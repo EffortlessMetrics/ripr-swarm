@@ -107,6 +107,41 @@
       "name": "mutable candidate ref does not qualify",
       "expected_status": "candidate_materialized",
       "immutable_candidate_ref": "refs/heads/main"
+    },
+    {
+      "name": "blank candidate exclusion identity is rejected",
+      "expected_status": "scope_pending",
+      "exclusion_mutation": "blank_id"
+    },
+    {
+      "name": "duplicate candidate exclusion identity is rejected",
+      "expected_status": "scope_pending",
+      "exclusion_mutation": "duplicate_id"
+    },
+    {
+      "name": "unknown candidate exclusion claim is rejected",
+      "expected_status": "scope_pending",
+      "exclusion_mutation": "unknown_claim"
+    },
+    {
+      "name": "blank candidate exclusion reason is rejected",
+      "expected_status": "scope_pending",
+      "exclusion_mutation": "blank_reason"
+    },
+    {
+      "name": "blank candidate exclusion non-claim is rejected",
+      "expected_status": "scope_pending",
+      "exclusion_mutation": "blank_non_claim"
+    },
+    {
+      "name": "unreviewed candidate exclusion is rejected",
+      "expected_status": "scope_pending",
+      "exclusion_mutation": "unreviewed"
+    },
+    {
+      "name": "candidate exclusion resolution needs a record",
+      "expected_status": "scope_pending",
+      "exclusion_mutation": "candidate_resolution_without_record"
     }
   ]
 }

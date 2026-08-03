@@ -18,6 +18,7 @@ const RESOLUTIONS: &[&str] = &[
 ];
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct CandidateSelection {
     pub(crate) schema_version: String,
     #[serde(default)]
@@ -37,6 +38,7 @@ pub(crate) struct CandidateSelection {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct SelectedClaim {
     pub(crate) claim_id: String,
     pub(crate) owner_issue: u64,
@@ -55,6 +57,7 @@ pub(crate) struct SelectedClaim {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct CandidateExclusion {
     pub(crate) exclusion_id: String,
     pub(crate) claim_id: String,
@@ -66,6 +69,7 @@ pub(crate) struct CandidateExclusion {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct KnownCandidateDefect {
     pub(crate) defect_id: String,
     pub(crate) description: String,
@@ -76,6 +80,7 @@ pub(crate) struct KnownCandidateDefect {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct CandidateProjection {
     #[serde(default)]
     pub(crate) reproducible: bool,
@@ -94,6 +99,7 @@ pub(crate) struct CandidateProjection {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct QualificationInputs {
     #[serde(default)]
     pub(crate) immutable_candidate_ref: Option<String>,
@@ -454,7 +460,7 @@ fn is_immutable_candidate_ref(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{CandidateSelection, KnownCandidateDefect, evaluate};
+    use super::{CandidateExclusion, CandidateSelection, KnownCandidateDefect, evaluate};
     use serde::Deserialize;
     use serde_json::json;
 
@@ -498,6 +504,13 @@ mod tests {
     #[test]
     fn staged_state_advances_only_after_each_boundary() -> Result<(), String> {
         let mut value = selection()?;
+        let ready = evaluate(Some(&value));
+        if ready.status != "qualification_eligible" || !ready.reasons.is_empty() {
+            return Err(format!(
+                "complete selection should be qualification_eligible with no reasons, got {} / {:?}",
+                ready.status, ready.reasons
+            ));
+        }
         value.qualification = Default::default();
         let state = evaluate(Some(&value));
         if state.status != "candidate_materialized" {
@@ -666,13 +679,18 @@ mod tests {
         Ok(())
     }
 
+    const NEGATIVE_FIXTURE_VERSION: &str = "candidate_state_negative.v1";
+
     #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct NegativeFixture {
+        schema_version: String,
         base_selection: CandidateSelection,
         cases: Vec<NegativeCase>,
     }
 
     #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct NegativeCase {
         name: String,
         expected_status: String,
@@ -704,6 +722,8 @@ mod tests {
         blank_preservation_digest: bool,
         #[serde(default)]
         manifest_tree_sha: Option<String>,
+        #[serde(default)]
+        exclusion_mutation: Option<String>,
     }
 
     #[test]
@@ -717,6 +737,20 @@ mod tests {
             .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
         let fixture: NegativeFixture = serde_json::from_str(&text)
             .map_err(|error| format!("failed to parse {}: {error}", path.display()))?;
+        if fixture.schema_version != NEGATIVE_FIXTURE_VERSION {
+            return Err(format!(
+                "fixture schema_version must be {NEGATIVE_FIXTURE_VERSION}, got {}",
+                fixture.schema_version
+            ));
+        }
+        if fixture.base_selection.selected_claims.is_empty() {
+            return Err(
+                "negative fixture base selection must contain a selected claim".to_string(),
+            );
+        }
+        if fixture.cases.is_empty() {
+            return Err("negative fixture must contain at least one case".to_string());
+        }
         for case in fixture.cases {
             let mut selection = fixture.base_selection.clone();
             if let Some(resolution) = case.selected_claim_resolution {
@@ -769,6 +803,60 @@ mod tests {
             }
             if let Some(tree_sha) = case.manifest_tree_sha {
                 selection.qualification.manifest_candidate_tree_sha = Some(tree_sha);
+            }
+            match case.exclusion_mutation.as_deref() {
+                Some("blank_id") => selection.candidate_exclusions.push(CandidateExclusion {
+                    exclusion_id: " ".to_string(),
+                    claim_id: "claim:lifecycle".to_string(),
+                    reason: "reviewed reason".to_string(),
+                    non_claim: "reviewed non-claim".to_string(),
+                    evidence_refs: vec!["fixture:negative".to_string()],
+                    reviewed: true,
+                }),
+                Some("duplicate_id") => {
+                    let exclusion = CandidateExclusion {
+                        exclusion_id: "exclusion:duplicate".to_string(),
+                        claim_id: "claim:lifecycle".to_string(),
+                        reason: "reviewed reason".to_string(),
+                        non_claim: "reviewed non-claim".to_string(),
+                        evidence_refs: vec!["fixture:negative".to_string()],
+                        reviewed: true,
+                    };
+                    selection.candidate_exclusions.push(exclusion.clone());
+                    selection.candidate_exclusions.push(exclusion);
+                }
+                Some("unknown_claim") => selection.candidate_exclusions.push(CandidateExclusion {
+                    exclusion_id: "exclusion:unknown".to_string(),
+                    claim_id: "claim:unknown".to_string(),
+                    reason: "reviewed reason".to_string(),
+                    non_claim: "reviewed non-claim".to_string(),
+                    evidence_refs: vec!["fixture:negative".to_string()],
+                    reviewed: true,
+                }),
+                Some("blank_reason") | Some("blank_non_claim") | Some("unreviewed") => {
+                    selection.candidate_exclusions.push(CandidateExclusion {
+                        exclusion_id: "exclusion:invalid".to_string(),
+                        claim_id: "claim:lifecycle".to_string(),
+                        reason: if case.exclusion_mutation.as_deref() == Some("blank_reason") {
+                            " ".to_string()
+                        } else {
+                            "reviewed reason".to_string()
+                        },
+                        non_claim: if case.exclusion_mutation.as_deref() == Some("blank_non_claim")
+                        {
+                            "\t".to_string()
+                        } else {
+                            "reviewed non-claim".to_string()
+                        },
+                        evidence_refs: vec!["fixture:negative".to_string()],
+                        reviewed: case.exclusion_mutation.as_deref() != Some("unreviewed"),
+                    });
+                }
+                Some("candidate_resolution_without_record") => {
+                    selection.selected_claims[0].resolution = "candidate_exclusion".to_string();
+                }
+                Some(other) => return Err(format!("unknown exclusion mutation `{other}`")),
+                None => {}
             }
             let state = evaluate(Some(&selection));
             if state.status != case.expected_status {

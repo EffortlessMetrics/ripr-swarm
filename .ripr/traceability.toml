@@ -7793,6 +7793,11 @@ tests = [
   "xtask/src/reports/candidate_control.rs::tests::unresolved_defect_is_not_hard_cut_eligible",
   "xtask/src/reports/candidate_control.rs::tests::missing_cut_and_projection_are_not_hard_cut_eligible",
   "xtask/src/reports/candidate_control.rs::tests::mismatched_materialization_and_manifest_do_not_qualify",
+  "xtask/src/reports/candidate_control.rs::tests::blank_landed_reference_is_not_scope_closed",
+  "xtask/src/reports/candidate_control.rs::tests::whitespace_non_claim_is_not_scope_closed",
+  "xtask/src/reports/candidate_control.rs::tests::optional_failed_claim_is_not_scope_closed",
+  "xtask/src/reports/candidate_control.rs::tests::blank_projection_digests_do_not_materialize",
+  "xtask/src/reports/candidate_control.rs::tests::mutable_candidate_ref_does_not_qualify",
   "xtask/src/reports/candidate_control.rs::tests::negative_candidate_state_fixture_covers_each_false_ready_boundary",
 ]
 fixtures = [

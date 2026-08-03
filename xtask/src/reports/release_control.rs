@@ -774,6 +774,10 @@ mod tests {
     #[test]
     fn missing_candidate_selection_is_exposed_as_scope_pending() -> Result<(), String> {
         let report = normalize_snapshot(snapshot()?);
+        require(
+            report.status == "ready",
+            "candidate scope_pending must not change the reconciliation status",
+        )?;
         let report_json = report_json(&report);
         let state = report_json
             .get("candidate_state")

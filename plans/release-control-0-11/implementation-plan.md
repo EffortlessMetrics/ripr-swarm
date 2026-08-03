@@ -142,8 +142,9 @@ release publication, or product correctness.
 
 ## Current implementation receipt
 
-Observed after the latest live reconciliation: `origin/main` is
-`fcbb30a7cf6a37027fa377abafb617632b2e6f57`. PR #2869 merged at that SHA and
+Observed at `2026-08-02` during that reconciliation: `origin/main` was
+`fcbb30a7cf6a37027fa377abafb617632b2e6f57`; the later 2026-08-03 refresh below
+records the current `origin/main`. PR #2869 merged at that SHA and
 delivered the typed reference-authority and fail-closed offline denominator
 slice. Its final routed result was not a clean qualification signal, so this
 merge is recorded as delivered implementation evidence, not candidate or
