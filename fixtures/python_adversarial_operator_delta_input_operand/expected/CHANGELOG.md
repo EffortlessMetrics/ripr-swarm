@@ -112,3 +112,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending
+
+Reason:
+RIPR-SPEC-0147: align fixture outputs with the typed incomplete-outcome and unquoted human outcome contract.
+
+Command:
+`cargo xtask goldens bless python_adversarial_operator_delta_input_operand --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

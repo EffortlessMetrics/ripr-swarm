@@ -6,8 +6,9 @@ Summary: 1 probe(s), 0 exposed, 0 weak, 0 unrevealed, 0 no path, 1 unknown
 
 Changed file(s) by language: rust: 0, typescript: 1.
 
-Analysis outcome: "complete_with_findings" (analysis complete).
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
+Analysis outcome: partial_with_limitations (analysis incomplete).
+  Zero findings is not a clean result because the analyzed scope is incomplete.
+  Limitation: language_scope_unsupported at language_adapter (src/broken.ts); affected items: 1; recovery: retry — Fix the TypeScript or JavaScript parse error, then re-run the analysis..
 
 Start here:
   State: preview_limited

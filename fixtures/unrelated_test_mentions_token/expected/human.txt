@@ -4,7 +4,7 @@ root: fixtures/unrelated_test_mentions_token/input
 
 Summary: 1 probe(s), 0 exposed, 0 weak, 0 unrevealed, 1 no path, 0 unknown
 
-Analysis outcome: "complete_with_findings" (analysis complete).
+Analysis outcome: complete_with_findings (analysis complete).
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
 
 Start here:

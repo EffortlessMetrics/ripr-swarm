@@ -342,3 +342,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending
+
+Reason:
+RIPR-SPEC-0147: align fixture outputs with the typed incomplete-outcome and unquoted human outcome contract.
+
+Command:
+`cargo xtask goldens bless typescript_strong_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
