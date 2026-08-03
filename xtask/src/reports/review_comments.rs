@@ -50,6 +50,7 @@ struct ReviewCommentsOptions {
     root: String,
     base: String,
     head: String,
+    check_output: Option<String>,
     check: bool,
 }
 
@@ -59,6 +60,7 @@ impl Default for ReviewCommentsOptions {
             root: DEFAULT_ROOT.to_string(),
             base: DEFAULT_BASE.to_string(),
             head: DEFAULT_HEAD.to_string(),
+            check_output: None,
             check: false,
         }
     }
@@ -95,6 +97,10 @@ fn parse_options(args: &[String]) -> Result<ReviewCommentsOptions, String> {
                 i += 1;
                 options.head = non_empty_arg(args, i, "--head")?.to_string();
             }
+            "--check-output" => {
+                i += 1;
+                options.check_output = Some(non_empty_arg(args, i, "--check-output")?.to_string());
+            }
             "--check" => options.check = true,
             other => return Err(format!("unknown ripr-review-comments argument {other:?}")),
         }
@@ -117,7 +123,7 @@ fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a
 
 fn print_help() {
     println!(
-        "usage: cargo xtask ripr-review-comments [--base <rev>] [--head <rev>] [--root <path>] [--check]"
+        "usage: cargo xtask ripr-review-comments [--base <rev>] [--head <rev>] [--root <path>] [--check-output <path>] [--check]"
     );
 }
 
@@ -446,7 +452,7 @@ fn run_ripr_review_comments(
     let root_arg = command_root_arg(repo, &options.root);
     let out_arg = out.display().to_string();
     let timeout_ms = review_comments_timeout_ms()?;
-    let ripr_args = vec![
+    let mut ripr_args = vec![
         "review-comments".to_string(),
         "--root".to_string(),
         root_arg,
@@ -454,11 +460,17 @@ fn run_ripr_review_comments(
         options.base.clone(),
         "--head".to_string(),
         options.head.clone(),
+    ];
+    if let Some(check_output) = &options.check_output {
+        ripr_args.push("--check-output".to_string());
+        ripr_args.push(check_output.clone());
+    }
+    ripr_args.extend([
         "--timeout-ms".to_string(),
         timeout_ms.to_string(),
         "--out".to_string(),
         out_arg,
-    ];
+    ]);
     let binary = match env::var("RIPR_BIN") {
         Ok(binary) => {
             if binary.trim().is_empty() {
@@ -962,6 +974,7 @@ mod tests {
             root: ".".to_string(),
             base: "origin/main".to_string(),
             head: "HEAD".to_string(),
+            check_output: None,
             check: false,
         }
     }
@@ -1342,6 +1355,7 @@ mod tests {
                 root: ".".to_string(),
                 base: "HEAD~1".to_string(),
                 head: "HEAD".to_string(),
+                check_output: None,
                 check: false,
             },
         ))

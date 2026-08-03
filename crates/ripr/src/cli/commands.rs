@@ -21,6 +21,67 @@ use crate::cli::commands_timestamps::generated_at_unix_ms;
 
 const DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS: u64 = 120_000;
 
+fn load_review_comments_analysis_outcome(
+    path: Option<&Path>,
+) -> Result<Option<crate::analysis_outcome::AnalysisOutcome>, String> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let text = std::fs::read_to_string(path).map_err(|error| {
+        format!(
+            "review-comments --check-output {} is invalid: read failed: {error}",
+            path.display()
+        )
+    })?;
+    let value: serde_json::Value = serde_json::from_str(&text).map_err(|error| {
+        format!(
+            "review-comments --check-output {} is invalid: JSON parse failed: {error}",
+            path.display()
+        )
+    })?;
+    let Some(envelope) = value.get("analysis_outcome") else {
+        return Err(format!(
+            "review-comments --check-output {} is invalid: missing analysis_outcome",
+            path.display()
+        ));
+    };
+    if envelope.is_null() {
+        return Err(format!(
+            "review-comments --check-output {} is invalid: analysis_outcome is null",
+            path.display()
+        ));
+    }
+    let declared_complete = envelope
+        .get("analysis_complete")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| {
+            format!(
+                "review-comments --check-output {} is invalid: analysis_complete is missing or not boolean",
+                path.display()
+            )
+        })?;
+    let outcome = envelope.get("outcome").cloned().ok_or_else(|| {
+        format!(
+            "review-comments --check-output {} is invalid: analysis_outcome.outcome is missing",
+            path.display()
+        )
+    })?;
+    let outcome: crate::analysis_outcome::AnalysisOutcome =
+        serde_json::from_value(outcome).map_err(|error| {
+            format!(
+                "review-comments --check-output {} is invalid: typed outcome failed validation: {error}",
+                path.display()
+            )
+        })?;
+    if declared_complete != outcome.kind.is_complete() {
+        return Err(format!(
+            "review-comments --check-output {} is invalid: analysis_complete does not match typed outcome kind",
+            path.display()
+        ));
+    }
+    Ok(Some(outcome))
+}
+
 #[path = "commands/agent.rs"]
 mod agent;
 #[path = "commands/agent_dispatch.rs"]
@@ -1138,6 +1199,11 @@ fn review_comments_with_diff_loader(
     receipt.write_atomic(&receipt_path)?;
 
     if let Some(gap_ledger) = &options.gap_ledger {
+        if options.check_output.is_some() {
+            return Err(
+                "review-comments accepts at most one of --gap-ledger or --check-output".to_string(),
+            );
+        }
         let gap_ledger_text = std::fs::read_to_string(gap_ledger).map_err(|err| {
             format!(
                 "review-comments --gap-ledger {} is invalid: read failed: {err}",
@@ -1229,6 +1295,7 @@ fn review_comments_with_diff_loader(
         &working_set,
         &scoped_inventory,
     );
+    let analysis_outcome = load_review_comments_analysis_outcome(options.check_output.as_deref())?;
     let render_context = output::review_comments::ReviewCommentsRenderContext {
         root: &input.root,
         base: &options.base,
@@ -1241,12 +1308,14 @@ fn review_comments_with_diff_loader(
         &working_set,
         &selection,
         &analysis_scope,
+        analysis_outcome.as_ref(),
     )?;
     let rendered_md = output::review_comments::render_review_comments_markdown_with_scope(
         &render_context,
         &working_set,
         &selection,
         &analysis_scope,
+        analysis_outcome.as_ref(),
     );
     receipt.phase("static_rendering", "artifact_io");
     receipt.write_atomic(&receipt_path)?;
@@ -1509,6 +1578,7 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
     let mut base: Option<String> = None;
     let mut head: Option<String> = None;
     let mut gap_ledger = None;
+    let mut check_output = None;
     let mut out = PathBuf::from("target/ripr/review/comments.json");
     let mut timeout_ms = DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS;
 
@@ -1545,6 +1615,16 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
                 }
                 gap_ledger = Some(PathBuf::from(value));
             }
+            "--check-output" => {
+                i += 1;
+                let value = expect_value(args, i, "--check-output")?;
+                if value.trim().is_empty() {
+                    return Err(
+                        "review-comments --check-output requires a non-empty path".to_string()
+                    );
+                }
+                check_output = Some(PathBuf::from(value));
+            }
             "--out" => {
                 i += 1;
                 let value = expect_value(args, i, "--out")?;
@@ -1568,6 +1648,7 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
         base: base.ok_or_else(|| "review-comments requires --base <sha>".to_string())?,
         head: head.ok_or_else(|| "review-comments requires --head <sha>".to_string())?,
         gap_ledger,
+        check_output,
         out,
         timeout_ms,
     })
@@ -4143,6 +4224,7 @@ mod tests {
                 base: "origin/main".to_string(),
                 head: "HEAD".to_string(),
                 gap_ledger: None,
+                check_output: None,
                 out: PathBuf::from("target/ripr/review/comments.json"),
                 timeout_ms: DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS,
             })
@@ -4163,6 +4245,7 @@ mod tests {
                 gap_ledger: Some(PathBuf::from(
                     "target/ripr/reports/gap-decision-ledger.json"
                 )),
+                check_output: None,
                 out: PathBuf::from("target/ripr/review/comments.json"),
                 timeout_ms: DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS,
             })
@@ -4213,12 +4296,88 @@ mod tests {
             Err("review-comments --gap-ledger requires a non-empty path".to_string())
         );
         assert_eq!(
+            parse_review_comments_options(&args(&[
+                "--base",
+                "main",
+                "--head",
+                "HEAD",
+                "--check-output",
+                "",
+            ])),
+            Err("review-comments --check-output requires a non-empty path".to_string())
+        );
+        assert_eq!(
             parse_review_comments_options(&args(&["--base", "main", "--head", "HEAD", "--bad"])),
             Err(
                 "unknown review-comments argument \"--bad\". Run `ripr review-comments --help`."
                     .to_string()
             )
         );
+    }
+
+    #[test]
+    fn review_comments_loads_typed_outcome_from_check_artifact() -> Result<(), String> {
+        let root = unique_command_test_dir("review-comments-check-output");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create temp root: {err}"))?;
+        let path = root.join("check.json");
+        let mut artifact = serde_json::json!({
+            "analysis_outcome": {
+                "analysis_complete": false,
+                "outcome": {
+                    "schema_version": "0.1",
+                    "kind": "partial_with_limitations",
+                    "identity": {
+                        "repository_identity": null,
+                        "root_identity": null,
+                        "config_identity": null,
+                        "base_revision": null,
+                        "input_identity": null,
+                        "snapshot_identity": null
+                    },
+                    "counts": {
+                        "changed_file_count": 0,
+                        "changed_line_count": 0,
+                        "candidate_line_count": 0,
+                        "probe_count": 0,
+                        "finding_count": 0
+                    },
+                    "limitations": [{
+                        "kind": "producer_timeout",
+                        "producer_stage": "analysis_pipeline",
+                        "path": null,
+                        "affected_items": null,
+                        "bounded_detail": null,
+                        "recovery": {
+                            "kind": "retry",
+                            "detail": "rerun the producer"
+                        }
+                    }],
+                    "claim_boundary": crate::analysis_outcome::ANALYSIS_OUTCOME_CLAIM_BOUNDARY
+                }
+            }
+        });
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&artifact).map_err(|err| err.to_string())?,
+        )
+        .map_err(|err| format!("write check artifact: {err}"))?;
+        let outcome = load_review_comments_analysis_outcome(Some(&path))?
+            .ok_or_else(|| "expected typed outcome".to_string())?;
+        assert_eq!(outcome.kind.as_str(), "partial_with_limitations");
+        assert_eq!(outcome.limitations[0].recovery.kind.as_str(), "retry");
+        artifact["analysis_outcome"]["analysis_complete"] = serde_json::json!(true);
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&artifact).map_err(|err| err.to_string())?,
+        )
+        .map_err(|err| format!("rewrite mismatched check artifact: {err}"))?;
+        let mismatch = match load_review_comments_analysis_outcome(Some(&path)) {
+            Ok(_) => return Err("mismatched completeness must fail closed".to_string()),
+            Err(error) => error,
+        };
+        assert!(mismatch.contains("does not match typed outcome kind"));
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
+        Ok(())
     }
 
     #[test]
