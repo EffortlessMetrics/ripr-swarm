@@ -1446,12 +1446,15 @@ impl Backend {
                         .iter()
                         .map(|outcome| outcome.status_payload(value.input_identity_id().as_deref()))
                         .collect::<Vec<_>>(),
+                    value.analysis_outcome.clone(),
                 )
             })
         });
-        let (snapshot_identity, components) = match snapshot_state {
-            Some((identity, components)) => (identity, components),
-            None => (None, Vec::new()),
+        let (snapshot_identity, components, analysis_outcome) = match snapshot_state {
+            Some((identity, components, analysis_outcome)) => {
+                (identity, components, analysis_outcome)
+            }
+            None => (None, Vec::new(), None),
         };
         let snapshot_input = snapshot_identity.map(|identity| identity.status_payload());
         let current_input = match (
@@ -1537,6 +1540,7 @@ impl Backend {
             "last_success_input_identity": health.last_success_input_identity,
             "last_success_age_ms": last_success_age_ms,
             "run_status": health.run_status(),
+            "analysis_outcome": analysis_outcome,
             // Typed bounded per-component outcomes for the committed snapshot
             // (#1997, RIPR-SPEC-0141): the single typed authority for
             // optional-component degradation. Empty until a snapshot commits.
@@ -4758,13 +4762,14 @@ fn workspace_status_receipt_summary(
 }
 
 fn workspace_status_run_status(snapshot: &AnalysisSnapshot) -> &'static str {
-    super::diagnostics::derive_run_status(
+    super::diagnostics::derive_run_status_with_outcome(
         &snapshot.findings,
         &snapshot.gap_artifact_rejections,
         &snapshot.gap_artifacts,
         snapshot.seams_deferred,
         snapshot.partial_scope.is_some(),
         &snapshot.component_outcomes,
+        snapshot.analysis_outcome.as_ref(),
     )
 }
 
@@ -4822,6 +4827,7 @@ struct TopLimitationDto {
     selected_count: usize,
     total_count: usize,
     non_claims: Vec<&'static str>,
+    analysis_outcome: Option<crate::analysis_outcome::AnalysisOutcome>,
 }
 
 impl TopLimitationDto {
@@ -4847,6 +4853,7 @@ impl TopLimitationDto {
             "total_count": self.total_count,
             "unlock_condition": repair_route,
             "non_claims": self.non_claims,
+            "analysis_outcome": self.analysis_outcome,
             "limits_note": "Static evidence only; advisory, not a gate decision.",
         })
     }
@@ -4881,6 +4888,7 @@ fn top_limitation_dto(
         selected_count,
         total_count,
         non_claims,
+        analysis_outcome: None,
     };
 
     if !authority.allows_analysis() {
@@ -5067,6 +5075,41 @@ fn top_limitation_dto(
         );
     }
 
+    if let Some(outcome) = snapshot
+        .analysis_outcome
+        .as_ref()
+        .filter(|outcome| !outcome.kind.is_complete())
+    {
+        let limitation = outcome.limitations.first();
+        let recovery_route = limitation
+            .map(|limitation| limitation.recovery.kind.as_str())
+            .unwrap_or("inspect_failure");
+        let sample_sources = limitation
+            .and_then(|limitation| limitation.path.clone())
+            .into_iter()
+            .collect();
+        let mut dto = common(
+            "analysis_outcome_incomplete",
+            outcome.kind.as_str(),
+            "limited",
+            format!(
+                "the producer reported incomplete static analysis ({}) and zero findings are not a clean result",
+                outcome.kind.as_str()
+            ),
+            recovery_route,
+            sample_sources,
+            outcome.counts.finding_count as usize,
+            outcome.counts.candidate_line_count as usize,
+            vec![
+                "not a gate, baseline, badge, or RIPR Zero input",
+                "not test adequacy",
+                "not runtime evidence",
+            ],
+        );
+        dto.analysis_outcome = Some(outcome.clone());
+        return dto;
+    }
+
     if let Some(rejection) = top_gap_artifact_rejection(&snapshot.gap_artifact_rejections) {
         let category = rejection.as_str();
         let (repair_route, why_not_actionable) = workspace_status_rejection_repair(rejection);
@@ -5225,6 +5268,13 @@ fn top_gap_artifact_rejection(
 #[cfg(test)]
 mod top_limitation_selection_tests {
     use super::*;
+    use crate::analysis_outcome::{
+        AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+        AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
+        AnalysisStage,
+    };
+    use crate::lsp::state::RefreshMetadata;
+    use tower_lsp_server::LspService;
 
     #[test]
     fn top_gap_artifact_rejection_is_order_independent() {
@@ -5247,6 +5297,82 @@ mod top_limitation_selection_tests {
 
         assert_eq!(selected(&first_order), Some(expected.clone()));
         assert_eq!(selected(&second_order), Some(expected));
+    }
+
+    #[test]
+    fn top_limitation_retains_typed_incomplete_outcome() -> Result<(), String> {
+        let limitation = AnalysisLimitation::new(
+            AnalysisLimitationKind::UnresolvedConflictMarkers,
+            AnalysisStage::DiffParse,
+            AnalysisRecovery::new(
+                AnalysisRecoveryKind::ResolveConflicts,
+                "resolve conflict markers before retrying analysis",
+            )?,
+        )
+        .with_path("src/lib.rs")?
+        .with_affected_items(1)?;
+        let outcome = AnalysisOutcome::new(
+            AnalysisOutcomeKind::UnsupportedInput,
+            AnalysisIdentity {
+                input_identity: Some("sha256:lsp-fixture".to_string()),
+                ..AnalysisIdentity::default()
+            },
+            AnalysisOutcomeCounts::default(),
+            vec![limitation],
+        )?;
+        let snapshot = AnalysisSnapshot {
+            root: PathBuf::from("C:/repo"),
+            input_identity: None,
+            base: Some("main".to_string()),
+            mode: crate::app::Mode::Draft,
+            refresh: RefreshMetadata::default(),
+            findings: Vec::new(),
+            analysis_outcome: Some(outcome),
+            diagnostic_profile: LspDiagnosticProfile::Full,
+            classified_seams: Vec::new(),
+            gap_artifacts: Vec::new(),
+            gap_artifact_rejections: Vec::new(),
+            diagnostics_by_uri: BTreeMap::new(),
+            delivery_selection: None,
+            seams_deferred: false,
+            partial_scope: None,
+            component_outcomes: Vec::new(),
+            out_of_scope_test_file_findings: 0,
+        };
+        let health = AnalysisHealth {
+            state: AnalysisAttemptState::Succeeded,
+            snapshot_id: Some("snapshot:lsp-fixture".to_string()),
+            snapshot_run_status: Some("limited_incomplete_input".to_string()),
+            ..AnalysisHealth::default()
+        };
+        let authority = WorkspaceRootAuthority::selected(PathBuf::from("C:/repo"));
+        let value = top_limitation_dto(&health, Some(&snapshot), &authority).into_json();
+
+        assert_eq!(value["status"], "analysis_outcome_incomplete");
+        assert_eq!(value["limitation_category"], "unsupported_input");
+        assert_eq!(value["run_status"], "limited_incomplete_input");
+        assert_eq!(value["analysis_outcome"]["kind"], "unsupported_input");
+        assert_eq!(
+            value["analysis_outcome"]["limitations"][0]["recovery"]["kind"],
+            "resolve_conflicts"
+        );
+        assert!(!value["analysis_outcome"].to_string().contains("C:/repo"));
+
+        let (service, _socket) =
+            LspService::new(|client| Backend::new(client, PathBuf::from("C:/repo")));
+        let backend = service.inner();
+        *backend
+            .latest_analysis
+            .lock()
+            .map_err(|error| format!("latest analysis lock poisoned: {error}"))? =
+            Some(std::sync::Arc::new(snapshot));
+        let analysis_status = backend.analysis_status_payload_for_health(&health);
+        assert_eq!(analysis_status["run_status"], "limited_incomplete_input");
+        assert_eq!(
+            analysis_status["analysis_outcome"]["kind"],
+            "unsupported_input"
+        );
+        Ok(())
     }
 }
 
@@ -6910,6 +7036,7 @@ mod delivery_selection_parity_tests {
             mode: crate::app::Mode::Draft,
             refresh: crate::lsp::state::RefreshMetadata::default(),
             findings: Vec::new(),
+            analysis_outcome: None,
             diagnostic_profile: LspDiagnosticProfile::Full,
             classified_seams: Vec::new(),
             gap_artifacts: Vec::new(),
