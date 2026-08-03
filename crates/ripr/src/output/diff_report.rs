@@ -135,7 +135,7 @@ pub(crate) struct DiffReport {
     pub(crate) head: String,
     pub(crate) mode: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) analysis_outcome: Option<AnalysisOutcome>,
+    pub(crate) analysis_outcome: Option<DiffAnalysisOutcome>,
     pub(crate) runtime_status: DiffRuntimeStatus,
     pub(crate) receipt: DiffReceiptStatus,
     pub(crate) summary: DiffSummary,
@@ -148,6 +148,21 @@ pub(crate) struct DiffReport {
     /// is NOT a clean Rust-grade result. See RIPR-SPEC-0082.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) preview_languages: Vec<DiffPreviewLanguageAdvisory>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct DiffAnalysisOutcome {
+    pub(crate) analysis_complete: bool,
+    pub(crate) outcome: AnalysisOutcome,
+}
+
+impl From<AnalysisOutcome> for DiffAnalysisOutcome {
+    fn from(outcome: AnalysisOutcome) -> Self {
+        Self {
+            analysis_complete: outcome.kind.is_complete(),
+            outcome,
+        }
+    }
 }
 
 pub(crate) fn build_diff_report(
@@ -193,7 +208,7 @@ pub(crate) fn build_diff_report(
         base: base.to_string(),
         head: head.to_string(),
         mode: output.mode.as_str().to_string(),
-        analysis_outcome: output.analysis_outcome.clone(),
+        analysis_outcome: output.analysis_outcome.clone().map(Into::into),
         runtime_status: DiffRuntimeStatus {
             state: "diff_complete_full_repo_limited".to_string(),
             diff: DiffPhaseStatus {
@@ -264,24 +279,16 @@ pub(crate) fn render_diff_report_human(report: &DiffReport) -> String {
     out.push_str(&format!("range: {}...{}\n", report.base, report.head));
     out.push_str(&format!("mode: {}\n", report.mode));
     if let Some(outcome) = &report.analysis_outcome {
-        let complete = matches!(
-            outcome.kind,
-            crate::analysis_outcome::AnalysisOutcomeKind::NoScope
-                | crate::analysis_outcome::AnalysisOutcomeKind::NoChangedLines
-                | crate::analysis_outcome::AnalysisOutcomeKind::NoBehavioralCandidates
-                | crate::analysis_outcome::AnalysisOutcomeKind::CompleteNoFindings
-                | crate::analysis_outcome::AnalysisOutcomeKind::CompleteWithFindings
-        );
         out.push_str(&format!(
             "analysis outcome: {} ({}).\n",
-            outcome.kind.as_str(),
-            if complete {
+            outcome.outcome.kind.as_str(),
+            if outcome.analysis_complete {
                 "analysis complete"
             } else {
                 "analysis incomplete"
             }
         ));
-        if !outcome.limitations.is_empty() {
+        if !outcome.outcome.limitations.is_empty() {
             out.push_str(
                 "zero findings is not a clean result because the analyzed scope is incomplete.\n",
             );
@@ -506,6 +513,8 @@ mod tests {
 
         let json = render_diff_report_json(&report)?;
         assert!(json.contains(r#""analysis_outcome""#));
+        assert!(json.contains(r#""analysis_complete": false"#));
+        assert!(json.contains(r#""outcome": {"#));
         assert!(json.contains(r#""kind": "unsupported_input""#));
         assert!(json.contains(r#""kind": "combined_hunk_unsupported""#));
 

@@ -166,18 +166,10 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput) {
     let Some(outcome) = &output.analysis_outcome else {
         return;
     };
-    let complete = matches!(
-        outcome.kind,
-        crate::analysis_outcome::AnalysisOutcomeKind::NoScope
-            | crate::analysis_outcome::AnalysisOutcomeKind::NoChangedLines
-            | crate::analysis_outcome::AnalysisOutcomeKind::NoBehavioralCandidates
-            | crate::analysis_outcome::AnalysisOutcomeKind::CompleteNoFindings
-            | crate::analysis_outcome::AnalysisOutcomeKind::CompleteWithFindings
-    );
     let kind = outcome.kind.as_str();
     out.push_str(&format!(
         "Analysis outcome: {kind} ({}).\n",
-        if complete {
+        if outcome.kind.is_complete() {
             "analysis complete"
         } else {
             "analysis incomplete"

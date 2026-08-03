@@ -58,14 +58,6 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
     summary_json(&mut out, output);
     out.push_str(",\n");
     if let Some(outcome) = &output.analysis_outcome {
-        let complete = matches!(
-            outcome.kind,
-            crate::analysis_outcome::AnalysisOutcomeKind::NoScope
-                | crate::analysis_outcome::AnalysisOutcomeKind::NoChangedLines
-                | crate::analysis_outcome::AnalysisOutcomeKind::NoBehavioralCandidates
-                | crate::analysis_outcome::AnalysisOutcomeKind::CompleteNoFindings
-                | crate::analysis_outcome::AnalysisOutcomeKind::CompleteWithFindings
-        );
         let serialized = serde_json::to_string(outcome).unwrap_or_else(|error| {
             format!(
                 "{{\"serialization_error\":{}}}",
@@ -73,7 +65,7 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
             )
         });
         out.push_str("  \"analysis_outcome\": {\n");
-        out.push_str(if complete {
+        out.push_str(if outcome.kind.is_complete() {
             "    \"analysis_complete\": true,\n"
         } else {
             "    \"analysis_complete\": false,\n"
