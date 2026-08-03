@@ -235,6 +235,7 @@ fn run_pipeline_for_diff_text(
                 )),
             });
         }
+        limitations.extend(result.limitations);
         partial_scope = result.partial_scope.clone();
         findings.extend(result.findings);
         rust_changed_files += result.changed_files;
@@ -285,6 +286,7 @@ fn run_pipeline_for_diff_text(
                     .candidate_line_count
                     .max(candidate_lines_from_findings(&result.findings));
                 findings.extend(result.findings);
+                limitations.extend(result.limitations);
                 if result.changed_files_by_language.is_empty() {
                     changed_files_by_language.push((*language, result.changed_files));
                 } else {
@@ -1598,6 +1600,57 @@ index 0000000..1111111 100644
         if !advisory.enabled {
             return Err("expected enabled=true when TypeScript is in the enabled list".to_string());
         }
+        Ok(())
+    }
+
+    /// A parser failure owned by a preview adapter must remain a typed
+    /// limitation in the shared outcome; a finding-side warning alone is not
+    /// enough to make the completeness contract machine-consumable.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn diff_pipeline_projects_typescript_adapter_limitation() -> Result<(), String> {
+        let root = temp_root("analysis-outcome-typescript-limitation")?;
+        write(root.join("src/broken.ts").as_path(), "const = ;\n")?;
+        let diff_file = root.join("broken.diff");
+        write(
+            &diff_file,
+            r#"diff --git a/src/broken.ts b/src/broken.ts
+index 0000000..1111111 100644
+--- /dev/null
++++ b/src/broken.ts
+@@ -0,0 +1 @@
++const = ;
+"#,
+        )?;
+
+        let result = run_diff_pipeline_with_oracle_policy(
+            &AnalysisOptions {
+                root: root.clone(),
+                base: None,
+                diff_file: Some(diff_file),
+                mode: AnalysisMode::Draft,
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+            },
+            &OraclePolicy::default(),
+            &[LanguageId::TypeScript],
+        )?;
+        let outcome = result
+            .analysis_outcome
+            .ok_or_else(|| "TypeScript diff must carry an analysis outcome".to_string())?;
+        assert_eq!(outcome.kind, AnalysisOutcomeKind::PartialWithLimitations);
+        let limitation = outcome
+            .limitations
+            .iter()
+            .find(|limitation| limitation.kind == AnalysisLimitationKind::LanguageScopeUnsupported)
+            .ok_or_else(|| "missing typed TypeScript adapter limitation".to_string())?;
+        assert_eq!(limitation.producer_stage, AnalysisStage::LanguageAdapter);
+        assert_eq!(limitation.path.as_deref(), Some("src/broken.ts"));
+        assert_eq!(limitation.recovery.kind, AnalysisRecoveryKind::Retry);
+
+        let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
 

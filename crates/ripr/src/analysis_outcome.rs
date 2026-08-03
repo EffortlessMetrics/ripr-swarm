@@ -52,6 +52,47 @@ impl AnalysisOutcomeKind {
     }
 }
 
+impl AnalysisLimitationKind {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::CombinedHunkUnsupported => "combined_hunk_unsupported",
+            Self::UnresolvedConflictMarkers => "unresolved_conflict_markers",
+            Self::DiffScopeOversized => "diff_scope_oversized",
+            Self::LanguageAdapterUnavailable => "language_adapter_unavailable",
+            Self::LanguageScopeUnsupported => "language_scope_unsupported",
+            Self::ProducerTimeout => "producer_timeout",
+            Self::ProducerFailure => "producer_failure",
+        }
+    }
+}
+
+impl AnalysisStage {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::DiffLoad => "diff_load",
+            Self::DiffParse => "diff_parse",
+            Self::LanguageAdapter => "language_adapter",
+            Self::ProbeGeneration => "probe_generation",
+            Self::FindingClassification => "finding_classification",
+            Self::AnalysisPipeline => "analysis_pipeline",
+        }
+    }
+}
+
+impl AnalysisRecoveryKind {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::NarrowDiff => "narrow_diff",
+            Self::UseTwoWayDiff => "use_two_way_diff",
+            Self::ResolveConflicts => "resolve_conflicts",
+            Self::EnableLanguage => "enable_language",
+            Self::IncreaseConfiguredLimit => "increase_configured_limit",
+            Self::Retry => "retry",
+            Self::InspectFailure => "inspect_failure",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum AnalysisStage {

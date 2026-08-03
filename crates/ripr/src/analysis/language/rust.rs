@@ -1422,6 +1422,7 @@ impl RustAdapter {
                     is_generated_rust_file_with_patterns(&file.path, generated_file_patterns)
                 })
                 .count(),
+            limitations: Vec::new(),
         })
     }
 }

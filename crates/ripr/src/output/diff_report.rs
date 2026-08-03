@@ -292,6 +292,15 @@ pub(crate) fn render_diff_report_human(report: &DiffReport) -> String {
             out.push_str(
                 "zero findings is not a clean result because the analyzed scope is incomplete.\n",
             );
+            for limitation in &outcome.outcome.limitations {
+                out.push_str(&format!(
+                    "limitation: {} at {}; recovery: {} — {}\n",
+                    limitation.kind.as_str(),
+                    limitation.producer_stage.as_str(),
+                    limitation.recovery.kind.as_str(),
+                    limitation.recovery.detail
+                ));
+            }
         }
     }
     out.push_str(&format!(
@@ -521,6 +530,8 @@ mod tests {
         let human = render_diff_report_human(&report);
         assert!(human.contains("analysis outcome: unsupported_input (analysis incomplete)."));
         assert!(human.contains("zero findings is not a clean result"));
+        assert!(human.contains("recovery: use_two_way_diff"));
+        assert!(human.contains("Re-run against a two-way diff"));
         Ok(())
     }
 

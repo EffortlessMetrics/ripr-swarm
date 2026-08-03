@@ -6442,6 +6442,7 @@ impl LanguageAdapter for PythonAdapter {
             changed_files_by_language: Vec::new(),
             partial_scope: None,
             skipped_files: 0,
+            limitations: Vec::new(),
         })
     }
 

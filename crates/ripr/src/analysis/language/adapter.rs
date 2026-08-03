@@ -4,6 +4,7 @@
 
 use super::super::{AnalysisOptions, diff::ChangedFile};
 use super::rust::PartialDiffScope;
+use crate::analysis_outcome::AnalysisLimitation;
 use crate::config::OraclePolicy;
 use crate::domain::Finding;
 use std::path::Path;
@@ -35,6 +36,9 @@ pub(crate) struct LanguageDiffResult {
     /// Number of accepted-language files intentionally excluded as generated
     /// source. The pipeline records this as a partial run disclosure.
     pub(crate) skipped_files: usize,
+    /// Typed adapter-owned limitations that the pipeline publishes in the
+    /// shared analysis outcome.
+    pub(crate) limitations: Vec<AnalysisLimitation>,
 }
 
 /// Per-language results returned by [`LanguageAdapter::analyze_repo`].

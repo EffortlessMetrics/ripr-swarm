@@ -191,8 +191,9 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput) {
     );
     for limitation in &outcome.limitations {
         out.push_str(&format!(
-            "  Limitation: {:?} at {:?}",
-            limitation.kind, limitation.producer_stage
+            "  Limitation: {} at {}",
+            limitation.kind.as_str(),
+            limitation.producer_stage.as_str()
         ));
         if let Some(path) = &limitation.path {
             out.push_str(&format!(" ({path})"));
@@ -200,7 +201,11 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput) {
         if let Some(count) = limitation.affected_items {
             out.push_str(&format!("; affected items: {count}"));
         }
-        out.push_str(&format!("; recovery: {}.\n", limitation.recovery.detail));
+        out.push_str(&format!(
+            "; recovery: {} — {}.\n",
+            limitation.recovery.kind.as_str(),
+            limitation.recovery.detail
+        ));
     }
     out.push('\n');
 }
