@@ -1368,14 +1368,18 @@ mod tests {
         options.check_output = Some("target/check-output.json".to_string());
         let mut producer_called = false;
 
-        write_review_comments_with_runner(&repo, &options, |_repo, _options| {
+        let result = write_review_comments_with_runner(&repo, &options, |_repo, _options| {
             producer_called = true;
             Err(ReviewCommentsRunError::from(
                 "producer received explicit check output for an empty diff".to_string(),
             ))
-        })?;
+        });
 
         assert!(producer_called);
+        let error = result
+            .err()
+            .ok_or_else(|| "missing check-output must fail closed".to_string())?;
+        assert!(error.contains("--check-output"), "{error}");
         let packet = read_packet(&repo)?;
         assert_eq!(packet["status"], "error");
         assert_eq!(packet["run_receipt"]["status"], "failed");
