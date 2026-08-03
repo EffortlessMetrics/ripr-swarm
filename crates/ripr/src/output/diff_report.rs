@@ -1,6 +1,7 @@
 use serde::Serialize;
 use std::path::{Component, Path};
 
+use crate::analysis_outcome::AnalysisOutcome;
 use crate::app::CheckOutput;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -133,6 +134,8 @@ pub(crate) struct DiffReport {
     pub(crate) base: String,
     pub(crate) head: String,
     pub(crate) mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) analysis_outcome: Option<AnalysisOutcome>,
     pub(crate) runtime_status: DiffRuntimeStatus,
     pub(crate) receipt: DiffReceiptStatus,
     pub(crate) summary: DiffSummary,
@@ -190,6 +193,7 @@ pub(crate) fn build_diff_report(
         base: base.to_string(),
         head: head.to_string(),
         mode: output.mode.as_str().to_string(),
+        analysis_outcome: output.analysis_outcome.clone(),
         runtime_status: DiffRuntimeStatus {
             state: "diff_complete_full_repo_limited".to_string(),
             diff: DiffPhaseStatus {
@@ -259,6 +263,30 @@ pub(crate) fn render_diff_report_human(report: &DiffReport) -> String {
     out.push_str(&format!("root: {}\n", report.root));
     out.push_str(&format!("range: {}...{}\n", report.base, report.head));
     out.push_str(&format!("mode: {}\n", report.mode));
+    if let Some(outcome) = &report.analysis_outcome {
+        let complete = matches!(
+            outcome.kind,
+            crate::analysis_outcome::AnalysisOutcomeKind::NoScope
+                | crate::analysis_outcome::AnalysisOutcomeKind::NoChangedLines
+                | crate::analysis_outcome::AnalysisOutcomeKind::NoBehavioralCandidates
+                | crate::analysis_outcome::AnalysisOutcomeKind::CompleteNoFindings
+                | crate::analysis_outcome::AnalysisOutcomeKind::CompleteWithFindings
+        );
+        out.push_str(&format!(
+            "analysis outcome: {} ({}).\n",
+            outcome.kind.as_str(),
+            if complete {
+                "analysis complete"
+            } else {
+                "analysis incomplete"
+            }
+        ));
+        if !outcome.limitations.is_empty() {
+            out.push_str(
+                "zero findings is not a clean result because the analyzed scope is incomplete.\n",
+            );
+        }
+    }
     out.push_str(&format!(
         "changed files: {}\nchanged seams: {}\n",
         report.summary.changed_files, report.summary.changed_seams
@@ -308,6 +336,11 @@ pub(crate) fn render_diff_report_human(report: &DiffReport) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis_outcome::{
+        AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+        AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
+        AnalysisStage,
+    };
     use crate::app::{CheckOutput, Mode};
     use crate::domain::{
         ActivationEvidence, Confidence, DeltaKind, ExposureClass, Probe, ProbeFamily, ProbeId,
@@ -420,6 +453,65 @@ mod tests {
         assert!(human.contains("RIPR diff status: diff_complete_full_repo_limited"));
         assert!(human.contains("full repo context: full_repo_limited"));
         assert!(human.contains("receipt path: target/ripr/receipts/"));
+        Ok(())
+    }
+
+    #[test]
+    fn diff_report_projects_incomplete_analysis_outcome() -> Result<(), String> {
+        let limitation = AnalysisLimitation::new(
+            AnalysisLimitationKind::CombinedHunkUnsupported,
+            AnalysisStage::DiffParse,
+            AnalysisRecovery::new(
+                AnalysisRecoveryKind::UseTwoWayDiff,
+                "Re-run against a two-way diff of the merge result.",
+            )?,
+        )
+        .with_path("src/lib.rs")?
+        .with_affected_items(1)?;
+        let outcome = AnalysisOutcome::new(
+            AnalysisOutcomeKind::UnsupportedInput,
+            AnalysisIdentity {
+                input_identity: Some("sha256:fixture".to_string()),
+                ..AnalysisIdentity::default()
+            },
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 2,
+                ..AnalysisOutcomeCounts::default()
+            },
+            vec![limitation],
+        )?;
+        let report = build_diff_report(
+            &CheckOutput {
+                schema_version: "0.1".to_string(),
+                tool: "ripr".to_string(),
+                mode: Mode::Draft,
+                root: PathBuf::from("repo"),
+                base: None,
+                summary: Summary::default(),
+                findings: Vec::new(),
+                preview_language_advisories: Vec::new(),
+                language_runs: Vec::new(),
+                no_scope_provided: false,
+                unanalyzed_working_tree: false,
+                suppression: None,
+                analysis_outcome: Some(outcome),
+                partial_scope: None,
+            },
+            "origin/main",
+            "HEAD",
+            Vec::new(),
+            "target/ripr/receipts/test.json".to_string(),
+        );
+
+        let json = render_diff_report_json(&report)?;
+        assert!(json.contains(r#""analysis_outcome""#));
+        assert!(json.contains(r#""kind": "unsupported_input""#));
+        assert!(json.contains(r#""kind": "combined_hunk_unsupported""#));
+
+        let human = render_diff_report_human(&report);
+        assert!(human.contains("analysis outcome: unsupported_input (analysis incomplete)."));
+        assert!(human.contains("zero findings is not a clean result"));
         Ok(())
     }
 
