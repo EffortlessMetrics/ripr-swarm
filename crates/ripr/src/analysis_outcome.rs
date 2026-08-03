@@ -57,6 +57,7 @@ impl AnalysisLimitationKind {
         match self {
             Self::CombinedHunkUnsupported => "combined_hunk_unsupported",
             Self::UnresolvedConflictMarkers => "unresolved_conflict_markers",
+            Self::MalformedDiff => "malformed_diff",
             Self::DiffScopeOversized => "diff_scope_oversized",
             Self::LanguageAdapterUnavailable => "language_adapter_unavailable",
             Self::LanguageScopeUnsupported => "language_scope_unsupported",
@@ -109,6 +110,7 @@ pub(crate) enum AnalysisStage {
 pub(crate) enum AnalysisLimitationKind {
     CombinedHunkUnsupported,
     UnresolvedConflictMarkers,
+    MalformedDiff,
     DiffScopeOversized,
     LanguageAdapterUnavailable,
     LanguageScopeUnsupported,
@@ -598,6 +600,7 @@ mod tests {
                 AnalysisLimitationKind::UnresolvedConflictMarkers,
                 "unresolved_conflict_markers",
             ),
+            (AnalysisLimitationKind::MalformedDiff, "malformed_diff"),
             (
                 AnalysisLimitationKind::DiffScopeOversized,
                 "diff_scope_oversized",

@@ -13,6 +13,10 @@
 use crate::analysis::AnalysisOptions;
 use crate::analysis::diff::ChangedFile;
 use crate::analysis::language::adapter::{LanguageAdapter, LanguageDiffResult, LanguageRepoResult};
+use crate::analysis_outcome::{
+    AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
+    AnalysisStage,
+};
 use crate::config::OraclePolicy;
 use crate::domain::ExposureClass;
 use serde::Deserialize;
@@ -195,6 +199,23 @@ impl LanguageAdapter for PerlAdapter {
             .map(|c| c.file_id.clone())
             .collect::<BTreeSet<_>>()
             .len();
+        let limitations = if packet.packet_status == PacketStatus::Partial {
+            vec![
+                AnalysisLimitation::new(
+                    AnalysisLimitationKind::LanguageScopeUnsupported,
+                    AnalysisStage::LanguageAdapter,
+                    AnalysisRecovery::new(
+                        AnalysisRecoveryKind::Retry,
+                        "Produce a complete Perl fact packet and re-run the analysis.",
+                    )?,
+                )
+                .with_detail(
+                    "The Perl fact producer declared the packet partial; findings are advisory only.",
+                )?,
+            ]
+        } else {
+            Vec::new()
+        };
 
         Ok(LanguageDiffResult {
             findings,
@@ -203,7 +224,7 @@ impl LanguageAdapter for PerlAdapter {
             changed_files_by_language: Vec::new(),
             partial_scope: None,
             skipped_files: 0,
-            limitations: Vec::new(),
+            limitations,
         })
     }
 

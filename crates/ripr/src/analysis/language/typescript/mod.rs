@@ -107,6 +107,10 @@ impl LanguageAdapter for TypeScriptAdapter {
         // so we can find related tests for any owner regardless of whether
         // the test file itself changed in this diff.
         let workspace_files = collect_workspace_typescript_files(&options.root);
+        let changed_paths = changed_files
+            .iter()
+            .map(|changed| normalized_path(&changed.path))
+            .collect::<Vec<_>>();
         let mut all_owners: Vec<TypeScriptOwner> = Vec::new();
         let mut all_tests: Vec<TypeScriptTest> = Vec::new();
         let mut parse_limits: Vec<TypeScriptParseLimit> = Vec::new();
@@ -116,7 +120,11 @@ impl LanguageAdapter for TypeScriptAdapter {
                 continue;
             };
             if let Some(reason) = parse_error_reason(relative, &source) {
-                if !is_test_file(relative) {
+                if !is_test_file(relative)
+                    && changed_paths
+                        .iter()
+                        .any(|changed| changed == &normalized_path(relative))
+                {
                     parse_limits.push(TypeScriptParseLimit {
                         file: relative.clone(),
                         reason,

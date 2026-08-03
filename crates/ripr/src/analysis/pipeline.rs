@@ -226,14 +226,21 @@ fn run_pipeline_for_diff_text(
         )?;
         cancellation::checkpoint()?;
         if result.skipped_files > 0 {
-            language_runs.push(LanguageRun {
-                language: LanguageId::Rust.as_str().to_string(),
-                status: LanguageRunStatus::Partial,
-                reason: Some(format!(
-                    "{} generated Rust file(s) skipped from static analysis by the configured generated-file predicate",
+            limitations.push(
+                AnalysisLimitation::new(
+                    AnalysisLimitationKind::LanguageScopeUnsupported,
+                    AnalysisStage::LanguageAdapter,
+                    AnalysisRecovery::new(
+                        AnalysisRecoveryKind::Retry,
+                        "Review the configured generated-file predicate and re-run the analysis.",
+                    )?,
+                )
+                .with_affected_items(result.skipped_files as u64)?
+                .with_detail(format!(
+                    "{} generated Rust file(s) were intentionally skipped by the configured generated-file predicate",
                     result.skipped_files
-                )),
-            });
+                ))?,
+            );
         }
         limitations.extend(result.limitations);
         partial_scope = result.partial_scope.clone();
@@ -311,6 +318,28 @@ fn run_pipeline_for_diff_text(
     // require the adapter to be enabled.
     let preview_paths: Vec<&diff::ChangedFile> = analysis_changed_files.iter().collect();
     let preview_advisories = detect_preview_advisories(languages, preview_paths.into_iter());
+    for advisory in &preview_advisories {
+        if !advisory.enabled {
+            limitations.push(
+                AnalysisLimitation::new(
+                    AnalysisLimitationKind::LanguageAdapterUnavailable,
+                    AnalysisStage::LanguageAdapter,
+                    AnalysisRecovery::new(
+                        AnalysisRecoveryKind::EnableLanguage,
+                        format!(
+                            "Enable the {} preview adapter and re-run the analysis.",
+                            advisory.language
+                        ),
+                    )?,
+                )
+                .with_affected_items(advisory.file_count as u64)?
+                .with_detail(format!(
+                    "{} changed {} file(s), but the preview adapter was not enabled or available",
+                    advisory.language, advisory.file_count
+                ))?,
+            );
+        }
+    }
 
     // Disclose when the diff contains only non-source files (docs/config-only
     // PRs): an empty result with zero probes is not a "clean" result in that
@@ -370,6 +399,28 @@ fn run_pipeline_for_diff_text(
         );
     }
 
+    if !diff_text.trim().is_empty()
+        && changed_files.is_empty()
+        && deleted_file_count == 0
+        && submodule_file_count == 0
+        && renamed_file_count == 0
+        && limitations.is_empty()
+    {
+        limitations.push(
+            AnalysisLimitation::new(
+                AnalysisLimitationKind::MalformedDiff,
+                AnalysisStage::DiffParse,
+                AnalysisRecovery::new(
+                    AnalysisRecoveryKind::Retry,
+                    "Provide a valid unified diff and re-run the analysis.",
+                )?,
+            )
+            .with_detail(
+                "The non-empty diff input contained no parseable file changes or hunks.",
+            )?,
+        );
+    }
+
     sort::sort_findings(&mut findings);
     cancellation::checkpoint()?;
     let mut summary_result = summary::summarize_findings(rust_changed_files, &findings);
@@ -409,6 +460,7 @@ fn run_pipeline_for_diff_text(
             limitation.kind,
             AnalysisLimitationKind::CombinedHunkUnsupported
                 | AnalysisLimitationKind::UnresolvedConflictMarkers
+                | AnalysisLimitationKind::MalformedDiff
         )
     }) {
         AnalysisOutcomeKind::UnsupportedInput
@@ -503,11 +555,19 @@ fn limitations_from_language_runs(
                         "Inspect the adapter result and re-run the analysis.",
                     )?,
                 )
-                .with_detail(format!("{}: {detail}", run.language))?,
+                .with_detail(bounded_language_run_detail(&run.language, &detail))?,
             ))
         })
         .collect::<Result<Vec<_>, String>>()
         .map(|items| items.into_iter().flatten().collect())
+}
+
+fn bounded_language_run_detail(language: &str, reason: &str) -> String {
+    let detail = format!("{language}: {reason}");
+    detail
+        .chars()
+        .take(crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS)
+        .collect()
 }
 
 pub(crate) fn run_repo_pipeline_with_oracle_policy(
@@ -963,6 +1023,98 @@ mod tests {
             "non-diff text must parse to zero changed files, got {}",
             changed.len()
         );
+    }
+
+    #[test]
+    fn nonempty_unparseable_diff_projects_unsupported_outcome() -> Result<(), String> {
+        let root = temp_root("analysis-outcome-malformed-diff")?;
+        let result = run_pipeline_for_diff_text(
+            &AnalysisOptions {
+                root,
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Draft,
+                include_unchanged_tests: false,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+            },
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+            &[],
+            "this is not a unified diff\n",
+        )?;
+        let outcome = result
+            .analysis_outcome
+            .ok_or_else(|| "malformed diff must carry an analysis outcome".to_string())?;
+        assert_eq!(outcome.kind, AnalysisOutcomeKind::UnsupportedInput);
+        assert!(outcome.limitations.iter().any(|limitation| {
+            limitation.kind == AnalysisLimitationKind::MalformedDiff
+                && limitation.producer_stage == AnalysisStage::DiffParse
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn adapter_limitation_details_are_bounded_without_aborting_projection() -> Result<(), String> {
+        let limitations = limitations_from_language_runs(&[LanguageRun {
+            language: "typescript".to_string(),
+            status: LanguageRunStatus::Partial,
+            reason: Some("x".repeat(2_000)),
+        }])?;
+        let detail = limitations[0]
+            .bounded_detail
+            .as_deref()
+            .ok_or_else(|| "bounded adapter limitation must retain a detail".to_string())?;
+        assert!(detail.starts_with("typescript: "));
+        assert!(
+            detail.chars().count() <= crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn configured_generated_skip_is_a_scope_limitation_not_a_producer_failure() -> Result<(), String>
+    {
+        let root = temp_root("analysis-outcome-generated-skip")?;
+        let result = run_pipeline_for_diff_text(
+            &AnalysisOptions {
+                root,
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Draft,
+                include_unchanged_tests: false,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+            },
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+            &["src/generated_*.rs".to_string()],
+            "diff --git a/src/generated_values.rs b/src/generated_values.rs\n\
+             --- /dev/null\n\
+             +++ b/src/generated_values.rs\n\
+             @@ -0,0 +1 @@\n\
+             +pub fn generated_value() -> u32 { 1 }\n",
+        )?;
+        let outcome = result
+            .analysis_outcome
+            .ok_or_else(|| "generated skip must carry an analysis outcome".to_string())?;
+        assert_eq!(outcome.kind, AnalysisOutcomeKind::PartialWithLimitations);
+        assert!(outcome.limitations.iter().any(|limitation| {
+            limitation.kind == AnalysisLimitationKind::LanguageScopeUnsupported
+                && limitation
+                    .bounded_detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains("intentionally skipped"))
+        }));
+        assert!(
+            !result
+                .language_runs
+                .iter()
+                .any(|run| run.status == LanguageRunStatus::Partial)
+        );
+        Ok(())
     }
 
     #[test]
@@ -1716,6 +1868,17 @@ index 0000000..1111111 100644
                 "expected enabled=false when TypeScript is NOT in the enabled list".to_string(),
             );
         }
+        let outcome = result
+            .analysis_outcome
+            .ok_or_else(|| "disabled preview diff must carry an analysis outcome".to_string())?;
+        assert_eq!(outcome.kind, AnalysisOutcomeKind::PartialWithLimitations);
+        assert!(outcome.limitations.iter().any(|limitation| {
+            limitation.kind == AnalysisLimitationKind::LanguageAdapterUnavailable
+                && limitation
+                    .bounded_detail
+                    .as_deref()
+                    .is_some_and(|detail| detail.contains("not enabled or available"))
+        }));
         Ok(())
     }
 

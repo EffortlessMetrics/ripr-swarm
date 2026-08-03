@@ -24,6 +24,12 @@ one `AnalysisOutcome` containing:
 - typed limitations with producer stage, affected items, and recovery route;
 - a portable input identity and the static-analysis claim boundary.
 
+Malformed non-empty diff input is a typed `malformed_diff` limitation at the
+diff-parse stage and produces `unsupported_input`; it is never represented as
+complete zero scope. Disabled preview-language files and configured generated
+source skips are typed limitations as well, while a producer-declared partial
+fact packet remains advisory rather than complete.
+
 Human output must name incomplete or unsupported analysis before any empty
 finding message and must state that zero findings is not a clean result when a
 limitation exists. JSON/status output must expose the same DTO and derive

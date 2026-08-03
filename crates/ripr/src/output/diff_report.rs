@@ -165,6 +165,26 @@ impl From<AnalysisOutcome> for DiffAnalysisOutcome {
     }
 }
 
+fn diff_projection_status(
+    outcome: Option<&AnalysisOutcome>,
+) -> (&'static str, &'static str, bool, &'static str) {
+    if outcome.is_some_and(|outcome| !outcome.kind.is_complete()) {
+        (
+            "diff_incomplete_full_repo_limited",
+            "diff_incomplete",
+            false,
+            "diff_incomplete/full_repo_limited",
+        )
+    } else {
+        (
+            "diff_complete_full_repo_limited",
+            "diff_complete",
+            true,
+            "diff_complete/full_repo_limited",
+        )
+    }
+}
+
 pub(crate) fn build_diff_report(
     output: &CheckOutput,
     base: &str,
@@ -195,6 +215,8 @@ pub(crate) fn build_diff_report(
         .collect::<Vec<_>>();
     let changed_file_count = changed_files.len();
     let changed_seam_count = changed_seams.len();
+    let (run_status, diff_state, downstream_consumable, outcome_hint) =
+        diff_projection_status(output.analysis_outcome.as_ref());
     let unknown = output.summary.static_unknown
         + output.summary.infection_unknown
         + output.summary.propagation_unknown;
@@ -203,20 +225,20 @@ pub(crate) fn build_diff_report(
         schema_version: "0.1".to_string(),
         kind: "ripr_diff".to_string(),
         tool: output.tool.clone(),
-        run_status: "diff_complete_full_repo_limited".to_string(),
+        run_status: run_status.to_string(),
         root: output.root.display().to_string(),
         base: base.to_string(),
         head: head.to_string(),
         mode: output.mode.as_str().to_string(),
         analysis_outcome: output.analysis_outcome.clone().map(Into::into),
         runtime_status: DiffRuntimeStatus {
-            state: "diff_complete_full_repo_limited".to_string(),
+            state: run_status.to_string(),
             diff: DiffPhaseStatus {
-                state: "diff_complete".to_string(),
+                state: diff_state.to_string(),
                 phase: "changed_surface_diff".to_string(),
                 changed_files: changed_file_count,
                 changed_seams: changed_seam_count,
-                downstream_consumable: true,
+                downstream_consumable,
             },
             full_repo_context: FullRepoContextStatus {
                 state: "full_repo_limited".to_string(),
@@ -229,7 +251,7 @@ pub(crate) fn build_diff_report(
         receipt: DiffReceiptStatus {
             state: "not_written".to_string(),
             path: receipt_path,
-            outcome_hint: "diff_complete/full_repo_limited".to_string(),
+            outcome_hint: outcome_hint.to_string(),
         },
         summary: DiffSummary {
             changed_files: changed_file_count,
@@ -521,6 +543,19 @@ mod tests {
         );
 
         let json = render_diff_report_json(&report)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|error| format!("parse diff report: {error}"))?;
+        assert!(json.contains(r#""run_status": "diff_incomplete_full_repo_limited""#));
+        assert!(json.contains(r#""state": "diff_incomplete""#));
+        assert_eq!(
+            value["runtime_status"]["state"],
+            serde_json::Value::String("diff_incomplete_full_repo_limited".to_string())
+        );
+        assert_eq!(
+            value["runtime_status"]["diff"]["downstream_consumable"],
+            serde_json::Value::Bool(false)
+        );
+        assert!(json.contains(r#""outcome_hint": "diff_incomplete/full_repo_limited""#));
         assert!(json.contains(r#""analysis_outcome""#));
         assert!(json.contains(r#""analysis_complete": false"#));
         assert!(json.contains(r#""outcome": {"#));
