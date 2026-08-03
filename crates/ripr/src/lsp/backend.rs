@@ -5463,6 +5463,23 @@ mod top_limitation_selection_tests {
     }
 
     #[test]
+    fn stale_snapshot_retains_typed_incomplete_outcome() -> Result<(), String> {
+        let snapshot = snapshot_for_outcome(incomplete_outcome(0)?, None);
+        let health = AnalysisHealth {
+            snapshot_id: Some("snapshot:lsp-fixture".to_string()),
+            snapshot_run_status: Some("stale".to_string()),
+            state: AnalysisAttemptState::Succeeded,
+            ..AnalysisHealth::default()
+        };
+        let authority = WorkspaceRootAuthority::selected(PathBuf::from("C:").join("repo"));
+        let value = top_limitation_dto(&health, Some(&snapshot), &authority).into_json();
+
+        assert_eq!(value["status"], "snapshot_stale");
+        assert_eq!(value["analysis_outcome"]["kind"], "unsupported_input");
+        Ok(())
+    }
+
+    #[test]
     fn incomplete_outcome_with_findings_does_not_claim_zero_findings() -> Result<(), String> {
         let snapshot = snapshot_for_outcome(incomplete_outcome(2)?, None);
         let health = AnalysisHealth {
