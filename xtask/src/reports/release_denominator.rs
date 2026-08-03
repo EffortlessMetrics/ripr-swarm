@@ -1275,7 +1275,7 @@ mod tests {
         )?;
         require(
             report.record_set_digest
-                == "sha256:157ce060005a3bf3b58501af0a7e7f8b4ced5a3a9be9786c2f1d9a20ac676461",
+                == "sha256:e33dd0e4e7a42924a3a3da8e0cd4dce414e0dbf5d92e0e23da65462c134052c2",
             "current-main record-set digest changed",
         )?;
         require(

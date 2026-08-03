@@ -75,7 +75,7 @@ disposition unless #2379 changes the release graph. The fixture pins cutoff
 `c30a26831b75051813bfaa3dbd9378096ec6aa82`, range digest
 `sha256:b85b8314b5f738335ae63220fe5f0ea8ef4e6e1892124eea148ea49181168501`,
 and record-set digest
-`sha256:157ce060005a3bf3b58501af0a7e7f8b4ced5a3a9be9786c2f1d9a20ac676461`.
+`sha256:e33dd0e4e7a42924a3a3da8e0cd4dce414e0dbf5d92e0e23da65462c134052c2`.
 It is range/identity and explicitly reconciled disposition evidence, not a
 final release qualification.
 
