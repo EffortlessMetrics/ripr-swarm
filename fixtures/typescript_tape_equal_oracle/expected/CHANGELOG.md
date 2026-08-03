@@ -125,3 +125,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending
+
+Reason:
+RIPR-SPEC-0147: publish typed analysis outcome in human and JSON output.
+
+Command:
+`cargo xtask goldens bless typescript_tape_equal_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
