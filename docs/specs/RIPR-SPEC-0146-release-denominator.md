@@ -62,10 +62,11 @@ decision; final output is ready only after every record is reconciled.
 ## Current-main evidence
 
 `fixtures/release_denominator/current-main-provisional.json` is a captured
-provisional census of `c86807ec..a379dd1` at `origin/main` as observed on
-2026-08-01. It carries 226 first-parent records and 219 candidate-tree
+provisional census of `c86807ec..fcbb30a` at `origin/main` as observed on
+2026-08-02. It carries 230 first-parent records and 219 candidate-tree
 records. The development-main merges for #2842, #2844, corrective #2858/#2859,
-corrective #2862, release-control #2857, and corrective #2867 are retained in
+corrective #2862, release-control #2857, corrective #2867, #2870, #2860, #2861,
+and #2869 are retained in
 the denominator with `safe_defer_post_0_11` / `hold_post_release` disposition
 and `absent_by_candidate_only_exclusion` tree state; the later corrective
 commits inherit that disposition unless #2379 changes the release graph. The
@@ -79,7 +80,7 @@ shared fail-closed validator. It does not close the final candidate decision
 tracked by #1609 or the dependent release-editor lane #2769.
 
 The implementation and fixture contract are mapped in `.ripr/traceability.toml`
-under `RIPR-SPEC-0146`. Focused proof is provided by the twenty-four tests named there
+under `RIPR-SPEC-0146`. Focused proof is provided by the twenty-five tests named there
 and the complete/reconcile-required fixtures under
 `fixtures/release_denominator/`; hosted CI is the authoritative execution
 proof for this PR. The complete fixture pins the #2767/#2788 and #2768/#2790
@@ -134,8 +135,8 @@ operator decisions, live drift, JSON/Markdown claim-boundary parity, typed
 reference authority, compatibility projection mismatch, contradictory
 identity, the two known issue/merge-PR pairs, deterministic ordering, changed mappings, final unreviewed
 references, malformed reference evidence, numeric compatibility projection
-ordering, manual-mapping reasons, reused reference identity, and the historical
-current-main census.
+ordering, manual-mapping reasons, reused reference identity, and the current-main
+census pinned to the final corrective cutoff and record-set digest.
 
 ## Implementation Mapping
 

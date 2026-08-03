@@ -155,11 +155,13 @@ No final candidate qualification or publication claim is made here.
 PR #2790 merged at `3c08654028dcf20eb9bee5fbf3c67b3ef6111891` with deterministic
 synthetic fixtures for validator shape. PR #2795 then merged at
 `f55df6f67797de5d2fe4515b689aa7cea57669b4`, retaining the real census in
-`fixtures/release_denominator/current-main-provisional.json`. This refresh
-rebases the provisional census to `origin/main` `a379dd1bc27e7cba09f24f9dd9a9e6a90982e9af`:
-the first-parent range `c86807ec..a379dd1` contains 226 observed commits and
-the candidate-tree projection contains 219 records. Merged PRs #2842, #2844,
-corrective #2858/#2859, corrective #2862, release-control #2857, and corrective #2867, plus later corrective follow-ups, remain explicitly
+`fixtures/release_denominator/current-main-provisional.json`. This final refresh
+rebases the provisional census to `origin/main`
+`fcbb30a7cf6a37027fa377abafb617632b2e6f57`: the first-parent range
+`c86807ec..fcbb30a` contains 230 observed commits and the candidate-tree
+projection contains 219 records. Merged PRs #2842, #2844, corrective #2858/#2859,
+corrective #2862, release-control #2857, corrective #2867, #2870, #2860, #2861,
+and #2869 remain explicitly
 `safe_defer_post_0_11` / `hold_post_release` and absent by
 `candidate_only_exclusion` unless #2379 changes the release graph. The fixture
 proves current range identity and reconciled disposition only; it is not a
@@ -167,21 +169,18 @@ reviewed final denominator and cannot unblock #1609 or #2769.
 
 ## Live reconciliation boundary (2026-08-02)
 
-The release-control checkout was refreshed from `origin/main`
-`d2a93e7bbb91ea90e46e38b92bef4e9cd281e9cb` after independently owned PR #2861
-merged the typed diff-limitation parser correction on top of PR #2860's
-process/CWD harness correction and PR #2870's earlier test-only harness
-correction. The captured provisional fixture
-above remains historical until #2831 PR B imports a fresh GitHub-backed census;
-its 224/219 counts are not the current release denominator. PR #2831 A owns
+The release-control checkout was refreshed from final `origin/main`
+`fcbb30a7cf6a37027fa377abafb617632b2e6f57` after #2870, #2860, #2861, and #2869
+landed. The final captured provisional fixture above carries 230/219
+records and eleven candidate-only exclusions. PR #2831 A owns
 only the typed reference-authority schema, offline validator, compatibility
 projection checks, and representative fixture proof. Concurrent product and
 release lanes remain independently owned and are not required to close for
 this plan slice. The production repair commit is
 `2a20da216428aa5ea13757d68f9fe9eed8cb6be1`; the focused denominator suite has
-25 tests, including the fail-closed candidate-tree-subset regression. The local
-wrapper/clippy relink remains unverified because the Windows volume exhausted
-space; hosted required proof is authoritative for the pushed candidate.
+25 tests, including the fail-closed candidate-tree-subset regression. The
+required routed proof for #2869 was still running when GitHub merged it, so that
+hosted receipt is retained as an explicit proof gap rather than a pass.
 
 ## Non-goals and safety boundary
 
