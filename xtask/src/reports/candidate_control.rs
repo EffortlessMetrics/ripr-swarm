@@ -233,11 +233,8 @@ pub(crate) fn evaluate(selection: Option<&CandidateSelection>) -> CandidateState
                     candidate_required_claims_pending += 1;
                 }
             }
-            "failed" => {
-                if claim.required_for_candidate {
-                    candidate_required_claims_pending += 1;
-                }
-            }
+            "failed" if claim.required_for_candidate => candidate_required_claims_pending += 1,
+            "failed" => {}
             _ => {}
         }
     }
