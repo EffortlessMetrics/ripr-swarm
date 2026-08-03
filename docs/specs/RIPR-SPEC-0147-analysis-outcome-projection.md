@@ -46,6 +46,7 @@ owns gate and PR-evidence-summary consumption: an
 retained, with its outcome kind and recovery limitations, in the summary.
 The B2 ownership includes `crates/ripr/src/output/gate/input.rs`,
 `crates/ripr/src/output/gate/tests.rs`,
+`crates/ripr/src/output/gap_decision_ledger.rs`,
 `crates/ripr/src/app/pr_summary/`, and the compatibility forwarding surface
 under `xtask/src/reports/pr_evidence_summary/`. Generated-CI, LSP, agent, and
 review projections remain serial follow-up work and are unclaimed until they
@@ -68,6 +69,9 @@ projection does not analyze those regions.
 - gate and PR-evidence-summary consumers fail closed or disclose the same
   incomplete typed outcome rather than deriving a clean result from zero
   candidates;
+- gate-decision ledger JSON and Markdown preserve and disclose the same typed
+  incomplete outcome when a check-output or rendered records artifact is
+  supplied;
 - the outcome input identity is stable for identical diff bytes and does not
   contain an absolute checkout path;
 - SARIF and diff-scoped badge output disclose an incomplete zero-result run;
@@ -106,6 +110,8 @@ incomplete zero-result downgrade and run-level disclosure. PR-B2's gate and
 PR-summary typed-envelope fixtures cover fail-closed consumption and summary
 preservation across `crates/ripr/src/output/gate/`,
 `crates/ripr/src/app/pr_summary/`, and the xtask compatibility route. The
+gate-decision-ledger round-trip fixture covers preservation in both JSON and
+Markdown when a rendered ledger is consumed as records. The
 fixture goldens under `fixtures/` cover the additive JSON, human, and
 changelog output projection across the existing language and edge-case corpus;
 `cargo xtask goldens check` is the drift gate.
@@ -119,7 +125,8 @@ Human rendering is in `crates/ripr/src/output/human.rs`, while JSON/status
 projection is in `crates/ripr/src/output/json/` and the related output
 builders. PR-B1 projects the DTO in `crates/ripr/src/output/sarif.rs` and
 `crates/ripr/src/output/badge/`. PR-B2 consumes it in
-`crates/ripr/src/output/gate/input.rs` and the shared
+`crates/ripr/src/output/gate/input.rs`,
+`crates/ripr/src/output/gap_decision_ledger.rs`, and the shared
 `crates/ripr/src/app/pr_summary/` owner; xtask delegates through that API.
 `docs/OUTPUT_SCHEMA.md` records the wire shape.
 

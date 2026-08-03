@@ -6515,6 +6515,7 @@ tests = [
   "crates/ripr/src/output/gate/tests.rs::tests::gate_fails_closed_on_typed_incomplete_analysis_outcome",
   "crates/ripr/src/output/gate/tests.rs::tests::check_output_gap_ledger_preserves_incomplete_outcome_for_gate_consumers",
   "crates/ripr/src/output/gate/tests.rs::tests::gate_gap_ledger_and_baseline_rejections_name_typed_outcome_kind",
+  "crates/ripr/src/output/gap_decision_ledger.rs::tests::records_source_preserves_incomplete_outcome_in_json_and_markdown",
   "crates/ripr/src/app/pr_summary/json.rs::tests::typed_incomplete_diff_outcome_is_preserved_and_not_reported_complete",
   "crates/ripr/src/output/sarif.rs::tests::sarif_discloses_incomplete_zero_finding_outcome_at_run_level",
   "crates/ripr/src/output/badge/tests.rs::tests::incomplete_zero_finding_diff_is_not_a_green_badge",

@@ -711,6 +711,7 @@ mod tests {
 
         let markdown = super::super::render_evidence_summary_md(&summary);
         assert!(markdown.contains("**Run Status**: `incomplete`"));
+        assert!(markdown.contains("**Analysis Complete**: `false`"));
         assert!(markdown.contains("**Analysis Outcome**: `unsupported_input`"));
         assert!(markdown.contains("unresolved_conflict_markers"));
         assert!(markdown.contains("recovery: `resolve_conflicts`"));
