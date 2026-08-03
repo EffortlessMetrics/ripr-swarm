@@ -134,7 +134,11 @@ projection. `candidate_materialized` additionally requires a candidate tree
 whose parent is `C` and matching exclusion/preservation digests.
 `qualification_eligible` additionally requires an immutable candidate ref, a
 manifest naming the materialized tree, and available qualification instruments.
-The immutable ref is intentionally not required for hard-cut eligibility.
+The immutable ref must use the repository-controlled
+`refs/ripr/candidate-<identifier>` namespace; mutable branch refs such as
+`refs/heads/main`, blank references, and whitespace-only values are not
+qualification evidence. The immutable ref is intentionally not required for
+hard-cut eligibility.
 
 ## Input contract
 

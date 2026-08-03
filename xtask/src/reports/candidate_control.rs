@@ -204,7 +204,10 @@ pub(crate) fn evaluate(selection: Option<&CandidateSelection>) -> CandidateState
         if matches!(
             claim.resolution.as_str(),
             "accepted_defer" | "candidate_exclusion"
-        ) && claim.non_claim.as_deref().is_none_or(str::is_empty)
+        ) && claim
+            .non_claim
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
         {
             reasons.push(format!(
                 "selected claim `{}` lacks its release non-claim",
@@ -213,9 +216,11 @@ pub(crate) fn evaluate(selection: Option<&CandidateSelection>) -> CandidateState
             scope_closed = false;
         }
         if claim.resolution == "landed"
-            && claim.evidence_refs.is_empty()
-            && claim.commit_refs.is_empty()
-            && claim.artifact_refs.is_empty()
+            && !references_are_non_blank(&[
+                &claim.evidence_refs,
+                &claim.commit_refs,
+                &claim.artifact_refs,
+            ])
         {
             reasons.push(format!(
                 "landed selected claim `{}` has no evidence, commit, or artifact reference",
@@ -233,8 +238,16 @@ pub(crate) fn evaluate(selection: Option<&CandidateSelection>) -> CandidateState
                     candidate_required_claims_pending += 1;
                 }
             }
-            "failed" if claim.required_for_candidate => candidate_required_claims_pending += 1,
-            "failed" => {}
+            "failed" => {
+                scope_closed = false;
+                if claim.required_for_candidate {
+                    candidate_required_claims_pending += 1;
+                }
+                reasons.push(format!(
+                    "selected claim `{}` failed and must be resolved or accepted as a defer",
+                    claim.claim_id
+                ));
+            }
             _ => {}
         }
     }
@@ -316,11 +329,14 @@ pub(crate) fn evaluate(selection: Option<&CandidateSelection>) -> CandidateState
         .as_deref()
         .zip(selection.selected_cut_sha.as_deref())
         .is_some_and(|(parent, cut)| parent == cut);
-    let exclusion_digests_match = selection.projection.exclusion_digest.is_some()
-        && selection.projection.exclusion_digest == selection.projection.expected_exclusion_digest;
-    let preservation_digests_match = selection.projection.preservation_digest.is_some()
-        && selection.projection.preservation_digest
-            == selection.projection.expected_preservation_digest;
+    let exclusion_digests_match = matching_non_blank_digests(
+        selection.projection.exclusion_digest.as_deref(),
+        selection.projection.expected_exclusion_digest.as_deref(),
+    );
+    let preservation_digests_match = matching_non_blank_digests(
+        selection.projection.preservation_digest.as_deref(),
+        selection.projection.expected_preservation_digest.as_deref(),
+    );
     let candidate_materialized = projection_reproducible
         && candidate_tree_present
         && candidate_tree_parent_matches_cut
@@ -330,7 +346,7 @@ pub(crate) fn evaluate(selection: Option<&CandidateSelection>) -> CandidateState
         .qualification
         .immutable_candidate_ref
         .as_deref()
-        .is_some_and(|value| !value.trim().is_empty());
+        .is_some_and(is_immutable_candidate_ref);
     let manifest_matches_candidate_tree = selection
         .qualification
         .manifest_candidate_tree_sha
@@ -412,6 +428,28 @@ pub(crate) fn evaluate(selection: Option<&CandidateSelection>) -> CandidateState
 
 fn is_sha(value: &str) -> bool {
     value.len() == 40 && value.chars().all(|character| character.is_ascii_hexdigit())
+}
+
+fn references_are_non_blank(references: &[&[String]]) -> bool {
+    references.iter().any(|group| !group.is_empty())
+        && references
+            .iter()
+            .all(|group| group.iter().all(|reference| !reference.trim().is_empty()))
+}
+
+fn matching_non_blank_digests(left: Option<&str>, right: Option<&str>) -> bool {
+    left.zip(right)
+        .is_some_and(|(left, right)| !left.trim().is_empty() && left == right)
+}
+
+fn is_immutable_candidate_ref(value: &str) -> bool {
+    let Some(suffix) = value.trim().strip_prefix("refs/ripr/candidate-") else {
+        return false;
+    };
+    !suffix.is_empty()
+        && suffix.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        })
 }
 
 #[cfg(test)]
@@ -553,6 +591,81 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn blank_landed_reference_is_not_scope_closed() -> Result<(), String> {
+        let mut value = selection()?;
+        value.selected_claims[0].evidence_refs = vec![" ".to_string()];
+        value.selected_claims[0].commit_refs.clear();
+        let state = evaluate(Some(&value));
+        if state.status != "scope_pending" {
+            return Err(format!(
+                "blank landed reference should remain scope_pending, got {}",
+                state.status
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn whitespace_non_claim_is_not_scope_closed() -> Result<(), String> {
+        let mut value = selection()?;
+        value.selected_claims[0].resolution = "accepted_defer".to_string();
+        value.selected_claims[0].candidate_effect = "exclude".to_string();
+        value.selected_claims[0].non_claim = Some(" \t".to_string());
+        let state = evaluate(Some(&value));
+        if state.status != "scope_pending" {
+            return Err(format!(
+                "whitespace-only non-claim should remain scope_pending, got {}",
+                state.status
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn optional_failed_claim_is_not_scope_closed() -> Result<(), String> {
+        let mut value = selection()?;
+        value.selected_claims[0].required_for_candidate = false;
+        value.selected_claims[0].resolution = "failed".to_string();
+        let state = evaluate(Some(&value));
+        if state.status != "scope_pending" || state.candidate_required_claims_pending != 0 {
+            return Err(format!(
+                "optional failed claim should remain scope_pending without required pending count, got {} / {}",
+                state.status, state.candidate_required_claims_pending
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn blank_projection_digests_do_not_materialize() -> Result<(), String> {
+        let mut value = selection()?;
+        value.projection.exclusion_digest = Some(String::new());
+        value.projection.expected_exclusion_digest = Some(String::new());
+        let state = evaluate(Some(&value));
+        if state.status != "hard_cut_eligible" || state.exclusion_digests_match {
+            return Err(format!(
+                "blank matching digests should not materialize, got {}",
+                state.status
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn mutable_candidate_ref_does_not_qualify() -> Result<(), String> {
+        let mut value = selection()?;
+        value.qualification.immutable_candidate_ref = Some("refs/heads/main".to_string());
+        let state = evaluate(Some(&value));
+        if state.status != "candidate_materialized" || state.candidate_ref_created {
+            return Err(format!(
+                "mutable candidate ref should not qualify, got {}",
+                state.status
+            ));
+        }
+        Ok(())
+    }
+
     #[derive(Debug, Deserialize)]
     struct NegativeFixture {
         base_selection: CandidateSelection,
@@ -566,6 +679,12 @@ mod tests {
         #[serde(default)]
         selected_claim_resolution: Option<String>,
         #[serde(default)]
+        selected_claim_required_for_candidate: Option<bool>,
+        #[serde(default)]
+        selected_claim_non_claim: Option<String>,
+        #[serde(default)]
+        selected_claim_evidence_refs: Option<Vec<String>>,
+        #[serde(default)]
         unresolved_defect: bool,
         #[serde(default)]
         denominator_decisions_remaining: Option<u64>,
@@ -577,6 +696,12 @@ mod tests {
         clear_candidate_tree: bool,
         #[serde(default)]
         clear_immutable_ref: bool,
+        #[serde(default)]
+        immutable_candidate_ref: Option<String>,
+        #[serde(default)]
+        blank_exclusion_digest: bool,
+        #[serde(default)]
+        blank_preservation_digest: bool,
         #[serde(default)]
         manifest_tree_sha: Option<String>,
     }
@@ -596,6 +721,15 @@ mod tests {
             let mut selection = fixture.base_selection.clone();
             if let Some(resolution) = case.selected_claim_resolution {
                 selection.selected_claims[0].resolution = resolution;
+            }
+            if let Some(required) = case.selected_claim_required_for_candidate {
+                selection.selected_claims[0].required_for_candidate = required;
+            }
+            if let Some(non_claim) = case.selected_claim_non_claim {
+                selection.selected_claims[0].non_claim = Some(non_claim);
+            }
+            if let Some(evidence_refs) = case.selected_claim_evidence_refs {
+                selection.selected_claims[0].evidence_refs = evidence_refs;
             }
             if case.unresolved_defect {
                 selection
@@ -621,6 +755,17 @@ mod tests {
             }
             if case.clear_immutable_ref {
                 selection.qualification.immutable_candidate_ref = None;
+            }
+            if let Some(candidate_ref) = case.immutable_candidate_ref {
+                selection.qualification.immutable_candidate_ref = Some(candidate_ref);
+            }
+            if case.blank_exclusion_digest {
+                selection.projection.exclusion_digest = Some(String::new());
+                selection.projection.expected_exclusion_digest = Some(String::new());
+            }
+            if case.blank_preservation_digest {
+                selection.projection.preservation_digest = Some(String::new());
+                selection.projection.expected_preservation_digest = Some(String::new());
             }
             if let Some(tree_sha) = case.manifest_tree_sha {
                 selection.qualification.manifest_candidate_tree_sha = Some(tree_sha);
