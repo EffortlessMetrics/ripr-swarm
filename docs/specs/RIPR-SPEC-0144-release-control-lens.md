@@ -92,6 +92,50 @@ The candidate control vocabulary is
 `candidate_ref_created`. An informational `open_release_pr_count` must not be
 used as a readiness predicate.
 
+The release-control snapshot may carry an optional `candidate_selection` DTO.
+When it is absent, candidate state is `scope_pending`; the ordinary PR lens
+remains replayable for disposition work, but it cannot imply candidate
+readiness. The DTO is the #2766 authority for the selected claim set:
+
+```text
+CandidateSelection
+  schema_version
+  selected_cut_sha
+  selected_claims[]
+  candidate_exclusions[]
+  known_candidate_defects[]
+  denominator_decisions_remaining
+  projection
+  qualification
+```
+
+Each selected claim carries `claim_id`, `owner_issue`,
+`required_for_candidate`, one resolution (`pending`, `landed`,
+`accepted_defer`, `candidate_exclusion`, or `failed`), evidence/commit/artifact
+references, `candidate_effect`, an explicit `non_claim` when deferred or
+excluded, and `reviewed`. Generic issue references or an `acceptance_owner`
+field cannot establish selected-claim satisfaction.
+
+The staged candidate states are fail-closed and ordered:
+
+```text
+scope_pending
+  → scope_closed
+  → hard_cut_eligible
+  → candidate_materialized
+  → qualification_eligible
+```
+
+`scope_closed` requires a non-empty, unique, reviewed claim set with a current
+resolution and explicit non-claims for defers/exclusions. `hard_cut_eligible`
+also requires zero required claims pending, zero unresolved candidate defects,
+zero denominator decisions through `C`, a selected `C`, and a reproducible
+projection. `candidate_materialized` additionally requires a candidate tree
+whose parent is `C` and matching exclusion/preservation digests.
+`qualification_eligible` additionally requires an immutable candidate ref, a
+manifest naming the materialized tree, and available qualification instruments.
+The immutable ref is intentionally not required for hard-cut eligibility.
+
 ## Input contract
 
 The input envelope has `schema_version = "0.1"` and
@@ -107,6 +151,9 @@ inputs do not prove those facts; the resulting report is therefore
 `reconcile_required` until an approved source supplies them. PR rows carry a
 number, title, open state, head SHA, `main` base ref, and explicit
 disposition/reason.
+An optional `candidate_selection` object carries the #2766 selected-claim
+authority and candidate-state inputs described above; its absence is
+`scope_pending`, not a successful empty selection.
 
 The fixture corpus in `fixtures/release_control/` is manifest-only and is
 validated by `cargo xtask check-fixture-contracts`. It includes a complete
@@ -118,7 +165,9 @@ The command writes `target/ripr/reports/release-control.json` and
 `target/ripr/reports/release-control.md`. JSON is schema `0.1` and contains the
 normalized source observation, sorted PR rows, `reconciliation_reasons`, a
 `status` of `ready` or `reconcile_required`, per-row `merge_eligible`, a
-`next_action`, and the explicit `authority_boundary`/`must_not_claim` fields.
+`candidate_state`, `next_action`, and the explicit
+`authority_boundary`/`must_not_claim` fields. `candidate_state` is a staged
+control signal and never changes the report's non-qualification boundary.
 Markdown is a projection of that same normalized DTO; it cannot strengthen a
 reconciliation-required state or any per-PR disposition.
 
@@ -137,6 +186,8 @@ reconciliation-required state or any per-PR disposition.
 - `xtask/src/reports/release_control.rs` owns the captured-input schema,
   bounded live collectors, deterministic normalization, shared JSON/Markdown
   projection, and fail-closed merge eligibility.
+- `xtask/src/reports/candidate_control.rs` owns the selected-claim DTO,
+  candidate-state transitions, and fail-closed false-ready checks.
 - `fixtures/release_control/complete.json` proves a complete current snapshot
   with both required and held rows; `fixtures/release_control/reconcile-required.json`
   proves stale authority cannot produce eligibility.

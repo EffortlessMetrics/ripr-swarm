@@ -90,9 +90,12 @@ deferred, and what residual issue or truthful non-claim remains. Commits after
 `C` belong to a later provisional range or a later candidate; they must not be
 added to this candidate's denominator merely because development continues.
 
-The denominator therefore supports the candidate-relative hard-cut predicate
-`candidate_required_claims_pending == 0`. It does not impose a repository-wide
-open-PR or open-issue convergence requirement.
+The denominator is one reviewed input to the candidate-relative hard-cut
+predicate `candidate_required_claims_pending == 0`; the #2766 candidate
+selection DTO owns selected-claim closure. This denominator report does not
+establish selected-claim satisfaction from generic issue references alone. It
+does not impose a repository-wide open-PR or open-issue convergence
+requirement.
 
 ## Acceptance and proof map
 

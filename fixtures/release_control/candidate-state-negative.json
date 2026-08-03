@@ -1,0 +1,80 @@
+{
+  "schema_version": "candidate_state_negative.v1",
+  "base_selection": {
+    "schema_version": "0.1",
+    "selected_cut_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "selected_claims": [
+      {
+        "claim_id": "claim:lifecycle",
+        "owner_issue": 2822,
+        "required_for_candidate": true,
+        "resolution": "landed",
+        "evidence_refs": ["issue:2822"],
+        "commit_refs": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+        "artifact_refs": [],
+        "candidate_effect": "include",
+        "non_claim": null,
+        "reviewed": true
+      }
+    ],
+    "candidate_exclusions": [],
+    "known_candidate_defects": [],
+    "denominator_decisions_remaining": 0,
+    "projection": {
+      "reproducible": true,
+      "candidate_tree_sha": "cccccccccccccccccccccccccccccccccccccccc",
+      "candidate_tree_parent_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "exclusion_digest": "sha256:exclusions",
+      "expected_exclusion_digest": "sha256:exclusions",
+      "preservation_digest": "sha256:preservation",
+      "expected_preservation_digest": "sha256:preservation"
+    },
+    "qualification": {
+      "immutable_candidate_ref": "refs/ripr/candidate-0.11",
+      "manifest_candidate_tree_sha": "cccccccccccccccccccccccccccccccccccccccc",
+      "required_instruments_available": true
+    }
+  },
+  "cases": [
+    {
+      "name": "selected claim remains pending",
+      "expected_status": "scope_pending",
+      "selected_claim_resolution": "pending"
+    },
+    {
+      "name": "known candidate defect remains unresolved",
+      "expected_status": "scope_closed",
+      "unresolved_defect": true
+    },
+    {
+      "name": "denominator decisions remain",
+      "expected_status": "scope_closed",
+      "denominator_decisions_remaining": 1
+    },
+    {
+      "name": "development cut is not selected",
+      "expected_status": "scope_closed",
+      "clear_selected_cut": true
+    },
+    {
+      "name": "candidate projection is not reproducible",
+      "expected_status": "scope_closed",
+      "projection_reproducible": false
+    },
+    {
+      "name": "candidate tree is not materialized",
+      "expected_status": "hard_cut_eligible",
+      "clear_candidate_tree": true
+    },
+    {
+      "name": "immutable candidate ref is absent",
+      "expected_status": "candidate_materialized",
+      "clear_immutable_ref": true
+    },
+    {
+      "name": "candidate manifest identifies a different tree",
+      "expected_status": "candidate_materialized",
+      "manifest_tree_sha": "dddddddddddddddddddddddddddddddddddddddd"
+    }
+  ]
+}
