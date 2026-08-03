@@ -241,6 +241,53 @@
       "$ref": "#/$defs/run_receipt"
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "required": ["analysis_outcome"],
+        "properties": {
+          "analysis_outcome": {
+            "properties": {
+              "analysis_complete": { "const": true }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "status": { "const": "advisory" }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["analysis_outcome"],
+        "properties": {
+          "analysis_outcome": {
+            "properties": {
+              "analysis_complete": { "const": false }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "status": { "const": "incomplete" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": { "const": "incomplete" }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "required": ["analysis_outcome"]
+      }
+    }
+  ],
   "$defs": {
     "analysis_outcome_projection": {
       "type": "object",
@@ -256,7 +303,55 @@
         "outcome": {
           "$ref": "#/$defs/analysis_outcome"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "analysis_complete": { "const": true }
+            }
+          },
+          "then": {
+            "properties": {
+              "outcome": {
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "no_scope",
+                      "no_changed_lines",
+                      "no_behavioral_candidates",
+                      "complete_no_findings",
+                      "complete_with_findings"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "analysis_complete": { "const": false }
+            }
+          },
+          "then": {
+            "properties": {
+              "outcome": {
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "partial_with_limitations",
+                      "unsupported_input",
+                      "analysis_failed"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
     },
     "analysis_outcome": {
       "type": "object",

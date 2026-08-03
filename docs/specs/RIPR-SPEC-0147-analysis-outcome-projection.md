@@ -64,7 +64,12 @@ unsupported outcomes set the review report status to `incomplete`, retain every
 limitation and recovery route, and must not become a clean or zero-finding
 claim. Without `--check-output`, the existing limited-diff scope remains a
 legacy scope-only report with no fabricated outcome. Gap-ledger-only rendering
-also remains scope-only because it has no diff-analysis denominator.
+also remains scope-only because it has no diff-analysis denominator. An
+explicit artifact must be the canonical producer envelope, including its
+schema version, tool, mode, root, base, summary, findings, and typed outcome;
+the declared completeness must agree with the closed outcome kind. The xtask
+wrapper still uses the legacy empty packet only when no producer artifact was
+requested.
 
 ## Non-Goals
 

@@ -142,7 +142,7 @@ where
     verify_revision(repo, &options.base)?;
     verify_revision(repo, &options.head)?;
     remove_stale_review_artifacts(repo)?;
-    if !has_changed_paths(repo, &options.base, &options.head)? {
+    if !has_changed_paths(repo, &options.base, &options.head)? && options.check_output.is_none() {
         write_empty_review_comments(repo, options)?;
     } else {
         match run_producer(repo, options).map_err(Into::into) {
@@ -1229,6 +1229,29 @@ mod tests {
         let markdown = fs::read_to_string(repo.join(REVIEW_COMMENTS_MD))
             .map_err(|err| format!("read empty Markdown: {err}"))?;
         assert!(markdown.contains("No changed paths were detected."));
+        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn write_wrapper_runs_producer_for_empty_diff_with_check_output() -> Result<(), String> {
+        let (repo, mut options) = prepared_review_repo("ripr-review-comments-empty-check")?;
+        options.base = "HEAD".to_string();
+        options.head = "HEAD".to_string();
+        options.check_output = Some("target/check-output.json".to_string());
+        let mut producer_called = false;
+
+        write_review_comments_with_runner(&repo, &options, |_repo, _options| {
+            producer_called = true;
+            Err(ReviewCommentsRunError::from(
+                "producer received explicit check output for an empty diff".to_string(),
+            ))
+        })?;
+
+        assert!(producer_called);
+        let packet = read_packet(&repo)?;
+        assert_eq!(packet["status"], "error");
+        assert_eq!(packet["run_receipt"]["status"], "failed");
         fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
         Ok(())
     }

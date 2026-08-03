@@ -39,6 +39,46 @@ fn load_review_comments_analysis_outcome(
             path.display()
         )
     })?;
+    let _producer_schema_version = value
+        .get("schema_version")
+        .and_then(serde_json::Value::as_str)
+        .filter(|version| !version.trim().is_empty())
+        .ok_or_else(|| {
+            format!(
+                "review-comments --check-output {} is invalid: missing producer schema_version",
+                path.display()
+            )
+        })?;
+    if value.get("tool").and_then(serde_json::Value::as_str) != Some("ripr") {
+        return Err(format!(
+            "review-comments --check-output {} is invalid: producer tool must be ripr",
+            path.display()
+        ));
+    }
+    for field in ["mode", "root", "base"] {
+        if value
+            .get(field)
+            .and_then(serde_json::Value::as_str)
+            .is_none()
+        {
+            return Err(format!(
+                "review-comments --check-output {} is invalid: producer envelope is missing string field {field}",
+                path.display()
+            ));
+        }
+    }
+    if !value
+        .get("summary")
+        .is_some_and(serde_json::Value::is_object)
+        || !value
+            .get("findings")
+            .is_some_and(serde_json::Value::is_array)
+    {
+        return Err(format!(
+            "review-comments --check-output {} is invalid: producer envelope requires summary and findings",
+            path.display()
+        ));
+    }
     let Some(envelope) = value.get("analysis_outcome") else {
         return Err(format!(
             "review-comments --check-output {} is invalid: missing analysis_outcome",
@@ -4321,6 +4361,13 @@ mod tests {
         std::fs::create_dir_all(&root).map_err(|err| format!("create temp root: {err}"))?;
         let path = root.join("check.json");
         let mut artifact = serde_json::json!({
+            "schema_version": "0.2",
+            "tool": "ripr",
+            "mode": "draft",
+            "root": ".",
+            "base": "main",
+            "summary": {},
+            "findings": [],
             "analysis_outcome": {
                 "analysis_complete": false,
                 "outcome": {
