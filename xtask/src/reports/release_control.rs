@@ -772,6 +772,24 @@ mod tests {
     }
 
     #[test]
+    fn missing_candidate_selection_is_exposed_as_scope_pending() -> Result<(), String> {
+        let report = normalize_snapshot(snapshot()?);
+        let report_json = report_json(&report);
+        let state = report_json
+            .get("candidate_state")
+            .and_then(Value::as_object)
+            .ok_or_else(|| "candidate_state was missing from JSON output".to_string())?;
+        require(
+            state.get("status") == Some(&Value::String("scope_pending".to_string())),
+            "missing candidate selection must remain scope_pending in JSON",
+        )?;
+        require(
+            state.get("candidate_cut_selected") == Some(&Value::Bool(false)),
+            "missing candidate selection must not select a cut",
+        )
+    }
+
+    #[test]
     fn missing_disposition_fails_closed() -> Result<(), String> {
         let mut value = serde_json::to_value(snapshot()?)
             .map_err(|err| format!("failed to serialize snapshot: {err}"))?;

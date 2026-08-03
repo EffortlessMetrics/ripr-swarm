@@ -245,6 +245,7 @@ then the inventory is marked incomplete and no row can become merge-eligible.
 ## Test Mapping
 
 - `xtask/src/reports/release_control.rs::tests::complete_snapshot_is_ready_and_only_required_rows_are_merge_eligible`
+- `xtask/src/reports/release_control.rs::tests::missing_candidate_selection_is_exposed_as_scope_pending`
   — complete captured input applies the disposition and draft rules.
 - `xtask/src/reports/release_control.rs::tests::missing_disposition_fails_closed`
   — missing PR authority clears all eligibility.

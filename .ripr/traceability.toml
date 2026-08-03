@@ -7777,6 +7777,7 @@ name = "temporary 0.11 release-control lens"
 spec = "docs/specs/RIPR-SPEC-0144-release-control-lens.md"
 tests = [
   "xtask/src/reports/release_control.rs::tests::complete_snapshot_is_ready_and_only_required_rows_are_merge_eligible",
+  "xtask/src/reports/release_control.rs::tests::missing_candidate_selection_is_exposed_as_scope_pending",
   "xtask/src/reports/release_control.rs::tests::missing_disposition_fails_closed",
   "xtask/src/reports/release_control.rs::tests::input_order_does_not_change_normalized_output",
   "xtask/src/reports/release_control.rs::tests::stale_authority_cannot_be_merge_eligible",
