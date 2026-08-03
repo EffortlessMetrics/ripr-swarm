@@ -6552,6 +6552,9 @@ code = [
   "crates/ripr/src/output/review_comments.rs",
   "schemas/ripr/review-comments.schema.json",
   "xtask/src/reports/review_comments.rs",
+  "xtask/src/reports/pr_evidence.rs",
+  ".github/workflows/ci.yml",
+  ".github/workflows/routed-rust.yml",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0147-analysis-outcome-projection.md",

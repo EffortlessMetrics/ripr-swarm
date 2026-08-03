@@ -16,6 +16,7 @@ const DEFAULT_BASE: &str = "origin/main";
 const DEFAULT_HEAD: &str = "HEAD";
 const PR_EVIDENCE_JSON: &str = "target/ripr/pr/repo-exposure.json";
 const PR_EVIDENCE_MD: &str = "target/ripr/pr/repo-exposure.md";
+const PR_CHECK_JSON: &str = "target/ripr/pr/check.json";
 const PR_DIFF: &str = "target/ripr/pr/pr.diff";
 const DEFAULT_TOOL_TIMEOUT_SECS: u64 = 120;
 const PR_EVIDENCE_TIMEOUT_ENV: &str = "RIPR_PR_EVIDENCE_TIMEOUT_SECS";
@@ -112,6 +113,7 @@ fn write_pr_evidence_with_runner(
         &changed_files,
         &options.root,
     )?;
+    remove_stale_check_artifact(repo)?;
     match run_check(repo, options) {
         Ok(check_json) => {
             match write_pr_evidence_packet(repo, options, &changed_files, &check_json) {
@@ -154,6 +156,14 @@ fn write_pr_evidence_packet(
     let json_text = serde_json::to_string_pretty(&packet)
         .map_err(|err| format!("serialize PR evidence packet: {err}"))?;
     let markdown = render_pr_evidence_markdown(&packet);
+    let check_json_text = serde_json::to_string_pretty(&check_value)
+        .map_err(|err| format!("serialize canonical check output: {err}"))?;
+
+    write_parented_file(
+        &repo.join(PR_CHECK_JSON),
+        PR_CHECK_JSON,
+        format!("{check_json_text}\n"),
+    )?;
 
     write_parented_file(
         &repo.join(PR_EVIDENCE_JSON),
@@ -177,6 +187,14 @@ fn write_pr_evidence_packet(
     println!("Wrote {PR_EVIDENCE_JSON}");
     println!("Wrote {PR_EVIDENCE_MD}");
     Ok(())
+}
+
+fn remove_stale_check_artifact(repo: &Path) -> Result<(), String> {
+    match fs::remove_file(repo.join(PR_CHECK_JSON)) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("remove stale {PR_CHECK_JSON} failed: {error}")),
+    }
 }
 
 fn write_pr_evidence_error_packet(
@@ -1008,6 +1026,11 @@ mod tests {
             head: "HEAD".to_string(),
             ..options()
         };
+        write_parented_file(
+            &repo.join(PR_CHECK_JSON),
+            PR_CHECK_JSON,
+            "{\"stale\":true}\n".to_string(),
+        )?;
         write_pr_evidence_with_runner(&repo, &options, |_repo, _options| {
             Err("ripr check for PR evidence timed out after 120 seconds; retry command: cargo xtask ripr-pr --base HEAD~1 --head HEAD --root .".to_string())
         })?;
@@ -1021,6 +1044,7 @@ mod tests {
         assert_eq!(packet["warnings"][0]["kind"], "tool_error");
         assert!(repo.join(PR_DIFF).exists());
         assert!(repo.join(PR_EVIDENCE_MD).exists());
+        assert!(!repo.join(PR_CHECK_JSON).exists());
 
         fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
         Ok(())
@@ -1130,6 +1154,11 @@ mod tests {
         assert_eq!(packet["summary"]["requires_targeted_mutation"], true);
         assert!(repo.join(PR_DIFF).exists());
         assert!(repo.join(PR_EVIDENCE_MD).exists());
+        let check_text = fs::read_to_string(repo.join(PR_CHECK_JSON))
+            .map_err(|err| format!("read canonical check output: {err}"))?;
+        let check_value: Value = serde_json::from_str(&check_text)
+            .map_err(|err| format!("parse canonical check output: {err}"))?;
+        assert_eq!(check_value["summary"]["weakly_exposed"], 1);
 
         fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
         Ok(())

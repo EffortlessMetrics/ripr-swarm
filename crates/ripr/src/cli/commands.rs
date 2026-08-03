@@ -6725,6 +6725,9 @@ language = "rust"
         assert!(workflow.contains("target/ripr/reports/index.md"));
         assert!(workflow.contains("target/ci/labels.json"));
         assert!(workflow.contains("target/ripr/review/comments.json"));
+        assert!(workflow.contains("target/ripr/pr/check.json"));
+        assert!(workflow.contains("ripr check \\"));
+        assert!(workflow.contains("--check-output target/ripr/pr/check.json"));
         assert!(workflow.contains("target/ripr/review/existing-comments.json"));
         assert!(workflow.contains("target/ripr/review/comment-publish-plan.json"));
         assert!(workflow.contains("target/ripr/review/comment-publish-plan.md"));
