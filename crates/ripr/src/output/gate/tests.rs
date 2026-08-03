@@ -111,6 +111,48 @@ fn gate_fails_closed_on_limited_partial_scope_pr_guidance() -> Result<(), String
 }
 
 #[test]
+fn gate_fails_closed_on_typed_incomplete_analysis_outcome() -> Result<(), String> {
+    let dir = temp_dir("gate-typed-incomplete-outcome")?;
+    let guidance = write_temp_json(
+        &dir,
+        "comments.json",
+        r#"{
+          "schema_version": "0.1",
+          "status": "advisory",
+          "comments": [],
+          "analysis_outcome": {
+            "analysis_complete": false,
+            "outcome": {
+              "kind": "unsupported_input",
+              "limitations": [
+                {
+                  "kind": "unresolved_conflict_markers",
+                  "recovery": {"kind": "resolve_conflicts"}
+                }
+              ]
+            }
+          }
+        }"#,
+    )?;
+    let mut input = fixture_input(GateMode::VisibleOnly);
+    input.pr_guidance = Some(guidance);
+
+    let report = build_gate_decision_report(&input)?;
+
+    assert_eq!(report.status, "config_error");
+    assert!(gate_decision_should_fail(&report));
+    assert_eq!(report.summary.evaluated, 0);
+    assert!(
+        report
+            .config_errors
+            .iter()
+            .any(|error| { error.contains("unsupported_input") && error.contains("incomplete") })
+    );
+    let _ = fs::remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
 fn gate_fails_closed_on_limited_partial_scope_gap_ledger() -> Result<(), String> {
     let dir = temp_dir("gate-partial-gap-ledger")?;
     let ledger = write_temp_json(
@@ -200,6 +242,25 @@ fn limited_partial_scope_detection_covers_run_state_vocabulary() {
     })));
     assert!(!discloses_limited_partial_scope(&json!({
         "analysis_scope": {"run_status": "diff_scope_oversized"}
+    })));
+}
+
+#[test]
+fn incomplete_analysis_outcome_detection_covers_typed_envelope() {
+    assert!(discloses_incomplete_analysis_outcome(&json!({
+        "analysis_outcome": {
+            "analysis_complete": false,
+            "outcome": {"kind": "unsupported_input"}
+        }
+    })));
+    assert!(!discloses_incomplete_analysis_outcome(&json!({
+        "analysis_outcome": {
+            "analysis_complete": true,
+            "outcome": {"kind": "complete"}
+        }
+    })));
+    assert!(!discloses_incomplete_analysis_outcome(&json!({
+        "run_status": "complete"
     })));
 }
 

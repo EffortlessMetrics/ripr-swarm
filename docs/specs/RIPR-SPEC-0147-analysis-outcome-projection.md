@@ -39,9 +39,12 @@ completeness flag.
 ## PR boundary
 
 PR A of #2829 owns parser-to-pipeline, human, JSON, and status projection plus
-complete-versus-limited zero-result parity. SARIF, badge, gate, generated-CI,
-LSP, agent, and review projections are the serial PR-B follow-up and remain
-unclaimed until they consume this DTO.
+complete-versus-limited zero-result parity. SARIF and badge projections consume
+the DTO and preserve incomplete status. The gate and PR-evidence-summary
+projections also consume the DTO: an `analysis_complete: false` envelope is
+never a clean gate input and is retained, with its outcome kind and recovery
+limitations, in the summary. Generated-CI, LSP, agent, and review projections
+remain serial follow-up work and are unclaimed until they consume this DTO.
 
 ## Non-Goals
 
@@ -57,6 +60,9 @@ projection does not analyze those regions.
 - ordinary zero-result input has a complete non-limitation kind distinct from
   unsupported or partial input;
 - human and JSON output carry the same limitation kind and recovery route;
+- gate and PR-evidence-summary consumers fail closed or disclose the same
+  incomplete typed outcome rather than deriving a clean result from zero
+  candidates;
 - the outcome input identity is stable for identical diff bytes and does not
   contain an absolute checkout path;
 - PR-B surfaces remain explicitly unclaimed until their own parity fixtures
@@ -79,7 +85,8 @@ and
 
 The focused pipeline and JSON/human parity tests above cover limitation
 propagation, complete-versus-incomplete zero-result behavior, and shared
-projection facts. The fixture goldens under `fixtures/` cover the additive
+projection facts. Gate and PR-summary typed-envelope fixtures cover
+fail-closed consumption and summary preservation. The fixture goldens under `fixtures/` cover the additive
 JSON, human, and changelog output projection across the existing language and
 edge-case corpus; `cargo xtask goldens check` is the drift gate.
 
