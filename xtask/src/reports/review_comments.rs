@@ -231,6 +231,7 @@ fn validate_packet_value(
     validate_rendering_limits(packet, &mut violations);
     validate_summary_counts(packet, &mut violations);
     validate_run_receipt(packet, repo, options, &mut violations);
+    validate_check_output_against_packet(packet, repo, options, &mut violations);
 
     for key in ["comments", "summary_only", "suppressed", "warnings"] {
         if !packet.get(key).is_some_and(Value::is_array) {
@@ -244,6 +245,74 @@ fn validate_packet_value(
         violations.push(format!("{REVIEW_COMMENTS_MD} is missing"));
     }
     violations
+}
+
+fn validate_check_output_against_packet(
+    packet: &Value,
+    repo: &Path,
+    options: &ReviewCommentsOptions,
+    violations: &mut Vec<String>,
+) {
+    let Some(check_output) = &options.check_output else {
+        return;
+    };
+    let path = Path::new(check_output);
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        repo.join(path)
+    };
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) => {
+            violations.push(format!(
+                "--check-output {} is unreadable: {error}",
+                path.display()
+            ));
+            return;
+        }
+    };
+    let producer: Value = match serde_json::from_str(&text) {
+        Ok(value) => value,
+        Err(error) => {
+            violations.push(format!(
+                "--check-output {} is invalid JSON: {error}",
+                path.display()
+            ));
+            return;
+        }
+    };
+    for field in ["schema_version", "tool", "mode", "root", "base"] {
+        if producer
+            .get(field)
+            .is_none_or(|value| value.as_str().is_none_or(|text| text.trim().is_empty()))
+        {
+            violations.push(format!(
+                "--check-output {} is missing producer field {field}",
+                path.display()
+            ));
+        }
+    }
+    if producer.get("tool").and_then(Value::as_str) != Some("ripr") {
+        violations.push(format!(
+            "--check-output {} producer tool must be ripr",
+            path.display()
+        ));
+    }
+    if !producer.get("summary").is_some_and(Value::is_object)
+        || !producer.get("findings").is_some_and(Value::is_array)
+    {
+        violations.push(format!(
+            "--check-output {} requires producer summary and findings",
+            path.display()
+        ));
+    }
+    if producer.get("analysis_outcome") != packet.get("analysis_outcome") {
+        violations.push(format!(
+            "--check-output {} analysis_outcome does not match rendered review packet",
+            path.display()
+        ));
+    }
 }
 
 fn validate_rendering_limits(packet: &Value, violations: &mut Vec<String>) {
@@ -1077,6 +1146,64 @@ mod tests {
             Path::new("missing-comments.md"),
         );
         assert!(violations.contains(&format!("{REVIEW_COMMENTS_MD} is missing")));
+    }
+
+    #[test]
+    fn check_output_missing_artifact_is_not_accepted() {
+        let mut options = options();
+        options.check_output = Some("target/missing-check-output.json".to_string());
+        let violations = validate_packet_value(
+            &valid_packet(&options),
+            &repo_root_for_display(),
+            &options,
+            false,
+            Path::new(REVIEW_COMMENTS_MD),
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("is unreadable")),
+            "{violations:#?}"
+        );
+    }
+
+    #[test]
+    fn check_output_outcome_mismatch_is_not_accepted() -> Result<(), String> {
+        let repo = temp_repo("ripr-review-comments-check-mismatch")?;
+        let mut options = options();
+        options.check_output = Some("target/check-output.json".to_string());
+        let packet = valid_packet_for_repo(&repo, &options);
+        let producer = json!({
+            "schema_version": "0.2",
+            "tool": "ripr",
+            "mode": "draft",
+            "root": repo.display().to_string(),
+            "base": options.base.clone(),
+            "summary": {},
+            "findings": [],
+            "analysis_outcome": {"analysis_complete": true}
+        });
+        fs::create_dir_all(repo.join("target")).map_err(|err| format!("create target: {err}"))?;
+        fs::write(
+            repo.join("target/check-output.json"),
+            serde_json::to_string(&producer).map_err(|err| format!("serialize: {err}"))?,
+        )
+        .map_err(|err| format!("write producer: {err}"))?;
+        let violations = validate_packet_value(
+            &packet,
+            &repo,
+            &options,
+            false,
+            Path::new(REVIEW_COMMENTS_MD),
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("does not match rendered review packet")),
+            "{violations:#?}"
+        );
+        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+        Ok(())
     }
 
     #[test]

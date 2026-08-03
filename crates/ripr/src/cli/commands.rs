@@ -11,6 +11,7 @@ use crate::cli::suggest::unknown_argument;
 use crate::config::CONFIG_FILE_NAME;
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
 use crate::output;
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 use crate::cli::commands_agent_support::{
@@ -23,6 +24,9 @@ const DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS: u64 = 120_000;
 
 fn load_review_comments_analysis_outcome(
     path: Option<&Path>,
+    root: &Path,
+    base: &str,
+    diff_text: &str,
 ) -> Result<Option<crate::analysis_outcome::AnalysisOutcome>, String> {
     let Some(path) = path else {
         return Ok(None);
@@ -66,6 +70,20 @@ fn load_review_comments_analysis_outcome(
                 path.display()
             ));
         }
+    }
+    if value.get("root").and_then(serde_json::Value::as_str)
+        != Some(output::outcome::display_path(root).as_str())
+    {
+        return Err(format!(
+            "review-comments --check-output {} is invalid: producer root does not match requested root",
+            path.display()
+        ));
+    }
+    if value.get("base").and_then(serde_json::Value::as_str) != Some(base) {
+        return Err(format!(
+            "review-comments --check-output {} is invalid: producer base does not match requested base",
+            path.display()
+        ));
     }
     if !value
         .get("summary")
@@ -113,6 +131,30 @@ fn load_review_comments_analysis_outcome(
                 path.display()
             )
         })?;
+    let expected_input_identity = format!(
+        "sha256:{}",
+        Sha256::digest(diff_text.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    );
+    if outcome.identity.input_identity.as_deref() != Some(expected_input_identity.as_str()) {
+        return Err(format!(
+            "review-comments --check-output {} is invalid: producer input identity does not match the requested diff",
+            path.display()
+        ));
+    }
+    if outcome
+        .identity
+        .base_revision
+        .as_deref()
+        .is_some_and(|revision| revision != base)
+    {
+        return Err(format!(
+            "review-comments --check-output {} is invalid: typed outcome base revision does not match requested base",
+            path.display()
+        ));
+    }
     if declared_complete != outcome.kind.is_complete() {
         return Err(format!(
             "review-comments --check-output {} is invalid: analysis_complete does not match typed outcome kind",
@@ -1335,7 +1377,12 @@ fn review_comments_with_diff_loader(
         &working_set,
         &scoped_inventory,
     );
-    let analysis_outcome = load_review_comments_analysis_outcome(options.check_output.as_deref())?;
+    let analysis_outcome = load_review_comments_analysis_outcome(
+        options.check_output.as_deref(),
+        &input.root,
+        &options.base,
+        &diff_text,
+    )?;
     let render_context = output::review_comments::ReviewCommentsRenderContext {
         root: &input.root,
         base: &options.base,
@@ -3381,6 +3428,7 @@ pub(super) fn ripr_plus(args: &[String]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
 
     pub(super) fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
@@ -4360,6 +4408,14 @@ mod tests {
         let root = unique_command_test_dir("review-comments-check-output");
         std::fs::create_dir_all(&root).map_err(|err| format!("create temp root: {err}"))?;
         let path = root.join("check.json");
+        let diff_text = "fixture diff";
+        let input_identity = format!(
+            "sha256:{}",
+            Sha256::digest(diff_text.as_bytes())
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        );
         let mut artifact = serde_json::json!({
             "schema_version": "0.2",
             "tool": "ripr",
@@ -4377,8 +4433,8 @@ mod tests {
                         "repository_identity": null,
                         "root_identity": null,
                         "config_identity": null,
-                        "base_revision": null,
-                        "input_identity": null,
+                        "base_revision": "main",
+                        "input_identity": input_identity,
                         "snapshot_identity": null
                     },
                     "counts": {
@@ -4408,8 +4464,9 @@ mod tests {
             serde_json::to_vec(&artifact).map_err(|err| err.to_string())?,
         )
         .map_err(|err| format!("write check artifact: {err}"))?;
-        let outcome = load_review_comments_analysis_outcome(Some(&path))?
-            .ok_or_else(|| "expected typed outcome".to_string())?;
+        let outcome =
+            load_review_comments_analysis_outcome(Some(&path), Path::new("."), "main", diff_text)?
+                .ok_or_else(|| "expected typed outcome".to_string())?;
         assert_eq!(outcome.kind.as_str(), "partial_with_limitations");
         assert_eq!(outcome.limitations[0].recovery.kind.as_str(), "retry");
         artifact["analysis_outcome"]["analysis_complete"] = serde_json::json!(true);
@@ -4418,7 +4475,12 @@ mod tests {
             serde_json::to_vec(&artifact).map_err(|err| err.to_string())?,
         )
         .map_err(|err| format!("rewrite mismatched check artifact: {err}"))?;
-        let mismatch = match load_review_comments_analysis_outcome(Some(&path)) {
+        let mismatch = match load_review_comments_analysis_outcome(
+            Some(&path),
+            Path::new("."),
+            "main",
+            diff_text,
+        ) {
             Ok(_) => return Err("mismatched completeness must fail closed".to_string()),
             Err(error) => error,
         };
