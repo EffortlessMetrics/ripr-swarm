@@ -43,7 +43,7 @@ map is:
 | `ripr gate evaluate` | `schema_version` | `0.1` |
 | `ripr doctor --json` | `schema_version` | `0.2` |
 | `ripr agent packet` | `schema_version` | `0.3` |
-| `ripr agent receipt` | `schema_version` | `0.3` |
+| `ripr agent receipt` | `schema_version` | `0.4` |
 | `ripr agent status` | `schema_version` | `0.1` |
 | `ripr agent review-summary` | `schema_version` | `0.1` |
 | `ripr receipt write/check` | `schema_version` | `0.1` |
@@ -2297,7 +2297,7 @@ Consumers must not treat limited artifacts as canonical actionable counts.
 
 ```json
 {
-  "schema_version": "0.3",
+  "schema_version": "0.4",
   "scope": "repo",
   "metrics": {
     "seams_total": 9355,
@@ -6578,8 +6578,9 @@ JSON shape:
 
 Field contract:
 
-- `schema_version` - currently `"0.3"`. Version `0.2` added receipt
-  provenance fields; version `0.3` adds structured next-action guidance while
+- `schema_version` - currently `"0.4"`. Version `0.2` added receipt
+  provenance fields; version `0.3` added structured next-action guidance;
+  version `0.4` adds the producer-owned analysis-outcome envelope while
   preserving the selected-seam and handoff fields from `0.1`.
 - `status` - `"advisory"` only when the producer outcome is complete;
   `"incomplete"` when the producer outcome is incomplete or unavailable; and

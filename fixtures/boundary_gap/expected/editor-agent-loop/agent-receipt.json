@@ -33,7 +33,7 @@
     },
     "workflow_artifact": null
   },
-  "schema_version": "0.3",
+  "schema_version": "0.4",
   "seam": {
     "after": "weakly_gripped",
     "before": "weakly_gripped",

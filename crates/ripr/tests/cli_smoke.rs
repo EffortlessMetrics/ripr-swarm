@@ -2814,7 +2814,7 @@ fn agent_receipt_writes_one_seam_handoff_json() -> Result<(), Box<dyn std::error
     assert_success(&output);
 
     let text = std::fs::read_to_string(&receipt)?;
-    assert!(text.contains(r#""schema_version": "0.3""#));
+    assert!(text.contains(r#""schema_version": "0.4""#));
     assert!(text.contains(r#""seam_id": "seam-a""#));
     assert!(text.contains(r#""change": "improved""#));
     assert!(text.contains(&format!(

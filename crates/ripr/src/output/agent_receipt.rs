@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use super::receipt_lifecycle::receipt_lifecycle_state_from_movement;
 
-pub(crate) const AGENT_RECEIPT_SCHEMA_VERSION: &str = "0.3";
+pub(crate) const AGENT_RECEIPT_SCHEMA_VERSION: &str = "0.4";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum AgentReceiptAnalysisOutcome {
@@ -595,7 +595,7 @@ mod tests {
         let value: Value = serde_json::from_str(&rendered)
             .map_err(|err| format!("receipt JSON should parse: {err}"))?;
 
-        assert_eq!(value["schema_version"], "0.3");
+        assert_eq!(value["schema_version"], "0.4");
         assert_eq!(value["seam"]["seam_id"], "seam-a");
         assert_eq!(value["seam"]["before"], "weakly_gripped");
         assert_eq!(value["seam"]["after"], "strongly_gripped");
