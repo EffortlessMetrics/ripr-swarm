@@ -119,10 +119,10 @@ fn normal_components(path: &Path) -> Vec<&OsStr> {
 ///
 /// `..` and `.` components are rejected explicitly and before the
 /// `normal_components`-based depth check. `normal_components` silently strips
-/// `Component::ParentDir`, so without this guard a path like
-/// `/home/user/target/ripr/cache/../../..` would pass both the depth rule and
-/// the suffix recognition while `remove_dir_all` operates on the un-normalized
-/// path — deleting far outside the cache (#2865 review P1).
+/// `Component::ParentDir`, so without this guard a cache path suffixed with
+/// `../../..` would pass both the depth rule and the suffix recognition while
+/// `remove_dir_all` operates on the un-normalized path — deleting far outside
+/// the cache (#2865 review P1).
 fn classify_cache_root(cache_dir: &Path) -> Result<CacheRoot, String> {
     let display = cache_dir.display();
     if cache_dir.as_os_str().is_empty() {
