@@ -396,16 +396,14 @@ fn normalize_agent_receipt_fixture(text: &str) -> Result<String, Box<dyn std::er
             }
         }
     }
-    if value.get("analysis_outcome_error").is_some() {
-        match value.as_object_mut() {
-            Some(object) => {
-                object.insert(
-                    "analysis_outcome_error".to_string(),
-                    serde_json::Value::String("<analysis_outcome_error>".to_string()),
-                );
-            }
-            None => return Err("agent receipt fixture should be a JSON object".into()),
-        }
+    let object = value
+        .as_object_mut()
+        .ok_or("agent receipt fixture should be a JSON object")?;
+    if object.contains_key("analysis_outcome_error") {
+        object.insert(
+            "analysis_outcome_error".to_string(),
+            serde_json::Value::String("<analysis_outcome_error>".to_string()),
+        );
     }
     let mut rendered = serde_json::to_string_pretty(&value)?;
     rendered.push('\n');

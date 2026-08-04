@@ -11712,7 +11712,7 @@ Field notes:
   `analysis_complete` value is derived from the closed outcome kind; it is not
   inferred from receipt movement, packet-budget state, or empty findings.
 - `surfaces[]` reports each joined surface as `computed`, `present`, `missing`,
-  `optional_missing`, or `invalid_json`.
+  `optional_missing`, `invalid`, or `invalid_json`.
 - `ci_artifacts[]` is local file presence for artifacts that generated CI can
   upload later; it does not query GitHub Actions.
 - `reviewer_summary` is intentionally compact enough for PR comments and LLM

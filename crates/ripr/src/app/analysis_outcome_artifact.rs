@@ -113,6 +113,11 @@ pub(crate) fn validate_analysis_outcome_artifact(
         ));
     }
     let declared_base = value.get("base").and_then(Value::as_str);
+    if declared_base.is_some_and(|base| base.starts_with('-')) {
+        return Err(invalid(
+            "Analysis outcome artifact base must not begin with '-'.",
+        ));
+    }
     if outcome.identity.base_revision.as_deref() != declared_base {
         return Err(invalid(
             "Analysis outcome artifact base does not match its typed identity.",
@@ -374,6 +379,17 @@ mod tests {
             validate_analysis_outcome_artifact(&root, &root_display, &wrong_base),
             Err(AnalysisOutcomeArtifactError::Invalid(
                 "Analysis outcome artifact base does not match its typed identity.".to_string()
+            ))
+        );
+
+        let mut option_like_base = artifact(&outcome, true)?;
+        option_like_base["base"] = Value::String("--output".to_string());
+        option_like_base["analysis_outcome"]["outcome"]["identity"]["base_revision"] =
+            Value::String("--output".to_string());
+        assert_eq!(
+            validate_analysis_outcome_artifact(&root, &root_display, &option_like_base),
+            Err(AnalysisOutcomeArtifactError::Invalid(
+                "Analysis outcome artifact base must not begin with '-'.".to_string()
             ))
         );
 
