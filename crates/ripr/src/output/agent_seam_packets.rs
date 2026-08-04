@@ -13,7 +13,7 @@
 //! `StronglyGripped`, `Intentional`, and `Suppressed` produce no
 //! packet — there is nothing for the agent to do.
 //!
-//! The packet schema is **0.3**, intentionally distinct from the
+//! The packet schema is **0.4**, intentionally distinct from the
 //! repo-exposure report's 0.1, because the packet is a separate
 //! contract aimed at coding agents rather than reviewers.
 
