@@ -1,7 +1,7 @@
 {
   "schema_version": "0.1",
   "kind": "release_denominator_snapshot",
-  "captured_at": "2026-08-04T12:31:22Z",
+  "captured_at": "2026-08-04T12:42:29Z",
   "source": {
     "mode": "captured",
     "stage": "provisional",
@@ -10,7 +10,7 @@
     "provisional_review_cutoff_sha": "fcbb30a7cf6a37027fa377abafb617632b2e6f57",
     "github_repository": "EffortlessMetrics/ripr-swarm",
     "candidate_ref": "origin/main",
-    "candidate_sha": "d5dd29a740eaf6a8405a5e470b1fef2ea71e9db8",
+    "candidate_sha": "388aa3c49cf639fe53f9dcbf24ef9c54e19e36ba",
     "range_commits": [
       "fd1eec2ad8145678f0fb494a50bd181d6857b0c7",
       "7fc0dda3dd6625f20874c3703aeaacfe65a289e7",
@@ -269,7 +269,8 @@
       "5077b486141b226e0c59b9bf09f0723c029c489f",
       "59d2b0178d4802cab5d8550a6ef6b1a726959f71",
     "c1fbf43274e187edbb8a1b2cd8ba2b6b3620ebcd",
-    "d5dd29a740eaf6a8405a5e470b1fef2ea71e9db8"
+    "d5dd29a740eaf6a8405a5e470b1fef2ea71e9db8",
+    "388aa3c49cf639fe53f9dcbf24ef9c54e19e36ba"
     ],
     "candidate_tree_commits": [
       "fd1eec2ad8145678f0fb494a50bd181d6857b0c7",
@@ -14837,6 +14838,23 @@
       "replacement_commit_sha": null,
       "review_refs": [],
       "proof_refs": ["git:first-parent-range", "pr:2895"],
+      "source_survivor_or_swarm_exclusion_effect": "Observed in the bounded post-cutoff delta; candidate-tree inclusion or exclusion awaits record-level adjudication.",
+      "limitation_or_operator_decision": "No blanket post-cutoff exclusion is accepted. Review the exact delivered delta, claim mapping, proof, and candidate-tree effect before candidate selection."
+    },
+    {
+      "commit_sha": "388aa3c49cf639fe53f9dcbf24ef9c54e19e36ba",
+      "first_parent_position": 259,
+      "subject": "fix(agent): preserve missing discriminator authority (#2896)",
+      "references": [{"kind":"merge_pr","number":2896,"source":"associated_pull_request","evidence_url":"https://github.com/EffortlessMetrics/ripr-swarm/pull/2896","observed_for_commit_sha":"388aa3c49cf639fe53f9dcbf24ef9c54e19e36ba","reviewed":false,"limitation":"Captured from GitHub merge metadata; operator adjudication remains required."}],
+      "reference_capture_status": "captured",
+      "reference_capture_limitation": "References are captured authority, not yet operator-reviewed.",
+      "theme_or_surface": "packet-output",
+      "release_disposition": "operator_decision_required",
+      "acceptance_owner": "packet-honesty-2830",
+      "candidate_tree_state": "candidate_tree_state_pending",
+      "replacement_commit_sha": null,
+      "review_refs": [],
+      "proof_refs": ["git:first-parent-range", "pr:2896"],
       "source_survivor_or_swarm_exclusion_effect": "Observed in the bounded post-cutoff delta; candidate-tree inclusion or exclusion awaits record-level adjudication.",
       "limitation_or_operator_decision": "No blanket post-cutoff exclusion is accepted. Review the exact delivered delta, claim mapping, proof, and candidate-tree effect before candidate selection."
     }

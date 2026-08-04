@@ -2512,11 +2512,11 @@ mod tests {
             ),
         )?;
         require(
-            report.records.len() == 258,
+            report.records.len() == 259,
             "current-main census record count changed",
         )?;
         require(
-            report.source.range_commits.len() == 258,
+            report.source.range_commits.len() == 259,
             "current-main census range count changed",
         )?;
         require(
@@ -2525,35 +2525,35 @@ mod tests {
         )?;
         require(
             report.source.historical_base_sha == "c86807ecdbf359594ef88c0ff38b10b446139dca"
-                && report.source.candidate_sha == "d5dd29a740eaf6a8405a5e470b1fef2ea71e9db8"
+                && report.source.candidate_sha == "388aa3c49cf639fe53f9dcbf24ef9c54e19e36ba"
                 && report.source.range_commits.first().map(String::as_str)
                     == Some("fd1eec2ad8145678f0fb494a50bd181d6857b0c7")
                 && report.source.range_commits.last().map(String::as_str)
-                    == Some("d5dd29a740eaf6a8405a5e470b1fef2ea71e9db8"),
+                    == Some("388aa3c49cf639fe53f9dcbf24ef9c54e19e36ba"),
             "current-main identity changed",
         )?;
         require(
             report.range_digest
-                == "sha256:09a8883e071a2050f79fca69623eb27fd9b1b88b80f6a9ec0636efddcb60b8b0"
+                == "sha256:39f5930b03a8520a65d5f18d3d65180cc137120842e2f4803151993f0dd01967"
                 && report.candidate_tree_digest
                     == "sha256:2392d40f28fdd141b81a949cf019c1ad3850cf68bb2ab3cef5802fbdcde7c93b",
             "current-main range or candidate-tree digest changed",
         )?;
         require(
             report.record_set_digest
-                == "sha256:b6b81b0a69361a2c080876254073fa09987c14de3f8f7e2f95438dada810285d",
+                == "sha256:c9d7422e62acdf054e56c06d09e7400df9d9113267efdd72450ea70c0239ab9a",
             "current-main record-set digest changed",
         )?;
         require(
             report
                 .counts_by_tree_state
                 .get("candidate_tree_state_pending")
-                == Some(&28)
+                == Some(&29)
                 && report.counts_by_tree_state.get("present_in_candidate") == Some(&230)
                 && report
                     .counts_by_disposition
                     .get("operator_decision_required")
-                    == Some(&28),
+                    == Some(&29),
             "current-main denominator counts changed",
         )?;
         let execution_record = report
@@ -2634,6 +2634,7 @@ mod tests {
                     "59d2b0178d4802cab5d8550a6ef6b1a726959f71",
                     "c1fbf43274e187edbb8a1b2cd8ba2b6b3620ebcd",
                     "d5dd29a740eaf6a8405a5e470b1fef2ea71e9db8",
+                    "388aa3c49cf639fe53f9dcbf24ef9c54e19e36ba",
                 ],
             "current-main excluded commit identities changed",
         )?;
@@ -2653,7 +2654,7 @@ mod tests {
             .collect::<Vec<_>>();
         require(
             record_range == snapshot.source.range_commits
-                && snapshot.source.range_commits.len() == 258
+                && snapshot.source.range_commits.len() == 259
                 && snapshot
                     .source
                     .provisional_review_cutoff_sha
@@ -2668,7 +2669,7 @@ mod tests {
                     == Some(229)
                 && snapshot.source.range_commits.last().map(String::as_str)
                     == Some("d5dd29a740eaf6a8405a5e470b1fef2ea71e9db8"),
-            "pinned 258-entry first-parent census does not match record order and cutoff",
+            "pinned 259-entry first-parent census does not match record order and cutoff",
         )
     }
 
