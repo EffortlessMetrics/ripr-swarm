@@ -3506,8 +3506,10 @@ mod tests {
             .ok_or_else(|| "expected typed command specs".to_string())?
             .verify[0]
             .authority_boundary = crate::domain::CommandAuthorityBoundary::ReceiptRouteOnly;
-        let error = render_agent_gap_record_packet_json("gap-ledger.json", &record)
-            .expect_err("role-mismatched producer command must fail closed");
+        let error = match render_agent_gap_record_packet_json("gap-ledger.json", &record) {
+            Ok(_) => return Err("role-mismatched producer command was projected".to_string()),
+            Err(error) => error,
+        };
         assert!(
             error.contains("command_specs.verify contains receipt role, expected verify"),
             "unexpected validation error: {error}"
