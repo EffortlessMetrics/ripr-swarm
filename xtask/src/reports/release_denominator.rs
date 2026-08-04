@@ -2512,11 +2512,11 @@ mod tests {
             ),
         )?;
         require(
-            report.records.len() == 259,
+            report.records.len() == 260,
             "current-main census record count changed",
         )?;
         require(
-            report.source.range_commits.len() == 259,
+            report.source.range_commits.len() == 260,
             "current-main census range count changed",
         )?;
         require(
@@ -2525,11 +2525,11 @@ mod tests {
         )?;
         require(
             report.source.historical_base_sha == "c86807ecdbf359594ef88c0ff38b10b446139dca"
-                && report.source.candidate_sha == "388aa3c49cf639fe53f9dcbf24ef9c54e19e36ba"
+                && report.source.candidate_sha == "3af35dae54277b470dc66239c7569a556ca15285"
                 && report.source.range_commits.first().map(String::as_str)
                     == Some("fd1eec2ad8145678f0fb494a50bd181d6857b0c7")
                 && report.source.range_commits.last().map(String::as_str)
-                    == Some("388aa3c49cf639fe53f9dcbf24ef9c54e19e36ba"),
+                    == Some("3af35dae54277b470dc66239c7569a556ca15285"),
             "current-main identity changed",
         )?;
         require(
@@ -2654,7 +2654,7 @@ mod tests {
             .collect::<Vec<_>>();
         require(
             record_range == snapshot.source.range_commits
-                && snapshot.source.range_commits.len() == 259
+                && snapshot.source.range_commits.len() == 260
                 && snapshot
                     .source
                     .provisional_review_cutoff_sha
@@ -2668,8 +2668,8 @@ mod tests {
                     })
                     == Some(229)
                 && snapshot.source.range_commits.last().map(String::as_str)
-                    == Some("388aa3c49cf639fe53f9dcbf24ef9c54e19e36ba"),
-            "pinned 259-entry first-parent census does not match record order and cutoff",
+                    == Some("3af35dae54277b470dc66239c7569a556ca15285"),
+            "pinned 260-entry first-parent census does not match record order and cutoff",
         )
     }
 
