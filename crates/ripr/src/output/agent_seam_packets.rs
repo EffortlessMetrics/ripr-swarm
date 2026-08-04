@@ -2138,6 +2138,12 @@ pub(crate) struct AssertionShape {
 }
 
 impl AssertionShape {
+    pub(crate) fn from_guidance(guidance: AssertionGuidance) -> Self {
+        Self {
+            guidance: guidance.view(),
+        }
+    }
+
     pub(crate) fn state(&self) -> AssertionState {
         self.guidance.state()
     }
@@ -2548,9 +2554,7 @@ pub(crate) fn assertion_shape_for_entry(entry: &ClassifiedSeam) -> AssertionShap
 }
 
 fn assertion_shape_from_guidance(guidance: AssertionGuidance) -> AssertionShape {
-    AssertionShape {
-        guidance: guidance.view(),
-    }
+    AssertionShape::from_guidance(guidance)
 }
 
 fn assertion_guidance_for(
@@ -3348,6 +3352,74 @@ mod tests {
         ] {
             if !json.contains(needle) {
                 return Err(format!("missing v2 field {needle:?} in: {json}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn typed_assertion_guidance_never_emits_examples_for_non_concrete_states() -> Result<(), String>
+    {
+        let cases = [
+            (
+                AssertionState::Concrete,
+                AssertionGuidance::Concrete {
+                    kind: AssertionKind::ExactReturnValue,
+                    example: "assert_eq!(actual, expected)".to_string(),
+                    basis: AssertionBasis::SeamRequiredDiscriminator,
+                },
+            ),
+            (
+                AssertionState::RequiresObserverSetup,
+                AssertionGuidance::RequiresObserverSetup {
+                    observer_kind: ObserverKind::SideEffectSink,
+                    reason: GuidanceReason::ObserverNotStaticallyVisible,
+                },
+            ),
+            (
+                AssertionState::FixSiteOnly,
+                AssertionGuidance::FixSiteOnly {
+                    reason: GuidanceReason::RouteIsInspectionOnly,
+                },
+            ),
+            (
+                AssertionState::VerificationOnly,
+                AssertionGuidance::VerificationOnly {
+                    reason: GuidanceReason::RouteIsVerificationOnly,
+                },
+            ),
+            (
+                AssertionState::Unresolved,
+                AssertionGuidance::Unresolved {
+                    reason: GuidanceReason::ProducerFactAbsent,
+                    recovery: GuidanceRecovery::InspectFixSite,
+                },
+            ),
+            (
+                AssertionState::Stale,
+                AssertionGuidance::Stale {
+                    reason: GuidanceReason::SnapshotStale,
+                    refresh: GuidanceRecovery::RefreshAnalysis,
+                },
+            ),
+        ];
+
+        for (expected_state, guidance) in cases {
+            let shape = AssertionShape::from_guidance(guidance);
+            let value = assertion_guidance_json(&shape);
+            if value["state"] != expected_state.as_str() {
+                return Err(format!(
+                    "guidance state drifted: expected {}, got {}",
+                    expected_state.as_str(),
+                    value["state"]
+                ));
+            }
+            if !value["example"].is_null() && expected_state != AssertionState::Concrete {
+                return Err(format!(
+                    "non-concrete {} guidance emitted an example: {}",
+                    expected_state.as_str(),
+                    value
+                ));
             }
         }
         Ok(())
