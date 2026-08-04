@@ -233,7 +233,7 @@ fn reviewer_summary(
             "Review packet is incomplete for {target}: producer analysis is {}.",
             outcome.kind.as_str()
         ),
-        "missing_artifact" => format!("Review packet is incomplete for {target}."),
+        ("missing_artifact", _) => format!("Review packet is incomplete for {target}."),
         _ => format!("Review packet is {status} for seam {target}."),
     };
     let what_changed = if analysis_outcome.is_none() {
