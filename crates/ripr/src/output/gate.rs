@@ -808,6 +808,21 @@ fn candidate_would_block(
     }
 }
 
+/// Append the `(expected: \`label\`, ...)` suffix to a blocking reason when
+/// acknowledgement labels are configured. Shared by the gap-decision-ledger arm
+/// and the catch-all arm so the hint is reachable for every blocking source.
+fn append_expected_label(base: &str, labels: &[String]) -> String {
+    if labels.is_empty() {
+        return base.to_string();
+    }
+    let expected = labels
+        .iter()
+        .map(|label| format!("`{label}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{base} without a matching acknowledgement label (expected: {expected})")
+}
+
 fn gate_reason(
     candidate: &GateCandidate,
     context: GateReasonContext<'_>,
@@ -888,10 +903,13 @@ fn gate_reason(
         "blocking" if context.mode == GateMode::BaselineCheck && context.is_baseline_new => {
             "new policy-eligible gap blocks under baseline-check".to_string()
         }
-        "blocking" if candidate.source == "gap_decision_ledger" => format!(
-            "new repairable {} gap blocks from gap decision ledger",
-            candidate.gap_kind.as_deref().unwrap_or("Rust")
-        ),
+        "blocking" if candidate.source == "gap_decision_ledger" => {
+            let base = format!(
+                "new repairable {} gap blocks from gap decision ledger",
+                candidate.gap_kind.as_deref().unwrap_or("Rust")
+            );
+            append_expected_label(&base, configured_acknowledgement_labels)
+        }
         "blocking" if context.mode == GateMode::CalibratedGate => {
             if context.mutation_calibration.confidence_effect == "supports_static_gap" {
                 "new policy-eligible gap has supporting imported mutation calibration".to_string()
@@ -900,18 +918,8 @@ fn gate_reason(
             }
         }
         "blocking" => {
-            let expected = configured_acknowledgement_labels
-                .iter()
-                .map(|label| format!("`{label}`"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            if expected.is_empty() {
-                "policy-eligible gap blocks under acknowledgeable mode".to_string()
-            } else {
-                format!(
-                    "policy-eligible gap blocks under acknowledgeable mode without a matching acknowledgement label (expected: {expected})"
-                )
-            }
+            let base = "policy-eligible gap blocks under acknowledgeable mode";
+            append_expected_label(base, configured_acknowledgement_labels)
         }
         _ if context.mode == GateMode::VisibleOnly => {
             "visible-only mode records evidence without blocking".to_string()
