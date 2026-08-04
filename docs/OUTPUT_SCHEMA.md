@@ -42,7 +42,7 @@ map is:
 | `ripr check --format sarif` | `version` | `2.1.0` (standard SARIF envelope) |
 | `ripr gate evaluate` | `schema_version` | `0.1` |
 | `ripr doctor --json` | `schema_version` | `0.2` |
-| `ripr agent packet` | `schema_version` | `0.3` |
+| `ripr agent packet` | `schema_version` | `0.4` |
 | `ripr agent receipt` | `schema_version` | `0.4` |
 | `ripr agent status` | `schema_version` | `0.1` |
 | `ripr agent review-summary` | `schema_version` | `0.1` |
@@ -6371,7 +6371,7 @@ Field contract:
 
 `ripr agent verify-execute --root <workspace> --packet <packet-json>
 --result-json <result-json> --authorize --json` is the only explicit process
-execution surface in the agent loop. It accepts one schema `0.3` producer
+execution surface in the agent loop. It accepts one schema `0.4` producer
 envelope containing exactly one packet, and executes only the direct,
 no-network, no-write `ripr agent verify` route. The current ripr executable is
 used; shell text is never interpreted.
@@ -6892,7 +6892,11 @@ Field contract:
   observation when available.
 - `comments[].suggested_test` - bounded test intent, candidate values,
   assertion shape, recommended test file, and related test to imitate when
-  available.
+  available. `assertion_guidance` is the typed projection of the same
+  producer-owned contract used by agent packets: only `state: "concrete"`
+  carries an example; `requires_observer_setup`, `fix_site_only`,
+  `verification_only`, `unresolved`, and `stale` carry `example: null` and
+  their bounded reason/recovery fields.
 - `comments[].suggested_test.related_test` - structured navigational object
   `{name, file, line}` for the nearest strong related test (RIPR-SPEC-0068),
   or `null` when no strong related test resolves. The flat `recommended_file`,
@@ -12804,7 +12808,7 @@ schema bump.
 
 Field contract:
 
-- `schema_version` — currently `"0.3"`. Distinct from the repo-exposure
+- `schema_version` — currently `"0.4"`. Distinct from the repo-exposure
   report's `"0.2"` because the packet is a separate contract aimed at
   coding agents rather than reviewers. Bumping requires updating this
   section, the renderer (`crates/ripr/src/output/agent_seam_packets.rs`),
@@ -12816,12 +12820,28 @@ Field contract:
   `nearest_strong_test_to_imitate`, `candidate_values`,
   `assertion_shape`, `patterns_to_imitate`, `patterns_to_avoid`, and
   packet `confidence` without changing the version again because the
-  in-flight `0.3` contract had not yet closed.
+  in-flight `0.3` contract had not yet closed. `0.4` adds the producer-owned
+  `analysis_outcome_status` and `analysis_outcome` envelope so packet
+  consumers cannot mistake seam-budget completion for diff-analysis
+  completeness.
   Reason and confidence vocabularies are documented in the
   `repo-exposure.json` field contract above.
 - `scope` — always `"repo"`, including the one-seam `ripr agent packet`
   expansion. The one-seam command is a filtered view of the repo packet
   contract, not a second packet schema.
+- `analysis_outcome_status` — the producer outcome projection state. It is
+  `"complete"` or `"incomplete"` when a typed diff outcome is present,
+  `"missing"` or `"invalid"` when a required producer artifact cannot be
+  trusted, and `"not_applicable"` for repo-only or gap-ledger packets that do
+  not have a diff denominator. This field is independent of `run_status`,
+  which only describes the agent packet seam budget.
+- `analysis_outcome_error` — optional bounded diagnostic for `missing` or
+  `invalid` producer evidence. It is never converted into a clean packet.
+- `analysis_outcome` — `null` for `not_applicable`, `missing`, or `invalid`;
+  otherwise an envelope containing `analysis_complete`, the exact typed
+  producer `outcome` (including kind, limitations, recovery routes, and input
+  identity), and its `semantic_digest`. Packet consumers copy this envelope;
+  they do not rerun diff analysis or infer completeness from packet counts.
 - `source` - optional. Present as `"gap_decision_ledger"` when the packet was
   rendered from explicit `GapRecord` input rather than live seam analysis.
 - `inputs.gap_ledger` - optional. Present with gap-ledger packet mode so
@@ -12956,11 +12976,12 @@ Field contract:
     assert_matches!)"
   - `side_effect` → "mock expectation, event/state observer, or
     persistence assertion (...)"
-- `packets[].assertion_shape` — structured assertion guidance with a
-  stable `kind` (`exact_return_value`, `exact_error_variant`,
-  `field_equality`, `side_effect_observer`, `match_result`, or
-  `call_expectation`) plus a fill-in example. Placeholders are
-  intentional; ripr does not invent expected values.
+- `packets[].assertion_shape` — the typed assertion-guidance projection.
+  `state` is one of `concrete`, `requires_observer_setup`, `fix_site_only`,
+  `verification_only`, `unresolved`, or `stale`. Only `concrete` may carry
+  `kind`, `basis`, or `example`; every other state carries `example: null`
+  and names its `reason` plus any bounded `recovery`. Observer-required
+  states name `observer_kind` and never emit a comment-shaped assertion.
 - `packets[].related_existing_tests` — capped at
   `MAX_RELATED_TESTS_PER_PACKET` (currently 8). Carries test name,
   file, line, oracle kind, oracle strength, and a short
@@ -12975,8 +12996,9 @@ Field contract:
   related tests or adding another test with only already-observed
   values. Each entry has `{pattern, reason}`.
 - `packets[].suggested_assertions` — best-effort assertion templates
-  the agent fills in. Placeholders are intentional; ripr never invents
-  expected values. Example for predicate boundary:
+  the agent fills in, emitted only for `assertion_shape.state == concrete`.
+  Placeholders are intentional; ripr never invents expected values. Example
+  for predicate boundary:
   `"assert_eq!(discounted_total(/* discount_threshold (equality boundary) */), /* expected */)"`.
 - `packets[].confidence` — `high`, `medium`, `low`, or `unknown`
   confidence in the packet recommendation. It is derived from related
@@ -13006,8 +13028,9 @@ Field contract:
   approve a patch, or authorize a merge.
 
 The packet is the agent's work order: it names the seam, the missing
-discriminator, the oracle shape, and an assertion template — but never
-generates the test itself. Composition with a coding agent closes the
+discriminator, the oracle shape, and either a producer-backed assertion
+template or an explicit non-concrete recovery state — but never generates
+the test itself. Composition with a coding agent closes the
 loop.
 
 ## Agent Working-Set Brief
