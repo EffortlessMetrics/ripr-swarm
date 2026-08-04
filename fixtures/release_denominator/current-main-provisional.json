@@ -8,6 +8,7 @@
     "freshness": "current",
     "historical_base_sha": "c86807ecdbf359594ef88c0ff38b10b446139dca",
     "provisional_review_cutoff_sha": "fcbb30a7cf6a37027fa377abafb617632b2e6f57",
+    "github_repository": "EffortlessMetrics/ripr-swarm",
     "candidate_ref": "origin/main",
     "candidate_sha": "c30a26831b75051813bfaa3dbd9378096ec6aa82",
     "range_commits": [

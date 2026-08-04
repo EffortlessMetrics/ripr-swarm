@@ -17,7 +17,8 @@ candidate qualification or publication decision.
 
 `release-denominator --input <ledger.json>` accepts a versioned
 `release_denominator_snapshot` containing the historical base, candidate ref
-and SHA, an optional fixed `provisional_review_cutoff_sha`, ordered range
+and SHA, the pinned `source.github_repository`, an optional fixed
+`provisional_review_cutoff_sha`, ordered range
 commits, candidate-tree commits, and one record per range commit. Each record
 carries release disposition, ownership, tree state, review/proof references,
 source-survivor or swarm-exclusion context, capture status, optional
@@ -28,7 +29,9 @@ the observed commit SHA, review state, and any limitation. The legacy
 from `references[]`; they are not reference authority. An optional
 `candidate_selection` object carries the #2766/#2871 selected-claim authority;
 claim references are rejected when that authority is absent or does not name
-the claim.
+the claim. A structurally invalid selected-claim authority also rejects its
+claim references; readiness state remains owned by the shared candidate
+control evaluator.
 
 The accepted dispositions are `include_product`,
 `include_release_infrastructure`, `include_control_or_honesty`,
@@ -47,11 +50,13 @@ exact ledger range and captures all-state PR merge identities plus PR-body
 issue/PR references from the current repository through `gh`. The capture is
 bound to the input candidate SHA and range digest and is replayable offline.
 Captured references are deliberately `reviewed: false` with an explicit
-limitation; GitHub observation is not operator adjudication.
+limitation; GitHub observation is not operator adjudication. PR-body references
+are classified as closing references only for explicit, token-bounded closing
+keywords; ordinary or negated prose remains a body reference.
 
 `--import-github --input <ledger.json> --capture <capture.json> --output
-<ledger.json>` imports only a capture with matching candidate and range
-identity. It rejects missing or duplicate commit records and converts
+<ledger.json>` imports only a capture with matching repository, candidate,
+and range identity. It rejects missing or duplicate commit records and converts
 inherited `safe_defer_post_0_11` rows, plus rows after the fixed provisional
 cutoff, into `operator_decision_required` with
 `candidate_tree_state_pending`. No blanket post-cutoff exclusion is accepted.

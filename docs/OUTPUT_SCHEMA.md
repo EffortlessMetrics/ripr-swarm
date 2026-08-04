@@ -12026,6 +12026,8 @@ Exactly one of `evidence_url` or `github_identity` is required. The legacy
 establish final denominator authority by themselves. Final ledgers reject
 unreviewed references and legacy-only projections.
 
+`source.github_repository` pins the GitHub repository whose retained authority
+may be imported; captures from another repository are rejected.
 `source.provisional_review_cutoff_sha` optionally pins the fixed review cutoff
 used by #2832. Each record may also carry `claim_refs[]`,
 `reference_capture_status` (`not_captured`, `captured`,

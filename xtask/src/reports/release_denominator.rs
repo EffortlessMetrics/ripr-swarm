@@ -13,7 +13,7 @@ use std::fs;
 use std::path::Path;
 use std::time::Duration;
 
-use super::candidate_control::CandidateSelection;
+use super::candidate_control::{CandidateSelection, evaluate as evaluate_candidate_selection};
 
 const REPORT_NAME: &str = "release-denominator";
 const SCHEMA_VERSION: &str = "0.1";
@@ -83,6 +83,8 @@ struct SnapshotSource {
     historical_base_sha: String,
     #[serde(default)]
     provisional_review_cutoff_sha: Option<String>,
+    #[serde(default)]
+    github_repository: Option<String>,
     candidate_ref: String,
     candidate_sha: String,
     range_commits: Vec<String>,
@@ -296,6 +298,7 @@ fn read_snapshot(path: &str) -> Result<Snapshot, String> {
 fn capture_github(input: &str, output: &str) -> Result<(), String> {
     let snapshot = read_snapshot(input)?;
     let repository = gh_repository_name()?;
+    validate_capture_repository(snapshot.source.github_repository.as_deref(), &repository)?;
     let all_prs = gh_pull_requests(&repository)?;
     let mut by_merge_sha: BTreeMap<String, Vec<&GithubPullRequest>> = BTreeMap::new();
     let mut known_prs = BTreeMap::new();
@@ -426,6 +429,10 @@ fn import_github(input: &str, capture_path: &str, output: &str) -> Result<(), St
     if capture.schema_version != "0.1" || capture.kind != "release_denominator_github_capture" {
         return Err("GitHub denominator capture has an unsupported schema or kind".to_string());
     }
+    validate_capture_repository(
+        snapshot.source.github_repository.as_deref(),
+        &capture.repository,
+    )?;
     if capture.observed_for_candidate_sha != snapshot.source.candidate_sha {
         return Err(
             "GitHub denominator capture candidate SHA does not match input ledger".to_string(),
@@ -472,6 +479,19 @@ fn import_github(input: &str, capture_path: &str, output: &str) -> Result<(), St
         format!("failed to write imported denominator ledger {output}: {error}")
     })?;
     println!("Wrote imported denominator ledger {output}");
+    Ok(())
+}
+
+fn validate_capture_repository(expected: Option<&str>, observed: &str) -> Result<(), String> {
+    let expected = expected.ok_or_else(|| {
+        "GitHub denominator input must pin source.github_repository before capture or import"
+            .to_string()
+    })?;
+    if expected != observed {
+        return Err(format!(
+            "GitHub denominator capture repository {observed} does not match expected {expected}"
+        ));
+    }
     Ok(())
 }
 
@@ -580,19 +600,7 @@ fn body_issue_or_pr_references(body: &str) -> Vec<(u64, &'static str)> {
             index = end;
             continue;
         };
-        let context = body[..index]
-            .chars()
-            .rev()
-            .take(64)
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect::<String>()
-            .to_ascii_lowercase();
-        let source = if ["close", "fix", "resolve"]
-            .iter()
-            .any(|word| context.contains(word))
-        {
+        let source = if has_explicit_closing_keyword(&body[..index]) {
             "closing_reference"
         } else {
             "body_reference"
@@ -601,6 +609,36 @@ fn body_issue_or_pr_references(body: &str) -> Vec<(u64, &'static str)> {
         index = end;
     }
     references
+}
+
+fn has_explicit_closing_keyword(prefix: &str) -> bool {
+    let words = prefix
+        .split_whitespace()
+        .rev()
+        .take(3)
+        .map(|word| {
+            word.trim_matches(|character: char| !character.is_ascii_alphanumeric())
+                .to_ascii_lowercase()
+        })
+        .collect::<Vec<_>>();
+    let Some(keyword) = words.first().map(String::as_str) else {
+        return false;
+    };
+    if !matches!(
+        keyword,
+        "close"
+            | "closes"
+            | "closed"
+            | "fix"
+            | "fixes"
+            | "fixed"
+            | "resolve"
+            | "resolves"
+            | "resolved"
+    ) {
+        return false;
+    }
+    !matches!(words.get(1).map(String::as_str), Some("not" | "never"))
 }
 
 fn normalize_snapshot(
@@ -971,6 +1009,15 @@ fn validate_claim_refs(
         }
         return;
     };
+    let authority = evaluate_candidate_selection(Some(selection));
+    if authority.status == "scope_pending" && !record.claim_refs.is_empty() {
+        reasons.push(format!(
+            "commit {} claim_refs require structurally valid selected claim authority: {}",
+            record.commit_sha,
+            authority.reasons.join("; ")
+        ));
+        return;
+    }
     let selected_claim_ids = selection
         .selected_claims
         .iter()
@@ -1808,11 +1855,71 @@ mod tests {
     }
 
     #[test]
+    fn claim_refs_reject_structurally_invalid_selected_authority() -> Result<(), String> {
+        let mut snapshot = fixture()?;
+        snapshot.candidate_selection = Some(
+            serde_json::from_value(json!({
+                "schema_version": "0.1",
+                "selected_claims": [{
+                    "claim_id": "claim:lifecycle",
+                    "owner_issue": 0,
+                    "required_for_candidate": true,
+                    "resolution": "pending",
+                    "candidate_effect": "",
+                    "reviewed": false
+                }]
+            }))
+            .map_err(|error| error.to_string())?,
+        );
+        snapshot.records[0].claim_refs = vec!["claim:lifecycle".to_string()];
+        let report = normalize_snapshot(snapshot, None)?;
+        require(
+            report.reconciliation_reasons.iter().any(|reason| {
+                reason.contains("claim_refs require structurally valid selected claim authority")
+            }),
+            "structurally invalid selected claim authority was accepted",
+        )
+    }
+
+    #[test]
     fn github_body_reference_parser_handles_unicode_context() -> Result<(), String> {
         require(
             body_issue_or_pr_references("Decision — Closes #2393.")
                 == vec![(2393, "closing_reference")],
             "Unicode PR body context was not parsed safely",
+        )
+    }
+
+    #[test]
+    fn github_body_reference_parser_requires_explicit_closing_syntax() -> Result<(), String> {
+        require(
+            body_issue_or_pr_references("Add fixture #123") == vec![(123, "body_reference")],
+            "ordinary fixture reference was misclassified as closing",
+        )?;
+        require(
+            body_issue_or_pr_references("Does not close #123") == vec![(123, "body_reference")],
+            "negated closing reference was misclassified",
+        )?;
+        require(
+            body_issue_or_pr_references("Fixes #123") == vec![(123, "closing_reference")],
+            "explicit closing reference was not recognized",
+        )
+    }
+
+    #[test]
+    fn github_capture_repository_must_match_pinned_source() -> Result<(), String> {
+        require(
+            validate_capture_repository(Some("EffortlessMetrics/ripr-swarm"), "attacker/fork")
+                .is_err(),
+            "capture from a different repository was accepted",
+        )?;
+        require(
+            validate_capture_repository(
+                Some("EffortlessMetrics/ripr-swarm"),
+                "EffortlessMetrics/ripr-swarm",
+            )
+            .is_ok(),
+            "matching capture repository was rejected",
         )
     }
 
