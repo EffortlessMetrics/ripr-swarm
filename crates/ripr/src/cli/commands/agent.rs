@@ -275,7 +275,9 @@ fn run_agent_receipt(options: AgentReceiptOptions) -> Result<(), String> {
         &options.root,
         &root_display,
     ) {
-        Ok(outcome) => output::agent_receipt::AgentReceiptAnalysisOutcome::Present(outcome),
+        Ok(outcome) => {
+            output::agent_receipt::AgentReceiptAnalysisOutcome::Present(Box::new(outcome))
+        }
         Err(error) => output::agent_receipt::AgentReceiptAnalysisOutcome::Unavailable {
             status: error.status().to_string(),
             reason: error.to_string(),

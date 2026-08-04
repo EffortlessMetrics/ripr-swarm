@@ -14,7 +14,7 @@ pub(crate) const AGENT_RECEIPT_SCHEMA_VERSION: &str = "0.4";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum AgentReceiptAnalysisOutcome {
-    Present(AnalysisOutcome),
+    Present(Box<AnalysisOutcome>),
     Unavailable { status: String, reason: String },
 }
 
@@ -85,7 +85,7 @@ pub(crate) fn render_agent_receipt_json(
         test_changed,
         commands_run,
         provenance,
-        AgentReceiptAnalysisOutcome::Present(analysis_outcome),
+        AgentReceiptAnalysisOutcome::Present(Box::new(analysis_outcome)),
     )
 }
 
@@ -765,7 +765,7 @@ mod tests {
             None,
             &[],
             fixed_provenance(),
-            AgentReceiptAnalysisOutcome::Present(outcome),
+            AgentReceiptAnalysisOutcome::Present(Box::new(outcome)),
         )?;
         let value: Value = serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
         assert_eq!(value["status"], "incomplete");
