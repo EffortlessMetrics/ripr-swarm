@@ -40,6 +40,7 @@
     {
       "position": 81,
       "batch_id": "2832-A-product",
+      "exclusion_id": "exclusion:2767:verification-execution",
       "disposition": "candidate_only_exclusion",
       "candidate_tree_state": "present_in_candidate",
       "review_ref": "review:2832:exception-2767",

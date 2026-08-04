@@ -661,7 +661,8 @@
         ]
       }
     ],
-    "denominator_decisions_remaining_through_provisional_cutoff": 0,
+  "denominator_decisions_remaining_through_provisional_cutoff": 0,
+  "denominator_decisions_remaining_through_selected_cut": null,
     "projection": {
       "reproducible": false,
       "candidate_tree_sha": null,

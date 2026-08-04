@@ -11984,7 +11984,8 @@ PR rows:
     "candidate_claims_excluded": 0,
     "candidate_claims_deferred": 0,
     "candidate_defects_unresolved": 0,
-     "denominator_decisions_remaining_through_provisional_cutoff": 0,
+    "denominator_decisions_remaining": 0,
+    "denominator_decisions_remaining_through_selected_cut": 0,
     "candidate_cut_selected": false,
     "candidate_ref_created": false,
     "projection_reproducible": false,
@@ -11999,11 +12000,13 @@ PR rows:
 }
 ```
 
-`denominator_decisions_remaining_through_provisional_cutoff` is `null` when
-candidate selection authority is absent. It counts only decisions through the
-fixed provisional review cutoff, not the repository-wide open board or the
-eventual final cut. A state earlier than `qualification_eligible` is not a
-qualification claim; the state names the next missing boundary.
+`denominator_decisions_remaining` is retained for schema-0.1 wire compatibility
+and counts decisions through the fixed provisional review cutoff. The additive
+`denominator_decisions_remaining_through_selected_cut` field is `null` until a
+development cut is selected; once selected, it must be zero before hard-cut
+eligibility. Neither field counts the repository-wide open board. A state
+earlier than `qualification_eligible` is not a qualification claim; the state
+names the next missing boundary.
 
 ## Release Denominator Ledger Report
 

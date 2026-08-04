@@ -182,6 +182,8 @@ struct AdjudicationBatch {
 struct AdjudicationOverride {
     position: usize,
     batch_id: String,
+    #[serde(default)]
+    exclusion_id: Option<String>,
     disposition: String,
     candidate_tree_state: String,
     review_ref: String,
@@ -653,9 +655,6 @@ fn apply_adjudication(input: &str, decisions_path: &str, output: &str) -> Result
             || override_record.challenged_disposition.trim().is_empty()
             || override_record.candidate_effect.trim().is_empty()
             || override_record.residual_acceptance.trim().is_empty()
-            || (override_record.disposition == "candidate_only_exclusion"
-                && override_record.candidate_only_excluded_paths.is_empty()
-                && override_record.candidate_tree_state == "present_in_candidate")
             || override_record
                 .review_evidence
                 .iter()
@@ -670,6 +669,7 @@ fn apply_adjudication(input: &str, decisions_path: &str, output: &str) -> Result
                 override_record.position
             ));
         }
+        validate_override_exclusion_paths(override_record)?;
         if overrides_by_position
             .insert(override_record.position, override_record)
             .is_some()
@@ -715,6 +715,9 @@ fn apply_adjudication(input: &str, decisions_path: &str, output: &str) -> Result
             });
         record.release_disposition = disposition.to_string();
         record.candidate_tree_state = candidate_tree_state.to_string();
+        record.candidate_only_excluded_paths = override_record
+            .map(|record| record.candidate_only_excluded_paths.clone())
+            .unwrap_or_default();
         record.review_refs = vec![batch.review_ref.clone(), format!("batch:{}", batch.id)];
         if let Some(override_record) = override_record {
             record.candidate_only_excluded_paths =
@@ -777,6 +780,66 @@ fn project_candidate_tree(records: &[CommitRecord], range_commits: &[String]) ->
         .iter()
         .filter(|commit_sha| candidate_tree.contains(commit_sha.as_str()))
         .cloned()
+        .collect()
+}
+
+fn validate_override_exclusion_paths(override_record: &AdjudicationOverride) -> Result<(), String> {
+    let mut supplied = BTreeSet::new();
+    for path in &override_record.candidate_only_excluded_paths {
+        if path.trim().is_empty() || !supplied.insert(path.clone()) {
+            return Err(format!(
+                "adjudication override at position {} has blank or duplicate exclusion paths",
+                override_record.position
+            ));
+        }
+    }
+    if override_record.disposition != "candidate_only_exclusion" {
+        if !supplied.is_empty() || override_record.exclusion_id.is_some() {
+            return Err(format!(
+                "adjudication override at position {} carries exclusion paths without candidate_only_exclusion disposition",
+                override_record.position
+            ));
+        }
+        return Ok(());
+    }
+    if override_record.exclusion_id.as_deref() != Some("exclusion:2767:verification-execution") {
+        return Err(format!(
+            "adjudication override at position {} is not bound to the accepted #2767 exclusion",
+            override_record.position
+        ));
+    }
+    if override_record.candidate_tree_state == "present_in_candidate" && supplied.is_empty() {
+        return Err(format!(
+            "adjudication override at position {} has no path-level exclusion",
+            override_record.position
+        ));
+    }
+    let accepted = accepted_execution_excluded_paths()?;
+    if supplied != accepted {
+        return Err(format!(
+            "adjudication override at position {} does not match the accepted #2767 path set",
+            override_record.position
+        ));
+    }
+    Ok(())
+}
+
+fn accepted_execution_excluded_paths() -> Result<BTreeSet<String>, String> {
+    let scope: Value = serde_json::from_str(include_str!(
+        "../../../fixtures/release_scope/accepted-outcome-a.json"
+    ))
+    .map_err(|error| format!("failed to parse accepted execution scope fixture: {error}"))?;
+    scope
+        .get("candidate_excluded_paths")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "accepted execution scope has no candidate_excluded_paths".to_string())?
+        .iter()
+        .map(|path| {
+            path.as_str()
+                .filter(|path| !path.trim().is_empty())
+                .map(ToOwned::to_owned)
+                .ok_or_else(|| "accepted execution scope contains a non-string path".to_string())
+        })
         .collect()
 }
 
@@ -1217,6 +1280,14 @@ fn validate_record(record: &CommitRecord, source: &SnapshotSource, reasons: &mut
         "present_in_candidate" => !record.candidate_only_excluded_paths.is_empty(),
         _ => false,
     };
+    if record.release_disposition != "candidate_only_exclusion"
+        && !record.candidate_only_excluded_paths.is_empty()
+    {
+        reasons.push(format!(
+            "commit {} has candidate_only_excluded_paths without candidate_only_exclusion disposition",
+            record.commit_sha
+        ));
+    }
     if record.release_disposition == "candidate_only_exclusion" && !valid_candidate_only_exclusion {
         reasons.push(format!(
             "commit {} candidate_only_exclusion disposition has the wrong tree state",
@@ -2272,16 +2343,22 @@ mod tests {
         )?;
         let execution_record = report
             .records
-            .get(80)
+            .iter()
+            .find(|record| record.commit_sha == "365f7d61e27fd441e997e6e17e3f3e28859a3964")
             .ok_or_else(|| "current-main census is missing the #2396 record".to_string())?;
         require(
-            execution_record.release_disposition == "candidate_only_exclusion"
+            execution_record.first_parent_position == 81
+                && execution_record.release_disposition == "candidate_only_exclusion"
                 && execution_record.candidate_tree_state == "present_in_candidate"
                 && execution_record
                     .candidate_only_excluded_paths
                     .iter()
                     .any(|path| path == "crates/ripr/src/app/verification_execution.rs"),
             "accepted #2767 path-level exclusion was not retained on the execution record",
+        )?;
+        require(
+            report.counts_by_disposition.get("candidate_only_exclusion") == Some(&1),
+            "current-main census does not retain exactly one accepted execution exclusion",
         )?;
         let pending = report
             .records
@@ -2330,6 +2407,13 @@ mod tests {
             "../../../fixtures/release_denominator/current-main-provisional.json"
         ))
         .map_err(|error| error.to_string())?;
+        let baseline = project_candidate_tree(&snapshot.records, &snapshot.source.range_commits);
+        let still_pending = snapshot
+            .records
+            .get(231)
+            .ok_or_else(|| "provisional fixture is missing a second post-cutoff row".to_string())?
+            .commit_sha
+            .clone();
         let post_cutoff = snapshot
             .records
             .get_mut(230)
@@ -2344,6 +2428,39 @@ mod tests {
                 .iter()
                 .any(|commit_sha| commit_sha == &post_cutoff_sha),
             "a reviewed post-cutoff candidate-tree row was discarded during projection",
+        )?;
+        require(
+            projected.len() == baseline.len() + 1,
+            "projection admitted more than the single reviewed post-cutoff row",
+        )?;
+        require(
+            !projected
+                .iter()
+                .any(|commit_sha| commit_sha == &still_pending),
+            "projection admitted a still-pending post-cutoff row",
+        )
+    }
+
+    #[test]
+    fn accepted_execution_exclusion_paths_are_pinned() -> Result<(), String> {
+        let manifest: AdjudicationManifest = serde_json::from_str(include_str!(
+            "../../../fixtures/release_denominator/2832-adjudication.json"
+        ))
+        .map_err(|error| error.to_string())?;
+        let mut override_record =
+            manifest.overrides.into_iter().next().ok_or_else(|| {
+                "adjudication fixture is missing its exception override".to_string()
+            })?;
+        override_record.candidate_only_excluded_paths[0] = "unrelated/path".to_string();
+        require(
+            validate_override_exclusion_paths(&override_record).is_err(),
+            "mutated accepted execution exclusion paths were accepted",
+        )?;
+        override_record.candidate_only_excluded_paths.clear();
+        override_record.disposition = "include_product".to_string();
+        require(
+            validate_override_exclusion_paths(&override_record).is_err(),
+            "non-exclusion disposition retained exclusion authority",
         )
     }
 
