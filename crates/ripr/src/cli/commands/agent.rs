@@ -279,7 +279,9 @@ fn run_agent_receipt(options: AgentReceiptOptions) -> Result<(), String> {
             output::agent_receipt::AgentReceiptAnalysisOutcome::Present(Box::new(outcome))
         }
         Err(error) => output::agent_receipt::AgentReceiptAnalysisOutcome::Unavailable {
-            status: error.status().to_string(),
+            status: output::agent_receipt::AgentReceiptUnavailableStatus::from_status(
+                error.status(),
+            )?,
             reason: error.to_string(),
         },
     };

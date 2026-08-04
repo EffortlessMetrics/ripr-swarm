@@ -45,7 +45,12 @@ pub(super) fn read_analysis_outcome(
         &value,
     ) {
         Ok(outcome) => outcome,
-        Err(error) => return (None, invalid_analysis_outcome_surface(&error.to_string())),
+        Err(error) => {
+            return (
+                None,
+                invalid_analysis_outcome_surface(error.status(), &error.to_string()),
+            );
+        }
     };
     let mut surface = artifact.surface;
     surface.status = if outcome.kind.is_complete() {
@@ -65,13 +70,13 @@ pub(super) fn read_analysis_outcome(
     (Some(outcome), surface)
 }
 
-fn invalid_analysis_outcome_surface(summary: &str) -> AgentReviewSurface {
+fn invalid_analysis_outcome_surface(status: &str, summary: &str) -> AgentReviewSurface {
     AgentReviewSurface {
         name: "analysis_outcome".to_string(),
         label: "Analysis outcome".to_string(),
         path: Some(WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT.to_string()),
-        state: "invalid_json".to_string(),
-        status: "invalid_json".to_string(),
+        state: status.to_string(),
+        status: status.to_string(),
         required: true,
         summary: summary.to_string(),
     }

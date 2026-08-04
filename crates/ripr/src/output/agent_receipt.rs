@@ -12,10 +12,36 @@ use super::receipt_lifecycle::receipt_lifecycle_state_from_movement;
 
 pub(crate) const AGENT_RECEIPT_SCHEMA_VERSION: &str = "0.4";
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AgentReceiptUnavailableStatus {
+    Missing,
+    Invalid,
+}
+
+impl AgentReceiptUnavailableStatus {
+    pub(crate) fn from_status(status: &str) -> Result<Self, String> {
+        match status {
+            "missing" => Ok(Self::Missing),
+            "invalid" => Ok(Self::Invalid),
+            other => Err(format!("unsupported agent receipt outcome status: {other}")),
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Missing => "missing",
+            Self::Invalid => "invalid",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum AgentReceiptAnalysisOutcome {
     Present(Box<AnalysisOutcome>),
-    Unavailable { status: String, reason: String },
+    Unavailable {
+        status: AgentReceiptUnavailableStatus,
+        reason: String,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -107,9 +133,10 @@ pub(crate) fn render_agent_receipt_value_json(
     let status = match &analysis_outcome {
         AgentReceiptAnalysisOutcome::Present(outcome) if outcome.kind.is_complete() => "advisory",
         AgentReceiptAnalysisOutcome::Present(_) => "incomplete",
-        AgentReceiptAnalysisOutcome::Unavailable { status, .. } if status == "missing" => {
-            "incomplete"
-        }
+        AgentReceiptAnalysisOutcome::Unavailable {
+            status: AgentReceiptUnavailableStatus::Missing,
+            ..
+        } => "incomplete",
         AgentReceiptAnalysisOutcome::Unavailable { .. } => "invalid",
     };
 
@@ -785,6 +812,38 @@ mod tests {
     }
 
     #[test]
+    fn agent_receipt_keeps_distinct_outcome_digests() -> Result<(), String> {
+        let verify: Value =
+            serde_json::from_str(agent_verify_json()).map_err(|error| error.to_string())?;
+        let mut digests = Vec::new();
+        for kind in [
+            AnalysisOutcomeKind::UnsupportedInput,
+            AnalysisOutcomeKind::PartialWithLimitations,
+        ] {
+            let outcome = test_incomplete_analysis_outcome(kind)?;
+            let rendered = render_agent_receipt_value_json(
+                &verify,
+                "target/ripr/workflow/agent-verify.json".to_string(),
+                "seam-a",
+                None,
+                &[],
+                fixed_provenance(),
+                AgentReceiptAnalysisOutcome::Present(Box::new(outcome)),
+            )?;
+            let value: Value =
+                serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
+            digests.push(
+                value["analysis_outcome"]["semantic_digest"]
+                    .as_str()
+                    .ok_or_else(|| "expected semantic digest".to_string())?
+                    .to_string(),
+            );
+        }
+        assert_ne!(digests[0], digests[1]);
+        Ok(())
+    }
+
+    #[test]
     fn agent_receipt_does_not_look_clean_without_producer_evidence() -> Result<(), String> {
         let rendered = render_agent_receipt_value_json(
             &serde_json::from_str(agent_verify_json()).map_err(|error| error.to_string())?,
@@ -794,7 +853,7 @@ mod tests {
             &[],
             fixed_provenance(),
             AgentReceiptAnalysisOutcome::Unavailable {
-                status: "missing".to_string(),
+                status: AgentReceiptUnavailableStatus::Missing,
                 reason: "producer artifact is missing".to_string(),
             },
         )?;
@@ -812,7 +871,7 @@ mod tests {
 
     #[test]
     fn agent_receipt_marks_malformed_or_stale_evidence_invalid() -> Result<(), String> {
-        for status in ["invalid", "malformed"] {
+        for status in [AgentReceiptUnavailableStatus::Invalid] {
             let rendered = render_agent_receipt_value_json(
                 &serde_json::from_str(agent_verify_json()).map_err(|error| error.to_string())?,
                 "target/ripr/workflow/agent-verify.json".to_string(),
@@ -821,16 +880,21 @@ mod tests {
                 &[],
                 fixed_provenance(),
                 AgentReceiptAnalysisOutcome::Unavailable {
-                    status: status.to_string(),
+                    status,
                     reason: "producer identity is stale".to_string(),
                 },
             )?;
             let value: Value =
                 serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
             assert_eq!(value["status"], "invalid");
-            assert_eq!(value["analysis_outcome_status"], status);
+            assert_eq!(value["analysis_outcome_status"], status.as_str());
             assert_eq!(value["analysis_outcome"], Value::Null);
         }
         Ok(())
+    }
+
+    #[test]
+    fn agent_receipt_rejects_unrecognized_unavailable_status() {
+        assert!(AgentReceiptUnavailableStatus::from_status("malformed").is_err());
     }
 }

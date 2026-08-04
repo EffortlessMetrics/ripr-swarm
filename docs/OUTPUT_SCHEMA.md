@@ -6494,7 +6494,7 @@ JSON shape:
 
 ```json
 {
-  "schema_version": "0.3",
+  "schema_version": "0.4",
   "tool": "ripr",
   "status": "advisory",
   "analysis_outcome_status": "complete",
