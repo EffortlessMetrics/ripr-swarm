@@ -102,7 +102,9 @@ function stageIntegrationWorkspace(templatePath: string, workspacePath: string):
 
 async function main() {
   try {
-    const extensionDevelopmentPath = path.resolve(__dirname, '../../');
+    const extensionDevelopmentPath = path.resolve(
+      process.env.RIPR_TEST_EXTENSION_PATH ?? path.resolve(__dirname, '../../')
+    );
     const extensionTestsPath = path.resolve(__dirname, './suite/index');
     const templatePath = path.resolve(
       process.env.RIPR_TEST_WORKSPACE_PATH ??
