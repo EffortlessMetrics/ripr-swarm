@@ -2668,7 +2668,7 @@ mod tests {
                     })
                     == Some(229)
                 && snapshot.source.range_commits.last().map(String::as_str)
-                    == Some("d5dd29a740eaf6a8405a5e470b1fef2ea71e9db8"),
+                    == Some("388aa3c49cf639fe53f9dcbf24ef9c54e19e36ba"),
             "pinned 259-entry first-parent census does not match record order and cutoff",
         )
     }
