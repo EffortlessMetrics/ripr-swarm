@@ -675,8 +675,8 @@
     "known_candidate_defects": [
       {
         "defect_id": "defect:goldens-check-misses-editor-agent-loop",
-        "description": "The golden-check command previously missed editor-agent-loop manifest drift; #2899 unified the gate with the shared assistant-loop-health validator and added fail-closed missing-corpus coverage.",
-        "resolved": true,
+        "description": "The golden-check command previously missed editor-agent-loop manifest drift; #2899 fixed the main-branch gate with the shared assistant-loop-health validator and added fail-closed missing-corpus coverage. Candidate inclusion of that fixing commit remains pending post-cutoff adjudication.",
+        "resolved": false,
         "evidence_refs": [
           "command:cargo xtask goldens check",
           "fixture:boundary_gap/expected/editor-agent-loop",
