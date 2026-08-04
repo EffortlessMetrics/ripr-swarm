@@ -7,6 +7,7 @@ use crate::agent::loop_commands::{
 use crate::analysis_outcome::AnalysisOutcome;
 use crate::app::agent_status::AgentStatusReport;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::path::Path;
 
 use super::receipt::receipt_snapshot;
@@ -25,7 +26,10 @@ pub(super) struct ArtifactRead {
     pub(super) surface: AgentReviewSurface,
 }
 
-pub(super) fn read_analysis_outcome(root: &Path) -> (Option<AnalysisOutcome>, AgentReviewSurface) {
+pub(super) fn read_analysis_outcome(
+    root: &Path,
+    root_display: &str,
+) -> (Option<AnalysisOutcome>, AgentReviewSurface) {
     let artifact = read_json_surface(
         root,
         "analysis_outcome",
@@ -36,6 +40,22 @@ pub(super) fn read_analysis_outcome(root: &Path) -> (Option<AnalysisOutcome>, Ag
     let Some(value) = artifact.value else {
         return (None, artifact.surface);
     };
+    if value.get("tool").and_then(Value::as_str) != Some("ripr") {
+        return (
+            None,
+            invalid_analysis_outcome_surface(
+                "Analysis outcome artifact has an unknown producer tool.",
+            ),
+        );
+    }
+    if value.get("root").and_then(Value::as_str) != Some(root_display) {
+        return (
+            None,
+            invalid_analysis_outcome_surface(
+                "Analysis outcome artifact root does not match the review root.",
+            ),
+        );
+    }
     let Some(envelope) = value.get("analysis_outcome") else {
         return (
             None,
@@ -78,6 +98,43 @@ pub(super) fn read_analysis_outcome(root: &Path) -> (Option<AnalysisOutcome>, Ag
                 "Analysis outcome artifact completeness disagrees with its typed outcome.",
             ),
         );
+    }
+    let declared_base = value.get("base").and_then(Value::as_str);
+    if outcome.identity.base_revision.as_deref() != declared_base {
+        return (
+            None,
+            invalid_analysis_outcome_surface(
+                "Analysis outcome artifact base does not match its typed identity.",
+            ),
+        );
+    }
+    if root.join(".git").exists() {
+        let diff = match crate::analysis::load_diff(root, declared_base, None, None) {
+            Ok(diff) => diff,
+            Err(error) => {
+                return (
+                    None,
+                    invalid_analysis_outcome_surface(&format!(
+                        "Current analysis input could not be established: {error}."
+                    )),
+                );
+            }
+        };
+        let expected_input_identity = format!(
+            "sha256:{}",
+            Sha256::digest(diff.as_bytes())
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        );
+        if outcome.identity.input_identity.as_deref() != Some(expected_input_identity.as_str()) {
+            return (
+                None,
+                invalid_analysis_outcome_surface(
+                    "Analysis outcome artifact input identity does not match the current diff.",
+                ),
+            );
+        }
     }
     let mut surface = artifact.surface;
     surface.status = if outcome.kind.is_complete() {

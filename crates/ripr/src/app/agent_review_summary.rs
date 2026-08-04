@@ -80,7 +80,7 @@ mod tests {
     "outcome": {
       "schema_version": "0.1",
       "kind": "no_scope",
-      "identity": {},
+      "identity": {"base_revision": "origin/main"},
       "counts": {
         "changed_file_count": 0,
         "changed_line_count": 0,
@@ -339,7 +339,7 @@ mod tests {
     "outcome": {
       "schema_version": "0.1",
       "kind": "unsupported_input",
-      "identity": {},
+      "identity": {"base_revision": "origin/main"},
       "counts": {
         "changed_file_count": 1,
         "changed_line_count": 2,
@@ -505,7 +505,7 @@ mod tests {
     "outcome": {
       "schema_version": "0.1",
       "kind": "complete_no_findings",
-      "identity": {},
+      "identity": {"base_revision": "origin/main"},
       "counts": {
         "changed_file_count": 0,
         "changed_line_count": 0,

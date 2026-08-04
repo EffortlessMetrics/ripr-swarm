@@ -33,7 +33,7 @@
         "repository_identity": null,
         "root_identity": null,
         "config_identity": null,
-        "base_revision": null,
+        "base_revision": "origin/main",
         "input_identity": null,
         "snapshot_identity": null
       },
