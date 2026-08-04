@@ -863,26 +863,23 @@ mod tests {
 
     #[test]
     fn agent_receipt_marks_malformed_or_stale_evidence_invalid() -> Result<(), String> {
-        {
-            let status = AgentReceiptUnavailableStatus::Invalid;
-            let rendered = render_agent_receipt_value_json(
-                &serde_json::from_str(agent_verify_json()).map_err(|error| error.to_string())?,
-                "target/ripr/workflow/agent-verify.json".to_string(),
-                "seam-a",
-                None,
-                &[],
-                fixed_provenance(),
-                AgentReceiptAnalysisOutcome::Unavailable {
-                    status,
-                    reason: "producer identity is stale".to_string(),
-                },
-            )?;
-            let value: Value =
-                serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
-            assert_eq!(value["status"], "invalid");
-            assert_eq!(value["analysis_outcome_status"], status.as_str());
-            assert_eq!(value["analysis_outcome"], Value::Null);
-        }
+        let status = AgentReceiptUnavailableStatus::Invalid;
+        let rendered = render_agent_receipt_value_json(
+            &serde_json::from_str(agent_verify_json()).map_err(|error| error.to_string())?,
+            "target/ripr/workflow/agent-verify.json".to_string(),
+            "seam-a",
+            None,
+            &[],
+            fixed_provenance(),
+            AgentReceiptAnalysisOutcome::Unavailable {
+                status,
+                reason: "producer identity is stale".to_string(),
+            },
+        )?;
+        let value: Value = serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
+        assert_eq!(value["status"], "invalid");
+        assert_eq!(value["analysis_outcome_status"], status.as_str());
+        assert_eq!(value["analysis_outcome"], Value::Null);
         Ok(())
     }
 }

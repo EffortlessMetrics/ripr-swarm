@@ -189,8 +189,9 @@ mod tests {
             },
             Vec::new(),
         )?;
-        let diff = crate::analysis::load_diff(&workspace_root()?, None, None, None)?;
+        let diff = crate::analysis::load_diff(&workspace_root()?, Some("HEAD"), None, None)?;
         let digest = Sha256::digest(diff.as_bytes());
+        outcome.identity.base_revision = Some("HEAD".to_string());
         outcome.identity.input_identity = Some(format!("sha256:{}", digest_hex(digest.as_ref())));
         Ok(outcome)
     }
@@ -220,7 +221,7 @@ mod tests {
             "schema_version": "0.2",
             "tool": "ripr",
             "root": root.display().to_string(),
-            "base": null,
+            "base": "HEAD",
             "analysis_outcome": {
                 "analysis_complete": declared_complete,
                 "outcome": outcome
