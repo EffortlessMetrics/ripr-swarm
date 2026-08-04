@@ -19,7 +19,12 @@ candidate qualification or publication decision.
 `release_denominator_snapshot` containing the historical base, candidate ref
 and SHA, ordered range commits, candidate-tree commits, and one record per
 range commit. Each record carries release disposition, ownership, tree state,
-review/proof references, and source-survivor or swarm-exclusion context.
+review/proof references, source-survivor or swarm-exclusion context, and
+typed `references[]` authority evidence. Each reference records its kind,
+number, source, one evidence URL or stable GitHub identity, the observed
+commit SHA, review state, and any limitation. The legacy `pr_refs` and
+`issue_refs` fields remain compatibility projections derived from
+`references[]`; they are not reference authority.
 
 The accepted dispositions are `include_product`,
 `include_release_infrastructure`, `include_control_or_honesty`,
@@ -36,7 +41,8 @@ observations. It does not replace the reviewed ledger.
 ## Validation
 
 Validation fails closed for missing, duplicate, out-of-range, or wrongly
-ordered records; range/tree disagreement; disposition/tree-state mismatch;
+ordered records; candidate-tree commit sets that are not subsets of the
+captured range; range/tree disagreement; disposition/tree-state mismatch;
 unresolved operator decisions in a final ledger; and live observation drift.
 JSON and Markdown are rendered from the same normalized report and carry the
 same authority boundary and limitation statements.
@@ -56,11 +62,40 @@ decision; final output is ready only after every record is reconciled.
 ## Current-main evidence
 
 `fixtures/release_denominator/current-main-provisional.json` is a captured
-provisional census of `c86807ec..37cc6595` at `origin/main` as observed on
-2026-07-30. It carries 191 first-parent records and matching candidate-tree
-membership. All records remain `operator_decision_required`; the fixture is
-range/identity evidence, not a final release disposition or candidate
-qualification.
+provisional census of `c86807ec..c30a2683` at `origin/main` as observed on
+2026-08-03. It carries 234 first-parent records and 219 candidate-tree
+records, with 15 candidate-only exclusions and 15 safe deferrals. The
+development-main merges for #2842, #2844, corrective #2858/#2859,
+corrective #2862, release-control #2857, corrective #2867, #2870, #2860, #2861,
+#2869, #2876, #2873, #2878, and #2872 are retained in
+the denominator with current `safe_defer_post_0_11` disposition and
+`absent_by_candidate_only_exclusion` tree state; earlier `hold_post_release`
+is historical context only. The later corrective commits inherit that
+disposition unless #2379 changes the release graph. The fixture pins cutoff
+`c30a26831b75051813bfaa3dbd9378096ec6aa82`, range digest
+`sha256:b85b8314b5f738335ae63220fe5f0ea8ef4e6e1892124eea148ea49181168501`,
+and record-set digest
+`sha256:166380b5b8cef061f6d617db089a5070e566e54841bd103c6a962d832881efe0`.
+It is range/identity and explicitly reconciled disposition evidence, not a
+final release qualification.
+
+## Cut-relative denominator boundary
+
+The final denominator is relative to a selected development cut `C`, not to
+an indefinitely moving `main`. Every commit through `C` must have a reviewed
+disposition and candidate-tree state. The ledger must identify whether each
+record is present in the candidate tree, which selected claim it satisfies,
+whether it is structural/control-only, superseded, explicitly excluded, or
+deferred, and what residual issue or truthful non-claim remains. Commits after
+`C` belong to a later provisional range or a later candidate; they must not be
+added to this candidate's denominator merely because development continues.
+
+The denominator is one reviewed input to the candidate-relative hard-cut
+predicate `candidate_required_claims_pending == 0`; the #2766 candidate
+selection DTO owns selected-claim closure. This denominator report does not
+establish selected-claim satisfaction from generic issue references alone. It
+does not impose a repository-wide open-PR or open-issue convergence
+requirement.
 
 ## Acceptance and proof map
 
@@ -69,11 +104,14 @@ shared fail-closed validator. It does not close the final candidate decision
 tracked by #1609 or the dependent release-editor lane #2769.
 
 The implementation and fixture contract are mapped in `.ripr/traceability.toml`
-under `RIPR-SPEC-0146`. Focused proof is provided by the ten tests named there
+under `RIPR-SPEC-0146`. Focused proof is provided by the twenty-five tests named there
 and the complete/reconcile-required fixtures under
 `fixtures/release_denominator/`; hosted CI is the authoritative execution
-proof for this PR. The current-main census is loaded by a focused
-normalization test that pins its 191-record range and candidate-tree counts.
+proof for this PR. The complete fixture pins the #2767/#2788 and #2768/#2790
+authority pairs, distinguishes an earlier body PR reference, and covers
+deterministic reference ordering, compatibility projection agreement, and
+digest sensitivity to changed mappings. Final ledgers reject unreviewed or
+legacy-only reference authority.
 
 ## Problem
 
@@ -115,14 +153,21 @@ decision in a final ledger, or disagreeing with live observations produces
 
 ## Test Mapping
 
-The ten focused tests listed in `.ripr/traceability.toml` cover deterministic
+The twenty-five focused tests listed in `.ripr/traceability.toml` cover deterministic
 normalization, missing/duplicate/out-of-range/order/tree failures, final
-operator decisions, live drift, JSON/Markdown claim-boundary parity, and the
-current-main 191-record census.
+operator decisions, live drift, JSON/Markdown claim-boundary parity, typed
+reference authority, compatibility projection mismatch, contradictory
+identity, the two known issue/merge-PR pairs, deterministic ordering, changed mappings, final unreviewed
+references, malformed reference evidence, numeric compatibility projection
+ordering, manual-mapping reasons, reused reference identity, and the current-main
+census pinned to the final corrective cutoff, counts, excluded commit
+identities, and record-set digest.
 
 ## Implementation Mapping
 
-The production implementation is `xtask/src/reports/release_denominator.rs`.
+The production implementation is `xtask/src/reports/release_denominator.rs`,
+including `ReferenceEvidence` validation and compatibility projection
+normalization.
 CLI parsing, dispatch, and manifest-only fixture registration are mapped in
 `xtask/src/command.rs`, `xtask/src/dispatch.rs`, and
 `xtask/src/reports/fixtures.rs`. The report contract is documented in
