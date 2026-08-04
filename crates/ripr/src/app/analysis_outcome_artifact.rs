@@ -221,7 +221,7 @@ mod tests {
             "schema_version": "0.2",
             "tool": "ripr",
             "root": root.display().to_string(),
-            "base": "HEAD",
+            "base": outcome.identity.base_revision.as_deref(),
             "analysis_outcome": {
                 "analysis_complete": declared_complete,
                 "outcome": outcome
