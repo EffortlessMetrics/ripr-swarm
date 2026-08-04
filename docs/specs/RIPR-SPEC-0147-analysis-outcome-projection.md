@@ -138,7 +138,11 @@ and
   the typed outcome and suppress full-run repair authority for incomplete
   input.
 - Generated-CI canonical-artifact publication and workflow forwarding are
-  covered by this slice; agent projections remain explicitly unclaimed.
+  covered by this slice through `xtask/src/reports/pr_evidence.rs`,
+  `crates/ripr/src/cli/commands/init.rs`, and the generated-workflow fixtures
+  `commands::tests::init_generated_github_workflow_matches_smoke_fixture` and
+  `commands::tests::init_generated_github_workflow_is_advisory`; agent
+  projections remain explicitly unclaimed.
 
 ## Test Mapping
 
@@ -180,8 +184,10 @@ builders. PR-B1 projects the DTO in `crates/ripr/src/output/sarif.rs` and
 PR-C projects the DTO through `crates/ripr/src/lsp/state.rs`,
 `crates/ripr/src/lsp/diagnostics.rs`, and `crates/ripr/src/lsp/backend.rs`.
 `docs/OUTPUT_SCHEMA.md` records the wire shape. Generated-CI preserves the
-raw producer artifact through `xtask/src/reports/pr_evidence.rs` and forwards
-it from the CI workflows; agent projections remain explicitly unclaimed.
+raw producer artifact through `xtask/src/reports/pr_evidence.rs`, forwards it
+from the CI workflows, and emits the same handoff from the generated workflow
+in `crates/ripr/src/cli/commands/init.rs`; agent projections remain explicitly
+unclaimed.
 Review-comments consumes the DTO in `crates/ripr/src/cli/commands.rs` and
 projects it through `crates/ripr/src/output/review_comments.rs`; the wire
 contract is defined in `schemas/ripr/review-comments.schema.json` and the

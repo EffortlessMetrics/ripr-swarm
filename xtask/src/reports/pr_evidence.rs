@@ -102,6 +102,7 @@ fn write_pr_evidence_with_runner(
     options: &PrEvidenceOptions,
     run_check: impl FnOnce(&Path, &PrEvidenceOptions) -> Result<String, String>,
 ) -> Result<(), String> {
+    remove_stale_check_artifact(repo)?;
     verify_revision(repo, &options.base)?;
     verify_revision(repo, &options.head)?;
     let changed_files = changed_files(repo, options)?;
@@ -113,7 +114,6 @@ fn write_pr_evidence_with_runner(
         &changed_files,
         &options.root,
     )?;
-    remove_stale_check_artifact(repo)?;
     match run_check(repo, options) {
         Ok(check_json) => {
             match write_pr_evidence_packet(repo, options, &changed_files, &check_json) {
@@ -299,6 +299,8 @@ fn run_ripr_check(repo: &Path, options: &PrEvidenceOptions) -> Result<String, St
         "check".to_string(),
         "--root".to_string(),
         root_arg,
+        "--base".to_string(),
+        options.base.clone(),
         "--diff".to_string(),
         diff_arg,
         "--format".to_string(),
@@ -1136,10 +1138,40 @@ mod tests {
             ..options()
         };
         let check_json = r#"{
+          "schema_version": "0.2",
+          "tool": "ripr",
+          "mode": "draft",
+          "root": ".",
+          "base": "HEAD~1",
           "summary": {
             "weakly_exposed": 1,
             "reachable_unrevealed": 0,
             "no_static_path": 0
+          },
+          "findings": [],
+          "analysis_outcome": {
+            "analysis_complete": true,
+            "outcome": {
+              "schema_version": "0.1",
+              "kind": "no_behavioral_candidates",
+              "identity": {
+                "repository_identity": null,
+                "root_identity": null,
+                "config_identity": null,
+                "base_revision": "HEAD~1",
+                "input_identity": "sha256:fixture",
+                "snapshot_identity": null
+              },
+              "counts": {
+                "changed_file_count": 1,
+                "changed_line_count": 1,
+                "candidate_line_count": 0,
+                "probe_count": 0,
+                "finding_count": 0
+              },
+              "limitations": [],
+              "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+            }
           }
         }"#;
         write_pr_evidence_from_check_json(&repo, &options, check_json)?;
@@ -1159,7 +1191,43 @@ mod tests {
         let check_value: Value = serde_json::from_str(&check_text)
             .map_err(|err| format!("parse canonical check output: {err}"))?;
         assert_eq!(check_value["summary"]["weakly_exposed"], 1);
+        assert_eq!(check_value["schema_version"], "0.2");
+        assert_eq!(check_value["tool"], "ripr");
+        assert_eq!(check_value["mode"], "draft");
+        assert_eq!(check_value["root"], ".");
+        assert_eq!(check_value["base"], "HEAD~1");
+        assert!(check_value["findings"].is_array());
+        assert_eq!(check_value["analysis_outcome"]["analysis_complete"], true);
+        assert_eq!(
+            check_value["analysis_outcome"]["outcome"]["kind"],
+            "no_behavioral_candidates"
+        );
 
+        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn stale_check_artifact_is_removed_before_revision_setup_failure() -> Result<(), String> {
+        let repo = temp_repo("ripr-pr-stale-before-setup-failure")?;
+        write_parented_file(
+            &repo.join(PR_CHECK_JSON),
+            PR_CHECK_JSON,
+            "{\"stale\":true}\n",
+        )?;
+        let options = PrEvidenceOptions {
+            base: "missing-base".to_string(),
+            ..options()
+        };
+
+        let error = write_pr_evidence_with_runner(&repo, &options, |_repo, _options| {
+            Err("runner must not execute after revision setup failure".to_string())
+        })
+        .err()
+        .ok_or_else(|| "invalid revision should fail before the runner".to_string())?;
+
+        assert!(error.contains("bad base revision"));
+        assert!(!repo.join(PR_CHECK_JSON).exists());
         fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
         Ok(())
     }
@@ -1197,6 +1265,8 @@ mod tests {
             "check".to_string(),
             "--root".to_string(),
             ".".to_string(),
+            "--base".to_string(),
+            "origin/main".to_string(),
             "--diff".to_string(),
             "target/ripr/pr/pr.diff".to_string(),
             "--format".to_string(),

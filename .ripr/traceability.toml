@@ -6523,6 +6523,8 @@ tests = [
   "crates/ripr/src/lsp/backend.rs::top_limitation_selection_tests::top_limitation_retains_typed_incomplete_outcome",
   "crates/ripr/src/output/review_comments.rs::tests::review_comments_projects_typed_outcome_without_strengthening_incomplete_input",
   "crates/ripr/src/output/review_comments.rs::tests::review_comments_projects_complete_zero_outcome_as_advisory",
+  "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_matches_smoke_fixture",
+  "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_is_advisory",
 ]
 code = [
   "crates/ripr/src/analysis_outcome.rs",
@@ -6549,6 +6551,7 @@ code = [
   "crates/ripr/src/lsp/diagnostics.rs",
   "crates/ripr/src/lsp/backend.rs",
   "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/commands/init.rs",
   "crates/ripr/src/output/review_comments.rs",
   "schemas/ripr/review-comments.schema.json",
   "xtask/src/reports/review_comments.rs",
