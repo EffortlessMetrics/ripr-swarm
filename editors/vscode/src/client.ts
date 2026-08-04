@@ -274,7 +274,7 @@ export class RiprClientLifecycleTimeoutError extends Error {
 }
 
 export interface RiprClientRuntime {
-  getConfig(): RiprConfig;
+  getConfig(resource?: vscode.Uri): RiprConfig;
   workspaceRootState(): RiprWorkspaceRootState;
   workspaceFolders(): readonly vscode.WorkspaceFolder[];
   showQuickPick<T extends vscode.QuickPickItem>(
@@ -435,9 +435,11 @@ export class RiprClientController {
       return;
     }
 
-    const config = this.runtime.getConfig();
     this.workspaceRootState = this.resolveWorkspaceRootState();
     this.workspaceRoot = this.workspaceRootState.root;
+    const config = this.runtime.getConfig(
+      this.workspaceRoot ? vscode.Uri.file(this.workspaceRoot) : undefined
+    );
     await this.refreshSetupStatusFiles();
 
     if (!config.enabled) {

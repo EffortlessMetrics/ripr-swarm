@@ -17,8 +17,13 @@ export interface RiprConfig {
   traceServer: TraceSetting;
 }
 
-export function getConfig(): RiprConfig {
-  const config = vscode.workspace.getConfiguration('ripr');
+export function getConfig(resource?: vscode.Uri): RiprConfig {
+  // Resource-scoped settings must be read against the same workspace root
+  // that the language server receives through workspace/configuration. A
+  // resource-less lookup can fall back to the user layer when a restart is
+  // initiated without an active editor, which makes profile transitions
+  // disagree between the extension and server.
+  const config = vscode.workspace.getConfiguration('ripr', resource);
   return {
     enabled: config.get<boolean>('enabled', true),
     serverPath: config.get<string>('server.path', ''),

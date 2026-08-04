@@ -329,6 +329,18 @@ suite('Extension Smoke', () => {
     });
   });
 
+  test('reads startup settings against the selected workspace resource', async () => {
+    const workspaceRoot = path.join(path.parse(process.cwd()).root, 'ripr-resource-scope-test');
+    await withControllerTestContext({ workspaceRoot }, async (context) => {
+      await context.controller.start();
+
+      assert.strictEqual(context.configuredWorkspaceRootState.root, workspaceRoot);
+      const resource = context.configResource();
+      assert.ok(resource, 'startup config lookup must be resource-scoped');
+      assertWorkspacePathEqual(resource.fsPath, workspaceRoot);
+    });
+  });
+
   test('real server surfaces seam diagnostic, hover provider, and agent actions', async function (this: Mocha.Context) {
     this.timeout(75000);
     if (!process.env.RIPR_TEST_SERVER_PATH) {
@@ -4177,21 +4189,25 @@ function createControllerTestContext(options: ControllerTestOptions) {
   const errorMessages: string[] = [];
   let clientOptions: unknown;
   let experimentalCapabilities: unknown;
+  const configResources: Array<vscode.Uri | undefined> = [];
   const configuredWorkspaceRootState = controllerWorkspaceRootState(options);
   const runtime: RiprClientRuntime = {
-    getConfig: () => ({
-      enabled: options.enabled ?? true,
-      serverPath: '',
-      serverArgs: ['lsp', '--stdio'],
-      autoDownload: false,
-      serverVersion: '',
-      downloadBaseUrl: '',
-      checkMode: 'draft',
-      baseRef: 'origin/main',
-      seamDiagnostics: options.seamDiagnostics ?? true,
-      diagnosticProfile: options.diagnosticProfile ?? 'actionable',
-      traceServer: 'off'
-    }),
+    getConfig: (resource) => {
+      configResources.push(resource);
+      return {
+        enabled: options.enabled ?? true,
+        serverPath: '',
+        serverArgs: ['lsp', '--stdio'],
+        autoDownload: false,
+        serverVersion: '',
+        downloadBaseUrl: '',
+        checkMode: 'draft',
+        baseRef: 'origin/main',
+        seamDiagnostics: options.seamDiagnostics ?? true,
+        diagnosticProfile: options.diagnosticProfile ?? 'actionable',
+        traceServer: 'off'
+      };
+    },
     workspaceRootState: () => configuredWorkspaceRootState,
     workspaceFolders: () => [],
     showQuickPick: async () => undefined,
@@ -4247,6 +4263,8 @@ function createControllerTestContext(options: ControllerTestOptions) {
     outputLines,
     clientOptions: () => clientOptions,
     experimentalCapabilities: () => experimentalCapabilities,
+    configResource: () => configResources.find((resource) => resource !== undefined),
+    configuredWorkspaceRootState,
     dispose: async () => {
       await controller.stop();
       output.dispose();
