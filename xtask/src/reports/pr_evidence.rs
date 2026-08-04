@@ -1029,7 +1029,7 @@ mod tests {
         write_parented_file(
             &repo.join(PR_CHECK_JSON),
             PR_CHECK_JSON,
-            "{\"stale\":true}\n".to_string(),
+            "{\"stale\":true}\n",
         )?;
         write_pr_evidence_with_runner(&repo, &options, |_repo, _options| {
             Err("ripr check for PR evidence timed out after 120 seconds; retry command: cargo xtask ripr-pr --base HEAD~1 --head HEAD --root .".to_string())
