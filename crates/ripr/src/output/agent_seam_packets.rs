@@ -1217,7 +1217,7 @@ fn task_for_gap_route(
     route: &GapRepairRoute,
     discriminator: &DiscriminatorAvailability,
 ) -> &'static str {
-    if !discriminator_gate(route, discriminator).allows_targeted_test() {
+    if discriminator_gate(route, discriminator).is_inspection_only() {
         return "inspect_static_limitation";
     }
     match route.route_kind.as_str() {
@@ -1238,6 +1238,7 @@ fn route_requires_discriminator(route: &GapRepairRoute) -> bool {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DiscriminatorGate {
     TargetedTestAllowed,
+    NonTargetedRoute,
     InspectStaticLimitation,
 }
 
@@ -1245,13 +1246,20 @@ impl DiscriminatorGate {
     const fn allows_targeted_test(self) -> bool {
         matches!(self, Self::TargetedTestAllowed)
     }
+
+    const fn is_inspection_only(self) -> bool {
+        matches!(self, Self::InspectStaticLimitation)
+    }
 }
 
 fn discriminator_gate(
     route: &GapRepairRoute,
     discriminator: &DiscriminatorAvailability,
 ) -> DiscriminatorGate {
-    if route_requires_discriminator(route) && discriminator.legacy_text().is_none() {
+    if !route_requires_discriminator(route) {
+        return DiscriminatorGate::NonTargetedRoute;
+    }
+    if discriminator.legacy_text().is_none() {
         DiscriminatorGate::InspectStaticLimitation
     } else {
         DiscriminatorGate::TargetedTestAllowed
@@ -1262,7 +1270,7 @@ fn recommended_test_reason(
     route: &GapRepairRoute,
     discriminator: &DiscriminatorAvailability,
 ) -> &'static str {
-    if !discriminator_gate(route, discriminator).allows_targeted_test() {
+    if discriminator_gate(route, discriminator).is_inspection_only() {
         return "producer discriminator was not produced; inspect the fix site before editing tests";
     }
     match route.route_kind.as_str() {
@@ -1371,7 +1379,7 @@ fn gap_record_prompt(
     verify_command: &str,
 ) -> String {
     let repair = repair_text_for_gap_route(route);
-    let prefix = if !discriminator_gate(route, discriminator).allows_targeted_test() {
+    let prefix = if discriminator_gate(route, discriminator).is_inspection_only() {
         "The producer did not provide a discriminator; inspect the fix site and do not promote this to a targeted-test repair. "
     } else {
         ""
@@ -1561,7 +1569,7 @@ fn gap_record_packet_repair(
         "Focused proof intent: {}",
         gap_record_packet_focused_proof_intent(route)
     ));
-    if !discriminator_gate(route, discriminator).allows_targeted_test() {
+    if discriminator_gate(route, discriminator).is_inspection_only() {
         repair.push(
             "Do not write or promote a targeted test until the producer supplies a discriminator; inspect the fix site instead."
                 .to_string(),
@@ -3666,6 +3674,34 @@ mod tests {
         );
         assert_eq!(queued["suggested_test_file"], serde_json::Value::Null);
         assert_eq!(queued["suggested_test_name"], serde_json::Value::Null);
+
+        let mut inspection_record = typed_gap_record()?;
+        let inspection_route = inspection_record
+            .repair_route
+            .as_mut()
+            .ok_or_else(|| "expected inspection repair route".to_string())?;
+        inspection_route.route_kind = "InspectStaticLimit".to_string();
+        inspection_route.missing_discriminator = Some("producer boundary fact".to_string());
+        let inspection_json =
+            render_agent_gap_record_packet_json("ledger.json", &inspection_record)?;
+        let inspection_value = serde_json::from_str::<serde_json::Value>(&inspection_json)
+            .map_err(|error| format!("inspection packet JSON should parse: {error}"))?;
+        let inspection_packet = inspection_value["packets"]
+            .as_array()
+            .and_then(|packets| packets.first())
+            .ok_or_else(|| format!("missing inspection packet: {inspection_json}"))?;
+        assert_eq!(
+            inspection_packet["task"],
+            serde_json::json!("inspect_static_limitation")
+        );
+        assert_eq!(
+            inspection_packet["recommended_test"]["file"],
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            inspection_packet["recommended_test"]["name"],
+            serde_json::Value::Null
+        );
         Ok(())
     }
 
