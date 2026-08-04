@@ -90,8 +90,12 @@ The candidate control vocabulary is
 `candidate_claims_deferred`, `candidate_defects_unresolved`,
 `denominator_decisions_remaining` (the schema-0.1 provisional-cutoff field),
 `denominator_decisions_remaining_through_selected_cut`, `candidate_cut_selected`, and
-`candidate_ref_created`. An informational `open_release_pr_count` must not be
-used as a readiness predicate.
+`candidate_ref_created`. A hard-cut decision also requires a `final_cut_authority`
+ledger bound to the selected cut. Its record-derived authority must report zero
+provisional decisions, zero unreviewed records after the provisional cutoff
+through the selected cut, and zero final-cut decisions; the selected-cut review
+flag must be true. An informational `open_release_pr_count` must not be used as
+a readiness predicate.
 
 The release-control snapshot may carry an optional `candidate_selection` DTO.
 When it is absent, candidate state is `scope_pending`; the ordinary PR lens
@@ -107,9 +111,20 @@ CandidateSelection
   known_candidate_defects[]
   denominator_decisions_remaining_through_provisional_cutoff
   denominator_decisions_remaining_through_selected_cut
+  final_cut_authority
   projection
   qualification
 ```
+
+`final_cut_authority` carries `cut_sha`,
+`provisional_decisions_remaining`,
+`unreviewed_post_provisional_records_through_cut`,
+`final_cut_decisions_remaining`, and
+`reviewed_through_selected_cut`. The denominator normalizer derives these
+values from records keyed by commit SHA and rejects disagreement with supplied
+counts. The legacy `denominator_decisions_remaining` serialized field remains
+the schema-0.1 wire name; the longer internal name is accepted as an input
+alias only.
 
 Each selected claim carries `claim_id`, `owner_issue`,
 `required_for_candidate`, one resolution (`pending`, `landed`,
@@ -141,6 +156,11 @@ The immutable ref must use the repository-controlled
 `refs/heads/main`, blank references, and whitespace-only values are not
 qualification evidence. The immutable ref is intentionally not required for
 hard-cut eligibility.
+
+Candidate-only exclusion records must identify whether their accepted paths
+are file-, symbol-, or hunk-scoped. The path set must match the accepted
+exclusion authority after normalization; unknown manifest keys, blank paths,
+duplicates, unrelated paths, and replay residue are invalid.
 
 ## Input contract
 

@@ -42,6 +42,8 @@ const TREE_STATES: &[&str] = &[
     "candidate_tree_state_pending",
 ];
 
+const CANDIDATE_EXCLUSION_SCOPES: &[&str] = &["file", "symbol", "hunk"];
+
 const CAPTURE_STATUSES: &[&str] = &[
     "not_captured",
     "captured",
@@ -114,6 +116,8 @@ struct CommitRecord {
     candidate_tree_state: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     candidate_only_excluded_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    candidate_only_exclusion_scope: Option<String>,
     #[serde(default)]
     replacement_commit_sha: Option<String>,
     #[serde(default)]
@@ -159,6 +163,7 @@ struct GithubCaptureRecord {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct AdjudicationManifest {
     schema_version: String,
     kind: String,
@@ -169,6 +174,7 @@ struct AdjudicationManifest {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct AdjudicationBatch {
     id: String,
     positions: Vec<usize>,
@@ -179,6 +185,7 @@ struct AdjudicationBatch {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct AdjudicationOverride {
     position: usize,
     batch_id: String,
@@ -193,6 +200,8 @@ struct AdjudicationOverride {
     residual_acceptance: String,
     #[serde(default)]
     candidate_only_excluded_paths: Vec<String>,
+    #[serde(default)]
+    candidate_only_exclusion_scope: Option<String>,
     #[serde(default)]
     review_evidence: Vec<String>,
 }
@@ -715,13 +724,9 @@ fn apply_adjudication(input: &str, decisions_path: &str, output: &str) -> Result
             });
         record.release_disposition = disposition.to_string();
         record.candidate_tree_state = candidate_tree_state.to_string();
-        record.candidate_only_excluded_paths = override_record
-            .map(|record| record.candidate_only_excluded_paths.clone())
-            .unwrap_or_default();
+        apply_candidate_only_override(record, override_record)?;
         record.review_refs = vec![batch.review_ref.clone(), format!("batch:{}", batch.id)];
         if let Some(override_record) = override_record {
-            record.candidate_only_excluded_paths =
-                override_record.candidate_only_excluded_paths.clone();
             record.review_refs.push(override_record.review_ref.clone());
             record
                 .review_refs
@@ -784,17 +789,12 @@ fn project_candidate_tree(records: &[CommitRecord], range_commits: &[String]) ->
 }
 
 fn validate_override_exclusion_paths(override_record: &AdjudicationOverride) -> Result<(), String> {
-    let mut supplied = BTreeSet::new();
-    for path in &override_record.candidate_only_excluded_paths {
-        if path.trim().is_empty() || !supplied.insert(path.clone()) {
-            return Err(format!(
-                "adjudication override at position {} has blank or duplicate exclusion paths",
-                override_record.position
-            ));
-        }
-    }
+    let supplied = normalized_exclusion_paths(override_record)?;
     if override_record.disposition != "candidate_only_exclusion" {
-        if !supplied.is_empty() || override_record.exclusion_id.is_some() {
+        if !supplied.is_empty()
+            || override_record.exclusion_id.is_some()
+            || override_record.candidate_only_exclusion_scope.is_some()
+        {
             return Err(format!(
                 "adjudication override at position {} carries exclusion paths without candidate_only_exclusion disposition",
                 override_record.position
@@ -805,6 +805,17 @@ fn validate_override_exclusion_paths(override_record: &AdjudicationOverride) -> 
     if override_record.exclusion_id.as_deref() != Some("exclusion:2767:verification-execution") {
         return Err(format!(
             "adjudication override at position {} is not bound to the accepted #2767 exclusion",
+            override_record.position
+        ));
+    }
+    if !CANDIDATE_EXCLUSION_SCOPES.contains(
+        &override_record
+            .candidate_only_exclusion_scope
+            .as_deref()
+            .unwrap_or_default(),
+    ) {
+        return Err(format!(
+            "adjudication override at position {} must declare file, symbol, or hunk exclusion scope",
             override_record.position
         ));
     }
@@ -824,6 +835,44 @@ fn validate_override_exclusion_paths(override_record: &AdjudicationOverride) -> 
     Ok(())
 }
 
+fn apply_candidate_only_override(
+    record: &mut CommitRecord,
+    override_record: Option<&AdjudicationOverride>,
+) -> Result<(), String> {
+    record.candidate_only_excluded_paths = override_record
+        .map(normalized_exclusion_paths)
+        .transpose()?
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    record.candidate_only_exclusion_scope =
+        override_record.and_then(|record| record.candidate_only_exclusion_scope.clone());
+    Ok(())
+}
+
+fn normalized_exclusion_paths(
+    override_record: &AdjudicationOverride,
+) -> Result<BTreeSet<String>, String> {
+    let mut supplied = BTreeSet::new();
+    for path in &override_record.candidate_only_excluded_paths {
+        let normalized = path.trim().replace('\\', "/");
+        if normalized.is_empty()
+            || normalized == "."
+            || normalized == ".."
+            || normalized
+                .split('/')
+                .any(|part| part.is_empty() || part == "." || part == "..")
+            || !supplied.insert(normalized)
+        {
+            return Err(format!(
+                "adjudication override at position {} has blank, unsafe, or duplicate exclusion paths",
+                override_record.position
+            ));
+        }
+    }
+    Ok(supplied)
+}
+
 fn accepted_execution_excluded_paths() -> Result<BTreeSet<String>, String> {
     let scope: Value = serde_json::from_str(include_str!(
         "../../../fixtures/release_scope/accepted-outcome-a.json"
@@ -837,7 +886,7 @@ fn accepted_execution_excluded_paths() -> Result<BTreeSet<String>, String> {
         .map(|path| {
             path.as_str()
                 .filter(|path| !path.trim().is_empty())
-                .map(ToOwned::to_owned)
+                .map(|path| path.trim().replace('\\', "/"))
                 .ok_or_else(|| "accepted execution scope contains a non-string path".to_string())
         })
         .collect()
@@ -1078,6 +1127,7 @@ fn normalize_snapshot(
     {
         reasons.push("final ledger retains operator_decision_required".to_string());
     }
+    validate_final_cut_authority(&snapshot, &mut reasons);
     let range_digest = digest_json(&snapshot.source.range_commits)?;
     let candidate_tree_digest = digest_json(&snapshot.source.candidate_tree_commits)?;
     let record_set_digest = digest_json(&snapshot.records)?;
@@ -1109,6 +1159,134 @@ fn normalize_snapshot(
         reconciliation_reasons: reasons,
         next_action,
     })
+}
+
+fn validate_final_cut_authority(snapshot: &Snapshot, reasons: &mut Vec<String>) {
+    let Some(selection) = snapshot.candidate_selection.as_ref() else {
+        return;
+    };
+    if let Some(provisional_cutoff) = snapshot.source.provisional_review_cutoff_sha.as_deref()
+        && let Some(provisional_position) = snapshot
+            .records
+            .iter()
+            .position(|record| record.commit_sha == provisional_cutoff)
+    {
+        let derived = snapshot.records[..=provisional_position]
+            .iter()
+            .filter(|record| record.release_disposition == "operator_decision_required")
+            .count() as u64;
+        if selection
+            .denominator_decisions_remaining_through_provisional_cutoff
+            .is_some_and(|supplied| supplied != derived)
+        {
+            reasons.push(format!(
+                "supplied provisional decision count disagrees with records: supplied {}, derived {}",
+                selection
+                    .denominator_decisions_remaining_through_provisional_cutoff
+                    .unwrap_or_default(),
+                derived
+            ));
+        }
+    } else if selection
+        .denominator_decisions_remaining_through_provisional_cutoff
+        .is_some()
+    {
+        reasons.push(
+            "supplied provisional decision count cannot be derived without a cutoff record"
+                .to_string(),
+        );
+    }
+    let Some(authority) = selection.final_cut_authority.as_ref() else {
+        if selection.selected_cut_sha.is_some() {
+            reasons.push("selected cut has no final-cut authority ledger".to_string());
+        }
+        return;
+    };
+    if selection.selected_cut_sha.as_deref() != Some(authority.cut_sha.as_str()) {
+        reasons.push("final-cut authority is not bound to selected_cut_sha".to_string());
+    }
+    let Some(cut_position) = snapshot
+        .records
+        .iter()
+        .position(|record| record.commit_sha == authority.cut_sha)
+    else {
+        reasons.push(format!(
+            "final-cut authority cut {} is absent from the denominator records",
+            authority.cut_sha
+        ));
+        return;
+    };
+    let Some(provisional_cutoff) = snapshot.source.provisional_review_cutoff_sha.as_deref() else {
+        reasons.push("final-cut authority requires a provisional review cutoff".to_string());
+        return;
+    };
+    let Some(provisional_position) = snapshot
+        .records
+        .iter()
+        .position(|record| record.commit_sha == provisional_cutoff)
+    else {
+        reasons.push(format!(
+            "provisional review cutoff {provisional_cutoff} is absent from the denominator records"
+        ));
+        return;
+    };
+    if cut_position < provisional_position {
+        reasons.push("selected cut precedes the provisional review cutoff".to_string());
+        return;
+    }
+    let provisional_decisions_remaining = snapshot.records[..=provisional_position]
+        .iter()
+        .filter(|record| record.release_disposition == "operator_decision_required")
+        .count() as u64;
+    let unreviewed_post_provisional_records_through_cut = snapshot.records
+        [provisional_position + 1..=cut_position]
+        .iter()
+        .filter(|record| record.review_refs.is_empty())
+        .count() as u64;
+    let final_cut_decisions_remaining = snapshot.records[..=cut_position]
+        .iter()
+        .filter(|record| record.release_disposition == "operator_decision_required")
+        .count() as u64;
+    if selection
+        .denominator_decisions_remaining_through_selected_cut
+        .is_some_and(|supplied| supplied != final_cut_decisions_remaining)
+    {
+        reasons.push(format!(
+            "supplied selected-cut decision count disagrees with records: supplied {}, derived {}",
+            selection
+                .denominator_decisions_remaining_through_selected_cut
+                .unwrap_or_default(),
+            final_cut_decisions_remaining
+        ));
+    }
+    if authority.provisional_decisions_remaining != provisional_decisions_remaining {
+        reasons.push(format!(
+            "final-cut authority provisional decision count disagrees with records: supplied {}, derived {}",
+            authority.provisional_decisions_remaining, provisional_decisions_remaining
+        ));
+    }
+    if authority.unreviewed_post_provisional_records_through_cut
+        != unreviewed_post_provisional_records_through_cut
+    {
+        reasons.push(format!(
+            "final-cut authority reviewed-record count disagrees with records: supplied {}, derived {}",
+            authority.unreviewed_post_provisional_records_through_cut,
+            unreviewed_post_provisional_records_through_cut
+        ));
+    }
+    if authority.final_cut_decisions_remaining != final_cut_decisions_remaining {
+        reasons.push(format!(
+            "final-cut authority decision count disagrees with records: supplied {}, derived {}",
+            authority.final_cut_decisions_remaining, final_cut_decisions_remaining
+        ));
+    }
+    if authority.reviewed_through_selected_cut
+        != (unreviewed_post_provisional_records_through_cut == 0)
+    {
+        reasons.push(
+            "final-cut authority reviewed_through_selected_cut disagrees with records".to_string(),
+        );
+    }
 }
 
 fn validate_source(snapshot: &Snapshot, reasons: &mut Vec<String>) {
@@ -1288,9 +1466,30 @@ fn validate_record(record: &CommitRecord, source: &SnapshotSource, reasons: &mut
             record.commit_sha
         ));
     }
+    if record.release_disposition != "candidate_only_exclusion"
+        && record.candidate_only_exclusion_scope.is_some()
+    {
+        reasons.push(format!(
+            "commit {} has candidate_only_exclusion_scope without candidate_only_exclusion disposition",
+            record.commit_sha
+        ));
+    }
     if record.release_disposition == "candidate_only_exclusion" && !valid_candidate_only_exclusion {
         reasons.push(format!(
             "commit {} candidate_only_exclusion disposition has the wrong tree state",
+            record.commit_sha
+        ));
+    }
+    if record.release_disposition == "candidate_only_exclusion"
+        && !CANDIDATE_EXCLUSION_SCOPES.contains(
+            &record
+                .candidate_only_exclusion_scope
+                .as_deref()
+                .unwrap_or_default(),
+        )
+    {
+        reasons.push(format!(
+            "commit {} candidate-only exclusion must declare file, symbol, or hunk scope",
             record.commit_sha
         ));
     }
@@ -2350,6 +2549,7 @@ mod tests {
             execution_record.first_parent_position == 81
                 && execution_record.release_disposition == "candidate_only_exclusion"
                 && execution_record.candidate_tree_state == "present_in_candidate"
+                && execution_record.candidate_only_exclusion_scope.as_deref() == Some("hunk")
                 && execution_record
                     .candidate_only_excluded_paths
                     .iter()
@@ -2377,6 +2577,51 @@ mod tests {
             "current-main excluded commit identities changed",
         )?;
         Ok(())
+    }
+
+    #[test]
+    fn final_cut_authority_counts_are_derived_from_commit_sha_records() -> Result<(), String> {
+        let mut snapshot: Snapshot = serde_json::from_str(include_str!(
+            "../../../fixtures/release_denominator/current-main-provisional.json"
+        ))
+        .map_err(|error| error.to_string())?;
+        let selection = snapshot
+            .candidate_selection
+            .as_mut()
+            .ok_or_else(|| "current-main fixture has no candidate selection".to_string())?;
+        selection.selected_cut_sha = Some("fcbb30a7cf6a37027fa377abafb617632b2e6f57".to_string());
+        selection.final_cut_authority =
+            Some(crate::reports::candidate_control::FinalCutAuthority {
+                cut_sha: "fcbb30a7cf6a37027fa377abafb617632b2e6f57".to_string(),
+                provisional_decisions_remaining: 0,
+                unreviewed_post_provisional_records_through_cut: 0,
+                final_cut_decisions_remaining: 0,
+                reviewed_through_selected_cut: true,
+            });
+        let report = normalize_snapshot(snapshot.clone(), None)?;
+        require(
+            report.status == "ready",
+            format!(
+                "record-derived final-cut authority did not reconcile: {:?}",
+                report.reconciliation_reasons
+            ),
+        )?;
+        snapshot
+            .candidate_selection
+            .as_mut()
+            .ok_or_else(|| "current-main fixture lost candidate selection".to_string())?
+            .final_cut_authority
+            .as_mut()
+            .ok_or_else(|| "current-main fixture lost final-cut authority".to_string())?
+            .final_cut_decisions_remaining = 1;
+        let report = normalize_snapshot(snapshot, None)?;
+        require(
+            report
+                .reconciliation_reasons
+                .iter()
+                .any(|reason| reason.contains("decision count disagrees with records")),
+            "hand-authored final-cut zero was not reconciled against records",
+        )
     }
 
     #[test]
@@ -2421,6 +2666,7 @@ mod tests {
         let post_cutoff_sha = post_cutoff.commit_sha.clone();
         post_cutoff.release_disposition = "include_product".to_string();
         post_cutoff.candidate_tree_state = "present_in_candidate".to_string();
+        post_cutoff.review_refs = vec!["review:2832:post-cutoff-row".to_string()];
 
         let projected = project_candidate_tree(&snapshot.records, &snapshot.source.range_commits);
         require(
@@ -2461,6 +2707,87 @@ mod tests {
         require(
             validate_override_exclusion_paths(&override_record).is_err(),
             "non-exclusion disposition retained exclusion authority",
+        )
+    }
+
+    #[test]
+    fn exclusion_manifest_rejects_unknown_keys_and_missing_scope() -> Result<(), String> {
+        let mut value: Value = serde_json::from_str(include_str!(
+            "../../../fixtures/release_denominator/2832-adjudication.json"
+        ))
+        .map_err(|error| error.to_string())?;
+        value["unknown_override_key"] = json!(true);
+        require(
+            serde_json::from_value::<AdjudicationManifest>(value).is_err(),
+            "unknown adjudication manifest key was accepted",
+        )?;
+
+        let manifest: AdjudicationManifest = serde_json::from_str(include_str!(
+            "../../../fixtures/release_denominator/2832-adjudication.json"
+        ))
+        .map_err(|error| error.to_string())?;
+        let mut override_record = manifest
+            .overrides
+            .into_iter()
+            .next()
+            .ok_or_else(|| "adjudication fixture has no override".to_string())?;
+        override_record.candidate_only_exclusion_scope = None;
+        require(
+            validate_override_exclusion_paths(&override_record).is_err(),
+            "candidate-only override without scope was accepted",
+        )
+    }
+
+    #[test]
+    fn exclusion_paths_reject_blank_and_unrelated_values() -> Result<(), String> {
+        let manifest: AdjudicationManifest = serde_json::from_str(include_str!(
+            "../../../fixtures/release_denominator/2832-adjudication.json"
+        ))
+        .map_err(|error| error.to_string())?;
+        let mut override_record = manifest
+            .overrides
+            .into_iter()
+            .next()
+            .ok_or_else(|| "adjudication fixture has no override".to_string())?;
+        override_record.candidate_only_excluded_paths[0] = "  ".to_string();
+        require(
+            validate_override_exclusion_paths(&override_record).is_err(),
+            "blank exclusion path was accepted",
+        )?;
+        override_record.candidate_only_excluded_paths[0] = "unrelated/path".to_string();
+        require(
+            validate_override_exclusion_paths(&override_record).is_err(),
+            "unrelated exclusion path was accepted",
+        )
+    }
+
+    #[test]
+    fn exclusion_override_does_not_leave_replay_residue() -> Result<(), String> {
+        let snapshot = fixture()?;
+        let manifest: AdjudicationManifest = serde_json::from_str(include_str!(
+            "../../../fixtures/release_denominator/2832-adjudication.json"
+        ))
+        .map_err(|error| error.to_string())?;
+        let override_record = manifest
+            .overrides
+            .first()
+            .ok_or_else(|| "adjudication fixture has no override".to_string())?;
+        let mut record = snapshot
+            .records
+            .first()
+            .ok_or_else(|| "complete fixture has no record".to_string())?
+            .clone();
+        apply_candidate_only_override(&mut record, Some(override_record))?;
+        require(
+            !record.candidate_only_excluded_paths.is_empty()
+                && record.candidate_only_exclusion_scope.as_deref() == Some("hunk"),
+            "candidate-only override was not applied",
+        )?;
+        apply_candidate_only_override(&mut record, None)?;
+        require(
+            record.candidate_only_excluded_paths.is_empty()
+                && record.candidate_only_exclusion_scope.is_none(),
+            "removed candidate-only override left replay residue",
         )
     }
 

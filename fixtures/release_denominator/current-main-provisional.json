@@ -5884,6 +5884,7 @@
       "release_disposition": "candidate_only_exclusion",
       "acceptance_owner": "release-authority-2379",
       "candidate_tree_state": "present_in_candidate",
+      "candidate_only_exclusion_scope": "hunk",
       "candidate_only_excluded_paths": [
         ".allow/spec-system/slices/verification-command-execution.v1.toml",
         ".ripr/traceability.toml",
