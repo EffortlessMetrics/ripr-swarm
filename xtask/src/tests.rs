@@ -4944,6 +4944,29 @@ fn goldens_check_includes_assistant_loop_health_contract_drift() -> Result<(), S
 }
 
 #[test]
+fn assistant_loop_health_missing_corpus_fails_both_shared_gates() -> Result<(), String> {
+    let root = temp_dir("assistant-loop-health-missing");
+    let base = root.join("assistant-loop-health");
+
+    let mut fixture_contract_violations = Vec::new();
+    super::validate_assistant_loop_health_fixture_corpus_at(
+        &base,
+        &mut fixture_contract_violations,
+    )?;
+    assert_eq!(
+        fixture_contract_violations,
+        vec![format!(
+            "assistant-loop-health corpus is missing {}",
+            super::normalize_path(&base)
+        )]
+    );
+
+    let golden_violations = super::golden_assistant_loop_health_contract_violations_at(&base)?;
+    assert_eq!(golden_violations, fixture_contract_violations);
+    Ok(())
+}
+
+#[test]
 fn editor_gap_cockpit_fixture_case_guard_accepts_actionable_contract() -> Result<(), String> {
     let root = temp_dir("editor-gap-cockpit-valid");
     write_editor_gap_case_expected(
