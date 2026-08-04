@@ -2512,11 +2512,11 @@ mod tests {
             ),
         )?;
         require(
-            report.records.len() == 257,
+            report.records.len() == 258,
             "current-main census record count changed",
         )?;
         require(
-            report.source.range_commits.len() == 257,
+            report.source.range_commits.len() == 258,
             "current-main census range count changed",
         )?;
         require(
@@ -2525,35 +2525,35 @@ mod tests {
         )?;
         require(
             report.source.historical_base_sha == "c86807ecdbf359594ef88c0ff38b10b446139dca"
-                && report.source.candidate_sha == "c1fbf43274e187edbb8a1b2cd8ba2b6b3620ebcd"
+                && report.source.candidate_sha == "d5dd29a740eaf6a8405a5e470b1fef2ea71e9db8"
                 && report.source.range_commits.first().map(String::as_str)
                     == Some("fd1eec2ad8145678f0fb494a50bd181d6857b0c7")
                 && report.source.range_commits.last().map(String::as_str)
-                    == Some("c1fbf43274e187edbb8a1b2cd8ba2b6b3620ebcd"),
+                    == Some("d5dd29a740eaf6a8405a5e470b1fef2ea71e9db8"),
             "current-main identity changed",
         )?;
         require(
             report.range_digest
-                == "sha256:2bfce9b7a81b15d67582738e1831b055c8b685833e04c3bab90ef582efe76e57"
+                == "sha256:09a8883e071a2050f79fca69623eb27fd9b1b88b80f6a9ec0636efddcb60b8b0"
                 && report.candidate_tree_digest
                     == "sha256:2392d40f28fdd141b81a949cf019c1ad3850cf68bb2ab3cef5802fbdcde7c93b",
             "current-main range or candidate-tree digest changed",
         )?;
         require(
             report.record_set_digest
-                == "sha256:25bf86bda5015d07ef2e771e901805814f86487c455e5759f0742f8372ead532",
+                == "sha256:b6b81b0a69361a2c080876254073fa09987c14de3f8f7e2f95438dada810285d",
             "current-main record-set digest changed",
         )?;
         require(
             report
                 .counts_by_tree_state
                 .get("candidate_tree_state_pending")
-                == Some(&27)
+                == Some(&28)
                 && report.counts_by_tree_state.get("present_in_candidate") == Some(&230)
                 && report
                     .counts_by_disposition
                     .get("operator_decision_required")
-                    == Some(&27),
+                    == Some(&28),
             "current-main denominator counts changed",
         )?;
         let execution_record = report
@@ -2633,6 +2633,7 @@ mod tests {
                     "5077b486141b226e0c59b9bf09f0723c029c489f",
                     "59d2b0178d4802cab5d8550a6ef6b1a726959f71",
                     "c1fbf43274e187edbb8a1b2cd8ba2b6b3620ebcd",
+                    "d5dd29a740eaf6a8405a5e470b1fef2ea71e9db8",
                 ],
             "current-main excluded commit identities changed",
         )?;
@@ -2658,8 +2659,8 @@ mod tests {
         require(
             facts.candidate_sha.as_deref() == Some(source.candidate_sha.as_str())
                 && facts.range_commits == source.range_commits
-                && facts.range_commits.len() == 257,
-            "pinned candidate ancestry does not match the 257-entry first-parent census",
+                && facts.range_commits.len() == 258,
+            "pinned candidate ancestry does not match the 258-entry first-parent census",
         )
     }
 
