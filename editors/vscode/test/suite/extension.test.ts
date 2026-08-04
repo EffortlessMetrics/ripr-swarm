@@ -484,6 +484,83 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('real server invalidates a seam action across deferred save and full refresh', async function (this: Mocha.Context) {
+    this.timeout(90000);
+    if (!process.env.RIPR_TEST_SERVER_PATH) {
+      this.skip();
+    }
+
+    const uri = workspaceFileUri('src/lib.rs');
+    try {
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      const document = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(document);
+
+      await editAndSaveDocumentThenWaitForAnalysis(document, 60000);
+      await vscode.commands.executeCommand('ripr.refreshDiagnostics');
+      const firstDiagnostic = await waitForDiagnostic(
+        uri,
+        (entry) => entry.source === 'ripr' && diagnosticCode(entry) === 'ripr-seam-weakly-gripped',
+        60000
+      );
+      const firstActions = await waitForCodeActions(uri, firstDiagnostic.range, (action) =>
+        action.title === 'Inspect Test Gap - Copy Context'
+      );
+      const firstContext = assertCommandAction(
+        firstActions,
+        'Inspect Test Gap - Copy Context',
+        'ripr.copyContext'
+      );
+      const firstTarget = firstContext.arguments?.[0] as { evidence_identity?: unknown } | undefined;
+      assert.ok(firstTarget?.evidence_identity, 'first full-seam action must carry evidence identity');
+
+      await editAndSaveDocumentThenWaitForAnalysis(document, 60000, '\n// stale-action-refresh-sentinel\n');
+      await vscode.commands.executeCommand('ripr.refreshDiagnostics');
+      const secondDiagnostic = await waitForDiagnostic(
+        uri,
+        (entry) => entry.source === 'ripr' && diagnosticCode(entry) === 'ripr-seam-weakly-gripped',
+        60000
+      );
+      const secondActions = await waitForCodeActions(uri, secondDiagnostic.range, (action) =>
+        action.title === 'Inspect Test Gap - Copy Context'
+      );
+      const secondContext = assertCommandAction(
+        secondActions,
+        'Inspect Test Gap - Copy Context',
+        'ripr.copyContext'
+      );
+      const secondTarget = secondContext.arguments?.[0] as { evidence_identity?: unknown } | undefined;
+      assert.ok(secondTarget?.evidence_identity, 'second full-seam action must carry evidence identity');
+      assert.notDeepStrictEqual(
+        secondTarget.evidence_identity,
+        firstTarget.evidence_identity,
+        'a second full refresh must publish a new evidence identity'
+      );
+
+      await writeClipboardText('stale-seam-action-sentinel');
+      await vscode.commands.executeCommand(firstContext.command, ...(firstContext.arguments ?? []));
+      const stalePacketText = await waitForClipboardText((text) => text.includes('"status": "stale"'));
+      const stalePacket = JSON.parse(stalePacketText) as {
+        status?: string;
+        recovery_command?: string;
+        recovery_route?: string;
+      };
+      assert.strictEqual(stalePacket.status, 'stale');
+      assert.strictEqual(stalePacket.recovery_command, 'ripr.refreshDiagnostics');
+      assert.strictEqual(stalePacket.recovery_route, 'ripr.refreshDiagnostics');
+
+      await vscode.commands.executeCommand(secondContext.command, ...(secondContext.arguments ?? []));
+      const currentPacket = JSON.parse(await waitForClipboardText((text) => text.includes('"seam_id"'))) as {
+        status?: string;
+        packets?: Array<{ seam_id?: string }>;
+      };
+      assert.notStrictEqual(currentPacket.status, 'stale');
+      assert.strictEqual(currentPacket.packets?.[0]?.seam_id, '67fc764ba37d77bd');
+    } finally {
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+    }
+  });
+
   test('real server surfaces preview gap diagnostic, hover, status, and bounded actions', async function (this: Mocha.Context) {
     this.timeout(75000);
     if (!process.env.RIPR_TEST_SERVER_PATH) {
@@ -4338,10 +4415,10 @@ function workspaceFilePath(relativePath: string): string {
   return workspaceFileUri(relativePath).fsPath;
 }
 
-async function editAndSaveDocument(document: vscode.TextDocument): Promise<boolean> {
+async function editAndSaveDocument(document: vscode.TextDocument, insertedText = '\n'): Promise<boolean> {
   const end = document.positionAt(document.getText().length);
   const editor = await vscode.window.showTextDocument(document);
-  const edited = await editor.edit((builder) => builder.insert(end, '\n'));
+  const edited = await editor.edit((builder) => builder.insert(end, insertedText));
   assert.ok(edited, `expected ${document.uri.fsPath} to become dirty before save`);
   return document.save();
 }
@@ -4538,7 +4615,8 @@ async function waitForDiagnostic(
 
 async function editAndSaveDocumentThenWaitForAnalysis(
   document: vscode.TextDocument,
-  timeoutMs = 15000
+  timeoutMs = 15000,
+  insertedText = '\n'
 ): Promise<void> {
   const targetUri = document.uri.toString();
   let saved = false;
@@ -4569,7 +4647,10 @@ async function editAndSaveDocumentThenWaitForAnalysis(
     );
   });
   try {
-    assert.ok(await editAndSaveDocument(document), `expected ${targetUri} to become dirty before save`);
+    assert.ok(
+      await editAndSaveDocument(document, insertedText),
+      `expected ${targetUri} to become dirty before save`
+    );
     await Promise.race([savedEvent, timeout]);
     await Promise.race([diagnosticsEvent, timeout]);
   } finally {
@@ -4646,6 +4727,29 @@ async function waitForCodeAction(
     await sleep(50);
   }
   throw new Error(`timed out waiting for code action. Last actions:\n${lastTitles.join('\n')}`);
+}
+
+async function waitForCodeActions(
+  uri: vscode.Uri,
+  range: vscode.Range,
+  predicate: (action: vscode.CodeAction | vscode.Command) => boolean,
+  timeoutMs = 5000
+): Promise<Array<vscode.CodeAction | vscode.Command>> {
+  const started = Date.now();
+  let lastTitles: string[] = [];
+  while (Date.now() - started < timeoutMs) {
+    const actions = await vscode.commands.executeCommand<Array<vscode.CodeAction | vscode.Command>>(
+      'vscode.executeCodeActionProvider',
+      uri,
+      range
+    );
+    lastTitles = (actions ?? []).map((action) => action.title);
+    if ((actions ?? []).some(predicate)) {
+      return actions ?? [];
+    }
+    await sleep(50);
+  }
+  throw new Error(`timed out waiting for code actions. Last actions:\n${lastTitles.join('\n')}`);
 }
 
 async function currentClipboardText(): Promise<string> {
