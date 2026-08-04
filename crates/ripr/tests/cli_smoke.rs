@@ -410,6 +410,16 @@ fn normalize_agent_receipt_fixture(text: &str) -> Result<String, Box<dyn std::er
     Ok(rendered)
 }
 
+#[test]
+fn normalize_agent_receipt_fixture_rejects_non_object_json() -> Result<(), String> {
+    for fixture in ["[]", "null"] {
+        if normalize_agent_receipt_fixture(fixture).is_ok() {
+            return Err(format!("non-object fixture should be rejected: {fixture}"));
+        }
+    }
+    Ok(())
+}
+
 fn json_string_field(text: &str, field: &str) -> Option<String> {
     let pattern = format!("\"{field}\": \"");
     let start = text.find(&pattern)? + pattern.len();
