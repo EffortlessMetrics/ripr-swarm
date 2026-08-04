@@ -307,6 +307,28 @@ suite('Extension Smoke', () => {
   test('defaults-first check mode is draft', () => {
     const config = vscode.workspace.getConfiguration('ripr');
     assert.strictEqual(config.inspect('check.mode')?.defaultValue, 'draft');
+    assert.strictEqual(config.inspect('seamDiagnostics')?.defaultValue, true);
+    assert.strictEqual(config.inspect('diagnosticProfile')?.defaultValue, 'actionable');
+  });
+
+  test('forwards seam diagnostic settings through LSP initialization options', async () => {
+    await withControllerTestContext({ seamDiagnostics: false, diagnosticProfile: 'full' }, async (context) => {
+      await context.controller.start();
+
+      const initializationOptions = (context.clientOptions() as {
+        initializationOptions?: Record<string, unknown>;
+      }).initializationOptions;
+      assert.deepStrictEqual(
+        {
+          seamDiagnostics: initializationOptions?.seamDiagnostics,
+          diagnosticProfile: initializationOptions?.diagnosticProfile
+        },
+        {
+          seamDiagnostics: false,
+          diagnosticProfile: 'full'
+        }
+      );
+    });
   });
 
   test('real server surfaces seam diagnostic, hover provider, and agent actions', async function (this: Mocha.Context) {
@@ -3641,6 +3663,8 @@ suite('Extension Smoke', () => {
 
 interface ControllerTestOptions {
   enabled?: boolean;
+  seamDiagnostics?: boolean;
+  diagnosticProfile?: 'actionable' | 'full';
   lspResult?: unknown;
   lspError?: Error;
   cliResult?: string;
@@ -4044,6 +4068,8 @@ function createControllerTestContext(options: ControllerTestOptions) {
       downloadBaseUrl: '',
       checkMode: 'draft',
       baseRef: 'origin/main',
+      seamDiagnostics: options.seamDiagnostics ?? true,
+      diagnosticProfile: options.diagnosticProfile ?? 'actionable',
       traceServer: 'off'
     }),
     workspaceRootState: () => configuredWorkspaceRootState,

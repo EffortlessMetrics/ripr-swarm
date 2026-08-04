@@ -530,7 +530,9 @@ export class RiprClientController {
       initializationOptions: {
         baseRef: config.baseRef,
         checkMode: config.checkMode,
-        includeUnchangedTests: true
+        includeUnchangedTests: true,
+        seamDiagnostics: config.seamDiagnostics,
+        diagnosticProfile: config.diagnosticProfile
       },
       outputChannel: this.output,
       traceOutputChannel: this.output,
