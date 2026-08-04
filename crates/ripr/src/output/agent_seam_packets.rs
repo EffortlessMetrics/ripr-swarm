@@ -31,6 +31,7 @@ use crate::analysis::seams::{ExpectedSink, RequiredDiscriminator, SeamGripClass,
 use crate::analysis::test_grip_evidence::{RelatedTestGrip, TestGripEvidence};
 use crate::analysis::{ClassifiedSeam, SeamLimitInfo, SeamLimitSource};
 use crate::analysis_outcome::AnalysisOutcome;
+pub(crate) use crate::app::AGENT_SEAM_PACKET_SCHEMA_VERSION;
 use crate::app::analysis_outcome_artifact::analysis_outcome_projection;
 use crate::app::causal_projection::CausalDeltaArtifact;
 use crate::domain::CommandRole;
@@ -47,8 +48,6 @@ use crate::output::receipt_lifecycle::{
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
-
-pub(crate) const AGENT_SEAM_PACKET_SCHEMA_VERSION: &str = "0.4";
 
 /// Cap on related-tests rendered per packet. Mirrors the JSON-side
 /// limit in `output::repo_exposure` so an agent inspecting the same
