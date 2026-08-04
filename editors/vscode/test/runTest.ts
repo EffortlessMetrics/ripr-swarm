@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { execFileSync } from 'child_process';
-import { runTests } from '@vscode/test-electron';
+import { execFileSync, spawn } from 'child_process';
+import { downloadAndUnzipVSCode, runTests } from '@vscode/test-electron';
 
 function runGit(workspacePath: string, args: string[]): string {
   return execFileSync('git', args, {
@@ -102,6 +102,44 @@ function stageIntegrationWorkspace(templatePath: string, workspacePath: string):
   return baseRef;
 }
 
+async function runUntrustedTests(
+  cachePath: string,
+  extensionDevelopmentPath: string,
+  extensionTestsPath: string,
+  launchArgs: string[]
+): Promise<void> {
+  const vscodeExecutablePath = await downloadAndUnzipVSCode({
+    cachePath,
+    extensionDevelopmentPath
+  });
+  const args = [
+    '--no-sandbox',
+    '--disable-gpu-sandbox',
+    '--disable-updates',
+    '--skip-welcome',
+    '--skip-release-notes',
+    `--extensionTestsPath=${extensionTestsPath}`,
+    `--extensionDevelopmentPath=${extensionDevelopmentPath}`,
+    ...launchArgs
+  ];
+
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(vscodeExecutablePath, args, {
+      env: process.env,
+      shell: process.platform === 'win32',
+      stdio: 'inherit'
+    });
+    child.once('error', reject);
+    child.once('close', (code, signal) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`untrusted VS Code test host exited with ${code ?? signal}`));
+    });
+  });
+}
+
 async function main() {
   try {
     const extensionDevelopmentPath = path.resolve(
@@ -122,6 +160,7 @@ async function main() {
     const userDataPath = path.join(artifactRoot, 'vscode-test-user-data', runId);
     const workspacePath = path.join(artifactRoot, 'workspace');
     const baseRef = stageIntegrationWorkspace(templatePath, workspacePath);
+    const workspaceTrustMode = process.env.RIPR_TEST_WORKSPACE_TRUST ?? 'trusted';
     process.env.RIPR_TEST_BASE_REF = baseRef;
     fs.mkdirSync(cachePath, { recursive: true });
     fs.mkdirSync(extensionsPath, { recursive: true });
@@ -134,7 +173,7 @@ async function main() {
     // This affects only the isolated extension-test host; production keeps
     // defaultRuntime.isWorkspaceTrusted() bound to vscode.workspace.isTrusted.
     const launchArgs = [
-      '--disable-workspace-trust',
+      ...(workspaceTrustMode === 'untrusted' ? [] : ['--disable-workspace-trust']),
       workspacePath,
       '--disable-extensions',
       '--extensions-dir',
@@ -155,17 +194,21 @@ async function main() {
           'ripr.check.mode': 'draft',
           'ripr.seamDiagnostics': true,
           'ripr.diagnosticProfile': 'full',
-          'security.workspace.trust.enabled': false,
+          'security.workspace.trust.enabled': workspaceTrustMode !== 'trusted',
         }, null, 2)}\n`
       );
     }
 
-    await runTests({
-      cachePath,
-      extensionDevelopmentPath,
-      extensionTestsPath,
-      launchArgs,
-    });
+    if (workspaceTrustMode === 'untrusted') {
+      await runUntrustedTests(cachePath, extensionDevelopmentPath, extensionTestsPath, launchArgs);
+    } else {
+      await runTests({
+        cachePath,
+        extensionDevelopmentPath,
+        extensionTestsPath,
+        launchArgs,
+      });
+    }
   } catch (err) {
     console.error('Failed to run tests:', err);
     process.exit(1);
