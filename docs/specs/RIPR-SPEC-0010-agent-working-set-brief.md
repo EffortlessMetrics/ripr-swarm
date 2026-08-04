@@ -46,6 +46,13 @@ The packet command expands a brief `packet_ref` into the existing
 second packet schema and must apply the same configured-off and hidden-class
 policy as the brief.
 
+The expanded packet may also carry the shared repair-loop handoff: before and
+after snapshot commands, a verify command that writes the verify artifact, and
+a seam-scoped receipt command when the envelope selects exactly one actionable
+seam. A packet's `suggested_test_command` is a proposed Cargo name filter, not
+evidence that the named test already exists or has run; consumers must preserve
+that distinction.
+
 Related verification receipt:
 
 ```bash
