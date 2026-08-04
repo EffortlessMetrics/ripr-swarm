@@ -1939,6 +1939,11 @@ fn push_packet_json(
 
     let assertion_shape_json = if is_safe_for_repair_packet(entry) {
         assertion_guidance_json(&assertion_shape_for_entry(entry))
+    } else if matches!(entry.class, SeamGripClass::Opaque) {
+        // Opaque seams are intentionally queued as inspection-only packets.
+        // Preserve that limitation as typed guidance instead of dropping the
+        // assertion state to a legacy null.
+        assertion_guidance_json(&assertion_shape_for_entry(entry))
     } else {
         serde_json::Value::Null
     };
@@ -2545,12 +2550,20 @@ pub(crate) fn candidate_values_for(
 }
 
 pub(crate) fn assertion_shape_for_entry(entry: &ClassifiedSeam) -> AssertionShape {
-    assertion_shape_from_guidance(assertion_guidance_for(
-        entry.seam.kind(),
-        entry.seam.owner(),
-        Some(entry.seam.required_discriminator()),
-        &entry.evidence,
-    ))
+    let guidance = if matches!(entry.class, SeamGripClass::Opaque) {
+        AssertionGuidance::Unresolved {
+            reason: GuidanceReason::StaticLimitationBlocksDerivation,
+            recovery: GuidanceRecovery::NoRecoveryAvailable,
+        }
+    } else {
+        assertion_guidance_for(
+            entry.seam.kind(),
+            entry.seam.owner(),
+            Some(entry.seam.required_discriminator()),
+            &entry.evidence,
+        )
+    };
+    assertion_shape_from_guidance(guidance)
 }
 
 fn assertion_shape_from_guidance(guidance: AssertionGuidance) -> AssertionShape {
@@ -2575,9 +2588,9 @@ fn assertion_guidance_for(
             let trimmed = suggestion.trim_start();
             !trimmed.starts_with("//") && trimmed.contains("assert")
         });
-    let basis = if required.is_some() {
+    let basis = if assertion_template_uses_required_discriminator(kind, required) {
         Some(AssertionBasis::SeamRequiredDiscriminator)
-    } else if !evidence.observed_values.is_empty() {
+    } else if required.is_none() && !evidence.observed_values.is_empty() {
         Some(AssertionBasis::ObservedValueFact)
     } else {
         None
@@ -2597,6 +2610,22 @@ fn assertion_guidance_for(
             reason: GuidanceReason::ProducerFactAbsent,
             recovery: GuidanceRecovery::InspectFixSite,
         },
+    }
+}
+
+fn assertion_template_uses_required_discriminator(
+    kind: SeamKind,
+    required: Option<&RequiredDiscriminator>,
+) -> bool {
+    match (kind, required) {
+        (
+            SeamKind::PredicateBoundary,
+            Some(RequiredDiscriminator::BoundaryValue { description }),
+        ) => !description.trim().is_empty(),
+        (SeamKind::ErrorVariant, Some(RequiredDiscriminator::ErrorVariant { variant })) => {
+            !variant.trim().is_empty()
+        }
+        _ => false,
     }
 }
 
@@ -5335,6 +5364,48 @@ mod tests {
     }
 
     #[test]
+    fn generic_assertion_templates_without_consumed_discriminator_stay_unresolved() {
+        let cases = [
+            (
+                SeamKind::ReturnValue,
+                RequiredDiscriminator::ReturnValue {
+                    description: "returned score".to_string(),
+                },
+                ExpectedSink::ReturnValue,
+            ),
+            (
+                SeamKind::FieldConstruction,
+                RequiredDiscriminator::FieldValue {
+                    field: "quote.total".to_string(),
+                },
+                ExpectedSink::OutputField,
+            ),
+            (
+                SeamKind::MatchArm,
+                RequiredDiscriminator::MatchArmTaken {
+                    arm: "Some(value)".to_string(),
+                },
+                ExpectedSink::ReturnValue,
+            ),
+        ];
+
+        for (kind, required, sink) in cases {
+            let entry = classified_with(
+                seam_with("pricing::calculate", kind, required, sink),
+                SeamGripClass::WeaklyGripped,
+                Vec::new(),
+            );
+            let shape = assertion_shape_for_entry(&entry);
+            assert_eq!(shape.state(), AssertionState::Unresolved);
+            assert!(shape.example().is_none());
+            assert_eq!(
+                shape.guidance().reason(),
+                Some(GuidanceReason::ProducerFactAbsent)
+            );
+        }
+    }
+
+    #[test]
     fn packet_v2_carries_side_effect_and_call_observer_guidance() -> Result<(), String> {
         let side_effect = seam_with(
             "billing::charge_customer",
@@ -5416,8 +5487,8 @@ mod tests {
     }
 
     #[test]
-    fn suggested_assertion_helper_keeps_setup_assertions_but_omits_comment_guidance()
-    -> Result<(), String> {
+    fn suggested_assertion_helper_fails_closed_without_consumed_producer_fact() -> Result<(), String>
+    {
         let field = classified_with(
             seam_with(
                 "pricing::build_quote",
@@ -5466,13 +5537,7 @@ mod tests {
             Vec::new(),
         );
 
-        let Some(assertion) = suggested_assertion_for_classified_seam(&field) else {
-            return Err("expected field construction assertion".to_string());
-        };
-        assert!(
-            assertion.contains("assert_eq!(result.field"),
-            "unexpected field assertion: {assertion}"
-        );
+        assert!(suggested_assertion_for_classified_seam(&field).is_none());
         assert!(suggested_assertion_for_classified_seam(&opaque_field).is_none());
         assert!(suggested_assertion_for_classified_seam(&side_effect).is_none());
         let side_effect_shape = assertion_shape_for_entry(&side_effect);
@@ -5669,6 +5734,19 @@ mod tests {
             value["packets"][0]
                 .get("suggested_test_command_status")
                 .is_none()
+        );
+        assert_eq!(
+            value["packets"][0]["assertion_shape"]["state"],
+            "unresolved"
+        );
+        assert!(value["packets"][0]["assertion_shape"]["example"].is_null());
+        assert_eq!(
+            value["packets"][0]["assertion_shape"]["reason"],
+            "static_limitation_blocks_derivation"
+        );
+        assert_eq!(
+            value["packets"][0]["assertion_shape"]["recovery"],
+            "no_recovery_available"
         );
         Ok(())
     }
