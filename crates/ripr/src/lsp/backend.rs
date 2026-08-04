@@ -7462,6 +7462,46 @@ mod delivery_selection_parity_tests {
     }
 
     #[test]
+    fn hover_prefers_gap_diagnostic_over_overlapping_finding() -> Result<(), String> {
+        let harness = parity_backend()?;
+        let backend = harness.service.inner();
+        let uri = parity_uri("pricing.rs")?;
+        let mut finding = parity_diagnostic("finding:pricing", true);
+        finding.range = tower_lsp_server::ls_types::Range::new(
+            tower_lsp_server::ls_types::Position::new(0, 0),
+            tower_lsp_server::ls_types::Position::new(0, 20),
+        );
+        let mut gap = finding.clone();
+        gap.data = Some(serde_json::json!({
+            "diagnostic_id": "gap:pricing",
+            "source": "gap_decision_ledger",
+            "gap_id": "gap:rust:pricing:threshold-boundary",
+            "language": "rust",
+            "language_status": "supported",
+            "repairability": "actionable",
+            "repair_route": "AddBoundaryAssertion"
+        }));
+
+        commit(
+            backend,
+            parity_workspace_diagnostics(vec![(uri.clone(), vec![finding, gap])]),
+        )?;
+        let params = HoverParams {
+            text_document_position_params: tower_lsp_server::ls_types::TextDocumentPositionParams {
+                text_document: tower_lsp_server::ls_types::TextDocumentIdentifier::new(uri),
+                position: tower_lsp_server::ls_types::Position::new(0, 1),
+            },
+            work_done_progress_params: tower_lsp_server::ls_types::WorkDoneProgressParams::default(
+            ),
+        };
+
+        if backend.hover_for_position(&params).is_none() {
+            return Err("overlapping gap diagnostic should provide a hover".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn omitted_identities_and_reasons_are_shared_by_both_transports() -> Result<(), String> {
         let harness = parity_backend()?;
         let backend = harness.service.inner();

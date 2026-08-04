@@ -3558,6 +3558,78 @@ mod diagnostic_policy_tests {
         Ok(())
     }
 
+    #[test]
+    fn gap_projection_policy_is_fail_closed_for_missing_or_mixed_preview_evidence()
+    -> Result<(), String> {
+        let complete = ComponentOutcome::complete(AnalysisComponent::Diff);
+        let record = complete_gap_record();
+        let preview_record = {
+            let mut record = record.clone();
+            record.language = "typescript".to_string();
+            record.language_status = "preview".to_string();
+            record
+        };
+        let mut preview_finding = policy_finding();
+        preview_finding.language_status = Some(LanguageStatus::Preview);
+        preview_finding.static_limit_kind = Some(StaticLimitKind::MissingImportGraph);
+
+        if should_project_gap_records("full", &[], &[], &[complete.clone()], None)
+            || should_project_gap_records("full", &[], &[], &[complete.clone()], Some(&[]))
+            || !should_project_gap_records(
+                "full",
+                &[],
+                &[],
+                &[complete.clone()],
+                Some(std::slice::from_ref(&record)),
+            )
+        {
+            return Err("full-run projection must require a non-empty ledger".to_string());
+        }
+        if should_project_gap_records("stale", &[], &[], &[complete.clone()], None)
+            || should_project_gap_records("limited", &[], &[], &[complete.clone()], None)
+            || should_project_gap_records(
+                "limited",
+                &[preview_finding.clone()],
+                &[],
+                &[complete.clone()],
+                Some(&[]),
+            )
+            || should_project_gap_records(
+                "limited",
+                &[preview_finding.clone()],
+                &[],
+                &[complete.clone()],
+                Some(std::slice::from_ref(&record)),
+            )
+            || !should_project_gap_records(
+                "limited",
+                &[preview_finding.clone()],
+                &[],
+                &[complete.clone()],
+                Some(std::slice::from_ref(&preview_record)),
+            )
+        {
+            return Err(
+                "limited projection must require preview-only, non-empty records".to_string(),
+            );
+        }
+
+        let mut stable_finding = policy_finding();
+        stable_finding.static_limit_kind = Some(StaticLimitKind::MissingImportGraph);
+        if should_project_gap_records(
+            "limited",
+            &[preview_finding, stable_finding],
+            &[],
+            &[complete],
+            Some(std::slice::from_ref(&preview_record)),
+        ) {
+            return Err(
+                "mixed preview and non-preview limitations must remain suppressed".to_string(),
+            );
+        }
+        Ok(())
+    }
+
     // Test 7: stale/limited snapshot → gap-record diagnostics suppressed entirely.
     //
     // Asserts: snapshot_run_status returns "stale" for a StaleArtifact rejection,

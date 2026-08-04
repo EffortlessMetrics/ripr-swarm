@@ -2398,6 +2398,25 @@ mod tests {
     }
 
     #[test]
+    fn gap_command_target_keeps_context_when_diagnostic_has_no_data() -> Result<(), String> {
+        let params = code_action_params(Vec::new())?;
+        let target = gap_command_target(
+            &params,
+            &Diagnostic::default(),
+            "gap_verify",
+            "cargo xtask verify",
+        );
+
+        if target["label"] != "gap_verify"
+            || target["command"] != "cargo xtask verify"
+            || target["root"] != COMMAND_ROOT
+        {
+            return Err(format!("gap command metadata was not preserved: {target}"));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn python_pytest_skeleton_rejects_non_python_or_unsafe_targets() {
         let snapshot = python_snapshot();
         let mut data = serde_json::json!({
