@@ -116,6 +116,13 @@ fn normal_components(path: &Path) -> Vec<&OsStr> {
 /// near-root path is refused without so much as a `stat`, so a misconfigured
 /// `RIPR_CACHE_DIR` can never turn `clear` into a recursive delete of a home
 /// directory or a filesystem root.
+///
+/// `..` and `.` components are rejected explicitly and before the
+/// `normal_components`-based depth check. `normal_components` silently strips
+/// `Component::ParentDir`, so without this guard a path like
+/// `/home/user/target/ripr/cache/../../..` would pass both the depth rule and
+/// the suffix recognition while `remove_dir_all` operates on the un-normalized
+/// path — deleting far outside the cache (#2865 review P1).
 fn classify_cache_root(cache_dir: &Path) -> Result<CacheRoot, String> {
     let display = cache_dir.display();
     if cache_dir.as_os_str().is_empty() {
@@ -126,6 +133,18 @@ fn classify_cache_root(cache_dir: &Path) -> Result<CacheRoot, String> {
     if !cache_dir.is_absolute() {
         return Err(format!(
             "refusing to clear relative cache path {display}; set {CACHE_DIR_ENV} to an absolute path"
+        ));
+    }
+    // Reject `..` / `.` anywhere in the path. This runs before the depth rule
+    // because `normal_components` strips these components and would hide a
+    // traversal that escapes the intended cache root.
+    if cache_dir
+        .components()
+        .any(|c| matches!(c, Component::ParentDir | Component::CurDir))
+    {
+        return Err(format!(
+            "refusing to clear {display}: it contains a `..` or `.` component; \
+             set {CACHE_DIR_ENV} to an absolute cache path without parent-directory traversal"
         ));
     }
     if normal_components(cache_dir).len() < 2 {
@@ -445,6 +464,48 @@ mod tests {
             return Err(format!("clear accepted near-root path {shallow:?}"));
         }
         Ok(())
+    }
+
+    /// A `RIPR_CACHE_DIR` containing `..` must be rejected before any filesystem
+    /// access — `normal_components` strips `..`, so without the explicit guard
+    /// a path like `<tmp>/target/ripr/cache/../../..` passes the depth rule and
+    /// the suffix check while `remove_dir_all` deletes outside the cache (#2865).
+    #[test]
+    fn clear_refuses_parent_dir_traversal_in_cache_path() -> Result<(), String> {
+        let base = temp_dir("traversal-bait");
+        fs::create_dir_all(&base).map_err(|error| error.to_string())?;
+        // Place a sentinel OUTSIDE the apparent cache root to prove nothing is
+        // deleted even if `--force` is supplied.
+        let bait = base.join("do-not-delete.txt");
+        fs::write(&bait, b"sentinel").map_err(|error| error.to_string())?;
+        let traversing = base
+            .join("target")
+            .join("ripr")
+            .join("cache")
+            .join("..")
+            .join("..")
+            .join("..");
+
+        let refused = clear_cache_dir(
+            &traversing,
+            ClearOptions {
+                dry_run: false,
+                force: true,
+            },
+        );
+        let sentinel_survived = bait.is_file();
+        let _ = fs::remove_dir_all(&base);
+
+        match refused {
+            Ok(message) => Err(format!("clear accepted a path with `..`: {message}")),
+            Err(error) if !error.contains("`..`") => {
+                Err(format!("refusal did not name the traversal: {error}"))
+            }
+            Err(_) if !sentinel_survived => {
+                Err("clear deleted a file outside the cache root".to_string())
+            }
+            Err(_) => Ok(()),
+        }
     }
 
     #[test]
