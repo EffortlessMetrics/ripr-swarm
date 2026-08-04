@@ -270,6 +270,17 @@ fn run_agent_receipt(options: AgentReceiptOptions) -> Result<(), String> {
         &verify_path,
         input_paths,
     )?;
+    let root_display = output::outcome::display_path(&options.root);
+    let analysis_outcome = match app::analysis_outcome_artifact::read_analysis_outcome_artifact(
+        &options.root,
+        &root_display,
+    ) {
+        Ok(outcome) => output::agent_receipt::AgentReceiptAnalysisOutcome::Present(outcome),
+        Err(error) => output::agent_receipt::AgentReceiptAnalysisOutcome::Unavailable {
+            status: error.status().to_string(),
+            reason: error.to_string(),
+        },
+    };
     let rendered = output::agent_receipt::render_agent_receipt_value_json(
         &validated.verify,
         output::outcome::display_path(&options.verify_json),
@@ -277,6 +288,7 @@ fn run_agent_receipt(options: AgentReceiptOptions) -> Result<(), String> {
         options.test_changed.as_deref(),
         &options.commands_run,
         provenance,
+        analysis_outcome,
     )?;
 
     match options.out {

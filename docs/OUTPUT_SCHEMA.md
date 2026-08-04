@@ -6497,6 +6497,20 @@ JSON shape:
   "schema_version": "0.3",
   "tool": "ripr",
   "status": "advisory",
+  "analysis_outcome_status": "complete",
+  "analysis_outcome_error": null,
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {
+      "schema_version": "0.1",
+      "kind": "complete_no_findings",
+      "identity": {},
+      "counts": {},
+      "limitations": [],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    },
+    "semantic_digest": "sha256:..."
+  },
   "inputs": {
     "agent_verify_json": "target/ripr/workflow/agent-verify.json",
     "before": "target/ripr/workflow/before.repo-exposure.json",
@@ -6567,7 +6581,20 @@ Field contract:
 - `schema_version` - currently `"0.3"`. Version `0.2` added receipt
   provenance fields; version `0.3` adds structured next-action guidance while
   preserving the selected-seam and handoff fields from `0.1`.
-- `status` - always `"advisory"`; this is a handoff receipt, not a CI policy.
+- `status` - `"advisory"` only when the producer outcome is complete;
+  `"incomplete"` when the producer outcome is incomplete or unavailable; and
+  `"invalid"` when the producer artifact is malformed, stale, or identity
+  mismatched. This is a handoff receipt, not a CI policy.
+- `analysis_outcome_status` - the producer evidence state: `complete`,
+  `incomplete`, `missing`, or `invalid`. It is copied from the canonical
+  `target/ripr/workflow/analysis-outcome.json` artifact and is never inferred
+  from static movement, finding counts, or receipt presence.
+- `analysis_outcome_error` - a diagnostic for `missing` or `invalid` producer
+  evidence; it is `null` when the typed outcome is present.
+- `analysis_outcome` - the validated producer-owned typed outcome, including
+  its derived completeness, limitations, recovery routes, input identity, and
+  semantic digest. It is `null` when producer evidence is unavailable or
+  invalid; the receipt never fabricates a replacement outcome.
 - `inputs.agent_verify_json` - the verify JSON path supplied to the command.
 - `inputs.before` / `inputs.after` - snapshot paths copied from the verify JSON.
 - `provenance` - identity for the static artifacts behind the receipt. It is
@@ -6599,6 +6626,10 @@ Field contract:
 - `provenance.limits` - explicit static boundary flags. Receipts prove only the
   relationship between static before/after artifacts; they do not run mutation
   testing or claim runtime adequacy.
+- The receipt reads and validates the canonical producer artifact but does not
+  rerun diff analysis. A complete zero-finding producer outcome remains
+  complete; partial, unsupported, missing, malformed, stale, or identity-
+  mismatched producer evidence remains visibly non-clean.
 - Receipt issuance rejects hand-authored or altered verify JSON before this
   envelope is rendered; the input must be exact canonical output from
   `ripr agent verify` for the bound artifacts.
