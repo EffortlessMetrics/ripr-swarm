@@ -116,12 +116,16 @@ CandidateSelection
   qualification
 ```
 
-`final_cut_authority` carries `cut_sha`,
+`final_cut_authority` carries `cut_sha`, a normalized denominator
+`record_set_digest`,
 `provisional_decisions_remaining`,
 `unreviewed_post_provisional_records_through_cut`,
 `final_cut_decisions_remaining`, and `reviewed_through_selected_cut`. The
-denominator normalizer derives these values from records keyed by commit SHA
-and rejects disagreement with supplied authority. The legacy
+denominator normalizer derives these values and the digest from records keyed
+by commit SHA and rejects disagreement with supplied authority. A
+release-control snapshot must carry the same digest as normalized denominator
+provenance before the final-cut authority can advance; a missing or mismatched
+digest remains reconciliation-required. The legacy
 `denominator_decisions_remaining` serialized field remains the schema-0.1 wire
 name; the longer internal name is accepted as an input alias only.
 

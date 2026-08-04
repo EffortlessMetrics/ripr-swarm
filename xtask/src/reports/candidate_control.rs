@@ -49,6 +49,8 @@ pub(crate) struct CandidateSelection {
 #[serde(deny_unknown_fields)]
 pub(crate) struct FinalCutAuthority {
     pub(crate) cut_sha: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) record_set_digest: Option<String>,
     pub(crate) provisional_decisions_remaining: u64,
     pub(crate) unreviewed_post_provisional_records_through_cut: u64,
     pub(crate) final_cut_decisions_remaining: u64,
@@ -407,16 +409,16 @@ pub(crate) fn evaluate(selection: Option<&CandidateSelection>) -> CandidateState
                     && authority.unreviewed_post_provisional_records_through_cut == 0
                     && authority.final_cut_decisions_remaining == 0
                     && authority.reviewed_through_selected_cut
+                    && authority
+                        .record_set_digest
+                        .as_deref()
+                        .is_some_and(is_record_set_digest)
             });
 
     let hard_cut_blocked = candidate_required_claims_pending > 0
         || candidate_defects_unresolved > 0
-        || selection
-            .denominator_decisions_remaining_through_provisional_cutoff
-            .is_some_and(|remaining| remaining != 0)
-        || selection
-            .denominator_decisions_remaining_through_selected_cut
-            .is_some_and(|remaining| remaining != 0)
+        || selection.denominator_decisions_remaining_through_provisional_cutoff != Some(0)
+        || selection.denominator_decisions_remaining_through_selected_cut != Some(0)
         || !final_cut_authority_valid
         || !candidate_cut_selected
         || !projection_reproducible;
@@ -441,17 +443,12 @@ pub(crate) fn evaluate(selection: Option<&CandidateSelection>) -> CandidateState
     if candidate_defects_unresolved > 0 {
         reasons.push("known candidate defects remain unresolved".to_string());
     }
-    if selection
-        .denominator_decisions_remaining_through_provisional_cutoff
-        .is_some_and(|remaining| remaining != 0)
-    {
+    if selection.denominator_decisions_remaining_through_provisional_cutoff != Some(0) {
         reasons
             .push("denominator decisions remain through the provisional review cutoff".to_string());
     }
     if candidate_cut_selected
-        && selection
-            .denominator_decisions_remaining_through_selected_cut
-            .is_some_and(|remaining| remaining != 0)
+        && selection.denominator_decisions_remaining_through_selected_cut != Some(0)
     {
         reasons.push("denominator decisions remain through the selected cut".to_string());
     }
@@ -511,6 +508,13 @@ fn is_sha(value: &str) -> bool {
     value.len() == 40 && value.chars().all(|character| character.is_ascii_hexdigit())
 }
 
+fn is_record_set_digest(value: &str) -> bool {
+    let Some(hex) = value.strip_prefix("sha256:") else {
+        return false;
+    };
+    hex.len() == 64 && hex.chars().all(|character| character.is_ascii_hexdigit())
+}
+
 fn references_are_non_blank(references: &[&[String]]) -> bool {
     references.iter().any(|group| !group.is_empty())
         && references
@@ -561,6 +565,7 @@ mod tests {
             "denominator_decisions_remaining_through_selected_cut": 0,
             "final_cut_authority": {
                 "cut_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "record_set_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "provisional_decisions_remaining": 0,
                 "unreviewed_post_provisional_records_through_cut": 0,
                 "final_cut_decisions_remaining": 0,
@@ -621,6 +626,40 @@ mod tests {
             return Err("unreviewed post-cutoff record was treated as hard-cut ready".to_string());
         }
         Ok(())
+    }
+
+    #[test]
+    fn final_cut_authority_requires_record_set_provenance() -> Result<(), String> {
+        let mut candidate = selection()?;
+        candidate
+            .final_cut_authority
+            .as_mut()
+            .ok_or_else(|| "selection fixture lost final-cut authority".to_string())?
+            .record_set_digest = None;
+        let state = evaluate(Some(&candidate));
+        require(
+            state.status == "scope_closed"
+                && state
+                    .reasons
+                    .iter()
+                    .any(|reason| reason.contains("final-cut authority")),
+            "final-cut authority without record-set provenance was accepted",
+        )
+    }
+
+    #[test]
+    fn missing_denominator_counts_fail_closed() -> Result<(), String> {
+        let mut candidate = selection()?;
+        candidate.denominator_decisions_remaining_through_provisional_cutoff = None;
+        candidate.denominator_decisions_remaining_through_selected_cut = None;
+        let state = evaluate(Some(&candidate));
+        require(
+            state.status == "scope_closed"
+                && state.reasons.iter().any(|reason| {
+                    reason.contains("denominator decisions remain through the provisional")
+                }),
+            "missing denominator counts did not block the hard cut",
+        )
     }
 
     #[test]

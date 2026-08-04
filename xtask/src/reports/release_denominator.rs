@@ -1121,7 +1121,8 @@ fn normalize_snapshot(
         ));
     }
     reconcile_provisional_decision_count(&mut snapshot, &mut reasons);
-    validate_final_cut_authority(&snapshot, &mut reasons);
+    let record_set_digest = digest_json(&snapshot.records)?;
+    validate_final_cut_authority(&snapshot, &record_set_digest, &mut reasons);
     if snapshot.source.stage == "final"
         && snapshot
             .records
@@ -1132,7 +1133,6 @@ fn normalize_snapshot(
     }
     let range_digest = digest_json(&snapshot.source.range_commits)?;
     let candidate_tree_digest = digest_json(&snapshot.source.candidate_tree_commits)?;
-    let record_set_digest = digest_json(&snapshot.records)?;
     let status = if reasons.is_empty() {
         "ready"
     } else {
@@ -1163,7 +1163,11 @@ fn normalize_snapshot(
     })
 }
 
-fn validate_final_cut_authority(snapshot: &Snapshot, reasons: &mut Vec<String>) {
+fn validate_final_cut_authority(
+    snapshot: &Snapshot,
+    record_set_digest: &str,
+    reasons: &mut Vec<String>,
+) {
     let Some(selection) = snapshot.candidate_selection.as_ref() else {
         return;
     };
@@ -1175,6 +1179,12 @@ fn validate_final_cut_authority(snapshot: &Snapshot, reasons: &mut Vec<String>) 
     };
     if selection.selected_cut_sha.as_deref() != Some(authority.cut_sha.as_str()) {
         reasons.push("final-cut authority is not bound to selected_cut_sha".to_string());
+    }
+    if authority.record_set_digest.as_deref() != Some(record_set_digest) {
+        reasons.push(
+            "final-cut authority is not bound to the normalized denominator record-set digest"
+                .to_string(),
+        );
     }
     let Some(cut_position) = snapshot
         .records
@@ -1209,11 +1219,33 @@ fn validate_final_cut_authority(snapshot: &Snapshot, reasons: &mut Vec<String>) 
         .iter()
         .filter(|record| record.release_disposition == "operator_decision_required")
         .count() as u64;
-    let unreviewed_post_provisional_records_through_cut = snapshot.records
-        [provisional_position + 1..=cut_position]
+    let post_provisional_records = if cut_position > provisional_position {
+        &snapshot.records[provisional_position + 1..=cut_position]
+    } else {
+        &snapshot.records[0..0]
+    };
+    let unreviewed_post_provisional_records_through_cut = post_provisional_records
         .iter()
-        .filter(|record| record.review_refs.is_empty())
+        .filter(|record| {
+            !record
+                .review_refs
+                .iter()
+                .any(|review_ref| is_adjudication_review_ref(review_ref))
+        })
         .count() as u64;
+    for record in post_provisional_records {
+        if !record
+            .review_refs
+            .iter()
+            .any(|review_ref| is_adjudication_review_ref(review_ref))
+            && !record.review_refs.is_empty()
+        {
+            reasons.push(format!(
+                "post-provisional record {} has no valid #2832 review authority",
+                record.commit_sha
+            ));
+        }
+    }
     let final_cut_decisions_remaining = snapshot.records[..=cut_position]
         .iter()
         .filter(|record| record.release_disposition == "operator_decision_required")
@@ -1246,6 +1278,17 @@ fn validate_final_cut_authority(snapshot: &Snapshot, reasons: &mut Vec<String>) 
             "final-cut authority reviewed_through_selected_cut disagrees with records".to_string(),
         );
     }
+}
+
+fn is_adjudication_review_ref(value: &str) -> bool {
+    let Some(suffix) = value.trim().strip_prefix("review:2832:") else {
+        return false;
+    };
+    !suffix.is_empty()
+        && !suffix.chars().any(char::is_whitespace)
+        && suffix.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.' | '/')
+        })
 }
 
 fn reconcile_provisional_decision_count(snapshot: &mut Snapshot, reasons: &mut Vec<String>) {
@@ -2565,11 +2608,18 @@ mod tests {
         selection.final_cut_authority =
             Some(crate::reports::candidate_control::FinalCutAuthority {
                 cut_sha: "fcbb30a7cf6a37027fa377abafb617632b2e6f57".to_string(),
+                record_set_digest: None,
                 provisional_decisions_remaining: 0,
                 unreviewed_post_provisional_records_through_cut: 0,
                 final_cut_decisions_remaining: 0,
                 reviewed_through_selected_cut: true,
             });
+        let first_report = normalize_snapshot(snapshot.clone(), None)?;
+        selection
+            .final_cut_authority
+            .as_mut()
+            .ok_or_else(|| "current-main fixture lost final-cut authority".to_string())?
+            .record_set_digest = Some(first_report.record_set_digest.clone());
         let report = normalize_snapshot(snapshot.clone(), None)?;
         require(
             report.status == "ready",
@@ -2593,6 +2643,52 @@ mod tests {
                 .iter()
                 .any(|reason| reason.contains("decision count disagrees with records")),
             "hand-authored final-cut zero was not reconciled against records",
+        )
+    }
+
+    #[test]
+    fn final_cut_authority_requires_valid_review_reference() -> Result<(), String> {
+        let mut snapshot: Snapshot = serde_json::from_str(include_str!(
+            "../../../fixtures/release_denominator/current-main-provisional.json"
+        ))
+        .map_err(|error| error.to_string())?;
+        let cut_sha = snapshot
+            .records
+            .last()
+            .map(|record| record.commit_sha.clone())
+            .ok_or_else(|| "current-main fixture has no records".to_string())?;
+        let post_cutoff = snapshot
+            .records
+            .last_mut()
+            .ok_or_else(|| "current-main fixture has no last record".to_string())?;
+        post_cutoff.review_refs = vec!["fabricated-review-token".to_string()];
+        let selection = snapshot
+            .candidate_selection
+            .as_mut()
+            .ok_or_else(|| "current-main fixture has no candidate selection".to_string())?;
+        selection.selected_cut_sha = Some(cut_sha.clone());
+        selection.final_cut_authority =
+            Some(crate::reports::candidate_control::FinalCutAuthority {
+                cut_sha,
+                record_set_digest: None,
+                provisional_decisions_remaining: 0,
+                unreviewed_post_provisional_records_through_cut: 0,
+                final_cut_decisions_remaining: 0,
+                reviewed_through_selected_cut: true,
+            });
+        let first_report = normalize_snapshot(snapshot.clone(), None)?;
+        selection
+            .final_cut_authority
+            .as_mut()
+            .ok_or_else(|| "current-main fixture lost final-cut authority".to_string())?
+            .record_set_digest = Some(first_report.record_set_digest);
+        let report = normalize_snapshot(snapshot, None)?;
+        require(
+            report
+                .reconciliation_reasons
+                .iter()
+                .any(|reason| reason.contains("no valid #2832 review authority")),
+            "fabricated review reference was credited as final-cut review",
         )
     }
 
