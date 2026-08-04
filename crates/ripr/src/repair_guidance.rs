@@ -1043,6 +1043,80 @@ mod tests {
     }
 
     #[test]
+    fn typed_guidance_tokens_cover_every_wire_variant() -> Result<(), String> {
+        let reasons = [
+            (GuidanceReason::ProducerFactAbsent, "producer_fact_absent"),
+            (
+                GuidanceReason::NoBehavioralDiscriminatorDerived,
+                "no_behavioral_discriminator_derived",
+            ),
+            (
+                GuidanceReason::ObserverNotStaticallyVisible,
+                "observer_not_statically_visible",
+            ),
+            (
+                GuidanceReason::RouteIsInspectionOnly,
+                "route_is_inspection_only",
+            ),
+            (
+                GuidanceReason::RouteIsVerificationOnly,
+                "route_is_verification_only",
+            ),
+            (
+                GuidanceReason::StaticLimitationBlocksDerivation,
+                "static_limitation_blocks_derivation",
+            ),
+            (GuidanceReason::SnapshotStale, "snapshot_stale"),
+            (
+                GuidanceReason::CrossLanguageOracleUnresolved,
+                "cross_language_oracle_unresolved",
+            ),
+        ];
+        for (reason, expected) in reasons {
+            if reason.as_str() != expected {
+                return Err(format!("guidance reason token changed: {reason:?}"));
+            }
+        }
+
+        let recoveries = [
+            (GuidanceRecovery::InspectFixSite, "inspect_fix_site"),
+            (GuidanceRecovery::RunExplain, "run_explain"),
+            (
+                GuidanceRecovery::AddObserverThenAssert,
+                "add_observer_then_assert",
+            ),
+            (GuidanceRecovery::RefreshAnalysis, "refresh_analysis"),
+            (
+                GuidanceRecovery::ReviewExternalOracle,
+                "review_external_oracle",
+            ),
+            (
+                GuidanceRecovery::NoRecoveryAvailable,
+                "no_recovery_available",
+            ),
+        ];
+        for (recovery, expected) in recoveries {
+            if recovery.as_str() != expected {
+                return Err(format!("guidance recovery token changed: {recovery:?}"));
+            }
+        }
+
+        let states = [
+            (DiscriminatorState::Present, "present"),
+            (DiscriminatorState::NotProduced, "not_produced"),
+            (DiscriminatorState::NotApplicable, "not_applicable"),
+            (DiscriminatorState::StaticLimitation, "static_limitation"),
+            (DiscriminatorState::Stale, "stale"),
+        ];
+        for (state, expected) in states {
+            if state.as_str() != expected {
+                return Err(format!("discriminator state token changed: {state:?}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn concrete_discriminator_round_trips_with_its_producer_basis() -> Result<(), String> {
         let facts = GapRouteGuidanceFacts {
             missing_discriminator: Some("boundary value 0"),
