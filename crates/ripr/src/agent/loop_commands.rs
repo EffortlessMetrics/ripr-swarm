@@ -30,9 +30,6 @@ pub(crate) const WORKFLOW_AGENT_REVIEW_SUMMARY_ARTIFACT: &str =
 pub(crate) const WORKFLOW_AGENT_REVIEW_SUMMARY_MARKDOWN_ARTIFACT: &str =
     "target/ripr/workflow/agent-review-summary.md";
 
-pub(crate) const WORKFLOW_PREPARE_COMMAND: &str =
-    "mkdir -p target/ripr/workflow target/ripr/reports";
-
 pub(crate) fn agent_start_command(root: &str, seam_id: &str, out_dir: &str) -> String {
     format!(
         "ripr agent start --root {} --seam-id {} --out {}",

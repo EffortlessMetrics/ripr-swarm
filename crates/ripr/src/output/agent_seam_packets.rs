@@ -20,8 +20,8 @@
 use crate::agent::command_specs::agent_command_spec_from_display;
 use crate::agent::loop_commands::{
     WORKFLOW_AFTER_SNAPSHOT_ARTIFACT, WORKFLOW_AGENT_RECEIPT_ARTIFACT,
-    WORKFLOW_AGENT_VERIFY_ARTIFACT, WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, WORKFLOW_PREPARE_COMMAND,
-    agent_receipt_command, agent_verify_command, check_repo_exposure_command, shell_arg,
+    WORKFLOW_AGENT_VERIFY_ARTIFACT, WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, agent_receipt_command,
+    agent_verify_command, check_repo_exposure_command, shell_arg,
 };
 use crate::analysis::canonical_gap::{CanonicalGapIdentity, canonical_gap_identities};
 use crate::analysis::repair_route::{
@@ -70,6 +70,11 @@ const REPAIR_LOOP_ROOT: &str = ".";
 /// Mode the rendered before/after snapshot commands use. Matches the draft
 /// default `ripr agent status` and `first-useful-action` already publish.
 const REPAIR_LOOP_MODE: &str = "draft";
+
+/// Create the two destinations used by the first redirected snapshot and the
+/// later receipt. This stays local to the packet renderer because xtask
+/// includes `loop_commands.rs` independently without this output module.
+const WORKFLOW_PREPARE_COMMAND: &str = "mkdir -p target/ripr/workflow target/ripr/reports";
 
 /// Honesty label carried next to `suggested_test_command`. The recommended
 /// test does not exist yet, so the `cargo test` filter selects nothing until
