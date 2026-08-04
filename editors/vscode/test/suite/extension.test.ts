@@ -4437,7 +4437,8 @@ async function editAndSaveDocument(document: vscode.TextDocument, insertedText =
   const end = document.positionAt(document.getText().length);
   const editor = await vscode.window.showTextDocument(document);
   const edited = await editor.edit((builder) => builder.insert(end, insertedText));
-  assert.ok(edited, `expected ${document.uri.fsPath} to become dirty before save`);
+  assert.ok(edited, `expected ${document.uri.fsPath} edit to apply before save`);
+  assert.strictEqual(document.isDirty, true, `expected ${document.uri.fsPath} to become dirty before save`);
   return document.save();
 }
 

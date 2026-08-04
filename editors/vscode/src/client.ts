@@ -1060,6 +1060,10 @@ export class RiprClientController {
   }
 
   async copyCurrentRepairPacket(): Promise<void> {
+    if (!this.runtime.isWorkspaceTrusted()) {
+      this.runtime.showInformationMessage('ripr workspace is not trusted; repair packets are unavailable.');
+      return;
+    }
     await this.refreshSetupStatusFiles();
     const queue = this.setupStatus.actionableQueue;
     if (this.status.kind === 'stale' && actionableGapQueueCanBecomeStale(queue.state)) {

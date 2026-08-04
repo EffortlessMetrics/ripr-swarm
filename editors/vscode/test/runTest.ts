@@ -126,7 +126,7 @@ async function runUntrustedTests(
   await new Promise<void>((resolve, reject) => {
     const child = spawn(vscodeExecutablePath, args, {
       env: process.env,
-      shell: process.platform === 'win32',
+      shell: false,
       stdio: 'inherit'
     });
     child.once('error', reject);
@@ -160,7 +160,7 @@ async function main() {
     const userDataPath = path.join(artifactRoot, 'vscode-test-user-data', runId);
     const workspacePath = path.join(artifactRoot, 'workspace');
     const baseRef = stageIntegrationWorkspace(templatePath, workspacePath);
-    const workspaceTrustMode = process.env.RIPR_TEST_WORKSPACE_TRUST ?? 'trusted';
+    const workspaceTrustMode = parseWorkspaceTrustMode(process.env.RIPR_TEST_WORKSPACE_TRUST);
     process.env.RIPR_TEST_BASE_REF = baseRef;
     fs.mkdirSync(cachePath, { recursive: true });
     fs.mkdirSync(extensionsPath, { recursive: true });
@@ -216,3 +216,13 @@ async function main() {
 }
 
 main();
+
+function parseWorkspaceTrustMode(value: string | undefined): 'trusted' | 'untrusted' {
+  const mode = value ?? 'trusted';
+  if (mode === 'trusted' || mode === 'untrusted') {
+    return mode;
+  }
+  throw new Error(
+    `RIPR_TEST_WORKSPACE_TRUST must be exactly 'trusted' or 'untrusted', got ${JSON.stringify(value)}`
+  );
+}
