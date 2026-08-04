@@ -31,6 +31,7 @@ use crate::analysis::seams::{ExpectedSink, RequiredDiscriminator, SeamGripClass,
 use crate::analysis::test_grip_evidence::{RelatedTestGrip, TestGripEvidence};
 use crate::analysis::{ClassifiedSeam, SeamLimitInfo, SeamLimitSource};
 use crate::analysis_outcome::AnalysisOutcome;
+use crate::app::analysis_outcome_artifact::analysis_outcome_projection;
 use crate::app::causal_projection::CausalDeltaArtifact;
 use crate::domain::CommandRole;
 use crate::output::evidence_record::{
@@ -81,75 +82,6 @@ const WORKFLOW_PREPARE_COMMAND: &str = "mkdir -p target/ripr/workflow target/rip
 /// test does not exist yet, so the `cargo test` filter selects nothing until
 /// the agent has written it.
 const SUGGESTED_TEST_COMMAND_STATUS: &str = "runnable_after_the_suggested_test_exists";
-
-struct AnalysisOutcomeProjection {
-    status: &'static str,
-    outcome: Value,
-    error: Option<String>,
-}
-
-fn analysis_outcome_projection(
-    analysis_outcome: Option<&AnalysisOutcome>,
-    required: bool,
-) -> AnalysisOutcomeProjection {
-    let Some(analysis_outcome) = analysis_outcome else {
-        return if required {
-            AnalysisOutcomeProjection {
-                status: "missing",
-                outcome: Value::Null,
-                error: Some(
-                    "diff-scoped agent packet requires the producer AnalysisOutcome artifact"
-                        .to_string(),
-                ),
-            }
-        } else {
-            AnalysisOutcomeProjection {
-                status: "not_applicable",
-                outcome: Value::Null,
-                error: None,
-            }
-        };
-    };
-
-    let outcome_value = match serde_json::to_value(analysis_outcome) {
-        Ok(value) => value,
-        Err(error) => {
-            return AnalysisOutcomeProjection {
-                status: "invalid",
-                outcome: Value::Null,
-                error: Some(format!(
-                    "serialize producer AnalysisOutcome failed: {error}"
-                )),
-            };
-        }
-    };
-    let digest = match analysis_outcome.semantic_digest() {
-        Ok(digest) => digest,
-        Err(error) => {
-            return AnalysisOutcomeProjection {
-                status: "invalid",
-                outcome: Value::Null,
-                error: Some(format!(
-                    "compute producer AnalysisOutcome digest failed: {error}"
-                )),
-            };
-        }
-    };
-
-    AnalysisOutcomeProjection {
-        status: if analysis_outcome.kind.is_complete() {
-            "complete"
-        } else {
-            "incomplete"
-        },
-        outcome: json!({
-            "analysis_complete": analysis_outcome.kind.is_complete(),
-            "outcome": outcome_value,
-            "semantic_digest": digest,
-        }),
-        error: None,
-    }
-}
 
 fn insert_analysis_outcome_projection(
     object: &mut serde_json::Map<String, Value>,
