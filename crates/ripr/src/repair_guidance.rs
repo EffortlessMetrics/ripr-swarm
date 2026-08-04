@@ -51,6 +51,21 @@ pub(crate) enum GuidanceReason {
     CrossLanguageOracleUnresolved,
 }
 
+impl GuidanceReason {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::ProducerFactAbsent => "producer_fact_absent",
+            Self::NoBehavioralDiscriminatorDerived => "no_behavioral_discriminator_derived",
+            Self::ObserverNotStaticallyVisible => "observer_not_statically_visible",
+            Self::RouteIsInspectionOnly => "route_is_inspection_only",
+            Self::RouteIsVerificationOnly => "route_is_verification_only",
+            Self::StaticLimitationBlocksDerivation => "static_limitation_blocks_derivation",
+            Self::SnapshotStale => "snapshot_stale",
+            Self::CrossLanguageOracleUnresolved => "cross_language_oracle_unresolved",
+        }
+    }
+}
+
 /// What a consumer can do about a non-concrete guidance state. This is a
 /// bounded inspection or refresh route, never an authorization to edit source
 /// or execute a verification command.
@@ -69,6 +84,19 @@ pub(crate) enum GuidanceRecovery {
     ReviewExternalOracle,
     /// No bounded recovery is available from static evidence.
     NoRecoveryAvailable,
+}
+
+impl GuidanceRecovery {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::InspectFixSite => "inspect_fix_site",
+            Self::RunExplain => "run_explain",
+            Self::AddObserverThenAssert => "add_observer_then_assert",
+            Self::RefreshAnalysis => "refresh_analysis",
+            Self::ReviewExternalOracle => "review_external_oracle",
+            Self::NoRecoveryAvailable => "no_recovery_available",
+        }
+    }
 }
 
 /// Producer-owned provenance for a concrete discriminator. Every variant names
@@ -180,6 +208,18 @@ pub(crate) enum DiscriminatorState {
     NotApplicable,
     StaticLimitation,
     Stale,
+}
+
+impl DiscriminatorState {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Present => "present",
+            Self::NotProduced => "not_produced",
+            Self::NotApplicable => "not_applicable",
+            Self::StaticLimitation => "static_limitation",
+            Self::Stale => "stale",
+        }
+    }
 }
 
 /// Wire state token for [`AssertionGuidance`].

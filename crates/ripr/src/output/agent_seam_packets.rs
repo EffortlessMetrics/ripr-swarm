@@ -1493,18 +1493,15 @@ fn discriminator_context_line(discriminator: &DiscriminatorAvailability) -> Stri
     if let Some(text) = discriminator.legacy_text() {
         return format!("Missing discriminator: `{text}`.");
     }
-    let state = serde_json::to_value(discriminator.state())
-        .ok()
-        .and_then(|value| value.as_str().map(ToOwned::to_owned))
-        .unwrap_or_else(|| "not_produced".to_string());
-    let reason = serde_json::to_value(discriminator.reason())
-        .ok()
-        .and_then(|value| value.as_str().map(ToOwned::to_owned))
-        .unwrap_or_else(|| "producer_fact_absent".to_string());
-    let recovery = serde_json::to_value(discriminator.recovery())
-        .ok()
-        .and_then(|value| value.as_str().map(ToOwned::to_owned))
-        .unwrap_or_else(|| "inspect_fix_site".to_string());
+    let state = discriminator.state().as_str();
+    let reason = discriminator
+        .reason()
+        .map(|reason| reason.as_str())
+        .unwrap_or("producer_fact_absent");
+    let recovery = discriminator
+        .recovery()
+        .map(|recovery| recovery.as_str())
+        .unwrap_or("inspect_fix_site");
     format!(
         "Missing discriminator unavailable: state `{state}`; reason `{reason}`; recovery `{recovery}`."
     )
