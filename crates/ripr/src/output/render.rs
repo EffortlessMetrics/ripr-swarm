@@ -378,6 +378,7 @@ fn missing_test_efficiency_badge_summary(
         warnings: vec![warning],
         preview_skipped: Vec::new(),
         projection: None,
+        analysis_outcome: None,
     }
 }
 
@@ -933,6 +934,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             suppression: None,
+            analysis_outcome: None,
             partial_scope: None,
         }
     }
