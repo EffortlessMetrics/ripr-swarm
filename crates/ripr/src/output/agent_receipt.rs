@@ -27,21 +27,6 @@ impl AgentReceiptUnavailableStatus {
     }
 }
 
-impl From<&crate::app::analysis_outcome_artifact::AnalysisOutcomeArtifactError>
-    for AgentReceiptUnavailableStatus
-{
-    fn from(error: &crate::app::analysis_outcome_artifact::AnalysisOutcomeArtifactError) -> Self {
-        match error {
-            crate::app::analysis_outcome_artifact::AnalysisOutcomeArtifactError::Missing(_) => {
-                Self::Missing
-            }
-            crate::app::analysis_outcome_artifact::AnalysisOutcomeArtifactError::Invalid(_) => {
-                Self::Invalid
-            }
-        }
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum AgentReceiptAnalysisOutcome {
     Present(Box<AnalysisOutcome>),
@@ -878,7 +863,8 @@ mod tests {
 
     #[test]
     fn agent_receipt_marks_malformed_or_stale_evidence_invalid() -> Result<(), String> {
-        for status in [AgentReceiptUnavailableStatus::Invalid] {
+        {
+            let status = AgentReceiptUnavailableStatus::Invalid;
             let rendered = render_agent_receipt_value_json(
                 &serde_json::from_str(agent_verify_json()).map_err(|error| error.to_string())?,
                 "target/ripr/workflow/agent-verify.json".to_string(),

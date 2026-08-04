@@ -3,7 +3,6 @@
 //! Consumers may project this artifact, but they must not reconstruct its
 //! completeness or identity from findings, packets, or exit status.
 
-use crate::agent::loop_commands::WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT;
 use crate::analysis_outcome::AnalysisOutcome;
 use crate::app::CHECK_OUTPUT_SCHEMA_VERSION;
 use serde_json::Value;
@@ -33,12 +32,12 @@ impl std::fmt::Display for AnalysisOutcomeArtifactError {
     }
 }
 
-pub(crate) fn read_analysis_outcome_artifact(
+pub(crate) fn read_analysis_outcome_artifact_at(
     root: &Path,
     root_display: &str,
+    path: &Path,
 ) -> Result<AnalysisOutcome, AnalysisOutcomeArtifactError> {
-    let path = root.join(WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT);
-    let text = std::fs::read_to_string(&path).map_err(|error| {
+    let text = std::fs::read_to_string(path).map_err(|error| {
         let message = format!(
             "Analysis outcome artifact {} is unavailable: {error}.",
             path.display()
@@ -56,6 +55,15 @@ pub(crate) fn read_analysis_outcome_artifact(
         ))
     })?;
     validate_analysis_outcome_artifact(root, root_display, &value)
+}
+
+pub(crate) fn analysis_outcome_artifact_path_for_verify(
+    verify_path: &Path,
+) -> Result<std::path::PathBuf, String> {
+    verify_path
+        .parent()
+        .map(|parent| parent.join("analysis-outcome.json"))
+        .ok_or_else(|| "agent verify path has no parent directory".to_string())
 }
 
 pub(crate) fn validate_analysis_outcome_artifact(
@@ -123,7 +131,7 @@ pub(crate) fn validate_analysis_outcome_artifact(
                 ))
             })?;
         let digest = Sha256::digest(diff.as_bytes());
-        let expected_input_identity = format!("sha256:{digest:x}");
+        let expected_input_identity = format!("sha256:{}", digest_hex(digest.as_ref()));
         if outcome.identity.input_identity.as_deref() != Some(expected_input_identity.as_str()) {
             return Err(invalid(
                 "Analysis outcome artifact input identity does not match the current diff.",
@@ -137,9 +145,20 @@ fn invalid(reason: impl Into<String>) -> AnalysisOutcomeArtifactError {
     AnalysisOutcomeArtifactError::Invalid(reason.into())
 }
 
+fn digest_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::loop_commands::WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT;
     use crate::analysis_outcome::{
         AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcomeCounts,
         AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind, AnalysisStage,
@@ -172,7 +191,7 @@ mod tests {
         )?;
         let diff = crate::analysis::load_diff(&workspace_root()?, None, None, None)?;
         let digest = Sha256::digest(diff.as_bytes());
-        outcome.identity.input_identity = Some(format!("sha256:{digest:x}"));
+        outcome.identity.input_identity = Some(format!("sha256:{}", digest_hex(digest.as_ref())));
         Ok(outcome)
     }
 
@@ -383,13 +402,25 @@ mod tests {
         let artifact_path = root.join(WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT);
         std::fs::create_dir_all(&artifact_path)
             .map_err(|error| format!("create directory artifact: {error}"))?;
-        let result = read_analysis_outcome_artifact(&root, &root.display().to_string());
+        let result =
+            read_analysis_outcome_artifact_at(&root, &root.display().to_string(), &artifact_path);
         std::fs::remove_dir_all(&root).map_err(|error| format!("remove test root: {error}"))?;
         assert!(matches!(
             result,
             Err(AnalysisOutcomeArtifactError::Invalid(reason))
                 if reason.contains("is unavailable")
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn derives_analysis_outcome_path_from_custom_verify_directory() -> Result<(), String> {
+        assert_eq!(
+            analysis_outcome_artifact_path_for_verify(Path::new(
+                "target/custom/agent-verify.json"
+            ))?,
+            Path::new("target/custom/analysis-outcome.json")
+        );
         Ok(())
     }
 }

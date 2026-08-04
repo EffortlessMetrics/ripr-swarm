@@ -2297,7 +2297,7 @@ Consumers must not treat limited artifacts as canonical actionable counts.
 
 ```json
 {
-  "schema_version": "0.4",
+  "schema_version": "0.3",
   "scope": "repo",
   "metrics": {
     "seams_total": 9355,

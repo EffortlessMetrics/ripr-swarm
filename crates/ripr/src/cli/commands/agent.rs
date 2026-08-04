@@ -271,17 +271,30 @@ fn run_agent_receipt(options: AgentReceiptOptions) -> Result<(), String> {
         input_paths,
     )?;
     let root_display = output::outcome::display_path(&options.root);
-    let analysis_outcome = match app::analysis_outcome_artifact::read_analysis_outcome_artifact(
+    let analysis_outcome_path =
+        app::analysis_outcome_artifact::analysis_outcome_artifact_path_for_verify(&verify_path)?;
+    let analysis_outcome = match app::analysis_outcome_artifact::read_analysis_outcome_artifact_at(
         &options.root,
         &root_display,
+        &analysis_outcome_path,
     ) {
         Ok(outcome) => {
             output::agent_receipt::AgentReceiptAnalysisOutcome::Present(Box::new(outcome))
         }
-        Err(error) => output::agent_receipt::AgentReceiptAnalysisOutcome::Unavailable {
-            status: (&error).into(),
-            reason: error.to_string(),
-        },
+        Err(error) => {
+            let status = match &error {
+                app::analysis_outcome_artifact::AnalysisOutcomeArtifactError::Missing(_) => {
+                    output::agent_receipt::AgentReceiptUnavailableStatus::Missing
+                }
+                app::analysis_outcome_artifact::AnalysisOutcomeArtifactError::Invalid(_) => {
+                    output::agent_receipt::AgentReceiptUnavailableStatus::Invalid
+                }
+            };
+            output::agent_receipt::AgentReceiptAnalysisOutcome::Unavailable {
+                status,
+                reason: error.to_string(),
+            }
+        }
     };
     let rendered = output::agent_receipt::render_agent_receipt_value_json(
         &validated.verify,
