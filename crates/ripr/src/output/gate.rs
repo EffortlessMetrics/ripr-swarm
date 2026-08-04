@@ -581,6 +581,9 @@ fn gate_decision(
             mutation_calibration: &mutation_calibration,
             acknowledgement_label: acknowledgement_label.as_deref(),
         },
+        // #2640: the configured labels travel alongside the matched one so a
+        // blocking reason can name the label that would have acknowledged it.
+        &policy.acknowledgement_labels,
     );
     let repair_route = build_gate_repair_route(candidate);
     GateDecision {
@@ -805,7 +808,26 @@ fn candidate_would_block(
     }
 }
 
-fn gate_reason(candidate: &GateCandidate, context: GateReasonContext<'_>) -> String {
+/// Append the `(expected: \`label\`, ...)` suffix to a blocking reason when
+/// acknowledgement labels are configured. Shared by the gap-decision-ledger arm
+/// and the catch-all arm so the hint is reachable for every blocking source.
+fn append_expected_label(base: &str, labels: &[String]) -> String {
+    if labels.is_empty() {
+        return base.to_string();
+    }
+    let expected = labels
+        .iter()
+        .map(|label| format!("`{label}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{base} without a matching acknowledgement label (expected: {expected})")
+}
+
+fn gate_reason(
+    candidate: &GateCandidate,
+    context: GateReasonContext<'_>,
+    configured_acknowledgement_labels: &[String],
+) -> String {
     if candidate.suppressed || candidate.configured_off {
         return format!(
             "configured-hidden or suppressed candidate preserved as `{}`",
@@ -881,10 +903,13 @@ fn gate_reason(candidate: &GateCandidate, context: GateReasonContext<'_>) -> Str
         "blocking" if context.mode == GateMode::BaselineCheck && context.is_baseline_new => {
             "new policy-eligible gap blocks under baseline-check".to_string()
         }
-        "blocking" if candidate.source == "gap_decision_ledger" => format!(
-            "new repairable {} gap blocks from gap decision ledger",
-            candidate.gap_kind.as_deref().unwrap_or("Rust")
-        ),
+        "blocking" if candidate.source == "gap_decision_ledger" => {
+            let base = format!(
+                "new repairable {} gap blocks from gap decision ledger",
+                candidate.gap_kind.as_deref().unwrap_or("Rust")
+            );
+            append_expected_label(&base, configured_acknowledgement_labels)
+        }
         "blocking" if context.mode == GateMode::CalibratedGate => {
             if context.mutation_calibration.confidence_effect == "supports_static_gap" {
                 "new policy-eligible gap has supporting imported mutation calibration".to_string()
@@ -892,7 +917,10 @@ fn gate_reason(candidate: &GateCandidate, context: GateReasonContext<'_>) -> Str
                 "new policy-eligible gap has supporting recommendation calibration".to_string()
             }
         }
-        "blocking" => "policy-eligible gap blocks under acknowledgeable mode".to_string(),
+        "blocking" => {
+            let base = "policy-eligible gap blocks under acknowledgeable mode";
+            append_expected_label(base, configured_acknowledgement_labels)
+        }
         _ if context.mode == GateMode::VisibleOnly => {
             "visible-only mode records evidence without blocking".to_string()
         }
@@ -1161,6 +1189,18 @@ fn partial_scope_input_error(value: &Value, path: &Path) -> Option<String> {
             crate::analysis::PartialDiffScope::RUN_STATUS,
             crate::analysis::PartialDiffScope::GATE_ELIGIBILITY,
         ))
+    } else if discloses_incomplete_analysis_outcome(value) {
+        let kind = value
+            .pointer("/analysis_outcome/outcome/kind")
+            .and_then(Value::as_str)
+            .unwrap_or("incomplete");
+        Some(format!(
+            "gate input {} discloses an incomplete analysis outcome ({kind}); \
+             an incomplete or unsupported denominator is never a gate, baseline, \
+             badge, or RIPR Zero input — follow the producer recovery limitation \
+             before gating",
+            display_path(path),
+        ))
     } else {
         None
     }
@@ -1199,6 +1239,27 @@ pub(crate) fn discloses_limited_partial_scope(value: &Value) -> bool {
                     || entry.get("category").and_then(Value::as_str) == Some(run_status)
             })
         })
+}
+
+/// Whether a producer supplied the typed incomplete-analysis envelope.
+///
+/// This is intentionally separate from the older run-state vocabulary: an
+/// unsupported input or another typed limitation is still an incomplete
+/// denominator even when it does not use `limited_partial_scope`.
+pub(crate) fn discloses_incomplete_analysis_outcome(value: &Value) -> bool {
+    value
+        .pointer("/analysis_outcome/analysis_complete")
+        .and_then(Value::as_bool)
+        == Some(false)
+}
+
+/// Return the producer-owned typed outcome kind for an incomplete envelope.
+/// Consumers use this only for fail-closed diagnostics.
+pub(crate) fn incomplete_analysis_outcome_kind(value: &Value) -> &str {
+    value
+        .pointer("/analysis_outcome/outcome/kind")
+        .and_then(Value::as_str)
+        .unwrap_or("incomplete")
 }
 
 fn resolve_root_path(root: &Path, path: &Path) -> PathBuf {

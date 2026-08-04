@@ -182,6 +182,7 @@ jobs:
           cargo test --workspace
           cargo xtask precommit
           cargo xtask check-evidence-promotion-honesty
+          cargo xtask check-agent-skills
           cargo xtask check-dependencies
           cargo xtask check-process-policy
           cargo xtask check-network-policy
@@ -206,8 +207,8 @@ jobs:
         run: |
           cargo xtask ripr-pr --base "$BASE_SHA" --head "$HEAD_SHA"
           cargo xtask ripr-pr --base "$BASE_SHA" --head "$HEAD_SHA" --check
-          cargo xtask ripr-review-comments --base "$BASE_SHA" --head "$HEAD_SHA"
-          cargo xtask ripr-review-comments --base "$BASE_SHA" --head "$HEAD_SHA" --check
+          cargo xtask ripr-review-comments --base "$BASE_SHA" --head "$HEAD_SHA" --check-output target/ripr/pr/check.json
+          cargo xtask ripr-review-comments --base "$BASE_SHA" --head "$HEAD_SHA" --check --check-output target/ripr/pr/check.json
           cargo xtask impacted-evidence
           cargo xtask impacted-evidence --check
           cargo xtask ripr-pr-summary
@@ -323,6 +324,7 @@ jobs:
           cargo test --workspace
           cargo xtask precommit
           cargo xtask check-evidence-promotion-honesty
+          cargo xtask check-agent-skills
           cargo xtask check-dependencies
           cargo xtask check-process-policy
           cargo xtask check-network-policy
@@ -347,8 +349,8 @@ jobs:
         run: |
           cargo xtask ripr-pr --base "$BASE_SHA" --head "$HEAD_SHA"
           cargo xtask ripr-pr --base "$BASE_SHA" --head "$HEAD_SHA" --check
-          cargo xtask ripr-review-comments --base "$BASE_SHA" --head "$HEAD_SHA"
-          cargo xtask ripr-review-comments --base "$BASE_SHA" --head "$HEAD_SHA" --check
+          cargo xtask ripr-review-comments --base "$BASE_SHA" --head "$HEAD_SHA" --check-output target/ripr/pr/check.json
+          cargo xtask ripr-review-comments --base "$BASE_SHA" --head "$HEAD_SHA" --check --check-output target/ripr/pr/check.json
           cargo xtask impacted-evidence
           cargo xtask impacted-evidence --check
           cargo xtask ripr-pr-summary
@@ -463,6 +465,7 @@ jobs:
           cargo test --workspace
           cargo xtask precommit
           cargo xtask check-evidence-promotion-honesty
+          cargo xtask check-agent-skills
           cargo xtask check-dependencies
           cargo xtask check-process-policy
           cargo xtask check-network-policy
@@ -487,8 +490,8 @@ jobs:
         run: |
           cargo xtask ripr-pr --base "$BASE_SHA" --head "$HEAD_SHA"
           cargo xtask ripr-pr --base "$BASE_SHA" --head "$HEAD_SHA" --check
-          cargo xtask ripr-review-comments --base "$BASE_SHA" --head "$HEAD_SHA"
-          cargo xtask ripr-review-comments --base "$BASE_SHA" --head "$HEAD_SHA" --check
+          cargo xtask ripr-review-comments --base "$BASE_SHA" --head "$HEAD_SHA" --check-output target/ripr/pr/check.json
+          cargo xtask ripr-review-comments --base "$BASE_SHA" --head "$HEAD_SHA" --check --check-output target/ripr/pr/check.json
           cargo xtask impacted-evidence
           cargo xtask impacted-evidence --check
           cargo xtask ripr-pr-summary
@@ -557,6 +560,7 @@ jobs:
           cargo test --workspace
           cargo xtask precommit
           cargo xtask check-evidence-promotion-honesty
+          cargo xtask check-agent-skills
           cargo xtask check-dependencies
           cargo xtask check-process-policy
           cargo xtask check-network-policy
@@ -580,8 +584,8 @@ jobs:
         run: |
           cargo xtask ripr-pr --base "$BASE_SHA" --head "$HEAD_SHA"
           cargo xtask ripr-pr --base "$BASE_SHA" --head "$HEAD_SHA" --check
-          cargo xtask ripr-review-comments --base "$BASE_SHA" --head "$HEAD_SHA"
-          cargo xtask ripr-review-comments --base "$BASE_SHA" --head "$HEAD_SHA" --check
+          cargo xtask ripr-review-comments --base "$BASE_SHA" --head "$HEAD_SHA" --check-output target/ripr/pr/check.json
+          cargo xtask ripr-review-comments --base "$BASE_SHA" --head "$HEAD_SHA" --check --check-output target/ripr/pr/check.json
           cargo xtask impacted-evidence
           cargo xtask impacted-evidence --check
           cargo xtask ripr-pr-summary
@@ -631,6 +635,7 @@ jobs:
       - name: Doc/spec gates (full precommit table)
         run: |
           cargo xtask precommit
+          cargo xtask check-agent-skills
       - name: Upload docs-gate reports
         if: always()
         uses: actions/upload-artifact@v7

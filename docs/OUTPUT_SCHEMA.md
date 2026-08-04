@@ -47,7 +47,7 @@ map is:
 | `ripr agent status` | `schema_version` | `0.1` |
 | `ripr agent review-summary` | `schema_version` | `0.1` |
 | `ripr receipt write/check` | `schema_version` | `0.1` |
-| badge JSON | `schema_version` | `0.7` |
+| badge JSON | `schema_version` | `0.8` |
 | `ripr cache status --json` | `schema_version` | `0.1` |
 
 Bump rules below apply per contract: a breaking change to one family bumps
@@ -135,9 +135,35 @@ Repo-scoped formats such as `repo-exposure-json`, `repo-exposure-md`,
     "propagation_unknown": 0,
     "static_unknown": 0
   },
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {
+      "schema_version": "0.1",
+      "kind": "complete_with_findings",
+      "identity": {
+        "base_revision": "origin/main",
+        "input_identity": "sha256:<diff-bytes>"
+      },
+      "counts": {
+        "changed_file_count": 1,
+        "changed_line_count": 2,
+        "candidate_line_count": 2,
+        "probe_count": 1,
+        "finding_count": 1
+      },
+      "limitations": [],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    }
+  },
   "findings": []
 }
 ```
+
+`analysis_outcome` is emitted for diff and worktree analysis. Its
+`analysis_complete` member is derived from `outcome.kind`; consumers must use
+the typed outcome and its `limitations[]` rather than infer completeness from
+`findings` or `probes`. For `unsupported_input` and
+`partial_with_limitations`, zero findings is explicitly not a clean result.
 
 When supported raw findings align to a canonical evidence item, `ripr check
 --json` also emits an additive `finding_alignment` section. The section is
@@ -1502,11 +1528,11 @@ ripr check --format repo-badge-plus-json
 ripr check --format repo-badge-json --gap-ledger target/ripr/reports/gap-decision-ledger.json
 ```
 
-Native schema `0.7`:
+Native schema `0.8`:
 
 ```json
 {
-  "schema_version": "0.7",
+  "schema_version": "0.8",
   "kind": "ripr",
   "scope": "repo",
   "basis": "canonical_actionable_gap",
@@ -1514,6 +1540,8 @@ Native schema `0.7`:
   "message": "0 actionable",
   "status": "pass",
   "color": "brightgreen",
+  "analysis_complete": null,
+  "analysis_outcome": null,
   "counts": {
     "unsuppressed_exposure_gaps": 0,
     "unsuppressed_test_efficiency_findings": 0,
@@ -1561,12 +1589,15 @@ Native schema `0.7`:
 
 Field contract:
 
-- `schema_version` — currently `"0.7"`. `0.2` added `scope`; `0.3` adds
+- `schema_version` — currently `"0.8"`. `0.2` added `scope`; `0.3` adds
   `basis` and `counts.analyzed_seams`; `0.4` adds
   `basis = "gap_decision_ledger"` and `counts.analyzed_gap_records`;
   `0.5` adds `basis = "canonical_actionable_gap"` for public repair-item
   projection; `0.6` adds `preview_skipped`; `0.7` adds the
-  `public_projection` object (RIPR-SPEC-0066) on repo-scoped public badges.
+  `public_projection` object (RIPR-SPEC-0066) on repo-scoped public badges;
+  `0.8` adds `analysis_complete` and typed `analysis_outcome` on diff-scoped
+  badges. Repo-scoped badges emit both fields as `null` because they do not
+  have a diff completeness denominator.
 - `kind` — `"ripr"` or `"ripr_plus"`.
 - `scope` — `"diff"` for PR/diff artifacts, `"repo"` for public repo
   baseline artifacts.
@@ -1605,6 +1636,15 @@ Field contract:
 - `preview_skipped` — (v0.6) array of preview-language adapter names detected
   in the diff but not enabled; a non-empty list means the result is not a
   clean Rust-grade result. Always present as an array (possibly empty).
+- `analysis_complete` — (v0.8) nullable Boolean derived from the typed
+  diff-scoped `analysis_outcome`; `false` means the badge is not a clean
+  result even when its finding count is zero, while `null` means the badge is
+  repo-scoped or otherwise has no diff outcome.
+- `analysis_outcome` — (v0.8) nullable typed `AnalysisOutcome` DTO for
+  diff-scoped badges. It preserves the producer outcome kind, counts,
+  limitations, recovery routes, and semantic input identity. An incomplete
+  outcome downgrades a pass/green diff badge to warning/yellow and names the
+  outcome kind in `message`; an existing failure remains a failure.
 - `public_projection` — (v0.7) present only on repo-scoped public badges
   (`canonical_actionable_gap` or `gap_decision_ledger` basis). The
   RIPR-SPEC-0066 projection of the badge into one closed public state plus
@@ -1800,6 +1840,13 @@ Configured severity maps into SARIF as:
 
 SARIF v1 does not emit `level: "error"`. CI blocking is a separate opt-in
 policy decision, not a property of the static SARIF renderer.
+
+Diff-scoped SARIF also carries additive run-level `properties` when the
+producer supplies an `AnalysisOutcome`: `run_status` is `"complete"` or
+`"incomplete"`, `analysis_complete` is the derived Boolean, and
+`analysis_outcome` is the typed DTO. These properties keep an empty `results`
+array from being misread as a clean analysis. Repo-scoped seam SARIF retains
+its existing limitation properties and does not invent a diff outcome.
 
 Every result carries:
 
@@ -11886,6 +11933,47 @@ The Markdown report is derived from the same normalized DTO and is advisory
 only. This report never closes issues, merges PRs, selects or qualifies a
 candidate, or publishes release artifacts.
 
+The open-PR inventory is informational and must not be used as a candidate
+readiness gate. Candidate readiness is a separate, cut-relative decision over
+selected claims, candidate-only exclusions, the reviewed denominator through
+development cut `C`, and a reproducible candidate tree. The candidate control
+artifact must report `candidate_required_claims_pending` and the associated
+landed, excluded, deferred, unresolved-defect, denominator, cut, and immutable
+candidate-reference state. An `open_release_pr_count`, if displayed, is
+context only.
+
+The release-control JSON carries this candidate-relative state separately from
+PR rows:
+
+```json
+{
+  "candidate_state": {
+    "status": "scope_pending | scope_closed | hard_cut_eligible | candidate_materialized | qualification_eligible",
+    "selected_candidate_claims": 0,
+    "candidate_required_claims_pending": 0,
+    "candidate_claims_landed": 0,
+    "candidate_claims_excluded": 0,
+    "candidate_claims_deferred": 0,
+    "candidate_defects_unresolved": 0,
+    "denominator_decisions_remaining": 0,
+    "candidate_cut_selected": false,
+    "candidate_ref_created": false,
+    "projection_reproducible": false,
+    "candidate_tree_present": false,
+    "candidate_tree_parent_matches_cut": false,
+    "exclusion_digests_match": false,
+    "preservation_digests_match": false,
+    "manifest_matches_candidate_tree": false,
+    "qualification_instruments_available": false,
+    "reasons": []
+  }
+}
+```
+
+`denominator_decisions_remaining` is `null` when candidate selection authority
+is absent. A state earlier than `qualification_eligible` is not a qualification
+claim; the state names the next missing boundary.
+
 ## Release Denominator Ledger Report
 
 `release-denominator` writes a deterministic supplemental denominator report
@@ -11899,6 +11987,7 @@ stable top-level shape:
   "captured_at": "...",
   "status": "ready | reconcile_required",
   "source": {},
+  "candidate_selection": null,
   "counts_by_disposition": {},
   "counts_by_tree_state": {},
   "records": [],
@@ -11916,6 +12005,38 @@ The validator preserves the ordered first-parent range and requires one
 reviewed record per range commit. Missing, duplicate, out-of-range, wrongly
 ordered, wrong-tree, stale-live, and unresolved-final-decision cases produce
 `reconcile_required`; no report status qualifies or publishes a candidate.
+
+Each record may retain typed reference authority in `references[]`:
+
+```json
+{
+  "kind": "merge_pr | issue | pull_request | reviewed_manual_mapping",
+  "number": 2788,
+  "source": "associated_pull_request | closing_reference | body_reference | explicit_review",
+  "evidence_url": "https://github.com/...",
+  "github_identity": null,
+  "observed_for_commit_sha": "...",
+  "reviewed": true,
+  "limitation": ""
+}
+```
+
+Exactly one of `evidence_url` or `github_identity` is required. The legacy
+`pr_refs` and `issue_refs` fields are compatibility projections and cannot
+establish final denominator authority by themselves. Final ledgers reject
+unreviewed references and legacy-only projections.
+
+`source.github_repository` pins the GitHub repository whose retained authority
+may be imported; captures from another repository are rejected.
+`source.provisional_review_cutoff_sha` optionally pins the fixed review cutoff
+used by #2832. Each record may also carry `claim_refs[]`,
+`reference_capture_status` (`not_captured`, `captured`,
+`no_linked_authority`, `ambiguous`, or `unavailable`), and
+`reference_capture_limitation`. `candidate_tree_state_pending` is the
+fail-closed state for a row whose candidate-tree effect has not been
+adjudicated; it is only valid with `operator_decision_required`. The optional
+`candidate_selection` object is the #2766/#2871 selected-claim authority, not a
+claim inferred from numeric issue or PR references.
 
 ## Operator Cockpit Report
 
@@ -14828,6 +14949,22 @@ artifact is reported as unavailable and never converted into a causal result.
 In particular, `comparison_unknown` and incomplete coverage remain visible but
 cannot be promoted by a renderer into PR-caused debt.
 
+## Canonical PR Check Artifact
+
+`cargo xtask ripr-pr` also preserves the parsed producer output at
+`target/ripr/pr/check.json`. This is the canonical typed analysis envelope for
+downstream PR projections; it is not the derived PR-evidence summary packet.
+The artifact retains the producer's `schema_version`, `tool`, `mode`, `root`,
+`base`, `summary`, `findings`, and `analysis_outcome` fields. A new PR-evidence
+run removes a stale copy before invoking the producer, so a failed or timed-out
+run cannot leave a previous passing outcome for generated CI to consume.
+
+Pull-request workflows pass this artifact to `ripr-review-comments
+--check-output target/ripr/pr/check.json` for both rendering and contract
+validation. Missing or malformed output remains an unavailable/error state;
+generated CI does not infer a complete result from the derived
+`target/ripr/pr/repo-exposure.json` packet.
+
 ## PR Evidence Summary
 
 `cargo xtask ripr-pr-summary` writes two sibling files after the legacy
@@ -14856,6 +14993,8 @@ JSON shape (schema version `0.1`):
   "kind": "pr_evidence_summary",
   "tool": "ripr",
   "run_status": "diff_complete_full_repo_limited",
+  "analysis_complete": null,
+  "analysis_outcome": null,
   "changed_surfaces": 3,
   "gaps": {
     "total_actionable": 2,
@@ -14912,6 +15051,8 @@ Field sources:
 | Field | Source artifact | Path |
 | --- | --- | --- |
 | `run_status` | diff-report (then repo-exposure fallback) | `run_status` |
+| `analysis_complete` | diff-report | `analysis_outcome.analysis_complete`; null when the typed envelope is absent. A false value forces summary `run_status` to `incomplete`. |
+| `analysis_outcome` | diff-report | `analysis_outcome`; preserves typed kind, limitations, and recovery routes without reconstructing them from empty findings. |
 | `changed_surfaces` | diff-report | `summary.changed_files` |
 | `gaps.total_actionable` | gap-decision-ledger | `summary.repairable_total` |
 | `gaps.total_static_limitation` | gap-decision-ledger | `summary.static_limitation_total` |

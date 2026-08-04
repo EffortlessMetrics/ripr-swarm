@@ -34,6 +34,11 @@ fn gate_acknowledgeable_blocks_policy_candidate_without_label() -> Result<(), St
     assert_eq!(report.summary.blocking, 1);
     assert!(gate_decision_should_fail(&report));
     assert_eq!(report.decisions[0].decision, "blocking");
+    // #2640: the reason names the label that would have acknowledged the gap.
+    assert_eq!(
+        report.decisions[0].gate_reason,
+        "policy-eligible gap blocks under acknowledgeable mode without a matching acknowledgement label (expected: `ripr-waive`)"
+    );
     Ok(())
 }
 
@@ -106,6 +111,142 @@ fn gate_fails_closed_on_limited_partial_scope_pr_guidance() -> Result<(), String
         "config error must name the partial run state: {:?}",
         report.config_errors
     );
+    let _ = fs::remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+fn gate_fails_closed_on_typed_incomplete_analysis_outcome() -> Result<(), String> {
+    let dir = temp_dir("gate-typed-incomplete-outcome")?;
+    let guidance = write_temp_json(
+        &dir,
+        "comments.json",
+        r#"{
+          "schema_version": "0.1",
+          "status": "advisory",
+          "comments": [],
+          "analysis_outcome": {
+            "analysis_complete": false,
+            "outcome": {
+              "kind": "unsupported_input",
+              "limitations": [
+                {
+                  "kind": "unresolved_conflict_markers",
+                  "recovery": {"kind": "resolve_conflicts"}
+                }
+              ]
+            }
+          }
+        }"#,
+    )?;
+    let mut input = fixture_input(GateMode::VisibleOnly);
+    input.pr_guidance = Some(guidance);
+
+    let report = build_gate_decision_report(&input)?;
+
+    assert_eq!(report.status, "config_error");
+    assert!(gate_decision_should_fail(&report));
+    assert_eq!(report.summary.evaluated, 0);
+    assert!(
+        report
+            .config_errors
+            .iter()
+            .any(|error| { error.contains("unsupported_input") && error.contains("incomplete") })
+    );
+    let _ = fs::remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+fn gate_gap_ledger_and_baseline_rejections_name_typed_outcome_kind() -> Result<(), String> {
+    let dir = temp_dir("gate-typed-incomplete-consumers")?;
+    let envelope = r#"{
+      "analysis_outcome": {
+        "analysis_complete": false,
+        "outcome": {"kind": "unsupported_input"}
+      }
+    }"#;
+
+    let gap_ledger = write_temp_json(&dir, "gap-ledger.json", envelope)?;
+    let mut gap_input = fixture_input(GateMode::VisibleOnly);
+    gap_input.pr_guidance = None;
+    gap_input.gap_ledger = Some(gap_ledger);
+    let gap_report = build_gate_decision_report(&gap_input)?;
+    assert_eq!(gap_report.status, "config_error");
+    assert!(
+        gap_report
+            .config_errors
+            .iter()
+            .any(|error| error.contains("gap decision ledger")
+                && error.contains("unsupported_input")),
+        "gap-ledger rejection must name the typed outcome kind: {:?}",
+        gap_report.config_errors
+    );
+
+    let baseline = write_temp_json(&dir, "baseline.json", envelope)?;
+    let mut baseline_input = fixture_input(GateMode::CalibratedGate);
+    baseline_input.pr_guidance = None;
+    baseline_input.baseline = Some(baseline);
+    let baseline_report = build_gate_decision_report(&baseline_input)?;
+    assert_eq!(baseline_report.status, "config_error");
+    assert!(
+        baseline_report
+            .config_errors
+            .iter()
+            .any(|error| error.contains("baseline") && error.contains("unsupported_input")),
+        "baseline rejection must name the typed outcome kind: {:?}",
+        baseline_report.config_errors
+    );
+
+    let _ = fs::remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+fn check_output_gap_ledger_preserves_incomplete_outcome_for_gate_consumers() -> Result<(), String> {
+    let dir = temp_dir("gate-check-output-typed-outcome")?;
+    let check_output = serde_json::json!({
+        "findings": [],
+        "analysis_outcome": {
+            "analysis_complete": false,
+            "outcome": {"kind": "unsupported_input"}
+        }
+    });
+    let source = serde_json::to_string(&check_output)
+        .map_err(|error| format!("serialize check output failed: {error}"))?;
+    let ledger = crate::output::gap_decision_ledger::build_gap_decision_ledger_report(
+        crate::output::gap_decision_ledger::GapDecisionLedgerInput {
+            root: dir.display().to_string(),
+            generated_at: "test".to_string(),
+            source_kind:
+                crate::output::gap_decision_ledger::GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "check-output.json".to_string(),
+            records_json: Ok(source),
+        },
+    );
+    let ledger_json = crate::output::gap_decision_ledger::render_gap_decision_ledger_json(&ledger)?;
+    assert!(
+        ledger_json.contains("\"analysis_outcome\""),
+        "check-output ledger must retain the producer outcome: {ledger_json}"
+    );
+    let ledger_path = write_temp_json(&dir, "gap-ledger.json", &ledger_json)?;
+
+    let mut gate_input = fixture_input(GateMode::VisibleOnly);
+    gate_input.pr_guidance = None;
+    gate_input.gap_ledger = Some(ledger_path);
+    let report = build_gate_decision_report(&gate_input)?;
+
+    assert_eq!(report.status, "config_error");
+    assert_eq!(report.summary.evaluated, 0);
+    assert!(
+        report
+            .config_errors
+            .iter()
+            .any(|error| error.contains("unsupported_input")),
+        "gate must reject the real check-output ledger with its typed kind: {:?}",
+        report.config_errors
+    );
+
     let _ = fs::remove_dir_all(dir);
     Ok(())
 }
@@ -200,6 +341,25 @@ fn limited_partial_scope_detection_covers_run_state_vocabulary() {
     })));
     assert!(!discloses_limited_partial_scope(&json!({
         "analysis_scope": {"run_status": "diff_scope_oversized"}
+    })));
+}
+
+#[test]
+fn incomplete_analysis_outcome_detection_covers_typed_envelope() {
+    assert!(discloses_incomplete_analysis_outcome(&json!({
+        "analysis_outcome": {
+            "analysis_complete": false,
+            "outcome": {"kind": "unsupported_input"}
+        }
+    })));
+    assert!(!discloses_incomplete_analysis_outcome(&json!({
+        "analysis_outcome": {
+            "analysis_complete": true,
+            "outcome": {"kind": "complete"}
+        }
+    })));
+    assert!(!discloses_incomplete_analysis_outcome(&json!({
+        "run_status": "complete"
     })));
 }
 
@@ -1115,6 +1275,52 @@ fn gate_acknowledgeable_blocks_complete_gap_ledger_route_with_typed_seam_identit
     Ok(())
 }
 
+/// #2640: the `(expected: ...)` acknowledgement-label hint must be reachable
+/// for `gap_decision_ledger` blockers, not only for `comments`-source blockers.
+/// Without threading the labels into the gap-ledger arm, the hint was dead code
+/// for the source that most needs it (review bots flagged this in #2863).
+#[test]
+fn gate_acknowledgeable_gap_ledger_block_names_the_expected_label() -> Result<(), String> {
+    let dir = temp_dir("gate-gap-ledger-label")?;
+    let gap_ledger = write_temp_json(&dir, "gap-ledger.json", GAP_LEDGER_BLOCKING_JSON)?;
+    let input = GateEvaluateInput {
+        root: dir.clone(),
+        repo_exposure: None,
+        pr_guidance: None,
+        gap_ledger: Some(
+            gap_ledger
+                .strip_prefix(&dir)
+                .map_err(|err| err.to_string())?
+                .to_path_buf(),
+        ),
+        sarif_policy: None,
+        labels_json: None,
+        labels: Vec::new(),
+        agent_verify: None,
+        agent_receipt: None,
+        recommendation_calibration: None,
+        mutation_calibration: None,
+        baseline: None,
+        mode: GateMode::Acknowledgeable,
+        acknowledgement_labels: vec!["ripr-waive".to_string()],
+        exception_policy: None,
+    };
+
+    let report = build_gate_decision_report(&input)?;
+    assert_eq!(report.status, "blocked");
+    assert_eq!(report.decisions[0].decision, "blocking");
+    assert_eq!(report.decisions[0].source, "gap_decision_ledger");
+    assert!(
+        report.decisions[0]
+            .gate_reason
+            .contains("without a matching acknowledgement label (expected: `ripr-waive`)"),
+        "gap-ledger block must name the expected label; got: {}",
+        report.decisions[0].gate_reason
+    );
+    let _ = fs::remove_dir_all(dir);
+    Ok(())
+}
+
 #[test]
 fn conflicting_gap_ledger_seam_identities_fail_closed_as_config_error() -> Result<(), String> {
     let dir = temp_dir("gate-gap-ledger-conflicting-seams")?;
@@ -1265,6 +1471,26 @@ fn gate_labels_array_supports_custom_acknowledgement_label() -> Result<(), Strin
         report.decisions[0].policy.acknowledgement_label.as_deref(),
         Some("accepted-risk")
     );
+
+    // #2640: without the waiver label the blocking reason names the configured
+    // label, not the built-in default.
+    input.labels_json = None;
+    let blocked = build_gate_decision_report(&input)?;
+    assert_eq!(blocked.status, "blocked");
+    assert_eq!(blocked.decisions[0].decision, "blocking");
+    assert_eq!(
+        blocked.decisions[0].gate_reason,
+        "policy-eligible gap blocks under acknowledgeable mode without a matching acknowledgement label (expected: `accepted-risk`)"
+    );
+    assert!(!blocked.decisions[0].gate_reason.contains("ripr-waive"));
+
+    input.acknowledgement_labels = vec!["accepted-risk".to_string(), "ops-waiver".to_string()];
+    let blocked = build_gate_decision_report(&input)?;
+    assert_eq!(
+        blocked.decisions[0].gate_reason,
+        "policy-eligible gap blocks under acknowledgeable mode without a matching acknowledgement label (expected: `accepted-risk`, `ops-waiver`)"
+    );
+
     let _ = fs::remove_dir_all(dir);
     Ok(())
 }
@@ -1399,6 +1625,61 @@ fn gate_markdown_projects_incomplete_route_limitation_without_fabricated_command
         "  - Inspect:",
         "incomplete route inspection command",
     )
+}
+
+#[test]
+fn gate_markdown_names_an_absent_anchor_instead_of_rendering_a_broken_location()
+-> Result<(), String> {
+    let input = fixture_input(GateMode::Acknowledgeable);
+    let report = build_gate_decision_report(&input)?;
+
+    // A decision with a complete placement is untouched. This is why no
+    // checked gate-decision.md golden moves with this change.
+    let complete = render_gate_decision_markdown(&report);
+    require_contains(
+        &complete,
+        "- src/pricing.rs:88 weakly_gripped",
+        "complete placement",
+    )?;
+
+    // `path` and `line` come from independent producer fallbacks, so every
+    // combination is reachable. None of them may render as `<no path>:?`.
+    for (label, placement, expected) in [
+        (
+            "no path and no line",
+            GatePlacement {
+                path: None,
+                line: None,
+            },
+            "- (no changed-line anchor) weakly_gripped",
+        ),
+        (
+            "path without line",
+            GatePlacement {
+                path: Some("src/pricing.rs".to_string()),
+                line: None,
+            },
+            "- src/pricing.rs (no line anchor) weakly_gripped",
+        ),
+        (
+            "line without path",
+            GatePlacement {
+                path: None,
+                line: Some(88),
+            },
+            "- (no file anchor):88 weakly_gripped",
+        ),
+    ] {
+        let mut variant = report.clone();
+        for decision in &mut variant.decisions {
+            decision.placement = placement.clone();
+        }
+        let rendered = render_gate_decision_markdown(&variant);
+        require_contains(&rendered, expected, label)?;
+        require_not_contains(&rendered, "<no path>", label)?;
+        require_not_contains(&rendered, ":?", label)?;
+    }
+    Ok(())
 }
 
 #[test]

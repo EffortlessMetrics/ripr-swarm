@@ -5106,22 +5106,27 @@ id = "RIPR-SPEC-0075"
 name = "pr evidence summary"
 spec = "docs/specs/RIPR-SPEC-0075-pr-evidence-summary.md"
 tests = [
-  "xtask/src/reports/pr_evidence_summary/json.rs::tests::missing_all_artifacts_yields_unknown_run_status",
-  "xtask/src/reports/pr_evidence_summary/json.rs::tests::present_top_gap_populates_top_repair",
-  "xtask/src/reports/pr_evidence_summary/json.rs::tests::gap_ledger_counts_are_surfaced",
-  "xtask/src/reports/pr_evidence_summary/json.rs::tests::repo_exposure_limitations_are_aggregated",
-  "xtask/src/reports/pr_evidence_summary::tests::parse_accepts_baseline_path",
-  "xtask/src/reports/pr_evidence_summary::tests::parse_rejects_baseline_without_path",
-  "xtask/src/reports/pr_evidence_summary::tests::evidence_summary_pair_missing_all_shows_explicit_states",
-  "xtask/src/reports/pr_evidence_summary::tests::evidence_summary_pair_present_top_gap_is_copyable"
+  "crates/ripr/src/app/pr_summary/json.rs::tests::missing_all_artifacts_yields_unknown_run_status",
+  "crates/ripr/src/app/pr_summary/json.rs::tests::present_top_gap_populates_top_repair",
+  "crates/ripr/src/app/pr_summary/json.rs::tests::typed_incomplete_diff_outcome_is_preserved_and_not_reported_complete",
+  "crates/ripr/src/app/pr_summary/json.rs::tests::gap_ledger_counts_are_surfaced",
+  "crates/ripr/src/app/pr_summary/json.rs::tests::repo_exposure_limitations_are_aggregated",
+  "crates/ripr/src/app/pr_summary/mod.rs::tests::parse_accepts_baseline",
+  "crates/ripr/src/app/pr_summary/mod.rs::tests::parse_rejects_unknown_arg",
+  "crates/ripr/tests/cli_smoke.rs::pr_summary_help_exits_cleanly",
+  "xtask/src/reports/pr_evidence_summary/json.rs::tests::typed_incomplete_diff_outcome_is_preserved_and_not_reported_complete"
 ]
 fixtures = []
 code = [
+  "crates/ripr/src/app/pr_summary/mod.rs",
+  "crates/ripr/src/app/pr_summary/json.rs",
+  "crates/ripr/src/app/pr_summary/model.rs",
+  "crates/ripr/src/app/pr_summary/render.rs",
+  "crates/ripr/src/output/gate.rs",
+  "crates/ripr/src/output/gate/input.rs",
   "xtask/src/reports/pr_evidence_summary.rs",
   "xtask/src/reports/pr_evidence_summary/json.rs",
-  "xtask/src/reports/pr_evidence_summary/model.rs",
-  "xtask/src/reports/pr_evidence_summary/io.rs",
-  "xtask/src/reports/pr_evidence_summary/util.rs"
+  "xtask/src/reports/pr_evidence_summary/model.rs"
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0075-pr-evidence-summary.md",
@@ -6501,6 +6506,76 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0147"
+name = "typed analysis outcome projection"
+spec = "docs/specs/RIPR-SPEC-0147-analysis-outcome-projection.md"
+tests = [
+  "crates/ripr/src/analysis/pipeline.rs::tests::diff_pipeline_projects_parser_limitation_and_distinguishes_complete_zero",
+  "crates/ripr/src/output/json/mod.rs::tests::typed_incomplete_outcome_matches_human_and_json_projection",
+  "crates/ripr/src/output/gate/tests.rs::tests::gate_fails_closed_on_typed_incomplete_analysis_outcome",
+  "crates/ripr/src/output/gate/tests.rs::tests::check_output_gap_ledger_preserves_incomplete_outcome_for_gate_consumers",
+  "crates/ripr/src/output/gate/tests.rs::tests::gate_gap_ledger_and_baseline_rejections_name_typed_outcome_kind",
+  "crates/ripr/src/output/gap_decision_ledger.rs::tests::records_source_preserves_incomplete_outcome_in_json_and_markdown",
+  "crates/ripr/src/app/pr_summary/json.rs::tests::typed_incomplete_diff_outcome_is_preserved_and_not_reported_complete",
+  "crates/ripr/src/output/sarif.rs::tests::sarif_discloses_incomplete_zero_finding_outcome_at_run_level",
+  "crates/ripr/src/output/badge/tests.rs::tests::incomplete_zero_finding_diff_is_not_a_green_badge",
+  "crates/ripr/src/lsp/diagnostics.rs::diagnostic_policy_tests::typed_incomplete_outcome_never_projects_as_full",
+  "crates/ripr/src/lsp/backend.rs::top_limitation_selection_tests::top_limitation_retains_typed_incomplete_outcome",
+  "crates/ripr/src/output/review_comments.rs::tests::review_comments_projects_typed_outcome_without_strengthening_incomplete_input",
+  "crates/ripr/src/output/review_comments.rs::tests::review_comments_projects_complete_zero_outcome_as_advisory",
+  "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_matches_smoke_fixture",
+  "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_is_advisory",
+  "xtask/src/reports/pr_evidence.rs::tests::run_ripr_check_uses_fake_binary_success_output",
+  "xtask/src/reports/pr_evidence.rs::tests::run_ripr_check_reports_fake_binary_failure",
+  "xtask/src/reports/pr_evidence.rs::tests::run_ripr_check_reports_fake_binary_timeout",
+  "xtask/src/reports/pr_evidence.rs::tests::write_pr_evidence_writes_error_packet_when_check_fails",
+  "xtask/src/reports/pr_evidence.rs::tests::write_and_check_packet_in_git_repo",
+  "xtask/src/reports/pr_evidence.rs::tests::stale_check_artifact_is_removed_before_revision_setup_failure",
+]
+code = [
+  "crates/ripr/src/analysis_outcome.rs",
+  "crates/ripr/src/analysis/diff/parse.rs",
+  "crates/ripr/src/analysis/pipeline.rs",
+  "crates/ripr/src/analysis/mod.rs",
+  "crates/ripr/src/app.rs",
+  "crates/ripr/src/output/human.rs",
+  "crates/ripr/src/output/json/report.rs",
+  "crates/ripr/src/output/gate.rs",
+  "crates/ripr/src/output/gate/input.rs",
+  "crates/ripr/src/output/gap_decision_ledger.rs",
+  "crates/ripr/src/app/pr_summary/json.rs",
+  "crates/ripr/src/app/pr_summary/model.rs",
+  "crates/ripr/src/app/pr_summary/render.rs",
+  "xtask/src/reports/pr_evidence_summary/json.rs",
+  "xtask/src/reports/pr_evidence_summary.rs",
+  "crates/ripr/src/output/sarif.rs",
+  "crates/ripr/src/output/badge/model.rs",
+  "crates/ripr/src/output/badge/render.rs",
+  "crates/ripr/src/output/badge/summaries.rs",
+  "crates/ripr/src/output/badge/test_efficiency.rs",
+  "crates/ripr/src/lsp/state.rs",
+  "crates/ripr/src/lsp/diagnostics.rs",
+  "crates/ripr/src/lsp/backend.rs",
+  "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/commands/init.rs",
+  "crates/ripr/src/output/review_comments.rs",
+  "schemas/ripr/review-comments.schema.json",
+  "xtask/src/reports/review_comments.rs",
+  "xtask/src/reports/pr_evidence.rs",
+  ".github/workflows/ci.yml",
+  ".github/workflows/routed-rust.yml",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0147-analysis-outcome-projection.md",
+  "docs/OUTPUT_SCHEMA.md",
+  "docs/BADGE_POLICY.md",
+]
+metrics = [
+  "analysis_outcome_complete_zero_distinguishable",
+  "analysis_outcome_limitation_projection_parity",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0146"
 name = "release supplemental denominator ledger"
 spec = "docs/specs/RIPR-SPEC-0146-release-denominator.md"
@@ -6512,9 +6587,28 @@ tests = [
   "xtask/src/reports/release_denominator.rs::tests::out_of_range_record_fails_closed",
   "xtask/src/reports/release_denominator.rs::tests::wrong_order_fails_closed",
   "xtask/src/reports/release_denominator.rs::tests::wrong_tree_fails_closed",
+  "xtask/src/reports/release_denominator.rs::tests::candidate_tree_extra_commit_fails_closed",
   "xtask/src/reports/release_denominator.rs::tests::final_operator_decision_fails_closed",
   "xtask/src/reports/release_denominator.rs::tests::live_observation_mismatch_fails_closed",
   "xtask/src/reports/release_denominator.rs::tests::report_json_and_markdown_share_the_claim_boundary",
+  "xtask/src/reports/release_denominator.rs::tests::reference_authority_pins_known_merge_and_issue_pair",
+  "xtask/src/reports/release_denominator.rs::tests::body_reference_remains_distinct_from_merge_pr_authority",
+  "xtask/src/reports/release_denominator.rs::tests::no_linked_issue_record_can_remain_explicitly_empty",
+  "xtask/src/reports/release_denominator.rs::tests::reviewed_manual_mapping_is_explicit_and_replayable",
+  "xtask/src/reports/release_denominator.rs::tests::reference_order_is_normalized_and_mapping_changes_digest",
+  "xtask/src/reports/release_denominator.rs::tests::final_ledger_rejects_unreviewed_reference",
+  "xtask/src/reports/release_denominator.rs::tests::final_ledger_rejects_ambiguous_manual_mapping",
+  "xtask/src/reports/release_denominator.rs::tests::final_ledger_rejects_legacy_only_reference_projection",
+  "xtask/src/reports/release_denominator.rs::tests::reference_projection_mismatch_fails_closed",
+  "xtask/src/reports/release_denominator.rs::tests::contradictory_reference_identity_fails_closed",
+  "xtask/src/reports/release_denominator.rs::tests::reused_reference_identity_for_different_claim_fails_closed",
+  "xtask/src/reports/release_denominator.rs::tests::malformed_reference_evidence_fails_closed",
+  "xtask/src/reports/release_denominator.rs::tests::compatibility_projections_sort_reference_numbers",
+  "xtask/src/reports/release_denominator.rs::tests::reviewed_manual_mapping_requires_reason",
+  "xtask/src/reports/release_denominator.rs::tests::capture_status_requires_typed_reference_evidence",
+  "xtask/src/reports/release_denominator.rs::tests::pending_cutoff_rows_are_not_candidate_exclusions",
+  "xtask/src/reports/release_denominator.rs::tests::claim_refs_require_selected_claim_authority",
+  "xtask/src/reports/release_denominator.rs::tests::github_body_reference_parser_handles_unicode_context",
 ]
 fixtures = [
   "fixtures/release_denominator/complete.json",
@@ -7736,6 +7830,7 @@ name = "temporary 0.11 release-control lens"
 spec = "docs/specs/RIPR-SPEC-0144-release-control-lens.md"
 tests = [
   "xtask/src/reports/release_control.rs::tests::complete_snapshot_is_ready_and_only_required_rows_are_merge_eligible",
+  "xtask/src/reports/release_control.rs::tests::missing_candidate_selection_is_exposed_as_scope_pending",
   "xtask/src/reports/release_control.rs::tests::missing_disposition_fails_closed",
   "xtask/src/reports/release_control.rs::tests::input_order_does_not_change_normalized_output",
   "xtask/src/reports/release_control.rs::tests::stale_authority_cannot_be_merge_eligible",
@@ -7745,13 +7840,27 @@ tests = [
   "xtask/src/reports/release_control.rs::tests::non_main_base_cannot_be_merge_eligible",
   "xtask/src/reports/release_control.rs::tests::bounded_live_collector_normalizes_success_and_failure_inputs",
   "xtask/src/reports/release_control.rs::tests::live_open_pr_bound_is_disclosed_and_fails_closed",
+  "xtask/src/reports/candidate_control.rs::tests::staged_state_advances_only_after_each_boundary",
+  "xtask/src/reports/candidate_control.rs::tests::missing_candidate_selection_is_not_ready",
+  "xtask/src/reports/candidate_control.rs::tests::unresolved_claim_is_not_hard_cut_eligible",
+  "xtask/src/reports/candidate_control.rs::tests::unresolved_defect_is_not_hard_cut_eligible",
+  "xtask/src/reports/candidate_control.rs::tests::missing_cut_and_projection_are_not_hard_cut_eligible",
+  "xtask/src/reports/candidate_control.rs::tests::mismatched_materialization_and_manifest_do_not_qualify",
+  "xtask/src/reports/candidate_control.rs::tests::blank_landed_reference_is_not_scope_closed",
+  "xtask/src/reports/candidate_control.rs::tests::whitespace_non_claim_is_not_scope_closed",
+  "xtask/src/reports/candidate_control.rs::tests::optional_failed_claim_is_not_scope_closed",
+  "xtask/src/reports/candidate_control.rs::tests::blank_projection_digests_do_not_materialize",
+  "xtask/src/reports/candidate_control.rs::tests::mutable_candidate_ref_does_not_qualify",
+  "xtask/src/reports/candidate_control.rs::tests::negative_candidate_state_fixture_covers_each_false_ready_boundary",
 ]
 fixtures = [
   "fixtures/release_control/complete.json",
   "fixtures/release_control/reconcile-required.json",
+  "fixtures/release_control/candidate-state-negative.json",
 ]
 code = [
   "xtask/src/reports/release_control.rs",
+  "xtask/src/reports/candidate_control.rs",
   "xtask/src/command.rs",
   "xtask/src/dispatch.rs",
   "xtask/src/fixture_contracts/mod.rs",
