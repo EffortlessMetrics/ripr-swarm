@@ -374,6 +374,7 @@ tests = [
   "crates/ripr/src/output/agent_seam_packets.rs::tests::schema_version_is_pinned_to_zero_three",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::actionable_packet_carries_a_suggested_test_command_marked_not_yet_runnable",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::single_actionable_envelope_carries_the_whole_loop_including_a_seam_receipt",
+  "crates/ripr/src/output/agent_seam_packets.rs::tests::mixed_actionable_and_limitation_envelope_leaves_the_seam_receipt_null",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::multi_seam_envelope_leaves_the_seam_scoped_receipt_null",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::static_limitation_only_envelope_keeps_its_current_shape",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::empty_envelope_carries_no_loop_commands",

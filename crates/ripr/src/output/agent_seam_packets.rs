@@ -20,8 +20,8 @@
 use crate::agent::command_specs::agent_command_spec_from_display;
 use crate::agent::loop_commands::{
     WORKFLOW_AFTER_SNAPSHOT_ARTIFACT, WORKFLOW_AGENT_RECEIPT_ARTIFACT,
-    WORKFLOW_AGENT_VERIFY_ARTIFACT, WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, agent_receipt_command,
-    agent_verify_command, check_repo_exposure_command, shell_arg,
+    WORKFLOW_AGENT_VERIFY_ARTIFACT, WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, WORKFLOW_PREPARE_COMMAND,
+    agent_receipt_command, agent_verify_command, check_repo_exposure_command, shell_arg,
 };
 use crate::analysis::canonical_gap::{CanonicalGapIdentity, canonical_gap_identities};
 use crate::analysis::repair_route::{
@@ -204,11 +204,10 @@ struct RepairLoopCommands {
 /// targeted test. An envelope of `inspect_static_limitation` packets has no
 /// repair to verify, so it keeps its current shape.
 fn repair_loop_commands(actionable: &[&ClassifiedSeam]) -> Option<RepairLoopCommands> {
-    let mut write_test_seams = actionable
+    let first = actionable
         .iter()
-        .filter(|entry| task_for(entry) == TASK_WRITE_TARGETED_TEST);
-    let first = write_test_seams.next()?;
-    let receipt = write_test_seams.next().is_none().then(|| {
+        .find(|entry| task_for(entry) == TASK_WRITE_TARGETED_TEST)?;
+    let receipt = (actionable.len() == 1).then(|| {
         agent_receipt_command(
             REPAIR_LOOP_ROOT,
             WORKFLOW_AGENT_VERIFY_ARTIFACT,
@@ -217,10 +216,13 @@ fn repair_loop_commands(actionable: &[&ClassifiedSeam]) -> Option<RepairLoopComm
         )
     });
     Some(RepairLoopCommands {
-        before_snapshot: check_repo_exposure_command(
-            REPAIR_LOOP_ROOT,
-            REPAIR_LOOP_MODE,
-            WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
+        before_snapshot: format!(
+            "{WORKFLOW_PREPARE_COMMAND} && {}",
+            check_repo_exposure_command(
+                REPAIR_LOOP_ROOT,
+                REPAIR_LOOP_MODE,
+                WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
+            )
         ),
         after_snapshot: check_repo_exposure_command(
             REPAIR_LOOP_ROOT,
@@ -4879,10 +4881,9 @@ mod tests {
         // hand-written duplicate of it.
         assert_eq!(
             next["before_snapshot_command"],
-            serde_json::Value::String(check_repo_exposure_command(
-                ".",
-                "draft",
-                WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT
+            serde_json::Value::String(format!(
+                "{WORKFLOW_PREPARE_COMMAND} && {}",
+                check_repo_exposure_command(".", "draft", WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT)
             ))
         );
         assert_eq!(
@@ -4926,6 +4927,24 @@ mod tests {
         assert!(
             receipt.contains(&format!("--verify-json {WORKFLOW_AGENT_VERIFY_ARTIFACT}")),
             "receipt command does not read the verify artifact: {receipt}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn mixed_actionable_and_limitation_envelope_leaves_the_seam_receipt_null() -> Result<(), String>
+    {
+        let mut limitation = weakly_gripped_classified();
+        limitation.class = SeamGripClass::Opaque;
+        let value = parsed_envelope(&render_agent_seam_packets_json(
+            &[weakly_gripped_classified(), limitation],
+            None,
+        ))?;
+        assert_eq!(value["packets_total"], 2);
+        assert!(value["next"]["verify_after_edit"].is_string());
+        assert!(
+            value["next"]["receipt_after_verify"].is_null(),
+            "mixed envelope must not name the actionable packet's receipt"
         );
         Ok(())
     }
