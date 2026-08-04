@@ -619,6 +619,14 @@ fn gap_records_from_repo_exposure_json(contents: &str) -> Result<Vec<GapRecord>,
         .ok_or_else(|| "expected repo exposure object with seams array".to_string())?;
     let mut records = Vec::new();
     for (index, seam) in seams.iter().enumerate() {
+        if let Some(canonical_item) = seam
+            .get("evidence_record")
+            .and_then(|evidence| evidence.get("canonical_item"))
+        {
+            command_specs_from_value(Some(canonical_item)).map_err(|error| {
+                format!("seam {index} contains invalid typed command specs: {error}")
+            })?;
+        }
         let Some(record) = gap_record_from_repo_exposure_seam(seam) else {
             continue;
         };
@@ -5072,6 +5080,32 @@ mod tests {
         assert!(
             error.contains("invalid GapRecord"),
             "unexpected error: {error}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn repo_exposure_rejects_malformed_typed_command_specs_with_seam_context() -> Result<(), String>
+    {
+        let input = serde_json::json!({
+            "seams": [{
+                "evidence_record": {
+                    "seam_id": "seam:invalid-command-spec",
+                    "canonical_item": {
+                        "gap_state": "actionable",
+                        "actionability": "add_focused_test",
+                        "command_specs": {"verify": "not-a-spec"}
+                    }
+                }
+            }]
+        });
+        let error = gap_records_from_repo_exposure_json(&input.to_string())
+            .err()
+            .ok_or("malformed repo-exposure command specs were accepted")?;
+        assert!(error.contains("seam 0"), "missing seam context: {error}");
+        assert!(
+            error.contains("invalid typed command specs"),
+            "missing typed-spec context: {error}"
         );
         Ok(())
     }
