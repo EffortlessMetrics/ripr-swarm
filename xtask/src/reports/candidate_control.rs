@@ -30,7 +30,8 @@ pub(crate) struct CandidateSelection {
     #[serde(default)]
     pub(crate) known_candidate_defects: Vec<KnownCandidateDefect>,
     #[serde(default)]
-    pub(crate) denominator_decisions_remaining: Option<u64>,
+    #[serde(alias = "denominator_decisions_remaining")]
+    pub(crate) denominator_decisions_remaining_through_provisional_cutoff: Option<u64>,
     #[serde(default)]
     pub(crate) projection: CandidateProjection,
     #[serde(default)]
@@ -118,7 +119,7 @@ pub(crate) struct CandidateState {
     pub(crate) candidate_claims_excluded: u64,
     pub(crate) candidate_claims_deferred: u64,
     pub(crate) candidate_defects_unresolved: u64,
-    pub(crate) denominator_decisions_remaining: Option<u64>,
+    pub(crate) denominator_decisions_remaining_through_provisional_cutoff: Option<u64>,
     pub(crate) candidate_cut_selected: bool,
     pub(crate) candidate_ref_created: bool,
     pub(crate) projection_reproducible: bool,
@@ -141,7 +142,7 @@ pub(crate) fn evaluate(selection: Option<&CandidateSelection>) -> CandidateState
             candidate_claims_excluded: 0,
             candidate_claims_deferred: 0,
             candidate_defects_unresolved: 0,
-            denominator_decisions_remaining: None,
+            denominator_decisions_remaining_through_provisional_cutoff: None,
             candidate_cut_selected: false,
             candidate_ref_created: false,
             projection_reproducible: false,
@@ -364,7 +365,7 @@ pub(crate) fn evaluate(selection: Option<&CandidateSelection>) -> CandidateState
 
     let hard_cut_blocked = candidate_required_claims_pending > 0
         || candidate_defects_unresolved > 0
-        || selection.denominator_decisions_remaining != Some(0)
+        || selection.denominator_decisions_remaining_through_provisional_cutoff != Some(0)
         || !candidate_cut_selected
         || !projection_reproducible;
     let status = if !scope_closed {
@@ -388,8 +389,9 @@ pub(crate) fn evaluate(selection: Option<&CandidateSelection>) -> CandidateState
     if candidate_defects_unresolved > 0 {
         reasons.push("known candidate defects remain unresolved".to_string());
     }
-    if selection.denominator_decisions_remaining != Some(0) {
-        reasons.push("denominator decisions remain through the selected cut".to_string());
+    if selection.denominator_decisions_remaining_through_provisional_cutoff != Some(0) {
+        reasons
+            .push("denominator decisions remain through the provisional review cutoff".to_string());
     }
     if !candidate_cut_selected {
         reasons.push("development cut C is not selected".to_string());
@@ -418,7 +420,8 @@ pub(crate) fn evaluate(selection: Option<&CandidateSelection>) -> CandidateState
         candidate_claims_excluded,
         candidate_claims_deferred,
         candidate_defects_unresolved,
-        denominator_decisions_remaining: selection.denominator_decisions_remaining,
+        denominator_decisions_remaining_through_provisional_cutoff: selection
+            .denominator_decisions_remaining_through_provisional_cutoff,
         candidate_cut_selected,
         candidate_ref_created,
         projection_reproducible,
@@ -482,7 +485,7 @@ mod tests {
             }],
             "candidate_exclusions": [],
             "known_candidate_defects": [],
-            "denominator_decisions_remaining": 0,
+            "denominator_decisions_remaining_through_provisional_cutoff": 0,
             "projection": {
                 "reproducible": true,
                 "candidate_tree_sha": "cccccccccccccccccccccccccccccccccccccccc",
@@ -524,7 +527,7 @@ mod tests {
         if state.status != "hard_cut_eligible" {
             return Err(format!("expected hard_cut_eligible, got {}", state.status));
         }
-        value.denominator_decisions_remaining = Some(1);
+        value.denominator_decisions_remaining_through_provisional_cutoff = Some(1);
         let state = evaluate(Some(&value));
         if state.status != "scope_closed" {
             return Err(format!("expected scope_closed, got {}", state.status));
@@ -705,7 +708,8 @@ mod tests {
         #[serde(default)]
         unresolved_defect: bool,
         #[serde(default)]
-        denominator_decisions_remaining: Option<u64>,
+        #[serde(alias = "denominator_decisions_remaining")]
+        denominator_decisions_remaining_through_provisional_cutoff: Option<u64>,
         #[serde(default)]
         clear_selected_cut: bool,
         #[serde(default)]
@@ -775,8 +779,12 @@ mod tests {
                         evidence_refs: vec!["fixture:negative".to_string()],
                     });
             }
-            if case.denominator_decisions_remaining.is_some() {
-                selection.denominator_decisions_remaining = case.denominator_decisions_remaining;
+            if case
+                .denominator_decisions_remaining_through_provisional_cutoff
+                .is_some()
+            {
+                selection.denominator_decisions_remaining_through_provisional_cutoff =
+                    case.denominator_decisions_remaining_through_provisional_cutoff;
             }
             if case.clear_selected_cut {
                 selection.selected_cut_sha = None;

@@ -112,6 +112,8 @@ struct CommitRecord {
     release_disposition: String,
     acceptance_owner: String,
     candidate_tree_state: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    candidate_only_excluded_paths: Vec<String>,
     #[serde(default)]
     replacement_commit_sha: Option<String>,
     #[serde(default)]
@@ -162,6 +164,8 @@ struct AdjudicationManifest {
     kind: String,
     cutoff_sha: String,
     batches: Vec<AdjudicationBatch>,
+    #[serde(default)]
+    overrides: Vec<AdjudicationOverride>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -172,6 +176,23 @@ struct AdjudicationBatch {
     candidate_tree_state: String,
     review_ref: String,
     rationale: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct AdjudicationOverride {
+    position: usize,
+    batch_id: String,
+    disposition: String,
+    candidate_tree_state: String,
+    review_ref: String,
+    delivered_delta: String,
+    challenged_disposition: String,
+    candidate_effect: String,
+    residual_acceptance: String,
+    #[serde(default)]
+    candidate_only_excluded_paths: Vec<String>,
+    #[serde(default)]
+    review_evidence: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -620,6 +641,51 @@ fn apply_adjudication(input: &str, decisions_path: &str, output: &str) -> Result
             }
         }
     }
+    let mut overrides_by_position = BTreeMap::new();
+    for override_record in &manifest.overrides {
+        if override_record.position == 0
+            || override_record.position > cutoff_position
+            || override_record.batch_id.trim().is_empty()
+            || !batch_ids.contains(&override_record.batch_id)
+            || override_record.review_ref.trim().is_empty()
+            || !override_record.review_ref.starts_with("review:2832:")
+            || override_record.delivered_delta.trim().is_empty()
+            || override_record.challenged_disposition.trim().is_empty()
+            || override_record.candidate_effect.trim().is_empty()
+            || override_record.residual_acceptance.trim().is_empty()
+            || (override_record.disposition == "candidate_only_exclusion"
+                && override_record.candidate_only_excluded_paths.is_empty()
+                && override_record.candidate_tree_state == "present_in_candidate")
+            || override_record
+                .review_evidence
+                .iter()
+                .any(|evidence| evidence.trim().is_empty())
+            || !DISPOSITIONS.contains(&override_record.disposition.as_str())
+            || override_record.disposition == "operator_decision_required"
+            || !TREE_STATES.contains(&override_record.candidate_tree_state.as_str())
+            || override_record.candidate_tree_state == "candidate_tree_state_pending"
+        {
+            return Err(format!(
+                "adjudication override at position {} is malformed or not closed",
+                override_record.position
+            ));
+        }
+        if overrides_by_position
+            .insert(override_record.position, override_record)
+            .is_some()
+        {
+            return Err(format!(
+                "adjudication overrides overlap at first-parent position {}",
+                override_record.position
+            ));
+        }
+        if coverage.get(&override_record.position) != Some(&override_record.batch_id) {
+            return Err(format!(
+                "adjudication override at position {} does not belong to batch {}",
+                override_record.position, override_record.batch_id
+            ));
+        }
+    }
     for position in 1..=cutoff_position {
         let batch_id = coverage.get(&position).ok_or_else(|| {
             format!("adjudication has no decision for first-parent position {position}")
@@ -639,32 +705,52 @@ fn apply_adjudication(input: &str, decisions_path: &str, output: &str) -> Result
                 record.first_parent_position
             ));
         }
-        record.release_disposition = batch.disposition.clone();
-        record.candidate_tree_state = batch.candidate_tree_state.clone();
+        let override_record = overrides_by_position.get(&position);
+        let disposition = override_record.map_or(batch.disposition.as_str(), |record| {
+            record.disposition.as_str()
+        });
+        let candidate_tree_state = override_record
+            .map_or(batch.candidate_tree_state.as_str(), |record| {
+                record.candidate_tree_state.as_str()
+            });
+        record.release_disposition = disposition.to_string();
+        record.candidate_tree_state = candidate_tree_state.to_string();
         record.review_refs = vec![batch.review_ref.clone(), format!("batch:{}", batch.id)];
-        record.source_survivor_or_swarm_exclusion_effect = format!(
-            "#2832 {} reviewed commit {} at first-parent position {}: {}",
-            batch.id, record.commit_sha, position, batch.rationale
-        );
-        record.limitation_or_operator_decision = format!(
-            "This provisional disposition does not close the owning issue, prove candidate qualification, or claim source promotion. Residual acceptance remains with {}.",
-            record.acceptance_owner
-        );
+        if let Some(override_record) = override_record {
+            record.candidate_only_excluded_paths =
+                override_record.candidate_only_excluded_paths.clone();
+            record.review_refs.push(override_record.review_ref.clone());
+            record
+                .review_refs
+                .extend(override_record.review_evidence.iter().cloned());
+            record.review_refs.push(format!("override:{}", position));
+            record.source_survivor_or_swarm_exclusion_effect = format!(
+                "#2832 {} reviewed commit {} at first-parent position {}: delivered delta: {}; challenged disposition: {}; accepted disposition: {}; candidate effect: {}.",
+                batch.id,
+                record.commit_sha,
+                position,
+                override_record.delivered_delta,
+                override_record.challenged_disposition,
+                override_record.disposition,
+                override_record.candidate_effect,
+            );
+            record.limitation_or_operator_decision = format!(
+                "{} Release non-claim: this provisional disposition does not close the owning issue, prove candidate qualification, or claim source promotion.",
+                override_record.residual_acceptance
+            );
+        } else {
+            record.source_survivor_or_swarm_exclusion_effect = format!(
+                "#2832 {} reviewed commit {} at first-parent position {}: {}",
+                batch.id, record.commit_sha, position, batch.rationale
+            );
+            record.limitation_or_operator_decision = format!(
+                "This provisional disposition does not close the owning issue, prove candidate qualification, or claim source promotion. Residual acceptance remains with {}.",
+                record.acceptance_owner
+            );
+        }
     }
-    let adjudicated_tree = snapshot
-        .records
-        .iter()
-        .take(cutoff_position)
-        .filter(|record| record.candidate_tree_state == "present_in_candidate")
-        .map(|record| record.commit_sha.as_str())
-        .collect::<BTreeSet<_>>();
-    snapshot.source.candidate_tree_commits = snapshot
-        .source
-        .range_commits
-        .iter()
-        .filter(|commit_sha| adjudicated_tree.contains(commit_sha.as_str()))
-        .cloned()
-        .collect();
+    snapshot.source.candidate_tree_commits =
+        project_candidate_tree(&snapshot.records, &snapshot.source.range_commits);
     let normalized = normalize_snapshot(snapshot.clone(), None)?;
     if normalized.status != "ready" {
         return Err(format!(
@@ -679,6 +765,19 @@ fn apply_adjudication(input: &str, decisions_path: &str, output: &str) -> Result
     })?;
     println!("Wrote adjudicated denominator ledger {output}");
     Ok(())
+}
+
+fn project_candidate_tree(records: &[CommitRecord], range_commits: &[String]) -> Vec<String> {
+    let candidate_tree = records
+        .iter()
+        .filter(|record| record.candidate_tree_state == "present_in_candidate")
+        .map(|record| record.commit_sha.as_str())
+        .collect::<BTreeSet<_>>();
+    range_commits
+        .iter()
+        .filter(|commit_sha| candidate_tree.contains(commit_sha.as_str()))
+        .cloned()
+        .collect()
 }
 
 fn apply_provisional_cutoff_boundary(snapshot: &mut Snapshot) -> Result<(), String> {
@@ -1113,9 +1212,12 @@ fn validate_record(record: &CommitRecord, source: &SnapshotSource, reasons: &mut
         }
         _ => {}
     }
-    if record.release_disposition == "candidate_only_exclusion"
-        && record.candidate_tree_state != "absent_by_candidate_only_exclusion"
-    {
+    let valid_candidate_only_exclusion = match record.candidate_tree_state.as_str() {
+        "absent_by_candidate_only_exclusion" => true,
+        "present_in_candidate" => !record.candidate_only_excluded_paths.is_empty(),
+        _ => false,
+    };
+    if record.release_disposition == "candidate_only_exclusion" && !valid_candidate_only_exclusion {
         reasons.push(format!(
             "commit {} candidate_only_exclusion disposition has the wrong tree state",
             record.commit_sha
@@ -2153,7 +2255,7 @@ mod tests {
         )?;
         require(
             report.record_set_digest
-                == "sha256:bb768e8f2b271695efb6ec1578be32474af43193b1f2f5455387e418f359ff80",
+                == "sha256:0af9e0bf56f9f4697883b1e3156ee92a0cc27b1a3f346450e54931cf37321ace",
             "current-main record-set digest changed",
         )?;
         require(
@@ -2167,6 +2269,19 @@ mod tests {
                     .get("operator_decision_required")
                     == Some(&4),
             "current-main denominator counts changed",
+        )?;
+        let execution_record = report
+            .records
+            .get(80)
+            .ok_or_else(|| "current-main census is missing the #2396 record".to_string())?;
+        require(
+            execution_record.release_disposition == "candidate_only_exclusion"
+                && execution_record.candidate_tree_state == "present_in_candidate"
+                && execution_record
+                    .candidate_only_excluded_paths
+                    .iter()
+                    .any(|path| path == "crates/ripr/src/app/verification_execution.rs"),
+            "accepted #2767 path-level exclusion was not retained on the execution record",
         )?;
         let pending = report
             .records
@@ -2206,6 +2321,29 @@ mod tests {
                 && unique.first() == Some(&1)
                 && unique.last() == Some(&230),
             "#2832 adjudication manifest does not cover the fixed cutoff exactly",
+        )
+    }
+
+    #[test]
+    fn candidate_tree_projection_preserves_reviewed_post_cutoff_rows() -> Result<(), String> {
+        let mut snapshot: Snapshot = serde_json::from_str(include_str!(
+            "../../../fixtures/release_denominator/current-main-provisional.json"
+        ))
+        .map_err(|error| error.to_string())?;
+        let post_cutoff = snapshot
+            .records
+            .get_mut(230)
+            .ok_or_else(|| "provisional fixture is missing post-cutoff row".to_string())?;
+        let post_cutoff_sha = post_cutoff.commit_sha.clone();
+        post_cutoff.release_disposition = "include_product".to_string();
+        post_cutoff.candidate_tree_state = "present_in_candidate".to_string();
+
+        let projected = project_candidate_tree(&snapshot.records, &snapshot.source.range_commits);
+        require(
+            projected
+                .iter()
+                .any(|commit_sha| commit_sha == &post_cutoff_sha),
+            "a reviewed post-cutoff candidate-tree row was discarded during projection",
         )
     }
 

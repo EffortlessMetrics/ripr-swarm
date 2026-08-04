@@ -19,7 +19,7 @@
     ],
     "candidate_exclusions": [],
     "known_candidate_defects": [],
-    "denominator_decisions_remaining": 0,
+    "denominator_decisions_remaining_through_provisional_cutoff": 0,
     "projection": {
       "reproducible": true,
       "candidate_tree_sha": "cccccccccccccccccccccccccccccccccccccccc",
@@ -49,7 +49,7 @@
     {
       "name": "denominator decisions remain",
       "expected_status": "scope_closed",
-      "denominator_decisions_remaining": 1
+      "denominator_decisions_remaining_through_provisional_cutoff": 1
     },
     {
       "name": "development cut is not selected",
