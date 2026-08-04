@@ -98,7 +98,17 @@ pub(crate) fn validate_analysis_outcome_artifact(
             "Analysis outcome artifact base does not match its typed identity.",
         ));
     }
-    if root.join(".git").exists() {
+    if outcome.kind.is_complete()
+        && !matches!(
+            outcome.kind,
+            crate::analysis_outcome::AnalysisOutcomeKind::NoScope
+        )
+    {
+        if !root.join(".git").exists() {
+            return Err(invalid(
+                "Current analysis input could not be established: repository metadata is unavailable.",
+            ));
+        }
         let diff =
             crate::analysis::load_diff(root, declared_base, None, None).map_err(|error| {
                 invalid(format!(
@@ -128,8 +138,16 @@ mod tests {
         AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind, AnalysisStage,
     };
 
+    fn workspace_root() -> Result<std::path::PathBuf, String> {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .ok_or_else(|| "expected workspace root above crate manifest".to_string())
+    }
+
     fn complete_outcome(kind: AnalysisOutcomeKind) -> Result<AnalysisOutcome, String> {
-        AnalysisOutcome::new(
+        let mut outcome = AnalysisOutcome::new(
             kind,
             AnalysisIdentity::default(),
             AnalysisOutcomeCounts {
@@ -144,7 +162,11 @@ mod tests {
                 },
             },
             Vec::new(),
-        )
+        )?;
+        let diff = crate::analysis::load_diff(&workspace_root()?, None, None, None)?;
+        let digest = Sha256::digest(diff.as_bytes());
+        outcome.identity.input_identity = Some(format!("sha256:{digest:x}"));
+        Ok(outcome)
     }
 
     fn incomplete_outcome(kind: AnalysisOutcomeKind) -> Result<AnalysisOutcome, String> {
@@ -166,17 +188,18 @@ mod tests {
         )
     }
 
-    fn artifact(outcome: &AnalysisOutcome, declared_complete: bool) -> Value {
-        serde_json::json!({
+    fn artifact(outcome: &AnalysisOutcome, declared_complete: bool) -> Result<Value, String> {
+        let root = workspace_root()?;
+        Ok(serde_json::json!({
             "schema_version": "0.2",
             "tool": "ripr",
-            "root": ".",
+            "root": root.display().to_string(),
             "base": null,
             "analysis_outcome": {
                 "analysis_complete": declared_complete,
                 "outcome": outcome
             }
-        })
+        }))
     }
 
     #[test]
@@ -186,12 +209,13 @@ mod tests {
             complete_outcome(AnalysisOutcomeKind::CompleteWithFindings)?,
             complete_outcome(AnalysisOutcomeKind::CompleteNoFindings)?,
         ] {
+            let root = workspace_root()?;
             let declared_complete = outcome.kind.is_complete();
             assert_eq!(
                 validate_analysis_outcome_artifact(
-                    Path::new("target"),
-                    ".",
-                    &artifact(&outcome, declared_complete)
+                    &root,
+                    &root.display().to_string(),
+                    &artifact(&outcome, declared_complete)?
                 ),
                 Ok(outcome)
             );
@@ -206,11 +230,12 @@ mod tests {
             AnalysisOutcomeKind::UnsupportedInput,
         ] {
             let outcome = incomplete_outcome(kind)?;
+            let root = workspace_root()?;
             assert_eq!(
                 validate_analysis_outcome_artifact(
-                    Path::new("target"),
-                    ".",
-                    &artifact(&outcome, false)
+                    &root,
+                    &root.display().to_string(),
+                    &artifact(&outcome, false)?
                 ),
                 Ok(outcome)
             );
@@ -221,25 +246,34 @@ mod tests {
     #[test]
     fn rejects_missing_envelope_and_declared_completeness_disagreement() -> Result<(), String> {
         let outcome = complete_outcome(AnalysisOutcomeKind::CompleteNoFindings)?;
-        let mut missing = artifact(&outcome, true);
+        let root = workspace_root()?;
+        let root_display = root.display().to_string();
+        let mut missing = artifact(&outcome, true)?;
         missing
             .as_object_mut()
             .ok_or_else(|| "fixture should be an object".to_string())?
             .remove("analysis_outcome");
         assert_eq!(
-            validate_analysis_outcome_artifact(Path::new("target"), ".", &missing),
+            validate_analysis_outcome_artifact(&root, &root_display, &missing),
             Err(AnalysisOutcomeArtifactError::Invalid(
                 "Analysis outcome artifact is missing the analysis_outcome envelope.".to_string()
             ))
         );
         assert_eq!(
-            validate_analysis_outcome_artifact(
-                Path::new("target"),
-                ".",
-                &artifact(&outcome, false)
-            ),
+            validate_analysis_outcome_artifact(&root, &root_display, &artifact(&outcome, false)?,),
             Err(AnalysisOutcomeArtifactError::Invalid(
                 "Analysis outcome artifact completeness disagrees with its typed outcome."
+                    .to_string()
+            ))
+        );
+        assert_eq!(
+            validate_analysis_outcome_artifact(
+                Path::new("target"),
+                &root_display,
+                &artifact(&outcome, true)?,
+            ),
+            Err(AnalysisOutcomeArtifactError::Invalid(
+                "Current analysis input could not be established: repository metadata is unavailable."
                     .to_string()
             ))
         );
