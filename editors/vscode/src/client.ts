@@ -813,19 +813,24 @@ export class RiprClientController {
       return;
     }
 
-    if (target?.label === 'first_repair_packet' && typeof target.packet === 'string') {
+    const directPacketLabel = target?.label === 'first_repair_packet'
+      ? 'first repair packet'
+      : target?.label === 'gap_repair_packet'
+        ? 'gap repair packet'
+        : undefined;
+    if (directPacketLabel && target && typeof target.packet === 'string') {
       const packet = target.packet.trim();
       if (!packet) {
-        this.runtime.showInformationMessage('No ripr first repair packet is available for this diagnostic.');
+        this.runtime.showInformationMessage(`No ripr ${directPacketLabel} is available for this diagnostic.`);
         return;
       }
       try {
         await this.runtime.writeClipboard(packet);
-        this.runtime.showInformationMessage('Copied ripr first repair packet to clipboard.');
+        this.runtime.showInformationMessage(`Copied ripr ${directPacketLabel} to clipboard.`);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        this.output.appendLine(`ripr copy first repair packet failed: ${message}`);
-        this.warnWithOutput('ripr could not copy the first repair packet.');
+        this.output.appendLine(`ripr copy ${directPacketLabel} failed: ${message}`);
+        this.warnWithOutput(`ripr could not copy the ${directPacketLabel}.`);
       }
       return;
     }

@@ -769,6 +769,31 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('copyContext copies gap repair packets without LSP fallback for active workspace file', async () => {
+    const relativePath = 'src/gap-repair-packet.rs';
+    const uri = workspaceFileUri(relativePath);
+    const context = createControllerTestContext({});
+    const packet = 'RIPR gap repair packet\n\nGap identity: gap:rust:pricing';
+    try {
+      await writeWorkspaceFile(relativePath, 'pub fn gap_repair_packet_target() {}\n');
+      const document = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(document);
+      await context.controller.start();
+      await context.controller.copyContext({
+        label: 'gap_repair_packet',
+        packet
+      });
+
+      assert.deepStrictEqual(context.client.requests, []);
+      assert.strictEqual(context.clipboardWrites[0], packet);
+      assert.ok(context.infoMessages.at(-1)?.includes('gap repair packet'));
+    } finally {
+      await context.dispose();
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await removeWorkspacePath(relativePath);
+    }
+  });
+
   test('direct repair commands fail closed without active file or target URI', async () => {
     const context = createControllerTestContext({});
     try {
