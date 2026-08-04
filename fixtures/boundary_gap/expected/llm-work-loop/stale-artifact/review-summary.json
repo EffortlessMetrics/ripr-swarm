@@ -1,7 +1,7 @@
 {
   "schema_version": "0.1",
   "tool": "ripr",
-  "status": "warning",
+  "status": "incomplete",
   "root": ".",
   "target_seam": {
     "seam_id": "seam-stale",
@@ -24,30 +24,7 @@
       "recommended_action": "Add the missing discriminator or stronger assertion named by the packet."
     }
   },
-  "analysis_outcome": {
-    "analysis_complete": true,
-    "outcome": {
-      "schema_version": "0.1",
-      "kind": "complete_no_findings",
-      "identity": {
-        "repository_identity": null,
-        "root_identity": null,
-        "config_identity": null,
-        "base_revision": null,
-        "input_identity": null,
-        "snapshot_identity": null
-      },
-      "counts": {
-        "changed_file_count": 0,
-        "changed_line_count": 0,
-        "candidate_line_count": 0,
-        "probe_count": 0,
-        "finding_count": 0
-      },
-      "limitations": [],
-      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
-    }
-  },
+  "analysis_outcome": null,
   "next_command": null,
   "surfaces": [
     {
@@ -108,10 +85,10 @@
       "name": "analysis_outcome",
       "label": "Analysis outcome",
       "path": "target/ripr/workflow/analysis-outcome.json",
-      "state": "present",
-      "status": "complete",
+      "state": "invalid_json",
+      "status": "invalid_json",
       "required": true,
-      "summary": "Producer analysis outcome is complete_no_findings (complete)."
+      "summary": "Analysis outcome artifact has an invalid typed outcome: complete_no_findings requires a behavioral candidate or probe subject."
     }
   ],
   "ci_artifacts": [
@@ -162,8 +139,8 @@
     }
   ],
   "reviewer_summary": {
-    "headline": "Review packet is warning for seam seam-stale.",
-    "what_changed": "Static movement is unchanged (weakly_gripped -> weakly_gripped).",
+    "headline": "Review packet is incomplete for seam-stale: producer analysis outcome is unavailable.",
+    "what_changed": "No producer-backed completeness result is available; static review evidence cannot be treated as complete.",
     "evidence": "Review target/ripr/reports/agent-receipt.json with target/ripr/workflow/agent-verify.json.",
     "remaining": "Add the missing discriminator or stronger assertion named by the packet.",
     "reviewer_should_inspect": [
