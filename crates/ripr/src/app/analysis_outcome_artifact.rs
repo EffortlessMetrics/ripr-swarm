@@ -7,6 +7,7 @@ use crate::agent::loop_commands::WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT;
 use crate::analysis_outcome::AnalysisOutcome;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use std::fmt::Write as _;
 use std::path::Path;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -105,13 +106,16 @@ pub(crate) fn validate_analysis_outcome_artifact(
                     "Current analysis input could not be established: {error}."
                 ))
             })?;
-        let expected_input_identity = format!(
-            "sha256:{}",
-            Sha256::digest(diff.as_bytes())
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect::<String>()
-        );
+        let digest = Sha256::digest(diff.as_bytes());
+        let mut hex = String::with_capacity(digest.len() * 2);
+        for byte in digest {
+            if write!(&mut hex, "{byte:02x}").is_err() {
+                return Err(invalid(
+                    "Analysis outcome input identity could not be formatted.",
+                ));
+            }
+        }
+        let expected_input_identity = format!("sha256:{hex}");
         if outcome.identity.input_identity.as_deref() != Some(expected_input_identity.as_str()) {
             return Err(invalid(
                 "Analysis outcome artifact input identity does not match the current diff.",
