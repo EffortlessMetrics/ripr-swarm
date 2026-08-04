@@ -6525,6 +6525,12 @@ tests = [
   "crates/ripr/src/output/review_comments.rs::tests::review_comments_projects_complete_zero_outcome_as_advisory",
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_matches_smoke_fixture",
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_is_advisory",
+  "xtask/src/reports/pr_evidence.rs::tests::run_ripr_check_uses_fake_binary_success_output",
+  "xtask/src/reports/pr_evidence.rs::tests::run_ripr_check_reports_fake_binary_failure",
+  "xtask/src/reports/pr_evidence.rs::tests::run_ripr_check_reports_fake_binary_timeout",
+  "xtask/src/reports/pr_evidence.rs::tests::write_pr_evidence_writes_error_packet_when_check_fails",
+  "xtask/src/reports/pr_evidence.rs::tests::write_and_check_packet_in_git_repo",
+  "xtask/src/reports/pr_evidence.rs::tests::stale_check_artifact_is_removed_before_revision_setup_failure",
 ]
 code = [
   "crates/ripr/src/analysis_outcome.rs",

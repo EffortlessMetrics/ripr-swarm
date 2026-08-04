@@ -141,8 +141,15 @@ and
   covered by this slice through `xtask/src/reports/pr_evidence.rs`,
   `crates/ripr/src/cli/commands/init.rs`, and the generated-workflow fixtures
   `commands::tests::init_generated_github_workflow_matches_smoke_fixture` and
-  `commands::tests::init_generated_github_workflow_is_advisory`; agent
-  projections remain explicitly unclaimed.
+  `commands::tests::init_generated_github_workflow_is_advisory`. Direct
+  producer coverage includes
+  `pr_evidence::tests::run_ripr_check_uses_fake_binary_success_output`,
+  `pr_evidence::tests::run_ripr_check_reports_fake_binary_failure`,
+  `pr_evidence::tests::run_ripr_check_reports_fake_binary_timeout`,
+  `pr_evidence::tests::write_pr_evidence_writes_error_packet_when_check_fails`,
+  `pr_evidence::tests::write_and_check_packet_in_git_repo`, and
+  `pr_evidence::tests::stale_check_artifact_is_removed_before_revision_setup_failure`;
+  agent projections remain explicitly unclaimed.
 
 ## Test Mapping
 
@@ -187,7 +194,8 @@ PR-C projects the DTO through `crates/ripr/src/lsp/state.rs`,
 raw producer artifact through `xtask/src/reports/pr_evidence.rs`, forwards it
 from the CI workflows, and emits the same handoff from the generated workflow
 in `crates/ripr/src/cli/commands/init.rs`; agent projections remain explicitly
-unclaimed.
+unclaimed. The producer's success, failure, timeout, packet-validation, and
+stale-artifact setup tests are mapped directly in the traceability ledger.
 Review-comments consumes the DTO in `crates/ripr/src/cli/commands.rs` and
 projects it through `crates/ripr/src/output/review_comments.rs`; the wire
 contract is defined in `schemas/ripr/review-comments.schema.json` and the
