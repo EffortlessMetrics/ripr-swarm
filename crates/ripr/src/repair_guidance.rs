@@ -51,6 +51,21 @@ pub(crate) enum GuidanceReason {
     CrossLanguageOracleUnresolved,
 }
 
+impl GuidanceReason {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::ProducerFactAbsent => "producer_fact_absent",
+            Self::NoBehavioralDiscriminatorDerived => "no_behavioral_discriminator_derived",
+            Self::ObserverNotStaticallyVisible => "observer_not_statically_visible",
+            Self::RouteIsInspectionOnly => "route_is_inspection_only",
+            Self::RouteIsVerificationOnly => "route_is_verification_only",
+            Self::StaticLimitationBlocksDerivation => "static_limitation_blocks_derivation",
+            Self::SnapshotStale => "snapshot_stale",
+            Self::CrossLanguageOracleUnresolved => "cross_language_oracle_unresolved",
+        }
+    }
+}
+
 /// What a consumer can do about a non-concrete guidance state. This is a
 /// bounded inspection or refresh route, never an authorization to edit source
 /// or execute a verification command.
@@ -69,6 +84,19 @@ pub(crate) enum GuidanceRecovery {
     ReviewExternalOracle,
     /// No bounded recovery is available from static evidence.
     NoRecoveryAvailable,
+}
+
+impl GuidanceRecovery {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::InspectFixSite => "inspect_fix_site",
+            Self::RunExplain => "run_explain",
+            Self::AddObserverThenAssert => "add_observer_then_assert",
+            Self::RefreshAnalysis => "refresh_analysis",
+            Self::ReviewExternalOracle => "review_external_oracle",
+            Self::NoRecoveryAvailable => "no_recovery_available",
+        }
+    }
 }
 
 /// Producer-owned provenance for a concrete discriminator. Every variant names
@@ -96,6 +124,16 @@ pub(crate) enum AssertionBasis {
     ResolvedFlowSink,
 }
 
+impl AssertionBasis {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::SeamRequiredDiscriminator => "seam_required_discriminator",
+            Self::ObservedValueFact => "observed_value_fact",
+            Self::ResolvedFlowSink => "resolved_flow_sink",
+        }
+    }
+}
+
 /// The closed assertion-shape vocabulary. These replace the ad-hoc
 /// `&'static str` shape tokens the packet renderer used, so that a shape can
 /// only be named when a concrete example exists.
@@ -110,6 +148,19 @@ pub(crate) enum AssertionKind {
     CallExpectation,
 }
 
+impl AssertionKind {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::ExactReturnValue => "exact_return_value",
+            Self::ExactErrorVariant => "exact_error_variant",
+            Self::FieldEquality => "field_equality",
+            Self::SideEffectObserver => "side_effect_observer",
+            Self::MatchResult => "match_result",
+            Self::CallExpectation => "call_expectation",
+        }
+    }
+}
+
 /// The kind of observer a test must establish before it can assert.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -117,6 +168,16 @@ pub(crate) enum ObserverKind {
     SideEffectSink,
     CallSite,
     ExternalLanguageOracle,
+}
+
+impl ObserverKind {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::SideEffectSink => "side_effect_sink",
+            Self::CallSite => "call_site",
+            Self::ExternalLanguageOracle => "external_language_oracle",
+        }
+    }
 }
 
 /// Availability of a producer-owned discriminator for one changed behavior.
@@ -182,6 +243,18 @@ pub(crate) enum DiscriminatorState {
     Stale,
 }
 
+impl DiscriminatorState {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Present => "present",
+            Self::NotProduced => "not_produced",
+            Self::NotApplicable => "not_applicable",
+            Self::StaticLimitation => "static_limitation",
+            Self::Stale => "stale",
+        }
+    }
+}
+
 /// Wire state token for [`AssertionGuidance`].
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -192,6 +265,19 @@ pub(crate) enum AssertionState {
     VerificationOnly,
     Unresolved,
     Stale,
+}
+
+impl AssertionState {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Concrete => "concrete",
+            Self::RequiresObserverSetup => "requires_observer_setup",
+            Self::FixSiteOnly => "fix_site_only",
+            Self::VerificationOnly => "verification_only",
+            Self::Unresolved => "unresolved",
+            Self::Stale => "stale",
+        }
+    }
 }
 
 /// Producer facts a gap-ledger repair route can offer.
@@ -224,6 +310,48 @@ pub(crate) struct SeamAssertionFacts<'a> {
 }
 
 impl DiscriminatorAvailability {
+    pub(crate) fn state(&self) -> DiscriminatorState {
+        match self {
+            Self::Present { .. } => DiscriminatorState::Present,
+            Self::NotProduced { .. } => DiscriminatorState::NotProduced,
+            Self::NotApplicable { .. } => DiscriminatorState::NotApplicable,
+            Self::StaticLimitation { .. } => DiscriminatorState::StaticLimitation,
+            Self::Stale { .. } => DiscriminatorState::Stale,
+        }
+    }
+
+    pub(crate) fn reason(&self) -> Option<GuidanceReason> {
+        match self {
+            Self::Present { .. } => None,
+            Self::NotProduced { reason, .. }
+            | Self::NotApplicable { reason }
+            | Self::StaticLimitation { reason, .. }
+            | Self::Stale { reason, .. } => Some(*reason),
+        }
+    }
+
+    pub(crate) fn recovery(&self) -> Option<GuidanceRecovery> {
+        match self {
+            Self::Present { .. } | Self::NotApplicable { .. } | Self::StaticLimitation { .. } => {
+                None
+            }
+            Self::NotProduced { recovery, .. }
+            | Self::Stale {
+                refresh: recovery, ..
+            } => Some(*recovery),
+        }
+    }
+
+    pub(crate) fn legacy_text(&self) -> Option<&str> {
+        match self {
+            Self::Present { text, .. } => Some(text.as_str()),
+            Self::NotProduced { .. }
+            | Self::NotApplicable { .. }
+            | Self::StaticLimitation { .. }
+            | Self::Stale { .. } => None,
+        }
+    }
+
     /// Project the gap-ledger route facts.
     ///
     /// Precedence is fixed: staleness first (authority rule 3), then a named
@@ -634,6 +762,34 @@ impl DiscriminatorGuidanceView {
 }
 
 impl AssertionGuidanceView {
+    pub(crate) const fn state(&self) -> AssertionState {
+        self.state
+    }
+
+    pub(crate) fn example(&self) -> Option<&str> {
+        self.example.as_deref()
+    }
+
+    pub(crate) const fn kind(&self) -> Option<AssertionKind> {
+        self.kind
+    }
+
+    pub(crate) const fn basis(&self) -> Option<AssertionBasis> {
+        self.basis
+    }
+
+    pub(crate) const fn observer_kind(&self) -> Option<ObserverKind> {
+        self.observer_kind
+    }
+
+    pub(crate) const fn reason(&self) -> Option<GuidanceReason> {
+        self.reason
+    }
+
+    pub(crate) const fn recovery(&self) -> Option<GuidanceRecovery> {
+        self.recovery
+    }
+
     /// Reject any state/field combination that would let a non-concrete state
     /// carry a paste-ready-looking example.
     fn validate(&self) -> Result<(), String> {
@@ -958,6 +1114,80 @@ mod tests {
             reason: GuidanceReason::NoBehavioralDiscriminatorDerived,
             recovery: GuidanceRecovery::InspectFixSite,
         }
+    }
+
+    #[test]
+    fn typed_guidance_tokens_cover_every_wire_variant() -> Result<(), String> {
+        let reasons = [
+            (GuidanceReason::ProducerFactAbsent, "producer_fact_absent"),
+            (
+                GuidanceReason::NoBehavioralDiscriminatorDerived,
+                "no_behavioral_discriminator_derived",
+            ),
+            (
+                GuidanceReason::ObserverNotStaticallyVisible,
+                "observer_not_statically_visible",
+            ),
+            (
+                GuidanceReason::RouteIsInspectionOnly,
+                "route_is_inspection_only",
+            ),
+            (
+                GuidanceReason::RouteIsVerificationOnly,
+                "route_is_verification_only",
+            ),
+            (
+                GuidanceReason::StaticLimitationBlocksDerivation,
+                "static_limitation_blocks_derivation",
+            ),
+            (GuidanceReason::SnapshotStale, "snapshot_stale"),
+            (
+                GuidanceReason::CrossLanguageOracleUnresolved,
+                "cross_language_oracle_unresolved",
+            ),
+        ];
+        for (reason, expected) in reasons {
+            if reason.as_str() != expected {
+                return Err(format!("guidance reason token changed: {reason:?}"));
+            }
+        }
+
+        let recoveries = [
+            (GuidanceRecovery::InspectFixSite, "inspect_fix_site"),
+            (GuidanceRecovery::RunExplain, "run_explain"),
+            (
+                GuidanceRecovery::AddObserverThenAssert,
+                "add_observer_then_assert",
+            ),
+            (GuidanceRecovery::RefreshAnalysis, "refresh_analysis"),
+            (
+                GuidanceRecovery::ReviewExternalOracle,
+                "review_external_oracle",
+            ),
+            (
+                GuidanceRecovery::NoRecoveryAvailable,
+                "no_recovery_available",
+            ),
+        ];
+        for (recovery, expected) in recoveries {
+            if recovery.as_str() != expected {
+                return Err(format!("guidance recovery token changed: {recovery:?}"));
+            }
+        }
+
+        let states = [
+            (DiscriminatorState::Present, "present"),
+            (DiscriminatorState::NotProduced, "not_produced"),
+            (DiscriminatorState::NotApplicable, "not_applicable"),
+            (DiscriminatorState::StaticLimitation, "static_limitation"),
+            (DiscriminatorState::Stale, "stale"),
+        ];
+        for (state, expected) in states {
+            if state.as_str() != expected {
+                return Err(format!("discriminator state token changed: {state:?}"));
+            }
+        }
+        Ok(())
     }
 
     #[test]

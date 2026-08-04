@@ -42,8 +42,8 @@ map is:
 | `ripr check --format sarif` | `version` | `2.1.0` (standard SARIF envelope) |
 | `ripr gate evaluate` | `schema_version` | `0.1` |
 | `ripr doctor --json` | `schema_version` | `0.2` |
-| `ripr agent packet` | `schema_version` | `0.3` |
-| `ripr agent receipt` | `schema_version` | `0.3` |
+| `ripr agent packet` | `schema_version` | `0.4` |
+| `ripr agent receipt` | `schema_version` | `0.4` |
 | `ripr agent status` | `schema_version` | `0.1` |
 | `ripr agent review-summary` | `schema_version` | `0.1` |
 | `ripr receipt write/check` | `schema_version` | `0.1` |
@@ -6371,7 +6371,7 @@ Field contract:
 
 `ripr agent verify-execute --root <workspace> --packet <packet-json>
 --result-json <result-json> --authorize --json` is the only explicit process
-execution surface in the agent loop. It accepts one schema `0.3` producer
+execution surface in the agent loop. It accepts one schema `0.4` producer
 envelope containing exactly one packet, and executes only the direct,
 no-network, no-write `ripr agent verify` route. The current ripr executable is
 used; shell text is never interpreted.
@@ -6494,9 +6494,23 @@ JSON shape:
 
 ```json
 {
-  "schema_version": "0.3",
+  "schema_version": "0.4",
   "tool": "ripr",
   "status": "advisory",
+  "analysis_outcome_status": "complete",
+  "analysis_outcome_error": null,
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {
+      "schema_version": "0.1",
+      "kind": "complete_no_findings",
+      "identity": {},
+      "counts": {},
+      "limitations": [],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    },
+    "semantic_digest": "sha256:..."
+  },
   "inputs": {
     "agent_verify_json": "target/ripr/workflow/agent-verify.json",
     "before": "target/ripr/workflow/before.repo-exposure.json",
@@ -6564,10 +6578,24 @@ JSON shape:
 
 Field contract:
 
-- `schema_version` - currently `"0.3"`. Version `0.2` added receipt
-  provenance fields; version `0.3` adds structured next-action guidance while
+- `schema_version` - currently `"0.4"`. Version `0.2` added receipt
+  provenance fields; version `0.3` added structured next-action guidance;
+  version `0.4` adds the producer-owned analysis-outcome envelope while
   preserving the selected-seam and handoff fields from `0.1`.
-- `status` - always `"advisory"`; this is a handoff receipt, not a CI policy.
+- `status` - `"advisory"` only when the producer outcome is complete;
+  `"incomplete"` when the producer outcome is incomplete or unavailable; and
+  `"invalid"` when the producer artifact is malformed, stale, or identity
+  mismatched. This is a handoff receipt, not a CI policy.
+- `analysis_outcome_status` - the producer evidence state: `complete`,
+  `incomplete`, `missing`, or `invalid`. It is copied from the canonical
+  `target/ripr/workflow/analysis-outcome.json` artifact and is never inferred
+  from static movement, finding counts, or receipt presence.
+- `analysis_outcome_error` - a diagnostic for `missing` or `invalid` producer
+  evidence; it is `null` when the typed outcome is present.
+- `analysis_outcome` - the validated producer-owned typed outcome, including
+  its derived completeness, limitations, recovery routes, input identity, and
+  semantic digest. It is `null` when producer evidence is unavailable or
+  invalid; the receipt never fabricates a replacement outcome.
 - `inputs.agent_verify_json` - the verify JSON path supplied to the command.
 - `inputs.before` / `inputs.after` - snapshot paths copied from the verify JSON.
 - `provenance` - identity for the static artifacts behind the receipt. It is
@@ -6599,6 +6627,10 @@ Field contract:
 - `provenance.limits` - explicit static boundary flags. Receipts prove only the
   relationship between static before/after artifacts; they do not run mutation
   testing or claim runtime adequacy.
+- The receipt reads and validates the canonical producer artifact but does not
+  rerun diff analysis. A complete zero-finding producer outcome remains
+  complete; partial, unsupported, missing, malformed, stale, or identity-
+  mismatched producer evidence remains visibly non-clean.
 - Receipt issuance rejects hand-authored or altered verify JSON before this
   envelope is rendered; the input must be exact canonical output from
   `ripr agent verify` for the bound artifacts.
@@ -6860,7 +6892,11 @@ Field contract:
   observation when available.
 - `comments[].suggested_test` - bounded test intent, candidate values,
   assertion shape, recommended test file, and related test to imitate when
-  available.
+  available. `assertion_guidance` is the typed projection of the same
+  producer-owned contract used by agent packets: only `state: "concrete"`
+  carries an example; `requires_observer_setup`, `fix_site_only`,
+  `verification_only`, `unresolved`, and `stale` carry `example: null` and
+  their bounded reason/recovery fields.
 - `comments[].suggested_test.related_test` - structured navigational object
   `{name, file, line}` for the nearest strong related test (RIPR-SPEC-0068),
   or `null` when no strong related test resolves. The flat `recommended_file`,
@@ -11680,7 +11716,7 @@ Field notes:
   `analysis_complete` value is derived from the closed outcome kind; it is not
   inferred from receipt movement, packet-budget state, or empty findings.
 - `surfaces[]` reports each joined surface as `computed`, `present`, `missing`,
-  `optional_missing`, or `invalid_json`.
+  `optional_missing`, `invalid`, or `invalid_json`.
 - `ci_artifacts[]` is local file presence for artifacts that generated CI can
   upload later; it does not query GitHub Actions.
 - `reviewer_summary` is intentionally compact enough for PR comments and LLM
@@ -11985,6 +12021,7 @@ PR rows:
     "candidate_claims_deferred": 0,
     "candidate_defects_unresolved": 0,
     "denominator_decisions_remaining": 0,
+    "denominator_decisions_remaining_through_selected_cut": 0,
     "candidate_cut_selected": false,
     "candidate_ref_created": false,
     "projection_reproducible": false,
@@ -11999,9 +12036,13 @@ PR rows:
 }
 ```
 
-`denominator_decisions_remaining` is `null` when candidate selection authority
-is absent. A state earlier than `qualification_eligible` is not a qualification
-claim; the state names the next missing boundary.
+`denominator_decisions_remaining` is retained for schema-0.1 wire compatibility
+and counts decisions through the fixed provisional review cutoff. The additive
+`denominator_decisions_remaining_through_selected_cut` field is `null` until a
+development cut is selected; once selected, it must be zero before hard-cut
+eligibility. Neither field counts the repository-wide open board. A state
+earlier than `qualification_eligible` is not a qualification claim; the state
+names the next missing boundary.
 
 ## Release Denominator Ledger Report
 
@@ -12385,8 +12426,17 @@ The queue envelope is:
       "language": "python",
       "language_status": "preview",
       "repair_kind": "StrengthenExistingTest",
+      "task": "strengthen_targeted_test",
       "changed_owner": "calculate_discount",
       "missing_discriminator": "amount == threshold",
+      "discriminator_guidance": {
+        "state": "present",
+        "text": "amount == threshold",
+        "basis": "activation_evidence_fact",
+        "reason": null,
+        "recovery": null,
+        "static_limit_kind": null
+      },
       "suggested_test_file": "tests/test_pricing.py",
       "suggested_test_name": "test_calculate_discount_smoke",
       "verify_command": "pytest tests/test_pricing.py::test_calculate_discount_smoke",
@@ -12758,7 +12808,7 @@ schema bump.
 
 Field contract:
 
-- `schema_version` — currently `"0.3"`. Distinct from the repo-exposure
+- `schema_version` — currently `"0.4"`. Distinct from the repo-exposure
   report's `"0.2"` because the packet is a separate contract aimed at
   coding agents rather than reviewers. Bumping requires updating this
   section, the renderer (`crates/ripr/src/output/agent_seam_packets.rs`),
@@ -12770,12 +12820,28 @@ Field contract:
   `nearest_strong_test_to_imitate`, `candidate_values`,
   `assertion_shape`, `patterns_to_imitate`, `patterns_to_avoid`, and
   packet `confidence` without changing the version again because the
-  in-flight `0.3` contract had not yet closed.
+  in-flight `0.3` contract had not yet closed. `0.4` adds the producer-owned
+  `analysis_outcome_status` and `analysis_outcome` envelope so packet
+  consumers cannot mistake seam-budget completion for diff-analysis
+  completeness.
   Reason and confidence vocabularies are documented in the
   `repo-exposure.json` field contract above.
 - `scope` — always `"repo"`, including the one-seam `ripr agent packet`
   expansion. The one-seam command is a filtered view of the repo packet
   contract, not a second packet schema.
+- `analysis_outcome_status` — the producer outcome projection state. It is
+  `"complete"` or `"incomplete"` when a typed diff outcome is present,
+  `"missing"` or `"invalid"` when a required producer artifact cannot be
+  trusted, and `"not_applicable"` for repo-only or gap-ledger packets that do
+  not have a diff denominator. This field is independent of `run_status`,
+  which only describes the agent packet seam budget.
+- `analysis_outcome_error` — optional bounded diagnostic for `missing` or
+  `invalid` producer evidence. It is never converted into a clean packet.
+- `analysis_outcome` — `null` for `not_applicable`, `missing`, or `invalid`;
+  otherwise an envelope containing `analysis_complete`, the exact typed
+  producer `outcome` (including kind, limitations, recovery routes, and input
+  identity), and its `semantic_digest`. Packet consumers copy this envelope;
+  they do not rerun diff analysis or infer completeness from packet counts.
 - `source` - optional. Present as `"gap_decision_ledger"` when the packet was
   rendered from explicit `GapRecord` input rather than live seam analysis.
 - `inputs.gap_ledger` - optional. Present with gap-ledger packet mode so
@@ -12794,7 +12860,9 @@ Field contract:
   existing weak related test,
   `"inspect_static_limitation"` for explicit inspection routes, and
   `"add_output_golden"` for `MissingOutputContract` records whose repair
-  route is `AddOutputGolden`.
+  route is `AddOutputGolden`. A discriminator-dependent GapRecord route with
+  no producer-owned discriminator is downgraded to
+  `"inspect_static_limitation"`.
 - `packets[].gap_id`, `packets[].canonical_gap_id`, `packets[].gap_kind`,
   `packets[].language`, `packets[].language_status`,
   `packets[].policy_state`, `packets[].gap_state`,
@@ -12836,9 +12904,15 @@ Field contract:
   reconstructing repair intent from rendered prose. `repair_route` may include
   `missing_discriminator` when the source record can name the exact missing
   proof separately from the suggested assertion shape.
-- `packets[].missing_discriminator` - optional first-screen missing proof copied
-  from `repair_route.missing_discriminator` when supplied, with compatibility
-  fallback to `assertion_shape` or `changed_behavior` for older GapRecords.
+- `packets[].missing_discriminator` - nullable legacy first-screen missing
+  proof copied only from producer-owned `repair_route.missing_discriminator`.
+  `assertion_shape` and `changed_behavior` are never relabelled as this field.
+- `packets[].discriminator_guidance` - typed additive availability authority
+  with `state` (`present`, `not_produced`, `not_applicable`,
+  `static_limitation`, or `stale`), nullable `text`, `basis`, `reason`,
+  `recovery`, and `static_limit_kind`. When the state is not `present`, the
+  packet must not promote a discriminator-dependent route to a targeted-test
+  repair; the copyable Markdown and repair card carry the same state.
 - `packets[].verification_commands` and `packets[].verify_command` - optional
   GapRecord verification commands. `verify_command` is the first command and
   is provided for existing single-command consumers.
@@ -12902,11 +12976,12 @@ Field contract:
     assert_matches!)"
   - `side_effect` → "mock expectation, event/state observer, or
     persistence assertion (...)"
-- `packets[].assertion_shape` — structured assertion guidance with a
-  stable `kind` (`exact_return_value`, `exact_error_variant`,
-  `field_equality`, `side_effect_observer`, `match_result`, or
-  `call_expectation`) plus a fill-in example. Placeholders are
-  intentional; ripr does not invent expected values.
+- `packets[].assertion_shape` — the typed assertion-guidance projection.
+  `state` is one of `concrete`, `requires_observer_setup`, `fix_site_only`,
+  `verification_only`, `unresolved`, or `stale`. Only `concrete` may carry
+  `kind`, `basis`, or `example`; every other state carries `example: null`
+  and names its `reason` plus any bounded `recovery`. Observer-required
+  states name `observer_kind` and never emit a comment-shaped assertion.
 - `packets[].related_existing_tests` — capped at
   `MAX_RELATED_TESTS_PER_PACKET` (currently 8). Carries test name,
   file, line, oracle kind, oracle strength, and a short
@@ -12921,8 +12996,9 @@ Field contract:
   related tests or adding another test with only already-observed
   values. Each entry has `{pattern, reason}`.
 - `packets[].suggested_assertions` — best-effort assertion templates
-  the agent fills in. Placeholders are intentional; ripr never invents
-  expected values. Example for predicate boundary:
+  the agent fills in, emitted only for `assertion_shape.state == concrete`.
+  Placeholders are intentional; ripr never invents expected values. Example
+  for predicate boundary:
   `"assert_eq!(discounted_total(/* discount_threshold (equality boundary) */), /* expected */)"`.
 - `packets[].confidence` — `high`, `medium`, `low`, or `unknown`
   confidence in the packet recommendation. It is derived from related
@@ -12952,8 +13028,9 @@ Field contract:
   approve a patch, or authorize a merge.
 
 The packet is the agent's work order: it names the seam, the missing
-discriminator, the oracle shape, and an assertion template — but never
-generates the test itself. Composition with a coding agent closes the
+discriminator, the oracle shape, and either a producer-backed assertion
+template or an explicit non-concrete recovery state — but never generates
+the test itself. Composition with a coding agent closes the
 loop.
 
 ## Agent Working-Set Brief
@@ -15108,7 +15185,7 @@ Field sources:
 
 | Field | Source artifact | Path |
 | --- | --- | --- |
-| `run_status` | diff-report (then repo-exposure fallback) | `run_status` |
+| `run_status` | diff-report | `run_status`; `unknown` when diff evidence is missing, because repo-exposure status cannot establish diff-analysis completeness |
 | `analysis_complete` | diff-report | `analysis_outcome.analysis_complete`; null when the typed envelope is absent. A false value forces summary `run_status` to `incomplete`. |
 | `analysis_outcome` | diff-report | `analysis_outcome`; preserves typed kind, limitations, and recovery routes without reconstructing them from empty findings. |
 | `changed_surfaces` | diff-report | `summary.changed_files` |

@@ -5,11 +5,26 @@
 //! focused test change. It does not run analysis, generate tests, or interpret
 //! runtime mutation output.
 
+use crate::analysis_outcome::AnalysisOutcome;
+use crate::app::analysis_outcome_artifact::{
+    analysis_outcome_projection, unavailable_analysis_outcome_projection,
+};
 use serde_json::Value;
 
 use super::receipt_lifecycle::receipt_lifecycle_state_from_movement;
 
-pub(crate) const AGENT_RECEIPT_SCHEMA_VERSION: &str = "0.3";
+pub(crate) const AGENT_RECEIPT_SCHEMA_VERSION: &str = "0.4";
+
+pub(crate) use crate::app::analysis_outcome_artifact::AnalysisOutcomeUnavailableStatus as AgentReceiptUnavailableStatus;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum AgentReceiptAnalysisOutcome {
+    Present(Box<AnalysisOutcome>),
+    Unavailable {
+        status: AgentReceiptUnavailableStatus,
+        reason: String,
+    },
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AgentReceiptInputPaths {
@@ -70,6 +85,7 @@ pub(crate) fn render_agent_receipt_json(
 ) -> Result<String, String> {
     let verify: Value = serde_json::from_str(agent_verify_json)
         .map_err(|err| format!("failed to parse agent verify JSON: {err}"))?;
+    let analysis_outcome = test_complete_analysis_outcome()?;
     render_agent_receipt_value_json(
         &verify,
         agent_verify_path,
@@ -77,6 +93,7 @@ pub(crate) fn render_agent_receipt_json(
         test_changed,
         commands_run,
         provenance,
+        AgentReceiptAnalysisOutcome::Present(Box::new(analysis_outcome)),
     )
 }
 
@@ -87,17 +104,38 @@ pub(crate) fn render_agent_receipt_value_json(
     test_changed: Option<&str>,
     commands_run: &[String],
     provenance: AgentReceiptProvenance,
+    analysis_outcome: AgentReceiptAnalysisOutcome,
 ) -> Result<String, String> {
     let input_paths = agent_receipt_input_paths_from_value(verify)?;
     let seam = find_receipt_seam(verify, seam_id)?;
     let guidance = receipt_guidance(&seam.change);
     let receipt_state = receipt_lifecycle_state_from_movement(Some(seam.change.as_str()));
     let provenance = provenance_json(&provenance, &seam);
+    let analysis_projection = match &analysis_outcome {
+        AgentReceiptAnalysisOutcome::Present(outcome) => {
+            analysis_outcome_projection(Some(outcome), true)
+        }
+        AgentReceiptAnalysisOutcome::Unavailable { status, reason } => {
+            unavailable_analysis_outcome_projection(*status, reason)
+        }
+    };
+    let status = match &analysis_outcome {
+        AgentReceiptAnalysisOutcome::Present(outcome) if outcome.kind.is_complete() => "advisory",
+        AgentReceiptAnalysisOutcome::Present(_) => "incomplete",
+        AgentReceiptAnalysisOutcome::Unavailable {
+            status: AgentReceiptUnavailableStatus::Missing,
+            ..
+        } => "incomplete",
+        AgentReceiptAnalysisOutcome::Unavailable { .. } => "invalid",
+    };
 
     let value = serde_json::json!({
         "schema_version": AGENT_RECEIPT_SCHEMA_VERSION,
         "tool": "ripr",
-        "status": "advisory",
+        "status": status,
+        "analysis_outcome_status": analysis_projection.status,
+        "analysis_outcome_error": analysis_projection.error,
+        "analysis_outcome": analysis_projection.outcome,
         "inputs": {
             "agent_verify_json": agent_verify_path,
             "before": input_paths.before,
@@ -354,8 +392,49 @@ fn string_array_field(value: &Value, key: &str) -> Vec<String> {
 }
 
 #[cfg(test)]
+fn test_complete_analysis_outcome() -> Result<AnalysisOutcome, String> {
+    AnalysisOutcome::new(
+        crate::analysis_outcome::AnalysisOutcomeKind::CompleteNoFindings,
+        crate::analysis_outcome::AnalysisIdentity::default(),
+        crate::analysis_outcome::AnalysisOutcomeCounts {
+            changed_file_count: 1,
+            changed_line_count: 1,
+            candidate_line_count: 1,
+            probe_count: 1,
+            finding_count: 0,
+        },
+        Vec::new(),
+    )
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis_outcome::{
+        AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcomeCounts, AnalysisOutcomeKind,
+        AnalysisRecovery, AnalysisRecoveryKind, AnalysisStage,
+    };
+
+    fn test_incomplete_analysis_outcome(
+        kind: AnalysisOutcomeKind,
+    ) -> Result<AnalysisOutcome, String> {
+        AnalysisOutcome::new(
+            kind,
+            crate::analysis_outcome::AnalysisIdentity::default(),
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 1,
+                candidate_line_count: 1,
+                probe_count: 0,
+                finding_count: 0,
+            },
+            vec![AnalysisLimitation::new(
+                AnalysisLimitationKind::ProducerFailure,
+                AnalysisStage::AnalysisPipeline,
+                AnalysisRecovery::new(AnalysisRecoveryKind::InspectFailure, "inspect the failure")?,
+            )],
+        )
+    }
 
     fn agent_verify_json() -> &'static str {
         r#"{
@@ -506,7 +585,7 @@ mod tests {
         let value: Value = serde_json::from_str(&rendered)
             .map_err(|err| format!("receipt JSON should parse: {err}"))?;
 
-        assert_eq!(value["schema_version"], "0.3");
+        assert_eq!(value["schema_version"], "0.4");
         assert_eq!(value["seam"]["seam_id"], "seam-a");
         assert_eq!(value["seam"]["before"], "weakly_gripped");
         assert_eq!(value["seam"]["after"], "strongly_gripped");
@@ -664,5 +743,114 @@ mod tests {
             ),
             Err("agent receipt seam_id missing was not found in agent verify JSON".to_string())
         );
+    }
+
+    #[test]
+    fn agent_receipt_preserves_incomplete_typed_outcome_and_digest() -> Result<(), String> {
+        let outcome = test_incomplete_analysis_outcome(AnalysisOutcomeKind::UnsupportedInput)?;
+        let rendered = render_agent_receipt_value_json(
+            &serde_json::from_str(agent_verify_json()).map_err(|error| error.to_string())?,
+            "target/ripr/workflow/agent-verify.json".to_string(),
+            "seam-a",
+            None,
+            &[],
+            fixed_provenance(),
+            AgentReceiptAnalysisOutcome::Present(Box::new(outcome)),
+        )?;
+        let value: Value = serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
+        assert_eq!(value["status"], "incomplete");
+        assert_eq!(value["analysis_outcome_status"], "incomplete");
+        assert_eq!(value["analysis_outcome"]["analysis_complete"], false);
+        assert_eq!(
+            value["analysis_outcome"]["outcome"]["kind"],
+            "unsupported_input"
+        );
+        assert_eq!(
+            value["analysis_outcome"]["outcome"]["limitations"][0]["kind"],
+            "producer_failure"
+        );
+        assert!(value["analysis_outcome"]["semantic_digest"].is_string());
+        assert_eq!(value["summary"]["next_action"]["safe_to_merge"], false);
+        Ok(())
+    }
+
+    #[test]
+    fn agent_receipt_keeps_distinct_outcome_digests() -> Result<(), String> {
+        let verify: Value =
+            serde_json::from_str(agent_verify_json()).map_err(|error| error.to_string())?;
+        let mut digests = Vec::new();
+        for kind in [
+            AnalysisOutcomeKind::UnsupportedInput,
+            AnalysisOutcomeKind::PartialWithLimitations,
+        ] {
+            let outcome = test_incomplete_analysis_outcome(kind)?;
+            let rendered = render_agent_receipt_value_json(
+                &verify,
+                "target/ripr/workflow/agent-verify.json".to_string(),
+                "seam-a",
+                None,
+                &[],
+                fixed_provenance(),
+                AgentReceiptAnalysisOutcome::Present(Box::new(outcome)),
+            )?;
+            let value: Value =
+                serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
+            digests.push(
+                value["analysis_outcome"]["semantic_digest"]
+                    .as_str()
+                    .ok_or_else(|| "expected semantic digest".to_string())?
+                    .to_string(),
+            );
+        }
+        assert_ne!(digests[0], digests[1]);
+        Ok(())
+    }
+
+    #[test]
+    fn agent_receipt_does_not_look_clean_without_producer_evidence() -> Result<(), String> {
+        let rendered = render_agent_receipt_value_json(
+            &serde_json::from_str(agent_verify_json()).map_err(|error| error.to_string())?,
+            "target/ripr/workflow/agent-verify.json".to_string(),
+            "seam-a",
+            None,
+            &[],
+            fixed_provenance(),
+            AgentReceiptAnalysisOutcome::Unavailable {
+                status: AgentReceiptUnavailableStatus::Missing,
+                reason: "producer artifact is missing".to_string(),
+            },
+        )?;
+        let value: Value = serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
+        assert_eq!(value["status"], "incomplete");
+        assert_eq!(value["analysis_outcome_status"], "missing");
+        assert_eq!(value["analysis_outcome"], Value::Null);
+        assert_eq!(
+            value["analysis_outcome_error"],
+            "producer artifact is missing"
+        );
+        assert_eq!(value["summary"]["next_action"]["safe_to_merge"], false);
+        Ok(())
+    }
+
+    #[test]
+    fn agent_receipt_marks_malformed_or_stale_evidence_invalid() -> Result<(), String> {
+        let status = AgentReceiptUnavailableStatus::Invalid;
+        let rendered = render_agent_receipt_value_json(
+            &serde_json::from_str(agent_verify_json()).map_err(|error| error.to_string())?,
+            "target/ripr/workflow/agent-verify.json".to_string(),
+            "seam-a",
+            None,
+            &[],
+            fixed_provenance(),
+            AgentReceiptAnalysisOutcome::Unavailable {
+                status,
+                reason: "producer identity is stale".to_string(),
+            },
+        )?;
+        let value: Value = serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
+        assert_eq!(value["status"], "invalid");
+        assert_eq!(value["analysis_outcome_status"], status.as_str());
+        assert_eq!(value["analysis_outcome"], Value::Null);
+        Ok(())
     }
 }
