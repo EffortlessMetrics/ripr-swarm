@@ -321,6 +321,7 @@ pub(crate) fn render_agent_gap_record_packet_json_with_causal(
     let receipt_status = receipt_status_for_gap_record(record);
     let must_not_change = gap_record_packet_do_not_do(record);
     let discriminator = discriminator_availability_for_gap_route(route)?;
+    let discriminator_present = discriminator.legacy_text().is_some();
     let discriminator_guidance = serde_json::to_value(discriminator.view())
         .map_err(|error| format!("serialize discriminator guidance failed: {error}"))?;
     let missing_discriminator = discriminator.legacy_text();
@@ -348,8 +349,8 @@ pub(crate) fn render_agent_gap_record_packet_json_with_causal(
         "dedupe_fingerprint": anchor.and_then(|anchor| anchor.dedupe_fingerprint.as_deref()),
     });
     let recommended_test_json = json!({
-        "file": if discriminator.legacy_text().is_some() { recommended_file } else { None },
-        "name": if discriminator.legacy_text().is_some() { route.related_test.as_deref() } else { None },
+        "file": if discriminator_present { recommended_file } else { None },
+        "name": if discriminator_present { route.related_test.as_deref() } else { None },
         "reason": recommended_test_reason(route, &discriminator),
     });
     let mut repair_card_json = json!({
@@ -1341,12 +1342,12 @@ fn gap_record_prompt(
 ) -> String {
     let repair = repair_text_for_gap_route(route);
     let prefix = if route_requires_discriminator(route) && discriminator.legacy_text().is_none() {
-        "The producer did not provide a discriminator; inspect the fix site and do not promote this to a targeted-test repair."
+        "The producer did not provide a discriminator; inspect the fix site and do not promote this to a targeted-test repair. "
     } else {
         ""
     };
     format!(
-        "{prefix} {repair} Use the supplied GapRecord fields as the repair boundary. Verify with `{verify_command}`."
+        "{prefix}{repair} Use the supplied GapRecord fields as the repair boundary. Verify with `{verify_command}`."
     )
 }
 
@@ -1492,22 +1493,18 @@ fn discriminator_context_line(discriminator: &DiscriminatorAvailability) -> Stri
     if let Some(text) = discriminator.legacy_text() {
         return format!("Missing discriminator: `{text}`.");
     }
-    let view = serde_json::to_value(discriminator.view()).ok();
-    let state = view
-        .as_ref()
-        .and_then(|value| value.get("state"))
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("not_produced");
-    let reason = view
-        .as_ref()
-        .and_then(|value| value.get("reason"))
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("producer_fact_absent");
-    let recovery = view
-        .as_ref()
-        .and_then(|value| value.get("recovery"))
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("inspect_fix_site");
+    let state = serde_json::to_value(discriminator.state())
+        .ok()
+        .and_then(|value| value.as_str().map(ToOwned::to_owned))
+        .unwrap_or_else(|| "not_produced".to_string());
+    let reason = serde_json::to_value(discriminator.reason())
+        .ok()
+        .and_then(|value| value.as_str().map(ToOwned::to_owned))
+        .unwrap_or_else(|| "producer_fact_absent".to_string());
+    let recovery = serde_json::to_value(discriminator.recovery())
+        .ok()
+        .and_then(|value| value.as_str().map(ToOwned::to_owned))
+        .unwrap_or_else(|| "inspect_fix_site".to_string());
     format!(
         "Missing discriminator unavailable: state `{state}`; reason `{reason}`; recovery `{recovery}`."
     )

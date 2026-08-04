@@ -224,6 +224,38 @@ pub(crate) struct SeamAssertionFacts<'a> {
 }
 
 impl DiscriminatorAvailability {
+    pub(crate) fn state(&self) -> DiscriminatorState {
+        match self {
+            Self::Present { .. } => DiscriminatorState::Present,
+            Self::NotProduced { .. } => DiscriminatorState::NotProduced,
+            Self::NotApplicable { .. } => DiscriminatorState::NotApplicable,
+            Self::StaticLimitation { .. } => DiscriminatorState::StaticLimitation,
+            Self::Stale { .. } => DiscriminatorState::Stale,
+        }
+    }
+
+    pub(crate) fn reason(&self) -> Option<GuidanceReason> {
+        match self {
+            Self::Present { .. } => None,
+            Self::NotProduced { reason, .. }
+            | Self::NotApplicable { reason }
+            | Self::StaticLimitation { reason, .. }
+            | Self::Stale { reason, .. } => Some(*reason),
+        }
+    }
+
+    pub(crate) fn recovery(&self) -> Option<GuidanceRecovery> {
+        match self {
+            Self::Present { .. } | Self::NotApplicable { .. } | Self::StaticLimitation { .. } => {
+                None
+            }
+            Self::NotProduced { recovery, .. }
+            | Self::Stale {
+                refresh: recovery, ..
+            } => Some(*recovery),
+        }
+    }
+
     pub(crate) fn legacy_text(&self) -> Option<&str> {
         match self {
             Self::Present { text, .. } => Some(text.as_str()),
