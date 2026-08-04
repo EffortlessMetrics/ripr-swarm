@@ -2534,26 +2534,26 @@ mod tests {
         )?;
         require(
             report.range_digest
-                == "sha256:39f5930b03a8520a65d5f18d3d65180cc137120842e2f4803151993f0dd01967"
+                == "sha256:3abd5c486c0d6e2d0116237e079fefe1d4db0d91b6c4854deded623713e8b68e"
                 && report.candidate_tree_digest
                     == "sha256:2392d40f28fdd141b81a949cf019c1ad3850cf68bb2ab3cef5802fbdcde7c93b",
             "current-main range or candidate-tree digest changed",
         )?;
         require(
             report.record_set_digest
-                == "sha256:c9d7422e62acdf054e56c06d09e7400df9d9113267efdd72450ea70c0239ab9a",
+                == "sha256:90541d78e2c7f03936add584411d7313b9a0c81c3c65bc8bc9daa63da4322fb3",
             "current-main record-set digest changed",
         )?;
         require(
             report
                 .counts_by_tree_state
                 .get("candidate_tree_state_pending")
-                == Some(&29)
+                == Some(&30)
                 && report.counts_by_tree_state.get("present_in_candidate") == Some(&230)
                 && report
                     .counts_by_disposition
                     .get("operator_decision_required")
-                    == Some(&29),
+                    == Some(&30),
             "current-main denominator counts changed",
         )?;
         let execution_record = report
@@ -2635,8 +2635,9 @@ mod tests {
                     "c1fbf43274e187edbb8a1b2cd8ba2b6b3620ebcd",
                     "d5dd29a740eaf6a8405a5e470b1fef2ea71e9db8",
                     "388aa3c49cf639fe53f9dcbf24ef9c54e19e36ba",
+                    "3af35dae54277b470dc66239c7569a556ca15285",
                 ],
-            "current-main excluded commit identities changed",
+            "current-main pending commit identities changed",
         )?;
         Ok(())
     }
