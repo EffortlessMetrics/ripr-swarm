@@ -93,9 +93,10 @@ fn insert_analysis_outcome_projection(
         "analysis_outcome_status".to_string(),
         Value::String(projection.status.to_string()),
     );
-    if let Some(error) = projection.error {
-        object.insert("analysis_outcome_error".to_string(), Value::String(error));
-    }
+    object.insert(
+        "analysis_outcome_error".to_string(),
+        projection.error.map(Value::String).unwrap_or(Value::Null),
+    );
     object.insert("analysis_outcome".to_string(), projection.outcome);
 }
 
@@ -109,12 +110,11 @@ fn push_analysis_outcome_projection(
         "  \"analysis_outcome_status\": \"{}\",\n",
         projection.status
     ));
-    if let Some(error) = projection.error {
-        out.push_str(&format!(
-            "  \"analysis_outcome_error\": \"{}\",\n",
-            json_escape(&error)
-        ));
-    }
+    let error = projection
+        .error
+        .map(|error| format!("\"{}\"", json_escape(&error)))
+        .unwrap_or_else(|| "null".to_string());
+    out.push_str(&format!("  \"analysis_outcome_error\": {error},\n"));
     let outcome_json = match serde_json::to_string(&projection.outcome) {
         Ok(value) => value,
         Err(_) => "null".to_string(),
