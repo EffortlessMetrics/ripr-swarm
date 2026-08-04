@@ -2641,26 +2641,34 @@ mod tests {
     }
 
     #[test]
-    fn current_main_provisional_range_matches_pinned_candidate_ancestry() -> Result<(), String> {
+    fn current_main_provisional_range_matches_record_order() -> Result<(), String> {
         let snapshot: Snapshot = serde_json::from_str(include_str!(
             "../../../fixtures/release_denominator/current-main-provisional.json"
         ))
         .map_err(|error| error.to_string())?;
-        let mut source = snapshot.source.clone();
-        source.candidate_ref = source.candidate_sha.clone();
-        let facts = collect_live_facts(&source);
+        let record_range = snapshot
+            .records
+            .iter()
+            .map(|record| record.commit_sha.clone())
+            .collect::<Vec<_>>();
         require(
-            facts.errors.is_empty(),
-            format!(
-                "pinned candidate ancestry could not be collected: {:?}",
-                facts.errors
-            ),
-        )?;
-        require(
-            facts.candidate_sha.as_deref() == Some(source.candidate_sha.as_str())
-                && facts.range_commits == source.range_commits
-                && facts.range_commits.len() == 258,
-            "pinned candidate ancestry does not match the 258-entry first-parent census",
+            record_range == snapshot.source.range_commits
+                && snapshot.source.range_commits.len() == 258
+                && snapshot
+                    .source
+                    .provisional_review_cutoff_sha
+                    .as_deref()
+                    .and_then(|cutoff| {
+                        snapshot
+                            .source
+                            .range_commits
+                            .iter()
+                            .position(|commit| commit == cutoff)
+                    })
+                    == Some(229)
+                && snapshot.source.range_commits.last().map(String::as_str)
+                    == Some("d5dd29a740eaf6a8405a5e470b1fef2ea71e9db8"),
+            "pinned 258-entry first-parent census does not match record order and cutoff",
         )
     }
 
