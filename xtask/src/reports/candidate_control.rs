@@ -543,6 +543,10 @@ mod tests {
     use serde::Deserialize;
     use serde_json::json;
 
+    fn require(condition: bool, message: impl Into<String>) -> Result<(), String> {
+        condition.then_some(()).ok_or(message.into())
+    }
+
     fn selection() -> Result<CandidateSelection, String> {
         serde_json::from_value(json!({
             "schema_version": "0.1",

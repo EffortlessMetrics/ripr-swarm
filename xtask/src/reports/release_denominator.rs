@@ -2600,22 +2600,28 @@ mod tests {
             "../../../fixtures/release_denominator/current-main-provisional.json"
         ))
         .map_err(|error| error.to_string())?;
-        let selection = snapshot
+        {
+            let selection = snapshot
+                .candidate_selection
+                .as_mut()
+                .ok_or_else(|| "current-main fixture has no candidate selection".to_string())?;
+            selection.selected_cut_sha =
+                Some("fcbb30a7cf6a37027fa377abafb617632b2e6f57".to_string());
+            selection.final_cut_authority =
+                Some(crate::reports::candidate_control::FinalCutAuthority {
+                    cut_sha: "fcbb30a7cf6a37027fa377abafb617632b2e6f57".to_string(),
+                    record_set_digest: None,
+                    provisional_decisions_remaining: 0,
+                    unreviewed_post_provisional_records_through_cut: 0,
+                    final_cut_decisions_remaining: 0,
+                    reviewed_through_selected_cut: true,
+                });
+        }
+        let first_report = normalize_snapshot(snapshot.clone(), None)?;
+        snapshot
             .candidate_selection
             .as_mut()
-            .ok_or_else(|| "current-main fixture has no candidate selection".to_string())?;
-        selection.selected_cut_sha = Some("fcbb30a7cf6a37027fa377abafb617632b2e6f57".to_string());
-        selection.final_cut_authority =
-            Some(crate::reports::candidate_control::FinalCutAuthority {
-                cut_sha: "fcbb30a7cf6a37027fa377abafb617632b2e6f57".to_string(),
-                record_set_digest: None,
-                provisional_decisions_remaining: 0,
-                unreviewed_post_provisional_records_through_cut: 0,
-                final_cut_decisions_remaining: 0,
-                reviewed_through_selected_cut: true,
-            });
-        let first_report = normalize_snapshot(snapshot.clone(), None)?;
-        selection
+            .ok_or_else(|| "current-main fixture lost candidate selection".to_string())?
             .final_cut_authority
             .as_mut()
             .ok_or_else(|| "current-main fixture lost final-cut authority".to_string())?
@@ -2662,22 +2668,27 @@ mod tests {
             .last_mut()
             .ok_or_else(|| "current-main fixture has no last record".to_string())?;
         post_cutoff.review_refs = vec!["fabricated-review-token".to_string()];
-        let selection = snapshot
+        {
+            let selection = snapshot
+                .candidate_selection
+                .as_mut()
+                .ok_or_else(|| "current-main fixture has no candidate selection".to_string())?;
+            selection.selected_cut_sha = Some(cut_sha.clone());
+            selection.final_cut_authority =
+                Some(crate::reports::candidate_control::FinalCutAuthority {
+                    cut_sha,
+                    record_set_digest: None,
+                    provisional_decisions_remaining: 0,
+                    unreviewed_post_provisional_records_through_cut: 0,
+                    final_cut_decisions_remaining: 0,
+                    reviewed_through_selected_cut: true,
+                });
+        }
+        let first_report = normalize_snapshot(snapshot.clone(), None)?;
+        snapshot
             .candidate_selection
             .as_mut()
-            .ok_or_else(|| "current-main fixture has no candidate selection".to_string())?;
-        selection.selected_cut_sha = Some(cut_sha.clone());
-        selection.final_cut_authority =
-            Some(crate::reports::candidate_control::FinalCutAuthority {
-                cut_sha,
-                record_set_digest: None,
-                provisional_decisions_remaining: 0,
-                unreviewed_post_provisional_records_through_cut: 0,
-                final_cut_decisions_remaining: 0,
-                reviewed_through_selected_cut: true,
-            });
-        let first_report = normalize_snapshot(snapshot.clone(), None)?;
-        selection
+            .ok_or_else(|| "current-main fixture lost candidate selection".to_string())?
             .final_cut_authority
             .as_mut()
             .ok_or_else(|| "current-main fixture lost final-cut authority".to_string())?
