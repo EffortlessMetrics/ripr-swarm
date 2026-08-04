@@ -106,17 +106,7 @@ pub(crate) fn validate_analysis_outcome_artifact(
                 ))
             })?;
         let digest = Sha256::digest(diff.as_bytes());
-        let hex: String = digest
-            .iter()
-            .flat_map(|byte| {
-                let alphabet = b"0123456789abcdef";
-                [
-                    alphabet[(byte >> 4) as usize] as char,
-                    alphabet[(byte & 0x0f) as usize] as char,
-                ]
-            })
-            .collect();
-        let expected_input_identity = format!("sha256:{hex}");
+        let expected_input_identity = format!("sha256:{digest:x}");
         if outcome.identity.input_identity.as_deref() != Some(expected_input_identity.as_str()) {
             return Err(invalid(
                 "Analysis outcome artifact input identity does not match the current diff.",
