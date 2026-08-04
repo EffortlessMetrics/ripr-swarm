@@ -79,7 +79,7 @@ mod tests {
     "analysis_complete": true,
     "outcome": {
       "schema_version": "0.1",
-      "kind": "complete_no_findings",
+      "kind": "no_scope",
       "identity": {},
       "counts": {
         "changed_file_count": 0,
@@ -491,6 +491,35 @@ mod tests {
         };
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
         write_common_workflow_artifacts(&root)?;
+        write_file(
+            &root.join(WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT),
+            r#"{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "draft",
+  "root": ".",
+  "base": "origin/main",
+  "summary": {},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {
+      "schema_version": "0.1",
+      "kind": "complete_no_findings",
+      "identity": {},
+      "counts": {
+        "changed_file_count": 0,
+        "changed_line_count": 0,
+        "candidate_line_count": 0,
+        "probe_count": 0,
+        "finding_count": 0
+      },
+      "limitations": [],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    }
+  },
+  "findings": []
+}"#,
+        )?;
         write_file(
             &root.join(WORKFLOW_MANIFEST_ARTIFACT),
             r#"{"schema_version":"0.1","tool":"ripr","status":"ready","seam":{"seam_id":"seam-stale","file":"src/pricing.rs","line":42,"seam_kind":"predicate_boundary"}}"#,

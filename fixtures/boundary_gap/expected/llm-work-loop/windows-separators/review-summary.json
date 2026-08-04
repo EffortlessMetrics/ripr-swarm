@@ -139,7 +139,7 @@
   ],
   "reviewer_summary": {
     "headline": "Review packet is incomplete for unknown seam.",
-    "what_changed": "No static before/after movement is available because the agent receipt is missing.",
+    "what_changed": "No producer-backed completeness result is available; static review evidence cannot be treated as complete.",
     "evidence": "Run agent receipt after verify to create review evidence.",
     "remaining": "Run the next command listed by agent status.",
     "reviewer_should_inspect": [

@@ -28,7 +28,7 @@
     "analysis_complete": true,
     "outcome": {
       "schema_version": "0.1",
-      "kind": "complete_no_findings",
+      "kind": "no_scope",
       "identity": {
         "repository_identity": null,
         "root_identity": null,
@@ -111,7 +111,7 @@
       "state": "present",
       "status": "complete",
       "required": true,
-      "summary": "Producer analysis outcome is complete_no_findings (complete)."
+      "summary": "Producer analysis outcome is no_scope (complete)."
     }
   ],
   "ci_artifacts": [
