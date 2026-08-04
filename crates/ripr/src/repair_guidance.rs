@@ -224,6 +224,16 @@ pub(crate) struct SeamAssertionFacts<'a> {
 }
 
 impl DiscriminatorAvailability {
+    pub(crate) fn legacy_text(&self) -> Option<&str> {
+        match self {
+            Self::Present { text, .. } => Some(text.as_str()),
+            Self::NotProduced { .. }
+            | Self::NotApplicable { .. }
+            | Self::StaticLimitation { .. }
+            | Self::Stale { .. } => None,
+        }
+    }
+
     /// Project the gap-ledger route facts.
     ///
     /// Precedence is fixed: staleness first (authority rule 3), then a named
