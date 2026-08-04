@@ -321,7 +321,7 @@ pub(crate) fn render_agent_gap_record_packet_json_with_causal(
     let receipt_status = receipt_status_for_gap_record(record);
     let must_not_change = gap_record_packet_do_not_do(record);
     let discriminator = discriminator_availability_for_gap_route(route)?;
-    let discriminator_present = discriminator.legacy_text().is_some();
+    let discriminator_gate = discriminator_gate(route, &discriminator);
     let discriminator_guidance = serde_json::to_value(discriminator.view())
         .map_err(|error| format!("serialize discriminator guidance failed: {error}"))?;
     let missing_discriminator = discriminator.legacy_text();
@@ -349,8 +349,8 @@ pub(crate) fn render_agent_gap_record_packet_json_with_causal(
         "dedupe_fingerprint": anchor.and_then(|anchor| anchor.dedupe_fingerprint.as_deref()),
     });
     let recommended_test_json = json!({
-        "file": if discriminator_present { recommended_file } else { None },
-        "name": if discriminator_present { route.related_test.as_deref() } else { None },
+        "file": if discriminator_gate.allows_targeted_test() { recommended_file } else { None },
+        "name": if discriminator_gate.allows_targeted_test() { route.related_test.as_deref() } else { None },
         "reason": recommended_test_reason(route, &discriminator),
     });
     let mut repair_card_json = json!({
@@ -496,6 +496,7 @@ pub(crate) fn render_agent_gap_record_queue_json(
             continue;
         };
         let discriminator = discriminator_availability_for_gap_route(route)?;
+        let discriminator_gate = discriminator_gate(route, &discriminator);
         let discriminator_guidance = serde_json::to_value(discriminator.view())
             .map_err(|error| format!("serialize discriminator guidance failed: {error}"))?;
         let allowed_edit_surface = allowed_edit_surface_for_gap_route(route);
@@ -513,8 +514,14 @@ pub(crate) fn render_agent_gap_record_queue_json(
             repair_kind: route.route_kind.clone(),
             task: task_for_gap_route(route, &discriminator).to_string(),
             discriminator_guidance,
-            suggested_test_file: allowed_edit_surface.first().cloned(),
-            suggested_test_name: route.related_test.clone(),
+            suggested_test_file: discriminator_gate
+                .allows_targeted_test()
+                .then(|| allowed_edit_surface.first().cloned())
+                .flatten(),
+            suggested_test_name: discriminator_gate
+                .allows_targeted_test()
+                .then(|| route.related_test.clone())
+                .flatten(),
             verify_command: verify_command.clone(),
             receipt_command: record.receipt_command.clone(),
             command_specs: gap_record_command_specs_json(record),
@@ -1210,7 +1217,7 @@ fn task_for_gap_route(
     route: &GapRepairRoute,
     discriminator: &DiscriminatorAvailability,
 ) -> &'static str {
-    if route_requires_discriminator(route) && discriminator.legacy_text().is_none() {
+    if !discriminator_gate(route, discriminator).allows_targeted_test() {
         return "inspect_static_limitation";
     }
     match route.route_kind.as_str() {
@@ -1228,11 +1235,34 @@ fn route_requires_discriminator(route: &GapRepairRoute) -> bool {
     )
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DiscriminatorGate {
+    TargetedTestAllowed,
+    InspectStaticLimitation,
+}
+
+impl DiscriminatorGate {
+    const fn allows_targeted_test(self) -> bool {
+        matches!(self, Self::TargetedTestAllowed)
+    }
+}
+
+fn discriminator_gate(
+    route: &GapRepairRoute,
+    discriminator: &DiscriminatorAvailability,
+) -> DiscriminatorGate {
+    if route_requires_discriminator(route) && discriminator.legacy_text().is_none() {
+        DiscriminatorGate::InspectStaticLimitation
+    } else {
+        DiscriminatorGate::TargetedTestAllowed
+    }
+}
+
 fn recommended_test_reason(
     route: &GapRepairRoute,
     discriminator: &DiscriminatorAvailability,
 ) -> &'static str {
-    if route_requires_discriminator(route) && discriminator.legacy_text().is_none() {
+    if !discriminator_gate(route, discriminator).allows_targeted_test() {
         return "producer discriminator was not produced; inspect the fix site before editing tests";
     }
     match route.route_kind.as_str() {
@@ -1341,7 +1371,7 @@ fn gap_record_prompt(
     verify_command: &str,
 ) -> String {
     let repair = repair_text_for_gap_route(route);
-    let prefix = if route_requires_discriminator(route) && discriminator.legacy_text().is_none() {
+    let prefix = if !discriminator_gate(route, discriminator).allows_targeted_test() {
         "The producer did not provide a discriminator; inspect the fix site and do not promote this to a targeted-test repair. "
     } else {
         ""
@@ -1531,7 +1561,7 @@ fn gap_record_packet_repair(
         "Focused proof intent: {}",
         gap_record_packet_focused_proof_intent(route)
     ));
-    if route_requires_discriminator(route) && discriminator.legacy_text().is_none() {
+    if !discriminator_gate(route, discriminator).allows_targeted_test() {
         repair.push(
             "Do not write or promote a targeted test until the producer supplies a discriminator; inspect the fix site instead."
                 .to_string(),
@@ -2688,6 +2718,7 @@ mod tests {
         Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence,
         StageState, ValueContext, ValueFact,
     };
+    use crate::repair_guidance::{GuidanceReason, GuidanceRecovery};
     use std::path::PathBuf;
 
     fn stage(state: StageState) -> StageEvidence {
@@ -3564,10 +3595,14 @@ mod tests {
                 ..GapRepairRoute::default()
             };
             let availability = discriminator_availability_for_gap_route(&route)?;
-            assert_eq!(availability.legacy_text(), None);
+            let expected = DiscriminatorAvailability::NotProduced {
+                reason: GuidanceReason::ProducerFactAbsent,
+                recovery: GuidanceRecovery::InspectFixSite,
+            };
+            assert_eq!(availability, expected);
             assert_eq!(
-                task_for_gap_route(&route, &availability),
-                "inspect_static_limitation"
+                discriminator_gate(&route, &availability),
+                DiscriminatorGate::InspectStaticLimitation
             );
             let guidance = serde_json::to_value(availability.view())
                 .map_err(|error| format!("serialize guidance failed: {error}"))?;
@@ -3575,6 +3610,62 @@ mod tests {
             assert_eq!(guidance["state"], serde_json::json!("not_produced"));
             assert_eq!(guidance["recovery"], serde_json::json!("inspect_fix_site"));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn missing_discriminator_blocks_targeted_queue_and_repair_projection() -> Result<(), String> {
+        let mut record = typed_gap_record()?;
+        let route = record
+            .repair_route
+            .as_mut()
+            .ok_or_else(|| "expected typed repair route".to_string())?;
+        route.missing_discriminator = None;
+        route.changed_behavior = None;
+        route.assertion_shape = Some("assert_eq!(value, expected)".to_string());
+
+        let packet_json = render_agent_gap_record_packet_json("ledger.json", &record)?;
+        let packet_value = serde_json::from_str::<serde_json::Value>(&packet_json)
+            .map_err(|error| format!("packet JSON should parse: {error}"))?;
+        let packet = packet_value["packets"]
+            .as_array()
+            .and_then(|packets| packets.first())
+            .ok_or_else(|| format!("missing packet: {packet_json}"))?;
+        assert_eq!(
+            packet["task"],
+            serde_json::json!("inspect_static_limitation")
+        );
+        assert_eq!(packet["recommended_test"]["file"], serde_json::Value::Null);
+        assert_eq!(packet["recommended_test"]["name"], serde_json::Value::Null);
+        assert!(
+            packet["llm_guidance"]["copyable_packet"]["repair"]
+                .as_array()
+                .is_some_and(|repair| repair.iter().any(|line| {
+                    line.as_str().is_some_and(|line| {
+                        line.contains("Do not write or promote a targeted test")
+                    })
+                })),
+            "repair card must remain inspection-only: {packet_json}"
+        );
+
+        let queue_json =
+            render_agent_gap_record_queue_json(".", "ledger.json", &[record], "rust", 1)?;
+        let queue_value = serde_json::from_str::<serde_json::Value>(&queue_json)
+            .map_err(|error| format!("queue JSON should parse: {error}"))?;
+        let queued = queue_value["packets"]
+            .as_array()
+            .and_then(|packets| packets.first())
+            .ok_or_else(|| format!("missing queue packet: {queue_json}"))?;
+        assert_eq!(
+            queued["task"],
+            serde_json::json!("inspect_static_limitation")
+        );
+        assert_eq!(
+            queued["discriminator_guidance"]["state"],
+            serde_json::json!("not_produced")
+        );
+        assert_eq!(queued["suggested_test_file"], serde_json::Value::Null);
+        assert_eq!(queued["suggested_test_name"], serde_json::Value::Null);
         Ok(())
     }
 
