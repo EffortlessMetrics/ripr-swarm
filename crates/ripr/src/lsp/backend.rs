@@ -13,6 +13,7 @@ use super::diagnostics::{
 use super::hover::{
     classified_seam_hover_response, diagnostic_at_position, diagnostic_covers_position,
     diagnostic_hover_response, finding_hover_response, hover_response, hover_with_snapshot_status,
+    is_gap_diagnostic,
 };
 use super::lens::{LensViewIdentity, code_lens_response, lens_view_identity};
 use super::payload_bounds::{
@@ -2519,6 +2520,19 @@ impl Backend {
                 if let Some(seam) = snapshot.classified_seam_for_diagnostic(diagnostic) {
                     return Some(hover_with_snapshot_status(
                         classified_seam_hover_response(seam, diagnostic, Some(snapshot)),
+                        snapshot,
+                    ));
+                }
+            }
+            // A producer-backed gap decision is more specific than the
+            // overlapping language finding: it carries the bounded repair,
+            // verification, and receipt route the user asked to inspect.
+            // Prefer it before the generic finding hover while retaining seam
+            // evidence as the highest-priority structural projection.
+            for diagnostic in &overlapping {
+                if is_gap_diagnostic(diagnostic) {
+                    return Some(hover_with_snapshot_status(
+                        diagnostic_hover_response(diagnostic),
                         snapshot,
                     ));
                 }

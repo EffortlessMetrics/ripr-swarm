@@ -1031,7 +1031,7 @@ export class RiprClientController {
       return;
     }
 
-    const rootBlocker = this.repairActionRootBlocker();
+    const rootBlocker = this.repairActionRootBlocker(uriFromTarget(target));
     if (rootBlocker) {
       this.runtime.showInformationMessage(rootBlocker);
       return;

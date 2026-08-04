@@ -8,6 +8,10 @@ export function run(): Promise<void> {
     color: true,
     timeout: 10000,
   });
+  const grep = process.env.RIPR_TEST_GREP;
+  if (grep) {
+    mocha.grep(grep);
+  }
 
   const testsRoot = path.resolve(__dirname);
   const files = findTestFiles(testsRoot);

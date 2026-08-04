@@ -337,12 +337,18 @@ suite('Extension Smoke', () => {
       this.skip();
     }
 
-    const uri = workspaceFileUri('src/lib.rs');
-    await vscode.commands.executeCommand('workbench.action.closeAllEditors');
-    const document = await vscode.workspace.openTextDocument(uri);
-    assert.strictEqual(document.languageId, 'rust');
-    await vscode.window.showTextDocument(document);
-    await vscode.commands.executeCommand('ripr.restartServer');
+    try {
+      const uri = workspaceFileUri('src/lib.rs');
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      const document = await vscode.workspace.openTextDocument(uri);
+      assert.strictEqual(document.languageId, 'rust');
+      await vscode.window.showTextDocument(document);
+      // The suite's activation already owns the initial trusted session. Keep
+      // this journey on that session; restart behavior is exercised separately
+      // by the lifecycle acceptance below.
+      assert.ok(await editAndSaveDocument(document), 'expected the Rust journey save to trigger analysis');
+      await waitForSavedAnalysis(workspaceFileUri('src/lib.rs'), 60000);
+      await vscode.commands.executeCommand('ripr.refreshDiagnostics');
 
     const diagnostic = await waitForDiagnostic(
       uri,
@@ -418,13 +424,13 @@ suite('Extension Smoke', () => {
 
     await vscode.commands.executeCommand(contextCommand.command, ...(contextCommand.arguments ?? []));
     const contextPacket = await waitForClipboardText((text) =>
-      text.includes('"schema_version": "0.3"') && text.includes('"seam_id": "67fc764ba37d77bd"')
+      text.includes('"schema_version": "0.4"') && text.includes('"seam_id": "67fc764ba37d77bd"')
     );
     const parsedContextPacket = JSON.parse(contextPacket) as {
       schema_version?: string;
       packets?: Array<{ seam_id?: string }>;
     };
-    assert.strictEqual(parsedContextPacket.schema_version, '0.3');
+    assert.strictEqual(parsedContextPacket.schema_version, '0.4');
     assert.strictEqual(parsedContextPacket.packets?.[0]?.seam_id, '67fc764ba37d77bd');
 
     await vscode.commands.executeCommand(targetedBriefCommand.command, ...(targetedBriefCommand.arguments ?? []));
@@ -475,7 +481,10 @@ suite('Extension Smoke', () => {
       activeEditor.document.uri.fsPath.replace(/\\/g, '/').endsWith('/tests/pricing.rs'),
       activeEditor.document.uri.fsPath
     );
-    assert.strictEqual(activeEditor.selection.active.line, 3);
+      assert.strictEqual(activeEditor.selection.active.line, 3);
+    } finally {
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+    }
   });
 
   test('real server surfaces preview gap diagnostic, hover, status, and bounded actions', async function (this: Mocha.Context) {
@@ -492,7 +501,12 @@ suite('Extension Smoke', () => {
       const document = await vscode.workspace.openTextDocument(uri);
       assert.strictEqual(document.languageId, 'typescript');
       await vscode.window.showTextDocument(document);
-      await vscode.commands.executeCommand('ripr.restartServer');
+      // Keep the preview journey on the same host/session as the trusted Rust
+      // journey so state leakage remains observable across the sequence.
+      assert.ok(await editAndSaveDocument(document), 'expected the TypeScript journey save to trigger analysis');
+      await waitForSavedAnalysis(uri);
+      await vscode.commands.executeCommand('ripr.refreshDiagnostics');
+      await vscode.commands.executeCommand('ripr.showStatus');
 
       const diagnostic = await waitForDiagnostic(
         uri,
@@ -970,6 +984,7 @@ suite('Extension Smoke', () => {
         }
       );
 
+      await waitForCodeAction(uri, near.range, (action) => action.title === 'Copy repair packet');
       await vscode.commands.executeCommand('ripr.copyRepairPacketAtCursor');
       assert.strictEqual(await waitForClipboardText((text) => text === 'near repair packet'), 'near repair packet');
 
@@ -4254,10 +4269,30 @@ async function configureTestServer(): Promise<void> {
   }
 
   const config = vscode.workspace.getConfiguration('ripr');
+  const desired = {
+    serverPath: testServerPath,
+    baseRef: process.env.RIPR_TEST_BASE_REF ?? 'HEAD',
+    checkMode: 'draft' as const,
+    seamDiagnostics: true,
+    diagnosticProfile: 'full' as const
+  };
+  if (
+    config.get<string>('server.path') === desired.serverPath &&
+    config.get<string>('baseRef') === desired.baseRef &&
+    config.get<string>('check.mode') === desired.checkMode &&
+    config.get<boolean>('seamDiagnostics') === desired.seamDiagnostics &&
+    config.get<string>('diagnosticProfile') === desired.diagnosticProfile
+  ) {
+    return;
+  }
   await config.update('server.path', testServerPath, vscode.ConfigurationTarget.Global);
   await config.update('server.autoDownload', false, vscode.ConfigurationTarget.Global);
-  await config.update('baseRef', 'HEAD', vscode.ConfigurationTarget.Global);
-  await config.update('check.mode', 'instant', vscode.ConfigurationTarget.Global);
+  await config.update(
+    'baseRef',
+    desired.baseRef,
+    vscode.ConfigurationTarget.Global
+  );
+  await config.update('check.mode', 'draft', vscode.ConfigurationTarget.Global);
   await config.update('seamDiagnostics', true, vscode.ConfigurationTarget.Global);
   await config.update('diagnosticProfile', 'full', vscode.ConfigurationTarget.Global);
 }
@@ -4272,6 +4307,14 @@ function workspaceFilePath(relativePath: string): string {
   return workspaceFileUri(relativePath).fsPath;
 }
 
+async function editAndSaveDocument(document: vscode.TextDocument): Promise<boolean> {
+  const end = document.positionAt(document.getText().length);
+  const editor = await vscode.window.showTextDocument(document);
+  const edited = await editor.edit((builder) => builder.insert(end, '\n'));
+  assert.ok(edited, `expected ${document.uri.fsPath} to become dirty before save`);
+  return document.save();
+}
+
 async function writeWorkspaceFile(relativePath: string, contents: string): Promise<void> {
   const filePath = workspaceFilePath(relativePath);
   await fs.mkdir(path.dirname(filePath), { recursive: true });
@@ -4283,12 +4326,7 @@ async function removeWorkspacePath(relativePath: string): Promise<void> {
 }
 
 async function cleanupEditorGapSmokeFiles(): Promise<void> {
-  await Promise.all([
-    removeWorkspacePath('ripr.toml'),
-    removeWorkspacePath('src/pricing.ts'),
-    removeWorkspacePath('tests/pricing.test.ts'),
-    removeWorkspacePath('target/ripr/reports/gap-decision-ledger.json')
-  ]);
+  await removeWorkspacePath('target/ripr/reports/gap-decision-ledger.json');
 }
 
 async function cleanupFirstPrBridgeSmokeFiles(): Promise<void> {
@@ -4465,6 +4503,17 @@ async function waitForDiagnostic(
     `Current URI diagnostics:\n${currentUriDiagnostics}`,
     `All diagnostics:\n${allDiagnostics}`,
   ].join('\n'));
+}
+
+async function waitForSavedAnalysis(uri: vscode.Uri, timeoutMs = 15000): Promise<void> {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (vscode.languages.getDiagnostics(uri).some((entry) => entry.source === 'ripr')) {
+      return;
+    }
+    await sleep(150);
+  }
+  throw new Error(`timed out waiting for saved-workspace diagnostics at ${uri.toString()}`);
 }
 
 async function waitForHoverText(
