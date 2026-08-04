@@ -572,12 +572,18 @@ fn apply_adjudication(input: &str, decisions_path: &str, output: &str) -> Result
         .ok_or_else(|| format!("adjudication cutoff {cutoff} is not in the input ledger"))?
         + 1;
     let mut coverage = BTreeMap::new();
+    let mut batch_ids = BTreeSet::new();
     for batch in &manifest.batches {
         if batch.id.trim().is_empty()
+            || !batch_ids.insert(batch.id.clone())
             || batch.review_ref.trim().is_empty()
+            || !batch.review_ref.starts_with("review:2832:")
             || batch.rationale.trim().is_empty()
         {
-            return Err("adjudication batches require id, review_ref, and rationale".to_string());
+            return Err(
+                "adjudication batches require unique id, review:2832:* review_ref, and rationale"
+                    .to_string(),
+            );
         }
         if batch.positions.is_empty()
             || batch
@@ -659,6 +665,13 @@ fn apply_adjudication(input: &str, decisions_path: &str, output: &str) -> Result
         .filter(|commit_sha| adjudicated_tree.contains(commit_sha.as_str()))
         .cloned()
         .collect();
+    let normalized = normalize_snapshot(snapshot.clone(), None)?;
+    if normalized.status != "ready" {
+        return Err(format!(
+            "adjudication produced a non-reconciling ledger: {}",
+            normalized.reconciliation_reasons.join("; ")
+        ));
+    }
     let text = serde_json::to_string_pretty(&snapshot)
         .map_err(|error| format!("failed to serialize adjudicated denominator ledger: {error}"))?;
     fs::write(output, format!("{text}\n")).map_err(|error| {
