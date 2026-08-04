@@ -138,7 +138,7 @@
     }
   ],
   "reviewer_summary": {
-    "headline": "Review packet is incomplete for unknown seam.",
+    "headline": "Review packet is incomplete for unknown seam: producer analysis outcome is unavailable.",
     "what_changed": "No producer-backed completeness result is available; static review evidence cannot be treated as complete.",
     "evidence": "Run agent receipt after verify to create review evidence.",
     "remaining": "Run the next command listed by agent status.",
