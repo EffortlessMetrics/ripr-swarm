@@ -4258,6 +4258,8 @@ async function configureTestServer(): Promise<void> {
   await config.update('server.autoDownload', false, vscode.ConfigurationTarget.Global);
   await config.update('baseRef', 'HEAD', vscode.ConfigurationTarget.Global);
   await config.update('check.mode', 'instant', vscode.ConfigurationTarget.Global);
+  await config.update('seamDiagnostics', true, vscode.ConfigurationTarget.Global);
+  await config.update('diagnosticProfile', 'full', vscode.ConfigurationTarget.Global);
 }
 
 function workspaceFileUri(relativePath: string): vscode.Uri {
