@@ -52,8 +52,8 @@ under `xtask/src/reports/pr_evidence_summary/`. PR-C owns LSP consumption: the
 committed editor snapshot, analysis status, workspace status, and
 top-limitation command retain the typed outcome and derive
 `limited_incomplete_input` without treating zero findings as complete.
-Generated-CI and agent projections remain serial follow-up work. This slice
-owns the generated-CI handoff only: `ripr-pr` preserves the producer's
+Generated-CI and agent projections are covered by serial follow-up slices.
+This slice owns the generated-CI handoff: `ripr-pr` preserves the producer's
 canonical check JSON at `target/ripr/pr/check.json`, removes a stale copy
 before each run, and pull-request workflows pass that artifact to
 review-comments. The workflow does not infer completeness from the PR-evidence
@@ -61,8 +61,10 @@ summary packet. The first agent parity slice is the generated workflow and
 `agent review-summary` handoff described below. The receipt parity slice now
 consumes the same artifact through a shared validator, copies the typed outcome
 and semantic digest, and emits an explicit missing or invalid state instead of
-a clean-looking legacy receipt. Agent packets remain unclaimed until their own
-parity fixtures consume this DTO.
+a clean-looking legacy receipt. Agent packets copy the typed producer envelope
+when diff-scoped and explicitly mark repo-only and gap-ledger packets as not
+applicable; their seam-budget `run_status` is not a diff-completeness
+authority.
 Review-comments is the bounded review consumer described below.
 
 The review-comments projection is the next bounded consumer. When invoked with
