@@ -1,5 +1,5 @@
 use crate::agent::loop_commands::shell_arg;
-use crate::domain::CommandSpec;
+use crate::domain::{CommandRole, CommandSpec};
 use crate::output::receipt_write::receipt_write_command;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -148,26 +148,46 @@ pub(crate) struct GapRecord {
 pub(crate) struct GapRecordCommandSpecs {
     #[serde(
         default,
-        deserialize_with = "deserialize_command_spec_collection",
+        deserialize_with = "deserialize_verify_command_spec_collection",
         skip_serializing_if = "Vec::is_empty"
     )]
     pub(crate) verify: Vec<CommandSpec>,
     #[serde(
         default,
-        deserialize_with = "deserialize_command_spec_collection",
+        deserialize_with = "deserialize_receipt_command_spec_collection",
         skip_serializing_if = "Vec::is_empty"
     )]
     pub(crate) receipt: Vec<CommandSpec>,
 }
 
+fn deserialize_verify_command_spec_collection<'de, D>(
+    deserializer: D,
+) -> Result<Vec<CommandSpec>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_command_spec_collection(deserializer, CommandRole::Verify)
+}
+
+fn deserialize_receipt_command_spec_collection<'de, D>(
+    deserializer: D,
+) -> Result<Vec<CommandSpec>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_command_spec_collection(deserializer, CommandRole::Receipt)
+}
+
 fn deserialize_command_spec_collection<'de, D>(
     deserializer: D,
+    expected_role: CommandRole,
 ) -> Result<Vec<CommandSpec>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     let value = Value::deserialize(deserializer)?;
     let value = match value {
+        Value::Null => return Ok(Vec::new()),
         Value::Array(_) => value,
         Value::Object(_) => Value::Array(vec![value]),
         _ => {
@@ -181,8 +201,25 @@ where
     for spec in &specs {
         spec.validate()
             .map_err(|error| serde::de::Error::custom(error.to_string()))?;
+        if spec.role != expected_role {
+            return Err(serde::de::Error::custom(format!(
+                "command spec role {} does not match {} collection",
+                command_role_label(spec.role),
+                command_role_label(expected_role)
+            )));
+        }
     }
     Ok(specs)
+}
+
+fn command_role_label(role: CommandRole) -> &'static str {
+    match role {
+        CommandRole::Verify => "verify",
+        CommandRole::Receipt => "receipt",
+        CommandRole::Regeneration => "regeneration",
+        CommandRole::Inspection => "inspection",
+        CommandRole::TargetedRerun => "targeted_rerun",
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -427,11 +464,12 @@ fn command_specs_from_value(
     let object = command_specs
         .as_object()
         .ok_or_else(|| "command_specs must be an object".to_string())?;
-    let parse = |field: &str| -> Result<Vec<CommandSpec>, String> {
+    let parse = |field: &str, expected_role: CommandRole| -> Result<Vec<CommandSpec>, String> {
         let Some(value) = object.get(field) else {
             return Ok(Vec::new());
         };
         let values = match value {
+            Value::Null => return Ok(Vec::new()),
             Value::Array(values) => values.clone(),
             Value::Object(_) => vec![value.clone()],
             _ => return Err(format!("command_specs.{field} must be an object or array")),
@@ -443,11 +481,21 @@ fn command_specs_from_value(
                     .map_err(|error| format!("command_specs.{field} is malformed: {error}"))?;
                 spec.validate()
                     .map_err(|error| format!("command_specs.{field} is invalid: {error}"))?;
+                if spec.role != expected_role {
+                    return Err(format!(
+                        "command_specs.{field} contains {} role, expected {}",
+                        command_role_label(spec.role),
+                        command_role_label(expected_role)
+                    ));
+                }
                 Ok(spec)
             })
             .collect()
     };
-    Ok((parse("verify")?, parse("receipt")?))
+    Ok((
+        parse("verify", CommandRole::Verify)?,
+        parse("receipt", CommandRole::Receipt)?,
+    ))
 }
 
 pub(crate) fn render_gap_decision_ledger_markdown(report: &GapDecisionLedgerReport) -> String {
@@ -2938,6 +2986,22 @@ mod tests {
     }
 
     #[test]
+    fn repo_exposure_null_typed_command_slots_remain_legacy_readable() -> Result<(), String> {
+        let mut seam =
+            make_repo_exposure_seam("actionable", "add_focused_test", "predicate_boundary");
+        seam["evidence_record"]["canonical_item"]["command_specs"] = serde_json::json!({
+            "verify": null,
+            "receipt": null,
+        });
+        let payload = serde_json::json!({"seams": [seam]});
+        let records = gap_records_from_repo_exposure_json(&payload.to_string())
+            .map_err(|error| format!("null typed command slots should be unavailable: {error}"))?;
+        assert_eq!(records.len(), 1);
+        assert!(records[0].command_specs.is_none());
+        Ok(())
+    }
+
+    #[test]
     fn repo_exposure_json_error_paths() -> Result<(), String> {
         // invalid JSON
         let err_msg = gap_records_from_repo_exposure_json("not-json")
@@ -5067,7 +5131,7 @@ mod tests {
             "after.json",
             None,
         );
-        let mut malformed = serde_json::to_value(verify)
+        let mut malformed = serde_json::to_value(&verify)
             .map_err(|error| format!("serialize verify spec failed: {error}"))?;
         malformed["role"] = serde_json::json!("receipt");
         let input = serde_json::json!([{
@@ -5081,6 +5145,26 @@ mod tests {
             error.contains("invalid GapRecord"),
             "unexpected error: {error}"
         );
+
+        let receipt = crate::agent::command_specs::agent_receipt_command_spec(
+            ".",
+            "target/verify.json",
+            "gap:role-mismatch",
+            Some("target/receipt.json"),
+        );
+        for (field, spec) in [("verify", receipt), ("receipt", verify)] {
+            let input = serde_json::json!([{
+                "gap_id": format!("gap:invalid-{field}"),
+                "command_specs": {field: spec}
+            }]);
+            let error = parse_gap_records_json(&input.to_string())
+                .err()
+                .ok_or_else(|| format!("role-mismatched {field} command spec was accepted"))?;
+            assert!(
+                error.contains("invalid GapRecord"),
+                "unexpected cross-role error for {field}: {error}"
+            );
+        }
         Ok(())
     }
 
