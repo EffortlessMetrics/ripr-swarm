@@ -236,18 +236,23 @@ mod tests {
             .as_object_mut()
             .ok_or_else(|| "fixture should be an object".to_string())?
             .remove("analysis_outcome");
-        assert!(matches!(
+        assert_eq!(
             validate_analysis_outcome_artifact(Path::new("target"), ".", &missing),
-            Err(AnalysisOutcomeArtifactError::Invalid(_))
-        ));
-        assert!(matches!(
+            Err(AnalysisOutcomeArtifactError::Invalid(
+                "Analysis outcome artifact is missing the analysis_outcome envelope.".to_string()
+            ))
+        );
+        assert_eq!(
             validate_analysis_outcome_artifact(
                 Path::new("target"),
                 ".",
                 &artifact(&outcome, false)
             ),
-            Err(AnalysisOutcomeArtifactError::Invalid(_))
-        ));
+            Err(AnalysisOutcomeArtifactError::Invalid(
+                "Analysis outcome artifact completeness disagrees with its typed outcome."
+                    .to_string()
+            ))
+        );
         Ok(())
     }
 }
