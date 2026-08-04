@@ -3573,39 +3573,51 @@ mod diagnostic_policy_tests {
         preview_finding.language_status = Some(LanguageStatus::Preview);
         preview_finding.static_limit_kind = Some(StaticLimitKind::MissingImportGraph);
 
-        if should_project_gap_records("full", &[], &[], &[complete.clone()], None)
-            || should_project_gap_records("full", &[], &[], &[complete.clone()], Some(&[]))
+        if should_project_gap_records("full", &[], &[], std::slice::from_ref(&complete), None)
+            || should_project_gap_records(
+                "full",
+                &[],
+                &[],
+                std::slice::from_ref(&complete),
+                Some(&[]),
+            )
             || !should_project_gap_records(
                 "full",
                 &[],
                 &[],
-                &[complete.clone()],
+                std::slice::from_ref(&complete),
                 Some(std::slice::from_ref(&record)),
             )
         {
             return Err("full-run projection must require a non-empty ledger".to_string());
         }
-        if should_project_gap_records("stale", &[], &[], &[complete.clone()], None)
-            || should_project_gap_records("limited", &[], &[], &[complete.clone()], None)
+        if should_project_gap_records("stale", &[], &[], std::slice::from_ref(&complete), None)
+            || should_project_gap_records(
+                "limited",
+                &[],
+                &[],
+                std::slice::from_ref(&complete),
+                None,
+            )
             || should_project_gap_records(
                 "limited",
                 &[preview_finding.clone()],
                 &[],
-                &[complete.clone()],
+                std::slice::from_ref(&complete),
                 Some(&[]),
             )
             || should_project_gap_records(
                 "limited",
                 &[preview_finding.clone()],
                 &[],
-                &[complete.clone()],
+                std::slice::from_ref(&complete),
                 Some(std::slice::from_ref(&record)),
             )
             || !should_project_gap_records(
                 "limited",
                 &[preview_finding.clone()],
                 &[],
-                &[complete.clone()],
+                std::slice::from_ref(&complete),
                 Some(std::slice::from_ref(&preview_record)),
             )
         {
