@@ -44,7 +44,9 @@ use crate::output::receipt_lifecycle::{
     normalize_receipt_lifecycle_state, receipt_lifecycle_state_from_movement,
 };
 use crate::repair_guidance::{
-    DiscriminatorAvailability, DiscriminatorState, GapRouteGuidanceFacts,
+    AssertionBasis, AssertionGuidance, AssertionGuidanceView, AssertionKind, AssertionState,
+    DiscriminatorAvailability, DiscriminatorState, GapRouteGuidanceFacts, GuidanceReason,
+    GuidanceRecovery, ObserverKind, SeamAssertionFacts,
 };
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -960,17 +962,9 @@ pub(crate) fn suggested_assertion_for_classified_seam(entry: &ClassifiedSeam) ->
     if !entry.class.is_headline_eligible() || !eligibility.readiness.is_repair_ready() {
         return None;
     }
-    suggested_assertions_for(
-        entry.seam.kind(),
-        entry.seam.owner(),
-        Some(entry.seam.required_discriminator()),
-        &entry.evidence,
-    )
-    .into_iter()
-    .find(|suggestion| {
-        let trimmed = suggestion.trim_start();
-        !trimmed.starts_with("//") && trimmed.contains("assert")
-    })
+    assertion_shape_for_entry(entry)
+        .example()
+        .map(ToString::to_string)
 }
 
 /// Render a compact human/agent work order for the next targeted test.
@@ -1037,7 +1031,10 @@ pub(crate) fn targeted_test_brief_for_classified_seam(entry: &ClassifiedSeam) ->
     if let Some(value) = outline.candidate_value.as_ref() {
         out.push_str(&format!("- Candidate value: {value}\n"));
     }
-    out.push_str(&format!("- Assertion shape: {}\n", outline.assertion_shape));
+    out.push_str(&format!(
+        "- Assertion guidance: {}\n",
+        outline.assertion_shape
+    ));
 
     if let Some(target) = navigation_target.as_ref() {
         out.push_str("\nExternal observer target (navigation only):\n");
@@ -1112,21 +1109,14 @@ pub(crate) fn targeted_test_brief_outline_for_classified_seam(
         .into_iter()
         .next()
         .map(|value| value.value);
-    let assertion_shape = if eligibility.readiness.is_repair_ready() {
-        assertion_shape_for_entry(entry)
-    } else {
-        AssertionShape {
-            kind: "not_applicable",
-            example: "not_applicable".to_string(),
-        }
-    };
+    let assertion_shape = assertion_shape_for_entry(entry);
 
     TargetedTestBriefOutline {
         suggested_file: recommended.file,
         suggested_name: recommended.name,
         suggested_reason: recommended.reason,
         candidate_value,
-        assertion_shape: assertion_shape.example,
+        assertion_shape: assertion_shape.human_summary(),
     }
 }
 
@@ -1947,21 +1937,14 @@ fn push_packet_json(
         json_escape(&missing_oracle_shape_for(seam.kind(), seam.expected_sink()))
     ));
 
-    let assertion_shape = if is_safe_for_repair_packet(entry) {
-        assertion_shape_for_entry(entry)
+    let assertion_shape_json = if is_safe_for_repair_packet(entry) {
+        assertion_guidance_json(&assertion_shape_for_entry(entry))
     } else {
-        AssertionShape {
-            kind: "not_applicable",
-            example: "not_applicable".to_string(),
-        }
+        serde_json::Value::Null
     };
-    out.push_str("      \"assertion_shape\": {");
-    out.push_str(&format!("\"kind\": \"{}\", ", assertion_shape.kind));
-    out.push_str(&format!(
-        "\"example\": \"{}\"",
-        json_escape(assertion_shape.example.as_str())
-    ));
-    out.push_str("},\n");
+    out.push_str("      \"assertion_shape\": ");
+    out.push_str(&assertion_shape_json.to_string());
+    out.push_str(",\n");
 
     out.push_str("      \"related_existing_tests\": [");
     if !evidence.related_tests.is_empty() {
@@ -2046,16 +2029,17 @@ fn push_packet_json(
     }
     out.push_str("],\n");
 
-    let suggested = if is_safe_for_repair_packet(entry) {
-        suggested_assertions_for(
-            seam.kind(),
-            seam.owner(),
-            Some(seam.required_discriminator()),
-            evidence,
-        )
-    } else {
-        Vec::new()
-    };
+    let suggested =
+        if is_safe_for_repair_packet(entry) && assertion_shape_for_entry(entry).is_concrete() {
+            suggested_assertions_for(
+                seam.kind(),
+                seam.owner(),
+                Some(seam.required_discriminator()),
+                evidence,
+            )
+        } else {
+            Vec::new()
+        };
     out.push_str("      \"suggested_assertions\": [");
     for (idx, suggestion) in suggested.iter().enumerate() {
         out.push_str(&format!("\"{}\"", json_escape(suggestion)));
@@ -2150,8 +2134,54 @@ pub(crate) struct NavigationOnlyExternalTarget {
 }
 
 pub(crate) struct AssertionShape {
-    pub(crate) kind: &'static str,
-    pub(crate) example: String,
+    guidance: AssertionGuidanceView,
+}
+
+impl AssertionShape {
+    pub(crate) fn state(&self) -> AssertionState {
+        self.guidance.state()
+    }
+
+    pub(crate) fn kind(&self) -> Option<AssertionKind> {
+        self.guidance.kind()
+    }
+
+    pub(crate) fn example(&self) -> Option<&str> {
+        self.guidance.example()
+    }
+
+    pub(crate) fn is_concrete(&self) -> bool {
+        self.state() == AssertionState::Concrete
+    }
+
+    pub(crate) fn guidance(&self) -> &AssertionGuidanceView {
+        &self.guidance
+    }
+
+    pub(crate) fn human_summary(&self) -> String {
+        let guidance = self.guidance();
+        match guidance.state() {
+            AssertionState::Concrete => guidance
+                .example()
+                .map(ToString::to_string)
+                .unwrap_or_else(|| "concrete assertion unavailable".to_string()),
+            AssertionState::RequiresObserverSetup => format!(
+                "requires observer setup ({})",
+                guidance
+                    .observer_kind()
+                    .map(ObserverKind::as_str)
+                    .unwrap_or("observer")
+            ),
+            state => format!(
+                "{} ({})",
+                state.as_str(),
+                guidance
+                    .reason()
+                    .map(GuidanceReason::as_str)
+                    .unwrap_or("unspecified")
+            ),
+        }
+    }
 }
 
 struct ImitationPattern<'a> {
@@ -2508,47 +2538,87 @@ pub(crate) fn candidate_values_for(
         .collect()
 }
 
-pub(crate) fn assertion_shape_for(
-    kind: SeamKind,
-    owner: &str,
-    evidence: &TestGripEvidence,
-) -> AssertionShape {
-    let example = suggested_assertions_for(kind, owner, None, evidence)
-        .into_iter()
-        .next()
-        .unwrap_or_else(|| "assert_eq!(actual, expected)".to_string());
-    AssertionShape {
-        kind: assertion_shape_kind_for(kind),
-        example,
-    }
-}
-
 pub(crate) fn assertion_shape_for_entry(entry: &ClassifiedSeam) -> AssertionShape {
-    let example = suggested_assertions_for(
+    assertion_shape_from_guidance(assertion_guidance_for(
         entry.seam.kind(),
         entry.seam.owner(),
         Some(entry.seam.required_discriminator()),
         &entry.evidence,
-    )
-    .into_iter()
-    .next()
-    .unwrap_or_else(|| "assert_eq!(actual, expected)".to_string());
+    ))
+}
+
+fn assertion_shape_from_guidance(guidance: AssertionGuidance) -> AssertionShape {
     AssertionShape {
-        kind: assertion_shape_kind_for(entry.seam.kind()),
-        example,
+        guidance: guidance.view(),
     }
 }
 
-fn assertion_shape_kind_for(kind: SeamKind) -> &'static str {
-    match kind {
-        SeamKind::PredicateBoundary => "exact_return_value",
-        SeamKind::ErrorVariant => "exact_error_variant",
-        SeamKind::ReturnValue => "exact_return_value",
-        SeamKind::FieldConstruction => "field_equality",
-        SeamKind::SideEffect => "side_effect_observer",
-        SeamKind::MatchArm => "match_result",
-        SeamKind::CallPresence => "call_expectation",
+fn assertion_guidance_for(
+    kind: SeamKind,
+    owner: &str,
+    required: Option<&RequiredDiscriminator>,
+    evidence: &TestGripEvidence,
+) -> AssertionGuidance {
+    let assertion_kind = assertion_kind_for(kind);
+    let observer_required = match kind {
+        SeamKind::SideEffect => Some(ObserverKind::SideEffectSink),
+        SeamKind::CallPresence => Some(ObserverKind::CallSite),
+        _ => None,
+    };
+    let derived_example = suggested_assertions_for(kind, owner, required, evidence)
+        .into_iter()
+        .find(|suggestion| {
+            let trimmed = suggestion.trim_start();
+            !trimmed.starts_with("//") && trimmed.contains("assert")
+        });
+    let basis = if required.is_some() {
+        Some(AssertionBasis::SeamRequiredDiscriminator)
+    } else if !evidence.observed_values.is_empty() {
+        Some(AssertionBasis::ObservedValueFact)
+    } else {
+        None
+    };
+
+    match AssertionGuidance::from_seam_facts(SeamAssertionFacts {
+        derived_example: derived_example.as_deref(),
+        kind: assertion_kind,
+        basis,
+        observer_required,
+        verification_only: false,
+        fix_site_only: false,
+        stale: false,
+    }) {
+        Ok(guidance) => guidance,
+        Err(_) => AssertionGuidance::Unresolved {
+            reason: GuidanceReason::ProducerFactAbsent,
+            recovery: GuidanceRecovery::InspectFixSite,
+        },
     }
+}
+
+fn assertion_kind_for(kind: SeamKind) -> AssertionKind {
+    match kind {
+        SeamKind::PredicateBoundary => AssertionKind::ExactReturnValue,
+        SeamKind::ErrorVariant => AssertionKind::ExactErrorVariant,
+        SeamKind::ReturnValue => AssertionKind::ExactReturnValue,
+        SeamKind::FieldConstruction => AssertionKind::FieldEquality,
+        SeamKind::SideEffect => AssertionKind::SideEffectObserver,
+        SeamKind::MatchArm => AssertionKind::MatchResult,
+        SeamKind::CallPresence => AssertionKind::CallExpectation,
+    }
+}
+
+pub(crate) fn assertion_guidance_json(shape: &AssertionShape) -> serde_json::Value {
+    let guidance = shape.guidance();
+    json!({
+        "state": guidance.state().as_str(),
+        "example": guidance.example(),
+        "kind": guidance.kind().map(AssertionKind::as_str),
+        "basis": guidance.basis().map(AssertionBasis::as_str),
+        "observer_kind": guidance.observer_kind().map(ObserverKind::as_str),
+        "reason": guidance.reason().map(GuidanceReason::as_str),
+        "recovery": guidance.recovery().map(GuidanceRecovery::as_str),
+    })
 }
 
 fn patterns_to_imitate_for(evidence: &TestGripEvidence) -> Vec<ImitationPattern<'_>> {
@@ -3271,8 +3341,9 @@ mod tests {
             "\"nearest_strong_test_to_imitate\": {\"name\": \"below_threshold_has_no_discount\"",
             "\"candidate_values\": [",
             "\"value\": \"discount_threshold (equality boundary)\"",
-            "\"assertion_shape\": {\"kind\": \"exact_return_value\"",
-            "\"example\": \"assert_eq!(discounted_total(/* boundary input where amount >= discount_threshold */), /* expected */)\"",
+            "\"basis\":\"seam_required_discriminator\"",
+            "\"state\":\"concrete\"",
+            "\"example\":\"assert_eq!(discounted_total(/* boundary input where amount >= discount_threshold */), /* expected */)\"",
             "\"confidence\": \"high\"",
         ] {
             if !json.contains(needle) {
@@ -4711,7 +4782,7 @@ mod tests {
             "- Suggested file: tests/pricing.rs",
             "- Suggested name: discounted_total_boundary_discriminator",
             "- Candidate value: discount_threshold (equality boundary)",
-            "- Assertion shape: assert_eq!(discounted_total(/* boundary input where amount >= discount_threshold */), /* expected */)",
+            "- Assertion guidance: assert_eq!(discounted_total(/* boundary input where amount >= discount_threshold */), /* expected */)",
             "Imitate:",
             "- below_threshold_has_no_discount (strong exact_value oracle with high relation)",
             "Avoid:",
@@ -4730,7 +4801,7 @@ mod tests {
         for needle in [
             "- No related test location is visible in saved-workspace analysis.",
             "- Suggested file: not_applicable",
-            "- Assertion shape: not_applicable",
+            "- Assertion guidance: not_applicable",
             "- Target-placement route: producer-owned route readiness is not eligible for a repair target",
             "- copying a smoke-only test shape",
         ] {
@@ -5132,7 +5203,8 @@ mod tests {
             "\"candidate_values\": [",
             "\"value\": \"AuthError::RevokedToken\"",
             "\"missing_oracle_shape\": \"exact error-variant assertion",
-            "\"assertion_shape\": {\"kind\": \"exact_error_variant\"",
+            "\"basis\":\"seam_required_discriminator\"",
+            "\"state\":\"concrete\"",
             "let err = authenticate(/* trigger AuthError::RevokedToken */).expect_err",
             "assert!(matches!(err, AuthError::RevokedToken",
             "\"pattern\": \"broad_error in empty_token_is_rejected\"",
@@ -5158,29 +5230,36 @@ mod tests {
             ExpectedSink::ErrorChannel,
         );
         let classified = classified_with(seam, SeamGripClass::WeaklyGripped, Vec::new());
-        let shape = assertion_shape_for(
-            SeamKind::ErrorVariant,
-            "auth::authenticate",
-            &classified.evidence,
-        );
+        let shape = assertion_shape_for_entry(&classified);
 
-        assert_eq!(shape.kind, "exact_error_variant");
-        assert!(
-            shape
-                .example
-                .contains("authenticate(/* trigger the exact error variant */)")
+        assert_eq!(
+            shape.kind().map(AssertionKind::as_str),
+            Some("exact_error_variant")
         );
         assert!(
             shape
-                .example
-                .contains("expect_err(\"expected the exact error variant\")")
+                .example()
+                .unwrap_or_default()
+                .contains("authenticate(/* trigger AuthError::RevokedToken */)")
         );
         assert!(
             shape
-                .example
-                .contains("assert!(matches!(err, /* exact error variant */")
+                .example()
+                .unwrap_or_default()
+                .contains("expect_err(\"expected AuthError::RevokedToken\")")
         );
-        assert!(!shape.example.contains("/* trigger /*"));
+        assert!(
+            shape
+                .example()
+                .unwrap_or_default()
+                .contains("assert!(matches!(err, AuthError::RevokedToken")
+        );
+        assert!(
+            !shape
+                .example()
+                .unwrap_or_default()
+                .contains("/* trigger /*")
+        );
     }
 
     #[test]
@@ -5210,7 +5289,7 @@ mod tests {
         );
         for needle in [
             "\"name\": \"not_applicable\"",
-            "\"assertion_shape\": {\"kind\": \"not_applicable\"",
+            "\"assertion_shape\": null",
             "\"task\": \"inspect_static_limitation\"",
         ] {
             if !json.contains(needle) {
@@ -5219,6 +5298,7 @@ mod tests {
                 ));
             }
         }
+        assert!(!json.contains("assert_eq!(actual, expected)"));
         Ok(())
     }
 
@@ -5323,6 +5403,15 @@ mod tests {
         );
         assert!(suggested_assertion_for_classified_seam(&opaque_field).is_none());
         assert!(suggested_assertion_for_classified_seam(&side_effect).is_none());
+        let side_effect_shape = assertion_shape_for_entry(&side_effect);
+        assert_eq!(
+            side_effect_shape.state(),
+            AssertionState::RequiresObserverSetup
+        );
+        assert!(side_effect_shape.example().is_none());
+        let guidance = assertion_guidance_json(&side_effect_shape).to_string();
+        assert!(guidance.contains("\"observer_kind\":\"side_effect_sink\""));
+        assert!(guidance.contains("\"example\":null"));
         Ok(())
     }
 

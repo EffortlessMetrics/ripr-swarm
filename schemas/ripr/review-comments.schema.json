@@ -1026,6 +1026,70 @@
             "null"
           ]
         },
+        "assertion_guidance": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "example",
+            "kind",
+            "basis",
+            "observer_kind",
+            "reason",
+            "recovery"
+          ],
+          "properties": {
+            "state": {
+              "enum": [
+                "concrete",
+                "requires_observer_setup",
+                "fix_site_only",
+                "verification_only",
+                "unresolved",
+                "stale"
+              ]
+            },
+            "example": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "basis": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "observer_kind": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "recovery": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
         "recommended_file": {
           "type": "string"
         },

@@ -779,8 +779,7 @@ fn review_recommendation_json(
     let recommended = agent_seam_packets::recommended_test_for(entry);
     let nearest = agent_seam_packets::nearest_strong_test_to_imitate(seam.kind(), &entry.evidence);
     let candidate_values = agent_seam_packets::candidate_values_for(entry, &missing);
-    let assertion_shape =
-        agent_seam_packets::assertion_shape_for(seam.kind(), seam.owner(), &entry.evidence);
+    let assertion_shape = agent_seam_packets::assertion_shape_for_entry(entry);
     let seam_id = seam.id().as_str();
     let root_display = display_path(root);
     let missing_value = missing.first().map(|record| record.value.clone());
@@ -872,10 +871,11 @@ fn review_recommendation_json(
 
     let suggested_test = if gap_state == "actionable" {
         json!({
-            "intent": suggested_test_intent(assertion_shape.kind),
+            "intent": suggested_test_intent(&assertion_shape),
             "candidate_values": candidate_values.iter().map(|record| record.value.clone()).collect::<Vec<_>>(),
-            "assertion_shape": assertion_shape.example,
-            "assertion_kind": assertion_shape.kind,
+            "assertion_shape": assertion_shape.example(),
+            "assertion_kind": assertion_shape.kind().map(|kind| kind.as_str()),
+            "assertion_guidance": agent_seam_packets::assertion_guidance_json(&assertion_shape),
             "recommended_file": recommended.file.as_str(),
             "recommended_name": recommended.name.as_str(),
             "near_test": nearest.map(|test| test.test_name.clone()),
@@ -887,6 +887,7 @@ fn review_recommendation_json(
             "candidate_values": [],
             "assertion_shape": null,
             "assertion_kind": null,
+            "assertion_guidance": agent_seam_packets::assertion_guidance_json(&assertion_shape),
             "recommended_file": "not_applicable",
             "recommended_name": "not_applicable",
             "near_test": null,
@@ -1139,8 +1140,30 @@ fn reason_for(selected: &AgentBriefSelectedSeam<'_>, missing: Option<&str>) -> S
     )
 }
 
-fn suggested_test_intent(assertion_kind: &str) -> &'static str {
-    match assertion_kind {
+fn suggested_test_intent(shape: &agent_seam_packets::AssertionShape) -> &'static str {
+    if !shape.is_concrete() {
+        return match shape.state() {
+            crate::repair_guidance::AssertionState::RequiresObserverSetup => {
+                "Establish the named observer before adding an assertion."
+            }
+            crate::repair_guidance::AssertionState::FixSiteOnly => {
+                "Inspect the named fix site; no assertion example is available."
+            }
+            crate::repair_guidance::AssertionState::VerificationOnly => {
+                "Use the verification route; no assertion example is available."
+            }
+            crate::repair_guidance::AssertionState::Stale => {
+                "Refresh the analysis before using assertion guidance."
+            }
+            crate::repair_guidance::AssertionState::Unresolved => {
+                "Inspect the producer-owned seam evidence before designing an assertion."
+            }
+            crate::repair_guidance::AssertionState::Concrete => {
+                "Add one focused discriminator test."
+            }
+        };
+    }
+    match shape.kind().map(|kind| kind.as_str()).unwrap_or_default() {
         "exact_error_variant" => "Add an exact error-variant test.",
         "side_effect_observer" => "Add a side-effect observer test.",
         "call_expectation" => "Add a call-observation test.",
