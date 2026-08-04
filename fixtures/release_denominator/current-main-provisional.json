@@ -661,8 +661,8 @@
         ]
       }
     ],
-  "denominator_decisions_remaining_through_provisional_cutoff": 0,
-  "denominator_decisions_remaining_through_selected_cut": null,
+    "denominator_decisions_remaining_through_provisional_cutoff": 0,
+    "denominator_decisions_remaining_through_selected_cut": null,
     "projection": {
       "reproducible": false,
       "candidate_tree_sha": null,
@@ -5904,6 +5904,7 @@
         "policy/process_allowlist.txt",
         "schemas/ripr/repair-assurance.schema.json"
       ],
+      "candidate_only_exclusion_granularity": "hunk_or_symbol",
       "replacement_commit_sha": null,
       "review_refs": [
         "review:2832:batch-A-product",
@@ -5917,7 +5918,7 @@
       "proof_refs": [
         "git:first-parent-range"
       ],
-      "source_survivor_or_swarm_exclusion_effect": "#2832 2832-A-product reviewed commit 365f7d61e27fd441e997e6e17e3f3e28859a3964 at first-parent position 81: delivered delta: PR #2396 adds the producer-owned verify-execute command and RepairReceiptV2 issuance surface.; challenged disposition: include_product; accepted disposition: candidate_only_exclusion; candidate effect: retain the development commit and reusable provenance/static-assurance foundations, while #2835 removes only the execution-only paths from the candidate tree.",
+      "source_survivor_or_swarm_exclusion_effect": "#2832 2832-A-product reviewed commit 365f7d61e27fd441e997e6e17e3f3e28859a3964 at first-parent position 81: delivered delta: PR #2396 adds the producer-owned verify-execute command and RepairReceiptV2 issuance surface.; challenged disposition: include_product; accepted disposition: candidate_only_exclusion; candidate effect: retain the development commit and reusable provenance/static-assurance foundations; #2835 must apply the exact execution-only path set with hunk-or-symbol-scoped projection rather than whole-file removal.",
       "limitation_or_operator_decision": "#2767/#2788 accepted Outcome A; #2835 must materialize the path-level exclusion and preserve the release non-claim that 0.11.0 does not execute verification commands or issue RepairReceiptV2. Release non-claim: this provisional disposition does not close the owning issue, prove candidate qualification, or claim source promotion."
     },
     {
