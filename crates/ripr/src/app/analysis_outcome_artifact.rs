@@ -394,9 +394,19 @@ mod tests {
                     .to_string()
             ))
         );
+        // Use an absolute path that cannot accidentally resolve back into the
+        // checkout. Hosted CI places `CARGO_TARGET_DIR` outside the checkout,
+        // while local Cargo commonly creates an in-tree `target`; using the
+        // relative `target` path would therefore exercise different Git
+        // discovery behavior in the two environments.
+        let invalid_root = std::env::temp_dir().join(format!(
+            "ripr-analysis-outcome-invalid-root-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&invalid_root);
         assert!(matches!(
             validate_analysis_outcome_artifact(
-                Path::new("target"),
+                &invalid_root,
                 &root_display,
                 &artifact(&outcome, true)?,
             ),
