@@ -18,7 +18,12 @@ export function run(): Promise<void> {
   files.forEach((f) => mocha.addFile(path.resolve(testsRoot, f)));
 
   return new Promise((resolve, reject) => {
-    mocha.run((failures: number) => {
+    const runner = mocha.run((failures: number) => {
+      const executed = runner.stats?.tests ?? 0;
+      if (executed === 0) {
+        reject(new Error('test run executed zero tests; result is not_run'));
+        return;
+      }
       if (failures > 0) {
         reject(new Error(`${failures} tests failed.`));
       } else {

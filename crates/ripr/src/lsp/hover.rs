@@ -114,8 +114,8 @@ pub(super) fn is_gap_diagnostic(diagnostic: &Diagnostic) -> bool {
 }
 
 fn diagnostic_hover_markdown(diagnostic: &Diagnostic) -> String {
-    if let Some(data) = &diagnostic.data
-        && data.get("source").and_then(string_value) == Some("gap_decision_ledger")
+    if is_gap_diagnostic(diagnostic)
+        && let Some(data) = &diagnostic.data
     {
         return gap_diagnostic_hover_markdown(diagnostic, data);
     }

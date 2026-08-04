@@ -70,6 +70,8 @@ function stageIntegrationWorkspace(templatePath: string, workspacePath: string):
   fs.writeFileSync(
     path.join(workspacePath, 'tests', 'pricing.test.ts'),
     [
+      "import { discountedTotal } from '../src/pricing';",
+      '',
       "test('below threshold has no discount', () => {",
       '    const result = discountedTotal(50, 100);',
       '    if (result !== 50) {',

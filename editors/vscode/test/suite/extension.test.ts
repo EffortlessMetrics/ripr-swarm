@@ -315,9 +315,7 @@ suite('Extension Smoke', () => {
     await withControllerTestContext({ seamDiagnostics: false, diagnosticProfile: 'full' }, async (context) => {
       await context.controller.start();
 
-      const initializationOptions = (context.clientOptions() as {
-        initializationOptions?: Record<string, unknown>;
-      }).initializationOptions;
+      const initializationOptions = context.client.receivedInitializationOptions;
       assert.deepStrictEqual(
         {
           seamDiagnostics: initializationOptions?.seamDiagnostics,
@@ -346,8 +344,7 @@ suite('Extension Smoke', () => {
       // The suite's activation already owns the initial trusted session. Keep
       // this journey on that session; restart behavior is exercised separately
       // by the lifecycle acceptance below.
-      assert.ok(await editAndSaveDocument(document), 'expected the Rust journey save to trigger analysis');
-      await waitForSavedAnalysis(workspaceFileUri('src/lib.rs'), 60000);
+      await editAndSaveDocumentThenWaitForAnalysis(document, 60000);
       await vscode.commands.executeCommand('ripr.refreshDiagnostics');
 
     const diagnostic = await waitForDiagnostic(
@@ -503,8 +500,7 @@ suite('Extension Smoke', () => {
       await vscode.window.showTextDocument(document);
       // Keep the preview journey on the same host/session as the trusted Rust
       // journey so state leakage remains observable across the sequence.
-      assert.ok(await editAndSaveDocument(document), 'expected the TypeScript journey save to trigger analysis');
-      await waitForSavedAnalysis(uri);
+      await editAndSaveDocumentThenWaitForAnalysis(document);
       await vscode.commands.executeCommand('ripr.refreshDiagnostics');
       await vscode.commands.executeCommand('ripr.showStatus');
 
@@ -4024,6 +4020,7 @@ function assertReportIncludes(report: string, expectedLines: string[]): void {
 
 class FakeLanguageClient {
   readonly requests: Array<{ method: string; params: unknown }> = [];
+  receivedInitializationOptions?: Record<string, unknown>;
   startCalls = 0;
   private readonly notificationHandlers = new Map<string, Array<(params: unknown) => void>>();
 
@@ -4060,6 +4057,12 @@ class FakeLanguageClient {
   }
 
   async stop(): Promise<void> {}
+
+  captureClientOptions(options: unknown): void {
+    this.receivedInitializationOptions = (options as {
+      initializationOptions?: Record<string, unknown>;
+    }).initializationOptions;
+  }
 }
 
 function controllerWorkspaceRootState(options: ControllerTestOptions): RiprWorkspaceRootState {
@@ -4123,6 +4126,7 @@ function createControllerTestContext(options: ControllerTestOptions) {
     }),
     createLanguageClient: (_serverOptions, options, experimental) => {
       clientOptions = options;
+      client.captureClientOptions(options);
       experimentalCapabilities = experimental;
       return client;
     },
@@ -4298,6 +4302,7 @@ async function configureTestServer(): Promise<void> {
     serverPath: testServerPath,
     baseRef: process.env.RIPR_TEST_BASE_REF ?? 'HEAD',
     checkMode: 'draft' as const,
+    autoDownload: false,
     seamDiagnostics: true,
     diagnosticProfile: 'full' as const
   };
@@ -4305,13 +4310,14 @@ async function configureTestServer(): Promise<void> {
     config.get<string>('server.path') === desired.serverPath &&
     config.get<string>('baseRef') === desired.baseRef &&
     config.get<string>('check.mode') === desired.checkMode &&
+    config.get<boolean>('server.autoDownload') === desired.autoDownload &&
     config.get<boolean>('seamDiagnostics') === desired.seamDiagnostics &&
     config.get<string>('diagnosticProfile') === desired.diagnosticProfile
   ) {
     return;
   }
   await config.update('server.path', testServerPath, vscode.ConfigurationTarget.Global);
-  await config.update('server.autoDownload', false, vscode.ConfigurationTarget.Global);
+  await config.update('server.autoDownload', desired.autoDownload, vscode.ConfigurationTarget.Global);
   await config.update(
     'baseRef',
     desired.baseRef,
@@ -4530,15 +4536,49 @@ async function waitForDiagnostic(
   ].join('\n'));
 }
 
-async function waitForSavedAnalysis(uri: vscode.Uri, timeoutMs = 15000): Promise<void> {
-  const started = Date.now();
-  while (Date.now() - started < timeoutMs) {
-    if (vscode.languages.getDiagnostics(uri).some((entry) => entry.source === 'ripr')) {
-      return;
+async function editAndSaveDocumentThenWaitForAnalysis(
+  document: vscode.TextDocument,
+  timeoutMs = 15000
+): Promise<void> {
+  const targetUri = document.uri.toString();
+  let saved = false;
+  let resolveSaved: () => void = () => {};
+  let resolveDiagnostics: () => void = () => {};
+  const savedEvent = new Promise<void>((resolve) => {
+    resolveSaved = resolve;
+  });
+  const diagnosticsEvent = new Promise<void>((resolve) => {
+    resolveDiagnostics = resolve;
+  });
+  const savedSubscription = vscode.workspace.onDidSaveTextDocument((savedDocument) => {
+    if (savedDocument.uri.toString() === targetUri) {
+      saved = true;
+      resolveSaved();
     }
-    await sleep(150);
+  });
+  const diagnosticsSubscription = vscode.languages.onDidChangeDiagnostics((event) => {
+    if (saved && event.uris.some((uri) => uri.toString() === targetUri)) {
+      resolveDiagnostics();
+    }
+  });
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(
+      () => reject(new Error(`timed out waiting for saved-workspace diagnostics at ${targetUri}`)),
+      timeoutMs
+    );
+  });
+  try {
+    assert.ok(await editAndSaveDocument(document), `expected ${targetUri} to become dirty before save`);
+    await Promise.race([savedEvent, timeout]);
+    await Promise.race([diagnosticsEvent, timeout]);
+  } finally {
+    savedSubscription.dispose();
+    diagnosticsSubscription.dispose();
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
   }
-  throw new Error(`timed out waiting for saved-workspace diagnostics at ${uri.toString()}`);
 }
 
 async function waitForHoverText(
