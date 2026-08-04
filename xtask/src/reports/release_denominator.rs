@@ -714,7 +714,7 @@ fn apply_adjudication(input: &str, decisions_path: &str, output: &str) -> Result
                 record.first_parent_position
             ));
         }
-        let override_record = overrides_by_position.get(&position);
+        let override_record = overrides_by_position.get(&position).copied();
         let disposition = override_record.map_or(batch.disposition.as_str(), |record| {
             record.disposition.as_str()
         });
