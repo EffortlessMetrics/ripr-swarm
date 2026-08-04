@@ -55,6 +55,8 @@ async function main() {
           'ripr.server.autoDownload': false,
           'ripr.baseRef': 'HEAD',
           'ripr.check.mode': 'instant',
+          'ripr.seamDiagnostics': true,
+          'ripr.diagnosticProfile': 'full',
           'security.workspace.trust.enabled': false,
         }, null, 2)}\n`
       );
