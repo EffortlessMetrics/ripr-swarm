@@ -116,11 +116,6 @@ pub(crate) fn validate_analysis_outcome_artifact(
             crate::analysis_outcome::AnalysisOutcomeKind::NoScope
         )
     {
-        if !root.join(".git").exists() {
-            return Err(invalid(
-                "Current analysis input could not be established: repository metadata is unavailable.",
-            ));
-        }
         let diff =
             crate::analysis::load_diff(root, declared_base, None, None).map_err(|error| {
                 invalid(format!(
@@ -278,17 +273,15 @@ mod tests {
                     .to_string()
             ))
         );
-        assert_eq!(
+        assert!(matches!(
             validate_analysis_outcome_artifact(
                 Path::new("target"),
                 &root_display,
                 &artifact(&outcome, true)?,
             ),
-            Err(AnalysisOutcomeArtifactError::Invalid(
-                "Current analysis input could not be established: repository metadata is unavailable."
-                    .to_string()
-            ))
-        );
+            Err(AnalysisOutcomeArtifactError::Invalid(reason))
+                if reason.contains("Current analysis input could not be established")
+        ));
         Ok(())
     }
 

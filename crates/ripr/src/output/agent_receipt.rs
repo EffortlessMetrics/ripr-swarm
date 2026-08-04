@@ -19,18 +19,25 @@ pub(crate) enum AgentReceiptUnavailableStatus {
 }
 
 impl AgentReceiptUnavailableStatus {
-    pub(crate) fn from_status(status: &str) -> Result<Self, String> {
-        match status {
-            "missing" => Ok(Self::Missing),
-            "invalid" => Ok(Self::Invalid),
-            other => Err(format!("unsupported agent receipt outcome status: {other}")),
-        }
-    }
-
     fn as_str(self) -> &'static str {
         match self {
             Self::Missing => "missing",
             Self::Invalid => "invalid",
+        }
+    }
+}
+
+impl From<&crate::app::analysis_outcome_artifact::AnalysisOutcomeArtifactError>
+    for AgentReceiptUnavailableStatus
+{
+    fn from(error: &crate::app::analysis_outcome_artifact::AnalysisOutcomeArtifactError) -> Self {
+        match error {
+            crate::app::analysis_outcome_artifact::AnalysisOutcomeArtifactError::Missing(_) => {
+                Self::Missing
+            }
+            crate::app::analysis_outcome_artifact::AnalysisOutcomeArtifactError::Invalid(_) => {
+                Self::Invalid
+            }
         }
     }
 }
@@ -891,10 +898,5 @@ mod tests {
             assert_eq!(value["analysis_outcome"], Value::Null);
         }
         Ok(())
-    }
-
-    #[test]
-    fn agent_receipt_rejects_unrecognized_unavailable_status() {
-        assert!(AgentReceiptUnavailableStatus::from_status("malformed").is_err());
     }
 }
