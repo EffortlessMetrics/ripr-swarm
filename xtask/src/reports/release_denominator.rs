@@ -2640,6 +2640,30 @@ mod tests {
     }
 
     #[test]
+    fn current_main_provisional_range_matches_pinned_candidate_ancestry() -> Result<(), String> {
+        let snapshot: Snapshot = serde_json::from_str(include_str!(
+            "../../../fixtures/release_denominator/current-main-provisional.json"
+        ))
+        .map_err(|error| error.to_string())?;
+        let mut source = snapshot.source.clone();
+        source.candidate_ref = source.candidate_sha.clone();
+        let facts = collect_live_facts(&source);
+        require(
+            facts.errors.is_empty(),
+            format!(
+                "pinned candidate ancestry could not be collected: {:?}",
+                facts.errors
+            ),
+        )?;
+        require(
+            facts.candidate_sha.as_deref() == Some(source.candidate_sha.as_str())
+                && facts.range_commits == source.range_commits
+                && facts.range_commits.len() == 257,
+            "pinned candidate ancestry does not match the 257-entry first-parent census",
+        )
+    }
+
+    #[test]
     fn final_cut_authority_counts_are_derived_from_commit_sha_records() -> Result<(), String> {
         let mut snapshot: Snapshot = serde_json::from_str(include_str!(
             "../../../fixtures/release_denominator/current-main-provisional.json"
