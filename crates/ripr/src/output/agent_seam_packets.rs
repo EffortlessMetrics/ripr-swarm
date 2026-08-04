@@ -30,6 +30,7 @@ use crate::analysis::repair_route::{
 use crate::analysis::seams::{ExpectedSink, RequiredDiscriminator, SeamGripClass, SeamKind};
 use crate::analysis::test_grip_evidence::{RelatedTestGrip, TestGripEvidence};
 use crate::analysis::{ClassifiedSeam, SeamLimitInfo, SeamLimitSource};
+use crate::analysis_outcome::AnalysisOutcome;
 use crate::app::causal_projection::CausalDeltaArtifact;
 use crate::domain::CommandRole;
 use crate::output::evidence_record::{
@@ -43,10 +44,10 @@ use crate::output::receipt_lifecycle::{
     RECEIPT_GAP_MISMATCH, RECEIPT_MOVEMENT_IMPROVED, RECEIPT_MOVEMENT_UNCHANGED, RECEIPT_STALE,
     normalize_receipt_lifecycle_state, receipt_lifecycle_state_from_movement,
 };
-use serde_json::json;
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
-pub(crate) const AGENT_SEAM_PACKET_SCHEMA_VERSION: &str = "0.3";
+pub(crate) const AGENT_SEAM_PACKET_SCHEMA_VERSION: &str = "0.4";
 
 /// Cap on related-tests rendered per packet. Mirrors the JSON-side
 /// limit in `output::repo_exposure` so an agent inspecting the same
@@ -81,6 +82,116 @@ const WORKFLOW_PREPARE_COMMAND: &str = "mkdir -p target/ripr/workflow target/rip
 /// the agent has written it.
 const SUGGESTED_TEST_COMMAND_STATUS: &str = "runnable_after_the_suggested_test_exists";
 
+struct AnalysisOutcomeProjection {
+    status: &'static str,
+    outcome: Value,
+    error: Option<String>,
+}
+
+fn analysis_outcome_projection(
+    analysis_outcome: Option<&AnalysisOutcome>,
+    required: bool,
+) -> AnalysisOutcomeProjection {
+    let Some(analysis_outcome) = analysis_outcome else {
+        return if required {
+            AnalysisOutcomeProjection {
+                status: "missing",
+                outcome: Value::Null,
+                error: Some(
+                    "diff-scoped agent packet requires the producer AnalysisOutcome artifact"
+                        .to_string(),
+                ),
+            }
+        } else {
+            AnalysisOutcomeProjection {
+                status: "not_applicable",
+                outcome: Value::Null,
+                error: None,
+            }
+        };
+    };
+
+    let outcome_value = match serde_json::to_value(analysis_outcome) {
+        Ok(value) => value,
+        Err(error) => {
+            return AnalysisOutcomeProjection {
+                status: "invalid",
+                outcome: Value::Null,
+                error: Some(format!(
+                    "serialize producer AnalysisOutcome failed: {error}"
+                )),
+            };
+        }
+    };
+    let digest = match analysis_outcome.semantic_digest() {
+        Ok(digest) => digest,
+        Err(error) => {
+            return AnalysisOutcomeProjection {
+                status: "invalid",
+                outcome: Value::Null,
+                error: Some(format!(
+                    "compute producer AnalysisOutcome digest failed: {error}"
+                )),
+            };
+        }
+    };
+
+    AnalysisOutcomeProjection {
+        status: if analysis_outcome.kind.is_complete() {
+            "complete"
+        } else {
+            "incomplete"
+        },
+        outcome: json!({
+            "analysis_complete": analysis_outcome.kind.is_complete(),
+            "outcome": outcome_value,
+            "semantic_digest": digest,
+        }),
+        error: None,
+    }
+}
+
+fn insert_analysis_outcome_projection(
+    object: &mut serde_json::Map<String, Value>,
+    analysis_outcome: Option<&AnalysisOutcome>,
+    required: bool,
+) {
+    let projection = analysis_outcome_projection(analysis_outcome, required);
+    object.insert(
+        "analysis_outcome_status".to_string(),
+        Value::String(projection.status.to_string()),
+    );
+    if let Some(error) = projection.error {
+        object.insert("analysis_outcome_error".to_string(), Value::String(error));
+    }
+    object.insert("analysis_outcome".to_string(), projection.outcome);
+}
+
+fn push_analysis_outcome_projection(
+    out: &mut String,
+    analysis_outcome: Option<&AnalysisOutcome>,
+    required: bool,
+) {
+    let projection = analysis_outcome_projection(analysis_outcome, required);
+    out.push_str(&format!(
+        "  \"analysis_outcome_status\": \"{}\",\n",
+        projection.status
+    ));
+    if let Some(error) = projection.error {
+        out.push_str(&format!(
+            "  \"analysis_outcome_error\": \"{}\",\n",
+            json_escape(&error)
+        ));
+    }
+    let outcome_json = match serde_json::to_string(&projection.outcome) {
+        Ok(value) => value,
+        Err(_) => "null".to_string(),
+    };
+    out.push_str("  \"analysis_outcome\": ");
+    out.push_str(&outcome_json);
+    out.push_str(",\n");
+}
+
 /// Render every actionable `ClassifiedSeam` in `classified` as an agent
 /// packet, returning a JSON object with a `packets` array. Strongly-gripped,
 /// intentional, and suppressed seams are skipped. `Opaque` seams emit a
@@ -101,6 +212,22 @@ pub(crate) fn render_agent_seam_packets_json_with_causal(
     limit_info: Option<&SeamLimitInfo>,
     causal_projection: Option<&CausalDeltaArtifact>,
 ) -> String {
+    render_agent_seam_packets_json_with_causal_and_outcome(
+        classified,
+        limit_info,
+        causal_projection,
+        None,
+        false,
+    )
+}
+
+pub(crate) fn render_agent_seam_packets_json_with_causal_and_outcome(
+    classified: &[ClassifiedSeam],
+    limit_info: Option<&SeamLimitInfo>,
+    causal_projection: Option<&CausalDeltaArtifact>,
+    analysis_outcome: Option<&AnalysisOutcome>,
+    analysis_outcome_required: bool,
+) -> String {
     let canonical_gaps = canonical_gap_identities(classified);
     let mut out = String::new();
     out.push_str("{\n");
@@ -109,6 +236,7 @@ pub(crate) fn render_agent_seam_packets_json_with_causal(
         AGENT_SEAM_PACKET_SCHEMA_VERSION
     ));
     out.push_str("  \"scope\": \"repo\",\n");
+    push_analysis_outcome_projection(&mut out, analysis_outcome, analysis_outcome_required);
     if let Some(projection) = causal_projection {
         out.push_str("  \"causal_comparison\": ");
         out.push_str(&projection.comparison_json().to_string());
@@ -434,6 +562,9 @@ pub(crate) fn render_agent_gap_record_packet_json_with_causal(
         "packets_total": 1,
         "packets": [packet],
     });
+    if let Some(object) = envelope.as_object_mut() {
+        insert_analysis_outcome_projection(object, None, false);
+    }
     if let Some(projection) = causal_projection
         && let Some(object) = envelope.as_object_mut()
     {
@@ -602,7 +733,7 @@ pub(crate) fn render_agent_gap_record_queue_json(
             packet
         })
         .collect();
-    let envelope = json!({
+    let mut envelope = json!({
         "schema_version": "0.1",
         "tool": "ripr",
         "report": "swarm-queue",
@@ -636,6 +767,9 @@ pub(crate) fn render_agent_gap_record_queue_json(
             "do not run providers, generate tests, run mutation testing, or claim runtime proof from this queue"
         ],
     });
+    if let Some(object) = envelope.as_object_mut() {
+        insert_analysis_outcome_projection(object, None, false);
+    }
     let mut rendered = serde_json::to_string_pretty(&envelope)
         .map_err(|err| format!("render agent gap queue JSON failed: {err}"))?;
     rendered.push('\n');
@@ -658,7 +792,7 @@ pub(crate) fn render_agent_gap_record_queue_wrong_root_json(
     let reason = format!(
         "gap ledger root {ledger_root} does not match requested --root {root}; regenerate the gap decision ledger for the selected root before assigning swarm work"
     );
-    let envelope = json!({
+    let mut envelope = json!({
         "schema_version": "0.1",
         "tool": "ripr",
         "report": "swarm-queue",
@@ -705,6 +839,9 @@ pub(crate) fn render_agent_gap_record_queue_wrong_root_json(
             "do not run providers, generate tests, run mutation testing, or claim runtime proof from this queue"
         ],
     });
+    if let Some(object) = envelope.as_object_mut() {
+        insert_analysis_outcome_projection(object, None, false);
+    }
     let mut rendered = serde_json::to_string_pretty(&envelope)
         .map_err(|err| format!("render blocked agent gap queue JSON failed: {err}"))?;
     rendered.push('\n');
@@ -727,7 +864,7 @@ pub(crate) fn render_agent_gap_record_queue_missing_root_json(
         "gap ledger {} is missing root metadata; regenerate the gap decision ledger for requested --root {root} before assigning swarm work",
         gap_ledger_path
     );
-    let envelope = json!({
+    let mut envelope = json!({
         "schema_version": "0.1",
         "tool": "ripr",
         "report": "swarm-queue",
@@ -774,6 +911,9 @@ pub(crate) fn render_agent_gap_record_queue_missing_root_json(
             "do not run providers, generate tests, run mutation testing, or claim runtime proof from this queue"
         ],
     });
+    if let Some(object) = envelope.as_object_mut() {
+        insert_analysis_outcome_projection(object, None, false);
+    }
     let mut rendered = serde_json::to_string_pretty(&envelope)
         .map_err(|err| format!("render blocked agent gap queue JSON failed: {err}"))?;
     rendered.push('\n');
@@ -2592,6 +2732,10 @@ mod tests {
     use super::*;
     use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
     use crate::analysis::test_grip_evidence::{RelatedTestGrip, RelationReason, TestGripEvidence};
+    use crate::analysis_outcome::{
+        AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcomeCounts, AnalysisOutcomeKind,
+        AnalysisRecovery, AnalysisRecoveryKind, AnalysisStage,
+    };
     use crate::domain::{
         Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence,
         StageState, ValueContext, ValueFact,
@@ -2600,6 +2744,36 @@ mod tests {
 
     fn stage(state: StageState) -> StageEvidence {
         StageEvidence::new(state, Confidence::Medium, "test stage")
+    }
+
+    fn complete_zero_outcome() -> Result<AnalysisOutcome, String> {
+        AnalysisOutcome::new(
+            AnalysisOutcomeKind::CompleteNoFindings,
+            Default::default(),
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 1,
+                candidate_line_count: 1,
+                probe_count: 0,
+                finding_count: 0,
+            },
+            Vec::new(),
+        )
+    }
+
+    fn unsupported_outcome() -> Result<AnalysisOutcome, String> {
+        let recovery = AnalysisRecovery::new(AnalysisRecoveryKind::EnableLanguage, "enable")?;
+        let limitation = AnalysisLimitation::new(
+            AnalysisLimitationKind::LanguageScopeUnsupported,
+            AnalysisStage::LanguageAdapter,
+            recovery,
+        );
+        AnalysisOutcome::new(
+            AnalysisOutcomeKind::UnsupportedInput,
+            Default::default(),
+            AnalysisOutcomeCounts::default(),
+            vec![limitation],
+        )
     }
 
     fn typed_gap_record() -> Result<GapRecord, String> {
@@ -4976,11 +5150,11 @@ mod tests {
     }
 
     #[test]
-    fn schema_version_is_pinned_to_zero_three() {
+    fn schema_version_is_pinned_to_zero_four() {
         let json = render_agent_seam_packets_json(&[weakly_gripped_classified()], None);
         assert!(
-            json.contains("\"schema_version\": \"0.3\""),
-            "expected schema_version 0.3: {json}"
+            json.contains("\"schema_version\": \"0.4\""),
+            "expected schema_version 0.4: {json}"
         );
     }
 
@@ -5169,11 +5343,81 @@ mod tests {
     }
 
     #[test]
+    fn repo_packet_marks_diff_outcome_not_applicable() -> Result<(), String> {
+        let value = parsed_envelope(&render_agent_seam_packets_json(&[], None))?;
+        assert_eq!(value["analysis_outcome_status"], "not_applicable");
+        assert_eq!(value["analysis_outcome"], Value::Null);
+        Ok(())
+    }
+
+    #[test]
+    fn diff_packet_copies_complete_zero_outcome_and_digest() -> Result<(), String> {
+        let outcome = complete_zero_outcome()?;
+        let value = parsed_envelope(&render_agent_seam_packets_json_with_causal_and_outcome(
+            &[],
+            None,
+            None,
+            Some(&outcome),
+            true,
+        ))?;
+        assert_eq!(value["analysis_outcome_status"], "complete");
+        assert_eq!(value["analysis_outcome"]["analysis_complete"], true);
+        assert_eq!(
+            value["analysis_outcome"]["outcome"]["kind"],
+            "complete_no_findings"
+        );
+        assert_eq!(
+            value["analysis_outcome"]["semantic_digest"],
+            outcome.semantic_digest()?
+        );
+        assert_eq!(value["run_status"], "complete");
+        Ok(())
+    }
+
+    #[test]
+    fn diff_packet_preserves_unsupported_outcome_as_incomplete() -> Result<(), String> {
+        let outcome = unsupported_outcome()?;
+        let value = parsed_envelope(&render_agent_seam_packets_json_with_causal_and_outcome(
+            &[],
+            None,
+            None,
+            Some(&outcome),
+            true,
+        ))?;
+        assert_eq!(value["analysis_outcome_status"], "incomplete");
+        assert_eq!(value["analysis_outcome"]["analysis_complete"], false);
+        assert_eq!(
+            value["analysis_outcome"]["outcome"]["kind"],
+            "unsupported_input"
+        );
+        assert_eq!(
+            value["analysis_outcome"]["outcome"]["limitations"][0]["recovery"]["kind"],
+            "enable_language"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn diff_packet_marks_missing_producer_outcome_incomplete() -> Result<(), String> {
+        let value = parsed_envelope(&render_agent_seam_packets_json_with_causal_and_outcome(
+            &[],
+            None,
+            None,
+            None,
+            true,
+        ))?;
+        assert_eq!(value["analysis_outcome_status"], "missing");
+        assert_eq!(value["analysis_outcome"], Value::Null);
+        assert!(value["analysis_outcome_error"].as_str().is_some());
+        Ok(())
+    }
+
+    #[test]
     fn empty_input_emits_well_formed_json() {
         let json = render_agent_seam_packets_json(&[], None);
         assert!(json.contains("\"packets_total\": 0"));
         assert!(json.contains("\"packets\": []"));
-        assert!(json.contains("\"schema_version\": \"0.3\""));
+        assert!(json.contains("\"schema_version\": \"0.4\""));
     }
 
     #[test]
