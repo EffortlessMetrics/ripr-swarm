@@ -638,10 +638,15 @@ suite('Extension Smoke', () => {
       this.skip();
     }
 
-    await cleanupEditorGapSmokeFiles();
-    await writeEditorGapSmokeFiles();
     const uri = workspaceFileUri('src/pricing.ts');
+    const config = vscode.workspace.getConfiguration('ripr', uri);
+    const previousProfile = config.get<'actionable' | 'full'>('diagnosticProfile', 'full');
     try {
+      // Preview diagnostics are intentionally exposed on the actionable
+      // profile; the preceding Rust journey uses the full seam profile.
+      await updateDiagnosticProfile(config, 'actionable');
+      await cleanupEditorGapSmokeFiles();
+      await writeEditorGapSmokeFiles();
       await vscode.commands.executeCommand('workbench.action.closeAllEditors');
       const document = await vscode.workspace.openTextDocument(uri);
       assert.strictEqual(document.languageId, 'typescript');
@@ -751,6 +756,7 @@ suite('Extension Smoke', () => {
       assert.strictEqual(activeEditor.selection.active.line, 3);
     } finally {
       await cleanupEditorGapSmokeFiles();
+      await updateDiagnosticProfile(config, previousProfile);
       await vscode.commands.executeCommand('ripr.restartServer');
     }
   });
