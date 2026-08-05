@@ -456,39 +456,52 @@ mod tests {
     #[test]
     fn repo_exposure_identity_changes_with_controlled_git_revision() -> Result<(), String> {
         let root = temporary_git_root()?;
-        std::fs::write(root.join("Cargo.toml"), "[workspace]\n")
-            .map_err(|error| format!("write Cargo.toml: {error}"))?;
-        run_git(&root, &["add", "Cargo.toml"])?;
-        run_git(&root, &["commit", "--quiet", "-m", "before"])?;
-        let before = RepoExposureArtifactContext::for_repo_exposure(
-            root.clone(),
-            "draft".to_string(),
-            None,
-        )?;
+        let result = (|| -> Result<(), String> {
+            std::fs::write(root.join("Cargo.toml"), "[workspace]\n")
+                .map_err(|error| format!("write Cargo.toml: {error}"))?;
+            run_git(&root, &["add", "Cargo.toml"])?;
+            run_git(&root, &["commit", "--quiet", "-m", "before"])?;
+            let before = RepoExposureArtifactContext::for_repo_exposure(
+                root.clone(),
+                "draft".to_string(),
+                None,
+            )?;
+            let before_artifact = repo_exposure_artifact_metadata(&before, "sha256:test")?;
 
-        run_git(
-            &root,
-            &["commit", "--quiet", "--allow-empty", "-m", "after"],
-        )?;
-        let after = RepoExposureArtifactContext::for_repo_exposure(
-            root.clone(),
-            "draft".to_string(),
-            None,
-        )?;
+            run_git(
+                &root,
+                &["commit", "--quiet", "--allow-empty", "-m", "after"],
+            )?;
+            let after = RepoExposureArtifactContext::for_repo_exposure(
+                root.clone(),
+                "draft".to_string(),
+                None,
+            )?;
+            let after_artifact = repo_exposure_artifact_metadata(&after, "sha256:test")?;
 
-        if before.input_identity == after.input_identity {
-            return Err(
-                "controlled Git revisions must produce distinct input identities".to_string(),
-            );
-        }
-        if repo_exposure_snapshot_identity(&before.input_identity)
-            == repo_exposure_snapshot_identity(&after.input_identity)
-        {
-            return Err(
-                "controlled Git revisions must produce distinct snapshot identities".to_string(),
-            );
-        }
-        std::fs::remove_dir_all(root).map_err(|error| format!("remove temp root: {error}"))?;
+            if before.input_identity == after.input_identity {
+                return Err(
+                    "controlled Git revisions must produce distinct input identities".to_string(),
+                );
+            }
+            let before_snapshot = before_artifact["snapshot_identity"]
+                .as_str()
+                .ok_or_else(|| "before artifact omitted snapshot identity".to_string())?;
+            let after_snapshot = after_artifact["snapshot_identity"]
+                .as_str()
+                .ok_or_else(|| "after artifact omitted snapshot identity".to_string())?;
+            if before_snapshot == after_snapshot {
+                return Err(
+                    "controlled Git revisions must produce distinct snapshot identities"
+                        .to_string(),
+                );
+            }
+            Ok(())
+        })();
+        let cleanup =
+            std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"));
+        result?;
+        cleanup?;
         Ok(())
     }
 }
