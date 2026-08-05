@@ -12,6 +12,7 @@ export interface RiprConfig {
   downloadBaseUrl: string;
   checkMode: 'instant' | 'draft' | 'fast' | 'deep' | 'ready';
   baseRef: string;
+  includeUnchangedTests: boolean;
   seamDiagnostics: boolean;
   diagnosticProfile: DiagnosticProfile;
   traceServer: TraceSetting;
@@ -33,6 +34,7 @@ export function getConfig(resource?: vscode.Uri): RiprConfig {
     downloadBaseUrl: config.get<string>('server.downloadBaseUrl', ''),
     checkMode: config.get<'instant' | 'draft' | 'fast' | 'deep' | 'ready'>('check.mode', 'draft'),
     baseRef: config.get<string>('baseRef', 'origin/main'),
+    includeUnchangedTests: config.get<boolean>('includeUnchangedTests', true),
     seamDiagnostics: config.get<boolean>('seamDiagnostics', true),
     diagnosticProfile: config.get<DiagnosticProfile>('diagnosticProfile', 'actionable'),
     traceServer: config.get<TraceSetting>('trace.server', 'off')

@@ -307,6 +307,7 @@ suite('Extension Smoke', () => {
   test('defaults-first check mode is draft', () => {
     const config = vscode.workspace.getConfiguration('ripr');
     assert.strictEqual(config.inspect('check.mode')?.defaultValue, 'draft');
+    assert.strictEqual(config.inspect('includeUnchangedTests')?.defaultValue, true);
     assert.strictEqual(config.inspect('seamDiagnostics')?.defaultValue, true);
     assert.strictEqual(config.inspect('diagnosticProfile')?.defaultValue, 'actionable');
   });
@@ -318,10 +319,12 @@ suite('Extension Smoke', () => {
       const initializationOptions = context.client.receivedInitializationOptions;
       assert.deepStrictEqual(
         {
+          includeUnchangedTests: initializationOptions?.includeUnchangedTests,
           seamDiagnostics: initializationOptions?.seamDiagnostics,
           diagnosticProfile: initializationOptions?.diagnosticProfile
         },
         {
+          includeUnchangedTests: true,
           seamDiagnostics: false,
           diagnosticProfile: 'full'
         }
@@ -367,7 +370,9 @@ suite('Extension Smoke', () => {
       assert.deepStrictEqual(delegatedSections, ['other.setting']);
       assert.strictEqual((result[1] as string), 'delegated:other.setting');
       assert.strictEqual(typeof (result[0] as Record<string, unknown>).diagnosticProfile, 'string');
+      assert.strictEqual(typeof (result[0] as Record<string, unknown>).includeUnchangedTests, 'boolean');
       assert.strictEqual(typeof (result[2] as Record<string, unknown>).diagnosticProfile, 'string');
+      assert.strictEqual(typeof (result[2] as Record<string, unknown>).includeUnchangedTests, 'boolean');
     });
   });
 
@@ -3905,6 +3910,7 @@ suite('Extension Smoke', () => {
 
 interface ControllerTestOptions {
   enabled?: boolean;
+  includeUnchangedTests?: boolean;
   seamDiagnostics?: boolean;
   diagnosticProfile?: 'actionable' | 'full';
   lspResult?: unknown;
@@ -4320,6 +4326,7 @@ function createControllerTestContext(options: ControllerTestOptions) {
         downloadBaseUrl: '',
         checkMode: 'draft',
         baseRef: 'origin/main',
+        includeUnchangedTests: options.includeUnchangedTests ?? true,
         seamDiagnostics: options.seamDiagnostics ?? true,
         diagnosticProfile: options.diagnosticProfile ?? 'actionable',
         traceServer: 'off'

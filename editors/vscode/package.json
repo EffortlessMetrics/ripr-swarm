@@ -179,6 +179,12 @@
           "default": "origin/main",
           "description": "Git base ref used by ripr editor diagnostics and context commands."
         },
+        "ripr.includeUnchangedTests": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include unchanged tests as static evidence when analyzing editor diagnostics. Forwarded as initializationOptions.includeUnchangedTests and workspace/configuration.",
+          "scope": "resource"
+        },
         "ripr.seamDiagnostics": {
           "type": "boolean",
           "default": true,

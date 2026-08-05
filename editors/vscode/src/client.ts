@@ -76,6 +76,7 @@ function lspConfigurationForResource(scopeUri: string | undefined): Record<strin
   return {
     baseRef: config.get<string>('baseRef'),
     checkMode: config.get<string>('check.mode'),
+    includeUnchangedTests: config.get<boolean>('includeUnchangedTests'),
     seamDiagnostics: config.get<boolean>('seamDiagnostics'),
     diagnosticProfile: config.get<string>('diagnosticProfile'),
     gitTimeoutMs: config.get<number>('gitTimeoutMs'),
@@ -545,7 +546,7 @@ export class RiprClientController {
       initializationOptions: {
         baseRef: config.baseRef,
         checkMode: config.checkMode,
-        includeUnchangedTests: true,
+        includeUnchangedTests: config.includeUnchangedTests,
         seamDiagnostics: config.seamDiagnostics,
         diagnosticProfile: config.diagnosticProfile
       },
