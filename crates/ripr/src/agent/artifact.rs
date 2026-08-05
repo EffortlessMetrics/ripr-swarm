@@ -135,9 +135,13 @@ pub(crate) fn repo_exposure_artifact_metadata(
                 "profile": context.mode,
                 "worktree": status,
             },
-        "snapshot_identity": format!("snapshot:{}", context.input_identity),
+        "snapshot_identity": repo_exposure_snapshot_identity(&context.input_identity),
         "content_sha256": content_sha256,
     }))
+}
+
+fn repo_exposure_snapshot_identity(input_identity: &str) -> String {
+    format!("snapshot:{input_identity}")
 }
 
 pub(crate) fn validate_repo_exposure_artifact(
@@ -462,10 +466,10 @@ mod tests {
             None,
         )?;
 
-        std::fs::write(root.join("Cargo.toml"), "[workspace]\nresolver = \"3\"\n")
-            .map_err(|error| format!("update Cargo.toml: {error}"))?;
-        run_git(&root, &["add", "Cargo.toml"])?;
-        run_git(&root, &["commit", "--quiet", "-m", "after"])?;
+        run_git(
+            &root,
+            &["commit", "--quiet", "--allow-empty", "-m", "after"],
+        )?;
         let after = RepoExposureArtifactContext::for_repo_exposure(
             root.clone(),
             "draft".to_string(),
@@ -477,8 +481,8 @@ mod tests {
                 "controlled Git revisions must produce distinct input identities".to_string(),
             );
         }
-        if format!("snapshot:{}", before.input_identity)
-            == format!("snapshot:{}", after.input_identity)
+        if repo_exposure_snapshot_identity(&before.input_identity)
+            == repo_exposure_snapshot_identity(&after.input_identity)
         {
             return Err(
                 "controlled Git revisions must produce distinct snapshot identities".to_string(),
