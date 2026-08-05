@@ -56,7 +56,7 @@ Pre-publish proof should record:
 - an external Cargo fixture (including a path with spaces) exercised by the
   installed binary for `check --write-artifact`, exact `diff`, typed `explain`,
   typed `context`, and bounded `pilot`, with the resulting packet and summary
-  retained in a platform receipt;
+  retained alongside the platform receipt;
 - generated CI dry-run with start-here/advisory gate boundaries;
 - VSIX packaging success;
 - one external-adopter smoke showing an installed binary can find one Rust
@@ -66,7 +66,8 @@ Pre-publish proof should record:
 The release-readiness gate writes
 `target/ripr/release-readiness/packaged-cli-journey-<os>.json` for each
 platform that runs it. The receipt records the packaged binary, independent
-fixture base/head identities, commands, and retained JSON artifacts. A
+fixture base/head identities, and commands; the surrounding readiness report
+records the retained JSON artifact paths. A
 Windows-only or Linux-only receipt is not a cross-platform qualification: the
 release handoff must name the missing platform when the other hosted lane has
 not run.

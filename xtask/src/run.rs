@@ -342,9 +342,36 @@ pub(crate) fn capture_output_in_dir(
     cwd: &Path,
     error_context: &str,
 ) -> Result<CapturedOutput, String> {
-    let output = Command::new(program)
-        .args(args)
-        .current_dir(cwd)
+    capture_output_in_dir_impl(program, args, cwd, error_context, false)
+}
+
+pub(crate) fn capture_output_in_dir_with_clean_git_environment(
+    program: &str,
+    args: &[String],
+    cwd: &Path,
+    error_context: &str,
+) -> Result<CapturedOutput, String> {
+    capture_output_in_dir_impl(program, args, cwd, error_context, true)
+}
+
+fn capture_output_in_dir_impl(
+    program: &str,
+    args: &[String],
+    cwd: &Path,
+    error_context: &str,
+    clean_git_environment: bool,
+) -> Result<CapturedOutput, String> {
+    let mut command = Command::new(program);
+    command.args(args).current_dir(cwd);
+    if clean_git_environment {
+        command.env_clear();
+        for (name, value) in std::env::vars() {
+            if !name.to_ascii_uppercase().starts_with("GIT_") {
+                command.env(name, value);
+            }
+        }
+    }
+    let output = command
         .output()
         .map_err(|err| format!("failed to run {error_context} in {}: {err}", cwd.display()))?;
     Ok(CapturedOutput {
