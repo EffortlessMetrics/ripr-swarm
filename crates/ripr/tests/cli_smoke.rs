@@ -3253,6 +3253,7 @@ fn doctor_json_reports_current_schema() -> Result<(), String> {
 }
 
 #[test]
+#[cfg(feature = "lang-typescript")]
 fn doctor_json_process_fails_for_enabled_missing_node_runtime() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
     std::fs::write(
