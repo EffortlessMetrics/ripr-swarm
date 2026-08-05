@@ -110,7 +110,7 @@ fn build_release_readiness_report(version: &str) -> ReleaseReadinessReport {
     let checks = vec![
         package_list_check(version, crate_version.as_deref(), clean_tree.clone()),
         publish_dry_run_check(version, crate_version.as_deref(), clean_tree.clone()),
-        package_install_check(version, crate_version.as_deref(), clean_tree),
+        package_install_check(version, crate_version.as_deref()),
         installed_command_surface_check(&installed_binary),
         pilot_fixture_check(&installed_binary),
         outcome_fixture_check(&installed_binary),
@@ -249,11 +249,7 @@ where
     }
 }
 
-fn package_install_check(
-    version: &str,
-    crate_version: Option<&str>,
-    clean_tree: Result<bool, String>,
-) -> ReleaseReadinessCheck {
+fn package_install_check(version: &str, crate_version: Option<&str>) -> ReleaseReadinessCheck {
     let command = format!(
         "cargo package -p ripr --locked && cargo install --path <external-package-root>/ripr-{version} --locked --root {INSTALL_ROOT} --force && installed ripr doctor --root <external-fixture> --json"
     );
@@ -281,7 +277,11 @@ fn package_install_check(
             )],
         );
     }
-    match clean_tree {
+    // Re-read the worktree immediately before packaging.  The initial status
+    // snapshot is shared with the other release checks, but this gate owns a
+    // package/install proof whose safety depends on the state at this exact
+    // point in time.
+    match git_worktree_is_clean() {
         Ok(true) => match run_packaged_install(version, crate_version) {
             Ok(result) if result.success => readiness_check(
                 "package-install",
@@ -313,19 +313,19 @@ fn package_install_check(
         },
         Ok(false) => readiness_check(
             "package-install",
-            "not_run",
-            false,
+            "fail",
+            true,
             &command,
-            "dirty tree; package/install proof must run on the committed version bump",
+            "dirty tree at package/install proof time; package/install proof is not trustworthy",
             Vec::new(),
             Vec::new(),
         ),
         Err(err) => readiness_check(
             "package-install",
-            "not_run",
-            false,
+            "fail",
+            true,
             &command,
-            "git worktree state could not be verified",
+            "git worktree state could not be verified before package/install proof",
             Vec::new(),
             vec![err],
         ),
@@ -462,8 +462,8 @@ fn run_packaged_install(
     }
     let installed_digest = crate::reports::release_server::sha256_file(&installed_binary)?;
     details.push(format!("installed binary sha256: {installed_digest}"));
-    if installed_digest == workspace_digest {
-        details.push("installed binary unexpectedly matches workspace binary digest".to_string());
+    if let Err(err) = validate_binary_identity(&workspace_digest, &installed_digest) {
+        details.push(err);
         return Ok(PackageInstallResult {
             success: false,
             artifacts,
@@ -474,15 +474,12 @@ fn run_packaged_install(
     let version_result = run_command_path(&installed_binary, &["--version"])
         .map_err(|err| format!("installed ripr --version could not run: {err}"))?;
     details.extend(command_details(&version_result));
-    if !version_result.success
-        || !version_result
-            .stdout
-            .contains(&format!("ripr {crate_version}"))
-    {
-        details.push(
-            "installed binary version output did not identify the packaged crate version"
-                .to_string(),
-        );
+    if let Err(err) = validate_installed_version(
+        version_result.success,
+        &version_result.stdout,
+        crate_version,
+    ) {
+        details.push(err);
         return Ok(PackageInstallResult {
             success: false,
             artifacts,
@@ -547,9 +544,8 @@ fn run_packaged_install(
             });
         }
     };
-    if !doctor_result.success || doctor_json.get("status").and_then(Value::as_str) != Some("pass") {
-        details
-            .push("installed ripr doctor did not report pass for the external fixture".to_string());
+    if let Err(err) = validate_doctor_result(doctor_result.success, &doctor_json) {
+        details.push(err);
         if let Err(cleanup_err) = fs::remove_dir_all(&fixture_root) {
             details.push(format!(
                 "external doctor fixture cleanup failed: {cleanup_err}"
@@ -598,28 +594,7 @@ fn extract_packaged_crate(archive: &Path, destination: &Path, version: &str) -> 
             .path()
             .map_err(|err| format!("read package entry {index} path failed: {err}"))?
             .into_owned();
-        if !enclosed.starts_with(&expected_root) {
-            return Err(format!(
-                "package entry {:?} is outside expected root {expected_root:?}",
-                enclosed
-            ));
-        }
-        if enclosed.components().any(|component| {
-            matches!(
-                component,
-                std::path::Component::ParentDir
-                    | std::path::Component::RootDir
-                    | std::path::Component::Prefix(_)
-            )
-        }) {
-            return Err(format!(
-                "package entry {:?} escapes extraction root",
-                enclosed
-            ));
-        }
-        if entry.header().entry_type().is_symlink() || entry.header().entry_type().is_hard_link() {
-            return Err(format!("package entry {:?} is a link", enclosed));
-        }
+        validate_package_entry(&enclosed, entry.header().entry_type(), &expected_root)?;
         let output = destination.join(&enclosed);
         if let Some(parent) = output.parent() {
             fs::create_dir_all(parent).map_err(|err| {
@@ -635,6 +610,62 @@ fn extract_packaged_crate(archive: &Path, destination: &Path, version: &str) -> 
                 crate::normalize_path(&output)
             )
         })?;
+    }
+    Ok(())
+}
+
+fn validate_package_entry(
+    enclosed: &Path,
+    entry_type: tar::EntryType,
+    expected_root: &Path,
+) -> Result<(), String> {
+    if !enclosed.starts_with(expected_root) {
+        return Err(format!(
+            "package entry {:?} is outside expected root {expected_root:?}",
+            enclosed
+        ));
+    }
+    if enclosed.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::ParentDir
+                | std::path::Component::RootDir
+                | std::path::Component::Prefix(_)
+        )
+    }) {
+        return Err(format!(
+            "package entry {:?} escapes extraction root",
+            enclosed
+        ));
+    }
+    if entry_type.is_symlink() || entry_type.is_hard_link() {
+        return Err(format!("package entry {:?} is a link", enclosed));
+    }
+    Ok(())
+}
+
+fn validate_binary_identity(workspace_digest: &str, installed_digest: &str) -> Result<(), String> {
+    if installed_digest == workspace_digest {
+        return Err("installed binary unexpectedly matches workspace binary digest".to_string());
+    }
+    Ok(())
+}
+
+fn validate_installed_version(success: bool, stdout: &str, version: &str) -> Result<(), String> {
+    if !success || !stdout.contains(&format!("ripr {version}")) {
+        return Err(
+            "installed binary version output did not identify the packaged crate version"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn validate_doctor_result(success: bool, doctor_json: &Value) -> Result<(), String> {
+    if !success || doctor_json.get("status").and_then(Value::as_str) != Some("pass") {
+        return Err(
+            "installed ripr doctor did not report pass for the external fixture".to_string(),
+        );
     }
     Ok(())
 }
@@ -665,15 +696,22 @@ fn release_temp_root() -> Result<PathBuf, String> {
     let configured = std::env::temp_dir();
     let current = std::env::current_dir()
         .map_err(|err| format!("read current directory for release fixture failed: {err}"))?;
-    let current = fs::canonicalize(&current).unwrap_or(current);
-    let mut candidate = fs::canonicalize(&configured).unwrap_or(configured);
-    while candidate == current || candidate.starts_with(&current) {
+    let current = fs::canonicalize(&current).map_err(|err| {
+        format!("canonicalize current directory for release fixture failed: {err}")
+    })?;
+    let mut candidate = fs::canonicalize(&configured).map_err(|err| {
+        format!("canonicalize temporary directory for release fixture failed: {err}")
+    })?;
+    for _ in 0..64 {
+        if candidate != current && !candidate.starts_with(&current) {
+            return Ok(candidate);
+        }
         candidate = candidate
             .parent()
             .map(Path::to_path_buf)
             .ok_or_else(|| "configured temporary directory has no external parent".to_string())?;
     }
-    Ok(candidate)
+    Err("could not find an external release fixture directory within 64 parent steps".to_string())
 }
 
 fn create_external_doctor_fixture(root: &Path) -> Result<PathBuf, String> {
@@ -2122,7 +2160,9 @@ mod tests {
         extract_packaged_crate, missing_required_needles, package_version,
         parse_release_readiness_args, read_crate_version, readiness_check,
         recommit_repo_exposure_json, release_readiness_json, release_readiness_markdown,
-        release_readiness_status, vsix_start_current_repair_command_present,
+        release_readiness_status, validate_binary_identity, validate_doctor_result,
+        validate_installed_version, validate_package_entry,
+        vsix_start_current_repair_command_present,
     };
     use serde_json::Value;
     use sha2::{Digest, Sha256};
@@ -2164,6 +2204,103 @@ mod tests {
             return Err(
                 "package extraction accepted an entry outside the package root".to_string(),
             );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn packaged_crate_extraction_rejects_symlink_and_hardlink_entries() -> Result<(), String> {
+        for (kind, entry_type) in [
+            ("symlink", tar::EntryType::symlink()),
+            ("hardlink", tar::EntryType::hard_link()),
+        ] {
+            let stamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|err| format!("clock error: {err}"))?
+                .as_nanos();
+            let archive = std::env::temp_dir().join(format!("ripr-package-{kind}-{stamp}.crate"));
+            let destination =
+                std::env::temp_dir().join(format!("ripr-package-extract-{kind}-{stamp}"));
+            let file = fs::File::create(&archive)
+                .map_err(|err| format!("create {kind} test archive failed: {err}"))?;
+            let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+            let mut writer = tar::Builder::new(encoder);
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(entry_type);
+            header.set_mode(0o644);
+            writer
+                .append_link(&mut header, format!("ripr-0.1.0/{kind}"), "target")
+                .map_err(|err| format!("write {kind} entry failed: {err}"))?;
+            let encoder = writer
+                .into_inner()
+                .map_err(|err| format!("finish {kind} archive failed: {err}"))?;
+            encoder
+                .finish()
+                .map_err(|err| format!("finish compressed {kind} archive failed: {err}"))?;
+
+            let result = extract_packaged_crate(&archive, &destination, "0.1.0");
+            let _ = fs::remove_file(&archive);
+            let _ = fs::remove_dir_all(&destination);
+            if result.is_ok() {
+                return Err(format!("package extraction accepted a {kind} entry"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn packaged_crate_entry_validation_rejects_traversal_components() -> Result<(), String> {
+        let expected_root = Path::new("ripr-0.1.0");
+        let regular = tar::EntryType::Regular;
+        for path in [Path::new("ripr-0.1.0/foo/../escape"), Path::new("/escape")] {
+            if validate_package_entry(path, regular, expected_root).is_ok() {
+                return Err(format!("package entry validation accepted {path:?}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn packaged_install_validates_identity_version_and_doctor_status() -> Result<(), String> {
+        if validate_binary_identity("same", "same").is_ok() {
+            return Err("matching workspace and installed digests were accepted".to_string());
+        }
+        validate_binary_identity("workspace", "installed")?;
+
+        if validate_installed_version(true, "ripr 0.9.0\n", "0.10.0").is_ok() {
+            return Err("wrong installed version was accepted".to_string());
+        }
+        validate_installed_version(true, "ripr 0.10.0\n", "0.10.0")?;
+        if validate_installed_version(false, "ripr 0.10.0\n", "0.10.0").is_ok() {
+            return Err("failed version command was accepted".to_string());
+        }
+
+        let pass = serde_json::json!({"status": "pass"});
+        validate_doctor_result(true, &pass)?;
+        if validate_doctor_result(false, &pass).is_ok() {
+            return Err("failed doctor command was accepted".to_string());
+        }
+        let warn = serde_json::json!({"status": "warn"});
+        if validate_doctor_result(true, &warn).is_ok() {
+            return Err("non-pass doctor status was accepted".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn release_fixture_root_is_canonical_and_external() -> Result<(), String> {
+        let root = super::release_temp_root()?;
+        let current = fs::canonicalize(
+            std::env::current_dir()
+                .map_err(|err| format!("read current directory failed: {err}"))?,
+        )
+        .map_err(|err| format!("canonicalize current directory failed: {err}"))?;
+        if root == current || root.starts_with(&current) {
+            return Err(format!(
+                "release fixture root {} is not external to {}",
+                root.display(),
+                current.display()
+            ));
         }
         Ok(())
     }
