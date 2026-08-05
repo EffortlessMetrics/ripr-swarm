@@ -454,6 +454,37 @@ mod tests {
     }
 
     #[test]
+    fn content_commitment_requires_one_terminated_field() {
+        let missing = r#"{"kind":"repo_exposure"}"#;
+        assert!(matches!(
+            content_sha256_with_placeholder(missing),
+            Err(error) if error.contains("missing content_sha256")
+        ));
+
+        let unterminated = r#"{"content_sha256":"sha256:0000000000000000000000000000000000000000000000000000000000000000}"#;
+        assert!(matches!(
+            content_sha256_with_placeholder(unterminated),
+            Err(error) if error.contains("unterminated")
+        ));
+    }
+
+    #[test]
+    fn content_commitment_does_not_rewrite_unrelated_placeholder_text() -> Result<(), String> {
+        let placeholder = CONTENT_SHA256_PLACEHOLDER;
+        let declared = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+        let raw = format!(r#"{{"note":"{placeholder}","content_sha256":"{declared}"}}"#);
+        let expected_input = raw.replacen(declared, placeholder, 1);
+        let mut hasher = Sha256::new();
+        hasher.update(expected_input.as_bytes());
+        let mut expected = String::from("sha256:");
+        for byte in hasher.finalize() {
+            expected.push_str(&format!("{byte:02x}"));
+        }
+        assert_eq!(content_sha256_with_placeholder(&raw)?, expected);
+        Ok(())
+    }
+
+    #[test]
     fn repo_exposure_identity_changes_with_controlled_git_revision() -> Result<(), String> {
         let root = temporary_git_root()?;
         let result = (|| -> Result<(), String> {
