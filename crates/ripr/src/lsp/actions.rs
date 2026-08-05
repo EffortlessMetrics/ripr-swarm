@@ -1137,6 +1137,7 @@ fn python_agent_packet_target(
     if !workspace_path_is_safe(snapshot.root.as_path(), gap_ledger) {
         return None;
     }
+    missing_discriminator_for_packet(data)?;
     first_safe_command_at(snapshot.root.as_path(), data, &["verification_commands"])?;
     first_safe_receipt_command(snapshot.root.as_path(), data)?;
     let mut target = gap_repair_packet_target(params, snapshot, diagnostic, artifact)?;
@@ -1176,6 +1177,10 @@ fn first_repair_packet_target(
             return None;
         }
     }
+    // First repair packets are actionable projections. Require producer-owned
+    // discriminator evidence before prose-only route fields can become a
+    // copyable repair packet.
+    missing_discriminator_for_packet(data)?;
     let verify_command =
         first_safe_command_at(snapshot.root.as_path(), data, &["verification_commands"])?;
     let receipt_command = first_safe_receipt_command(snapshot.root.as_path(), data)?;
@@ -1250,7 +1255,7 @@ fn first_repair_packet_text(
     {
         lines.push(format!("- Changed behavior: {changed_behavior}"));
     }
-    if let Some(missing_discriminator) = missing_discriminator_for_packet(data, repair_route) {
+    if let Some(missing_discriminator) = missing_discriminator_for_packet(data) {
         lines.push(format!("- Missing discriminator: {missing_discriminator}"));
     }
     if let Some(focused_proof_intent) = focused_proof_intent_for_packet(repair_route) {
@@ -1359,7 +1364,7 @@ fn python_repair_card_text(
 ) -> Option<String> {
     let gap_identity = first_gap_identity(data)?;
     let changed_owner = string_at(data, &["anchor", "owner"]).unwrap_or(gap_identity);
-    let missing_discriminator = missing_discriminator_for_packet(data, route)?;
+    let missing_discriminator = missing_discriminator_for_packet(data)?;
     let route_kind = route.get("route_kind").and_then(non_empty_string)?;
     let assertion = route
         .get("assertion_shape")
@@ -1465,7 +1470,7 @@ fn python_pytest_skeleton_target(snapshot: &AnalysisSnapshot, data: &Value) -> O
         .get("assertion_shape")
         .and_then(non_empty_string)
         .unwrap_or("assert <observed> == <expected>");
-    let missing_discriminator = missing_discriminator_for_packet(data, route)?;
+    let missing_discriminator = missing_discriminator_for_packet(data)?;
     let gap_identity = first_gap_identity(data).unwrap_or("unknown");
     let mut lines = vec![
         "# RIPR Python repair skeleton".to_string(),
@@ -1702,14 +1707,8 @@ fn slug_identifier(value: &str) -> String {
         .collect::<String>()
 }
 
-fn missing_discriminator_for_packet(data: &Value, repair_route: &Value) -> Option<String> {
-    string_at(data, &["missing_discriminator"])
-        .or_else(|| {
-            repair_route
-                .get("missing_discriminator")
-                .and_then(non_empty_string)
-        })
-        .map(ToOwned::to_owned)
+fn missing_discriminator_for_packet(data: &Value) -> Option<String> {
+    string_at(data, &["missing_discriminator"]).map(ToOwned::to_owned)
 }
 
 fn focused_proof_intent_for_packet(repair_route: &Value) -> Option<String> {
@@ -2442,9 +2441,7 @@ mod tests {
             },
             "verification_commands": ["pytest tests/test_pricing.py::test_boundary"]
         });
-        let route = &data["repair_route"];
-
-        if missing_discriminator_for_packet(&data, route).is_some() {
+        if missing_discriminator_for_packet(&data).is_some() {
             return Err("prose fields must not become a discriminator".to_string());
         }
         if python_pytest_skeleton_target(&snapshot, &data).is_some() {

@@ -1798,6 +1798,10 @@ fn gap_record_diagnostic_data_with_causal(
         "static_limit_kind": record.static_limit_kind,
         "static_limit_detail": record.static_limit_detail,
         "static_limits": record.static_limits,
+        "missing_discriminator": record
+            .repair_route
+            .as_ref()
+            .and_then(|route| route.missing_discriminator.as_deref()),
         "repair_route": record.repair_route,
         "anchor": record.anchor,
         "evidence_ids": record.evidence_ids,
@@ -2494,6 +2498,7 @@ mod seam_diagnostic_tests {
         assert_eq!(data["source"], "gap_decision_ledger");
         assert_eq!(data["gap_id"], "gap:pr:pricing:threshold-boundary");
         assert_eq!(data["gap_kind"], "MissingBoundaryAssertion");
+        assert_eq!(data["missing_discriminator"], "amount == threshold");
         assert_eq!(data["repair_route"]["route_kind"], "AddBoundaryAssertion");
         assert_eq!(
             data["verification_commands"][0],

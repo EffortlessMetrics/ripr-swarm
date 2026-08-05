@@ -3210,6 +3210,69 @@ fn gap_code_actions_suppress_first_repair_packet_without_verify_or_receipt_comma
 }
 
 #[test]
+fn gap_code_actions_suppress_first_repair_packet_without_producer_discriminator()
+-> Result<(), String> {
+    let root = unique_lsp_test_root("gap-first-repair-requires-discriminator")?;
+    std::fs::create_dir_all(root.path().join("tests"))
+        .map_err(|err| format!("create tests failed: {err}"))?;
+    std::fs::write(
+        root.path().join("tests/test_pricing.py"),
+        "def test_discount_boundary():\n    assert price(10) == 9\n",
+    )
+    .map_err(|err| format!("write related test failed: {err}"))?;
+    let uri = file_uri_for_path(&root.path().join("src/pricing.py"))?;
+    let mut diagnostic = gap_action_diagnostic();
+    let data = diagnostic
+        .data
+        .as_mut()
+        .ok_or_else(|| "missing diagnostic data".to_string())?;
+    let object = data
+        .as_object_mut()
+        .ok_or_else(|| "expected object data".to_string())?;
+    object.remove("missing_discriminator");
+    object
+        .get_mut("repair_route")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| "expected repair route object".to_string())?
+        .remove("missing_discriminator");
+    let mut snapshot = sample_analysis_snapshot(
+        root.path().to_path_buf(),
+        uri.clone(),
+        vec![diagnostic.clone()],
+        Vec::new(),
+    );
+    snapshot.gap_artifacts = vec![validated_gap_artifact()];
+
+    let actions = code_action_response(
+        &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
+        Some(&snapshot),
+        &vscode_client_features()?,
+    );
+    let commands = code_action_commands(&actions)?;
+
+    if commands.iter().any(|(title, _, args)| {
+        title == "Copy first repair packet"
+            || title == "Agent handoff: copy Python packet"
+            || args
+                .first()
+                .is_some_and(|arg| arg["label"] == "first_repair_packet")
+    }) {
+        return Err(format!(
+            "prose-only gap must not expose an actionable first packet: {commands:?}"
+        ));
+    }
+    if !commands
+        .iter()
+        .any(|(title, _, _)| title == "Inspect gap: copy repair packet")
+    {
+        return Err(format!(
+            "inspection packet should remain available: {commands:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn gap_code_actions_suppress_python_agent_packet_without_actionable_python_gap_record()
 -> Result<(), String> {
     let root = unique_lsp_test_root("gap-python-agent-packet-contract")?;
@@ -3352,7 +3415,7 @@ fn gap_code_actions_project_python_pytest_skeleton_and_target_file() -> Result<(
     data["repair_route"]["target_line"] = serde_json::json!(1);
     data["repair_route"]["related_test"] =
         serde_json::json!("test_calculate_discount_threshold_boundary");
-    data["repair_route"]["missing_discriminator"] = serde_json::json!("amount == threshold");
+    data["missing_discriminator"] = serde_json::json!("amount == threshold");
     data["repair_route"]["assertion_shape"] = serde_json::json!(
         "assert calculate_discount(amount=threshold, threshold=threshold) == expected_discount"
     );
@@ -10291,6 +10354,7 @@ fn gap_action_diagnostic() -> tower_lsp_server::ls_types::Diagnostic {
             "gap_state": "actionable",
             "policy_state": "advisory",
             "repairability": "repairable",
+            "missing_discriminator": "price(threshold) == expected",
             "static_limit_kind": "missing_import_graph",
             "static_limit_detail": "Imported owner targets were not resolved in preview mode.",
             "anchor": {
@@ -10303,7 +10367,6 @@ fn gap_action_diagnostic() -> tower_lsp_server::ls_types::Diagnostic {
                 "target_file": "tests/test_pricing.py",
                 "target_line": 2,
                 "related_test": "tests/test_pricing.py::test_discount_boundary",
-                "missing_discriminator": "price(threshold) == expected",
                 "assertion_shape": "assert price(threshold) == expected",
                 "changed_behavior": "amount >= threshold",
                 "stop_conditions": ["Stop if the related test belongs to another package."]
