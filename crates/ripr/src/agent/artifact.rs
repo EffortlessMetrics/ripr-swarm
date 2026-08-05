@@ -508,6 +508,14 @@ mod tests {
             let after_snapshot = after_artifact["snapshot_identity"]
                 .as_str()
                 .ok_or_else(|| "after artifact omitted snapshot identity".to_string())?;
+            if before_snapshot != repo_exposure_snapshot_identity(&before.input_identity)
+                || after_snapshot != repo_exposure_snapshot_identity(&after.input_identity)
+            {
+                return Err(
+                    "snapshot identity must use the production snapshot identity builder"
+                        .to_string(),
+                );
+            }
             if before_snapshot == after_snapshot {
                 return Err(
                     "controlled Git revisions must produce distinct snapshot identities"
