@@ -66,10 +66,10 @@ Pre-publish proof should record:
 The release-readiness gate writes
 `target/ripr/release-readiness/packaged-cli-journey-<os>.json` for each
 platform that runs it. The receipt records the packaged binary, independent
-fixture base/head identities, commands, and retained JSON artifacts. A
-Windows-only or Linux-only receipt is not a cross-platform qualification: the
-release handoff must name the missing platform when the other hosted lane has
-not run.
+fixture base/head identities, and executed commands. The readiness check
+reports retained JSON artifacts alongside the receipt. A Windows-only or
+Linux-only receipt is not a cross-platform qualification: the release handoff
+must name the missing platform when the other hosted lane has not run.
 
 ## Previous Release Proof
 
