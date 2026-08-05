@@ -3244,6 +3244,10 @@ fn doctor_json_reports_current_schema() -> Result<(), String> {
         .map_err(|err| format!("doctor JSON did not parse: {err}"))?;
     assert_eq!(report["schema_version"], "0.2");
     assert_eq!(report["tool"], "ripr");
+    assert!(
+        report["runtime_probes"].is_array(),
+        "doctor JSON must expose typed runtime probe results: {report}"
+    );
     std::fs::remove_dir_all(workspace).map_err(|err| format!("remove workspace: {err}"))?;
     Ok(())
 }
