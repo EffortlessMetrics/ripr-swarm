@@ -3064,7 +3064,7 @@ fn gap_code_actions_surface_bounded_repair_actions_when_artifact_is_valid() -> R
             && packet.contains("Language status: preview")
             && packet.contains("Static limit: missing_import_graph")
             && packet.contains("Suggested action:")
-            && packet.contains("Missing discriminator: assert price(threshold) == expected")
+            && packet.contains("Missing discriminator: price(threshold) == expected")
             && packet.contains("Focused proof intent:")
             && packet.contains("Artifacts:")
             && packet.contains("Verify command:")
@@ -3121,7 +3121,7 @@ fn gap_code_actions_surface_bounded_repair_actions_when_artifact_is_valid() -> R
         "Freshness: current validated GapRecord diagnostic.",
         "Changed owner:\n  python:app/pricing.py::calculate_discount",
         "Current test evidence:",
-        "Missing discriminator:\n  assert price(threshold) == expected",
+        "Missing discriminator:\n  price(threshold) == expected",
         "Verify:\n  ripr agent verify --root . --json",
         "Receipt:\n  ripr agent receipt --root . --json",
         "Static preview evidence only",
@@ -3746,7 +3746,7 @@ fn editor_adoption_baseline_pins_gap_repair_action_contract() -> Result<(), Stri
         .ok_or_else(|| "missing first repair packet text".to_string())?;
     assert!(packet.contains("Language status: preview"));
     assert!(packet.contains("Static limit: missing_import_graph"));
-    assert!(packet.contains("Missing discriminator: assert price(threshold) == expected"));
+    assert!(packet.contains("Missing discriminator: price(threshold) == expected"));
     assert!(packet.contains("Focused proof intent:"));
     assert!(packet.contains("Artifacts:"));
     assert!(packet.contains("Verify command:\nripr agent verify --root . --json"));
@@ -10303,6 +10303,7 @@ fn gap_action_diagnostic() -> tower_lsp_server::ls_types::Diagnostic {
                 "target_file": "tests/test_pricing.py",
                 "target_line": 2,
                 "related_test": "tests/test_pricing.py::test_discount_boundary",
+                "missing_discriminator": "price(threshold) == expected",
                 "assertion_shape": "assert price(threshold) == expected",
                 "changed_behavior": "amount >= threshold",
                 "stop_conditions": ["Stop if the related test belongs to another package."]
