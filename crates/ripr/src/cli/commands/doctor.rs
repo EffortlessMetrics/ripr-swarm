@@ -1210,7 +1210,9 @@ mod tests {
         );
         assert!(!required_ok);
         assert_eq!(required_report.status, output::doctor::DoctorStatus::Fail);
-        assert!(output::doctor::doctor_report_result(&required_report).is_err());
+        if output::doctor::doctor_report_result(&required_report).is_ok() {
+            return Err("required runtime failure unexpectedly passed doctor".to_string());
+        }
         let node_probe = required_report
             .runtime_probes
             .iter()
@@ -1241,7 +1243,8 @@ mod tests {
         );
         assert!(optional_ok);
         assert_eq!(optional_report.status, output::doctor::DoctorStatus::Pass);
-        assert!(output::doctor::doctor_report_result(&optional_report).is_ok());
+        output::doctor::doctor_report_result(&optional_report)
+            .map_err(|error| format!("optional runtime failure should remain advisory: {error}"))?;
         let node_probe = optional_report
             .runtime_probes
             .iter()
