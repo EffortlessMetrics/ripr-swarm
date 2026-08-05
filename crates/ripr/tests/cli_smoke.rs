@@ -2645,6 +2645,64 @@ fn agent_verify_rejects_incomparable_analysis_inputs() -> Result<(), Box<dyn std
 }
 
 #[test]
+fn agent_verify_rejects_comparison_metadata_drift() -> Result<(), Box<dyn std::error::Error>> {
+    let cases = [
+        (
+            "producer version",
+            "\"version\": \"0.10.0\"",
+            "\"version\": \"0.11.0\"",
+            "producer versions differ",
+        ),
+        (
+            "analysis mode",
+            "\"mode\": \"draft\", \"base_revision\"",
+            "\"mode\": \"release\", \"base_revision\"",
+            "analysis modes differ",
+        ),
+        (
+            "analysis profile",
+            "\"profile\": \"draft\"",
+            "\"profile\": \"release\"",
+            "analysis profiles differ",
+        ),
+        (
+            "base revision",
+            "\"base_revision\": null",
+            "\"base_revision\": \"base:other\"",
+            "base revisions differ",
+        ),
+    ];
+    for (label, from, to, expected) in cases {
+        let root = unique_temp_workspace(&format!("agent-verify-metadata-{label}"));
+        std::fs::create_dir_all(&root)?;
+        init_git_fixture_repo(&root)?;
+        let before = root.join("before.repo-exposure.json");
+        let after = root.join("after.repo-exposure.json");
+        let seam = r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#;
+        write_bound_repo_exposure_fixture(&root, &before, seam)?;
+        write_bound_repo_exposure_fixture(&root, &after, seam)?;
+        let altered = std::fs::read_to_string(&after)?.replace(from, to);
+        std::fs::write(&after, recommit_repo_exposure_json(altered))?;
+        let output = run_ripr(&[
+            "agent",
+            "verify",
+            "--root",
+            &root.display().to_string(),
+            "--before",
+            &before.display().to_string(),
+            "--after",
+            &after.display().to_string(),
+            "--json",
+        ]);
+        assert_failure(&output);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(expected), "{label}: {stderr}");
+        std::fs::remove_dir_all(root)?;
+    }
+    Ok(())
+}
+
+#[test]
 fn agent_verify_accepts_historical_comparable_pair_with_disclosure()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = unique_temp_workspace("agent-verify-historical");
@@ -3015,6 +3073,60 @@ fn agent_receipt_rejects_incomparable_analysis_inputs() -> Result<(), Box<dyn st
     assert_failure(&output);
     assert!(String::from_utf8_lossy(&output.stderr).contains("[incomparable_analysis_inputs]"));
     std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
+fn agent_receipt_rejects_comparison_metadata_drift() -> Result<(), Box<dyn std::error::Error>> {
+    let cases = [
+        (
+            "producer version",
+            "\"version\": \"0.10.0\"",
+            "\"version\": \"0.11.0\"",
+        ),
+        (
+            "analysis mode",
+            "\"mode\": \"draft\", \"base_revision\"",
+            "\"mode\": \"release\", \"base_revision\"",
+        ),
+        (
+            "analysis profile",
+            "\"profile\": \"draft\"",
+            "\"profile\": \"release\"",
+        ),
+    ];
+    for (label, from, to) in cases {
+        let root = unique_temp_workspace(&format!("agent-receipt-metadata-{label}"));
+        std::fs::create_dir_all(&root)?;
+        init_git_fixture_repo(&root)?;
+        let before = root.join("before.repo-exposure.json");
+        let after = root.join("after.repo-exposure.json");
+        let seam = r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#;
+        write_bound_repo_exposure_fixture(&root, &before, seam)?;
+        write_bound_repo_exposure_fixture(&root, &after, seam)?;
+        let altered = std::fs::read_to_string(&after)?.replace(from, to);
+        std::fs::write(&after, recommit_repo_exposure_json(altered))?;
+        let verify = root.join("fabricated-agent-verify.json");
+        write_fabricated_agent_verify_json(&verify, &before, &after)?;
+        let output = run_ripr(&[
+            "agent",
+            "receipt",
+            "--root",
+            &root.display().to_string(),
+            "--verify-json",
+            &verify.display().to_string(),
+            "--seam-id",
+            "seam-a",
+            "--json",
+        ]);
+        assert_failure(&output);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("[incomparable_analysis_inputs]"),
+            "{label}: {stderr}"
+        );
+        std::fs::remove_dir_all(root)?;
+    }
     Ok(())
 }
 
