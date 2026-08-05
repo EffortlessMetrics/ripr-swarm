@@ -1868,9 +1868,9 @@ fn run_authentic_repo_exposure_journey_in_fixture(
     let after_input = artifact_string(&after_value, &["artifact", "analysis", "input_identity"])?;
     let before_snapshot = artifact_string(&before_value, &["artifact", "snapshot_identity"])?;
     let after_snapshot = artifact_string(&after_value, &["artifact", "snapshot_identity"])?;
-    if before_input == after_input || before_snapshot == after_snapshot {
+    if before_input != after_input || before_snapshot == after_snapshot {
         return Err(
-            "authentic producer did not distinguish before and after input/snapshot identities"
+            "authentic producer did not preserve comparable input identity and distinguish before/after snapshot identities"
                 .to_string(),
         );
     }
