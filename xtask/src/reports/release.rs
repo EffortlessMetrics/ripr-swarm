@@ -1175,6 +1175,18 @@ fn packaged_cli_journey_check(binary: &Path, crate_version: Option<&str>) -> Rel
             let value: Value = serde_json::from_str(&text)
                 .map_err(|err| format!("packaged CLI pilot artifact is malformed JSON: {err}"))?;
             if path == &packet {
+                let run_status =
+                    value
+                        .get("run_status")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| {
+                            "packaged CLI pilot packet artifact omitted run_status".to_string()
+                        })?;
+                if run_status != "complete" {
+                    return Err(format!(
+                        "packaged CLI pilot did not complete: run_status={run_status}"
+                    ));
+                }
                 let packets_total = value
                     .get("packets_total")
                     .and_then(Value::as_u64)
@@ -1182,7 +1194,19 @@ fn packaged_cli_journey_check(binary: &Path, crate_version: Option<&str>) -> Rel
                         "packaged CLI pilot packet artifact omitted numeric packets_total"
                             .to_string()
                     })?;
+                details.push(format!("pilot run status: {run_status}"));
                 details.push(format!("pilot packets: {packets_total}"));
+            } else {
+                let status = value
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "packaged CLI pilot summary omitted status".to_string())?;
+                if status != "complete" {
+                    return Err(format!(
+                        "packaged CLI pilot summary was not complete: status={status}"
+                    ));
+                }
+                details.push(format!("pilot summary status: {status}"));
             }
         }
         let retained_packet = report_dir.join("packaged-cli-agent-seam-packets.json");
