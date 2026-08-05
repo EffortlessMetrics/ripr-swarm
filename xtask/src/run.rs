@@ -342,34 +342,24 @@ pub(crate) fn capture_output_in_dir(
     cwd: &Path,
     error_context: &str,
 ) -> Result<CapturedOutput, String> {
-    capture_output_in_dir_impl(program, args, cwd, error_context, false)
+    capture_output_in_dir_with_envs(program, args, cwd, error_context, &[], &[])
 }
 
-pub(crate) fn capture_output_in_dir_with_clean_git_environment(
+pub(crate) fn capture_output_in_dir_with_envs(
     program: &str,
     args: &[String],
     cwd: &Path,
     error_context: &str,
-) -> Result<CapturedOutput, String> {
-    capture_output_in_dir_impl(program, args, cwd, error_context, true)
-}
-
-fn capture_output_in_dir_impl(
-    program: &str,
-    args: &[String],
-    cwd: &Path,
-    error_context: &str,
-    clean_git_environment: bool,
+    envs: &[(&str, &str)],
+    env_remove: &[&str],
 ) -> Result<CapturedOutput, String> {
     let mut command = Command::new(program);
     command.args(args).current_dir(cwd);
-    if clean_git_environment {
-        command.env_clear();
-        for (name, value) in std::env::vars() {
-            if !name.to_ascii_uppercase().starts_with("GIT_") {
-                command.env(name, value);
-            }
-        }
+    for (name, value) in envs {
+        command.env(name, value);
+    }
+    for name in env_remove {
+        command.env_remove(name);
     }
     let output = command
         .output()

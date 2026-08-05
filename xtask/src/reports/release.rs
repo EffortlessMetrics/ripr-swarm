@@ -52,6 +52,17 @@ struct CommandResult {
     stderr: String,
 }
 
+struct PublicCliReceipt<'a> {
+    status: &'a str,
+    report_dir: &'a Path,
+    binary: &'a Path,
+    fixture_root: &'a Path,
+    base: Option<&'a str>,
+    head: Option<&'a str>,
+    commands: &'a [Value],
+    details: &'a [String],
+}
+
 pub(crate) fn release_readiness(args: &[String]) -> Result<(), String> {
     let args = parse_release_readiness_args(args)?;
     fs::create_dir_all(REPORT_WORK_DIR)
@@ -762,22 +773,33 @@ fn run_command_in_dir(
 }
 
 fn run_git_output_in_dir(root: &Path, args: &[&str]) -> Result<String, String> {
-    let owned = args
-        .iter()
-        .map(|arg| (*arg).to_string())
-        .collect::<Vec<_>>();
-    let result = crate::run::capture_output_in_dir_with_clean_git_environment(
+    let mut owned = vec![
+        "-c".to_string(),
+        "core.hooksPath=".to_string(),
+        "-c".to_string(),
+        "init.templateDir=".to_string(),
+        "-c".to_string(),
+        "commit.template=".to_string(),
+    ];
+    owned.extend(
+        args.iter()
+            .map(|arg| (*arg).to_string())
+            .collect::<Vec<_>>(),
+    );
+    let output = crate::run::capture_output_in_dir_with_envs(
         "git",
         &owned,
         root,
         "external CLI fixture git command",
-    )
-    .map(|output| CommandResult {
+        &[("GIT_CONFIG_NOSYSTEM", "1")],
+        &["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"],
+    )?;
+    let result = CommandResult {
         status: output.status.code(),
         success: output.status.success(),
         stdout: output.stdout,
         stderr: output.stderr,
-    })?;
+    };
     if !result.success {
         return Err(format!(
             "git {} failed: {}",
@@ -849,9 +871,19 @@ fn record_journey_command(
     args: &[String],
     result: &CommandResult,
 ) {
+    let argv = args
+        .iter()
+        .map(|arg| {
+            if Path::new(arg).is_absolute() {
+                crate::normalize_path(Path::new(arg))
+            } else {
+                arg.clone()
+            }
+        })
+        .collect::<Vec<_>>();
     commands.push(json!({
         "name": name,
-        "argv": args,
+        "argv": argv,
         "status": if result.success { "pass" } else { "fail" },
         "exit_code": result.status,
         "stdout_preview": result.stdout.lines().take(3).collect::<Vec<_>>(),
@@ -859,31 +891,23 @@ fn record_journey_command(
     }));
 }
 
-fn write_public_cli_receipt(
-    status: &str,
-    binary: &Path,
-    fixture_root: &Path,
-    base: Option<&str>,
-    head: Option<&str>,
-    commands: &[Value],
-    details: &[String],
-) -> Result<PathBuf, String> {
-    let path = Path::new(REPORT_WORK_DIR).join(format!(
+fn write_public_cli_receipt(receipt: &PublicCliReceipt<'_>) -> Result<PathBuf, String> {
+    let path = receipt.report_dir.join(format!(
         "packaged-cli-journey-{}.json",
         std::env::consts::OS
     ));
     let value = json!({
         "schema_version": "0.1",
         "kind": "ripr_packaged_cli_journey",
-        "status": status,
+        "status": receipt.status,
         "platform": std::env::consts::OS,
         "architecture": std::env::consts::ARCH,
-        "binary": crate::normalize_path(binary),
-        "fixture_root": crate::normalize_path(fixture_root),
-        "base_sha": base,
-        "head_sha": head,
-        "commands": commands,
-        "details": details,
+        "binary": crate::normalize_path(receipt.binary),
+        "fixture_root": crate::normalize_path(receipt.fixture_root),
+        "base_sha": receipt.base,
+        "head_sha": receipt.head,
+        "commands": receipt.commands,
+        "details": receipt.details,
         "non_publication": true,
     });
     let text = serde_json::to_string_pretty(&value)
@@ -895,13 +919,8 @@ fn write_public_cli_receipt(
 
 fn packaged_cli_journey_check(binary: &Path, crate_version: Option<&str>) -> ReleaseReadinessCheck {
     let command = format!(
-        "{} --version; {} check --root <external-fixture> --base <base> --json --write-artifact <check-artifact>; {} diff --root <external-fixture> --base <base> --head <head> --json; {} explain --root <external-fixture> --from <check-artifact> <finding>; {} context --root <external-fixture> --from <check-artifact> --at <finding> --json; {} pilot --root <external-fixture> --out <pilot-output> --timeout-ms 30000",
-        crate::normalize_path(binary),
-        crate::normalize_path(binary),
-        crate::normalize_path(binary),
-        crate::normalize_path(binary),
-        crate::normalize_path(binary),
-        crate::normalize_path(binary),
+        "{bin} --version; {bin} check --root <external-fixture> --base <base> --json --write-artifact <check-artifact>; {bin} diff --root <external-fixture> --base <base> --head <head> --json; {bin} explain --root <external-fixture> --from <check-artifact> <finding>; {bin} context --root <external-fixture> --from <check-artifact> --at <finding> --json; {bin} pilot --root <external-fixture> --out <pilot-out> --timeout-ms 30000",
+        bin = crate::normalize_path(binary),
     );
     let binary = match fs::canonicalize(binary) {
         Ok(path) => path,
@@ -1006,11 +1025,6 @@ fn packaged_cli_journey_check(binary: &Path, crate_version: Option<&str>) -> Rel
                 crate::normalize_path(&check_artifact)
             ));
         }
-        let retained_check = report_dir.join("packaged-cli-check.json");
-        if check_artifact != retained_check {
-            fs::copy(&check_artifact, &retained_check)
-                .map_err(|err| format!("retain packaged CLI check artifact failed: {err}"))?;
-        }
         let diff_args = vec![
             "diff".to_string(),
             "--root".to_string(),
@@ -1062,9 +1076,9 @@ fn packaged_cli_journey_check(binary: &Path, crate_version: Option<&str>) -> Rel
             return Err("packaged CLI explain failed or emitted no output".to_string());
         }
         if !explain.stdout.contains(&finding) {
-            return Err(format!(
-                "packaged CLI explain output did not contain finding identity {finding}"
-            ));
+            return Err(
+                "packaged CLI explain did not retain the requested finding identity".to_string(),
+            );
         }
         let context_args = vec![
             "context".to_string(),
@@ -1130,41 +1144,47 @@ fn packaged_cli_journey_check(binary: &Path, crate_version: Option<&str>) -> Rel
             }
             let text = fs::read_to_string(path)
                 .map_err(|err| format!("read packaged CLI pilot artifact failed: {err}"))?;
-            serde_json::from_str::<Value>(&text)
+            let value: Value = serde_json::from_str(&text)
                 .map_err(|err| format!("packaged CLI pilot artifact is malformed JSON: {err}"))?;
+            if path == &packet {
+                let packets_total = value
+                    .get("packets_total")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| {
+                        "packaged CLI pilot packet artifact omitted numeric packets_total"
+                            .to_string()
+                    })?;
+                details.push(format!("pilot packets: {packets_total}"));
+            }
         }
-        let packet_text = fs::read_to_string(&packet)
-            .map_err(|err| format!("read packaged CLI packet failed: {err}"))?;
-        let packet_json: Value = serde_json::from_str(&packet_text)
-            .map_err(|err| format!("packaged CLI packet is malformed JSON: {err}"))?;
-        let packet_count = packet_json
-            .get("packets_total")
-            .and_then(Value::as_u64)
-            .ok_or_else(|| "packaged CLI packet omitted numeric packets_total".to_string())?;
-        details.push(format!("pilot packets: {packet_count}"));
         let retained_packet = report_dir.join("packaged-cli-agent-seam-packets.json");
         let retained_summary = report_dir.join("packaged-cli-pilot-summary.json");
         fs::copy(&packet, &retained_packet)
             .map_err(|err| format!("retain packaged CLI packet failed: {err}"))?;
         fs::copy(&summary, &retained_summary)
             .map_err(|err| format!("retain packaged CLI summary failed: {err}"))?;
-        let receipt = write_public_cli_receipt(
-            "qualified",
-            &binary,
-            &fixture_root,
-            Some(&base),
-            Some(&head),
-            &commands,
-            &details,
-        )?;
+        let receipt = write_public_cli_receipt(&PublicCliReceipt {
+            status: "qualified",
+            report_dir: &report_dir,
+            binary: &binary,
+            fixture_root: &fixture_root,
+            base: Some(&base),
+            head: Some(&head),
+            commands: &commands,
+            details: &details,
+        })?;
         Ok(vec![
             crate::normalize_path(&receipt),
-            crate::normalize_path(&retained_check),
+            crate::normalize_path(&check_artifact),
             crate::normalize_path(&retained_packet),
             crate::normalize_path(&retained_summary),
         ])
     })();
-    let cleanup = cleanup_external_fixture(&fixture_root);
+    let cleanup = if fixture_root.exists() {
+        fs::remove_dir_all(&fixture_root)
+    } else {
+        Ok(())
+    };
     match (journey, cleanup) {
         (Ok(artifacts), Ok(())) => readiness_check(
             "packaged-cli-journey",
@@ -1183,8 +1203,7 @@ fn packaged_cli_journey_check(binary: &Path, crate_version: Option<&str>) -> Rel
             "packaged CLI journey passed but external fixture cleanup failed",
             Vec::new(),
             {
-                let mut details = details;
-                details.push(err.to_string());
+                details.push(format!("cleanup error: {err}"));
                 details
             },
         ),
@@ -1196,7 +1215,6 @@ fn packaged_cli_journey_check(binary: &Path, crate_version: Option<&str>) -> Rel
             "installed packaged CLI external journey failed",
             Vec::new(),
             {
-                let mut details = details;
                 details.push(err);
                 details
             },
@@ -1209,20 +1227,11 @@ fn packaged_cli_journey_check(binary: &Path, crate_version: Option<&str>) -> Rel
             "installed packaged CLI journey and fixture cleanup failed",
             Vec::new(),
             {
-                let mut details = details;
                 details.push(err);
-                details.push(cleanup_err.to_string());
+                details.push(format!("cleanup error: {cleanup_err}"));
                 details
             },
         ),
-    }
-}
-
-fn cleanup_external_fixture(root: &Path) -> Result<(), std::io::Error> {
-    if root.exists() {
-        fs::remove_dir_all(root)
-    } else {
-        Ok(())
     }
 }
 
