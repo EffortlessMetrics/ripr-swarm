@@ -460,6 +460,9 @@ fn run_packaged_install(
             details,
         });
     }
+    let installed_binary = fs::canonicalize(&installed_binary).map_err(|err| {
+        format!("canonicalize installed binary for external execution failed: {err}")
+    })?;
     let installed_digest = crate::reports::release_server::sha256_file(&installed_binary)?;
     details.push(format!("installed binary sha256: {installed_digest}"));
     if let Err(err) = validate_binary_identity(&workspace_digest, &installed_digest) {
