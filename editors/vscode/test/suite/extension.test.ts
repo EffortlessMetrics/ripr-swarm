@@ -573,6 +573,65 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('real server reapplies diagnostic profile after runtime configuration changes', async function (this: Mocha.Context) {
+    this.timeout(300000);
+    if (!process.env.RIPR_TEST_SERVER_PATH) {
+      this.skip();
+    }
+
+    const uri = workspaceFileUri('src/lib.rs');
+    const config = vscode.workspace.getConfiguration('ripr', uri);
+    const transitionTimeoutMs = 120000;
+    const previousProfile = config.get<'actionable' | 'full'>('diagnosticProfile', 'full');
+    try {
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      const document = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(document);
+      await editAndSaveDocumentThenWaitForAnalysis(document, 60000);
+      await vscode.commands.executeCommand('ripr.refreshDiagnostics');
+      await waitForDiagnostic(
+        uri,
+        (entry) => entry.source === 'ripr' && diagnosticCode(entry) === 'weakly_exposed',
+        transitionTimeoutMs
+      );
+
+      await updateDiagnosticProfile(config, 'actionable');
+      await vscode.commands.executeCommand('ripr.refreshDiagnostics');
+      await waitForDiagnostic(
+        uri,
+        (entry) => entry.source === 'ripr' && diagnosticCode(entry) === 'weakly_exposed',
+        transitionTimeoutMs
+      );
+
+      await updateDiagnosticProfile(config, 'full');
+      await vscode.commands.executeCommand('ripr.refreshDiagnostics');
+      await waitForDiagnostic(
+        uri,
+        (entry) => entry.source === 'ripr' && diagnosticCode(entry) === 'ripr-seam-weakly-gripped',
+        transitionTimeoutMs
+      );
+
+      await updateDiagnosticProfile(config, 'actionable');
+      await vscode.commands.executeCommand('ripr.refreshDiagnostics');
+      await waitForDiagnosticAbsence(
+        uri,
+        (entry) => entry.source === 'ripr' && diagnosticCode(entry) === 'ripr-seam-weakly-gripped',
+        transitionTimeoutMs
+      );
+
+      await updateDiagnosticProfile(config, 'full');
+      await vscode.commands.executeCommand('ripr.refreshDiagnostics');
+      await waitForDiagnostic(
+        uri,
+        (entry) => entry.source === 'ripr' && diagnosticCode(entry) === 'ripr-seam-weakly-gripped',
+        transitionTimeoutMs
+      );
+    } finally {
+      await config.update('diagnosticProfile', previousProfile, vscode.ConfigurationTarget.Workspace);
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+    }
+  });
+
   test('real server surfaces preview gap diagnostic, hover, status, and bounded actions', async function (this: Mocha.Context) {
     this.timeout(75000);
     if (!process.env.RIPR_TEST_SERVER_PATH) {
@@ -4392,7 +4451,9 @@ async function configureTestServer(): Promise<void> {
     return;
   }
 
-  const config = vscode.workspace.getConfiguration('ripr');
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  assert.ok(workspaceFolder, 'packaged integration tests require a workspace folder');
+  const config = vscode.workspace.getConfiguration('ripr', workspaceFolder.uri);
   const desired = {
     serverPath: testServerPath,
     baseRef: process.env.RIPR_TEST_BASE_REF ?? 'HEAD',
@@ -4419,8 +4480,18 @@ async function configureTestServer(): Promise<void> {
     vscode.ConfigurationTarget.Global
   );
   await config.update('check.mode', 'draft', vscode.ConfigurationTarget.Global);
-  await config.update('seamDiagnostics', true, vscode.ConfigurationTarget.Global);
-  await config.update('diagnosticProfile', 'full', vscode.ConfigurationTarget.Global);
+  await config.update('seamDiagnostics', true, vscode.ConfigurationTarget.Workspace);
+  await config.update('diagnosticProfile', 'full', vscode.ConfigurationTarget.Workspace);
+}
+
+async function updateDiagnosticProfile(
+  config: vscode.WorkspaceConfiguration,
+  profile: 'actionable' | 'full'
+): Promise<void> {
+  await config.update('diagnosticProfile', profile, vscode.ConfigurationTarget.Workspace);
+  // Let the language client deliver workspace/didChangeConfiguration before
+  // the explicit refresh asks the server to publish the new projection.
+  await sleep(500);
 }
 
 function workspaceFileUri(relativePath: string): vscode.Uri {
@@ -4630,6 +4701,25 @@ async function waitForDiagnostic(
     `Current URI diagnostics:\n${currentUriDiagnostics}`,
     `All diagnostics:\n${allDiagnostics}`,
   ].join('\n'));
+}
+
+async function waitForDiagnosticAbsence(
+  uri: vscode.Uri,
+  predicate: (diagnostic: vscode.Diagnostic) => boolean,
+  timeoutMs = 15000
+): Promise<void> {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (!vscode.languages.getDiagnostics(uri).some(predicate)) {
+      return;
+    }
+    await sleep(150);
+  }
+  const current = vscode.languages
+    .getDiagnostics(uri)
+    .map((entry) => `${entry.source ?? '<no source>'}:${diagnosticCode(entry)}:${entry.message}`)
+    .join('\n');
+  throw new Error(`timed out waiting for diagnostic to disappear at ${uri}:\n${current}`);
 }
 
 async function editAndSaveDocumentThenWaitForAnalysis(

@@ -70,6 +70,19 @@ const RIPR_RELATED_TEST_LANGUAGE_BY_EXTENSION = new Map<string, 'rust' | 'typesc
 ]);
 const RIPR_CONFIG_RELATIVE_PATH = 'ripr.toml';
 
+function lspConfigurationForResource(scopeUri: string | undefined): Record<string, unknown> {
+  const resource = scopeUri ? vscode.Uri.parse(scopeUri) : undefined;
+  const config = vscode.workspace.getConfiguration('ripr', resource);
+  return {
+    baseRef: config.get<string>('baseRef'),
+    checkMode: config.get<string>('check.mode'),
+    seamDiagnostics: config.get<boolean>('seamDiagnostics'),
+    diagnosticProfile: config.get<string>('diagnosticProfile'),
+    gitTimeoutMs: config.get<number>('gitTimeoutMs'),
+    refreshDeadlineMs: config.get<number>('refreshDeadlineMs')
+  };
+}
+
 // The ripr.* commands this extension registers, advertised to the server at
 // initialize inside the RIPR experimental capability block (#1987,
 // RIPR-SPEC-0143) so the session profile knows which client commands exist.
@@ -538,6 +551,16 @@ export class RiprClientController {
       },
       outputChannel: this.output,
       traceOutputChannel: this.output,
+      middleware: {
+        workspace: {
+          configuration: async (params, token, next) => {
+            if (params.items.some((item) => item.section !== 'ripr')) {
+              return next(params, token);
+            }
+            return params.items.map((item) => lspConfigurationForResource(item.scopeUri));
+          }
+        }
+      },
       synchronize: {
         configurationSection: 'ripr',
         fileEvents: this.runtime.createFileSystemWatcher(

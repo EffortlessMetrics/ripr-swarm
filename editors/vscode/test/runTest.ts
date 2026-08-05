@@ -21,6 +21,14 @@ function stageIntegrationWorkspace(templatePath: string, workspacePath: string):
   fs.rmSync(path.join(workspacePath, 'target'), { force: true, recursive: true });
   fs.mkdirSync(path.join(workspacePath, 'src'), { recursive: true });
   fs.mkdirSync(path.join(workspacePath, 'tests'), { recursive: true });
+  fs.mkdirSync(path.join(workspacePath, '.vscode'), { recursive: true });
+  fs.writeFileSync(
+    path.join(workspacePath, '.vscode', 'settings.json'),
+    `${JSON.stringify({
+      'ripr.seamDiagnostics': true,
+      'ripr.diagnosticProfile': 'full'
+    }, null, 2)}\n`
+  );
   fs.writeFileSync(
     path.join(workspacePath, 'ripr.toml'),
     '[languages]\nenabled = ["rust", "typescript"]\n'
