@@ -1223,6 +1223,7 @@ fn first_repair_packet_text(
 ) -> Option<String> {
     let gap_identity = first_gap_identity(data)?;
     let route_kind = repair_route.get("route_kind").and_then(non_empty_string)?;
+    let missing_discriminator = missing_discriminator_for_packet(data, repair_route)?;
     let mut lines = vec![
         "RIPR first repair packet".to_string(),
         String::new(),
@@ -1250,9 +1251,7 @@ fn first_repair_packet_text(
     {
         lines.push(format!("- Changed behavior: {changed_behavior}"));
     }
-    if let Some(missing_discriminator) = missing_discriminator_for_packet(data, repair_route) {
-        lines.push(format!("- Missing discriminator: {missing_discriminator}"));
-    }
+    lines.push(format!("- Missing discriminator: {missing_discriminator}"));
     if let Some(focused_proof_intent) = focused_proof_intent_for_packet(repair_route) {
         lines.push(format!("- Focused proof intent: {focused_proof_intent}"));
     }

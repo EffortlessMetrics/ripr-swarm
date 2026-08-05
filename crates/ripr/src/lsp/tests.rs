@@ -3210,6 +3210,59 @@ fn gap_code_actions_suppress_first_repair_packet_without_verify_or_receipt_comma
 }
 
 #[test]
+fn gap_code_actions_suppress_first_repair_packet_without_producer_discriminator()
+-> Result<(), String> {
+    let root = unique_lsp_test_root("gap-first-repair-requires-discriminator")?;
+    std::fs::create_dir_all(root.path().join("tests"))
+        .map_err(|err| format!("create tests failed: {err}"))?;
+    std::fs::write(
+        root.path().join("tests/test_pricing.py"),
+        "def test_discount_boundary():\n    assert price(10) == 9\n",
+    )
+    .map_err(|err| format!("write related test failed: {err}"))?;
+    let uri = file_uri_for_path(&root.path().join("src/pricing.py"))?;
+    let mut diagnostic = gap_action_diagnostic();
+    let data = diagnostic
+        .data
+        .as_mut()
+        .ok_or_else(|| "missing diagnostic data".to_string())?;
+    let object = data
+        .as_object_mut()
+        .ok_or_else(|| "expected diagnostic object data".to_string())?;
+    object.remove("missing_discriminator");
+    object
+        .get_mut("repair_route")
+        .and_then(serde_json::Value::as_object_mut)
+        .map(|route| route.remove("missing_discriminator"));
+
+    let mut snapshot = sample_analysis_snapshot(
+        root.path().to_path_buf(),
+        uri.clone(),
+        vec![diagnostic.clone()],
+        Vec::new(),
+    );
+    snapshot.gap_artifacts = vec![validated_gap_artifact()];
+
+    let actions = code_action_response(
+        &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
+        Some(&snapshot),
+        &vscode_client_features()?,
+    );
+    let commands = code_action_commands(&actions)?;
+
+    assert!(
+        commands.iter().all(|(title, _, args)| {
+            title != "Copy first repair packet"
+                && args
+                    .first()
+                    .is_none_or(|arg| arg["label"] != "first_repair_packet")
+        }),
+        "first repair packet must require producer-owned discriminator evidence: {commands:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn gap_code_actions_suppress_python_agent_packet_without_actionable_python_gap_record()
 -> Result<(), String> {
     let root = unique_lsp_test_root("gap-python-agent-packet-contract")?;
