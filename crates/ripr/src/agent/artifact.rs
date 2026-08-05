@@ -491,7 +491,17 @@ mod tests {
             std::fs::write(root.join("Cargo.toml"), "[workspace]\n")
                 .map_err(|error| format!("write Cargo.toml: {error}"))?;
             run_git(&root, &["add", "Cargo.toml"])?;
-            run_git(&root, &["commit", "--quiet", "-m", "before"])?;
+            run_git(
+                &root,
+                &[
+                    "-c",
+                    "commit.gpgSign=false",
+                    "commit",
+                    "--quiet",
+                    "-m",
+                    "before",
+                ],
+            )?;
             let before = RepoExposureArtifactContext::for_repo_exposure(
                 root.clone(),
                 "draft".to_string(),
@@ -501,7 +511,15 @@ mod tests {
 
             run_git(
                 &root,
-                &["commit", "--quiet", "--allow-empty", "-m", "after"],
+                &[
+                    "-c",
+                    "commit.gpgSign=false",
+                    "commit",
+                    "--quiet",
+                    "--allow-empty",
+                    "-m",
+                    "after",
+                ],
             )?;
             let after = RepoExposureArtifactContext::for_repo_exposure(
                 root.clone(),
