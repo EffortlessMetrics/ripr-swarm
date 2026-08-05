@@ -63,6 +63,14 @@ struct PublicCliReceipt<'a> {
     details: &'a [String],
 }
 
+struct PublicCliJourney {
+    base: String,
+    head: String,
+    artifacts: Vec<String>,
+    commands: Vec<Value>,
+    details: Vec<String>,
+}
+
 pub(crate) fn release_readiness(args: &[String]) -> Result<(), String> {
     let args = parse_release_readiness_args(args)?;
     fs::create_dir_all(REPORT_WORK_DIR)
@@ -936,6 +944,31 @@ fn packaged_cli_journey_check(binary: &Path, crate_version: Option<&str>) -> Rel
             );
         }
     };
+    let report_dir = match std::env::current_dir() {
+        Ok(current_dir) => current_dir.join(REPORT_WORK_DIR),
+        Err(err) => {
+            return readiness_check(
+                "packaged-cli-journey",
+                "fail",
+                true,
+                &command,
+                "readiness report directory could not be determined",
+                Vec::new(),
+                vec![err.to_string()],
+            );
+        }
+    };
+    if let Err(err) = clear_packaged_cli_artifacts(&report_dir) {
+        return readiness_check(
+            "packaged-cli-journey",
+            "fail",
+            true,
+            &command,
+            "stale packaged CLI artifacts could not be cleared",
+            Vec::new(),
+            vec![err],
+        );
+    }
     let fixture_root = match external_cli_fixture_root() {
         Ok(path) => path,
         Err(err) => {
@@ -952,7 +985,7 @@ fn packaged_cli_journey_check(binary: &Path, crate_version: Option<&str>) -> Rel
     };
     let mut commands = Vec::new();
     let mut details = vec![format!("platform: {}", std::env::consts::OS)];
-    let journey = (|| -> Result<Vec<String>, String> {
+    let journey = (|| -> Result<PublicCliJourney, String> {
         let expected_version = crate_version.ok_or_else(|| {
             "crate version could not be read for packaged CLI journey".to_string()
         })?;
@@ -973,11 +1006,6 @@ fn packaged_cli_journey_check(binary: &Path, crate_version: Option<&str>) -> Rel
         details.push(format!("head sha: {head}"));
         let binary_text = binary.to_string_lossy().into_owned();
         let root_text = fixture_root.to_string_lossy().into_owned();
-        let report_dir = std::env::current_dir()
-            .map_err(|err| {
-                format!("read current directory for packaged CLI artifacts failed: {err}")
-            })?
-            .join(REPORT_WORK_DIR);
         let check_artifact = report_dir.join("packaged-cli-check.json");
         let check_artifact_text = check_artifact.to_string_lossy().into_owned();
         let check_args = vec![
@@ -1163,22 +1191,17 @@ fn packaged_cli_journey_check(binary: &Path, crate_version: Option<&str>) -> Rel
             .map_err(|err| format!("retain packaged CLI packet failed: {err}"))?;
         fs::copy(&summary, &retained_summary)
             .map_err(|err| format!("retain packaged CLI summary failed: {err}"))?;
-        let receipt = write_public_cli_receipt(&PublicCliReceipt {
-            status: "qualified",
-            report_dir: &report_dir,
-            binary: &binary,
-            fixture_root: &fixture_root,
-            base: Some(&base),
-            head: Some(&head),
-            commands: &commands,
-            details: &details,
-        })?;
-        Ok(vec![
-            crate::normalize_path(&receipt),
-            crate::normalize_path(&check_artifact),
-            crate::normalize_path(&retained_packet),
-            crate::normalize_path(&retained_summary),
-        ])
+        Ok(PublicCliJourney {
+            base,
+            head,
+            artifacts: vec![
+                crate::normalize_path(&check_artifact),
+                crate::normalize_path(&retained_packet),
+                crate::normalize_path(&retained_summary),
+            ],
+            commands: std::mem::take(&mut commands),
+            details: std::mem::take(&mut details),
+        })
     })();
     let cleanup = if fixture_root.exists() {
         fs::remove_dir_all(&fixture_root)
@@ -1186,16 +1209,40 @@ fn packaged_cli_journey_check(binary: &Path, crate_version: Option<&str>) -> Rel
         Ok(())
     };
     match (journey, cleanup) {
-        (Ok(artifacts), Ok(())) => readiness_check(
-            "packaged-cli-journey",
-            "pass",
-            true,
-            &command,
-            "installed packaged CLI completed external check, exact diff, explain/context, and pilot packet journey",
-            artifacts,
-            details,
-        ),
-        (Ok(_), Err(err)) => readiness_check(
+        (Ok(journey), Ok(())) => match write_public_cli_receipt(&PublicCliReceipt {
+            status: "qualified",
+            report_dir: &report_dir,
+            binary: &binary,
+            fixture_root: &fixture_root,
+            base: Some(&journey.base),
+            head: Some(&journey.head),
+            commands: &journey.commands,
+            details: &journey.details,
+        }) {
+            Ok(receipt) => {
+                let mut artifacts = vec![crate::normalize_path(&receipt)];
+                artifacts.extend(journey.artifacts);
+                readiness_check(
+                    "packaged-cli-journey",
+                    "pass",
+                    true,
+                    &command,
+                    "installed packaged CLI completed external check, exact diff, explain/context, and pilot packet journey",
+                    artifacts,
+                    journey.details,
+                )
+            }
+            Err(err) => readiness_check(
+                "packaged-cli-journey",
+                "fail",
+                true,
+                &command,
+                "packaged CLI journey passed but receipt writing failed",
+                Vec::new(),
+                vec![err],
+            ),
+        },
+        (Ok(journey), Err(err)) => readiness_check(
             "packaged-cli-journey",
             "fail",
             true,
@@ -1203,6 +1250,7 @@ fn packaged_cli_journey_check(binary: &Path, crate_version: Option<&str>) -> Rel
             "packaged CLI journey passed but external fixture cleanup failed",
             Vec::new(),
             {
+                let mut details = journey.details;
                 details.push(format!("cleanup error: {err}"));
                 details
             },
@@ -1233,6 +1281,29 @@ fn packaged_cli_journey_check(binary: &Path, crate_version: Option<&str>) -> Rel
             },
         ),
     }
+}
+
+fn clear_packaged_cli_artifacts(report_dir: &Path) -> Result<(), String> {
+    let names = [
+        format!("packaged-cli-journey-{}.json", std::env::consts::OS),
+        "packaged-cli-check.json".to_string(),
+        "packaged-cli-agent-seam-packets.json".to_string(),
+        "packaged-cli-pilot-summary.json".to_string(),
+    ];
+    for name in names {
+        let path = report_dir.join(name);
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => {
+                return Err(format!(
+                    "remove stale packaged CLI artifact {} failed: {err}",
+                    crate::normalize_path(&path)
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Commands the bounded first screen (`ripr --help`) must keep offering.
