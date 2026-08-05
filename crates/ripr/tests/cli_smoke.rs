@@ -2599,9 +2599,28 @@ fn agent_verify_rejects_incomparable_analysis_inputs() -> Result<(), Box<dyn std
     let seam = r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#;
     write_bound_repo_exposure_fixture(&root, &before, seam)?;
     write_bound_repo_exposure_fixture(&root, &after, seam)?;
-    let altered = std::fs::read_to_string(&after)?
-        .replace("input:fixture", "input:other")
-        .replace("snapshot:input:fixture", "snapshot:input:other");
+    let old_head = concrete_fixture_repository_head(&root)?;
+    std::fs::write(root.join("marker.txt"), "fixture-moved\n")?;
+    run_git(&root, &["add", "marker.txt"])?;
+    let commit = run_command(
+        "git",
+        Some(&root),
+        &[
+            "-c",
+            "user.name=RIPR test",
+            "-c",
+            "user.email=ripr@example.invalid",
+            "commit",
+            "-m",
+            "advance fixture",
+        ],
+    )?;
+    assert!(commit.status.success(), "fixture commit failed: {commit:?}");
+    let new_head = concrete_fixture_repository_head(&root)?;
+    let altered = std::fs::read_to_string(&after)?.replace(
+        &format!("\"head\": \"{old_head}\""),
+        &format!("\"head\": \"{new_head}\""),
+    );
     std::fs::write(&after, recommit_repo_exposure_json(altered))?;
 
     let before_path = before.display().to_string();
@@ -2618,7 +2637,9 @@ fn agent_verify_rejects_incomparable_analysis_inputs() -> Result<(), Box<dyn std
         "--json",
     ]);
     assert_failure(&output);
-    assert!(String::from_utf8_lossy(&output.stderr).contains("analysis input identities differ"));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("analysis input identities are identical")
+    );
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
@@ -2950,9 +2971,27 @@ fn agent_receipt_rejects_incomparable_analysis_inputs() -> Result<(), Box<dyn st
         &after,
         r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#,
     )?;
+    let old_head = concrete_fixture_repository_head(&root)?;
+    std::fs::write(root.join("marker.txt"), "fixture-moved\n")?;
+    run_git(&root, &["add", "marker.txt"])?;
+    let commit = run_command(
+        "git",
+        Some(&root),
+        &[
+            "-c",
+            "user.name=RIPR test",
+            "-c",
+            "user.email=ripr@example.invalid",
+            "commit",
+            "-m",
+            "advance fixture",
+        ],
+    )?;
+    assert!(commit.status.success(), "fixture commit failed: {commit:?}");
+    let new_head = concrete_fixture_repository_head(&root)?;
     let altered = std::fs::read_to_string(&after)?.replace(
-        "\"input_identity\": \"input:fixture\"",
-        "\"input_identity\": \"input:other\"",
+        &format!("\"head\": \"{old_head}\""),
+        &format!("\"head\": \"{new_head}\""),
     );
     // Keep the tampered artifact internally consistent (input identity and
     // snapshot identity must agree under exact snapshot validation) so the

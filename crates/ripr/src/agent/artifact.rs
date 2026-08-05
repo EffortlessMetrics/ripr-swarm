@@ -250,6 +250,9 @@ pub(crate) fn validate_repo_exposure_artifact(
         input_identity: identity.analysis.input_identity,
         snapshot_identity: identity.snapshot_identity,
         repository_head: identity.repository.head,
+        producer_version: identity.producer.version,
+        analysis_mode: identity.analysis.mode,
+        analysis_profile: identity.analysis.profile,
     })
 }
 
@@ -267,6 +270,61 @@ pub(crate) struct ValidatedArtifact {
     pub(crate) input_identity: String,
     pub(crate) snapshot_identity: String,
     pub(crate) repository_head: String,
+    pub(crate) producer_version: String,
+    pub(crate) analysis_mode: String,
+    pub(crate) analysis_profile: String,
+}
+
+/// Validate that two producer artifacts describe comparable analyses of
+/// distinct repository snapshots. The input identity is snapshot-bound; the
+/// stable comparison fields below carry the analysis configuration that must
+/// remain unchanged across the pair.
+pub(crate) fn validate_comparable_pair(
+    before: &ValidatedArtifact,
+    after: &ValidatedArtifact,
+) -> Result<(), String> {
+    if before.base_revision != after.base_revision {
+        return Err(format!(
+            "base revisions differ ({:?} vs {:?})",
+            before.base_revision, after.base_revision
+        ));
+    }
+    if before.producer_version != after.producer_version {
+        return Err(format!(
+            "producer versions differ ({} vs {})",
+            before.producer_version, after.producer_version
+        ));
+    }
+    if before.analysis_mode != after.analysis_mode {
+        return Err(format!(
+            "analysis modes differ ({} vs {})",
+            before.analysis_mode, after.analysis_mode
+        ));
+    }
+    if before.analysis_profile != after.analysis_profile {
+        return Err(format!(
+            "analysis profiles differ ({} vs {})",
+            before.analysis_profile, after.analysis_profile
+        ));
+    }
+    if before.repository_head != after.repository_head {
+        if before.input_identity == after.input_identity {
+            return Err("analysis input identities are identical".to_string());
+        }
+        if before.snapshot_identity == after.snapshot_identity {
+            return Err("snapshot identities are identical".to_string());
+        }
+    } else {
+        if before.input_identity != after.input_identity {
+            return Err(
+                "analysis input identities differ for the same repository head".to_string(),
+            );
+        }
+        if before.snapshot_identity != after.snapshot_identity {
+            return Err("snapshot identities differ for the same repository head".to_string());
+        }
+    }
+    Ok(())
 }
 
 #[derive(serde::Deserialize)]
