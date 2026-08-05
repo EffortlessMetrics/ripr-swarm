@@ -554,10 +554,26 @@ export class RiprClientController {
       middleware: {
         workspace: {
           configuration: async (params, token, next) => {
-            if (params.items.some((item) => item.section !== 'ripr')) {
+            const riprItems = params.items.filter((item) => item.section === 'ripr');
+            const otherItems = params.items.filter((item) => item.section !== 'ripr');
+            if (riprItems.length === 0) {
               return next(params, token);
             }
-            return params.items.map((item) => lspConfigurationForResource(item.scopeUri));
+            const riprConfigurations = riprItems.map((item) => lspConfigurationForResource(item.scopeUri));
+            if (otherItems.length === 0) {
+              return riprConfigurations;
+            }
+            const otherConfigurations = await next({ items: otherItems }, token);
+            if (!Array.isArray(otherConfigurations)) {
+              return otherConfigurations;
+            }
+            let riprIndex = 0;
+            let otherIndex = 0;
+            return params.items.map((item) =>
+              item.section === 'ripr'
+                ? riprConfigurations[riprIndex++]
+                : otherConfigurations[otherIndex++]
+            );
           }
         }
       },

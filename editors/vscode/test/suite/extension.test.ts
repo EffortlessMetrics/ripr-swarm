@@ -329,6 +329,48 @@ suite('Extension Smoke', () => {
     });
   });
 
+  test('preserves mixed LSP configuration request ordering', async () => {
+    await withControllerTestContext({}, async (context) => {
+      await context.controller.start();
+      const options = context.clientOptions() as {
+        middleware?: {
+          workspace?: {
+            configuration?: (
+              params: { items: Array<{ section?: string; scopeUri?: string }> },
+              token: unknown,
+              next: (
+                params: { items: Array<{ section?: string; scopeUri?: string }> },
+                token: unknown
+              ) => Promise<unknown[]>
+            ) => Promise<unknown[]>;
+          };
+        };
+      };
+      const configuration = options.middleware?.workspace?.configuration;
+      assert.ok(configuration, 'expected configuration middleware');
+      const delegatedSections: string[] = [];
+      const result = await configuration(
+        {
+          items: [
+            { section: 'ripr', scopeUri: 'file:///workspace/src/lib.rs' },
+            { section: 'other.setting', scopeUri: 'file:///workspace/src/lib.rs' },
+            { section: 'ripr', scopeUri: 'file:///workspace/src/pricing.ts' }
+          ]
+        },
+        undefined,
+        async (params) => {
+          delegatedSections.push(...params.items.map((item) => item.section ?? '<missing>'));
+          return params.items.map((item) => `delegated:${item.section ?? '<missing>'}`);
+        }
+      );
+
+      assert.deepStrictEqual(delegatedSections, ['other.setting']);
+      assert.strictEqual((result[1] as string), 'delegated:other.setting');
+      assert.strictEqual(typeof (result[0] as Record<string, unknown>).diagnosticProfile, 'string');
+      assert.strictEqual(typeof (result[2] as Record<string, unknown>).diagnosticProfile, 'string');
+    });
+  });
+
   test('reads startup settings against the selected workspace resource', async () => {
     const workspaceRoot = path.join(path.parse(process.cwd()).root, 'ripr-resource-scope-test');
     await withControllerTestContext({ workspaceRoot }, async (context) => {
@@ -662,7 +704,7 @@ suite('Extension Smoke', () => {
       await updateDiagnosticProfile(config, 'actionable');
       // Keep the preview journey on the same host/session as the trusted Rust
       // journey so state leakage remains observable across the sequence.
-      await editAndSaveDocumentThenWaitForAnalysis(document);
+      await editAndSaveDocumentThenWaitForAnalysis(document, 60000);
       await vscode.commands.executeCommand('ripr.refreshDiagnostics');
       await vscode.commands.executeCommand('ripr.showStatus');
 
@@ -694,10 +736,11 @@ suite('Extension Smoke', () => {
         hoverText
       );
 
-      const actions = await vscode.commands.executeCommand<Array<vscode.CodeAction | vscode.Command>>(
-        'vscode.executeCodeActionProvider',
+      const actions = await waitForCodeActions(
         uri,
-        diagnostic.range
+        diagnostic.range,
+        (action) => action.title === 'Inspect gap: copy repair packet',
+        10000
       );
       const repairPacketCommand = assertCommandAction(
         actions,
