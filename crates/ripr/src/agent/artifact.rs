@@ -521,6 +521,27 @@ mod tests {
     }
 
     #[test]
+    fn comparable_pair_rejects_profile_drift_after_artifact_validation() {
+        let before = ValidatedArtifact {
+            currentness: ArtifactCurrentness::Current,
+            base_revision: None,
+            input_identity: "input:before".to_string(),
+            snapshot_identity: "snapshot:input:before".to_string(),
+            repository_head: "a".repeat(40),
+            producer_version: "0.11.0".to_string(),
+            analysis_mode: "draft".to_string(),
+            analysis_profile: "draft".to_string(),
+        };
+        let mut after = before.clone();
+        after.analysis_profile = "release".to_string();
+
+        assert!(matches!(
+            validate_comparable_pair(&before, &after),
+            Err(error) if error.contains("analysis profiles differ")
+        ));
+    }
+
+    #[test]
     fn repo_exposure_identity_changes_with_controlled_git_revision() -> Result<(), String> {
         let root = temporary_git_root()?;
         let result = (|| -> Result<(), String> {

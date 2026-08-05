@@ -2681,7 +2681,10 @@ fn agent_verify_rejects_comparison_metadata_drift() -> Result<(), Box<dyn std::e
         let seam = r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#;
         write_bound_repo_exposure_fixture(&root, &before, seam)?;
         write_bound_repo_exposure_fixture(&root, &after, seam)?;
-        let altered = std::fs::read_to_string(&after)?.replace(from, to);
+        let mut altered = std::fs::read_to_string(&after)?.replace(from, to);
+        if label == "analysis mode" {
+            altered = altered.replace("\"profile\": \"draft\"", "\"profile\": \"release\"");
+        }
         std::fs::write(&after, recommit_repo_exposure_json(altered))?;
         let output = run_ripr(&[
             "agent",
@@ -2696,6 +2699,11 @@ fn agent_verify_rejects_comparison_metadata_drift() -> Result<(), Box<dyn std::e
         ]);
         assert_failure(&output);
         let stderr = String::from_utf8_lossy(&output.stderr);
+        let expected = if label == "analysis profile" {
+            "invalid or unknown producer identity"
+        } else {
+            expected
+        };
         assert!(stderr.contains(expected), "{label}: {stderr}");
         std::fs::remove_dir_all(root)?;
     }
@@ -3104,7 +3112,10 @@ fn agent_receipt_rejects_comparison_metadata_drift() -> Result<(), Box<dyn std::
         let seam = r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#;
         write_bound_repo_exposure_fixture(&root, &before, seam)?;
         write_bound_repo_exposure_fixture(&root, &after, seam)?;
-        let altered = std::fs::read_to_string(&after)?.replace(from, to);
+        let mut altered = std::fs::read_to_string(&after)?.replace(from, to);
+        if label == "analysis mode" {
+            altered = altered.replace("\"profile\": \"draft\"", "\"profile\": \"release\"");
+        }
         std::fs::write(&after, recommit_repo_exposure_json(altered))?;
         let verify = root.join("fabricated-agent-verify.json");
         write_fabricated_agent_verify_json(&verify, &before, &after)?;
@@ -3121,10 +3132,12 @@ fn agent_receipt_rejects_comparison_metadata_drift() -> Result<(), Box<dyn std::
         ]);
         assert_failure(&output);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            stderr.contains("[incomparable_analysis_inputs]"),
-            "{label}: {stderr}"
-        );
+        let expected = if label == "analysis profile" {
+            "invalid or unknown producer identity"
+        } else {
+            "[incomparable_analysis_inputs]"
+        };
+        assert!(stderr.contains(expected), "{label}: {stderr}");
         std::fs::remove_dir_all(root)?;
     }
     Ok(())
