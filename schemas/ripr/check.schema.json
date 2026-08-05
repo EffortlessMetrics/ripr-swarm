@@ -31,6 +31,10 @@
       "items": { "$ref": "#/$defs/language_run" }
     },
     "analysis_scope": { "type": "object" },
+    "run_limitations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/run_limitation" }
+    },
     "scope_disclosures": {
       "type": "array",
       "items": { "type": "object" }
@@ -346,6 +350,26 @@
         "analyzed": { "type": "boolean" },
         "category": { "type": "string", "minLength": 1 },
         "why": { "type": "string", "minLength": 1 }
+      }
+    },
+    "run_limitation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "category",
+        "run_status",
+        "basis",
+        "downstream_consumable",
+        "message",
+        "repair_route"
+      ],
+      "properties": {
+        "category": { "type": "string", "minLength": 1 },
+        "run_status": { "type": "string", "minLength": 1 },
+        "basis": { "type": "string", "minLength": 1 },
+        "downstream_consumable": { "const": false },
+        "message": { "type": "string", "minLength": 1 },
+        "repair_route": { "type": "string", "minLength": 1 }
       }
     },
     "finding_alignment": {

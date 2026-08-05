@@ -88,7 +88,7 @@ const CONTRACTS: &[VerificationContract] = &[
     },
     VerificationContract {
         schema_path: "schemas/ripr/check.schema.json",
-        fixture_path: "fixtures/weak_error_oracle/expected/check.json",
+        fixture_path: "tests/fixtures/verification/ripr/check-complete.valid.json",
         doc_path: "docs/OUTPUT_SCHEMA.md",
         doc_markers: &[
             "schema_version",
@@ -100,6 +100,12 @@ const CONTRACTS: &[VerificationContract] = &[
             "findings",
             "finding_alignment",
         ],
+    },
+    VerificationContract {
+        schema_path: "schemas/ripr/check.schema.json",
+        fixture_path: "tests/fixtures/verification/ripr/check-limited.valid.json",
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &[],
     },
 ];
 
@@ -463,16 +469,11 @@ fn validate_string(text: &str, schema: &Value, location: &str, violations: &mut 
 }
 
 fn validate_number(value: &Value, schema: &Value, location: &str, violations: &mut Vec<String>) {
-    if let Some(minimum) = schema.get("minimum").and_then(Value::as_i64) {
-        let Some(actual) = value
-            .as_i64()
-            .or_else(|| value.as_u64().map(|number| number as i64))
-        else {
-            return;
-        };
-        if actual < minimum {
-            violations.push(format!("{location}: number below minimum {minimum}"));
-        }
+    if let Some(minimum) = schema.get("minimum").and_then(Value::as_f64)
+        && let Some(actual) = value.as_f64()
+        && actual < minimum
+    {
+        violations.push(format!("{location}: number below minimum {minimum}"));
     }
 }
 
@@ -649,7 +650,8 @@ mod tests {
     fn complete_check_fixture_matches_schema() -> Result<(), String> {
         let root = repo_root()?;
         let schema = read_json(root.join("schemas/ripr/check.schema.json"))?;
-        let fixture = read_json(root.join("fixtures/weak_error_oracle/expected/check.json"))?;
+        let fixture =
+            read_json(root.join("tests/fixtures/verification/ripr/check-complete.valid.json"))?;
         let mut violations = Vec::new();
 
         validate_value_against_schema(
@@ -687,10 +689,36 @@ mod tests {
     }
 
     #[test]
+    fn limited_check_fixture_matches_schema_without_becoming_consumable() -> Result<(), String> {
+        let root = repo_root()?;
+        let schema = read_json(root.join("schemas/ripr/check.schema.json"))?;
+        let fixture =
+            read_json(root.join("tests/fixtures/verification/ripr/check-limited.valid.json"))?;
+        let mut violations = Vec::new();
+
+        validate_value_against_schema(
+            &fixture,
+            &schema,
+            &schema,
+            "limited check fixture".to_string(),
+            &mut violations,
+        );
+
+        assert!(violations.is_empty(), "{violations:#?}");
+        assert_eq!(fixture["analysis_scope"]["downstream_consumable"], false);
+        assert_eq!(
+            fixture["run_limitations"][0]["downstream_consumable"],
+            false
+        );
+        Ok(())
+    }
+
+    #[test]
     fn check_schema_rejects_unknown_top_level_field() -> Result<(), String> {
         let root = repo_root()?;
         let schema = read_json(root.join("schemas/ripr/check.schema.json"))?;
-        let mut fixture = read_json(root.join("fixtures/weak_error_oracle/expected/check.json"))?;
+        let mut fixture =
+            read_json(root.join("tests/fixtures/verification/ripr/check-complete.valid.json"))?;
         fixture["unexpected_release_field"] = Value::Bool(true);
         let mut violations = Vec::new();
 
@@ -707,6 +735,32 @@ mod tests {
                 .iter()
                 .any(|violation| violation.contains("unexpected field `unexpected_release_field`")),
             "expected top-level schema drift rejection, got {violations:#?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn check_schema_rejects_negative_fractional_confidence() -> Result<(), String> {
+        let root = repo_root()?;
+        let schema = read_json(root.join("schemas/ripr/check.schema.json"))?;
+        let mut fixture =
+            read_json(root.join("tests/fixtures/verification/ripr/check-complete.valid.json"))?;
+        fixture["findings"][0]["confidence"] = serde_json::json!(-0.5);
+        let mut violations = Vec::new();
+
+        validate_value_against_schema(
+            &fixture,
+            &schema,
+            &schema,
+            "fractional confidence fixture".to_string(),
+            &mut violations,
+        );
+
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("number below minimum")),
+            "expected fractional minimum rejection, got {violations:#?}"
         );
         Ok(())
     }
