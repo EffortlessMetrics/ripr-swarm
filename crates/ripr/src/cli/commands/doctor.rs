@@ -284,12 +284,21 @@ fn runtime_probe_is_required(language: &str, tool: &str, enabled: &[LanguageId])
         && enabled.iter().any(|id| id.as_str() == language)
 }
 
+const PRIMARY_RUNTIME_PROBES: &[(&str, &str, &str)] = &[
+    ("typescript", "node", "install Node.js"),
+    ("javascript", "node", "install Node.js"),
+    (
+        "python",
+        "python3",
+        "install python3 (e.g. apt install python3)",
+    ),
+];
+
 fn primary_runtime(language: &str) -> Option<(&'static str, &'static str)> {
-    match language {
-        "typescript" | "javascript" => Some(("node", "install Node.js")),
-        "python" => Some(("python3", "install python3 (e.g. apt install python3)")),
-        _ => None,
-    }
+    PRIMARY_RUNTIME_PROBES
+        .iter()
+        .find(|(candidate, _, _)| *candidate == language)
+        .map(|(_, tool, hint)| (*tool, *hint))
 }
 
 fn language_runtime_probes_for(
@@ -305,15 +314,12 @@ fn append_missing_primary_runtime_probes(
     probes: &mut Vec<(&'static str, &'static str, &'static str)>,
     enabled: &[LanguageId],
 ) {
-    for language in ["typescript", "javascript", "python"] {
-        let enabled_language = enabled.iter().any(|id| id.as_str() == language);
-        let Some((tool, hint)) = primary_runtime(language) else {
-            continue;
-        };
+    for (language, tool, hint) in PRIMARY_RUNTIME_PROBES {
+        let enabled_language = enabled.iter().any(|id| id.as_str() == *language);
         if enabled_language
             && !probes
                 .iter()
-                .any(|(found, detected_tool, _)| *found == language && *detected_tool == tool)
+                .any(|(found, detected_tool, _)| *found == *language && *detected_tool == *tool)
         {
             probes.push((language, tool, hint));
         }
