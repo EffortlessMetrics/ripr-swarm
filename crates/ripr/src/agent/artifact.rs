@@ -129,9 +129,13 @@ pub(crate) fn repo_exposure_artifact_metadata(
                 "profile": context.mode,
                 "worktree": status,
             },
-        "snapshot_identity": format!("snapshot:{}", context.input_identity),
+        "snapshot_identity": repo_exposure_snapshot_identity(&context.input_identity, &head),
         "content_sha256": content_sha256,
     }))
+}
+
+fn repo_exposure_snapshot_identity(input_identity: &str, repository_head: &str) -> String {
+    format!("snapshot:{input_identity};revision:{repository_head}")
 }
 
 pub(crate) fn validate_repo_exposure_artifact(
@@ -404,6 +408,26 @@ fn content_sha256_with_placeholder(raw: &str) -> Result<String, String> {
 mod tests {
     use super::*;
 
+    fn run_git(root: &Path, args: &[&str]) -> Result<String, String> {
+        git_output(root, args)
+    }
+
+    fn temporary_git_root() -> Result<PathBuf, String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| format!("clock error: {error}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("ripr-artifact-identity-{stamp}"));
+        std::fs::create_dir_all(&root).map_err(|error| format!("create temp root: {error}"))?;
+        run_git(&root, &["init", "--quiet"])?;
+        run_git(&root, &["config", "user.name", "RIPR test"])?;
+        run_git(
+            &root,
+            &["config", "user.email", "ripr-test@example.invalid"],
+        )?;
+        Ok(root)
+    }
+
     #[test]
     fn content_placeholder_is_fixed_width() {
         assert_eq!(CONTENT_SHA256_PLACEHOLDER.len(), 71);
@@ -421,5 +445,92 @@ mod tests {
         let raw = r#"{"content_sha256":"sha256:gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg"}"#;
         let result = content_sha256_with_placeholder(raw);
         assert!(matches!(result, Err(error) if error.contains("sha256:<64 hex>")));
+    }
+
+    #[test]
+    fn repo_exposure_identity_changes_with_controlled_git_revision() -> Result<(), String> {
+        let root = temporary_git_root()?;
+        let result = (|| -> Result<(), String> {
+            std::fs::write(root.join("Cargo.toml"), "[workspace]\n")
+                .map_err(|error| format!("write Cargo.toml: {error}"))?;
+            run_git(&root, &["add", "Cargo.toml"])?;
+            run_git(
+                &root,
+                &[
+                    "-c",
+                    "commit.gpgSign=false",
+                    "commit",
+                    "--quiet",
+                    "-m",
+                    "before",
+                ],
+            )?;
+            let before = RepoExposureArtifactContext::for_repo_exposure(
+                root.clone(),
+                "draft".to_string(),
+                None,
+            )?;
+            let before_artifact = repo_exposure_artifact_metadata(&before, "sha256:test")?;
+
+            run_git(
+                &root,
+                &[
+                    "-c",
+                    "commit.gpgSign=false",
+                    "commit",
+                    "--quiet",
+                    "--allow-empty",
+                    "-m",
+                    "after",
+                ],
+            )?;
+            let after = RepoExposureArtifactContext::for_repo_exposure(
+                root.clone(),
+                "draft".to_string(),
+                None,
+            )?;
+            let after_artifact = repo_exposure_artifact_metadata(&after, "sha256:test")?;
+
+            if before.input_identity != after.input_identity {
+                return Err(
+                    "controlled Git revisions must preserve the comparable input identity"
+                        .to_string(),
+                );
+            }
+            let before_snapshot = before_artifact["snapshot_identity"]
+                .as_str()
+                .ok_or_else(|| "before artifact omitted snapshot identity".to_string())?;
+            let after_snapshot = after_artifact["snapshot_identity"]
+                .as_str()
+                .ok_or_else(|| "after artifact omitted snapshot identity".to_string())?;
+            let before_head = before_artifact["repository"]["head"]
+                .as_str()
+                .ok_or_else(|| "before artifact omitted repository head".to_string())?;
+            let after_head = after_artifact["repository"]["head"]
+                .as_str()
+                .ok_or_else(|| "after artifact omitted repository head".to_string())?;
+            if before_snapshot
+                != repo_exposure_snapshot_identity(&before.input_identity, before_head)
+                || after_snapshot
+                    != repo_exposure_snapshot_identity(&after.input_identity, after_head)
+            {
+                return Err(
+                    "snapshot identity must use the production snapshot identity builder"
+                        .to_string(),
+                );
+            }
+            if before_snapshot == after_snapshot {
+                return Err(
+                    "controlled Git revisions must produce distinct snapshot identities"
+                        .to_string(),
+                );
+            }
+            Ok(())
+        })();
+        let cleanup =
+            std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"));
+        result?;
+        cleanup?;
+        Ok(())
     }
 }
