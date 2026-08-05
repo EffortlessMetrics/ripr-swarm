@@ -34,17 +34,11 @@ impl RepoExposureArtifactContext {
         let canonical_root = canonical_root(&root)?;
         let (manifest_identity, lockfile_identity) =
             crate::analysis::seam_cache::workspace_named_file_identities(&canonical_root);
-        let revision_identity = git_output(&canonical_root, &["rev-parse", "HEAD"])
-            .ok()
-            .map(|head| head.trim().to_string())
-            .filter(|head| is_full_sha(head))
-            .unwrap_or_else(|| "unavailable".to_string());
         let input_canonical = format!(
-            "root={};base={:?};mode={};format=repo-exposure-json;revision={};manifest={:?};lockfile={:?};analyzer={}",
+            "root={};base={:?};mode={};format=repo-exposure-json;manifest={:?};lockfile={:?};analyzer={}",
             display_root(&canonical_root),
             base_revision,
             mode,
-            revision_identity,
             manifest_identity,
             lockfile_identity,
             env!("CARGO_PKG_VERSION"),
@@ -135,13 +129,13 @@ pub(crate) fn repo_exposure_artifact_metadata(
                 "profile": context.mode,
                 "worktree": status,
             },
-        "snapshot_identity": repo_exposure_snapshot_identity(&context.input_identity),
+        "snapshot_identity": repo_exposure_snapshot_identity(&context.input_identity, &head),
         "content_sha256": content_sha256,
     }))
 }
 
-fn repo_exposure_snapshot_identity(input_identity: &str) -> String {
-    format!("snapshot:{input_identity}")
+fn repo_exposure_snapshot_identity(input_identity: &str, repository_head: &str) -> String {
+    format!("snapshot:{input_identity};revision:{repository_head}")
 }
 
 pub(crate) fn validate_repo_exposure_artifact(
@@ -528,9 +522,10 @@ mod tests {
             )?;
             let after_artifact = repo_exposure_artifact_metadata(&after, "sha256:test")?;
 
-            if before.input_identity == after.input_identity {
+            if before.input_identity != after.input_identity {
                 return Err(
-                    "controlled Git revisions must produce distinct input identities".to_string(),
+                    "controlled Git revisions must preserve the comparable input identity"
+                        .to_string(),
                 );
             }
             let before_snapshot = before_artifact["snapshot_identity"]
@@ -539,8 +534,16 @@ mod tests {
             let after_snapshot = after_artifact["snapshot_identity"]
                 .as_str()
                 .ok_or_else(|| "after artifact omitted snapshot identity".to_string())?;
-            if before_snapshot != repo_exposure_snapshot_identity(&before.input_identity)
-                || after_snapshot != repo_exposure_snapshot_identity(&after.input_identity)
+            let before_head = before_artifact["repository"]["head"]
+                .as_str()
+                .ok_or_else(|| "before artifact omitted repository head".to_string())?;
+            let after_head = after_artifact["repository"]["head"]
+                .as_str()
+                .ok_or_else(|| "after artifact omitted repository head".to_string())?;
+            if before_snapshot
+                != repo_exposure_snapshot_identity(&before.input_identity, before_head)
+                || after_snapshot
+                    != repo_exposure_snapshot_identity(&after.input_identity, after_head)
             {
                 return Err(
                     "snapshot identity must use the production snapshot identity builder"
