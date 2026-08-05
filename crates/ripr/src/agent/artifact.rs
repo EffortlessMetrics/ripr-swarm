@@ -34,11 +34,17 @@ impl RepoExposureArtifactContext {
         let canonical_root = canonical_root(&root)?;
         let (manifest_identity, lockfile_identity) =
             crate::analysis::seam_cache::workspace_named_file_identities(&canonical_root);
+        let revision_identity = git_output(&canonical_root, &["rev-parse", "HEAD"])
+            .ok()
+            .map(|head| head.trim().to_string())
+            .filter(|head| is_full_sha(head))
+            .unwrap_or_else(|| "unavailable".to_string());
         let input_canonical = format!(
-            "root={};base={:?};mode={};format=repo-exposure-json;manifest={:?};lockfile={:?};analyzer={}",
+            "root={};base={:?};mode={};format=repo-exposure-json;revision={};manifest={:?};lockfile={:?};analyzer={}",
             display_root(&canonical_root),
             base_revision,
             mode,
+            revision_identity,
             manifest_identity,
             lockfile_identity,
             env!("CARGO_PKG_VERSION"),
@@ -404,6 +410,38 @@ fn content_sha256_with_placeholder(raw: &str) -> Result<String, String> {
 mod tests {
     use super::*;
 
+    fn run_git(root: &Path, args: &[&str]) -> Result<String, String> {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .map_err(|error| format!("run git {args:?}: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        String::from_utf8(output.stdout)
+            .map_err(|error| format!("git {args:?} returned non-UTF-8 output: {error}"))
+    }
+
+    fn temporary_git_root() -> Result<PathBuf, String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| format!("clock error: {error}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("ripr-artifact-identity-{stamp}"));
+        std::fs::create_dir_all(&root).map_err(|error| format!("create temp root: {error}"))?;
+        run_git(&root, &["init", "--quiet"])?;
+        run_git(&root, &["config", "user.name", "RIPR test"])?;
+        run_git(
+            &root,
+            &["config", "user.email", "ripr-test@example.invalid"],
+        )?;
+        Ok(root)
+    }
+
     #[test]
     fn content_placeholder_is_fixed_width() {
         assert_eq!(CONTENT_SHA256_PLACEHOLDER.len(), 71);
@@ -421,5 +459,44 @@ mod tests {
         let raw = r#"{"content_sha256":"sha256:gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg"}"#;
         let result = content_sha256_with_placeholder(raw);
         assert!(matches!(result, Err(error) if error.contains("sha256:<64 hex>")));
+    }
+
+    #[test]
+    fn repo_exposure_identity_changes_with_controlled_git_revision() -> Result<(), String> {
+        let root = temporary_git_root()?;
+        std::fs::write(root.join("Cargo.toml"), "[workspace]\n")
+            .map_err(|error| format!("write Cargo.toml: {error}"))?;
+        run_git(&root, &["add", "Cargo.toml"])?;
+        run_git(&root, &["commit", "--quiet", "-m", "before"])?;
+        let before = RepoExposureArtifactContext::for_repo_exposure(
+            root.clone(),
+            "draft".to_string(),
+            None,
+        )?;
+
+        std::fs::write(root.join("Cargo.toml"), "[workspace]\nresolver = \"3\"\n")
+            .map_err(|error| format!("update Cargo.toml: {error}"))?;
+        run_git(&root, &["add", "Cargo.toml"])?;
+        run_git(&root, &["commit", "--quiet", "-m", "after"])?;
+        let after = RepoExposureArtifactContext::for_repo_exposure(
+            root.clone(),
+            "draft".to_string(),
+            None,
+        )?;
+
+        if before.input_identity == after.input_identity {
+            return Err(
+                "controlled Git revisions must produce distinct input identities".to_string(),
+            );
+        }
+        if format!("snapshot:{}", before.input_identity)
+            == format!("snapshot:{}", after.input_identity)
+        {
+            return Err(
+                "controlled Git revisions must produce distinct snapshot identities".to_string(),
+            );
+        }
+        std::fs::remove_dir_all(root).map_err(|error| format!("remove temp root: {error}"))?;
+        Ok(())
     }
 }
