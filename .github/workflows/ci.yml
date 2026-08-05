@@ -82,6 +82,13 @@ jobs:
           path: |
             target/ripr/reports/release-readiness.json
             target/ripr/reports/release-readiness.md
+            target/ripr/reports/agent-receipt.json
+            target/ripr/reports/gap-decision-ledger.json
+            target/ripr/reports/lsp-cockpit.json
+            target/ripr/reports/lsp-cockpit.md
+            target/ripr/reports/repo-exposure-latency.json
+            target/ripr/reports/repo-exposure-latency.md
+            target/ripr/reports/start-here.md
             target/ripr/release-readiness/
           if-no-files-found: warn
       - name: Generate ripr test-efficiency report
