@@ -411,19 +411,7 @@ mod tests {
     use super::*;
 
     fn run_git(root: &Path, args: &[&str]) -> Result<String, String> {
-        let output = Command::new("git")
-            .args(args)
-            .current_dir(root)
-            .output()
-            .map_err(|error| format!("run git {args:?}: {error}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "git {args:?} failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        String::from_utf8(output.stdout)
-            .map_err(|error| format!("git {args:?} returned non-UTF-8 output: {error}"))
+        git_output(root, args)
     }
 
     fn temporary_git_root() -> Result<PathBuf, String> {
