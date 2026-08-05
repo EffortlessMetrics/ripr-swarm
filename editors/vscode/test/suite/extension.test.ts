@@ -347,8 +347,11 @@ suite('Extension Smoke', () => {
       this.skip();
     }
 
+    const uri = workspaceFileUri('src/lib.rs');
+    const config = vscode.workspace.getConfiguration('ripr', uri);
+    const previousProfile = config.get<'actionable' | 'full'>('diagnosticProfile', 'actionable');
     try {
-      const uri = workspaceFileUri('src/lib.rs');
+      await updateDiagnosticProfile(config, 'full');
       await vscode.commands.executeCommand('workbench.action.closeAllEditors');
       const document = await vscode.workspace.openTextDocument(uri);
       assert.strictEqual(document.languageId, 'rust');
@@ -492,6 +495,7 @@ suite('Extension Smoke', () => {
     );
       assert.strictEqual(activeEditor.selection.active.line, 3);
     } finally {
+      await updateDiagnosticProfile(config, previousProfile);
       await vscode.commands.executeCommand('workbench.action.closeAllEditors');
     }
   });
@@ -503,7 +507,10 @@ suite('Extension Smoke', () => {
     }
 
     const uri = workspaceFileUri('src/lib.rs');
+    const config = vscode.workspace.getConfiguration('ripr', uri);
+    const previousProfile = config.get<'actionable' | 'full'>('diagnosticProfile', 'actionable');
     try {
+      await updateDiagnosticProfile(config, 'full');
       await vscode.commands.executeCommand('workbench.action.closeAllEditors');
       const document = await vscode.workspace.openTextDocument(uri);
       await vscode.window.showTextDocument(document);
@@ -569,6 +576,7 @@ suite('Extension Smoke', () => {
       assert.notStrictEqual(currentPacket.status, 'stale');
       assert.strictEqual(currentPacket.packets?.[0]?.seam_id, '67fc764ba37d77bd');
     } finally {
+      await updateDiagnosticProfile(config, previousProfile);
       await vscode.commands.executeCommand('workbench.action.closeAllEditors');
     }
   });
@@ -582,7 +590,7 @@ suite('Extension Smoke', () => {
     const uri = workspaceFileUri('src/lib.rs');
     const config = vscode.workspace.getConfiguration('ripr', uri);
     const transitionTimeoutMs = 120000;
-    const previousProfile = config.get<'actionable' | 'full'>('diagnosticProfile', 'full');
+    const previousProfile = config.get<'actionable' | 'full'>('diagnosticProfile', 'actionable');
     try {
       await vscode.commands.executeCommand('workbench.action.closeAllEditors');
       const document = await vscode.workspace.openTextDocument(uri);
@@ -627,7 +635,7 @@ suite('Extension Smoke', () => {
         transitionTimeoutMs
       );
     } finally {
-      await config.update('diagnosticProfile', previousProfile, vscode.ConfigurationTarget.Workspace);
+      await updateDiagnosticProfile(config, previousProfile);
       await vscode.commands.executeCommand('workbench.action.closeAllEditors');
     }
   });
@@ -640,7 +648,7 @@ suite('Extension Smoke', () => {
 
     const uri = workspaceFileUri('src/pricing.ts');
     const config = vscode.workspace.getConfiguration('ripr', uri);
-    const previousProfile = config.get<'actionable' | 'full'>('diagnosticProfile', 'full');
+    const previousProfile = config.get<'actionable' | 'full'>('diagnosticProfile', 'actionable');
     try {
       // Preview diagnostics are intentionally exposed on the actionable
       // profile; the preceding Rust journey uses the full seam profile.

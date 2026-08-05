@@ -26,7 +26,7 @@ function stageIntegrationWorkspace(templatePath: string, workspacePath: string):
     path.join(workspacePath, '.vscode', 'settings.json'),
     `${JSON.stringify({
       'ripr.seamDiagnostics': true,
-      'ripr.diagnosticProfile': 'full'
+      'ripr.diagnosticProfile': 'actionable'
     }, null, 2)}\n`
   );
   fs.writeFileSync(
@@ -201,7 +201,7 @@ async function main() {
           'ripr.baseRef': baseRef,
           'ripr.check.mode': 'draft',
           'ripr.seamDiagnostics': true,
-          'ripr.diagnosticProfile': 'full',
+          'ripr.diagnosticProfile': 'actionable',
           'security.workspace.trust.enabled': workspaceTrustMode !== 'trusted',
         }, null, 2)}\n`
       );
