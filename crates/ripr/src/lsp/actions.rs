@@ -2410,8 +2410,10 @@ mod tests {
         if target["label"] != "gap_verify"
             || target["command"] != "cargo xtask verify"
             || target["root"] != COMMAND_ROOT
+            || target["uri"] != "file:///workspace/src/pricing.rs"
+            || target["line"] != 12
         {
-            return Err(format!("gap command metadata was not preserved: {target}"));
+            return Err(format!("gap command context was not preserved: {target}"));
         }
         Ok(())
     }

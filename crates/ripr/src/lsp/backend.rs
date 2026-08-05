@@ -7495,8 +7495,14 @@ mod delivery_selection_parity_tests {
             ),
         };
 
-        if backend.hover_for_position(&params).is_none() {
-            return Err("overlapping gap diagnostic should provide a hover".to_string());
+        let hover = backend
+            .hover_for_position(&params)
+            .ok_or_else(|| "overlapping gap diagnostic should provide a hover".to_string())?;
+        let hover_text = serde_json::to_string(&hover).map_err(|error| error.to_string())?;
+        if !hover_text.contains("gap:rust:pricing:threshold-boundary") {
+            return Err(format!(
+                "overlapping gap diagnostic did not own the hover content: {hover_text}"
+            ));
         }
         Ok(())
     }
