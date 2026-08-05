@@ -650,15 +650,16 @@ suite('Extension Smoke', () => {
     const config = vscode.workspace.getConfiguration('ripr', uri);
     const previousProfile = config.get<'actionable' | 'full'>('diagnosticProfile', 'actionable');
     try {
-      // Preview diagnostics are intentionally exposed on the actionable
-      // profile; the preceding Rust journey uses the full seam profile.
-      await updateDiagnosticProfile(config, 'actionable');
       await cleanupEditorGapSmokeFiles();
       await writeEditorGapSmokeFiles();
       await vscode.commands.executeCommand('workbench.action.closeAllEditors');
       const document = await vscode.workspace.openTextDocument(uri);
       assert.strictEqual(document.languageId, 'typescript');
       await vscode.window.showTextDocument(document);
+      // Preview diagnostics are intentionally exposed on the actionable
+      // profile. Apply it after the resource is open so the next
+      // workspace/configuration pull is scoped to this TypeScript URI.
+      await updateDiagnosticProfile(config, 'actionable');
       // Keep the preview journey on the same host/session as the trusted Rust
       // journey so state leakage remains observable across the sequence.
       await editAndSaveDocumentThenWaitForAnalysis(document);
