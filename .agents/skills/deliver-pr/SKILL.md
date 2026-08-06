@@ -7,6 +7,10 @@ description: Carry one coherent issue or claim from current repository truth thr
 
 One coherent claim has one current candidate, current proof and review for the affected seams, a durable GitHub PR state, and an accurate issue disposition after merge or deliberate closure.
 
+# Route markers
+
+- `review_route:deliver_pr_to_review_pr`
+
 # Procedure
 
 1. Hydrate the selected claim from the issue, governing artifacts, current source, and any existing PR.
@@ -25,11 +29,13 @@ One coherent claim has one current candidate, current proof and review for the a
 4. Enter at that point. Do not recreate completed ceremony merely because this session arrived later.
 5. If the issue is missing or materially wrong, use `prepare-issue` and continue.
 6. If proof is absent or self-confirming, use `prepare-proof` and continue.
-7. Build or repair the one current candidate with `build-candidate`.
-8. Run `review-pr` on the exact current head before merge convergence. A green check set, empty thread list, or unavailable reviewer does not establish substantive review.
-9. Route `REPAIR_REQUIRED` back through the same candidate, then refresh only the affected proof and review dimensions.
-10. Publish or resume the PR, then use `finish-pr` only after the current head has a `REVIEW_READY` disposition or an explicit incomplete/blocking state is being carried forward.
-11. After merge or deliberate closure, verify current `main`, update delivered versus remaining acceptance, update parents, and release the candidate worktree.
+7. Build or repair the one current candidate with `build-candidate` and materialize an exact committed head.
+8. Run `review-pr` on that exact head. Before publication, retain unavailable remote checks, artifacts, and external review as `REVIEW_INCOMPLETE`; do not convert them to pass.
+9. Use `finish-pr` to publish or resume the exact candidate when no equivalent PR already exists.
+10. Re-enter `review-pr` on the exact published PR head after remote evidence is available. A green check set, empty thread list, or unavailable reviewer does not establish substantive review.
+11. Route `REPAIR_REQUIRED` back through the same candidate, then refresh only the affected proof and review dimensions.
+12. Only a current `REVIEW_READY` PR head may enter `finish-pr` merge convergence. Explicit incomplete or blocking review states remain draft or durably in flight.
+13. After merge or deliberate closure, verify current `main`, update delivered versus remaining acceptance, update parents, and release the candidate worktree.
 
 # Candidate law
 
