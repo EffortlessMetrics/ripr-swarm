@@ -17,6 +17,8 @@ substantive exact-head inspection → review-pr
 published or existing PR convergence → finish-pr
 ```
 
+- `review_route:root_to_review_pr`
+
 A candidate that appears ready moves through `review-pr` before `finish-pr` may
 arm merge. Reading automated comments, seeing no unresolved threads, or seeing
 green CI is remote triage, not the substantive current-head review.
