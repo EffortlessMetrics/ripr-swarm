@@ -433,12 +433,14 @@ PR.
 For scoped implementation, docs, tests, and refactors, use this default flow:
 
 ```text
-build -> review-pr -> improve -> validate -> commit -> push -> open/update PR -> finish-pr -> merge when ready
+build -> improve -> validate -> commit exact candidate -> review-pr candidate pass -> push/open/update PR -> review-pr published-head pass -> finish-pr -> merge when ready
 ```
 
-A PR is ready when the branch is current, the exact head has a `REVIEW_READY`
-disposition, required checks pass, real review findings are addressed, the diff
-matches the stated scope, and repo policy does not require a different sequence.
+The candidate pass may remain `REVIEW_INCOMPLETE` while remote evidence does not
+exist. A PR is ready only when the exact published head has a current
+`REVIEW_READY` disposition, required checks pass, real review findings are
+addressed, the diff matches the stated scope, and repo policy does not require a
+different sequence.
 
 Merge-safety rules, learned the hard way:
 
@@ -540,8 +542,10 @@ before merge convergence. Reading automated comments, seeing an empty thread
 list, or seeing green CI is remote triage, not review completion. Follow changed
 behavior into its semantic owner and real consumers, challenge the test oracle,
 inspect rendered/public and runtime/schema/docs parity, check platform-relevant
-branches, and bind the review record to the exact head. On the author's own PR,
-use a `COMMENT` review with an explicit blocking or review-ready disposition;
+branches, and bind the review record to a committed head. A pre-publication pass
+may remain `REVIEW_INCOMPLETE`; re-run the review on the exact published PR head
+with current remote evidence before emitting `REVIEW_READY`. On the author's own
+PR, use a `COMMENT` review with an explicit blocking or review-ready disposition;
 GitHub's author-review limitation is not approval.
 
 When reviewing or repairing code, read these files first:
@@ -563,10 +567,12 @@ and closeout graph is the repository's source of truth for long-running work.
 
 Use the seven Codex procedures under `.agents/skills/**` as the operational
 entrypoints. Select the narrowest procedure for the current claim, and keep one
-current branch/worktree/PR per coherent claim. A candidate that appears ready
-moves from `build-candidate` through `review-pr`; only a current `REVIEW_READY`
-head enters `finish-pr` merge convergence. A waiting PR is still in flight;
-advance a distinct claim when useful and revisit it after a material transition.
+current branch/worktree/PR per coherent claim. Commit the coherent candidate,
+run the pre-publication `review-pr` pass, and let a `REVIEW_INCOMPLETE` candidate
+enter `finish-pr` only for publication. Re-run `review-pr` on the exact published
+head with current remote evidence; only `REVIEW_READY` may enter `finish-pr`
+merge convergence. A waiting PR is still in flight; advance a distinct claim
+when useful and revisit it after a material transition.
 
 Use focused readers or reviewers only when they add a different source,
 oracle, context, threat model, platform reach, or verification method. Their
