@@ -7,6 +7,11 @@ description: Build, harden, simplify, and challenge one current candidate for a 
 
 One candidate implements the selected claim, carries discriminating proof, respects the semantic owner, has no unnecessary parallel authority, and is ready for substantive exact-head review.
 
+# Route markers
+
+- `review_route:build_candidate_to_review_pr`
+- `review_route:repair_returns_to_same_candidate`
+
 # Procedure
 
 1. Confirm the issue, claim boundary, current candidate branch/worktree, and governing sources.
@@ -32,8 +37,10 @@ One candidate implements the selected claim, carries discriminating proof, respe
    - platform, packaging, process, security, and user-facing claim honesty where relevant.
 8. Repair every accepted finding through the same candidate.
 9. Run `cargo xtask precommit`, focused tests, and the additional gates required by the changed surface. Report incomplete or infrastructure-limited evidence honestly.
-10. Hand the exact current head to `review-pr`. Candidate challenge inside the builder is not the final PR review, and green CI or zero review threads cannot replace that pass.
-11. If `review-pr` returns `REPAIR_REQUIRED`, repair the same candidate and refresh only the affected review/proof dimensions before reviewing again.
+10. Commit the coherent candidate so review binds to an exact Git object. An uncommitted worktree cannot receive an exact-head disposition.
+11. Hand the exact committed head to `review-pr`. Candidate challenge inside the builder is not the final PR review, and green CI or zero review threads cannot replace that pass.
+12. Before a PR exists, `review-pr` may return `REVIEW_INCOMPLETE` because remote checks, artifacts, and review evidence are unavailable. Route that exact candidate to `finish-pr` for publication, then re-enter `review-pr` on the published PR head before merge convergence.
+13. If `review-pr` returns `REPAIR_REQUIRED`, repair the same candidate, recommit, and refresh only the affected review/proof dimensions before reviewing again.
 
 # Candidate law
 
