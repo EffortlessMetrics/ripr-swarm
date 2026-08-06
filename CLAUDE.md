@@ -17,6 +17,8 @@ substantive exact-head inspection → review-pr
 published or existing PR convergence → finish-pr
 ```
 
+- `review_route:root_to_review_pr`
+
 Use the narrowest skill that matches the current state. Enter existing work at
 the earliest missing or stale judgment rather than recreating completed
 ceremony.
@@ -87,7 +89,7 @@ many distinct claims may be in flight
 one current candidate per coherent claim
 one writer mutates each candidate branch/worktree at a time
 readers, researchers, reviewers, and tools may inspect it
-Git and focused integration proof surface real interactions when they occur
+Git or integration proof surfaces real interactions when they occur
 ```
 
 Do not inspect sibling worktrees, reserve files/crates/semantic surfaces,
@@ -250,6 +252,12 @@ clean self-review records what was inspected and uses a `COMMENT` disposition on
 the author's PR; GitHub's inability to request changes from the author is not
 approval.
 
+Review binds only to committed Git objects. A pre-publication candidate review
+may establish source and oracle findings but must retain absent hosted checks,
+artifacts, and external review as `REVIEW_INCOMPLETE`. After the PR exists and
+remote evidence is current, re-run `review-pr` on the exact published head. Only
+that published-head pass may emit `REVIEW_READY` for merge convergence.
+
 ## Local validation
 
 Use focused proof during implementation. Before publication, run:
@@ -310,9 +318,11 @@ subjects.
 ## PR convergence
 
 Use `.claude/skills/finish-pr/SKILL.md` for publication, review repair, CI,
-integration, merge, and reconciliation. `finish-pr` may arm merge only after the
-exact current head has a `REVIEW_READY` disposition from `review-pr`; a later
-material head change refreshes the affected review dimensions.
+integration, merge, and reconciliation. A committed candidate with
+`REVIEW_INCOMPLETE` may be published so remote evidence can run. `finish-pr` may
+arm merge only after the exact published head has a `REVIEW_READY` disposition
+from `review-pr`; a later material head change refreshes affected review
+dimensions.
 
 Useful remote-owned outcomes:
 
