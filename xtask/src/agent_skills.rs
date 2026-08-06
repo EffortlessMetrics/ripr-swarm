@@ -13,23 +13,25 @@ const SKILLS: [&str; 7] = [
     "review-pr",
 ];
 
-const REVIEW_PR_REQUIRED_PHRASES: [&str; 16] = [
-    "reviewed_head_sha",
-    "semantic owner",
-    "old or wrong behavior",
-    "rendered",
-    "contract parity",
-    "platform",
-    "exact-head ci",
-    "denominators",
-    "mutation/removal experiment",
-    "unresolved threads does not mean",
-    "green required ci",
-    "`lgtm`",
-    "`comment`",
-    "review_ready",
-    "repair_required",
-    "mergestatestatus: blocked",
+const REVIEW_PR_ROUTED_SKILLS: [&str; 3] = ["build-candidate", "deliver-pr", "finish-pr"];
+
+const REVIEW_PR_REQUIRED_MARKERS: [&str; 16] = [
+    "review_contract:exact_head_binding",
+    "review_contract:semantic_owner_and_consumers",
+    "review_contract:wrong_behavior_oracle_challenge",
+    "review_contract:rendered_behavior",
+    "review_contract:contract_parity",
+    "review_contract:platform_relevance",
+    "review_contract:exact_head_ci_receipts",
+    "review_contract:denominator_honesty",
+    "review_contract:mutation_or_removal_challenge",
+    "review_contract:no_threads_is_not_review",
+    "review_contract:green_ci_is_not_semantic_review",
+    "review_contract:clean_review_record_not_lgtm",
+    "review_contract:author_self_review_comment",
+    "review_contract:review_ready_gate",
+    "review_contract:repair_same_candidate",
+    "review_contract:blocked_is_not_human_cause",
 ];
 
 const PROVIDERS: [(&str, &str, &str, &str, Option<&str>); 2] = [
@@ -138,6 +140,16 @@ pub(crate) fn check() -> Result<(), String> {
                     ));
                 }
             }
+            if REVIEW_PR_ROUTED_SKILLS.contains(&skill) && !skill_text.contains("review-pr") {
+                findings.push(format!(
+                    "{provider}: {relative} does not route through review-pr"
+                ));
+            }
+            if skill == "finish-pr" && !skill_text.contains("REVIEW_READY") {
+                findings.push(format!(
+                    "{provider}: {relative} can converge without REVIEW_READY"
+                ));
+            }
             if skill == "review-pr" {
                 validate_review_pr_contract(provider, &relative, &skill_text, &mut findings);
             }
@@ -208,7 +220,8 @@ pub(crate) fn check() -> Result<(), String> {
         "not_enforced": [
             "prose identity", "section-order symmetry", "equal agent counts",
             "equal model choices", "one role per pass",
-            "one provider as generated canonical source", "mandatory separate reviewer identity"
+            "one provider as generated canonical source", "mandatory separate reviewer identity",
+            "semantic truth of declared review contract markers"
         ]
     });
     crate::write_report(
@@ -244,14 +257,19 @@ fn validate_review_pr_contract(
     skill_text: &str,
     findings: &mut Vec<String>,
 ) {
-    let lower = skill_text.to_ascii_lowercase();
-    for phrase in REVIEW_PR_REQUIRED_PHRASES {
-        if !lower.contains(phrase) {
-            findings.push(format!(
-                "{provider}: {relative} is missing review contract phrase `{phrase}`"
-            ));
-        }
+    for marker in missing_review_pr_contract_markers(skill_text) {
+        findings.push(format!(
+            "{provider}: {relative} is missing review contract marker `{marker}`"
+        ));
     }
+}
+
+fn missing_review_pr_contract_markers(skill_text: &str) -> Vec<&'static str> {
+    let lower = skill_text.to_ascii_lowercase();
+    REVIEW_PR_REQUIRED_MARKERS
+        .into_iter()
+        .filter(|marker| !lower.contains(marker))
+        .collect()
 }
 
 fn has_active_reference(text: &str, target: &str) -> bool {
@@ -272,4 +290,30 @@ fn negative_context(lines: &[&str], index: usize) -> bool {
                 line.contains("do not") || line.contains("no ") || line.contains("without ")
             })
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn review_contract_markers_are_closed_and_discriminating() -> Result<(), String> {
+        let complete = REVIEW_PR_REQUIRED_MARKERS.join("\n");
+        let missing = missing_review_pr_contract_markers(&complete);
+        if !missing.is_empty() {
+            return Err(format!(
+                "complete review contract unexpectedly missed markers: {missing:?}"
+            ));
+        }
+
+        let removed = REVIEW_PR_REQUIRED_MARKERS[3];
+        let incomplete = complete.replace(removed, "");
+        let missing = missing_review_pr_contract_markers(&incomplete);
+        if missing != [removed] {
+            return Err(format!(
+                "review contract mutation should miss only `{removed}`, got {missing:?}"
+            ));
+        }
+        Ok(())
+    }
 }
