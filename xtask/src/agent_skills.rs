@@ -271,7 +271,7 @@ fn validate_root_review_route(provider: &str, routing_text: &str, findings: &mut
         )),
     }
     for declared in counts.keys() {
-        if declared != ROOT_REVIEW_ROUTE_MARKER {
+        if declared.as_str() != ROOT_REVIEW_ROUTE_MARKER {
             findings.push(format!(
                 "{provider}: root instructions declare unknown review route marker `{declared}`"
             ));
@@ -298,7 +298,7 @@ fn review_route_findings(skill: &str, skill_text: &str) -> Vec<String> {
     for declared in counts.keys() {
         if !REVIEW_ROUTE_REQUIRED_MARKERS
             .iter()
-            .any(|(owner, marker)| *owner == skill && *marker == declared)
+            .any(|(owner, marker)| *owner == skill && *marker == declared.as_str())
         {
             findings.push(format!(
                 "declares unknown review route marker `{declared}`"
