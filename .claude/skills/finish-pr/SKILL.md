@@ -7,9 +7,15 @@ description: Publish or resume one PR, require substantive exact-head review, ad
 
 The selected PR has an exact current candidate, a current `review-pr` disposition, every substantive finding repaired or evidence-refuted, proof current for affected seams, honest remote-wait state, and accurate post-merge issue reconciliation.
 
+# Route markers
+
+- `review_route:finish_pr_requires_review_ready`
+
 # Entry condition
 
-`finish-pr` owns publication, review-comment/CI repair, merge, and reconciliation. It does not infer that substantive review occurred. Before arming merge, the exact current head must have `REVIEW_READY` from `review-pr`. Re-enter review for dimensions changed by a later head.
+`finish-pr` owns publication, review-comment/CI repair, merge, and reconciliation. It does not infer that substantive review occurred.
+
+A committed candidate with `REVIEW_INCOMPLETE` may enter so the PR can be published and remote evidence can run. Before auto-merge or merge, the exact published head must have `REVIEW_READY` from `review-pr`. Re-enter review for dimensions changed by a later head.
 
 # Workflow
 
@@ -33,7 +39,7 @@ The selected PR has an exact current candidate, a current `review-pr` dispositio
    - squash/merge-group result: combined-tree interaction.
 9. Do not update a behind-only branch. Reconcile only an actual conflict, explicit stack change, material prerequisite change, or failed integration proof.
 10. Do not treat green CI, zero unresolved threads, or unavailable automated reviewers as substantive review. Do not infer a human approval dependency from `mergeStateStatus: BLOCKED`; identify the exact active rule, required actor, unsatisfied requirement, and evidence source.
-11. When GitHub owns the next transition, yield instead of polling unchanged state. Arm auto-merge only for the exact reviewed head when `review-pr` says `REVIEW_READY` and required proof is current.
+11. When GitHub owns the next transition, yield instead of polling unchanged state. Arm auto-merge only for the exact published head when `review-pr` says `REVIEW_READY` and required proof is current.
 12. After merge, verify current `main`, update issue and parent acceptance, refresh generated evidence, and close only acceptance-complete issues.
 13. After deliberate closure or supersession, name the winning candidate and preserve residual work.
 
