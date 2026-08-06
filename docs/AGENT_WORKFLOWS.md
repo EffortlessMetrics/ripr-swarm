@@ -19,12 +19,18 @@ high-level goal
 → one distinct PR claim
 → deliver-pr
 → prepare-issue / prepare-proof / build-candidate as needed
-→ review-pr on the exact current head
-→ finish-pr for publication, remote repair, merge, and reconciliation
+→ commit one exact candidate head
+→ review-pr candidate pass
+→ finish-pr publication or PR resumption
+→ review-pr published-head pass with remote evidence
+→ finish-pr merge convergence and reconciliation
 → merge or durable in-flight state
-→ reconcile
 → continue until the actual goal is satisfied
 ```
+
+The pre-publication pass normally exits `REVIEW_INCOMPLETE` when hosted checks,
+artifacts, or external review do not yet exist. Only the exact published PR head
+may receive `REVIEW_READY` for merge convergence.
 
 ---
 
@@ -69,8 +75,10 @@ Use `deliver-pr`.
    - review repair;
    - integration proof;
    - reconciliation.
-5. Continue through publication, exact-head review, review/CI repair, merge, and
-   reconciliation unless a real stop condition exists.
+5. Commit the coherent candidate before exact-head review.
+6. Continue through candidate review, publication, published-head review,
+   review/CI repair, merge, and reconciliation unless a real stop condition
+   exists.
 
 Filing or correcting the issue is not a reason to stop when implementation was
 the requested job.
@@ -112,8 +120,8 @@ in-flight PRs, and final satisfaction judgment.
 ### `deliver-pr`
 
 Owns one coherent claim from current premise to merge or deliberate closure.
-It routes a candidate through substantive exact-head review before merge
-convergence.
+It routes a committed candidate through a pre-publication review, publication,
+and a published exact-head review before merge convergence.
 
 ### `prepare-issue`
 
@@ -128,14 +136,16 @@ proof before or during implementation.
 ### `build-candidate`
 
 Implements, tests, simplifies, challenges, and repairs one current candidate.
-Its internal challenge pass does not substitute the final PR review.
+It commits the coherent candidate before exact-head review. Its internal
+challenge pass does not substitute the final PR review.
 
 ### `review-pr`
 
-Performs the substantive review on one exact current head. It reads the complete
-diff and governing claim, follows the change into semantic owners and real
-consumers, challenges the test oracle and public/runtime contracts, inspects
-platform-relevant behavior and exact-head CI receipts, and emits one of:
+Performs the substantive review on one exact committed head. It reads the
+complete diff and governing claim, follows the change into semantic owners and
+real consumers, challenges the test oracle and public/runtime contracts,
+inspects platform-relevant behavior and exact-head CI receipts, and emits one
+of:
 
 ```text
 REVIEW_READY
@@ -146,21 +156,27 @@ INFRASTRUCTURE_FAILURE
 NOT_ESTABLISHED
 ```
 
-A clean review records what was inspected, risks considered, invariants checked,
-validation observed, missing evidence, residual assumptions, and the exact head.
-`LGTM`, green CI, and an empty thread list are not review records.
+A pre-publication candidate review normally retains absent remote evidence as
+`REVIEW_INCOMPLETE`. A clean published-head review records what was inspected,
+risks considered, invariants checked, validation observed, missing evidence,
+residual assumptions, and the exact head. `LGTM`, green CI, and an empty thread
+list are not review records.
 
 ### `finish-pr`
 
-Publishes or resumes the PR, requires a current `REVIEW_READY` disposition before
-arming merge, repairs review and CI findings, yields remote waits, merges the
-exact ready candidate, and reconciles repository state.
+Publishes or resumes a committed candidate with `REVIEW_INCOMPLETE`, obtains
+remote evidence, requires a current published-head `REVIEW_READY` disposition
+before arming merge, repairs review and CI findings, yields remote waits, merges
+the exact ready candidate, and reconciles repository state.
 
 Each provider's file contains the complete procedure and valid outcomes.
 
 ---
 
 ## Exact-head review contract
+
+An exact review subject is a committed Git object. Uncommitted working-tree
+state cannot receive an exact-head disposition.
 
 A standard review binds:
 
@@ -335,8 +351,9 @@ A later edit invalidates only affected dimensions:
 - integration basis;
 - candidate head identity.
 
-`finish-pr` may arm merge only when the exact head has `REVIEW_READY`, required
-proof is current, and substantive findings are repaired or evidence-refuted.
+`finish-pr` may publish a committed `REVIEW_INCOMPLETE` candidate. It may arm
+merge only when the exact published head has `REVIEW_READY`, required proof is
+current, and substantive findings are repaired or evidence-refuted.
 
 Useful remote-owned outcomes include:
 
