@@ -3,13 +3,33 @@ use std::path::Path;
 
 use serde_json::json;
 
-const SKILLS: [&str; 6] = [
+const SKILLS: [&str; 7] = [
     "build-candidate",
     "deliver-goal",
     "deliver-pr",
     "finish-pr",
     "prepare-issue",
     "prepare-proof",
+    "review-pr",
+];
+
+const REVIEW_PR_REQUIRED_PHRASES: [&str; 16] = [
+    "reviewed_head_sha",
+    "semantic owner",
+    "old or wrong behavior",
+    "rendered",
+    "contract parity",
+    "platform",
+    "exact-head ci",
+    "denominators",
+    "mutation/removal experiment",
+    "unresolved threads does not mean",
+    "green required ci",
+    "`lgtm`",
+    "`comment`",
+    "review_ready",
+    "repair_required",
+    "mergestatestatus: blocked",
 ];
 
 const PROVIDERS: [(&str, &str, &str, &str, Option<&str>); 2] = [
@@ -67,6 +87,12 @@ pub(crate) fn check() -> Result<(), String> {
                 }
             }
         }
+        let routing_text = provider_text.clone();
+        if !routing_text.contains("review-pr") {
+            findings.push(format!(
+                "{provider}: root instructions do not route substantive review through review-pr"
+            ));
+        }
         for skill in SKILLS {
             let relative = format!("{root}/{skill}/SKILL.md");
             let path = Path::new(&relative);
@@ -111,6 +137,9 @@ pub(crate) fn check() -> Result<(), String> {
                         "{provider}: {relative} references missing {sibling}"
                     ));
                 }
+            }
+            if skill == "review-pr" {
+                validate_review_pr_contract(provider, &relative, &skill_text, &mut findings);
             }
             provider_text.push('\n');
             provider_text.push_str(&skill_text);
@@ -159,6 +188,8 @@ pub(crate) fn check() -> Result<(), String> {
             "GOAL_IN_FLIGHT",
             "NEEDS_OWNER_DECISION",
             "NOT_ESTABLISHED",
+            "REVIEW_READY",
+            "REPAIR_REQUIRED",
         ] {
             if !provider_text.contains(state) {
                 findings.push(format!("{provider}: required state absent: {state}"));
@@ -177,7 +208,7 @@ pub(crate) fn check() -> Result<(), String> {
         "not_enforced": [
             "prose identity", "section-order symmetry", "equal agent counts",
             "equal model choices", "one role per pass",
-            "one provider as generated canonical source"
+            "one provider as generated canonical source", "mandatory separate reviewer identity"
         ]
     });
     crate::write_report(
@@ -204,6 +235,22 @@ pub(crate) fn check() -> Result<(), String> {
             "check-agent-skills found {} issue(s); see target/ripr/reports/agent-skills.md",
             report["findings"].as_array().map_or(0, Vec::len)
         ))
+    }
+}
+
+fn validate_review_pr_contract(
+    provider: &str,
+    relative: &str,
+    skill_text: &str,
+    findings: &mut Vec<String>,
+) {
+    let lower = skill_text.to_ascii_lowercase();
+    for phrase in REVIEW_PR_REQUIRED_PHRASES {
+        if !lower.contains(phrase) {
+            findings.push(format!(
+                "{provider}: {relative} is missing review contract phrase `{phrase}`"
+            ));
+        }
     }
 }
 
