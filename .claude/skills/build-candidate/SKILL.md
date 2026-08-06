@@ -7,6 +7,11 @@ description: Build, harden, simplify, and challenge one current candidate for a 
 
 One candidate implements the claim, carries discriminating evidence, extends the correct semantic owner, contains no unnecessary parallel authority, and is ready for exact-head `review-pr` inspection.
 
+# Route markers
+
+- `review_route:build_candidate_to_review_pr`
+- `review_route:repair_returns_to_same_candidate`
+
 # Workflow
 
 1. Confirm the controlling issue, claim boundary, current branch/worktree, and governing sources.
@@ -32,8 +37,10 @@ One candidate implements the claim, carries discriminating evidence, extends the
    - security, privacy, platform, packaging, compatibility, performance, and user-facing claim honesty where relevant.
 8. Repair accepted findings through the same candidate.
 9. Run `cargo xtask precommit`, focused tests, and changed-surface gates. Report missing or infrastructure-limited evidence without converting it to pass.
-10. Route the exact current head to `review-pr`. Candidate challenge during implementation is not the final substantive PR review, and green checks or an empty thread list do not replace it.
-11. When `review-pr` returns `REPAIR_REQUIRED`, repair the same candidate and refresh only affected proof/review dimensions before reviewing again.
+10. Commit the coherent candidate so the review subject is one exact Git object. An uncommitted worktree cannot receive an exact-head disposition.
+11. Route that committed head to `review-pr`. Candidate challenge during implementation is not the final substantive PR review, and green checks or an empty thread list do not replace it.
+12. Before PR publication, unavailable hosted checks, artifacts, and external review normally produce `REVIEW_INCOMPLETE`. Route the exact candidate to `finish-pr` for publication and re-enter `review-pr` on the published head before merge convergence.
+13. When `review-pr` returns `REPAIR_REQUIRED`, repair the same candidate, recommit, and refresh only affected proof/review dimensions before reviewing again.
 
 # Mutation boundary
 
