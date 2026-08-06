@@ -12,6 +12,13 @@ mod parse;
 mod rerun;
 mod suggest;
 
+use crate::agent::loop_commands::{
+    WORKFLOW_AGENT_BRIEF_ARTIFACT, WORKFLOW_AGENT_PACKET_ARTIFACT,
+    WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, WORKFLOW_COMMANDS_MARKDOWN_ARTIFACT,
+    WORKFLOW_MANIFEST_ARTIFACT,
+};
+use crate::app::repair_attempt::BeforeArtifactSource;
+
 pub fn run(mut args: Vec<String>) -> Result<(), String> {
     let version_requested = parse::top_level_version_requested(&args);
     // #2610: extract --verbose before command dispatch so it works with any
@@ -23,7 +30,71 @@ pub fn run(mut args: Vec<String>) -> Result<(), String> {
         crate::set_verbose(true);
         eprintln!("ripr: verbose mode enabled");
     }
-    execute::execute(parse::parse_args(args)?)
+    let before_attempt = before_repair_attempt(&args)?;
+    execute::execute(parse::parse_args(args)?)?;
+    if let Some(options) = before_attempt {
+        persist_before_repair_attempt(&options)?;
+    }
+    Ok(())
+}
+
+fn before_repair_attempt(args: &[String]) -> Result<Option<agent::AgentRepairOptions>, String> {
+    if args.get(1).map(String::as_str) != Some("agent")
+        || args.get(2).map(String::as_str) != Some("repair")
+    {
+        return Ok(None);
+    }
+    match agent::parse_agent_args(&args[2..])? {
+        agent::AgentCommand::Repair(options)
+            if options.phase == agent::AgentRepairPhase::Before =>
+        {
+            Ok(Some(options))
+        }
+        _ => Ok(None),
+    }
+}
+
+fn persist_before_repair_attempt(options: &agent::AgentRepairOptions) -> Result<(), String> {
+    let root = &options.root;
+    let workflow_manifest = root.join(WORKFLOW_MANIFEST_ARTIFACT);
+    let commands_markdown = root.join(WORKFLOW_COMMANDS_MARKDOWN_ARTIFACT);
+    let agent_brief = root.join(WORKFLOW_AGENT_BRIEF_ARTIFACT);
+    let before_snapshot = root.join(WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT);
+    let agent_packet = root.join(WORKFLOW_AGENT_PACKET_ARTIFACT);
+    let result = crate::app::repair_attempt::begin_repair_attempt(
+        root,
+        root,
+        &options.seam_id,
+        &[
+            BeforeArtifactSource {
+                role: "workflow_manifest",
+                path: &workflow_manifest,
+            },
+            BeforeArtifactSource {
+                role: "commands_markdown",
+                path: &commands_markdown,
+            },
+            BeforeArtifactSource {
+                role: "agent_brief",
+                path: &agent_brief,
+            },
+            BeforeArtifactSource {
+                role: "before_snapshot",
+                path: &before_snapshot,
+            },
+            BeforeArtifactSource {
+                role: "agent_packet",
+                path: &agent_packet,
+            },
+        ],
+    )?;
+    eprintln!(
+        "ripr: repair attempt {} is awaiting the focused test edit",
+        result.manifest.repair_attempt_id.as_str()
+    );
+    eprintln!("ripr: attempt manifest: {}", result.manifest_path.display());
+    eprintln!("ripr: attempt next command: {}", result.manifest.next_command);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -32,6 +103,45 @@ mod tests {
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn before_repair_attempt_selects_only_the_before_phase() -> Result<(), String> {
+        let before = before_repair_attempt(&args(&[
+            "ripr",
+            "agent",
+            "repair",
+            "--root",
+            ".",
+            "--seam-id",
+            "seam:sample",
+            "--phase",
+            "before",
+        ]))?;
+        let Some(before) = before else {
+            return Err("before phase was not selected for attempt persistence".to_string());
+        };
+        if before.seam_id != "seam:sample" || before.phase != agent::AgentRepairPhase::Before {
+            return Err(format!("unexpected before-phase options: {before:?}"));
+        }
+
+        let after = before_repair_attempt(&args(&[
+            "ripr",
+            "agent",
+            "repair",
+            "--seam-id",
+            "seam:sample",
+            "--phase",
+            "after",
+        ]))?;
+        if after.is_some() {
+            return Err("after phase attempted to create a new repair attempt".to_string());
+        }
+        let unrelated = before_repair_attempt(&args(&["ripr", "check", "--help"]))?;
+        if unrelated.is_some() {
+            return Err("unrelated command attempted to create a repair attempt".to_string());
+        }
+        Ok(())
     }
 
     #[test]
