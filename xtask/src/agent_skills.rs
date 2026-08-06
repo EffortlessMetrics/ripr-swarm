@@ -14,7 +14,20 @@ const SKILLS: [&str; 7] = [
     "review-pr",
 ];
 
-const REVIEW_PR_ROUTED_SKILLS: [&str; 3] = ["build-candidate", "deliver-pr", "finish-pr"];
+const ROOT_REVIEW_ROUTE_MARKER: &str = "review_route:root_to_review_pr";
+
+const REVIEW_ROUTE_REQUIRED_MARKERS: [(&str, &str); 4] = [
+    (
+        "build-candidate",
+        "review_route:build_candidate_to_review_pr",
+    ),
+    (
+        "build-candidate",
+        "review_route:repair_returns_to_same_candidate",
+    ),
+    ("deliver-pr", "review_route:deliver_pr_to_review_pr"),
+    ("finish-pr", "review_route:finish_pr_requires_review_ready"),
+];
 
 const REVIEW_PR_REQUIRED_MARKERS: [&str; 16] = [
     "review_contract:exact_head_binding",
@@ -91,11 +104,7 @@ pub(crate) fn check() -> Result<(), String> {
             }
         }
         let routing_text = provider_text.clone();
-        if !routing_text.contains("review-pr") {
-            findings.push(format!(
-                "{provider}: root instructions do not route substantive review through review-pr"
-            ));
-        }
+        validate_root_review_route(provider, &routing_text, &mut findings);
         for skill in SKILLS {
             let relative = format!("{root}/{skill}/SKILL.md");
             let path = Path::new(&relative);
@@ -141,10 +150,8 @@ pub(crate) fn check() -> Result<(), String> {
                     ));
                 }
             }
-            if REVIEW_PR_ROUTED_SKILLS.contains(&skill) && !skill_text.contains("review-pr") {
-                findings.push(format!(
-                    "{provider}: {relative} does not route through review-pr"
-                ));
+            for finding in review_route_findings(skill, &skill_text) {
+                findings.push(format!("{provider}: {relative} {finding}"));
             }
             if skill == "finish-pr" && !skill_text.contains("REVIEW_READY") {
                 findings.push(format!(
@@ -252,6 +259,55 @@ pub(crate) fn check() -> Result<(), String> {
     }
 }
 
+fn validate_root_review_route(provider: &str, routing_text: &str, findings: &mut Vec<String>) {
+    let counts = declared_marker_counts(routing_text, "review_route:");
+    match counts.get(ROOT_REVIEW_ROUTE_MARKER).copied().unwrap_or(0) {
+        0 => findings.push(format!(
+            "{provider}: root instructions are missing `{ROOT_REVIEW_ROUTE_MARKER}`"
+        )),
+        1 => {}
+        count => findings.push(format!(
+            "{provider}: root instructions declare `{ROOT_REVIEW_ROUTE_MARKER}` {count} times"
+        )),
+    }
+    for declared in counts.keys() {
+        if declared != ROOT_REVIEW_ROUTE_MARKER {
+            findings.push(format!(
+                "{provider}: root instructions declare unknown review route marker `{declared}`"
+            ));
+        }
+    }
+}
+
+fn review_route_findings(skill: &str, skill_text: &str) -> Vec<String> {
+    let counts = declared_marker_counts(skill_text, "review_route:");
+    let mut findings = Vec::new();
+
+    for (_, required) in REVIEW_ROUTE_REQUIRED_MARKERS
+        .iter()
+        .filter(|(owner, _)| *owner == skill)
+    {
+        match counts.get(*required).copied().unwrap_or(0) {
+            0 => findings.push(format!("is missing review route marker `{required}`")),
+            1 => {}
+            count => findings.push(format!(
+                "declares review route marker `{required}` {count} times"
+            )),
+        }
+    }
+    for declared in counts.keys() {
+        if !REVIEW_ROUTE_REQUIRED_MARKERS
+            .iter()
+            .any(|(owner, marker)| *owner == skill && *marker == declared)
+        {
+            findings.push(format!(
+                "declares unknown review route marker `{declared}`"
+            ));
+        }
+    }
+    findings
+}
+
 fn validate_review_pr_contract(
     provider: &str,
     relative: &str,
@@ -264,7 +320,7 @@ fn validate_review_pr_contract(
 }
 
 fn review_pr_contract_findings(skill_text: &str) -> Vec<String> {
-    let counts = review_pr_contract_marker_counts(skill_text);
+    let counts = declared_marker_counts(skill_text, "review_contract:");
     let mut findings = Vec::new();
 
     for required in REVIEW_PR_REQUIRED_MARKERS {
@@ -288,7 +344,7 @@ fn review_pr_contract_findings(skill_text: &str) -> Vec<String> {
     findings
 }
 
-fn review_pr_contract_marker_counts(skill_text: &str) -> BTreeMap<String, usize> {
+fn declared_marker_counts(skill_text: &str, prefix: &str) -> BTreeMap<String, usize> {
     let mut counts = BTreeMap::new();
     for line in skill_text.lines() {
         let trimmed = line.trim();
@@ -299,7 +355,7 @@ fn review_pr_contract_marker_counts(skill_text: &str) -> BTreeMap<String, usize>
             continue;
         };
         let marker = marker.to_ascii_lowercase();
-        if marker.starts_with("review_contract:") {
+        if marker.starts_with(prefix) {
             *counts.entry(marker).or_insert(0) += 1;
         }
     }
@@ -347,8 +403,8 @@ mod tests {
         let removed = REVIEW_PR_REQUIRED_MARKERS[3];
         let incomplete = complete.replace(&format!("- `{removed}`"), "");
         let findings = review_pr_contract_findings(&incomplete);
-        let expected = format!("is missing review contract marker `{removed}`");
-        if findings != [expected] {
+        let expected = vec![format!("is missing review contract marker `{removed}`")];
+        if findings != expected {
             return Err(format!(
                 "review contract omission should report only `{removed}`, got {findings:?}"
             ));
@@ -356,10 +412,11 @@ mod tests {
 
         let duplicated = format!("{complete}\n- `{}`", REVIEW_PR_REQUIRED_MARKERS[0]);
         let findings = review_pr_contract_findings(&duplicated);
-        if findings != [format!(
+        let expected = vec![format!(
             "declares review contract marker `{}` 2 times",
             REVIEW_PR_REQUIRED_MARKERS[0]
-        )] {
+        )];
+        if findings != expected {
             return Err(format!(
                 "review contract duplicate was not isolated: {findings:?}"
             ));
@@ -367,12 +424,56 @@ mod tests {
 
         let unknown = format!("{complete}\n- `review_contract:invented_authority`");
         let findings = review_pr_contract_findings(&unknown);
-        if findings != [
+        let expected = vec![
             "declares unknown review contract marker `review_contract:invented_authority`"
                 .to_string(),
-        ] {
+        ];
+        if findings != expected {
             return Err(format!(
                 "unknown review contract marker was not isolated: {findings:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn review_route_markers_are_closed_and_discriminating() -> Result<(), String> {
+        let complete = [
+            "- `review_route:build_candidate_to_review_pr`",
+            "- `review_route:repair_returns_to_same_candidate`",
+        ]
+        .join("\n");
+        let findings = review_route_findings("build-candidate", &complete);
+        if !findings.is_empty() {
+            return Err(format!(
+                "complete build-candidate review route unexpectedly failed: {findings:?}"
+            ));
+        }
+
+        let incomplete = complete.replace(
+            "- `review_route:build_candidate_to_review_pr`",
+            "",
+        );
+        let findings = review_route_findings("build-candidate", &incomplete);
+        let expected = vec![
+            "is missing review route marker `review_route:build_candidate_to_review_pr`"
+                .to_string(),
+        ];
+        if findings != expected {
+            return Err(format!(
+                "review route omission was not isolated: {findings:?}"
+            ));
+        }
+
+        let unknown = format!("{complete}\n- `review_route:parallel_reviewer_gate`");
+        let findings = review_route_findings("build-candidate", &unknown);
+        let expected = vec![
+            "declares unknown review route marker `review_route:parallel_reviewer_gate`"
+                .to_string(),
+        ];
+        if findings != expected {
+            return Err(format!(
+                "unknown review route marker was not isolated: {findings:?}"
             ));
         }
         Ok(())
