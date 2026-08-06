@@ -3177,6 +3177,19 @@ impl LanguageServer for Backend {
                     )
                     .await;
             }
+        } else {
+            // #2629: Client does not support dynamic-registration for file
+            // watching. ripr.toml/Cargo.toml changes will NOT be picked up
+            // automatically — the user must restart the server or run
+            // `ripr: Refresh Full Analysis` after editing config files.
+            self.client
+                .log_message(
+                    MessageType::INFO,
+                    "ripr: this client does not support dynamic file-watching registration; \
+                     ripr.toml and Cargo.toml changes require a server restart or \
+                     `ripr: Refresh Full Analysis` to take effect.",
+                )
+                .await;
         }
         // First configuration pull (#2031). This runs in `initialized`, not
         // `initialize`: tower-lsp-server rejects client requests with -32002
