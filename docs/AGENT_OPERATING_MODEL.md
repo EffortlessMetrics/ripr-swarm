@@ -103,14 +103,20 @@ current premise
 → test hardening
 → simplification
 → candidate challenge
+→ commit one exact candidate head
+→ pre-publication review-pr candidate pass
 → publication or PR resumption
-→ substantive review-pr on the exact current head
+→ published-head review-pr with remote evidence
 → review and CI repair
 → refreshed exact-head review for affected dimensions
 → integration proof
-→ squash merge
+→ merge convergence
 → reconciliation
 ```
+
+The pre-publication pass normally remains `REVIEW_INCOMPLETE` while hosted
+checks, artifacts, and external review are absent. The exact published PR head
+must receive `REVIEW_READY` before merge convergence.
 
 These are judgment passes, not mandatory identities. The accountable root may
 perform several passes directly. Focused provider-native subagents are useful
@@ -133,6 +139,8 @@ Examples:
 - issue ready, no proof: design proof;
 - proof ready, no implementation: build candidate;
 - existing candidate: harden, simplify, or challenge it;
+- committed candidate, no PR: run candidate review, publish with incomplete
+  remote evidence, then review the published head;
 - candidate appears ready: run substantive exact-head review;
 - existing PR with comments: verify, repair or refute, refresh review as needed,
   and continue;
@@ -230,7 +238,7 @@ The integrating writer:
 - owns accepted mutations to the branch/worktree;
 - reconciles contradictory research or review;
 - keeps the candidate coherent;
-- publishes one current head.
+- commits and publishes one current head.
 
 Read-only subagents may map authority, challenge tests, research external
 semantics, or review correctness/security/privacy/compatibility/platform
@@ -240,9 +248,22 @@ behavior. The root verifies and synthesizes their results.
 
 ## Substantive exact-head review
 
-`review-pr` is the required judgment between a candidate that appears ready and
-merge convergence. It is not another permanent actor and does not require a
-separate person. It is a distinct evidence pass.
+`review-pr` is the required judgment between candidate hardening and merge
+convergence. It is not another permanent actor and does not require a separate
+person. It is a distinct evidence pass.
+
+An exact review subject is a committed Git object. Uncommitted worktree state
+cannot receive an exact-head disposition.
+
+A candidate may receive two passes:
+
+1. **Pre-publication candidate pass:** source, proof, and repository contracts
+   are reviewed on the exact committed branch head. Missing hosted checks,
+   artifacts, and external review remain explicit, so the normal result is
+   `REVIEW_INCOMPLETE`.
+2. **Published merge pass:** the exact PR head is reviewed with current hosted
+   jobs, artifacts, comments, and integration evidence. Only this pass may emit
+   `REVIEW_READY` for merge convergence.
 
 Bind every review to:
 
@@ -306,8 +327,9 @@ False-confidence boundaries:
 - `mergeStateStatus: BLOCKED` is not a causal diagnosis and does not prove a
   human approval requirement.
 
-Only `REVIEW_READY` proceeds to merge convergence. `REPAIR_REQUIRED` returns to
-the same candidate and refreshes affected review dimensions.
+Only the published-head `REVIEW_READY` disposition proceeds to merge
+convergence. `REPAIR_REQUIRED` returns to the same candidate and refreshes
+affected review dimensions.
 
 ---
 
@@ -391,8 +413,8 @@ state rather than source failure.
 A ready PR has:
 
 - one coherent claim;
-- an exact current candidate;
-- a current `REVIEW_READY` exact-head disposition;
+- an exact current published candidate;
+- a current published-head `REVIEW_READY` disposition;
 - all substantive findings repaired or evidence-refuted;
 - current proof for affected seams;
 - required checks green or an explicit non-ready disposition;
