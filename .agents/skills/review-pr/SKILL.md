@@ -31,6 +31,25 @@ it.
 - `review_contract:repair_same_candidate`
 - `review_contract:blocked_is_not_human_cause`
 
+# Exact-head levels
+
+An exact head is a committed Git object. Uncommitted worktree state cannot
+receive an exact-head disposition.
+
+The procedure may run twice on the same candidate lifecycle:
+
+1. **Candidate review before publication.** Bind the committed branch head and
+   inspect source, proof, and repository contracts. Hosted checks, artifacts,
+   and external review that do not yet exist remain missing evidence, so the
+   normal result is `REVIEW_INCOMPLETE`, not `REVIEW_READY`.
+2. **Merge review after publication.** Bind the exact published PR head, inspect
+   current remote checks, artifacts, comments, and integration evidence, and
+   refresh only dimensions changed since the earlier review. Only this complete
+   published-head pass may emit `REVIEW_READY` for merge convergence.
+
+Publication does not erase a valid candidate review. It adds remote evidence
+that must be inspected before the disposition can advance.
+
 # Entry boundary
 
 Use this procedure when a coherent candidate exists and one of these is true:
