@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
@@ -257,19 +258,52 @@ fn validate_review_pr_contract(
     skill_text: &str,
     findings: &mut Vec<String>,
 ) {
-    for marker in missing_review_pr_contract_markers(skill_text) {
-        findings.push(format!(
-            "{provider}: {relative} is missing review contract marker `{marker}`"
-        ));
+    for finding in review_pr_contract_findings(skill_text) {
+        findings.push(format!("{provider}: {relative} {finding}"));
     }
 }
 
-fn missing_review_pr_contract_markers(skill_text: &str) -> Vec<&'static str> {
-    let lower = skill_text.to_ascii_lowercase();
-    REVIEW_PR_REQUIRED_MARKERS
-        .into_iter()
-        .filter(|marker| !lower.contains(marker))
-        .collect()
+fn review_pr_contract_findings(skill_text: &str) -> Vec<String> {
+    let counts = review_pr_contract_marker_counts(skill_text);
+    let mut findings = Vec::new();
+
+    for required in REVIEW_PR_REQUIRED_MARKERS {
+        match counts.get(required).copied().unwrap_or(0) {
+            0 => findings.push(format!(
+                "is missing review contract marker `{required}`"
+            )),
+            1 => {}
+            count => findings.push(format!(
+                "declares review contract marker `{required}` {count} times"
+            )),
+        }
+    }
+    for declared in counts.keys() {
+        if !REVIEW_PR_REQUIRED_MARKERS.contains(&declared.as_str()) {
+            findings.push(format!(
+                "declares unknown review contract marker `{declared}`"
+            ));
+        }
+    }
+    findings
+}
+
+fn review_pr_contract_marker_counts(skill_text: &str) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for line in skill_text.lines() {
+        let trimmed = line.trim();
+        let Some(marker) = trimmed
+            .strip_prefix("- `")
+            .and_then(|value| value.strip_suffix('`'))
+        else {
+            continue;
+        };
+        let marker = marker.to_ascii_lowercase();
+        if marker.starts_with("review_contract:") {
+            *counts.entry(marker).or_insert(0) += 1;
+        }
+    }
+    counts
 }
 
 fn has_active_reference(text: &str, target: &str) -> bool {
@@ -298,20 +332,47 @@ mod tests {
 
     #[test]
     fn review_contract_markers_are_closed_and_discriminating() -> Result<(), String> {
-        let complete = REVIEW_PR_REQUIRED_MARKERS.join("\n");
-        let missing = missing_review_pr_contract_markers(&complete);
-        if !missing.is_empty() {
+        let complete = REVIEW_PR_REQUIRED_MARKERS
+            .iter()
+            .map(|marker| format!("- `{marker}`"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let findings = review_pr_contract_findings(&complete);
+        if !findings.is_empty() {
             return Err(format!(
-                "complete review contract unexpectedly missed markers: {missing:?}"
+                "complete review contract unexpectedly failed: {findings:?}"
             ));
         }
 
         let removed = REVIEW_PR_REQUIRED_MARKERS[3];
-        let incomplete = complete.replace(removed, "");
-        let missing = missing_review_pr_contract_markers(&incomplete);
-        if missing != [removed] {
+        let incomplete = complete.replace(&format!("- `{removed}`"), "");
+        let findings = review_pr_contract_findings(&incomplete);
+        let expected = format!("is missing review contract marker `{removed}`");
+        if findings != [expected] {
             return Err(format!(
-                "review contract mutation should miss only `{removed}`, got {missing:?}"
+                "review contract omission should report only `{removed}`, got {findings:?}"
+            ));
+        }
+
+        let duplicated = format!("{complete}\n- `{}`", REVIEW_PR_REQUIRED_MARKERS[0]);
+        let findings = review_pr_contract_findings(&duplicated);
+        if findings != [format!(
+            "declares review contract marker `{}` 2 times",
+            REVIEW_PR_REQUIRED_MARKERS[0]
+        )] {
+            return Err(format!(
+                "review contract duplicate was not isolated: {findings:?}"
+            ));
+        }
+
+        let unknown = format!("{complete}\n- `review_contract:invented_authority`");
+        let findings = review_pr_contract_findings(&unknown);
+        if findings != [
+            "declares unknown review contract marker `review_contract:invented_authority`"
+                .to_string(),
+        ] {
+            return Err(format!(
+                "unknown review contract marker was not isolated: {findings:?}"
             ));
         }
         Ok(())
