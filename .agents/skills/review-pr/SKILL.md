@@ -7,6 +7,30 @@ description: Perform a substantive exact-head review of one pull request or curr
 
 The exact current PR head has an evidence-backed disposition that distinguishes blocking defects, non-blocking suggestions, refuted or stale findings, missing proof/review, and infrastructure or instrument failure. The review establishes whether the candidate may proceed to merge convergence; it does not substitute GitHub state or green CI for semantic acceptance.
 
+# Contract markers
+
+These stable IDs declare the load-bearing review contract without requiring
+provider prose symmetry. `cargo xtask check-agent-skills` validates the closed
+set; normal review still verifies whether the prose and behavior actually honor
+it.
+
+- `review_contract:exact_head_binding`
+- `review_contract:semantic_owner_and_consumers`
+- `review_contract:wrong_behavior_oracle_challenge`
+- `review_contract:rendered_behavior`
+- `review_contract:contract_parity`
+- `review_contract:platform_relevance`
+- `review_contract:exact_head_ci_receipts`
+- `review_contract:denominator_honesty`
+- `review_contract:mutation_or_removal_challenge`
+- `review_contract:no_threads_is_not_review`
+- `review_contract:green_ci_is_not_semantic_review`
+- `review_contract:clean_review_record_not_lgtm`
+- `review_contract:author_self_review_comment`
+- `review_contract:review_ready_gate`
+- `review_contract:repair_same_candidate`
+- `review_contract:blocked_is_not_human_cause`
+
 # Entry boundary
 
 Use this procedure when a coherent candidate exists and one of these is true:
