@@ -7,9 +7,15 @@ description: Publish or resume one PR, require substantive exact-head review, ad
 
 The selected PR has an exact current head, a current `review-pr` disposition, all substantive findings repaired or evidence-refuted, required proof current for affected seams, remote waits represented honestly, and issue state reconciled after merge or deliberate closure.
 
+# Route markers
+
+- `review_route:finish_pr_requires_review_ready`
+
 # Entry condition
 
-`finish-pr` owns publication, remote review/CI repair, merge, and reconciliation. It does not silently manufacture the substantive review pass. Before arming merge, the exact current head must have a `REVIEW_READY` result from `review-pr`. When the head changes materially, re-enter `review-pr` for affected currentness dimensions.
+`finish-pr` owns publication, remote review/CI repair, merge, and reconciliation. It does not silently manufacture the substantive review pass.
+
+A committed candidate with `REVIEW_INCOMPLETE` may enter so the procedure can publish the PR and obtain remote evidence. Before arming auto-merge or merging, the exact published PR head must have a current `REVIEW_READY` result from `review-pr`. When the head changes materially, re-enter `review-pr` for affected currentness dimensions.
 
 # Procedure
 
@@ -40,7 +46,7 @@ The selected PR has an exact current head, a current `review-pr` disposition, al
    - the squash/merge-group result is the combined-tree subject.
 9. Do not update a behind-only branch. Reconcile only an actual conflict, explicit stack change, material prerequisite change, or failed combined-tree proof.
 10. Do not infer review from an empty thread list, reviewer quota/unavailability, or green required checks. Do not infer a human approval requirement from `mergeStateStatus: BLOCKED`; identify the exact rule and evidence source first.
-11. When GitHub owns the next transition, return an in-flight result instead of polling unchanged state. Auto-merge may be armed only for the exact reviewed head with `REVIEW_READY` and current required proof.
+11. When GitHub owns the next transition, return an in-flight result instead of polling unchanged state. Auto-merge may be armed only for the exact published head with `REVIEW_READY` and current required proof.
 12. After merge, verify `main`, update issue acceptance, parent state, generated evidence, and any residual work. Close only acceptance-complete issues.
 13. After deliberate closure or supersession, record the winning candidate and preserved residual work.
 
