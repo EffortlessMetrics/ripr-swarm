@@ -13,7 +13,8 @@ selected issue/claim or existing PR → deliver-pr
 missing or stale issue premise → prepare-issue
 missing or weak oracle → prepare-proof
 implementation/hardening → build-candidate
-published or existing PR → finish-pr
+substantive exact-head inspection → review-pr
+published or existing PR convergence → finish-pr
 ```
 
 Use the narrowest skill that matches the current state. Enter existing work at
@@ -227,7 +228,8 @@ Review and proof currentness are dimensional:
 - public claim;
 - generated relationships;
 - conflict resolution;
-- integration basis.
+- integration basis;
+- candidate head identity.
 
 Refresh only the dimensions affected by the latest change. Unrelated movement
 on `main` invalidates nothing by itself.
@@ -238,6 +240,15 @@ after a repair or reply exists.
 
 Quota, unavailable, skipped, failed, or stale review-provider output means
 review is missing; it is not a clean review.
+
+Use `.claude/skills/review-pr/SKILL.md` for the substantive current-head pass.
+Reading threads and checks is remote triage, not review completion. Before merge
+convergence, inspect the complete diff, semantic owner and consumers, test
+stimulus and oracle grip, rendered/public behavior, runtime/schema/docs/output
+parity, platform-relevant branches, and exact-head job/artifact evidence. A
+clean self-review records what was inspected and uses a `COMMENT` disposition on
+the author's PR; GitHub's inability to request changes from the author is not
+approval.
 
 ## Local validation
 
@@ -299,7 +310,9 @@ subjects.
 ## PR convergence
 
 Use `.claude/skills/finish-pr/SKILL.md` for publication, review repair, CI,
-integration, merge, and reconciliation.
+integration, merge, and reconciliation. `finish-pr` may arm merge only after the
+exact current head has a `REVIEW_READY` disposition from `review-pr`; a later
+material head change refreshes the affected review dimensions.
 
 Useful remote-owned outcomes:
 
