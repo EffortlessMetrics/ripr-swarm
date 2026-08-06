@@ -31,6 +31,25 @@ procedure and actual behavior earn those declarations.
 - `review_contract:repair_same_candidate`
 - `review_contract:blocked_is_not_human_cause`
 
+# Exact-head levels
+
+An exact head is a committed Git object. Uncommitted edits cannot receive an
+exact-head review disposition.
+
+The same candidate may receive two deliberate passes:
+
+1. **Pre-publication candidate review.** Bind the committed branch head and
+   inspect source, proof, and repository contracts. Remote checks, artifacts,
+   and external review that do not exist yet remain missing, so this normally
+   exits `REVIEW_INCOMPLETE` rather than `REVIEW_READY`.
+2. **Published merge review.** Bind the exact PR head, inspect current hosted
+   jobs, artifacts, comments, and integration evidence, and refresh only the
+   dimensions changed since the candidate pass. Only this published-head pass
+   may emit `REVIEW_READY` for merge convergence.
+
+Publication adds remote evidence; it does not erase an earlier valid source and
+oracle inspection.
+
 # When to enter
 
 Use `review-pr` when:
