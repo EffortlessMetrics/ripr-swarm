@@ -1,11 +1,11 @@
 ---
 name: build-candidate
-description: Build, harden, simplify, and challenge one current candidate for a coherent claim. Use after proof design or when an existing candidate needs repair before PR convergence.
+description: Build, harden, simplify, and challenge one current candidate for a coherent claim. Use after proof design or when an existing candidate needs repair before substantive PR review.
 ---
 
 # Result
 
-One candidate implements the claim, carries discriminating evidence, extends the correct semantic owner, contains no unnecessary parallel authority, and is ready for publication or exact-head review.
+One candidate implements the claim, carries discriminating evidence, extends the correct semantic owner, contains no unnecessary parallel authority, and is ready for exact-head `review-pr` inspection.
 
 # Workflow
 
@@ -17,21 +17,23 @@ One candidate implements the claim, carries discriminating evidence, extends the
    - add discriminating negative or alternate cases;
    - validate fixture setup and intended subject;
    - add currentness and identity checks where material;
-   - preserve explicit unknown and limitation states.
+   - preserve explicit unknown and limitation states;
+   - exercise rendered/public behavior where source-text checks could remain green without changing the real route.
 6. Simplify:
    - remove scaffolding and dead branches;
    - remove public placeholders and panic/todo paths;
    - collapse duplicated decisions into the owning layer;
    - keep one acceptance and rollback boundary.
 7. Challenge the candidate from fresh perspectives:
-   - authority and architecture;
-   - correctness and edge cases;
-   - test grip;
-   - security, privacy, compatibility, and performance where relevant;
-   - user-facing claim honesty.
+   - authority, provenance, and architecture;
+   - correctness, failure paths, rollback, transaction boundaries, replay, and concurrency;
+   - test stimulus and oracle grip;
+   - runtime/schema/docs/help/output parity;
+   - security, privacy, platform, packaging, compatibility, performance, and user-facing claim honesty where relevant.
 8. Repair accepted findings through the same candidate.
 9. Run `cargo xtask precommit`, focused tests, and changed-surface gates. Report missing or infrastructure-limited evidence without converting it to pass.
-10. Route the coherent candidate to `finish-pr`.
+10. Route the exact current head to `review-pr`. Candidate challenge during implementation is not the final substantive PR review, and green checks or an empty thread list do not replace it.
+11. When `review-pr` returns `REPAIR_REQUIRED`, repair the same candidate and refresh only affected proof/review dimensions before reviewing again.
 
 # Mutation boundary
 
@@ -48,10 +50,12 @@ Make and document reasonable reversible engineering decisions. Escalate only whe
 
 # Valid outcomes
 
-- `CANDIDATE_READY`
+- `CANDIDATE_READY_FOR_REVIEW`
 - `CANDIDATE_REPAIRED`
 - `PROOF_NEEDS_REPAIR`
 - `PLAN_OR_ISSUE_NEEDS_REPAIR`
+- `REPAIR_REQUIRED`
+- `REVIEW_INCOMPLETE`
 - `INSTRUMENT_FAILURE`
 - `INFRASTRUCTURE_FAILURE`
 - `EXTERNAL_BLOCKER`
