@@ -185,7 +185,6 @@ pub(crate) fn validate_repo_exposure_artifact(
         || identity.analysis.input_identity.trim().is_empty()
         || identity.analysis.command != "ripr check --format repo-exposure-json"
         || identity.analysis.profile != identity.analysis.mode
-        || !identity.snapshot_identity.starts_with("snapshot:input:")
         || !matches!(identity.analysis.worktree.as_str(), "clean" | "dirty")
     {
         return Err(format!(
@@ -205,6 +204,15 @@ pub(crate) fn validate_repo_exposure_artifact(
         return Err(format!(
             "agent verify {label} artifact has invalid repository HEAD `{}`",
             identity.repository.head
+        ));
+    }
+    let expected_snapshot = repo_exposure_snapshot_identity(
+        &identity.analysis.input_identity,
+        &identity.repository.head,
+    );
+    if identity.snapshot_identity != expected_snapshot {
+        return Err(format!(
+            "agent verify {label} artifact snapshot identity does not match the declared analysis input identity and repository head"
         ));
     }
     if !identity.content_sha256.starts_with("sha256:") {
@@ -419,12 +427,19 @@ mod tests {
             .as_nanos();
         let root = std::env::temp_dir().join(format!("ripr-artifact-identity-{stamp}"));
         std::fs::create_dir_all(&root).map_err(|error| format!("create temp root: {error}"))?;
-        run_git(&root, &["init", "--quiet"])?;
-        run_git(&root, &["config", "user.name", "RIPR test"])?;
-        run_git(
-            &root,
-            &["config", "user.email", "ripr-test@example.invalid"],
-        )?;
+        let init = (|| -> Result<(), String> {
+            run_git(&root, &["init", "--quiet"])?;
+            run_git(&root, &["config", "user.name", "RIPR test"])?;
+            run_git(
+                &root,
+                &["config", "user.email", "ripr-test@example.invalid"],
+            )?;
+            Ok(())
+        })();
+        if let Err(error) = init {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err(error);
+        }
         Ok(root)
     }
 
@@ -524,6 +539,117 @@ mod tests {
                     "controlled Git revisions must produce distinct snapshot identities"
                         .to_string(),
                 );
+            }
+            Ok(())
+        })();
+        let cleanup =
+            std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"));
+        result?;
+        cleanup?;
+        Ok(())
+    }
+
+    fn commit_fixture_file(root: &Path) -> Result<(), String> {
+        std::fs::write(root.join("Cargo.toml"), "[workspace]\n")
+            .map_err(|error| format!("write Cargo.toml: {error}"))?;
+        run_git(root, &["add", "Cargo.toml"])?;
+        run_git(
+            root,
+            &[
+                "-c",
+                "commit.gpgSign=false",
+                "commit",
+                "--quiet",
+                "-m",
+                "fixture",
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Render a canonical artifact document with the content commitment left
+    /// at the fixed placeholder so variants can be recommitted after edits.
+    fn repo_exposure_raw_with_placeholder(root: &Path) -> Result<String, String> {
+        let context = RepoExposureArtifactContext::for_repo_exposure(
+            root.to_path_buf(),
+            "draft".to_string(),
+            None,
+        )?;
+        let identity = repo_exposure_artifact_metadata(&context, CONTENT_SHA256_PLACEHOLDER)?;
+        let document = json!({
+            "schema_version": crate::output::repo_exposure::REPO_EXPOSURE_SCHEMA_VERSION,
+            "scope": "repo",
+            "run_status": "complete",
+            "artifact": identity,
+            "seams": [],
+        });
+        serde_json::to_string_pretty(&document)
+            .map_err(|error| format!("render artifact document: {error}"))
+    }
+
+    fn commit_content(raw_with_placeholder: &str) -> Result<String, String> {
+        let digest = content_sha256_with_placeholder(raw_with_placeholder)?;
+        Ok(raw_with_placeholder.replace(CONTENT_SHA256_PLACEHOLDER, &digest))
+    }
+
+    #[test]
+    fn repo_exposure_validation_requires_exact_snapshot_identity() -> Result<(), String> {
+        let root = temporary_git_root()?;
+        let result = (|| -> Result<(), String> {
+            commit_fixture_file(&root)?;
+            let placeholder_raw = repo_exposure_raw_with_placeholder(&root)?;
+            let raw = commit_content(&placeholder_raw)?;
+            let validated = validate_repo_exposure_artifact(&root, &raw, "test before")
+                .map_err(|error| format!("canonical artifact must validate: {error}"))?;
+            if validated.currentness != ArtifactCurrentness::Current {
+                return Err("fresh canonical artifact must be current".to_string());
+            }
+
+            let head = validated.repository_head.clone();
+            let input = validated.input_identity.clone();
+            let valid_snapshot = validated.snapshot_identity.clone();
+            let wrong_head = "0".repeat(40);
+            let cases = [
+                (
+                    "wrong revision component",
+                    repo_exposure_snapshot_identity(&input, &wrong_head),
+                ),
+                (
+                    "wrong input component",
+                    repo_exposure_snapshot_identity("input:0000000000000000", &head),
+                ),
+                (
+                    "prefix-compatible legacy shape",
+                    format!("snapshot:{input}"),
+                ),
+                (
+                    "arbitrary prefix-compatible text",
+                    "snapshot:input:arbitrary".to_string(),
+                ),
+                (
+                    "reordered components",
+                    format!("revision:{head};snapshot:{input}"),
+                ),
+            ];
+            for (case, snapshot) in cases {
+                if snapshot == valid_snapshot {
+                    return Err(format!(
+                        "{case} fixture must differ from the valid snapshot identity"
+                    ));
+                }
+                let tampered =
+                    commit_content(&placeholder_raw.replace(&valid_snapshot, &snapshot))?;
+                match validate_repo_exposure_artifact(&root, &tampered, "test before") {
+                    Err(error) if error.contains("snapshot identity does not match") => {}
+                    Err(error) => {
+                        return Err(format!("{case}: unexpected rejection reason: {error}"));
+                    }
+                    Ok(_) => {
+                        return Err(format!(
+                            "{case}: tampered snapshot identity must be rejected"
+                        ));
+                    }
+                }
             }
             Ok(())
         })();
