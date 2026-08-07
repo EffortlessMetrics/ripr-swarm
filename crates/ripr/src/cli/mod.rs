@@ -32,6 +32,9 @@ pub fn run(mut args: Vec<String>) -> Result<(), String> {
         crate::set_verbose(true);
         eprintln!("ripr: verbose mode enabled");
     }
+    // Selection is side-effect-free parsing; the lock is acquired before the
+    // first side-effecting step (workflow execution and attempt publication),
+    // so a lock loser fails closed without producing any workflow artifacts.
     let before_attempt = before_repair_attempt(&args)?;
     let _before_lock = before_attempt
         .as_ref()
@@ -47,7 +50,10 @@ pub fn run(mut args: Vec<String>) -> Result<(), String> {
 /// Serialize before-phase execution and attempt publication per repository.
 /// The workflow artifacts under `target/ripr/workflow` are repository-global,
 /// so a concurrent before phase could otherwise publish this invocation's
-/// copies under its own attempt identity. The lock is released on drop.
+/// copies under its own attempt identity. Acquisition is non-blocking: a
+/// concurrent before phase gets a bounded error instead of waiting on the
+/// lock. The lock is an OS file-handle lock, so it is released on drop or
+/// process exit and cannot go stale.
 fn lock_before_repair_attempt(root: &Path) -> Result<File, String> {
     let directory = root.join(crate::app::repair_attempt::REPAIR_ATTEMPT_DIRECTORY);
     std::fs::create_dir_all(&directory)
@@ -55,8 +61,15 @@ fn lock_before_repair_attempt(root: &Path) -> Result<File, String> {
     let lock_path = directory.join(".before.lock");
     let lock = File::create(&lock_path)
         .map_err(|error| format!("create {} failed: {error}", lock_path.display()))?;
-    lock.lock()
-        .map_err(|error| format!("lock {} failed: {error}", lock_path.display()))?;
+    if let Err(error) = lock.try_lock() {
+        if matches!(error, std::fs::TryLockError::WouldBlock) {
+            return Err(
+                "another before-phase repair attempt is in progress for this repository; retry after it finishes"
+                    .to_string(),
+            );
+        }
+        return Err(format!("lock {} failed: {error}", lock_path.display()));
+    }
     Ok(lock)
 }
 
@@ -128,6 +141,44 @@ mod tests {
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
+    }
+
+    fn test_root(label: &str) -> Result<std::path::PathBuf, String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| format!("test clock failed: {error}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-before-lock-{label}-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root)
+            .map_err(|error| format!("create {} failed: {error}", root.display()))?;
+        Ok(root)
+    }
+
+    #[test]
+    fn before_lock_fails_closed_while_held_and_releases_on_drop() -> Result<(), String> {
+        let root = test_root("contention")?;
+        let result = (|| -> Result<(), String> {
+            let guard = lock_before_repair_attempt(&root)?;
+            let second = lock_before_repair_attempt(&root);
+            drop(guard);
+            match second {
+                Err(error) if error.contains("in progress") => {}
+                other => {
+                    return Err(format!(
+                        "second before-phase lock acquisition was not rejected: {other:?}"
+                    ));
+                }
+            }
+            let reacquired = lock_before_repair_attempt(&root)?;
+            drop(reacquired);
+            Ok(())
+        })();
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        result
     }
 
     #[test]
