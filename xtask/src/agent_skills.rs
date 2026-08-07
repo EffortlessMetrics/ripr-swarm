@@ -300,9 +300,7 @@ fn review_route_findings(skill: &str, skill_text: &str) -> Vec<String> {
             .iter()
             .any(|(owner, marker)| *owner == skill && *marker == declared.as_str())
         {
-            findings.push(format!(
-                "declares unknown review route marker `{declared}`"
-            ));
+            findings.push(format!("declares unknown review route marker `{declared}`"));
         }
     }
     findings
@@ -325,9 +323,7 @@ fn review_pr_contract_findings(skill_text: &str) -> Vec<String> {
 
     for required in REVIEW_PR_REQUIRED_MARKERS {
         match counts.get(required).copied().unwrap_or(0) {
-            0 => findings.push(format!(
-                "is missing review contract marker `{required}`"
-            )),
+            0 => findings.push(format!("is missing review contract marker `{required}`")),
             1 => {}
             count => findings.push(format!(
                 "declares review contract marker `{required}` {count} times"
@@ -450,10 +446,7 @@ mod tests {
             ));
         }
 
-        let incomplete = complete.replace(
-            "- `review_route:build_candidate_to_review_pr`",
-            "",
-        );
+        let incomplete = complete.replace("- `review_route:build_candidate_to_review_pr`", "");
         let findings = review_route_findings("build-candidate", &incomplete);
         let expected = vec![
             "is missing review route marker `review_route:build_candidate_to_review_pr`"
