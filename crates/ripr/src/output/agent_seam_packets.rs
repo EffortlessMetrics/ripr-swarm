@@ -2048,6 +2048,14 @@ fn push_packet_json(
                 "\"oracle_strength\": \"{}\", ",
                 grip.oracle_strength.as_str()
             ));
+            // #2674: emit a strengthening recipe so consumers know how to
+            // upgrade a weak oracle. The recipe mirrors missing_oracle_shape_for.
+            let recipe =
+                oracle_strength_recipe(grip.oracle_kind.as_str(), grip.oracle_strength.as_str());
+            out.push_str(&format!(
+                "\"oracle_strength_recipe\": \"{}\", ",
+                json_escape(&recipe)
+            ));
             out.push_str(&format!(
                 "\"evidence_summary\": \"{}\", ",
                 json_escape(grip.evidence_summary.as_str())
@@ -2608,16 +2616,37 @@ fn push_related_test_reference(
 }
 
 pub(crate) fn candidate_values_for(
-    _entry: &ClassifiedSeam,
+    entry: &ClassifiedSeam,
     missing: &[MissingRecord],
 ) -> Vec<CandidateValue> {
-    missing
+    // #2673: Previously this function ignored the entry entirely and cloned
+    // missing_discriminators verbatim — candidate_values was always identical
+    // to missing_discriminators, carrying no additional information.
+    //
+    // Now: merge the missing-discriminator records with observed activation
+    // values from the test grip evidence. The observed values are the concrete
+    // inputs tests already use; the candidate values tell the consumer which
+    // input variants to try next.
+    let mut values: Vec<CandidateValue> = missing
         .iter()
         .map(|record| CandidateValue {
             value: record.value.clone(),
             reason: record.reason.clone(),
         })
-        .collect()
+        .collect();
+    for fact in &entry.evidence.observed_values {
+        // Only add observed values that aren't already a candidate
+        if !values.iter().any(|v| v.value == fact.value) {
+            values.push(CandidateValue {
+                value: fact.value.clone(),
+                reason: format!(
+                    "observed {} value from existing tests",
+                    fact.context.as_str()
+                ),
+            });
+        }
+    }
+    values
 }
 
 pub(crate) fn assertion_shape_for_entry(entry: &ClassifiedSeam) -> AssertionShape {
@@ -2848,6 +2877,31 @@ fn missing_oracle_shape_for(kind: SeamKind, sink: ExpectedSink) -> String {
         ),
         SeamKind::MatchArm => "exact value assertion on the match result".to_string(),
         SeamKind::CallPresence => "mock or spy assertion on the call site".to_string(),
+    }
+}
+
+/// Returns a short recipe explaining how to strengthen the oracle from its
+/// current strength toward 'strong' (#2674). The recipe is advisory text,
+/// not a generated test — it tells the consumer what shape of assertion
+/// would upgrade the observation.
+fn oracle_strength_recipe(oracle_kind: &str, current_strength: &str) -> String {
+    if current_strength == "strong" {
+        return "already at strong — no upgrade needed".to_string();
+    }
+    match oracle_kind {
+        "exact_value" => "upgrade to a direct assert_eq! on the exact expected value".to_string(),
+        "exact_error_variant" => {
+            "upgrade to a matches!(result, Err(Variant)) assertion on the specific variant"
+                .to_string()
+        }
+        "whole_object_equality" => "upgrade to assert_eq! on the full object".to_string(),
+        "snapshot" => "upgrade from snapshot comparison to a typed field assertion".to_string(),
+        "mock_expectation" => {
+            "upgrade from call-presence to argument-capture (expect().with())".to_string()
+        }
+        "broad_error" => "narrow from is_err() to a specific error variant match".to_string(),
+        "relational_check" => "upgrade from a comparison to an exact value assertion".to_string(),
+        _ => "add a discriminating assertion that observes the changed value exactly".to_string(),
     }
 }
 
