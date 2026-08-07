@@ -5,9 +5,12 @@
 //! `src/cli/help/overview.rs` passes even when a route disappears from the
 //! default screen, because that one file holds the default overview, the
 //! exhaustive reference, and prose; only the rendered output is the public
-//! contract. The doc asserts below pin the same canonical role vocabulary in
-//! the three human-facing docs so README, Quickstart, and the hierarchy page
-//! cannot drift away from the help the binary actually prints.
+//! contract. All rendered and doc surfaces are matched after whitespace
+//! normalization, so a benign column realignment or line reflow does not break
+//! the guard while the roles stay correct — the token sequence, not the
+//! spacing, is the contract. The doc asserts pin the same canonical role
+//! vocabulary in the three human-facing docs so README, Quickstart, and the
+//! hierarchy page cannot drift away from the help the binary actually prints.
 
 use std::process::Command;
 
@@ -38,8 +41,9 @@ fn assert_contains(surface: &str, text: &str, needle: &str) -> Result<(), String
     Err(format!("{surface} lost the canonical route `{needle}`"))
 }
 
-/// Collapse all whitespace runs so a doc needle survives line reflows; the
-/// vocabulary, not the wrapping, is the contract.
+/// Collapse all whitespace runs so a needle survives line reflows and help
+/// column realignment; the vocabulary and token order, not the wrapping, are
+/// the contract.
 fn normalized(doc: &str) -> String {
     doc.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -47,14 +51,15 @@ fn normalized(doc: &str) -> String {
 #[test]
 fn default_help_keeps_the_task_roles_distinct() -> Result<(), String> {
     for args in [["--help"].as_slice(), ["help"].as_slice()] {
-        let stdout = rendered_help(args)?;
+        let stdout = normalized(&rendered_help(args)?);
         for needle in [
-            "Diagnose setup        ripr doctor",
-            "Inspect one change    ripr check",
-            "Guided repo adoption  ripr pilot --root .",
-            "Repair one named gap  ripr agent repair",
-            "Compose PR evidence   ripr first-pr",
-            "Adopt advisory CI     ripr init --ci github",
+            "Diagnose setup ripr doctor",
+            "Inspect one change ripr check",
+            "Guided repo adoption ripr pilot --root .",
+            "Repair one named gap ripr agent repair",
+            "Compose PR evidence ripr first-pr",
+            "Adopt advisory CI ripr init --ci github",
+            "ripr help --all",
         ] {
             assert_contains(
                 "default help (`ripr --help` / `ripr help`)",
@@ -62,25 +67,20 @@ fn default_help_keeps_the_task_roles_distinct() -> Result<(), String> {
                 needle,
             )?;
         }
-        assert_contains(
-            "default help (`ripr --help` / `ripr help`)",
-            &stdout,
-            "ripr help --all",
-        )?;
     }
     Ok(())
 }
 
 #[test]
 fn exhaustive_help_keeps_the_same_roles_and_boundaries() -> Result<(), String> {
-    let stdout = rendered_help(&["help", "--all"])?;
+    let stdout = normalized(&rendered_help(&["help", "--all"])?);
     for needle in [
-        "Diagnose setup        ripr doctor",
-        "Inspect one change    ripr check --base origin/main",
-        "Guided repo adoption  ripr pilot --root .",
-        "Repair one named gap  ripr agent repair --seam-id ID --phase before|after",
-        "Compose PR evidence   ripr first-pr --root . --base origin/main --head HEAD",
-        "Adopt advisory CI     ripr init --ci github",
+        "Diagnose setup ripr doctor",
+        "Inspect one change ripr check --base origin/main",
+        "Guided repo adoption ripr pilot --root .",
+        "Repair one named gap ripr agent repair --seam-id ID --phase before|after",
+        "Compose PR evidence ripr first-pr --root . --base origin/main --head HEAD",
+        "Adopt advisory CI ripr init --ci github",
         "`ripr check` is the ordinary first-value analysis; `ripr pilot` is the guided repo-adoption workflow.",
         "`ripr first-pr` and `ripr start-here` compose `target/ripr/reports/start-here.{json,md}` from existing artifacts; they do not run analysis or repair a gap.",
     ] {
@@ -93,16 +93,17 @@ fn exhaustive_help_keeps_the_same_roles_and_boundaries() -> Result<(), String> {
 fn agent_help_makes_repair_primary_without_removing_control_surfaces() -> Result<(), String> {
     for args in [["agent", "--help"].as_slice(), ["agent"].as_slice()] {
         let stdout = rendered_help(args)?;
-        assert_contains("agent help", &stdout, "Primary workflow:")?;
+        let collapsed = normalized(&stdout);
+        assert_contains("agent help", &collapsed, "Primary workflow:")?;
         assert_contains(
             "agent help",
-            &stdout,
-            "repair    Run the two-phase before/edit/after repair transaction for one seam.",
+            &collapsed,
+            "repair Run the two-phase before/edit/after repair transaction for one seam.",
         )?;
         assert_contains(
             "agent help",
-            &stdout,
-            "status    Report existing agent-loop artifacts and the exact next command.",
+            &collapsed,
+            "status Report existing agent-loop artifacts and the exact next command.",
         )?;
         let advanced = stdout
             .split("Advanced and compatibility workflows:")
@@ -131,6 +132,28 @@ fn agent_help_makes_repair_primary_without_removing_control_surfaces() -> Result
                 ));
             }
         }
+    }
+    Ok(())
+}
+
+/// The primary repair transaction has its own help surface; it must keep the
+/// before/edit/after sequence and the explicit limits (no test generation, no
+/// mutation execution, no merge authority) that keep the route advisory.
+#[test]
+fn agent_repair_help_names_the_primary_transaction_and_its_limits() -> Result<(), String> {
+    let stdout = normalized(&rendered_help(&["agent", "repair", "--help"])?);
+    for needle in [
+        "Run the primary two-phase repair transaction for one named gap.",
+        "ripr agent repair --seam-id ID --phase before",
+        "# edit one focused test outside RIPR",
+        "ripr agent repair --seam-id ID --phase after",
+        "The repair command does not generate or apply tests, execute mutation testing, or declare the repository safe to merge.",
+    ] {
+        assert_contains(
+            "agent repair help (`ripr agent repair --help`)",
+            &stdout,
+            needle,
+        )?;
     }
     Ok(())
 }
