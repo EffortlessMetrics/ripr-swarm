@@ -773,7 +773,6 @@ fn create_external_doctor_fixture(root: &Path) -> Result<PathBuf, String> {
     Ok(root.to_path_buf())
 }
 
-
 fn run_git_output_in_dir(root: &Path, args: &[&str]) -> Result<String, String> {
     let mut owned = vec![
         "-c".to_string(),
