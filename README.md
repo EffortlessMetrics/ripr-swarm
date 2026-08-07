@@ -16,7 +16,7 @@
   <a href="https://github.com/EffortlessMetrics/ripr/releases"><img src="https://img.shields.io/github/v/release/EffortlessMetrics/ripr?sort=semver&label=release" alt="GitHub release" /></a>
   <a href="https://crates.io/crates/ripr"><img src="https://img.shields.io/crates/d/ripr.svg?label=crates.io%20downloads" alt="crates.io downloads" /></a>
   <a href="https://marketplace.visualstudio.com/items?itemName=EffortlessMetrics.ripr"><img src="https://img.shields.io/badge/VS%20Marketplace-5%20installs-0078D4" alt="VS Marketplace installs" /></a>
-  <a href="https://open-vsx.org/extension/EffortlessMetrics.ripr"><img src="https://img.shields.io/open-vsx/dt/EffortlessMetrics/ripr?label=Open%20VSX%20downloads" alt="Open VSX downloads" /></a>
+  <a href="https://open-vsx.org/extension/EffortlessMetrics/ripr"><img src="https://img.shields.io/open-vsx/dt/EffortlessMetrics/ripr?label=Open%20VSX%20downloads" alt="Open VSX downloads" /></a>
 </p>
 
 <p align="center">
