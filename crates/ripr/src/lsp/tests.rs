@@ -3253,11 +3253,18 @@ fn gap_code_actions_suppress_first_repair_packet_without_producer_discriminator(
     assert!(
         commands.iter().all(|(title, _, args)| {
             title != "Copy first repair packet"
-                && args
-                    .first()
-                    .is_none_or(|arg| arg["label"] != "first_repair_packet")
+                && title != "Agent handoff: copy Python packet"
+                && args.first().is_none_or(|arg| {
+                    arg["label"] != "first_repair_packet" && arg["label"] != "python_agent_packet"
+                })
         }),
-        "first repair packet must require producer-owned discriminator evidence: {commands:?}"
+        "repair packet handoffs must require producer-owned discriminator evidence: {commands:?}"
+    );
+    assert!(
+        commands
+            .iter()
+            .any(|(title, _, _)| title == "Inspect gap: copy repair packet"),
+        "inspect route should remain available without a discriminator: {commands:?}"
     );
     Ok(())
 }

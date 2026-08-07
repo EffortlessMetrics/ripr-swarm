@@ -1132,6 +1132,10 @@ fn python_agent_packet_target(
     {
         return None;
     }
+    // #2657: an absent producer-owned discriminator strips agent-handoff
+    // authority; fail closed instead of presenting the packet as actionable.
+    let repair_route = data.get("repair_route")?;
+    missing_discriminator_for_packet(data, repair_route)?;
     string_at(data, &["gap_id"])?;
     let gap_ledger = string_at(data, &["gap_ledger"])?;
     if !workspace_path_is_safe(snapshot.root.as_path(), gap_ledger) {
