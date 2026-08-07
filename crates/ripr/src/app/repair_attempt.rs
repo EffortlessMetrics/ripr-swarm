@@ -37,13 +37,15 @@ impl RepairAttemptId {
             ));
         };
         if suffix.len() != REPAIR_ATTEMPT_ID_HEX_LEN
-            || !suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || !suffix
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
         {
             return Err(format!(
-                "repair attempt ID suffix must contain {REPAIR_ATTEMPT_ID_HEX_LEN} hexadecimal characters"
+                "repair attempt ID suffix must contain {REPAIR_ATTEMPT_ID_HEX_LEN} lowercase hexadecimal characters"
             ));
         }
-        Ok(Self(value.to_ascii_lowercase()))
+        Ok(Self(value))
     }
 
     pub(crate) fn as_str(&self) -> &str {
@@ -127,52 +129,51 @@ pub(crate) fn begin_repair_attempt(
         std::process::id(),
         nonce,
     )?;
-    let attempt_directory = repair_attempt_directory(&canonical_root, &repair_attempt_id);
-    if attempt_directory.exists() {
-        return Err(format!(
-            "repair attempt directory already exists: {}",
-            attempt_directory.display()
-        ));
-    }
-
-    let artifacts = stage_before_artifacts(
-        &canonical_root,
-        &attempt_directory,
-        sources,
-    )?;
+    let attempt_directory = reserve_attempt_directory(&canonical_root, &repair_attempt_id)?;
     let root_argument = display_path(root_argument);
-    let next_command = format!(
-        "ripr agent repair --root {} --seam-id {} --phase after",
-        shell_arg(&root_argument),
-        shell_arg(seam_id)
+    let result = stage_before_artifacts(&canonical_root, &attempt_directory, sources).and_then(
+        |artifacts| {
+            let next_command = format!(
+                "ripr agent repair --root {} --seam-id {} --phase after",
+                shell_arg(&root_argument),
+                shell_arg(seam_id)
+            );
+            let manifest = RepairAttemptManifest {
+                schema_version: REPAIR_ATTEMPT_SCHEMA_VERSION.to_string(),
+                kind: "repair_attempt".to_string(),
+                repair_attempt_id,
+                state: RepairAttemptState::AwaitingEdit,
+                root: display_path(&canonical_root),
+                repository_head,
+                producer_version: env!("CARGO_PKG_VERSION").to_string(),
+                seam_id: seam_id.to_string(),
+                created_unix_ms,
+                artifacts,
+                next_command,
+                limitations: vec![
+                    "after phase remains seam-selected until #2927 PR B adds --attempt consumption"
+                        .to_string(),
+                ],
+                non_claims: vec![
+                    "RIPR does not author or apply the focused test edit".to_string(),
+                    "prepared evidence does not mean the gap is fixed or verified".to_string(),
+                    "this manifest does not authorize mutation execution or merge".to_string(),
+                ],
+            };
+            let manifest_path = write_repair_attempt_manifest(&canonical_root, &manifest)?;
+            Ok(BeginRepairAttemptResult {
+                manifest,
+                manifest_path,
+            })
+        },
     );
-    let manifest = RepairAttemptManifest {
-        schema_version: REPAIR_ATTEMPT_SCHEMA_VERSION.to_string(),
-        kind: "repair_attempt".to_string(),
-        repair_attempt_id,
-        state: RepairAttemptState::AwaitingEdit,
-        root: display_path(&canonical_root),
-        repository_head,
-        producer_version: env!("CARGO_PKG_VERSION").to_string(),
-        seam_id: seam_id.to_string(),
-        created_unix_ms,
-        artifacts,
-        next_command,
-        limitations: vec![
-            "after phase remains seam-selected until #2927 PR B adds --attempt consumption"
-                .to_string(),
-        ],
-        non_claims: vec![
-            "RIPR does not author or apply the focused test edit".to_string(),
-            "prepared evidence does not mean the gap is fixed or verified".to_string(),
-            "this manifest does not authorize mutation execution or merge".to_string(),
-        ],
-    };
-    let manifest_path = write_repair_attempt_manifest(&canonical_root, &manifest)?;
-    Ok(BeginRepairAttemptResult {
-        manifest,
-        manifest_path,
-    })
+    match result {
+        Ok(result) => Ok(result),
+        Err(error) => {
+            let _ = std::fs::remove_dir_all(&attempt_directory);
+            Err(error)
+        }
+    }
 }
 
 pub(crate) fn repair_attempt_directory(root: &Path, attempt_id: &RepairAttemptId) -> PathBuf {
@@ -180,13 +181,33 @@ pub(crate) fn repair_attempt_directory(root: &Path, attempt_id: &RepairAttemptId
         .join(attempt_id.as_str())
 }
 
+/// Reserve the attempt transaction exclusively. Creating the directory with
+/// `create_dir` (not check-then-act) fails closed when the attempt identity is
+/// already taken, so an existing attempt is never reused or overwritten.
+fn reserve_attempt_directory(root: &Path, attempt_id: &RepairAttemptId) -> Result<PathBuf, String> {
+    let attempts_root = root.join(REPAIR_ATTEMPT_DIRECTORY);
+    std::fs::create_dir_all(&attempts_root)
+        .map_err(|error| format!("create {} failed: {error}", attempts_root.display()))?;
+    let attempt_directory = attempts_root.join(attempt_id.as_str());
+    std::fs::create_dir(&attempt_directory).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::AlreadyExists {
+            return format!(
+                "repair attempt directory already exists: {}",
+                attempt_directory.display()
+            );
+        }
+        format!("create {} failed: {error}", attempt_directory.display())
+    })?;
+    Ok(attempt_directory)
+}
+
 pub(crate) fn write_repair_attempt_manifest(
     root: &Path,
     manifest: &RepairAttemptManifest,
 ) -> Result<PathBuf, String> {
     validate_manifest(manifest)?;
-    let path = repair_attempt_directory(root, &manifest.repair_attempt_id)
-        .join(REPAIR_ATTEMPT_MANIFEST);
+    let path =
+        repair_attempt_directory(root, &manifest.repair_attempt_id).join(REPAIR_ATTEMPT_MANIFEST);
     let mut rendered = serde_json::to_vec_pretty(manifest)
         .map_err(|error| format!("serialize repair attempt manifest failed: {error}"))?;
     rendered.push(b'\n');
@@ -200,6 +221,34 @@ fn stage_before_artifacts(
     sources: &[BeforeArtifactSource<'_>],
 ) -> Result<Vec<RepairAttemptArtifact>, String> {
     let destination_directory = attempt_directory.join(REPAIR_ATTEMPT_ARTIFACTS_DIRECTORY);
+    let nonce = ATTEMPT_NONCE.fetch_add(1, Ordering::Relaxed);
+    let staging_directory = attempt_directory.join(format!(
+        ".{REPAIR_ATTEMPT_ARTIFACTS_DIRECTORY}.tmp-{}-{nonce}",
+        std::process::id()
+    ));
+    let artifacts = match stage_sources(root, &staging_directory, &destination_directory, sources) {
+        Ok(artifacts) => artifacts,
+        Err(error) => {
+            let _ = std::fs::remove_dir_all(&staging_directory);
+            return Err(error);
+        }
+    };
+    if let Err(error) = std::fs::rename(&staging_directory, &destination_directory) {
+        let _ = std::fs::remove_dir_all(&staging_directory);
+        return Err(format!(
+            "publish {} failed: {error}",
+            destination_directory.display()
+        ));
+    }
+    Ok(artifacts)
+}
+
+fn stage_sources(
+    root: &Path,
+    staging_directory: &Path,
+    destination_directory: &Path,
+    sources: &[BeforeArtifactSource<'_>],
+) -> Result<Vec<RepairAttemptArtifact>, String> {
     let mut roles = BTreeSet::new();
     let mut names = BTreeSet::new();
     let mut artifacts = Vec::with_capacity(sources.len());
@@ -238,8 +287,9 @@ fn stage_before_artifacts(
         }
         let bytes = std::fs::read(&source_path)
             .map_err(|error| format!("read {} failed: {error}", source_path.display()))?;
-        let destination = destination_directory.join(file_name);
-        write_bytes_atomic(&destination, &bytes)?;
+        let staged = staging_directory.join(&file_name);
+        write_bytes_atomic(&staged, &bytes)?;
+        let destination = destination_directory.join(&file_name);
         let relative = destination.strip_prefix(root).map_err(|error| {
             format!(
                 "repair attempt destination {} is not under root {}: {error}",
@@ -270,29 +320,46 @@ fn validate_manifest(manifest: &RepairAttemptManifest) -> Result<(), String> {
     }
     RepairAttemptId::parse(manifest.repair_attempt_id.as_str())?;
     if manifest.kind != "repair_attempt"
-        || manifest.root.trim().is_empty()
+        || manifest.state != RepairAttemptState::AwaitingEdit
+        || manifest.root.is_empty()
         || manifest.repository_head.len() != 40
         || !manifest
             .repository_head
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit())
-        || manifest.seam_id.trim().is_empty()
+        || manifest.producer_version.is_empty()
+        || manifest.seam_id.is_empty()
         || manifest.artifacts.is_empty()
-        || manifest.next_command.trim().is_empty()
+        || manifest.next_command.is_empty()
+        || manifest
+            .limitations
+            .iter()
+            .any(|limitation| limitation.is_empty())
+        || manifest.non_claims.is_empty()
+        || manifest
+            .non_claims
+            .iter()
+            .any(|non_claim| non_claim.is_empty())
     {
         return Err("repair attempt manifest is incomplete or malformed".to_string());
     }
-    if manifest
-        .artifacts
-        .iter()
-        .any(|artifact| artifact.role.trim().is_empty()
-            || artifact.path.trim().is_empty()
-            || !artifact.sha256.starts_with("sha256:")
-            || artifact.sha256.len() != 71)
-    {
+    if manifest.artifacts.iter().any(|artifact| {
+        artifact.role.is_empty() || artifact.path.is_empty() || !is_sha256_digest(&artifact.sha256)
+    }) {
         return Err("repair attempt manifest contains an invalid artifact".to_string());
     }
     Ok(())
+}
+
+/// Schema 0.1 artifact digest shape: `sha256:` plus 64 lowercase hex digits.
+fn is_sha256_digest(value: &str) -> bool {
+    let Some(digest) = value.strip_prefix("sha256:") else {
+        return false;
+    };
+    digest.len() == 64
+        && digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
 
 fn repair_attempt_id_from_parts(
@@ -360,17 +427,21 @@ fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
         return Err(error);
     }
 
-    #[cfg(windows)]
-    if path.exists()
-        && let Err(error) = std::fs::remove_file(path)
-    {
+    // Publish exclusively: attempt destinations are immutable, so linking the
+    // temporary file into place fails closed instead of deleting or
+    // overwriting an existing destination (which also removes the Windows
+    // delete-before-rename crash gap).
+    if let Err(error) = std::fs::hard_link(&temporary, path) {
         let _ = std::fs::remove_file(&temporary);
-        return Err(format!("remove {} failed: {error}", path.display()));
-    }
-    if let Err(error) = std::fs::rename(&temporary, path) {
-        let _ = std::fs::remove_file(&temporary);
+        if error.kind() == std::io::ErrorKind::AlreadyExists {
+            return Err(format!(
+                "repair attempt destination is immutable and already exists: {}",
+                path.display()
+            ));
+        }
         return Err(format!("publish {} failed: {error}", path.display()));
     }
+    let _ = std::fs::remove_file(&temporary);
     Ok(())
 }
 
@@ -415,13 +486,12 @@ mod tests {
             artifacts: vec![RepairAttemptArtifact {
                 role: "before_snapshot".to_string(),
                 path: "target/ripr/repair-attempts/sample/artifacts/before.json".to_string(),
-                sha256:
-                    "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-                        .to_string(),
+                sha256: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                    .to_string(),
                 bytes: 2,
             }],
-            next_command:
-                "ripr agent repair --root . --seam-id seam:sample --phase after".to_string(),
+            next_command: "ripr agent repair --root . --seam-id seam:sample --phase after"
+                .to_string(),
             limitations: Vec::new(),
             non_claims: vec!["not merge authority".to_string()],
         })
@@ -458,9 +528,10 @@ mod tests {
         if decoded != manifest {
             return Err("repair attempt manifest changed during round trip".to_string());
         }
-        let leftovers = std::fs::read_dir(path.parent().ok_or_else(|| {
-            "repair attempt manifest has no parent directory".to_string()
-        })?)
+        let leftovers = std::fs::read_dir(
+            path.parent()
+                .ok_or_else(|| "repair attempt manifest has no parent directory".to_string())?,
+        )
         .map_err(|error| format!("read manifest directory failed: {error}"))?
         .filter_map(Result::ok)
         .filter(|entry| entry.file_name().to_string_lossy().contains("tmp-"))
@@ -468,7 +539,9 @@ mod tests {
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
         if leftovers != 0 {
-            return Err(format!("atomic manifest write left {leftovers} temporary files"));
+            return Err(format!(
+                "atomic manifest write left {leftovers} temporary files"
+            ));
         }
         Ok(())
     }
@@ -496,8 +569,225 @@ mod tests {
         {
             return Err(format!("unexpected staged artifact: {artifacts:?}"));
         }
+        let staging_leftovers = std::fs::read_dir(&attempt_directory)
+            .map_err(|error| format!("read attempt directory failed: {error}"))?
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains("tmp-"))
+            .count();
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        if staging_leftovers != 0 {
+            return Err(format!(
+                "staging left {staging_leftovers} temporary entries in the attempt directory"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn repair_attempt_id_rejects_uppercase_and_preserves_value() -> Result<(), String> {
+        let canonical = "repair-attempt-0123456789abcdef01234567";
+        let parsed = RepairAttemptId::parse(canonical)?;
+        if parsed.as_str() != canonical {
+            return Err(format!(
+                "repair attempt ID was rewritten during parse: {}",
+                parsed.as_str()
+            ));
+        }
+        if RepairAttemptId::parse("repair-attempt-0123456789ABCDEF01234567").is_ok() {
+            return Err("uppercase repair attempt ID was accepted".to_string());
+        }
+        if RepairAttemptId::parse("repair-attempt-0123456789abcdef0123456").is_ok() {
+            return Err("short repair attempt ID was accepted".to_string());
+        }
+        Ok(())
+    }
+
+    type ManifestMutation = (&'static str, fn(&mut RepairAttemptManifest));
+
+    #[test]
+    fn validate_manifest_accepts_sample_and_rejects_each_schema_invariant() -> Result<(), String> {
+        let root = test_root("validate")?;
+        validate_manifest(&sample_manifest(&root)?)
+            .map_err(|error| format!("sample manifest was rejected: {error}"))?;
+        let cases: Vec<ManifestMutation> = vec![
+            ("schema_version is not 0.1", |manifest| {
+                manifest.schema_version = "9.9".to_string();
+            }),
+            ("kind is not repair_attempt", |manifest| {
+                manifest.kind = "repair_attempts".to_string();
+            }),
+            ("repair_attempt_id has uppercase hex", |manifest| {
+                manifest.repair_attempt_id =
+                    RepairAttemptId("repair-attempt-0123456789ABCDEF01234567".to_string());
+            }),
+            ("repair_attempt_id has wrong length", |manifest| {
+                manifest.repair_attempt_id = RepairAttemptId("repair-attempt-0123".to_string());
+            }),
+            ("state is not awaiting_edit", |manifest| {
+                manifest.state = RepairAttemptState::Prepared;
+            }),
+            ("root is empty", |manifest| {
+                manifest.root.clear();
+            }),
+            ("repository_head is not 40 characters", |manifest| {
+                manifest.repository_head = "0123".to_string();
+            }),
+            ("repository_head is not hexadecimal", |manifest| {
+                manifest.repository_head = "g".repeat(40);
+            }),
+            ("producer_version is empty", |manifest| {
+                manifest.producer_version.clear();
+            }),
+            ("seam_id is empty", |manifest| {
+                manifest.seam_id.clear();
+            }),
+            ("artifacts is empty", |manifest| {
+                manifest.artifacts.clear();
+            }),
+            ("next_command is empty", |manifest| {
+                manifest.next_command.clear();
+            }),
+            ("artifact role is blank", |manifest| {
+                manifest.artifacts[0].role.clear();
+            }),
+            ("artifact path is blank", |manifest| {
+                manifest.artifacts[0].path.clear();
+            }),
+            ("artifact sha256 is missing the prefix", |manifest| {
+                manifest.artifacts[0].sha256 =
+                    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string();
+            }),
+            ("artifact sha256 has the wrong length", |manifest| {
+                manifest.artifacts[0].sha256 = "sha256:0123".to_string();
+            }),
+            ("artifact sha256 has uppercase hex", |manifest| {
+                manifest.artifacts[0].sha256 = format!("sha256:{}", "A".repeat(64));
+            }),
+            ("limitations entry is empty", |manifest| {
+                manifest.limitations = vec![String::new()];
+            }),
+            ("non_claims is empty", |manifest| {
+                manifest.non_claims.clear();
+            }),
+            ("non_claims entry is empty", |manifest| {
+                manifest.non_claims = vec![String::new()];
+            }),
+        ];
+        for (name, mutate) in cases {
+            let mut manifest = sample_manifest(&root)?;
+            mutate(&mut manifest);
+            if validate_manifest(&manifest).is_ok() {
+                std::fs::remove_dir_all(&root)
+                    .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+                return Err(format!("validate_manifest accepted invalid case: {name}"));
+            }
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn attempt_directory_reservation_is_exclusive() -> Result<(), String> {
+        let root = test_root("reserve")?;
+        let attempt_id = RepairAttemptId::parse("repair-attempt-0123456789abcdef01234567")?;
+        reserve_attempt_directory(&root, &attempt_id)?;
+        let second = reserve_attempt_directory(&root, &attempt_id);
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        match second {
+            Err(error) if error.contains("already exists") => Ok(()),
+            other => Err(format!(
+                "second reservation of the same attempt was not rejected: {other:?}"
+            )),
+        }
+    }
+
+    #[test]
+    fn write_bytes_atomic_refuses_to_overwrite_a_destination() -> Result<(), String> {
+        let root = test_root("immutable")?;
+        let path = root.join("attempt.json");
+        write_bytes_atomic(&path, b"first")?;
+        let second = write_bytes_atomic(&path, b"second");
+        let contents = std::fs::read(&path)
+            .map_err(|error| format!("read {} failed: {error}", path.display()))?;
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        if second.is_ok() {
+            return Err("immutable repair attempt destination was overwritten".to_string());
+        }
+        if contents != b"first" {
+            return Err("immutable repair attempt destination bytes changed".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn failed_begin_leaves_no_orphan_attempt_directory() -> Result<(), String> {
+        let root = test_repo_root("orphan")?;
+        let missing = root.join("missing-before.json");
+        let result = begin_repair_attempt(
+            &root,
+            &root,
+            "seam:sample",
+            &[BeforeArtifactSource {
+                role: "before_snapshot",
+                path: &missing,
+            }],
+        );
+        if result.is_ok() {
+            return Err("begin_repair_attempt accepted a missing artifact source".to_string());
+        }
+        let attempts_root = root.join(REPAIR_ATTEMPT_DIRECTORY);
+        let orphans = std::fs::read_dir(&attempts_root)
+            .map_err(|error| format!("read {} failed: {error}", attempts_root.display()))?
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(REPAIR_ATTEMPT_ID_PREFIX)
+            })
+            .count();
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        if orphans != 0 {
+            return Err(format!(
+                "failed begin_repair_attempt left {orphans} orphan attempt directories"
+            ));
+        }
+        Ok(())
+    }
+
+    fn test_repo_root(label: &str) -> Result<PathBuf, String> {
+        let root = test_root(label)?;
+        run_git(&root, &["init"])?;
+        run_git(
+            &root,
+            &["config", "user.email", "ripr-test@example.invalid"],
+        )?;
+        run_git(&root, &["config", "user.name", "RIPR Test"])?;
+        let readme = root.join("README.md");
+        std::fs::write(&readme, "# test\n")
+            .map_err(|error| format!("write {} failed: {error}", readme.display()))?;
+        run_git(&root, &["add", "."])?;
+        run_git(&root, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+        Ok(root)
+    }
+
+    fn run_git(root: &Path, args: &[&str]) -> Result<(), String> {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .map_err(|error| format!("run git {args:?} failed: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
         Ok(())
     }
 }

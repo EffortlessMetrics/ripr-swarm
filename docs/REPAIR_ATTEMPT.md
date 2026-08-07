@@ -69,13 +69,22 @@ The manifest separately retains:
 
 ## Publication law
 
-Artifacts and the manifest are written to temporary files in their destination
-directories, synchronized, and renamed into place. A manifest is not visible as
-complete until all attempt-specific artifact copies have been published.
+Artifact copies are staged in a sibling temporary directory inside the attempt
+directory and renamed into `artifacts/` once complete. The manifest is written
+to a temporary file, synchronized, and linked into place. A manifest is not
+visible as complete until all attempt-specific artifact copies have been
+published, and a mid-staging failure leaves no partial `artifacts/` set.
+
+The before phase holds a per-repository lock
+(`target/ripr/repair-attempts/.before.lock`) across workflow execution and
+attempt publication, so a concurrent before phase cannot publish another
+invocation's workflow artifacts under this attempt's identity.
 
 Source artifacts must canonicalize inside the selected repository root.
-Duplicate roles or destination file names fail closed. An existing attempt
-directory is never reused.
+Duplicate roles or destination file names fail closed. Attempt destinations
+are immutable: an existing attempt directory, artifact, or manifest is never
+reused or overwritten, and a failed begin removes the reserved attempt
+directory.
 
 ## Current state
 
