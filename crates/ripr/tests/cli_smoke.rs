@@ -2617,10 +2617,23 @@ fn agent_verify_rejects_incomparable_analysis_inputs() -> Result<(), Box<dyn std
     )?;
     assert!(commit.status.success(), "fixture commit failed: {commit:?}");
     let new_head = concrete_fixture_repository_head(&root)?;
-    let altered = std::fs::read_to_string(&after)?.replace(
-        &format!("\"head\": \"{old_head}\""),
-        &format!("\"head\": \"{new_head}\""),
-    );
+    // Tamper the analysis input identity while keeping the after artifact
+    // internally consistent (input identity, declared head, and snapshot
+    // identity must agree under exact snapshot validation) so the pair
+    // comparison — not single-artifact validation — rejects it.
+    let altered = std::fs::read_to_string(&after)?
+        .replace(
+            &format!("\"head\": \"{old_head}\""),
+            &format!("\"head\": \"{new_head}\""),
+        )
+        .replace(
+            &format!("snapshot:input:fixture;revision:{old_head}"),
+            &format!("snapshot:input:other;revision:{new_head}"),
+        )
+        .replace(
+            "\"input_identity\": \"input:fixture\"",
+            "\"input_identity\": \"input:other\"",
+        );
     std::fs::write(&after, recommit_repo_exposure_json(altered))?;
 
     let before_path = before.display().to_string();
@@ -2637,10 +2650,7 @@ fn agent_verify_rejects_incomparable_analysis_inputs() -> Result<(), Box<dyn std
         "--json",
     ]);
     assert_failure(&output);
-    assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("snapshot identities are identical for distinct repository heads")
-    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("analysis input identities differ"));
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
@@ -3056,14 +3066,23 @@ fn agent_receipt_rejects_incomparable_analysis_inputs() -> Result<(), Box<dyn st
     )?;
     assert!(commit.status.success(), "fixture commit failed: {commit:?}");
     let new_head = concrete_fixture_repository_head(&root)?;
-    let altered = std::fs::read_to_string(&after)?.replace(
-        &format!("\"head\": \"{old_head}\""),
-        &format!("\"head\": \"{new_head}\""),
-    );
-    // Keep the tampered artifact internally consistent (input identity and
-    // snapshot identity must agree under exact snapshot validation) so the
-    // pair comparison — not single-artifact validation — rejects it.
-    let altered = altered.replace("snapshot:input:fixture", "snapshot:input:other");
+    // Tamper the analysis input identity while keeping the after artifact
+    // internally consistent (input identity, declared head, and snapshot
+    // identity must agree under exact snapshot validation) so the pair
+    // comparison — not single-artifact validation — rejects it.
+    let altered = std::fs::read_to_string(&after)?
+        .replace(
+            &format!("\"head\": \"{old_head}\""),
+            &format!("\"head\": \"{new_head}\""),
+        )
+        .replace(
+            &format!("snapshot:input:fixture;revision:{old_head}"),
+            &format!("snapshot:input:other;revision:{new_head}"),
+        )
+        .replace(
+            "\"input_identity\": \"input:fixture\"",
+            "\"input_identity\": \"input:other\"",
+        );
     std::fs::write(&after, recommit_repo_exposure_json(altered))?;
     let verify = root.join("fabricated-agent-verify.json");
     write_fabricated_agent_verify_json(&verify, &before, &after)?;
@@ -3080,7 +3099,11 @@ fn agent_receipt_rejects_incomparable_analysis_inputs() -> Result<(), Box<dyn st
         "--json",
     ]);
     assert_failure(&output);
-    assert!(String::from_utf8_lossy(&output.stderr).contains("[incomparable_analysis_inputs]"));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("[incomparable_analysis_inputs]"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
