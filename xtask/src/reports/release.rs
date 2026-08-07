@@ -773,20 +773,6 @@ fn create_external_doctor_fixture(root: &Path) -> Result<PathBuf, String> {
     Ok(root.to_path_buf())
 }
 
-fn run_command_in_dir(
-    program: &str,
-    args: &[String],
-    cwd: &Path,
-    error_context: &str,
-) -> Result<CommandResult, String> {
-    let output = crate::run::capture_output_in_dir(program, args, cwd, error_context)?;
-    Ok(CommandResult {
-        status: output.status.code(),
-        success: output.status.success(),
-        stdout: output.stdout,
-        stderr: output.stderr,
-    })
-}
 
 fn run_git_output_in_dir(root: &Path, args: &[&str]) -> Result<String, String> {
     let mut owned = vec![
@@ -999,7 +985,7 @@ fn packaged_cli_journey_check(binary: &Path, crate_version: Option<&str>) -> Rel
         })?;
         let version_args = vec!["--version".to_string()];
         let version = run_command_in_dir(
-            &binary.to_string_lossy(),
+            &binary,
             &version_args,
             &std::env::current_dir().map_err(|err| {
                 format!("read current directory for packaged CLI version failed: {err}")
