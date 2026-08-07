@@ -130,24 +130,54 @@ pub(crate) fn begin_repair_attempt(
         nonce,
     )?;
     let attempt_directory = reserve_attempt_directory(&canonical_root, &repair_attempt_id)?;
-    let root_argument = display_path(root_argument);
-    let result = stage_before_artifacts(&canonical_root, &attempt_directory, sources).and_then(
-        |artifacts| {
+    complete_repair_attempt(
+        &canonical_root,
+        &attempt_directory,
+        AttemptPublication {
+            root_argument,
+            seam_id,
+            repository_head,
+            created_unix_ms,
+            repair_attempt_id,
+            sources,
+        },
+    )
+}
+
+struct AttemptPublication<'a> {
+    root_argument: &'a Path,
+    seam_id: &'a str,
+    repository_head: String,
+    created_unix_ms: u64,
+    repair_attempt_id: RepairAttemptId,
+    sources: &'a [BeforeArtifactSource<'a>],
+}
+
+/// Stage artifacts and publish the manifest inside a reserved attempt
+/// directory. Any failure removes the reserved directory, so a failed begin
+/// leaves neither an orphan attempt nor a partial artifact set behind.
+fn complete_repair_attempt(
+    canonical_root: &Path,
+    attempt_directory: &Path,
+    publication: AttemptPublication<'_>,
+) -> Result<BeginRepairAttemptResult, String> {
+    let result = stage_before_artifacts(canonical_root, attempt_directory, publication.sources)
+        .and_then(|artifacts| {
             let next_command = format!(
                 "ripr agent repair --root {} --seam-id {} --phase after",
-                shell_arg(&root_argument),
-                shell_arg(seam_id)
+                shell_arg(&display_path(publication.root_argument)),
+                shell_arg(publication.seam_id)
             );
             let manifest = RepairAttemptManifest {
                 schema_version: REPAIR_ATTEMPT_SCHEMA_VERSION.to_string(),
                 kind: "repair_attempt".to_string(),
-                repair_attempt_id,
+                repair_attempt_id: publication.repair_attempt_id,
                 state: RepairAttemptState::AwaitingEdit,
-                root: display_path(&canonical_root),
-                repository_head,
+                root: display_path(canonical_root),
+                repository_head: publication.repository_head,
                 producer_version: env!("CARGO_PKG_VERSION").to_string(),
-                seam_id: seam_id.to_string(),
-                created_unix_ms,
+                seam_id: publication.seam_id.to_string(),
+                created_unix_ms: publication.created_unix_ms,
                 artifacts,
                 next_command,
                 limitations: vec![
@@ -160,20 +190,16 @@ pub(crate) fn begin_repair_attempt(
                     "this manifest does not authorize mutation execution or merge".to_string(),
                 ],
             };
-            let manifest_path = write_repair_attempt_manifest(&canonical_root, &manifest)?;
+            let manifest_path = write_repair_attempt_manifest(canonical_root, &manifest)?;
             Ok(BeginRepairAttemptResult {
                 manifest,
                 manifest_path,
             })
-        },
-    );
-    match result {
-        Ok(result) => Ok(result),
-        Err(error) => {
-            let _ = std::fs::remove_dir_all(&attempt_directory);
-            Err(error)
-        }
+        });
+    if result.is_err() {
+        let _ = std::fs::remove_dir_all(attempt_directory);
     }
+    result
 }
 
 pub(crate) fn repair_attempt_directory(root: &Path, attempt_id: &RepairAttemptId) -> PathBuf {
@@ -756,6 +782,51 @@ mod tests {
             return Err(format!(
                 "failed begin_repair_attempt left {orphans} orphan attempt directories"
             ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn failed_manifest_write_removes_staged_attempt_and_artifacts() -> Result<(), String> {
+        let root = test_root("publish")?;
+        let attempt_id = RepairAttemptId::parse("repair-attempt-0123456789abcdef01234567")?;
+        let attempt_directory = reserve_attempt_directory(&root, &attempt_id)?;
+        let source = root.join("before.json");
+        std::fs::write(&source, b"{}")
+            .map_err(|error| format!("write {} failed: {error}", source.display()))?;
+        // Force the manifest publish to fail after staging succeeds: the
+        // manifest destination already exists as a directory, so the
+        // exclusive link in write_bytes_atomic fails closed.
+        std::fs::create_dir(attempt_directory.join(REPAIR_ATTEMPT_MANIFEST))
+            .map_err(|error| format!("create occupied manifest path failed: {error}"))?;
+        let result = complete_repair_attempt(
+            &root,
+            &attempt_directory,
+            AttemptPublication {
+                root_argument: &root,
+                seam_id: "seam:sample",
+                repository_head: "0123456789abcdef0123456789abcdef01234567".to_string(),
+                created_unix_ms: 1,
+                repair_attempt_id: attempt_id,
+                sources: &[BeforeArtifactSource {
+                    role: "before_snapshot",
+                    path: &source,
+                }],
+            },
+        );
+        let attempt_remaining = attempt_directory.exists();
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        if result.is_ok() {
+            return Err(
+                "complete_repair_attempt published over an occupied manifest path".to_string(),
+            );
+        }
+        if attempt_remaining {
+            return Err(
+                "failed manifest write left the attempt directory and staged artifacts behind"
+                    .to_string(),
+            );
         }
         Ok(())
     }

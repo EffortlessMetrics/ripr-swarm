@@ -78,7 +78,10 @@ published, and a mid-staging failure leaves no partial `artifacts/` set.
 The before phase holds a per-repository lock
 (`target/ripr/repair-attempts/.before.lock`) across workflow execution and
 attempt publication, so a concurrent before phase cannot publish another
-invocation's workflow artifacts under this attempt's identity.
+invocation's workflow artifacts under this attempt's identity. Acquisition is
+non-blocking: a concurrent before phase fails closed with a bounded error
+instead of waiting. The lock is an OS file-handle lock released on drop or
+process exit, so it cannot go stale.
 
 Source artifacts must canonicalize inside the selected repository root.
 Duplicate roles or destination file names fail closed. Attempt destinations
