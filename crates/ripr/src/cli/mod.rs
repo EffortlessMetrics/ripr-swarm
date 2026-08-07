@@ -18,6 +18,8 @@ use crate::agent::loop_commands::{
     WORKFLOW_MANIFEST_ARTIFACT,
 };
 use crate::app::repair_attempt::BeforeArtifactSource;
+use std::fs::File;
+use std::path::Path;
 
 pub fn run(mut args: Vec<String>) -> Result<(), String> {
     let version_requested = parse::top_level_version_requested(&args);
@@ -31,11 +33,31 @@ pub fn run(mut args: Vec<String>) -> Result<(), String> {
         eprintln!("ripr: verbose mode enabled");
     }
     let before_attempt = before_repair_attempt(&args)?;
+    let _before_lock = before_attempt
+        .as_ref()
+        .map(|options| lock_before_repair_attempt(&options.root))
+        .transpose()?;
     execute::execute(parse::parse_args(args)?)?;
     if let Some(options) = before_attempt {
         persist_before_repair_attempt(&options)?;
     }
     Ok(())
+}
+
+/// Serialize before-phase execution and attempt publication per repository.
+/// The workflow artifacts under `target/ripr/workflow` are repository-global,
+/// so a concurrent before phase could otherwise publish this invocation's
+/// copies under its own attempt identity. The lock is released on drop.
+fn lock_before_repair_attempt(root: &Path) -> Result<File, String> {
+    let directory = root.join(crate::app::repair_attempt::REPAIR_ATTEMPT_DIRECTORY);
+    std::fs::create_dir_all(&directory)
+        .map_err(|error| format!("create {} failed: {error}", directory.display()))?;
+    let lock_path = directory.join(".before.lock");
+    let lock = File::create(&lock_path)
+        .map_err(|error| format!("create {} failed: {error}", lock_path.display()))?;
+    lock.lock()
+        .map_err(|error| format!("lock {} failed: {error}", lock_path.display()))?;
+    Ok(lock)
 }
 
 fn before_repair_attempt(args: &[String]) -> Result<Option<agent::AgentRepairOptions>, String> {
@@ -93,7 +115,10 @@ fn persist_before_repair_attempt(options: &agent::AgentRepairOptions) -> Result<
         result.manifest.repair_attempt_id.as_str()
     );
     eprintln!("ripr: attempt manifest: {}", result.manifest_path.display());
-    eprintln!("ripr: attempt next command: {}", result.manifest.next_command);
+    eprintln!(
+        "ripr: attempt next command: {}",
+        result.manifest.next_command
+    );
     Ok(())
 }
 
