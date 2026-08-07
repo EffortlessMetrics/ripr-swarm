@@ -275,10 +275,12 @@ pub(crate) struct ValidatedArtifact {
     pub(crate) analysis_profile: String,
 }
 
-/// Validate that two producer artifacts describe comparable analyses of
-/// distinct repository snapshots. The input identity is snapshot-bound; the
-/// stable comparison fields below carry the analysis configuration that must
-/// remain unchanged across the pair.
+/// Validate that two producer artifacts describe comparable analyses. The
+/// input identity is stable semantic/configuration identity: it must be equal
+/// across a comparable pair (the positive control), independent of the
+/// repository head. The snapshot identity is producer-owned observation
+/// identity, exactly bound to the input identity plus the concrete repository
+/// head, so it must differ across distinct heads and agree for the same head.
 pub(crate) fn validate_comparable_pair(
     before: &ValidatedArtifact,
     after: &ValidatedArtifact,
@@ -307,22 +309,17 @@ pub(crate) fn validate_comparable_pair(
             before.analysis_profile, after.analysis_profile
         ));
     }
+    if before.input_identity != after.input_identity {
+        return Err("analysis input identities differ".to_string());
+    }
     if before.repository_head != after.repository_head {
-        if before.input_identity == after.input_identity {
-            return Err("analysis input identities are identical".to_string());
-        }
         if before.snapshot_identity == after.snapshot_identity {
-            return Err("snapshot identities are identical".to_string());
-        }
-    } else {
-        if before.input_identity != after.input_identity {
             return Err(
-                "analysis input identities differ for the same repository head".to_string(),
+                "snapshot identities are identical for distinct repository heads".to_string(),
             );
         }
-        if before.snapshot_identity != after.snapshot_identity {
-            return Err("snapshot identities differ for the same repository head".to_string());
-        }
+    } else if before.snapshot_identity != after.snapshot_identity {
+        return Err("snapshot identities differ for the same repository head".to_string());
     }
     Ok(())
 }
@@ -520,24 +517,83 @@ mod tests {
         assert!(matches!(result, Err(error) if error.contains("sha256:<64 hex>")));
     }
 
-    #[test]
-    fn comparable_pair_rejects_profile_drift_after_artifact_validation() {
-        let before = ValidatedArtifact {
+    fn comparable_artifact() -> ValidatedArtifact {
+        ValidatedArtifact {
             currentness: ArtifactCurrentness::Current,
             base_revision: None,
-            input_identity: "input:before".to_string(),
-            snapshot_identity: "snapshot:input:before".to_string(),
+            input_identity: "input:stable".to_string(),
+            snapshot_identity: format!("snapshot:input:stable;revision:{}", "a".repeat(40)),
             repository_head: "a".repeat(40),
             producer_version: "0.11.0".to_string(),
             analysis_mode: "draft".to_string(),
             analysis_profile: "draft".to_string(),
-        };
+        }
+    }
+
+    #[test]
+    fn comparable_pair_rejects_profile_drift_after_artifact_validation() {
+        let before = comparable_artifact();
         let mut after = before.clone();
         after.analysis_profile = "release".to_string();
 
         assert!(matches!(
             validate_comparable_pair(&before, &after),
             Err(error) if error.contains("analysis profiles differ")
+        ));
+    }
+
+    #[test]
+    fn comparable_pair_accepts_stable_input_identity_across_distinct_heads() {
+        let before = comparable_artifact();
+        let mut after = before.clone();
+        after.repository_head = "b".repeat(40);
+        after.snapshot_identity = format!("snapshot:input:stable;revision:{}", "b".repeat(40));
+
+        assert_eq!(validate_comparable_pair(&before, &after), Ok(()));
+    }
+
+    #[test]
+    fn comparable_pair_rejects_identical_snapshot_across_distinct_heads() {
+        let before = comparable_artifact();
+        let mut after = before.clone();
+        after.repository_head = "b".repeat(40);
+
+        assert!(matches!(
+            validate_comparable_pair(&before, &after),
+            Err(error) if error.contains("snapshot identities are identical")
+        ));
+    }
+
+    #[test]
+    fn comparable_pair_rejects_input_identity_drift() {
+        let before = comparable_artifact();
+        let mut same_head = before.clone();
+        same_head.input_identity = "input:drifted".to_string();
+        same_head.snapshot_identity = "snapshot:input:drifted".to_string();
+        assert!(matches!(
+            validate_comparable_pair(&before, &same_head),
+            Err(error) if error.contains("analysis input identities differ")
+        ));
+
+        let mut distinct_head = same_head.clone();
+        distinct_head.repository_head = "b".repeat(40);
+        distinct_head.snapshot_identity =
+            format!("snapshot:input:drifted;revision:{}", "b".repeat(40));
+        assert!(matches!(
+            validate_comparable_pair(&before, &distinct_head),
+            Err(error) if error.contains("analysis input identities differ")
+        ));
+    }
+
+    #[test]
+    fn comparable_pair_rejects_snapshot_drift_for_the_same_head() {
+        let before = comparable_artifact();
+        let mut after = before.clone();
+        after.snapshot_identity = "snapshot:input:other".to_string();
+
+        assert!(matches!(
+            validate_comparable_pair(&before, &after),
+            Err(error) if error.contains("snapshot identities differ for the same repository head")
         ));
     }
 

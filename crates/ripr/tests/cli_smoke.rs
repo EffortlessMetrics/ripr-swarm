@@ -2638,7 +2638,8 @@ fn agent_verify_rejects_incomparable_analysis_inputs() -> Result<(), Box<dyn std
     ]);
     assert_failure(&output);
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("analysis input identities are identical")
+        String::from_utf8_lossy(&output.stderr)
+            .contains("snapshot identities are identical for distinct repository heads")
     );
     std::fs::remove_dir_all(root)?;
     Ok(())
