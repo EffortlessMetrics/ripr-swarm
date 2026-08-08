@@ -930,6 +930,114 @@ mod tests {
         Ok(())
     }
 
+    /// Turning on `if`/`then` evaluation in this validator made the
+    /// review-comments conditionals enforceable for the first time, and they
+    /// immediately rejected an honest producer packet.
+    ///
+    /// `error_review_comments_packet` (`xtask/src/reports/review_comments.rs`)
+    /// emits `status: "error"` and deliberately retains the producer's
+    /// `analysis_outcome` — `error_packet_retains_check_output_analysis_outcome`
+    /// pins that on purpose, so a failed run can still say what the analysis
+    /// found. Both branches keyed on `analysis_complete` pinned `status` to a
+    /// single `const`, so an error packet was rejected whichever outcome it
+    /// carried. Observed on this PR's own CI as
+    /// `allOf[1].status: expected const "incomplete", got "error"`.
+    ///
+    /// The relaxation must not degrade into "any status is fine anywhere": the
+    /// complete/incomplete split is why these branches exist, so each is
+    /// asserted in both directions.
+    #[test]
+    fn review_comments_schema_admits_error_without_losing_the_completeness_split()
+    -> Result<(), String> {
+        let root = repo_root()?;
+        let schema = read_json(root.join("schemas/ripr/review-comments.schema.json"))?;
+        let base =
+            read_json(root.join("tests/fixtures/verification/ripr/review-comments.valid.json"))?;
+
+        // Both outcomes come from real `ripr check` producer fixtures rather
+        // than hand-shaped stubs. `analysis_outcome_projection` requires
+        // `outcome` beside `analysis_complete` and forbids extra properties, so
+        // a synthesized stub would fail for reasons unrelated to `status` and
+        // would prove nothing about the branches under test.
+        let outcome_for = |complete: bool| -> Result<Value, String> {
+            let fixture = if complete {
+                "tests/fixtures/verification/ripr/check-complete.valid.json"
+            } else {
+                "tests/fixtures/verification/ripr/check-incomplete.valid.json"
+            };
+            let producer = read_json(root.join(fixture))?;
+            producer
+                .get("analysis_outcome")
+                .filter(|outcome| !outcome.is_null())
+                .cloned()
+                .ok_or_else(|| format!("{fixture} has no analysis_outcome to project"))
+        };
+        let complete_outcome = outcome_for(true)?;
+        let incomplete_outcome = outcome_for(false)?;
+        assert_eq!(
+            complete_outcome["analysis_complete"],
+            serde_json::json!(true),
+            "check-complete fixture must actually carry a completed analysis"
+        );
+        assert_eq!(
+            incomplete_outcome["analysis_complete"],
+            serde_json::json!(false),
+            "check-incomplete fixture must actually carry an incomplete analysis"
+        );
+
+        let with = |complete: bool, status: &str| {
+            let mut value = base.clone();
+            value["status"] = serde_json::json!(status);
+            value["analysis_outcome"] = if complete {
+                complete_outcome.clone()
+            } else {
+                incomplete_outcome.clone()
+            };
+            let mut violations = Vec::new();
+            validate_value_against_schema(
+                &value,
+                &schema,
+                &schema,
+                format!("review comments {status}/{complete}"),
+                &mut violations,
+            );
+            violations
+        };
+
+        assert!(
+            with(true, "error").is_empty(),
+            "an error packet retaining a completed analysis_outcome must validate: {:#?}",
+            with(true, "error")
+        );
+
+        // The incomplete case is asserted only at the level this change owns:
+        // the `status` branch must stop rejecting it. It is deliberately not
+        // asserted fully valid, because a separate divergence still rejects it
+        // — `check.schema.json` allows any non-empty `claim_boundary` while this
+        // schema pins it to one `const`, so a real incomplete outcome never
+        // projects cleanly. That is tracked on its own and is not silently
+        // absorbed here.
+        let incomplete_error = with(false, "error");
+        assert!(
+            !incomplete_error
+                .iter()
+                .any(|violation| violation.contains(".status:")),
+            "no status violation may remain for an error packet retaining an \
+             incomplete analysis_outcome: {incomplete_error:#?}"
+        );
+
+        // The discrimination that must survive the relaxation.
+        assert!(
+            !with(false, "advisory").is_empty(),
+            "advisory guidance must still be rejected when analysis did not complete"
+        );
+        assert!(
+            !with(true, "incomplete").is_empty(),
+            "an incomplete status must still be rejected when analysis completed"
+        );
+        Ok(())
+    }
+
     #[test]
     fn complete_check_fixture_matches_schema() -> Result<(), String> {
         let root = repo_root()?;
