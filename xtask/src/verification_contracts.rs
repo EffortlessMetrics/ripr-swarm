@@ -4,11 +4,34 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use crate::schema_pattern::SchemaPattern;
+
 const VERIFICATION_README: &str = "docs/verification/README.md";
+
+/// Which value inside `fixture_path` a contract validates.
+///
+/// A published schema is not always the shape of a whole file. Some producer
+/// bytes only exist embedded in a larger generated artifact, and validating a
+/// hand-written copy of them instead would make the contract self-confirming.
+enum ContractSubject {
+    /// The whole fixture document.
+    Document,
+    /// One value selected by JSON pointer.
+    Pointer(&'static str),
+    /// Every element of the array at `array`, optionally narrowed by `item`.
+    EachItem {
+        array: &'static str,
+        item: Option<&'static str>,
+    },
+}
 
 struct VerificationContract {
     schema_path: &'static str,
+    /// JSON pointer to the subschema that owns the subject, or `None` for the
+    /// whole schema document.
+    schema_pointer: Option<&'static str>,
     fixture_path: &'static str,
+    subject: ContractSubject,
     doc_path: &'static str,
     doc_markers: &'static [&'static str],
 }
@@ -16,13 +39,17 @@ struct VerificationContract {
 const CONTRACTS: &[VerificationContract] = &[
     VerificationContract {
         schema_path: "schemas/badges/shields-endpoint.schema.json",
+        schema_pointer: None,
         fixture_path: "tests/fixtures/verification/badge/ripr-plus.valid.json",
+        subject: ContractSubject::Document,
         doc_path: "docs/verification/badge-contract.md",
         doc_markers: &["schemaVersion", "label", "message", "color"],
     },
     VerificationContract {
         schema_path: "schemas/ripr/pr-evidence.schema.json",
+        schema_pointer: None,
         fixture_path: "tests/fixtures/verification/ripr/pr-evidence.valid.json",
+        subject: ContractSubject::Document,
         doc_path: "docs/verification/pr-evidence-contract.md",
         doc_markers: &[
             "schema_version",
@@ -44,7 +71,9 @@ const CONTRACTS: &[VerificationContract] = &[
     },
     VerificationContract {
         schema_path: "schemas/ripr/review-comments.schema.json",
+        schema_pointer: None,
         fixture_path: "tests/fixtures/verification/ripr/review-comments.valid.json",
+        subject: ContractSubject::Document,
         doc_path: "docs/verification/pr-evidence-contract.md",
         doc_markers: &[
             "schema_version",
@@ -64,7 +93,9 @@ const CONTRACTS: &[VerificationContract] = &[
     },
     VerificationContract {
         schema_path: "schemas/ripr/gate-decision.schema.json",
+        schema_pointer: None,
         fixture_path: "tests/fixtures/verification/ripr/gate-decision.valid.json",
+        subject: ContractSubject::Document,
         doc_path: "docs/OUTPUT_SCHEMA.md",
         doc_markers: &[
             "schema_version",
@@ -88,7 +119,9 @@ const CONTRACTS: &[VerificationContract] = &[
     },
     VerificationContract {
         schema_path: "schemas/ripr/check.schema.json",
+        schema_pointer: None,
         fixture_path: "tests/fixtures/verification/ripr/check-complete.valid.json",
+        subject: ContractSubject::Document,
         doc_path: "docs/OUTPUT_SCHEMA.md",
         doc_markers: &[
             "schema_version",
@@ -103,9 +136,74 @@ const CONTRACTS: &[VerificationContract] = &[
     },
     VerificationContract {
         schema_path: "schemas/ripr/check.schema.json",
+        schema_pointer: None,
         fixture_path: "tests/fixtures/verification/ripr/check-limited.valid.json",
+        subject: ContractSubject::Document,
         doc_path: "docs/OUTPUT_SCHEMA.md",
         doc_markers: &[],
+    },
+    // The trust corpus of record is its own canonical instance. Validating a
+    // hand-written copy instead would let the schema confirm itself while the
+    // artifact `cargo xtask rust-repair-trust` actually reads drifts away.
+    VerificationContract {
+        schema_path: "schemas/ripr/rust-repair-trust-corpus.schema.json",
+        schema_pointer: None,
+        fixture_path: "metrics/rust-repair-trust/corpus.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/verification/schema-producer-audit.md",
+        doc_markers: &[
+            "schema_version",
+            "kind",
+            "authorization",
+            "cases",
+            "exclusions",
+            "observations",
+        ],
+    },
+    // `command_specs.verify` in a generated agent packet is producer output
+    // from `crate::agent::command_specs`, so the published command-spec
+    // contract is checked against bytes the product actually emitted.
+    VerificationContract {
+        schema_path: "schemas/ripr/repair-assurance.schema.json",
+        schema_pointer: Some("/$defs/verification_command_spec"),
+        fixture_path: "fixtures/boundary_gap/expected/editor-agent-loop/agent-packet.json",
+        subject: ContractSubject::Pointer(
+            "/packets/0/evidence_record/canonical_item/command_specs/verify",
+        ),
+        doc_path: "docs/verification/schema-producer-audit.md",
+        doc_markers: &["command_spec", "verification_command_spec"],
+    },
+    VerificationContract {
+        schema_path: "schemas/ripr/repair-assurance.schema.json",
+        schema_pointer: Some("/$defs/command_spec"),
+        fixture_path: "fixtures/boundary_gap/expected/editor-agent-loop/agent-packet.json",
+        subject: ContractSubject::Pointer(
+            "/packets/0/evidence_record/canonical_item/command_specs/receipt",
+        ),
+        doc_path: "docs/verification/schema-producer-audit.md",
+        doc_markers: &["authority_boundary", "working_directory"],
+    },
+    // The `RepairAssuranceV1` envelope has no producer: `implementation_state`
+    // is pinned to `design_only`. The design corpus is the narrower authority
+    // that the vocabulary spec already claims, so it is registered here rather
+    // than left as an unenforced sentence in `fixtures/assurance_vocabulary/`.
+    VerificationContract {
+        schema_path: "schemas/ripr/repair-assurance.schema.json",
+        schema_pointer: None,
+        fixture_path: "fixtures/assurance_vocabulary/assurance/corpus.json",
+        subject: ContractSubject::EachItem {
+            array: "/cases",
+            item: Some("/record"),
+        },
+        doc_path: "docs/verification/schema-producer-audit.md",
+        doc_markers: &[
+            "implementation_state",
+            "static_movement",
+            "verification",
+            "receipt_state",
+            "runtime_mutation",
+            "non_claims",
+        ],
     },
 ];
 
@@ -128,24 +226,49 @@ pub(crate) fn check_verification_contracts(args: &[String]) -> Result<(), String
         "schemas/ripr/review-comments.schema.json",
         "schemas/ripr/gate-decision.schema.json",
         "schemas/ripr/check.schema.json",
+        "schemas/ripr/repair-assurance.schema.json",
+        "schemas/ripr/rust-repair-trust-corpus.schema.json",
+        "schema-producer-audit.md",
     ] {
         if !readme.contains(required) {
             violations.push(format!("{VERIFICATION_README} does not link `{required}`"));
         }
     }
 
+    let mut subjects_checked = 0usize;
     for contract in CONTRACTS {
         let schema = read_json(root.join(contract.schema_path))?;
         validate_schema_document(contract.schema_path, &schema, &mut violations);
 
+        let subschema = match contract.schema_pointer {
+            None => Some(&schema),
+            Some(pointer) => match schema.pointer(pointer) {
+                Some(value) => Some(value),
+                None => {
+                    violations.push(format!(
+                        "{} does not define the registered subschema `{pointer}`",
+                        contract.schema_path
+                    ));
+                    None
+                }
+            },
+        };
+
         let fixture = read_json(root.join(contract.fixture_path))?;
-        validate_value_against_schema(
-            &fixture,
-            &schema,
-            &schema,
-            contract.fixture_path.to_string(),
-            &mut violations,
-        );
+        if let Some(subschema) = subschema {
+            let subjects = contract.subjects(&fixture, &mut violations);
+            // A contract that resolves no subject is a gate that did not run.
+            if subjects.is_empty() {
+                violations.push(format!(
+                    "{} registers {} but resolved no subject to validate",
+                    contract.schema_path, contract.fixture_path
+                ));
+            }
+            for (location, value) in subjects {
+                subjects_checked += 1;
+                validate_value_against_schema(value, subschema, &schema, location, &mut violations);
+            }
+        }
 
         let doc = read_text(root.join(contract.doc_path))?;
         for marker in contract.doc_markers {
@@ -201,7 +324,7 @@ pub(crate) fn check_verification_contracts(args: &[String]) -> Result<(), String
 
     if violations.is_empty() {
         println!(
-            "verification contracts: checked {} schemas and fixtures",
+            "verification contracts: checked {} contracts over {subjects_checked} producer subjects",
             CONTRACTS.len()
         );
         Ok(())
@@ -214,6 +337,62 @@ pub(crate) fn check_verification_contracts(args: &[String]) -> Result<(), String
                 .collect::<Vec<_>>()
                 .join("\n")
         ))
+    }
+}
+
+impl VerificationContract {
+    /// Resolve the fixture values this contract validates, reporting a
+    /// violation for any registered pointer that does not resolve.
+    fn subjects<'a>(
+        &self,
+        fixture: &'a Value,
+        violations: &mut Vec<String>,
+    ) -> Vec<(String, &'a Value)> {
+        match self.subject {
+            ContractSubject::Document => vec![(self.fixture_path.to_string(), fixture)],
+            ContractSubject::Pointer(pointer) => match fixture.pointer(pointer) {
+                Some(value) => vec![(format!("{}{pointer}", self.fixture_path), value)],
+                None => {
+                    violations.push(format!(
+                        "{} does not contain the registered subject `{pointer}`",
+                        self.fixture_path
+                    ));
+                    Vec::new()
+                }
+            },
+            ContractSubject::EachItem { array, item } => {
+                let Some(entries) = fixture.pointer(array).and_then(Value::as_array) else {
+                    violations.push(format!(
+                        "{} does not contain the registered subject array `{array}`",
+                        self.fixture_path
+                    ));
+                    return Vec::new();
+                };
+                entries
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, entry)| {
+                        let value = match item {
+                            None => Some(entry),
+                            Some(item) => entry.pointer(item),
+                        };
+                        // An entry that does not expose the registered member
+                        // is not a subject of this contract; the corpus keeps
+                        // patch-shaped negative cases alongside whole records.
+                        value.map(|value| {
+                            (
+                                format!(
+                                    "{}{array}/{index}{}",
+                                    self.fixture_path,
+                                    item.unwrap_or_default()
+                                ),
+                                value,
+                            )
+                        })
+                    })
+                    .collect()
+            }
+        }
     }
 }
 
@@ -349,6 +528,63 @@ fn validate_value_against_schema(
         }
     }
 
+    if let Some(one_of) = schema.get("oneOf").and_then(Value::as_array) {
+        let mut messages = Vec::new();
+        let matches = one_of
+            .iter()
+            .filter(|subschema| {
+                let mut nested = Vec::new();
+                validate_value_against_schema(
+                    value,
+                    subschema,
+                    root_schema,
+                    location.clone(),
+                    &mut nested,
+                );
+                let matched = nested.is_empty();
+                messages.extend(nested);
+                matched
+            })
+            .count();
+        if matches != 1 {
+            violations.push(format!(
+                "{location}: matched {matches} of {} mutually exclusive schemas ({})",
+                one_of.len(),
+                messages.join("; ")
+            ));
+        }
+    }
+
+    // `if`/`then`/`else` carry the conditional field requirements that make a
+    // state vocabulary closed — a validator that skipped them would accept a
+    // state paired with evidence the schema forbids.
+    if let Some(condition) = schema.get("if") {
+        let mut condition_violations = Vec::new();
+        validate_value_against_schema(
+            value,
+            condition,
+            root_schema,
+            location.clone(),
+            &mut condition_violations,
+        );
+        let branch = if condition_violations.is_empty() {
+            schema.get("then")
+        } else {
+            schema.get("else")
+        };
+        if let Some(branch) = branch {
+            validate_value_against_schema(value, branch, root_schema, location.clone(), violations);
+        }
+    }
+
+    if let Some(negated) = schema.get("not") {
+        let mut nested = Vec::new();
+        validate_value_against_schema(value, negated, root_schema, location.clone(), &mut nested);
+        if nested.is_empty() {
+            violations.push(format!("{location}: matched a forbidden schema"));
+        }
+    }
+
     if let Some(expected) = schema.get("const")
         && value != expected
     {
@@ -434,10 +670,37 @@ fn validate_array(
     location: &str,
     violations: &mut Vec<String>,
 ) {
-    let Some(items_schema) = schema.get("items") else {
+    let Some(items) = value.as_array() else {
         return;
     };
-    let Some(items) = value.as_array() else {
+
+    if let Some(min_items) = schema.get("minItems").and_then(Value::as_u64)
+        && (items.len() as u64) < min_items
+    {
+        violations.push(format!(
+            "{location}: array shorter than minItems {min_items}"
+        ));
+    }
+    if let Some(max_items) = schema.get("maxItems").and_then(Value::as_u64)
+        && (items.len() as u64) > max_items
+    {
+        violations.push(format!(
+            "{location}: array longer than maxItems {max_items}"
+        ));
+    }
+    if schema.get("uniqueItems").and_then(Value::as_bool) == Some(true) {
+        let mut seen = BTreeSet::new();
+        for item in items {
+            if !seen.insert(compact_json(item)) {
+                violations.push(format!(
+                    "{location}: uniqueItems violated by duplicate {}",
+                    compact_json(item)
+                ));
+            }
+        }
+    }
+
+    let Some(items_schema) = schema.get("items") else {
         return;
     };
     for (index, item) in items.iter().enumerate() {
@@ -466,6 +729,21 @@ fn validate_string(text: &str, schema: &Value, location: &str, violations: &mut 
             "{location}: string longer than maxLength {max_length}"
         ));
     }
+    // `pattern` carries the identity commitments — commit SHAs, `sha256:`
+    // digests, relative working directories. Compilation is fail-closed, so an
+    // uninterpretable pattern is reported rather than assumed satisfied.
+    if let Some(pattern) = schema.get("pattern").and_then(Value::as_str) {
+        match SchemaPattern::compile(pattern) {
+            Ok(compiled) => {
+                if !compiled.is_match(text) {
+                    violations.push(format!(
+                        "{location}: string does not match pattern {pattern}"
+                    ));
+                }
+            }
+            Err(error) => violations.push(format!("{location}: {error}")),
+        }
+    }
 }
 
 fn validate_number(value: &Value, schema: &Value, location: &str, violations: &mut Vec<String>) {
@@ -474,6 +752,12 @@ fn validate_number(value: &Value, schema: &Value, location: &str, violations: &m
         && actual < minimum
     {
         violations.push(format!("{location}: number below minimum {minimum}"));
+    }
+    if let Some(maximum) = schema.get("maximum").and_then(Value::as_f64)
+        && let Some(actual) = value.as_f64()
+        && actual > maximum
+    {
+        violations.push(format!("{location}: number above maximum {maximum}"));
     }
 }
 
@@ -829,6 +1113,279 @@ mod tests {
         });
         assert!(!validate(invalid_observer_setup).is_empty());
         Ok(())
+    }
+
+    const TRUST_CORPUS: &str = "metrics/rust-repair-trust/corpus.json";
+    const TRUST_CORPUS_SCHEMA: &str = "schemas/ripr/rust-repair-trust-corpus.schema.json";
+    const ASSURANCE_SCHEMA: &str = "schemas/ripr/repair-assurance.schema.json";
+    const ASSURANCE_CORPUS: &str = "fixtures/assurance_vocabulary/assurance/corpus.json";
+    const AGENT_PACKET_GOLDEN: &str =
+        "fixtures/boundary_gap/expected/editor-agent-loop/agent-packet.json";
+
+    fn violations_for(value: &Value, subschema: &Value, root_schema: &Value) -> Vec<String> {
+        let mut violations = Vec::new();
+        validate_value_against_schema(
+            value,
+            subschema,
+            root_schema,
+            "subject".to_string(),
+            &mut violations,
+        );
+        violations
+    }
+
+    fn subschema<'a>(schema: &'a Value, pointer: &str) -> Result<&'a Value, String> {
+        schema
+            .pointer(pointer)
+            .ok_or_else(|| format!("schema must define {pointer}"))
+    }
+
+    /// The corpus of record — the exact bytes `cargo xtask rust-repair-trust`
+    /// reads — must satisfy its published schema. Validating a hand-written
+    /// copy instead would let the schema confirm itself.
+    #[test]
+    fn live_rust_repair_trust_corpus_matches_its_schema() -> Result<(), String> {
+        let root = repo_root()?;
+        let schema = read_json(root.join(TRUST_CORPUS_SCHEMA))?;
+        let corpus = read_json(root.join(TRUST_CORPUS))?;
+
+        assert!(
+            violations_for(&corpus, &schema, &schema).is_empty(),
+            "{:#?}",
+            violations_for(&corpus, &schema, &schema)
+        );
+        // Which member arrays carry live data decides what this contract
+        // actually exercises. `cases` is empty today, so the attempt
+        // subschema is registered but unexercised; that must stay visible
+        // rather than be read as coverage.
+        assert_eq!(corpus["cases"].as_array().map(Vec::len), Some(0));
+        assert!(
+            corpus["exclusions"]
+                .as_array()
+                .is_some_and(|entries| !entries.is_empty())
+        );
+        assert!(
+            corpus["observations"]
+                .as_array()
+                .is_some_and(|entries| !entries.is_empty())
+        );
+        Ok(())
+    }
+
+    /// An entry that cannot be attributed to an exact revision is the corpus
+    /// failure that matters: `analyzed_head_sha` is what makes a receipt-backed
+    /// observation checkable at all.
+    #[test]
+    fn rust_repair_trust_corpus_rejects_a_non_sha_analyzed_head() -> Result<(), String> {
+        let root = repo_root()?;
+        let schema = read_json(root.join(TRUST_CORPUS_SCHEMA))?;
+        let mut corpus = read_json(root.join(TRUST_CORPUS))?;
+        corpus["exclusions"][0]["analyzed_head_sha"] = Value::String("main".to_string());
+
+        let violations = violations_for(&corpus, &schema, &schema);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("does not match pattern")),
+            "expected a head-SHA pattern rejection, got {violations:#?}"
+        );
+        Ok(())
+    }
+
+    /// The generated agent packet carries real `CommandSpec` bytes from
+    /// `crate::agent::command_specs`, so the published command-spec contract is
+    /// checked against output the product actually emitted.
+    #[test]
+    fn producer_command_specs_match_the_published_contract() -> Result<(), String> {
+        let root = repo_root()?;
+        let schema = read_json(root.join(ASSURANCE_SCHEMA))?;
+        let packet = read_json(root.join(AGENT_PACKET_GOLDEN))?;
+        let specs = packet
+            .pointer("/packets/0/evidence_record/canonical_item/command_specs")
+            .ok_or("the golden packet must carry producer command specs")?;
+
+        let verify = specs.get("verify").ok_or("missing verify spec")?;
+        let receipt = specs.get("receipt").ok_or("missing receipt spec")?;
+        assert!(
+            violations_for(
+                verify,
+                subschema(&schema, "/$defs/verification_command_spec")?,
+                &schema
+            )
+            .is_empty()
+        );
+        assert!(
+            violations_for(receipt, subschema(&schema, "/$defs/command_spec")?, &schema).is_empty()
+        );
+        Ok(())
+    }
+
+    /// A command spec that names an absolute working directory escapes the
+    /// declared root. The schema's `pattern` is the only place that constraint
+    /// is expressed, so the contract must reject it.
+    #[test]
+    fn command_spec_contract_rejects_an_absolute_working_directory() -> Result<(), String> {
+        let root = repo_root()?;
+        let schema = read_json(root.join(ASSURANCE_SCHEMA))?;
+        let packet = read_json(root.join(AGENT_PACKET_GOLDEN))?;
+        let mut receipt = packet
+            .pointer("/packets/0/evidence_record/canonical_item/command_specs/receipt")
+            .ok_or("the golden packet must carry a receipt command spec")?
+            .clone();
+        receipt["working_directory"] = Value::String(r"drive-letter:\workspace".to_string());
+
+        let violations = violations_for(
+            &receipt,
+            subschema(&schema, "/$defs/command_spec")?,
+            &schema,
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("does not match pattern")),
+            "expected a working-directory rejection, got {violations:#?}"
+        );
+        Ok(())
+    }
+
+    /// The verify subschema exists to stop a receipt route from being executed
+    /// through the verification authority boundary.
+    #[test]
+    fn verification_command_spec_contract_rejects_a_receipt_route() -> Result<(), String> {
+        let root = repo_root()?;
+        let schema = read_json(root.join(ASSURANCE_SCHEMA))?;
+        let packet = read_json(root.join(AGENT_PACKET_GOLDEN))?;
+        let mut verify = packet
+            .pointer("/packets/0/evidence_record/canonical_item/command_specs/verify")
+            .ok_or("the golden packet must carry a verify command spec")?
+            .clone();
+        verify["role"] = Value::String("receipt".to_string());
+
+        let violations = violations_for(
+            &verify,
+            subschema(&schema, "/$defs/verification_command_spec")?,
+            &schema,
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("expected const \"verify\"")),
+            "expected a verify-role rejection, got {violations:#?}"
+        );
+        Ok(())
+    }
+
+    /// Every design-corpus case must expose a subject the contract can reach,
+    /// so a case cannot be silently skipped by the registered pointer.
+    #[test]
+    fn assurance_corpus_cases_all_expose_a_contract_subject() -> Result<(), String> {
+        let root = repo_root()?;
+        let corpus = read_json(root.join(ASSURANCE_CORPUS))?;
+        let cases = corpus["cases"]
+            .as_array()
+            .ok_or("the assurance corpus must declare cases")?;
+        assert!(!cases.is_empty());
+        for case in cases {
+            assert!(
+                case.get("record").is_some() || case.get("record_patch").is_some(),
+                "case {:?} exposes neither a record nor a record patch",
+                case.get("id")
+            );
+        }
+        Ok(())
+    }
+
+    /// The corpus declares its own negative: an absolute working directory in a
+    /// command spec. Applying the declared patch must fail the envelope schema,
+    /// or the design-only contract enforces nothing.
+    #[test]
+    fn assurance_corpus_rejects_an_absolute_command_working_directory() -> Result<(), String> {
+        let root = repo_root()?;
+        let schema = read_json(root.join(ASSURANCE_SCHEMA))?;
+        let corpus = read_json(root.join(ASSURANCE_CORPUS))?;
+        let cases = corpus["cases"]
+            .as_array()
+            .ok_or("the assurance corpus must declare cases")?;
+        let patch = cases
+            .iter()
+            .find(|case| case.get("id").and_then(Value::as_str) == Some("malformed_command_spec"))
+            .and_then(|case| case.get("record_patch"))
+            .ok_or("the corpus must declare the malformed command spec case")?;
+        let mut record = cases
+            .iter()
+            .find(|case| case.get("id").and_then(Value::as_str) == Some("unchanged_pass"))
+            .and_then(|case| case.get("record"))
+            .ok_or("the corpus must declare a valid baseline record")?
+            .clone();
+        assert!(violations_for(&record, &schema, &schema).is_empty());
+
+        let patch = patch
+            .as_object()
+            .ok_or("the record patch must be an object")?;
+        for (field, value) in patch {
+            record[field] = value.clone();
+        }
+
+        let violations = violations_for(&record, &schema, &schema);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("does not match pattern")),
+            "expected the declared malformed spec to be rejected, got {violations:#?}"
+        );
+        Ok(())
+    }
+
+    /// `if`/`then` carries the closure of the assurance state vocabulary. A
+    /// validator that skipped it would accept `verification_not_run` paired
+    /// with the command spec and result that state forbids.
+    #[test]
+    fn assurance_schema_rejects_evidence_its_state_forbids() -> Result<(), String> {
+        let root = repo_root()?;
+        let schema = read_json(root.join(ASSURANCE_SCHEMA))?;
+        let corpus = read_json(root.join(ASSURANCE_CORPUS))?;
+        let cases = corpus["cases"]
+            .as_array()
+            .ok_or("the assurance corpus must declare cases")?;
+        let mut record = cases
+            .iter()
+            .find(|case| case.get("id").and_then(Value::as_str) == Some("unchanged_pass"))
+            .and_then(|case| case.get("record"))
+            .ok_or("the corpus must declare a valid executed-pass record")?
+            .clone();
+        record["verification"]["state"] = Value::String("verification_not_run".to_string());
+
+        let violations = violations_for(&record, &schema, &schema);
+        assert!(
+            !violations.is_empty(),
+            "a not-run state carrying an execution result must be rejected"
+        );
+        Ok(())
+    }
+
+    /// A registered contract that resolves no subject is a gate that did not
+    /// run, not a gate that passed.
+    #[test]
+    fn a_contract_pointer_that_resolves_nothing_is_a_violation() {
+        let contract = VerificationContract {
+            schema_path: ASSURANCE_SCHEMA,
+            schema_pointer: None,
+            fixture_path: ASSURANCE_CORPUS,
+            subject: ContractSubject::Pointer("/cases/9999/record"),
+            doc_path: "docs/verification/schema-producer-audit.md",
+            doc_markers: &[],
+        };
+        let mut violations = Vec::new();
+        let fixture = serde_json::json!({"cases": []});
+        let subjects = contract.subjects(&fixture, &mut violations);
+
+        assert!(subjects.is_empty());
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("does not contain the registered subject")),
+            "{violations:#?}"
+        );
     }
 
     #[test]

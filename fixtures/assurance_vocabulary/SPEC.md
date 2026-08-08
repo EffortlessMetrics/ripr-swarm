@@ -15,8 +15,10 @@ execution, receipt issuance, and external runtime evidence.
 cargo xtask fixtures assurance_vocabulary
 ```
 
-The assurance corpus is inspected against
-`schemas/ripr/repair-assurance.schema.json` by the assurance contract checks.
+Every corpus record is validated against
+`schemas/ripr/repair-assurance.schema.json` by
+`cargo xtask check-verification-contracts --check`, which registers
+`/cases/*/record` as a contract subject.
 The typed `VerificationExecutionResultV1` validator covers the command-spec,
 root, HEAD, disposition, and commitment boundaries; this PR does not execute
 any command from the corpus.
