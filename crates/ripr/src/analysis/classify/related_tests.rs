@@ -12,6 +12,7 @@ pub(in crate::analysis) fn find_related_tests<'a>(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
     index: &'a RustIndex,
+    workspace_complete: bool,
 ) -> Vec<(&'a TestSummary, RelationReason)> {
     let mut related: Vec<(&TestSummary, RelationReason)> = Vec::new();
     let owner_name = owner_fn.map(|f| f.name.as_str()).unwrap_or("");
@@ -25,15 +26,18 @@ pub(in crate::analysis) fn find_related_tests<'a>(
     let owner_package_prefix = owner_fn.and_then(|owner| package_prefix(&owner.file));
 
     // #2971 ambiguity rule: a bare `call.name == owner_name` match can bypass
-    // the package-prefix guard only when the owner name is unique in the
-    // workspace. When multiple crates define functions with the same name, a
-    // bare call in crate_b calling `score()` cannot be attributed to
-    // crate_a::score — that is the token-coincidence false-exposed family.
-    // When the name IS unique, any call must refer to that sole function, so
-    // a cross-crate integration test that genuinely imports and calls the
-    // owner is correctly retained. This follows the owner_shape.rs precedent
-    // of scanning index.functions for same-name collision.
-    let owner_name_is_unique = !owner_name.is_empty()
+    // the package-prefix guard only when (a) the owner name is unique in the
+    // workspace AND (b) the index is workspace-complete (Deep/Ready mode). When
+    // multiple crates define functions with the same name, a bare call in
+    // crate_b calling `score()` cannot be attributed to crate_a::score — that
+    // is the token-coincidence false-exposed family. In Instant/Draft/Fast
+    // mode, index.functions may be scoped to changed files only, so a
+    // same-named function in an unchanged file is absent from the count and
+    // the name would falsely appear unique — fail-closed by requiring
+    // workspace completeness. This follows the owner_shape.rs precedent of
+    // scanning index.functions for same-name collision.
+    let owner_name_is_unique = workspace_complete
+        && !owner_name.is_empty()
         && index
             .functions
             .iter()
@@ -224,7 +228,7 @@ mod tests {
         };
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
-        let related = find_related_tests(&probe, Some(&owner), &index);
+        let related = find_related_tests(&probe, Some(&owner), &index, true);
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].0.name, "crate_a_score_test");
@@ -249,7 +253,7 @@ mod tests {
         };
         let probe = probe("crates/digest/src/lib.rs", "compute_hash(input)");
 
-        let related = find_related_tests(&probe, Some(&owner), &index);
+        let related = find_related_tests(&probe, Some(&owner), &index, true);
 
         assert_eq!(
             related.len(),
@@ -287,7 +291,7 @@ mod tests {
         };
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
-        let related = find_related_tests(&probe, Some(&owner), &index);
+        let related = find_related_tests(&probe, Some(&owner), &index, true);
 
         // The crate_a test is in-package and passes; the crate_b test is
         // cross-crate and filtered despite calling `score()` because the name
@@ -312,7 +316,7 @@ mod tests {
         };
         let probe = probe("src/lib.rs", "score + 1");
 
-        let related = find_related_tests(&probe, Some(&owner), &index);
+        let related = find_related_tests(&probe, Some(&owner), &index, true);
 
         assert_eq!(related.len(), 2);
         assert_eq!(related[0].0.file, PathBuf::from("tests/a_case.rs"));
@@ -332,7 +336,7 @@ mod tests {
         };
         let probe = probe("src/lib.rs", "vat >= threshold");
 
-        let related = find_related_tests(&probe, Some(&owner), &index);
+        let related = find_related_tests(&probe, Some(&owner), &index, true);
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].0.name, "vat_boundary_is_checked_by_macro");
@@ -362,7 +366,7 @@ mod tests {
         };
         let probe = probe("src/internal.rs", "if a >= b");
 
-        let related = find_related_tests(&probe, Some(&owner), &index);
+        let related = find_related_tests(&probe, Some(&owner), &index, true);
 
         assert!(
             related.is_empty(),
@@ -390,7 +394,7 @@ mod tests {
         };
         let probe = probe("src/internal.rs", "if a >= b");
 
-        let related = find_related_tests(&probe, Some(&owner), &index);
+        let related = find_related_tests(&probe, Some(&owner), &index, true);
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
@@ -568,7 +572,7 @@ mod tests {
         // Struct field probe: expression contains `open_in` (7 chars, >= 5)
         let probe = struct_field_probe("crates/ripr/src/config.rs", "open_in");
 
-        let related = find_related_tests(&probe, None, &index);
+        let related = find_related_tests(&probe, None, &index, true);
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].0.name, "repo_lane_deserializes_fields_correctly");
@@ -609,8 +613,8 @@ mod tests {
         let probe_open_in = struct_field_probe("crates/ripr/src/config.rs", "open_in");
         let probe_open_cap = struct_field_probe("crates/ripr/src/config.rs", "open_cap");
 
-        let related_in = find_related_tests(&probe_open_in, None, &index);
-        let related_cap = find_related_tests(&probe_open_cap, None, &index);
+        let related_in = find_related_tests(&probe_open_in, None, &index, true);
+        let related_cap = find_related_tests(&probe_open_cap, None, &index, true);
 
         assert_eq!(
             related_in.len(),
@@ -657,7 +661,7 @@ mod tests {
         // Probe expression is `port` (4 chars) — below the >= 5 threshold.
         let probe = struct_field_probe("crates/ripr/src/scheduler.rs", "port");
 
-        let related = find_related_tests(&probe, None, &index);
+        let related = find_related_tests(&probe, None, &index, true);
 
         assert!(
             related.is_empty(),
@@ -694,7 +698,7 @@ mod tests {
         // assertions_reference_owner signal must NOT fire.
         let probe = probe("src/lib.rs", "amount >= discount_threshold");
 
-        let related = find_related_tests(&probe, Some(&owner), &index);
+        let related = find_related_tests(&probe, Some(&owner), &index, true);
 
         assert!(
             related.is_empty(),
@@ -717,7 +721,7 @@ mod tests {
             "pub(crate) state: GateWatchdogState",
         );
 
-        let related = find_related_tests(&probe, None, &index);
+        let related = find_related_tests(&probe, None, &index, true);
         let Some((test, reason)) = related.first() else {
             return Err(
                 "absolute root probe did not match its relative companion test".to_string(),
@@ -746,7 +750,7 @@ mod tests {
             "pub(crate) state: State",
         );
 
-        let related = find_related_tests(&probe, None, &index);
+        let related = find_related_tests(&probe, None, &index, true);
         if !related.is_empty() {
             return Err(format!("cross-crate test must stay unrelated: {related:?}"));
         }
