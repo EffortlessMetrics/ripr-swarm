@@ -31,6 +31,7 @@ mod fixture_contracts;
 mod no_panic;
 mod policy;
 mod repo_readiness;
+mod schema_pattern;
 mod types;
 pub(crate) use types::*;
 mod reports;
