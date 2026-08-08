@@ -633,6 +633,10 @@ mod tests {
 /// `CallDeletion` has no `SeamKind` equivalent (it is a Rust-specific
 /// detection for removed call sites that do not map to a seam kind) and
 /// maps to `None`. `StaticUnknown` also maps to `None`.
+#[allow(
+    dead_code,
+    reason = "consumer not yet wired; see #1937 crosswalk convergence"
+)]
 pub(crate) fn seam_kind_from_probe_family(family: &crate::domain::ProbeFamily) -> Option<SeamKind> {
     match family {
         crate::domain::ProbeFamily::Predicate => Some(SeamKind::PredicateBoundary),
@@ -653,6 +657,10 @@ pub(crate) fn seam_kind_from_probe_family(family: &crate::domain::ProbeFamily) -
 ///
 /// Every `SeamKind` has exactly one `ProbeFamily` equivalent, so this
 /// mapping is total (returns `ProbeFamily`, not `Option`).
+#[allow(
+    dead_code,
+    reason = "consumer not yet wired; see #1937 crosswalk convergence"
+)]
 pub(crate) fn probe_family_from_seam_kind(kind: &SeamKind) -> crate::domain::ProbeFamily {
     match kind {
         SeamKind::PredicateBoundary => crate::domain::ProbeFamily::Predicate,
