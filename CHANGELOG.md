@@ -35,6 +35,19 @@ are scoped or reviewed.
   list the flag-parity guard iterates, which previously omitted them from both
   sides and so could not see the gap.
 
+- `cargo xtask check-public-api` now observes the transitive public surface.
+  Its collector matched two line prefixes in `crates/ripr/src/lib.rs`, so every
+  `pub` item reachable through an allowlisted `pub mod` was invisible: a new
+  `pub const` in `domain/mod.rs` was reported as `pass`. The gate now parses the
+  crate's module tree and records module-level items whose visibility is a bare
+  `pub`, following `pub mod` into other files. `policy/public_api.txt` is
+  rewritten as a `<kind> <path>` recording of the surface that already existed —
+  214 entries where 18 lines were recorded before. No item's visibility changed;
+  the previously unrecorded items were already public. The gate does not cover
+  public struct fields, enum variants, trait items, or associated functions in
+  `impl` blocks, and it records a glob re-export as a glob because a syntax walk
+  cannot expand one. Both limits are stated in the gate's own report.
+
 - Human output no longer restates the `Missing discriminator` label inside its
   own value. The classifier builds these entries as
   `Missing discriminator value: <value>`, so the digest rendered
