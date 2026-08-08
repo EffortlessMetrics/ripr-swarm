@@ -116,6 +116,15 @@ pub(crate) fn goldens_impl(args: &[String]) -> Result<(), String> {
 }
 
 pub(crate) fn goldens_check() -> Result<(), String> {
+    // #3054: Rebuild the binary unconditionally and clear the fact cache so
+    // the gate validates current source, not a stale artifact. Every other
+    // gate (fixtures_impl, dogfood_impl, evidence_audit, targeted_rerun)
+    // builds unconditionally; goldens was the outlier that only built when
+    // the binary was missing, silently reporting zero drift against previous
+    // code. The cache clear ensures facts are recomputed under the fresh
+    // binary — a warm cache from a prior run can serve stale classification.
+    run("cargo", &["build", "-p", "ripr"])?;
+    let _ = std::fs::remove_dir_all("target/ripr/cache");
     let run_set = collect_golden_runs()?;
     let entries = write_golden_drift_reports(&run_set.runs, &run_set.violations)?;
     let body = goldens_check_report_body(&run_set.fixtures, &run_set.runs, &run_set.violations);
@@ -240,6 +249,10 @@ fn collect_golden_runs() -> Result<GoldenRunSet, String> {
 }
 
 fn goldens_bless(name: &str, reason: &str) -> Result<(), String> {
+    // #3054: Same rebuild + cache-clear as goldens_check — blessing with a
+    // stale binary embeds old behavior into the expected output.
+    run("cargo", &["build", "-p", "ripr"])?;
+    let _ = std::fs::remove_dir_all("target/ripr/cache");
     validate_bless_reason(reason)?;
     let fixture = fixture_dir_for_name(name)?;
     if !fixture.exists() {
