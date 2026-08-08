@@ -11,6 +11,14 @@ are scoped or reviewed.
 
 ### Fixed
 
+- The README's example output was missing two lines the renderer has been
+  emitting: the `Why <class>:` classification hint, and the whole
+  `Next: drill into the top finding:` block naming the `explain` and `context`
+  commands. The second is the most actionable thing on screen — the product's
+  own advertisement of its output omitted the step that tells a reader what to
+  run next. Both now match `fixtures/boundary_gap/expected/human.txt`, which is
+  the same example.
+
 - `ripr explain` and `ripr context` now reject a mistyped flag with a
   suggestion. Neither parser routed through the shared unknown-argument
   helper: `ripr context --fromm` failed with a bare
