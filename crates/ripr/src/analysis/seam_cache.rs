@@ -1768,8 +1768,11 @@ fn workspace_file_identity(
     files.sort_by(|left, right| left.0.cmp(&right.0));
     let mut input = String::new();
     for (path, bytes) in files {
-        let rendered = match strip_root.and_then(|root| path.strip_prefix(root).ok()) {
-            Some(relative) => relative.to_string_lossy().replace('\\', "/"),
+        let rendered = match strip_root {
+            Some(root) => path
+                .strip_prefix(root)
+                .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+                .ok()?,
             None => path.to_string_lossy().replace('\\', "/"),
         };
         input.push_str(&rendered);
