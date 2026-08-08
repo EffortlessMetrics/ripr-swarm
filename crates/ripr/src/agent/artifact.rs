@@ -41,8 +41,10 @@ impl RepoExposureArtifactContext {
     /// meaning: identity version, mode, profile (this producer binds profile
     /// to mode; both are stated explicitly), base semantics, analysis format,
     /// manifest and lockfile content identities (root-relative, so equivalent
-    /// checkouts under different roots agree), the finding-affecting
-    /// configuration fingerprint (RIPR-SPEC-0140), and the analyzer version.
+    /// checkouts under different roots agree), the repo-exposure
+    /// producer-consumed configuration boundary
+    /// (`crate::config::repo_exposure_config_identity_hash` — the three
+    /// oracle-strength fields only), and the analyzer version.
     /// The concrete checkout root is deliberately absent: it is emitted as
     /// `repository.root` and validated with exact canonical-path equality.
     pub(crate) fn for_repo_exposure(
@@ -227,20 +229,33 @@ pub(crate) fn validate_repo_exposure_artifact(
     // deferred until a real migration producer exists (#2921 deferred
     // negatives — no fabricated migration authority here).
     let supported_prefix = format!("input:{INPUT_IDENTITY_VERSION}:");
-    let valid_current_shape = identity
+    let Some(algorithm_and_digest) = identity
         .analysis
         .input_identity
         .strip_prefix(&supported_prefix)
-        .and_then(|digest| digest.strip_prefix("fnv1a64:"))
-        .is_some_and(|digest| {
-            digest.len() == 16
-                && digest
-                    .chars()
-                    .all(|character| character.is_ascii_hexdigit() && !character.is_ascii_uppercase())
-        });
-    if !valid_current_shape {
+    else {
         return Err(format!(
-            "agent verify {label} artifact has unsupported input identity version or shape `{}` (expected `{supported_prefix}fnv1a64:<16 lowercase hex>`)",
+            "agent verify {label} artifact has unsupported input identity version `{}` (expected `{supported_prefix}<digest>`)",
+            identity.analysis.input_identity
+        ));
+    };
+    // Shape gate: the producer emits exactly `fnv1a64:<16 lowercase hex>`.
+    // Anything else carrying the current version prefix is malformed, not
+    // merely "a different digest", and is rejected with its own bounded
+    // reason so a shape failure is never confused with a version failure.
+    let Some(digest) = algorithm_and_digest.strip_prefix("fnv1a64:") else {
+        return Err(format!(
+            "agent verify {label} artifact has malformed input identity digest `{}` (expected `{supported_prefix}fnv1a64:<16 lowercase hex>`)",
+            identity.analysis.input_identity
+        ));
+    };
+    if digest.len() != 16
+        || !digest
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        return Err(format!(
+            "agent verify {label} artifact has malformed input identity digest `{}` (expected `{supported_prefix}fnv1a64:<16 lowercase hex>`)",
             identity.analysis.input_identity
         ));
     }
@@ -2180,6 +2195,106 @@ mod tests {
         Ok(())
     }
 
+    /// (#2823 review repair) The config boundary is scoped to what the
+    /// repo-exposure producer actually consumes: a config differing from the
+    /// default only in `typescript.resolve_tsconfig_paths`, `perl.*`, or
+    /// `languages.enabled` — inputs the Rust-only seam inventory never reads —
+    /// produces the SAME input identity (the pair stays comparable), while an
+    /// oracle-policy change still moves it (positive control, also covered by
+    /// test 4).
+    #[test]
+    fn repo_exposure_input_identity_ignores_unconsumed_config_fields() -> Result<(), String> {
+        let root = temporary_git_root()?;
+        let result = (|| -> Result<(), String> {
+            commit_fixture_file(&root)?;
+            let config = crate::config::RiprConfig::default();
+            let baseline = RepoExposureArtifactContext::for_repo_exposure(
+                root.clone(),
+                "draft".to_string(),
+                None,
+                &config,
+            )?;
+            // Negative controls: SPEC-0140 finding-affecting fields the seam
+            // inventory does not consume must NOT move the identity. First
+            // pin that each fixture really does move the diff-check config
+            // hash, so a vacuous fixture cannot hide a real regression.
+            let unconsumed = [
+                (
+                    "typescript.resolve_tsconfig_paths",
+                    "[typescript]\nresolve_tsconfig_paths = true\n",
+                ),
+                ("perl.timeout_ms", "[perl]\ntimeout_ms = 1234\n"),
+            ];
+            for (case, toml) in unconsumed {
+                let moved = crate::config::tests_only_parse(toml)?;
+                if crate::config::check_artifact_config_identity_hash(&moved)
+                    == crate::config::check_artifact_config_identity_hash(&config)
+                {
+                    return Err(format!(
+                        "{case} fixture must move the diff-check (SPEC-0140) config hash, otherwise this test proves nothing"
+                    ));
+                }
+                if crate::config::repo_exposure_config_identity_hash(&moved)
+                    != crate::config::repo_exposure_config_identity_hash(&config)
+                {
+                    return Err(format!(
+                        "{case} is not consumed by the repo-exposure producer and must not move its config identity"
+                    ));
+                }
+                let context = RepoExposureArtifactContext::for_repo_exposure(
+                    root.clone(),
+                    "draft".to_string(),
+                    None,
+                    &moved,
+                )?;
+                if context.input_identity != baseline.input_identity {
+                    return Err(format!(
+                        "{case} must leave the repo-exposure input identity unchanged (comparable pair)"
+                    ));
+                }
+            }
+            // `languages.enabled` is recorded elsewhere in the diff-check
+            // identity (SPEC-0140 CapturedElsewhere) and unconsumed by the
+            // Rust-only seam inventory, so it must not move this identity
+            // either.
+            let languages_moved = crate::config::tests_only_parse(
+                "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
+            )?;
+            let languages_context = RepoExposureArtifactContext::for_repo_exposure(
+                root.clone(),
+                "draft".to_string(),
+                None,
+                &languages_moved,
+            )?;
+            if languages_context.input_identity != baseline.input_identity {
+                return Err(
+                    "languages.enabled must leave the repo-exposure input identity unchanged"
+                        .to_string(),
+                );
+            }
+            // Positive control: a consumed oracle field still moves it.
+            let oracles_moved =
+                crate::config::tests_only_parse("[oracles]\nsnapshot_strength = \"strong\"\n")?;
+            let oracles_context = RepoExposureArtifactContext::for_repo_exposure(
+                root.clone(),
+                "draft".to_string(),
+                None,
+                &oracles_moved,
+            )?;
+            if oracles_context.input_identity == baseline.input_identity {
+                return Err(
+                    "a consumed oracle-policy change must move the input identity".to_string(),
+                );
+            }
+            Ok(())
+        })();
+        let cleanup =
+            std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"));
+        result?;
+        cleanup?;
+        Ok(())
+    }
+
     /// (#2823 test 5) A rerun at the same root and same revision is
     /// byte-stable in both identities.
     #[test]
@@ -2279,7 +2394,8 @@ mod tests {
     /// (#2823 test 7) A previous-version input identity — the v1
     /// `input:<digest>` shape, or any non-`input:v2:` value — never validates
     /// as current evidence, even when the artifact is otherwise internally
-    /// consistent.
+    /// consistent; nor does a current-version identity whose digest is not
+    /// exactly `fnv1a64:<16 lowercase hex>`.
     #[test]
     fn repo_exposure_validation_rejects_unsupported_input_identity_version() -> Result<(), String> {
         let root = temporary_git_root()?;
@@ -2316,6 +2432,60 @@ mod tests {
                             "legacy identity {legacy} must never validate as current evidence"
                         ));
                     }
+                }
+            }
+
+            // Shape gate: the current version prefix with anything but
+            // exactly `fnv1a64:<16 lowercase hex>` is malformed, not merely
+            // an unknown version, and gets its own bounded reason.
+            let malformed_identities = [
+                "input:v2:garbage",
+                "input:v2:fnv1a64:",
+                "input:v2:fnv1a64:0123456789abcde",
+                "input:v2:fnv1a64:0123456789abcdef0",
+                "input:v2:fnv1a64:0123456789ABCDEF",
+            ];
+            for malformed in malformed_identities {
+                let malformed_snapshot = repo_exposure_snapshot_identity(malformed, &head);
+                let mutated = validate_mutated_identity(&root, &document, |document| {
+                    document["artifact"]["analysis"]["input_identity"] = json!(malformed);
+                    document["artifact"]["snapshot_identity"] = json!(malformed_snapshot.as_str());
+                })?;
+                match mutated {
+                    Err(error) if error.contains("malformed input identity digest") => {}
+                    Err(error) => {
+                        return Err(format!(
+                            "malformed identity {malformed}: unexpected rejection reason (must name the malformed input identity digest): {error}"
+                        ));
+                    }
+                    Ok(_) => {
+                        return Err(format!(
+                            "malformed identity {malformed} must never validate as current evidence"
+                        ));
+                    }
+                }
+            }
+
+            // Positive control: the canonical producer shape validates, and a
+            // well-formed foreign digest reaches the later checks (here: the
+            // snapshot mismatch), proving the shape gate does not reject
+            // well-formed identities.
+            let well_formed = "input:v2:fnv1a64:fedcba9876543210";
+            let mutated = validate_mutated_identity(&root, &document, |document| {
+                document["artifact"]["analysis"]["input_identity"] = json!(well_formed);
+            })?;
+            match mutated {
+                Err(error) if error.contains("snapshot identity does not match") => {}
+                Err(error) => {
+                    return Err(format!(
+                        "well-formed identity: unexpected rejection reason (must pass the version and shape gates): {error}"
+                    ));
+                }
+                Ok(_) => {
+                    return Err(
+                        "well-formed identity with a stale snapshot must be rejected by the snapshot check, not accepted"
+                            .to_string(),
+                    );
                 }
             }
             Ok(())
