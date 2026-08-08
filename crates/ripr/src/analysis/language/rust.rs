@@ -1371,7 +1371,10 @@ impl RustAdapter {
         // that actually built the index instead: it is a deduplicated subset
         // of `analyzable_rust_files`, so an equal length means nothing was
         // dropped. Any narrower selection leaves the index partial.
-        let workspace_index_complete = index_files.len() == analyzable_rust_files.len();
+        let workspace_index_complete = index_files.len() == analyzable_rust_files.len()
+            && index_files
+                .iter()
+                .all(|file| analyzable_rust_files.iter().any(|candidate| candidate == file));
 
         for changed in analyzable_changed_files
             .iter()
