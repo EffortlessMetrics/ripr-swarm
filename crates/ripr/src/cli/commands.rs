@@ -3333,8 +3333,15 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
                 help::print_explain_help();
                 return Ok(());
             }
-            value if selector.is_none() => selector = Some(value.to_string()),
-            other => return Err(format!("unexpected explain argument {other:?}")),
+            // The selector is positional, but only a non-flag token can be one:
+            // finding ids are `probe:...` and locations are `file:line`, never
+            // `-`-prefixed. Without the guard a mistyped flag was accepted as
+            // the selector and analysis ran against `--fromm` as if it were a
+            // finding id, instead of reporting the typo.
+            value if selector.is_none() && !value.starts_with('-') => {
+                selector = Some(value.to_string());
+            }
+            other => return Err(unknown_argument("explain", other)),
         }
         i += 1;
     }
@@ -8148,11 +8155,38 @@ language = "rust"
         );
     }
 
+    /// The regression this guards is not a missing suggestion but a missing
+    /// *error*: the positional-selector arm accepted any token, so a mistyped
+    /// flag became the finding selector and `explain` ran a full analysis
+    /// against `--fromm` as if it were a finding id. A flag-shaped token must
+    /// be rejected as a flag, with the suggestion the parser now routes to.
+    #[test]
+    fn explain_suggests_the_nearest_flag_instead_of_taking_a_typo_as_the_selector() {
+        assert_eq!(
+            explain(&args(&["--fromm", "artifact.json"])),
+            Err(
+                "unknown explain argument \"--fromm\". Did you mean `--from`? \
+                 Run `ripr explain --help`."
+                    .to_string()
+            )
+        );
+    }
+
+    /// The guard must not cost `explain` its positional selector, which is the
+    /// command's only required argument.
+    #[test]
+    fn explain_still_accepts_a_positional_selector() {
+        assert_eq!(
+            explain(&args(&["probe:src_lib_rs:10:return_value", "extra"])),
+            Err("unknown explain argument \"extra\". Run `ripr explain --help`.".to_string())
+        );
+    }
+
     #[test]
     fn explain_rejects_unexpected_argument_after_selector() {
         assert_eq!(
             explain(&args(&["probe:src_lib_rs:10:return_value", "extra"])),
-            Err("unexpected explain argument \"extra\"".to_string())
+            Err("unknown explain argument \"extra\". Run `ripr explain --help`.".to_string())
         );
     }
 

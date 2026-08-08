@@ -11,14 +11,20 @@ are scoped or reviewed.
 
 ### Fixed
 
-- `ripr explain` and `ripr context` now suggest a near-miss flag instead of
-  failing bare. Both had fully documented help bodies, but neither was wired
-  into the help lookup that `unknown_argument` reads, so `ripr explain
-  --fromm` produced `unknown explain argument "--fromm".` with no suggestion.
-  These are the two commands the human digest points the reader to next, so
-  the slip is likely there. Both are also added to the registered command
-  paths, so the existing flag-parity guard covers them — it iterated the same
-  list they were missing from, and so could not see the omission.
+- `ripr explain` and `ripr context` now reject a mistyped flag with a
+  suggestion. Neither parser routed through the shared unknown-argument
+  helper: `ripr context --fromm` failed with a bare
+  `unexpected context argument "--fromm"` — no suggestion and no help
+  pointer — and `ripr explain --fromm` did not report an argument error at
+  all, because the positional-selector arm accepted any token, so `--fromm`
+  was taken as the finding selector and analysis ran against it. Both parsers
+  now use the shared helper, and `explain`'s positional arm accepts only
+  non-flag tokens. Output becomes
+  `unknown context argument "--fromm". Did you mean \`--from\`? Run \`ripr context --help\`.`
+
+  Both commands are also registered in the help lookup and the command-path
+  list the flag-parity guard iterates, which previously omitted them from both
+  sides and so could not see the gap.
 
 - Human output no longer restates the `Missing discriminator` label inside its
   own value. The classifier builds these entries as
