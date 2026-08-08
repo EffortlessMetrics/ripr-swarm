@@ -106,7 +106,7 @@ mod markdown {
         lines.push(String::new());
         lines.push("This workflow packet is advisory and source-edit-free. It gives a human or agent the static context and commands for one focused test loop.".to_string());
         lines.push(String::new());
-        lines.push("Generated commands are bash command lines. They use POSIX single-quote quoting and `>` redirection, so run them from bash (Git Bash or WSL on Windows). cmd.exe and PowerShell do not interpret this quoting the same way and will pass or reject the quoted arguments incorrectly.".to_string());
+        lines.push("Generated commands are bash command lines. They use POSIX single-quote quoting and `>` redirection, so run them from bash — on Windows, Git Bash. cmd.exe and PowerShell do not interpret this quoting the same way and will mis-pass or reject the quoted arguments. WSL bash is not a drop-in substitute: paths here keep their Windows drive prefix (`C:/...`), which WSL resolves as a relative path, so running them there requires translating each path to `/mnt/c/...` and having ripr available inside WSL.".to_string());
         lines.push(String::new());
     }
 
@@ -278,6 +278,37 @@ mod tests {
         assert!(
             rendered.contains("PowerShell"),
             "disclosure must name the shells that do not accept these commands: {rendered}"
+        );
+        Ok(())
+    }
+
+    /// `display_path` (`agent::loop_commands`) only swaps `\` for `/`, so an
+    /// absolute Windows root stays `C:/...`. Git Bash resolves that; WSL bash
+    /// reads it as a path relative to the current directory and the `>`
+    /// redirection fails before ripr runs. Recommending "bash on Windows"
+    /// without that distinction sends the one affected reader to an environment
+    /// where the copied command still breaks, so the caveat is load-bearing and
+    /// is pinned here rather than left to review.
+    #[test]
+    fn workflow_markdown_does_not_offer_wsl_as_an_unqualified_windows_shell()
+    -> Result<(), String> {
+        let rendered = render_agent_workflow_commands_md(&manifest());
+
+        let wsl = rendered
+            .find("WSL")
+            .ok_or_else(|| format!("disclosure must address WSL explicitly: {rendered}"))?;
+        let git_bash = rendered
+            .find("Git Bash")
+            .ok_or_else(|| format!("disclosure must name Git Bash: {rendered}"))?;
+        assert!(
+            git_bash < wsl,
+            "Git Bash must be the recommendation the reader meets first, \
+             with WSL qualified afterwards: {rendered}"
+        );
+        assert!(
+            rendered.contains("/mnt/c/"),
+            "the WSL caveat must name the translation a reader has to perform, \
+             not merely discourage it: {rendered}"
         );
         Ok(())
     }

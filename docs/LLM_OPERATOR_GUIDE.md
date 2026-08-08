@@ -121,10 +121,13 @@ Every generated command string in this loop — including the `agent verify` and
 receipt commands — is a bash command line. RIPR quotes arguments with POSIX
 single quotes and appends `>` redirection, and `commands.md` fences the commands
 as `bash`. `workflow.json` states the same boundary in `command_shell`. Run the
-commands from bash; on Windows that means Git Bash or WSL. cmd.exe treats `'` as
-a literal character, and PowerShell rejects the `'\''` escape, so either shell
-will pass or reject a quoted argument incorrectly. Emitting a shell-neutral argv
-form is tracked separately (#1617); a PowerShell variant is tracked in #2964.
+commands from bash; on Windows that means Git Bash. cmd.exe treats `'` as a
+literal character, and PowerShell rejects the `'\''` escape, so either shell will
+mis-pass or reject a quoted argument. WSL bash is not a drop-in substitute:
+generated paths keep their Windows drive prefix (`C:/...`), which WSL resolves as
+a relative path, so running there requires translating each path to `/mnt/c/...`
+and having `ripr` installed inside WSL. Emitting a shell-neutral argv form is
+tracked separately (#1617); a PowerShell variant is tracked in #2964.
 
 If the operator needs the full seam packet as well:
 
