@@ -17,16 +17,18 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::release::{
-    CommandResult, absolute_installed_binary, artifact_string, checkout_fixture_commit,
-    command_details, create_authentic_repo_exposure_fixture, fixture_head, git_worktree_is_clean,
-    installed_ripr_binary, produce_authentic_chain_in_fixture, read_crate_version, read_json_value,
-    run_command_in_dir, run_fixture_git_command, run_packaged_install,
+    BOUNDARY_GAP_SEAM_ID, CommandResult, absolute_installed_binary, artifact_string,
+    checkout_fixture_commit, command_details, create_authentic_repo_exposure_fixture, fixture_head,
+    git_worktree_is_clean, installed_ripr_binary, produce_authentic_chain_in_fixture,
+    read_crate_version, read_json_value, run_command_in_dir, run_fixture_git_command,
+    run_packaged_install, run_producer_check,
 };
 use super::release_server::{hex_lower, sha256_file};
 
 const NEGATIVE_WORK_DIR: &str = "target/ripr/release-negative-corpus";
 const BEFORE_ARTIFACT: &str = "before.repo-exposure.json";
 const AFTER_ARTIFACT: &str = "after.repo-exposure.json";
+const THIRD_ARTIFACT: &str = "after-third.repo-exposure.json";
 const ANALYSIS_OUTCOME: &str = "analysis-outcome.json";
 const VERIFY_JSON: &str = "agent-verify.json";
 const RECEIPT_JSON: &str = "agent-receipt.json";
@@ -86,14 +88,19 @@ struct StateSnapshot {
     files: Vec<StateFile>,
 }
 
-/// What the installed binary must do with the mutated state: assert the
-/// exit status FIRST and the closed reason token second.
+/// What the installed binary must do with the mutated state. Rejection
+/// cases assert the exit status FIRST and the closed reason token second;
+/// pass cases pin the exact typed projection the honest output must keep.
 #[derive(Clone, Debug)]
 enum Expectation {
     Reject {
         token: &'static str,
         out_absent: Option<&'static str>,
         out_preserved: Option<(String, String)>,
+    },
+    Pass {
+        out_file: &'static str,
+        pointers: Vec<(&'static str, &'static str)>,
     },
 }
 
@@ -106,9 +113,18 @@ impl Expectation {
         }
     }
 
+    fn reject_without_out(token: &'static str) -> Self {
+        Self::Reject {
+            token,
+            out_absent: Some(CASE_RECEIPT_OUT),
+            out_preserved: None,
+        }
+    }
+
     fn expected_kind(&self) -> String {
         match self {
             Self::Reject { token, .. } => (*token).to_string(),
+            Self::Pass { .. } => "none (expected pass with a pinned honest projection)".to_string(),
         }
     }
 }
@@ -466,6 +482,12 @@ fn execute_case(
                 }
                 receipt.details.append(&mut violations);
             }
+            Expectation::Pass { out_file, pointers } => {
+                let (outcome, violations) = evaluate_pass(&run_cwd, out_file, pointers, &result);
+                receipt.process_outcome = outcome;
+                receipt.actual_failure_kind = "none".to_string();
+                receipt.details.extend(violations);
+            }
         }
 
         // Retain the mutated evidence before restoration reverts it.
@@ -563,6 +585,48 @@ fn evaluate_rejection(token: &str, result: &CommandResult) -> (String, String, V
     }
 }
 
+fn evaluate_pass(
+    run_cwd: &Path,
+    out_file: &str,
+    pointers: &[(&str, &str)],
+    result: &CommandResult,
+) -> (String, Vec<String>) {
+    if !result.success {
+        return (
+            "unexpected_failure".to_string(),
+            vec![format!(
+                "honesty-pin command failed: {}",
+                command_details(result).join("; ")
+            )],
+        );
+    }
+    let out_path = run_cwd.join(out_file);
+    let value = match read_json_value(&out_path) {
+        Ok(value) => value,
+        Err(err) => {
+            return (
+                "output_contract_violation".to_string(),
+                vec![format!("read pinned output {out_file} failed: {err}")],
+            );
+        }
+    };
+    let mut violations = Vec::new();
+    for (pointer, expected) in pointers {
+        let actual = value.pointer(pointer).and_then(Value::as_str);
+        if actual != Some(*expected) {
+            violations.push(format!(
+                "pinned projection {pointer} must stay {expected:?}, got {:?}",
+                actual.unwrap_or("<missing>")
+            ));
+        }
+    }
+    if violations.is_empty() {
+        ("passed_with_pinned_projection".to_string(), violations)
+    } else {
+        ("output_contract_violation".to_string(), violations)
+    }
+}
+
 fn first_stderr_line(stderr: &str) -> String {
     let line = stderr.lines().find(|line| !line.trim().is_empty());
     match line {
@@ -597,9 +661,45 @@ fn verify_case_execution(env: &CaseEnv, mutation: &str) -> Result<CaseExecution,
     })
 }
 
+fn receipt_case_execution(env: &CaseEnv, mutation: &str) -> Result<CaseExecution, String> {
+    produce_case_chain(env)?;
+    let snapshot = snapshot_state(env.root)?;
+    Ok(CaseExecution {
+        mutation: mutation.to_string(),
+        argv: agent_receipt_argv(BOUNDARY_GAP_SEAM_ID, CASE_RECEIPT_OUT),
+        control_argv: agent_receipt_argv(BOUNDARY_GAP_SEAM_ID, RECEIPT_JSON),
+        expected: Expectation::reject_without_out(""),
+        original: Vec::new(),
+        mutated: Vec::new(),
+        retain: Vec::new(),
+        snapshot,
+        run_cwd: None,
+        extra_cleanup: Vec::new(),
+    })
+}
+
 fn agent_verify_argv(before: &str, after: &str) -> Vec<String> {
     [
         "agent", "verify", "--root", ".", "--before", before, "--after", after, "--json",
+    ]
+    .iter()
+    .map(|arg| (*arg).to_string())
+    .collect()
+}
+
+fn agent_receipt_argv(seam_id: &str, out: &str) -> Vec<String> {
+    [
+        "agent",
+        "receipt",
+        "--root",
+        ".",
+        "--verify-json",
+        VERIFY_JSON,
+        "--seam-id",
+        seam_id,
+        "--json",
+        "--out",
+        out,
     ]
     .iter()
     .map(|arg| (*arg).to_string())
@@ -793,6 +893,56 @@ fn mutate_file_text(root: &Path, name: &str, from: &str, to: &str) -> Result<(),
             crate::normalize_path(&path)
         )
     })
+}
+
+/// Shift the final lowercase hex character of an identity digest so the
+/// mutated identity stays well-formed but no longer matches its pair.
+fn shift_final_hex(text: &str) -> Result<String, String> {
+    let mut chars = text.chars().collect::<Vec<_>>();
+    let Some(last) = chars.pop() else {
+        return Err("cannot shift an empty identity".to_string());
+    };
+    let shifted = match last {
+        '0' => '1',
+        '1' => '2',
+        '2' => '3',
+        '3' => '4',
+        '4' => '5',
+        '5' => '6',
+        '6' => '7',
+        '7' => '8',
+        '8' => '9',
+        '9' => 'a',
+        'a' => 'b',
+        'b' => 'c',
+        'c' => 'd',
+        'd' => 'e',
+        'e' => 'f',
+        'f' => '0',
+        other => {
+            return Err(format!(
+                "identity does not end in a lowercase hex digit: {other:?}"
+            ));
+        }
+    };
+    chars.push(shifted);
+    Ok(chars.into_iter().collect())
+}
+
+fn commit_empty(root: &Path, message: &str) -> Result<String, String> {
+    run_fixture_git_command(
+        root,
+        &[
+            "-c",
+            "core.hooksPath=",
+            "commit",
+            "--allow-empty",
+            "-m",
+            message,
+        ],
+        "corpus movement commit",
+    )?;
+    fixture_head(root)
 }
 
 fn snapshot_state(root: &Path) -> Result<StateSnapshot, String> {
@@ -1121,6 +1271,415 @@ fn case_artifact_commitment_malformed(env: &CaseEnv) -> Result<CaseExecution, St
     Ok(execution)
 }
 
+fn case_pair_reversed_revisions(env: &CaseEnv) -> Result<CaseExecution, String> {
+    let mut execution = verify_case_execution(
+        env,
+        "present the after artifact as --before and the before artifact as --after (lineage reversal; no byte mutation)",
+    )?;
+    execution.original = pair_digests(env)?;
+    execution.mutated = pair_digests(env)?;
+    execution.argv = agent_verify_argv(AFTER_ARTIFACT, BEFORE_ARTIFACT);
+    execution.expected = Expectation::reject("revisions are reversed");
+    Ok(execution)
+}
+
+fn case_pair_unrelated_revisions(env: &CaseEnv) -> Result<CaseExecution, String> {
+    let mut execution = verify_case_execution(
+        env,
+        "rebind the after artifact to a fresh orphan root commit that shares no ancestry with the before revision (snapshot follows; commitment re-committed)",
+    )?;
+    execution.original = pair_digests(env)?;
+    run_fixture_git_command(
+        env.root,
+        &["checkout", "--quiet", "--orphan", "corpus-unrelated"],
+        "create unrelated orphan branch",
+    )?;
+    run_fixture_git_command(
+        env.root,
+        &[
+            "-c",
+            "core.hooksPath=",
+            "commit",
+            "--quiet",
+            "--allow-empty",
+            "-m",
+            "corpus unrelated root",
+        ],
+        "commit unrelated orphan root",
+    )?;
+    let orphan = fixture_head(env.root)?;
+    rebind_artifact_head(env.root, AFTER_ARTIFACT, &orphan)?;
+    execution.mutated = artifact_digests(env.root, &[AFTER_ARTIFACT])?;
+    execution.expected = Expectation::reject("revisions are unrelated");
+    execution.retain = vec![(AFTER_ARTIFACT.to_string(), AFTER_ARTIFACT.to_string())];
+    Ok(execution)
+}
+
+fn case_pair_incompatible_mode(env: &CaseEnv) -> Result<CaseExecution, String> {
+    let mut execution = verify_case_execution(
+        env,
+        "switch the after artifact analysis mode and bound profile draft -> release (input identity unchanged; commitment re-committed)",
+    )?;
+    execution.original = artifact_digests(env.root, &[AFTER_ARTIFACT])?;
+    mutate_artifact_value(env.root, AFTER_ARTIFACT, |value| {
+        set_json_string(value, "/artifact/analysis/mode", "release")?;
+        set_json_string(value, "/artifact/analysis/profile", "release")
+    })?;
+    execution.mutated = artifact_digests(env.root, &[AFTER_ARTIFACT])?;
+    execution.expected = Expectation::reject("analysis modes differ");
+    execution.retain = vec![(AFTER_ARTIFACT.to_string(), AFTER_ARTIFACT.to_string())];
+    Ok(execution)
+}
+
+fn case_pair_incompatible_base(env: &CaseEnv) -> Result<CaseExecution, String> {
+    let mut execution = verify_case_execution(
+        env,
+        "set the after artifact base_revision null -> base:corpus (commitment re-committed)",
+    )?;
+    execution.original = artifact_digests(env.root, &[AFTER_ARTIFACT])?;
+    mutate_artifact_value(env.root, AFTER_ARTIFACT, |value| {
+        let slot = value
+            .pointer_mut("/artifact/analysis/base_revision")
+            .ok_or_else(|| "after artifact base_revision slot is missing".to_string())?;
+        *slot = Value::String("base:corpus".to_string());
+        Ok(())
+    })?;
+    execution.mutated = artifact_digests(env.root, &[AFTER_ARTIFACT])?;
+    execution.expected = Expectation::reject("base revisions differ");
+    execution.retain = vec![(AFTER_ARTIFACT.to_string(), AFTER_ARTIFACT.to_string())];
+    Ok(execution)
+}
+
+fn case_pair_producer_version_drift(env: &CaseEnv) -> Result<CaseExecution, String> {
+    let mut execution = verify_case_execution(
+        env,
+        "shift the after artifact producer version to 0.0.0-corpus (commitment re-committed)",
+    )?;
+    execution.original = artifact_digests(env.root, &[AFTER_ARTIFACT])?;
+    mutate_artifact_value(env.root, AFTER_ARTIFACT, |value| {
+        set_json_string(value, "/artifact/producer/version", "0.0.0-corpus")
+    })?;
+    execution.mutated = artifact_digests(env.root, &[AFTER_ARTIFACT])?;
+    execution.expected = Expectation::reject("producer versions differ");
+    execution.retain = vec![(AFTER_ARTIFACT.to_string(), AFTER_ARTIFACT.to_string())];
+    Ok(execution)
+}
+
+fn case_pair_input_identity_drift(env: &CaseEnv) -> Result<CaseExecution, String> {
+    let mut execution = verify_case_execution(
+        env,
+        "shift the final hex digit of the after artifact input identity digest (snapshot follows; commitment re-committed): both artifacts stay individually valid but the pair is incomparable",
+    )?;
+    execution.original = pair_digests(env)?;
+    let after_value = read_json_value(&env.root.join(AFTER_ARTIFACT))?;
+    let input =
+        artifact_string(&after_value, &["artifact", "analysis", "input_identity"])?.to_string();
+    let shifted = shift_final_hex(&input)?;
+    if shifted == input {
+        return Err("input identity shift must change the identity".to_string());
+    }
+    mutate_artifact_value(env.root, AFTER_ARTIFACT, |value| {
+        let head = value
+            .pointer("/artifact/repository/head")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "after artifact head is missing".to_string())?
+            .to_string();
+        set_json_string(value, "/artifact/analysis/input_identity", &shifted)?;
+        set_json_string(
+            value,
+            "/artifact/snapshot_identity",
+            &format!("snapshot:{shifted};revision:{head}"),
+        )
+    })?;
+    execution.mutated = artifact_digests(env.root, &[AFTER_ARTIFACT])?;
+    execution.expected = Expectation::reject("analysis input identities differ");
+    execution.retain = vec![(AFTER_ARTIFACT.to_string(), AFTER_ARTIFACT.to_string())];
+    Ok(execution)
+}
+
+fn case_pair_no_movement_same_clean_revision(env: &CaseEnv) -> Result<CaseExecution, String> {
+    let mut execution = verify_case_execution(
+        env,
+        "check out the before revision (real producer worktree state) and present the same current before artifact as both sides of the pair",
+    )?;
+    execution.original = artifact_digests(env.root, &[BEFORE_ARTIFACT])?;
+    checkout_fixture_commit(env.root, env.before_sha)?;
+    execution.mutated = artifact_digests(env.root, &[BEFORE_ARTIFACT])?;
+    execution.argv = agent_verify_argv(BEFORE_ARTIFACT, BEFORE_ARTIFACT);
+    execution.expected = Expectation::reject("no repository movement");
+    Ok(execution)
+}
+
+fn case_verify_unsupported_schema(env: &CaseEnv) -> Result<CaseExecution, String> {
+    let mut execution = receipt_case_execution(
+        env,
+        "rewrite the canonical verify document schema_version 0.3 -> 0.2: a canonical-in-every-other-way older document is rejected by the fail-closed schema gate, never migrated",
+    )?;
+    execution.original = artifact_digests(env.root, &[VERIFY_JSON])?;
+    mutate_file_text(
+        env.root,
+        VERIFY_JSON,
+        "\"schema_version\": \"0.3\"",
+        "\"schema_version\": \"0.2\"",
+    )?;
+    execution.mutated = artifact_digests(env.root, &[VERIFY_JSON])?;
+    execution.expected = Expectation::reject_without_out("[unsupported_schema]");
+    execution.retain = vec![(VERIFY_JSON.to_string(), VERIFY_JSON.to_string())];
+    Ok(execution)
+}
+
+fn case_verify_replayed_against_another_pair(env: &CaseEnv) -> Result<CaseExecution, String> {
+    let mut execution = receipt_case_execution(
+        env,
+        "advance the repository, produce a third authentic after artifact, and replay the original verify JSON against the new pair bytes",
+    )?;
+    execution.original = artifact_digests(env.root, &[AFTER_ARTIFACT, VERIFY_JSON])?;
+    commit_empty(env.root, "corpus third state")?;
+    run_producer_check(env.binary, env.root, THIRD_ARTIFACT)?;
+    fs::copy(env.root.join(THIRD_ARTIFACT), env.root.join(AFTER_ARTIFACT))
+        .map_err(|err| format!("replay third artifact as after failed: {err}"))?;
+    execution.mutated = artifact_digests(env.root, &[AFTER_ARTIFACT, VERIFY_JSON])?;
+    execution.expected = Expectation::reject_without_out("[not_canonical]");
+    execution.retain = vec![
+        (AFTER_ARTIFACT.to_string(), AFTER_ARTIFACT.to_string()),
+        (THIRD_ARTIFACT.to_string(), THIRD_ARTIFACT.to_string()),
+    ];
+    Ok(execution)
+}
+
+fn case_verify_artifact_bytes_changed_after_verify(env: &CaseEnv) -> Result<CaseExecution, String> {
+    let mut execution = receipt_case_execution(
+        env,
+        "change after-artifact bytes the movement render never reads (run_status complete -> stalled) and re-commit, then replay the original verify JSON",
+    )?;
+    execution.original = artifact_digests(env.root, &[AFTER_ARTIFACT])?;
+    mutate_artifact_value(env.root, AFTER_ARTIFACT, |value| {
+        set_json_string(value, "/run_status", "stalled")
+    })?;
+    execution.mutated = artifact_digests(env.root, &[AFTER_ARTIFACT])?;
+    execution.expected = Expectation::reject_without_out("[not_canonical]");
+    execution.retain = vec![(AFTER_ARTIFACT.to_string(), AFTER_ARTIFACT.to_string())];
+    Ok(execution)
+}
+
+fn case_verify_stale_after_repository_movement(env: &CaseEnv) -> Result<CaseExecution, String> {
+    let mut execution = receipt_case_execution(
+        env,
+        "advance the repository after the verify result was produced, then replay the stale verify JSON; the prior authoritative receipt must stay byte-identical and no new output may appear",
+    )?;
+    execution.original = artifact_digests(env.root, &[VERIFY_JSON, RECEIPT_JSON])?;
+    let prior_receipt_digest = file_digest_prefixed(&env.root.join(RECEIPT_JSON))?;
+    commit_empty(env.root, "corpus post-verify movement")?;
+    execution.mutated = artifact_digests(env.root, &[VERIFY_JSON, RECEIPT_JSON])?;
+    execution.expected = Expectation::Reject {
+        token: "[not_canonical]",
+        out_absent: Some(CASE_RECEIPT_OUT),
+        out_preserved: Some((RECEIPT_JSON.to_string(), prior_receipt_digest)),
+    };
+    Ok(execution)
+}
+
+fn case_verify_tampered_digest(env: &CaseEnv) -> Result<CaseExecution, String> {
+    let mut execution = receipt_case_execution(
+        env,
+        "flip one hex digit of the verify document after_content_sha256 binding",
+    )?;
+    execution.original = artifact_digests(env.root, &[VERIFY_JSON])?;
+    let verify_value = read_json_value(&env.root.join(VERIFY_JSON))?;
+    let bound = artifact_string(&verify_value, &["inputs", "after_content_sha256"])?.to_string();
+    let shifted = shift_final_hex(&bound)?;
+    if shifted == bound {
+        return Err("digest flip must change the bound digest".to_string());
+    }
+    mutate_file_text(env.root, VERIFY_JSON, &bound, &shifted)?;
+    execution.mutated = artifact_digests(env.root, &[VERIFY_JSON])?;
+    execution.expected = Expectation::reject_without_out("[not_canonical]");
+    execution.retain = vec![(VERIFY_JSON.to_string(), VERIFY_JSON.to_string())];
+    Ok(execution)
+}
+
+fn case_verify_tampered_status(env: &CaseEnv) -> Result<CaseExecution, String> {
+    let mut execution = receipt_case_execution(
+        env,
+        "rewrite the verify document status advisory -> failed: the status field is governed canonical output",
+    )?;
+    execution.original = artifact_digests(env.root, &[VERIFY_JSON])?;
+    mutate_file_text(
+        env.root,
+        VERIFY_JSON,
+        "\"status\": \"advisory\"",
+        "\"status\": \"failed\"",
+    )?;
+    execution.mutated = artifact_digests(env.root, &[VERIFY_JSON])?;
+    execution.expected = Expectation::reject_without_out("[not_canonical]");
+    execution.retain = vec![(VERIFY_JSON.to_string(), VERIFY_JSON.to_string())];
+    Ok(execution)
+}
+
+fn case_receipt_input_rerendered_verify_bytes(env: &CaseEnv) -> Result<CaseExecution, String> {
+    let mut execution = receipt_case_execution(
+        env,
+        "re-render the verify document from its parsed value with different byte layout: identical values, different bytes than the exact canonical verify output",
+    )?;
+    execution.original = artifact_digests(env.root, &[VERIFY_JSON])?;
+    let path = env.root.join(VERIFY_JSON);
+    let text = crate::read_text_lossy(&path)?;
+    let value: Value = serde_json::from_str(&text)
+        .map_err(|err| format!("parse verify document for mutation failed: {err}"))?;
+    let rerendered = serde_json::to_string(&value)
+        .map_err(|err| format!("re-render verify document failed: {err}"))?;
+    if rerendered == text {
+        return Err("re-rendered verify document must differ byte-wise".to_string());
+    }
+    fs::write(&path, rerendered)
+        .map_err(|err| format!("write re-rendered verify document failed: {err}"))?;
+    execution.mutated = artifact_digests(env.root, &[VERIFY_JSON])?;
+    execution.expected = Expectation::reject_without_out("[not_canonical]");
+    execution.retain = vec![(VERIFY_JSON.to_string(), VERIFY_JSON.to_string())];
+    Ok(execution)
+}
+
+fn case_receipt_from_incomparable_verification(env: &CaseEnv) -> Result<CaseExecution, String> {
+    let mut execution = receipt_case_execution(
+        env,
+        "retarget the verify document inputs.after at the before artifact and check out the before revision: a no-movement verification cannot issue an authoritative receipt",
+    )?;
+    execution.original = artifact_digests(env.root, &[VERIFY_JSON])?;
+    let verify_value = read_json_value(&env.root.join(VERIFY_JSON))?;
+    let before_input = artifact_string(&verify_value, &["inputs", "before"])?.to_string();
+    let after_input = artifact_string(&verify_value, &["inputs", "after"])?.to_string();
+    mutate_file_text(
+        env.root,
+        VERIFY_JSON,
+        &format!("\"after\": \"{after_input}\""),
+        &format!("\"after\": \"{before_input}\""),
+    )?;
+    checkout_fixture_commit(env.root, env.before_sha)?;
+    execution.mutated = artifact_digests(env.root, &[VERIFY_JSON])?;
+    execution.expected = Expectation::reject_without_out("[no_movement]");
+    execution.retain = vec![(VERIFY_JSON.to_string(), VERIFY_JSON.to_string())];
+    Ok(execution)
+}
+
+fn case_receipt_target_absent_from_both_states(env: &CaseEnv) -> Result<CaseExecution, String> {
+    let mut execution = receipt_case_execution(
+        env,
+        "request a receipt for a target seam that does not exist in either state (no artifact mutation)",
+    )?;
+    execution.original = artifact_digests(env.root, &[VERIFY_JSON])?;
+    execution.mutated = artifact_digests(env.root, &[VERIFY_JSON])?;
+    execution.argv = agent_receipt_argv("corpus-absent-target", CASE_RECEIPT_OUT);
+    execution.expected = Expectation::reject_without_out("was not found in agent verify JSON");
+    Ok(execution)
+}
+
+fn case_receipt_unmoved_retained_target(env: &CaseEnv) -> Result<CaseExecution, String> {
+    // Build a linear two-seam chain on top of the before revision: seam X
+    // (loyalty_points) keeps one weak discriminator in both states while
+    // seam Y (discounted_total) gains the boundary test in the second
+    // commit. The chain must be linear — commits on divergent branches share
+    // no ancestry and fail the lineage gate instead. The receipt for the
+    // retained target must issue but stay `unchanged` — movement on seam Y
+    // can never strengthen seam X.
+    let loyalty_fn = "\npub fn loyalty_points(total: i32, threshold: i32) -> i32 {\n    if total >= threshold {\n        total / 10\n    } else {\n        0\n    }\n}\n";
+    let loyalty_test = "\n#[test]\nfn loyalty_below_threshold_has_no_points() {\n    assert_eq!(loyalty_points(50, 100), 0);\n}\n";
+    let equality_test = "\n#[test]\nfn equality_boundary_discounts() {\n    assert_eq!(discounted_total(100, 100), 90);\n}\n";
+    checkout_fixture_commit(env.root, env.before_sha)?;
+    let lib_path = env.root.join("src/lib.rs");
+    let mut lib = crate::read_text_lossy(&lib_path)?;
+    lib.push_str(loyalty_fn);
+    fs::write(&lib_path, lib).map_err(|err| format!("add loyalty seam failed: {err}"))?;
+    let tests_path = env.root.join("tests/pricing.rs");
+    let mut tests = crate::read_text_lossy(&tests_path)?;
+    tests.push_str(loyalty_test);
+    fs::write(&tests_path, tests).map_err(|err| format!("add loyalty weak test failed: {err}"))?;
+    run_fixture_git_command(
+        env.root,
+        &["-c", "core.hooksPath=", "add", "."],
+        "stage two-seam before state",
+    )?;
+    run_fixture_git_command(
+        env.root,
+        &[
+            "-c",
+            "core.hooksPath=",
+            "commit",
+            "--quiet",
+            "-m",
+            "corpus two-seam before",
+        ],
+        "commit two-seam before state",
+    )?;
+    let before_two_seam = fixture_head(env.root)?;
+    let mut tests = crate::read_text_lossy(&tests_path)?;
+    tests.push_str(equality_test);
+    fs::write(&tests_path, tests)
+        .map_err(|err| format!("add equality boundary test failed: {err}"))?;
+    run_fixture_git_command(
+        env.root,
+        &["-c", "core.hooksPath=", "add", "."],
+        "stage two-seam after state",
+    )?;
+    run_fixture_git_command(
+        env.root,
+        &[
+            "-c",
+            "core.hooksPath=",
+            "commit",
+            "--quiet",
+            "-m",
+            "corpus two-seam after",
+        ],
+        "commit two-seam after state",
+    )?;
+    let after_two_seam = fixture_head(env.root)?;
+    produce_authentic_chain_in_fixture(env.binary, env.root, &before_two_seam, &after_two_seam)?;
+    // Control on the producer output itself: exactly one seam may move.
+    let verify_value = read_json_value(&env.root.join(VERIFY_JSON))?;
+    let changed = verify_value
+        .get("changed_seams")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "verify document changed_seams is missing".to_string())?;
+    if changed.len() != 1 {
+        return Err(format!(
+            "two-seam control failed: expected exactly one moved seam, got {}",
+            changed.len()
+        ));
+    }
+    let unchanged = verify_value
+        .get("unchanged_seams")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "verify document unchanged_seams is missing".to_string())?;
+    let Some(retained) = unchanged.first() else {
+        return Err("two-seam control failed: the retained target seam is missing".to_string());
+    };
+    let retained_id = retained
+        .get("seam_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "retained target seam_id is missing".to_string())?
+        .to_string();
+    let snapshot = snapshot_state(env.root)?;
+    Ok(CaseExecution {
+        mutation: "no mutation: honesty pin — receipt for the retained target seam must stay `unchanged` while only the other seam moves".to_string(),
+        argv: agent_receipt_argv(&retained_id, RECEIPT_JSON),
+        control_argv: agent_receipt_argv(&retained_id, RECEIPT_JSON),
+        expected: Expectation::Pass {
+            out_file: RECEIPT_JSON,
+            pointers: vec![
+                ("/seam/change", "unchanged"),
+                ("/summary/receipt_state", "receipt_movement_unchanged"),
+                ("/provenance/movement", "unchanged"),
+            ],
+        },
+        original: artifact_digests(env.root, &[VERIFY_JSON])?,
+        mutated: artifact_digests(env.root, &[VERIFY_JSON])?,
+        retain: vec![(VERIFY_JSON.to_string(), VERIFY_JSON.to_string())],
+        snapshot,
+        run_cwd: None,
+        extra_cleanup: Vec::new(),
+    })
+}
+
 fn case_specs() -> Vec<CaseSpec> {
     vec![
         CaseSpec {
@@ -1188,6 +1747,108 @@ fn case_specs() -> Vec<CaseSpec> {
             group: "artifact",
             description: "malformed content commitment digest shape",
             run: case_artifact_commitment_malformed,
+        },
+        CaseSpec {
+            id: "pair-reversed-revisions",
+            group: "pair",
+            description: "reversed revisions",
+            run: case_pair_reversed_revisions,
+        },
+        CaseSpec {
+            id: "pair-unrelated-revisions",
+            group: "pair",
+            description: "unrelated revisions",
+            run: case_pair_unrelated_revisions,
+        },
+        CaseSpec {
+            id: "pair-incompatible-mode",
+            group: "pair",
+            description: "incompatible analysis mode/profile",
+            run: case_pair_incompatible_mode,
+        },
+        CaseSpec {
+            id: "pair-incompatible-base",
+            group: "pair",
+            description: "incompatible base revision configuration",
+            run: case_pair_incompatible_base,
+        },
+        CaseSpec {
+            id: "pair-producer-version-drift",
+            group: "pair",
+            description: "producer version drift across the pair",
+            run: case_pair_producer_version_drift,
+        },
+        CaseSpec {
+            id: "pair-input-identity-drift",
+            group: "pair",
+            description: "unexpected input-identity drift (individually valid but incomparable pair)",
+            run: case_pair_input_identity_drift,
+        },
+        CaseSpec {
+            id: "pair-no-movement-same-clean-revision",
+            group: "pair",
+            description: "same clean revision with no actual target movement (pinned producer worktree state)",
+            run: case_pair_no_movement_same_clean_revision,
+        },
+        CaseSpec {
+            id: "verify-unsupported-schema",
+            group: "verify_receipt",
+            description: "canonical 0.2 verify document rejected by the 0.3 schema gate",
+            run: case_verify_unsupported_schema,
+        },
+        CaseSpec {
+            id: "verify-replayed-against-another-pair",
+            group: "verify_receipt",
+            description: "verify replayed against another pair",
+            run: case_verify_replayed_against_another_pair,
+        },
+        CaseSpec {
+            id: "verify-artifact-bytes-changed-after-verify",
+            group: "verify_receipt",
+            description: "artifact bytes changed after verify",
+            run: case_verify_artifact_bytes_changed_after_verify,
+        },
+        CaseSpec {
+            id: "verify-stale-after-repository-movement",
+            group: "verify_receipt",
+            description: "stale verify after repository movement; failed issuance leaves no output and preserves the prior receipt",
+            run: case_verify_stale_after_repository_movement,
+        },
+        CaseSpec {
+            id: "verify-tampered-digest",
+            group: "verify_receipt",
+            description: "tampered verify digest binding",
+            run: case_verify_tampered_digest,
+        },
+        CaseSpec {
+            id: "verify-tampered-status",
+            group: "verify_receipt",
+            description: "tampered verify status",
+            run: case_verify_tampered_status,
+        },
+        CaseSpec {
+            id: "receipt-input-rerendered-verify-bytes",
+            group: "verify_receipt",
+            description: "receipt input differing from the exact canonical verify bytes",
+            run: case_receipt_input_rerendered_verify_bytes,
+        },
+        CaseSpec {
+            id: "receipt-from-incomparable-verification",
+            group: "verify_receipt",
+            description: "no-movement verification attempting to issue an authoritative receipt",
+            run: case_receipt_from_incomparable_verification,
+        },
+        CaseSpec {
+            id: "receipt-target-absent-from-both-states",
+            group: "verify_receipt",
+            description: "target absent from both states",
+            run: case_receipt_target_absent_from_both_states,
+        },
+        CaseSpec {
+            id: "receipt-unmoved-retained-target",
+            group: "verify_receipt",
+            description: "another target moves while the retained target does not (honesty pin)",
+            run: case_receipt_unmoved_retained_target,
         },
     ]
 }
@@ -1399,6 +2060,7 @@ fn release_negative_usage() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_string()).collect()
@@ -1463,6 +2125,55 @@ mod tests {
         let recomputed = recompute_content_commitment(&tampered)?;
         if recomputed == declared {
             return Err("stale commitment was not detected after a byte change".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn recommit_rejects_missing_or_duplicate_commitment_keys() -> Result<(), String> {
+        if recommit_repo_exposure_bytes(r#"{"artifact":{}}"#).is_ok() {
+            return Err("recommit accepted a missing commitment key".to_string());
+        }
+        let duplicate = format!(
+            r#"{{"artifact":{{"content_sha256":"{CONTENT_PLACEHOLDER}","content_sha256":"{CONTENT_PLACEHOLDER}"}}}}"#
+        );
+        if recommit_repo_exposure_bytes(&duplicate).is_ok() {
+            return Err("recommit accepted a duplicate commitment key".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn replace_once_requires_a_unique_anchor() -> Result<(), String> {
+        if replace_once("nothing to find here", "anchor", "x").is_ok() {
+            return Err("replace_once accepted a missing anchor".to_string());
+        }
+        // The whole-string "anchor anchor" contains the anchor twice.
+        if replace_once("anchor anchor", "anchor", "x").is_ok() {
+            return Err("replace_once accepted a repeated anchor".to_string());
+        }
+        let replaced = replace_once("one anchor only", "anchor", "x")?;
+        if replaced != "one x only" {
+            return Err(format!("unexpected replacement: {replaced}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn shift_final_hex_stays_lowercase_hex_and_changes_value() -> Result<(), String> {
+        for (input, expected) in [("abc0", "abc1"), ("abc9", "abca"), ("abcf", "abc0")] {
+            let shifted = shift_final_hex(input)?;
+            if shifted != expected {
+                return Err(format!(
+                    "shift_final_hex({input}) = {shifted}, want {expected}"
+                ));
+            }
+        }
+        if shift_final_hex("").is_ok() {
+            return Err("shift_final_hex accepted an empty identity".to_string());
+        }
+        if shift_final_hex("abcZ").is_ok() {
+            return Err("shift_final_hex accepted a non-hex tail".to_string());
         }
         Ok(())
     }
@@ -1551,7 +2262,61 @@ mod tests {
     }
 
     #[test]
-    fn corpus_covers_every_landed_case_once() -> Result<(), String> {
+    fn case_receipt_json_carries_the_required_receipt_fields() -> Result<(), String> {
+        let spec = CaseSpec {
+            id: "case",
+            group: "verify_receipt",
+            description: "case",
+            run: case_verify_tampered_status,
+        };
+        let candidate = CandidateIdentity {
+            path: "p".to_string(),
+            version_output: "ripr 0.10.0".to_string(),
+            sha256: "sha256:0".to_string(),
+        };
+        let baseline = BaselineContext {
+            fixture_root: PathBuf::from("fixture"),
+            before_sha: "b".to_string(),
+            after_sha: "a".to_string(),
+            artifacts: Vec::new(),
+        };
+        let receipt = CaseReceipt::new(&spec, &candidate, &baseline);
+        let value = case_receipt_json(&receipt);
+        for key in [
+            "case_id",
+            "mutation",
+            "candidate",
+            "fixture",
+            "argv",
+            "control_argv",
+            "original_artifacts",
+            "mutated_artifacts",
+            "expected_failure_kind",
+            "actual_failure_kind",
+            "process_outcome",
+            "restoration_outcome",
+            "cleanup_outcome",
+            "status",
+        ] {
+            if value.get(key).is_none() {
+                return Err(format!("case receipt JSON is missing {key}"));
+            }
+        }
+        for key in ["path", "version", "sha256"] {
+            if value["candidate"].get(key).is_none() {
+                return Err(format!("case receipt candidate is missing {key}"));
+            }
+        }
+        for key in ["root", "before_sha", "after_sha"] {
+            if value["fixture"].get(key).is_none() {
+                return Err(format!("case receipt fixture is missing {key}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn corpus_covers_every_required_case_once() -> Result<(), String> {
         let specs = case_specs();
         let mut ids = std::collections::BTreeSet::new();
         for spec in &specs {
@@ -1559,9 +2324,6 @@ mod tests {
                 return Err(format!("duplicate case id {}", spec.id));
             }
         }
-        // Staged coverage (#2824 slice B1): exactly the artifact family
-        // landed in this slice; the verify/receipt families extend this to
-        // the full 28-case matrix in the follow-up slice.
         let required = [
             "artifact-producer-tool",
             "artifact-repo-exposure-schema",
@@ -1574,6 +2336,23 @@ mod tests {
             "artifact-commitment-missing",
             "artifact-commitment-duplicate",
             "artifact-commitment-malformed",
+            "pair-reversed-revisions",
+            "pair-unrelated-revisions",
+            "pair-incompatible-mode",
+            "pair-incompatible-base",
+            "pair-producer-version-drift",
+            "pair-input-identity-drift",
+            "pair-no-movement-same-clean-revision",
+            "verify-unsupported-schema",
+            "verify-replayed-against-another-pair",
+            "verify-artifact-bytes-changed-after-verify",
+            "verify-stale-after-repository-movement",
+            "verify-tampered-digest",
+            "verify-tampered-status",
+            "receipt-input-rerendered-verify-bytes",
+            "receipt-from-incomparable-verification",
+            "receipt-target-absent-from-both-states",
+            "receipt-unmoved-retained-target",
         ];
         for id in required {
             if !ids.contains(id) {
@@ -1582,7 +2361,7 @@ mod tests {
         }
         if specs.len() != required.len() {
             return Err(format!(
-                "corpus has {} cases; the landed matrix has {}",
+                "corpus has {} cases; the required matrix has {}",
                 specs.len(),
                 required.len()
             ));
@@ -1617,6 +2396,99 @@ mod tests {
             if !ids.contains(&required) {
                 return Err(format!("deferred disposition {required} is missing"));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn copy_dir_recursive_rejects_symlink_entries() -> Result<(), String> {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|err| format!("read clock failed: {err}"))?
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!(
+            "ripr-negative-corpus-copy-{}-{stamp}",
+            std::process::id()
+        ));
+        let source = base.join("source");
+        let result = (|| -> Result<(), String> {
+            fs::create_dir_all(&source).map_err(|err| format!("create source failed: {err}"))?;
+            fs::write(source.join("file.txt"), "content")
+                .map_err(|err| format!("write source file failed: {err}"))?;
+            let destination = base.join("destination");
+            copy_dir_recursive(&source, &destination)?;
+            let copied = crate::read_text_lossy(&destination.join("file.txt"))?;
+            if copied != "content" {
+                return Err("copied content drifted".to_string());
+            }
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink(source.join("file.txt"), source.join("link.txt"))
+                    .map_err(|err| format!("create symlink failed: {err}"))?;
+                if copy_dir_recursive(&source, &base.join("destination-b")).is_ok() {
+                    return Err("symlink entries must be rejected fail-closed".to_string());
+                }
+            }
+            Ok(())
+        })();
+        let cleanup = fs::remove_dir_all(&base);
+        result?;
+        cleanup.map_err(|err| format!("remove copy test dir failed: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn report_markdown_renders_case_matrix_and_dispositions() -> Result<(), String> {
+        let spec = CaseSpec {
+            id: "case",
+            group: "pair",
+            description: "case",
+            run: case_pair_reversed_revisions,
+        };
+        let candidate = CandidateIdentity {
+            path: "p".to_string(),
+            version_output: "ripr 0.10.0".to_string(),
+            sha256: "sha256:0".to_string(),
+        };
+        let baseline = BaselineContext {
+            fixture_root: PathBuf::from("fixture"),
+            before_sha: "b".to_string(),
+            after_sha: "a".to_string(),
+            artifacts: Vec::new(),
+        };
+        let receipt = CaseReceipt::new(&spec, &candidate, &baseline);
+        let report = NegativeCorpusReport {
+            version: "0.10.0".to_string(),
+            status: "fail".to_string(),
+            candidate,
+            baseline_root: "fixture".to_string(),
+            baseline_before_sha: "b".to_string(),
+            baseline_after_sha: "a".to_string(),
+            baseline_artifacts: Vec::new(),
+            baseline_cleanup: "removed".to_string(),
+            cases: vec![receipt],
+            dispositions: deferred_dispositions(),
+        };
+        let markdown = negative_corpus_markdown(&report);
+        for needle in [
+            "Status: fail",
+            "## Case matrix",
+            "| case |",
+            "## Deferred dispositions",
+            "migration-claims-fresh-production",
+        ] {
+            if !markdown.contains(needle) {
+                return Err(format!("markdown is missing {needle:?}"));
+            }
+        }
+        let json = negative_corpus_json(&report)?;
+        let value: Value = serde_json::from_str(&json)
+            .map_err(|err| format!("report JSON is malformed: {err}"))?;
+        if value["summary"]["total_cases"] != json!(1) {
+            return Err("report summary lost the case count".to_string());
+        }
+        if value["summary"]["not_applicable"] != json!(2) {
+            return Err("report summary lost the disposition count".to_string());
         }
         Ok(())
     }
