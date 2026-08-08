@@ -157,7 +157,12 @@ after movement succeeds but discloses `historical_noncurrent`.
   exit status first and the closed reason token second, restores the original
   bytes/state byte-exactly (verified by digest), and reruns the original
   command to a passing control before a per-case failure receipt is retained
-  under `target/ripr/release-negative-corpus/`. Deferred negatives without a
+  under `target/ripr/release-negative-corpus/`. Output-contract breaches
+  (stdout rendered on a rejection, a rejected issuance creating or updating
+  its out file, a stale prior receipt digest drifting, a retained mutation
+  source missing) are recorded as first-class receipt `violations`, and any
+  recorded violation fails the case even when every outcome token matched.
+  Deferred negatives without a
   real producer on main (migration claims of fresh production, binary/artifact
   inventory disagreement) are recorded as explicit `not_applicable`
   dispositions, never fabricated rejections.

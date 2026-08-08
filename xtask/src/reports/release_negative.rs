@@ -492,7 +492,7 @@ fn execute_case(
                 let (outcome, violations) = evaluate_pass(&run_cwd, out_file, pointers, &result);
                 receipt.process_outcome = outcome;
                 receipt.actual_failure_kind = "none".to_string();
-                receipt.details.extend(violations);
+                receipt.violations.extend(violations);
             }
         }
 
@@ -2383,6 +2383,7 @@ mod tests {
             "restoration_outcome",
             "cleanup_outcome",
             "status",
+            "violations",
         ] {
             if value.get(key).is_none() {
                 return Err(format!("case receipt JSON is missing {key}"));
