@@ -220,6 +220,25 @@ pub(crate) fn check_artifact_config_identity_hash(config: &RiprConfig) -> String
     config_fingerprint(&pairs.join("\n"))
 }
 
+/// Canonical config identity for the repo-exposure producer.
+///
+/// Repo exposure currently consumes the Rust oracle policy and generated-file
+/// selection. Adapter-specific producer settings (TypeScript and Perl) are
+/// intentionally excluded until this producer actually consumes them; hashing
+/// them here would make otherwise comparable repo-exposure artifacts diverge.
+pub(crate) fn repo_exposure_config_identity_hash(config: &RiprConfig) -> String {
+    let mut pairs = config
+        .check_artifact_identity_fields()
+        .into_iter()
+        .filter(|field| {
+            field.name.starts_with("oracles.")
+                || field.name == "languages.rust.generated_file_patterns"
+        })
+        .map(|field| format!("{}={}", field.name, field.value.unwrap_or_default()))
+        .collect::<Vec<_>>();
+    pairs.sort();
+    config_fingerprint(&pairs.join("\n"))
+}
 pub(crate) fn apply_to_check_input(
     input: &mut CheckInput,
     config: &RiprConfig,
