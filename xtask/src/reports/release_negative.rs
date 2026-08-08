@@ -217,13 +217,16 @@ impl CaseReceipt {
     }
 
     fn finalize(&mut self) {
-        // Real-producers-only (#2824 review): this slice emits exactly one
-        // passing shape — a Reject-arm case evaluated `rejected_as_expected`
-        // by evaluate_rejection, restored `restored_byte_exact` by
-        // restore_state. The pinned-projection pass token has no producer in
-        // this slice (the Expectation::Pass arm lands with the verify/receipt
-        // families) and must not be accepted before it exists.
-        let passed = self.process_outcome == "rejected_as_expected";
+        // Real-producers-only (#2824 review): every accepted token names the
+        // producer that emits it in this tree —
+        // - `rejected_as_expected`: evaluate_rejection on a Reject-arm case;
+        // - `passed_with_pinned_projection`: evaluate_pass on the Pass-arm
+        //   honesty case (receipt-unmoved-retained-target);
+        // - `restored_byte_exact`: restore_state after every case.
+        // `verified_unchanged` is deliberately not accepted: no producer in
+        // this tree emits it.
+        let passed = self.process_outcome == "rejected_as_expected"
+            || self.process_outcome == "passed_with_pinned_projection";
         let restoration_ok = self.restoration_outcome == "restored_byte_exact";
         // A recorded violation fails the case even when every outcome token
         // matched: a corpus that records violations but ignores them would
@@ -2509,36 +2512,21 @@ mod tests {
     #[test]
     fn family_coverage_discloses_the_deferred_families() -> Result<(), String> {
         let (covered, deferred) = family_coverage();
-        if covered != vec!["artifact".to_string()] {
-            return Err(format!(
-                "this slice covers only the artifact family: {covered:?}"
-            ));
-        }
-        let expected_deferred = vec![
+        let expected_covered = vec![
+            "artifact".to_string(),
             "pair".to_string(),
             "verify".to_string(),
             "receipt".to_string(),
         ];
-        if deferred != expected_deferred {
+        if covered != expected_covered {
             return Err(format!(
-                "deferred families must be derived from the case registry: {deferred:?}"
+                "the full matrix must cover every family: {covered:?}"
             ));
         }
-        Ok(())
-    }
-
-    #[test]
-    fn replace_once_requires_a_unique_anchor() -> Result<(), String> {
-        if replace_once("nothing to find here", "anchor", "x").is_ok() {
-            return Err("replace_once accepted a missing anchor".to_string());
-        }
-        // The whole-string "anchor anchor" contains the anchor twice.
-        if replace_once("anchor anchor", "anchor", "x").is_ok() {
-            return Err("replace_once accepted a repeated anchor".to_string());
-        }
-        let replaced = replace_once("one anchor only", "anchor", "x")?;
-        if replaced != "one x only" {
-            return Err(format!("unexpected replacement: {replaced}"));
+        if !deferred.is_empty() {
+            return Err(format!(
+                "the full matrix must defer no family: {deferred:?}"
+            ));
         }
         Ok(())
     }
@@ -2741,6 +2729,14 @@ mod tests {
         let report = NegativeCorpusReport {
             version: "0.10.0".to_string(),
             status: "fail".to_string(),
+            run_status: "complete".to_string(),
+            covered_families: vec![
+                "artifact".to_string(),
+                "pair".to_string(),
+                "verify".to_string(),
+                "receipt".to_string(),
+            ],
+            deferred_families: Vec::new(),
             candidate,
             baseline_root: "fixture".to_string(),
             baseline_before_sha: "b".to_string(),
@@ -2753,6 +2749,7 @@ mod tests {
         let markdown = negative_corpus_markdown(&report);
         for needle in [
             "Status: fail",
+            "Run status: `complete`",
             "## Case matrix",
             "| case |",
             "## Deferred dispositions",

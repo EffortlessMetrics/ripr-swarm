@@ -6833,7 +6833,6 @@ tests = [
   "xtask/src/reports/release_negative.rs::tests::shift_final_hex_stays_lowercase_hex_and_changes_value",
   "xtask/src/reports/release_negative.rs::tests::rejection_evaluation_checks_exit_status_before_the_token",
   "xtask/src/reports/release_negative.rs::tests::rejection_evaluation_discriminates_repository_root_from_snapshot_mismatch",
-  "xtask/src/reports/release_negative.rs::tests::replace_once_requires_a_unique_anchor",
   "xtask/src/reports/release_negative.rs::tests::restore_state_recovers_bytes_and_head_after_mutation",
   "xtask/src/reports/release_negative.rs::tests::restore_state_rejects_digest_mismatch_and_unreturnable_head",
   "xtask/src/reports/release_negative.rs::tests::family_coverage_discloses_the_deferred_families",

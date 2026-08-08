@@ -162,7 +162,11 @@ after movement succeeds but discloses `historical_noncurrent`.
   its out file, a stale prior receipt digest drifting, a retained mutation
   source missing) are recorded as first-class receipt `violations`, and any
   recorded violation fails the case even when every outcome token matched.
-  Deferred negatives without a
+  The report summary discloses matrix completeness from the case registry:
+  a slice that lands only some case families reports
+  `run_status: "families_deferred"` with explicit `covered_families` /
+  `deferred_families` lists; the full matrix reports `run_status:
+  "complete"`. Deferred negatives without a
   real producer on main (migration claims of fresh production, binary/artifact
   inventory disagreement) are recorded as explicit `not_applicable`
   dispositions, never fabricated rejections.
