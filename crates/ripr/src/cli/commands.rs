@@ -3276,17 +3276,15 @@ fn sanitize_ref_for_path(value: &str) -> String {
     }
 }
 
-/// Whether a positional token is shaped like an `explain` selector rather than
-/// a mistyped flag.
+/// Whether a `-`-prefixed positional token is a `file:line` selector rather
+/// than a mistyped flag.
 ///
-/// The two accepted forms are a finding id (`probe:...`) and a `file:line`
-/// locator. `app/selector.rs::selector_matches_file_line` splits on the last
-/// `:` and imposes no constraint on the path, so the file part may legitimately
-/// begin with `-`; only the line part must be numeric.
-fn is_selector_shaped(value: &str) -> bool {
-    if value.starts_with("probe:") {
-        return true;
-    }
+/// Only consulted for tokens beginning with `-`, so a `probe:...` finding id
+/// cannot reach here and is not checked — the caller's short-circuit already
+/// accepts every non-`-` token. `app/selector.rs::selector_matches_file_line`
+/// splits on the last `:` and imposes no constraint on the path, so the file
+/// part may legitimately begin with `-`; only the line part must be numeric.
+fn is_dash_prefixed_file_line_selector(value: &str) -> bool {
     value.rsplit_once(':').is_some_and(|(file, line)| {
         !file.is_empty() && !line.is_empty() && line.bytes().all(|byte| byte.is_ascii_digit())
     })
@@ -3357,7 +3355,8 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
             // `-generated.rs` gives the valid selector `-generated.rs:42`.
             // Reject a `-`-prefixed token only when it is not selector-shaped.
             value
-                if selector.is_none() && (!value.starts_with('-') || is_selector_shaped(value)) =>
+                if selector.is_none()
+                    && (!value.starts_with('-') || is_dash_prefixed_file_line_selector(value)) =>
             {
                 selector = Some(value.to_string());
             }
