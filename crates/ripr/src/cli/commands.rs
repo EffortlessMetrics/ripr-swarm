@@ -3276,6 +3276,22 @@ fn sanitize_ref_for_path(value: &str) -> String {
     }
 }
 
+/// Whether a positional token is shaped like an `explain` selector rather than
+/// a mistyped flag.
+///
+/// The two accepted forms are a finding id (`probe:...`) and a `file:line`
+/// locator. `app/selector.rs::selector_matches_file_line` splits on the last
+/// `:` and imposes no constraint on the path, so the file part may legitimately
+/// begin with `-`; only the line part must be numeric.
+fn is_selector_shaped(value: &str) -> bool {
+    if value.starts_with("probe:") {
+        return true;
+    }
+    value.rsplit_once(':').is_some_and(|(file, line)| {
+        !file.is_empty() && !line.is_empty() && line.bytes().all(|byte| byte.is_ascii_digit())
+    })
+}
+
 pub(super) fn explain(args: &[String]) -> Result<(), String> {
     let mut input = CheckInput::default();
     let mut explicit = CheckInputExplicit::default();
@@ -3333,12 +3349,16 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
                 help::print_explain_help();
                 return Ok(());
             }
-            // The selector is positional, but only a non-flag token can be one:
-            // finding ids are `probe:...` and locations are `file:line`, never
-            // `-`-prefixed. Without the guard a mistyped flag was accepted as
-            // the selector and analysis ran against `--fromm` as if it were a
-            // finding id, instead of reporting the typo.
-            value if selector.is_none() && !value.starts_with('-') => {
+            // The selector is positional, so a mistyped flag used to be
+            // accepted as one: analysis ran against `--fromm` as if it were a
+            // finding id instead of reporting the typo. A `-` prefix alone
+            // cannot decide that, though — `app/selector.rs` splits `file:line`
+            // on the last `:` and accepts any path, so a file named
+            // `-generated.rs` gives the valid selector `-generated.rs:42`.
+            // Reject a `-`-prefixed token only when it is not selector-shaped.
+            value
+                if selector.is_none() && (!value.starts_with('-') || is_selector_shaped(value)) =>
+            {
                 selector = Some(value.to_string());
             }
             other => return Err(unknown_argument("explain", other)),
@@ -8172,16 +8192,41 @@ language = "rust"
         );
     }
 
-    /// The guard must not cost `explain` its positional selector, which is the
-    /// command's only required argument.
+    /// A `file:line` selector may legitimately begin with `-`, because
+    /// `app/selector.rs` splits on the last `:` and accepts any path. Guarding
+    /// the positional arm on the `-` prefix alone would reject
+    /// `-generated.rs:42`, a previously usable selector, with no `--`
+    /// end-of-options escape to recover it. The token must reach selector
+    /// handling, while a genuine typo still gets the suggestion.
     #[test]
-    fn explain_still_accepts_a_positional_selector() {
+    fn explain_keeps_dash_prefixed_file_line_selectors() {
+        let unknown_argument_error =
+            "unknown explain argument \"-generated.rs:42\". Run `ripr explain --help`.";
+        let result = explain(&args(&["-generated.rs:42"]));
+        assert_ne!(
+            result,
+            Err(unknown_argument_error.to_string()),
+            "a dash-prefixed file:line selector must not be treated as a flag"
+        );
+        assert!(
+            !matches!(&result, Err(message) if message.contains("unknown explain argument")),
+            "unexpected unknown-argument rejection: {result:?}"
+        );
+
         assert_eq!(
-            explain(&args(&["probe:src_lib_rs:10:return_value", "extra"])),
-            Err("unknown explain argument \"extra\". Run `ripr explain --help`.".to_string())
+            explain(&args(&["--fromm", "artifact.json"])),
+            Err(
+                "unknown explain argument \"--fromm\". Did you mean `--from`? \
+                 Run `ripr explain --help`."
+                    .to_string()
+            )
         );
     }
 
+    /// Also pins that the `!value.starts_with('-')` guard on the positional
+    /// arm did not cost `explain` its selector: `probe:...` is still accepted
+    /// there, so the rejected token is the trailing `"extra"`. Were the guard
+    /// wrong, this error would name `probe:...` instead.
     #[test]
     fn explain_rejects_unexpected_argument_after_selector() {
         assert_eq!(
