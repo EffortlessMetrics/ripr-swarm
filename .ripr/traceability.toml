@@ -6835,6 +6835,8 @@ tests = [
   "xtask/src/reports/release_negative.rs::tests::rejection_evaluation_discriminates_repository_root_from_snapshot_mismatch",
   "xtask/src/reports/release_negative.rs::tests::restore_state_recovers_bytes_and_head_after_mutation",
   "xtask/src/reports/release_negative.rs::tests::restore_state_rejects_digest_mismatch_and_unreturnable_head",
+  "xtask/src/reports/release_negative.rs::tests::evaluate_pass_requires_a_pinned_projection",
+  "xtask/src/reports/release_negative.rs::tests::two_seam_honesty_fixture_compiles_and_its_tests_pass",
   "xtask/src/reports/release_negative.rs::tests::family_coverage_discloses_the_deferred_families",
   "xtask/src/reports/release_negative.rs::tests::case_receipt_finalize_requires_the_full_chain",
   "xtask/src/reports/release_negative.rs::tests::case_receipt_json_carries_the_required_receipt_fields",

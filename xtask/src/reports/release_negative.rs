@@ -16,6 +16,8 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[cfg(test)]
+use super::release::release_temp_root;
 use super::release::{
     BOUNDARY_GAP_SEAM_ID, CommandResult, absolute_installed_binary, artifact_string,
     checkout_fixture_commit, command_details, create_authentic_repo_exposure_fixture, fixture_head,
@@ -141,6 +143,11 @@ struct CaseExecution {
     snapshot: StateSnapshot,
     run_cwd: Option<PathBuf>,
     extra_cleanup: Vec<PathBuf>,
+    /// Case-specific before/after revisions when the case builds its own
+    /// chain (the two-seam honesty case); `None` means the baseline pair.
+    /// Retained receipts must name the revisions the case actually produced
+    /// — never the baseline's (#2824 review).
+    fixture_shas: Option<(String, String)>,
 }
 
 struct CaseEnv<'a> {
@@ -501,12 +508,28 @@ fn execute_case(
                 spec.id
             ));
         }
+        // Symmetric fail-closed guard (#2824 review): a pass expectation
+        // without pinned projection pointers would credit any successful
+        // command — a vacuous pass.
+        if matches!(&execution.expected, Expectation::Pass { pointers, .. } if pointers.is_empty())
+        {
+            return Err(format!(
+                "case {} declared a pass expectation without a pinned projection",
+                spec.id
+            ));
+        }
         receipt.mutation = execution.mutation.clone();
         receipt.argv = execution.argv.clone();
         receipt.control_argv = execution.control_argv.clone();
         receipt.original_artifacts = execution.original.clone();
         receipt.mutated_artifacts = execution.mutated.clone();
         receipt.expected_failure_kind = execution.expected.expected_kind();
+        // Provenance (#2824 review): a case that builds its own chain must
+        // name the revisions it actually produced, not the baseline pair.
+        if let Some((before_sha, after_sha)) = &execution.fixture_shas {
+            receipt.before_sha = before_sha.clone();
+            receipt.after_sha = after_sha.clone();
+        }
 
         let run_cwd = execution
             .run_cwd
@@ -546,8 +569,14 @@ fn execute_case(
             }
             Expectation::Pass { out_file, pointers } => {
                 let (outcome, violations) = evaluate_pass(&run_cwd, out_file, pointers, &result);
+                // "none" only on a real pass; a failed honesty pin records
+                // the actual outcome as the failure kind (#2824 review).
+                receipt.actual_failure_kind = if outcome == "passed_with_pinned_projection" {
+                    "none".to_string()
+                } else {
+                    outcome.clone()
+                };
                 receipt.process_outcome = outcome;
-                receipt.actual_failure_kind = "none".to_string();
                 receipt.violations.extend(violations);
             }
         }
@@ -653,6 +682,14 @@ fn evaluate_pass(
     pointers: &[(&str, &str)],
     result: &CommandResult,
 ) -> (String, Vec<String>) {
+    // Fail closed on a vacuous expectation (#2824 review): no pinned
+    // projection pointer means any successful command would pass.
+    if pointers.is_empty() {
+        return (
+            "output_contract_violation".to_string(),
+            vec!["a pass expectation must pin at least one projection pointer".to_string()],
+        );
+    }
     if !result.success {
         return (
             "unexpected_failure".to_string(),
@@ -720,6 +757,7 @@ fn verify_case_execution(env: &CaseEnv, mutation: &str) -> Result<CaseExecution,
         snapshot,
         run_cwd: None,
         extra_cleanup: Vec::new(),
+        fixture_shas: None,
     })
 }
 
@@ -737,6 +775,7 @@ fn receipt_case_execution(env: &CaseEnv, mutation: &str) -> Result<CaseExecution
         snapshot,
         run_cwd: None,
         extra_cleanup: Vec::new(),
+        fixture_shas: None,
     })
 }
 
@@ -1623,33 +1662,37 @@ fn case_receipt_target_absent_from_both_states(env: &CaseEnv) -> Result<CaseExec
     Ok(execution)
 }
 
-fn case_receipt_unmoved_retained_target(env: &CaseEnv) -> Result<CaseExecution, String> {
-    // Build a linear two-seam chain on top of the before revision: seam X
-    // (loyalty_points) keeps one weak discriminator in both states while
-    // seam Y (discounted_total) gains the boundary test in the second
-    // commit. The chain must be linear — commits on divergent branches share
-    // no ancestry and fail the lineage gate instead. The receipt for the
-    // retained target must issue but stay `unchanged` — movement on seam Y
-    // can never strengthen seam X.
-    let loyalty_fn = "\npub fn loyalty_points(total: i32, threshold: i32) -> i32 {\n    if total >= threshold {\n        total / 10\n    } else {\n        0\n    }\n}\n";
-    let loyalty_test = "\n#[test]\nfn loyalty_below_threshold_has_no_points() {\n    assert_eq!(loyalty_points(50, 100), 0);\n}\n";
-    let equality_test = "\n#[test]\nfn equality_boundary_discounts() {\n    assert_eq!(discounted_total(100, 100), 90);\n}\n";
-    checkout_fixture_commit(env.root, env.before_sha)?;
-    let lib_path = env.root.join("src/lib.rs");
+/// The two-seam honesty fixture texts. The loyalty call is fully qualified:
+/// `tests/pricing.rs` imports only `discounted_total`, so an unqualified
+/// `loyalty_points(...)` would not compile (E0425) and the fixture would
+/// credit a discriminator that cannot execute (#2824 review). Shared by the
+/// case and the PR-time compilability test — one code path, one oracle.
+const LOYALTY_FN: &str = "\npub fn loyalty_points(total: i32, threshold: i32) -> i32 {\n    if total >= threshold {\n        total / 10\n    } else {\n        0\n    }\n}\n";
+const LOYALTY_TEST: &str = "\n#[test]\nfn loyalty_below_threshold_has_no_points() {\n    assert_eq!(boundary_gap_fixture::loyalty_points(50, 100), 0);\n}\n";
+const EQUALITY_TEST: &str = "\n#[test]\nfn equality_boundary_discounts() {\n    assert_eq!(discounted_total(100, 100), 90);\n}\n";
+
+/// Build the linear two-seam chain on top of the fixture's before revision:
+/// seam X (loyalty_points) keeps one weak discriminator in both states while
+/// seam Y (discounted_total) gains the boundary test in the second commit.
+/// The chain must be linear — commits on divergent branches share no
+/// ancestry and fail the lineage gate instead. Returns (before, after) SHAs.
+fn build_two_seam_commits(root: &Path, before_sha: &str) -> Result<(String, String), String> {
+    checkout_fixture_commit(root, before_sha)?;
+    let lib_path = root.join("src/lib.rs");
     let mut lib = crate::read_text_lossy(&lib_path)?;
-    lib.push_str(loyalty_fn);
+    lib.push_str(LOYALTY_FN);
     fs::write(&lib_path, lib).map_err(|err| format!("add loyalty seam failed: {err}"))?;
-    let tests_path = env.root.join("tests/pricing.rs");
+    let tests_path = root.join("tests/pricing.rs");
     let mut tests = crate::read_text_lossy(&tests_path)?;
-    tests.push_str(loyalty_test);
+    tests.push_str(LOYALTY_TEST);
     fs::write(&tests_path, tests).map_err(|err| format!("add loyalty weak test failed: {err}"))?;
     run_fixture_git_command(
-        env.root,
+        root,
         &["-c", "core.hooksPath=", "add", "."],
         "stage two-seam before state",
     )?;
     run_fixture_git_command(
-        env.root,
+        root,
         &[
             "-c",
             "core.hooksPath=",
@@ -1660,18 +1703,18 @@ fn case_receipt_unmoved_retained_target(env: &CaseEnv) -> Result<CaseExecution, 
         ],
         "commit two-seam before state",
     )?;
-    let before_two_seam = fixture_head(env.root)?;
+    let before_two_seam = fixture_head(root)?;
     let mut tests = crate::read_text_lossy(&tests_path)?;
-    tests.push_str(equality_test);
+    tests.push_str(EQUALITY_TEST);
     fs::write(&tests_path, tests)
         .map_err(|err| format!("add equality boundary test failed: {err}"))?;
     run_fixture_git_command(
-        env.root,
+        root,
         &["-c", "core.hooksPath=", "add", "."],
         "stage two-seam after state",
     )?;
     run_fixture_git_command(
-        env.root,
+        root,
         &[
             "-c",
             "core.hooksPath=",
@@ -1682,9 +1725,22 @@ fn case_receipt_unmoved_retained_target(env: &CaseEnv) -> Result<CaseExecution, 
         ],
         "commit two-seam after state",
     )?;
-    let after_two_seam = fixture_head(env.root)?;
+    let after_two_seam = fixture_head(root)?;
+    if before_two_seam == after_two_seam {
+        return Err("two-seam before and after commits are identical".to_string());
+    }
+    Ok((before_two_seam, after_two_seam))
+}
+
+fn case_receipt_unmoved_retained_target(env: &CaseEnv) -> Result<CaseExecution, String> {
+    // The receipt for the retained target must issue but stay `unchanged` —
+    // movement on seam Y can never strengthen seam X.
+    let (before_two_seam, after_two_seam) = build_two_seam_commits(env.root, env.before_sha)?;
     produce_authentic_chain_in_fixture(env.binary, env.root, &before_two_seam, &after_two_seam)?;
-    // Control on the producer output itself: exactly one seam may move.
+    // Grip the producer output itself (#2824 review): the moved seam must be
+    // the discounted_total boundary seam this fixture family pins, and the
+    // retained target must be the loyalty seam this case constructed — never
+    // `unchanged_seams.first()` on faith.
     let verify_value = read_json_value(&env.root.join(VERIFY_JSON))?;
     let changed = verify_value
         .get("changed_seams")
@@ -1696,13 +1752,35 @@ fn case_receipt_unmoved_retained_target(env: &CaseEnv) -> Result<CaseExecution, 
             changed.len()
         ));
     }
+    let moved = &changed[0];
+    if moved.get("seam_id").and_then(Value::as_str) != Some(BOUNDARY_GAP_SEAM_ID)
+        || moved.get("before").and_then(Value::as_str) != Some("weakly_gripped")
+        || moved.get("after").and_then(Value::as_str) != Some("strongly_gripped")
+    {
+        return Err(format!(
+            "two-seam control failed: the moved seam is not the discounted_total boundary seam: {moved}"
+        ));
+    }
     let unchanged = verify_value
         .get("unchanged_seams")
         .and_then(Value::as_array)
         .ok_or_else(|| "verify document unchanged_seams is missing".to_string())?;
-    let Some(retained) = unchanged.first() else {
-        return Err("two-seam control failed: the retained target seam is missing".to_string());
-    };
+    if unchanged.len() != 1 {
+        return Err(format!(
+            "two-seam control failed: expected exactly one retained seam, got {}",
+            unchanged.len()
+        ));
+    }
+    let retained = &unchanged[0];
+    if retained.get("seam_id").and_then(Value::as_str) == Some(BOUNDARY_GAP_SEAM_ID)
+        || retained.get("file").and_then(Value::as_str) != Some("src/lib.rs")
+        || retained.get("before").and_then(Value::as_str) != Some("weakly_gripped")
+        || retained.get("after").and_then(Value::as_str) != Some("weakly_gripped")
+    {
+        return Err(format!(
+            "two-seam control failed: the retained seam is not the unchanged loyalty seam: {retained}"
+        ));
+    }
     let retained_id = retained
         .get("seam_id")
         .and_then(Value::as_str)
@@ -1721,12 +1799,17 @@ fn case_receipt_unmoved_retained_target(env: &CaseEnv) -> Result<CaseExecution, 
                 ("/provenance/movement", "unchanged"),
             ],
         },
-        original: artifact_digests(env.root, &[VERIFY_JSON])?,
-        mutated: artifact_digests(env.root, &[VERIFY_JSON])?,
-        retain: vec![(VERIFY_JSON.to_string(), VERIFY_JSON.to_string())],
+        original: artifact_digests(env.root, &[BEFORE_ARTIFACT, AFTER_ARTIFACT, VERIFY_JSON])?,
+        mutated: artifact_digests(env.root, &[BEFORE_ARTIFACT, AFTER_ARTIFACT, VERIFY_JSON])?,
+        retain: vec![
+            (BEFORE_ARTIFACT.to_string(), BEFORE_ARTIFACT.to_string()),
+            (AFTER_ARTIFACT.to_string(), AFTER_ARTIFACT.to_string()),
+            (VERIFY_JSON.to_string(), VERIFY_JSON.to_string()),
+        ],
         snapshot,
         run_cwd: None,
         extra_cleanup: Vec::new(),
+        fixture_shas: Some((before_two_seam, after_two_seam)),
     })
 }
 
@@ -2423,6 +2506,8 @@ mod tests {
         let value = case_receipt_json(&receipt);
         for key in [
             "case_id",
+            "group",
+            "description",
             "mutation",
             "candidate",
             "fixture",
@@ -2432,8 +2517,10 @@ mod tests {
             "mutated_artifacts",
             "expected_failure_kind",
             "actual_failure_kind",
+            "exit_status",
             "process_outcome",
             "restoration_outcome",
+            "control_outcome",
             "cleanup_outcome",
             "status",
             "violations",
@@ -2671,6 +2758,11 @@ mod tests {
 
     #[test]
     fn copy_dir_recursive_rejects_symlink_entries() -> Result<(), String> {
+        // Platform disclosure (#2824 review): the symlink-rejection proof is
+        // `#[cfg(unix)]` — on Windows this test proves regular-file copying
+        // only, and the fail-closed symlink rejection carries no
+        // cross-platform evidence. Do not read a green Windows run as
+        // covering the symlink path.
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|err| format!("read clock failed: {err}"))?
@@ -2692,6 +2784,9 @@ mod tests {
             }
             #[cfg(unix)]
             {
+                // Unix-only evidence: the fail-closed symlink rejection is
+                // exercised here; other platforms exercise only the
+                // regular-file copy above.
                 std::os::unix::fs::symlink(source.join("file.txt"), source.join("link.txt"))
                     .map_err(|err| format!("create symlink failed: {err}"))?;
                 if copy_dir_recursive(&source, &base.join("destination-b")).is_ok() {
@@ -2703,6 +2798,122 @@ mod tests {
         let cleanup = fs::remove_dir_all(&base);
         result?;
         cleanup.map_err(|err| format!("remove copy test dir failed: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_pass_requires_a_pinned_projection() -> Result<(), String> {
+        // A pass expectation with no pinned projection pointers must never
+        // evaluate to a vacuous pass (#2824 review): empty pointers plus a
+        // successful command is an output-contract violation, not a pass.
+        let (outcome, violations) = evaluate_pass(
+            Path::new("."),
+            "unused.json",
+            &[],
+            &command_result(true, "", ""),
+        );
+        if outcome == "passed_with_pinned_projection" {
+            return Err("an empty pass expectation must not produce a vacuous pass".to_string());
+        }
+        if outcome != "output_contract_violation" || violations.is_empty() {
+            return Err(format!(
+                "empty pointers must be an output_contract_violation with a recorded violation: {outcome}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn two_seam_honesty_fixture_compiles_and_its_tests_pass() -> Result<(), String> {
+        // PR-time proof for the honesty-case fixture (#2824 review): build
+        // the two-seam before/after states through the same code path the
+        // case uses (build_two_seam_commits, on a copy of the real
+        // boundary_gap fixture input), then run the fixture's own test
+        // suite. Cargo is available in this environment — the xtask suite
+        // itself builds with it — so no skip path is documented or taken.
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|err| format!("read clock failed: {err}"))?
+            .as_nanos();
+        // The fixture must be isolated from the repository workspace: under
+        // `cargo test` the temporary directory can resolve inside the
+        // workspace tree, and a nested package manifest then collides with
+        // the repo workspace. An empty `[workspace]` table is cargo's own
+        // isolation mechanism; the seam construction below stays the exact
+        // code path the case uses.
+        let root = release_temp_root()?.join(format!(
+            "ripr-negative-corpus-two-seam-{}-{stamp}",
+            std::process::id()
+        ));
+        let result = (|| -> Result<(), String> {
+            let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .ok_or_else(|| "xtask manifest dir has no parent".to_string())?;
+            copy_dir_recursive(&workspace_root.join("fixtures/boundary_gap/input"), &root)?;
+            let mut manifest = crate::read_text_lossy(&root.join("Cargo.toml"))?;
+            manifest.push_str("\n[workspace]\n");
+            fs::write(root.join("Cargo.toml"), manifest)
+                .map_err(|err| format!("isolate two-seam fixture workspace failed: {err}"))?;
+            run_fixture_git_command(&root, &["init", "--quiet", "--template="], "initialize")?;
+            run_fixture_git_command(
+                &root,
+                &["config", "user.name", "RIPR Corpus Test"],
+                "user name",
+            )?;
+            run_fixture_git_command(
+                &root,
+                &["config", "user.email", "corpus-test@example.invalid"],
+                "user email",
+            )?;
+            run_fixture_git_command(&root, &["config", "commit.gpgSign", "false"], "signing")?;
+            run_fixture_git_command(&root, &["-c", "core.hooksPath=", "add", "."], "stage")?;
+            run_fixture_git_command(
+                &root,
+                &[
+                    "-c",
+                    "core.hooksPath=",
+                    "commit",
+                    "--quiet",
+                    "-m",
+                    "boundary_gap input",
+                ],
+                "commit",
+            )?;
+            let before_sha = fixture_head(&root)?;
+            let (_before_two_seam, after_two_seam) = build_two_seam_commits(&root, &before_sha)?;
+            checkout_fixture_commit(&root, &after_two_seam)?;
+            let cargo = run_command_in_dir(
+                "cargo",
+                &["test".to_string()],
+                &root,
+                "two-seam fixture cargo test",
+            )?;
+            if !cargo.success {
+                return Err(format!(
+                    "the two-seam honesty fixture must compile and pass its tests: {}",
+                    command_details(&cargo).join("; ")
+                ));
+            }
+            if !cargo
+                .stdout
+                .contains("loyalty_below_threshold_has_no_points")
+            {
+                return Err(
+                    "the loyalty discriminator test did not run in the two-seam fixture"
+                        .to_string(),
+                );
+            }
+            if !cargo.stdout.contains("equality_boundary_discounts") {
+                return Err(
+                    "the boundary discriminator test did not run in the two-seam fixture"
+                        .to_string(),
+                );
+            }
+            Ok(())
+        })();
+        let cleanup = fs::remove_dir_all(&root);
+        result?;
+        cleanup.map_err(|err| format!("remove two-seam compile fixture failed: {err}"))?;
         Ok(())
     }
 
