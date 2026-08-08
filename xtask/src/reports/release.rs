@@ -3178,12 +3178,24 @@ mod tests {
             }
             let args = vec!["--list".to_string()];
             // Pre-fix mechanism: the relative path cannot resolve from the
-            // unrelated external cwd, so the spawn itself fails.
-            if let Ok(outcome) = super::run_command_in_dir(&relative, &args, &external_dir, "stub")
-            {
-                return Err(format!(
-                    "checkout-relative stub unexpectedly spawned from an external cwd: {outcome:?}"
-                ));
+            // unrelated external cwd, so the spawn itself fails. Pin the
+            // not-found error class specifically: a spawn that fails for any
+            // other reason (permissions, sandbox policy) is a different
+            // defect, and an unexpected success means the platform's
+            // relative-path semantics changed and this test must be
+            // revisited rather than silently passing.
+            match super::run_command_in_dir(&relative, &args, &external_dir, "stub") {
+                Ok(outcome) => {
+                    return Err(format!(
+                        "checkout-relative stub unexpectedly spawned from an external cwd: {outcome:?}"
+                    ));
+                }
+                Err(error) if error.contains("os error 2") || error.contains("No such file") => {}
+                Err(error) => {
+                    return Err(format!(
+                        "relative stub spawn failed for an unexpected reason: {error}"
+                    ));
+                }
             }
             // Post-fix: the resolved absolute path spawns from the same cwd.
             let resolved = super::absolute_installed_binary(&relative)?;
