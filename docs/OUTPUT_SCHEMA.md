@@ -2123,12 +2123,12 @@ additive top-level `artifact` envelope before it is suitable for
     "format": "repo-exposure-json",
     "mode": "draft",
     "base_revision": null,
-    "input_identity": "input:<bounded-fingerprint>",
+    "input_identity": "input:v2:<bounded-fingerprint>",
     "command": "ripr check --format repo-exposure-json",
     "profile": "draft",
     "worktree": "clean"
   },
-  "snapshot_identity": "snapshot:input:<bounded-fingerprint>;revision:<full-head-sha>",
+  "snapshot_identity": "snapshot:input:v2:<bounded-fingerprint>;revision:<full-head-sha>",
   "content_sha256": "sha256:<64-hex-digest>"
 }
 ```
@@ -2138,11 +2138,23 @@ with the fixed zero-digest placeholder. This is an integrity/currentness
 commitment, not a signature or runtime proof. `repository.head` and
 `analysis.worktree` are `unavailable` when the producer cannot resolve Git;
 such an artifact is disclosed but is not accepted by `agent verify`.
-`analysis.input_identity` binds the selected repository snapshot (including
-the concrete repository head), base, mode, named workspace inputs, and
-analyzer version without exposing configuration bytes. Consequently, two
-clean artifacts from different commits have distinct input and snapshot
-identities even when their analysis configuration is unchanged. `agent verify`
+`analysis.input_identity` is the portable semantic/configuration identity of
+the analysis input. It carries an explicit algorithm version
+(`input:v2:<fingerprint>`) and covers the identity version, mode, profile
+(this producer binds profile to mode and states both), base semantics,
+analysis format, manifest and lockfile content identities, the
+finding-affecting configuration fingerprint, and the analyzer version — never
+the concrete checkout root or any host-specific path spelling. Two equivalent
+checkouts of the same commit under different temporary roots therefore share
+one input identity, while `repository.root` stays the concrete
+checkout-instance evidence: `agent verify` validates the declared root with
+exact canonical-path equality, so an artifact produced in one root is still
+rejected at another. The snapshot identity
+(`snapshot:<input_identity>;revision:<head>`) binds that portable input
+identity to the concrete repository head, so two clean artifacts from
+different commits have distinct snapshot identities even when their input
+identity is unchanged, and only the current `input:v2:` identity version
+validates as current evidence. `agent verify`
 and `agent receipt` compare the stable producer/version, base, mode, and
 profile fields separately, and reject unchanged identities when the declared
 repository commits differ. `analysis.command` and `analysis.profile` state the

@@ -1725,7 +1725,7 @@ fn hash_named_workspace_files(root: &Path, file_name: &str) -> String {
 pub(crate) fn workspace_named_file_identity(root: &Path, file_name: &str) -> Option<String> {
     let mut files = Vec::new();
     collect_named_workspace_files(root, root, file_name, &mut files);
-    workspace_file_identity(files)
+    workspace_file_identity(files, None)
 }
 
 /// Return the Cargo manifest and lockfile identities with one workspace walk.
@@ -1738,16 +1738,41 @@ pub(crate) fn workspace_named_file_identities(root: &Path) -> (Option<String>, O
     collect_named_workspace_files_by_name(root, root, &mut files);
     let [manifest_files, lockfile_files] = files;
     (
-        workspace_file_identity(manifest_files),
-        workspace_file_identity(lockfile_files),
+        workspace_file_identity(manifest_files, None),
+        workspace_file_identity(lockfile_files, None),
     )
 }
 
-fn workspace_file_identity(mut files: Vec<(PathBuf, Vec<u8>)>) -> Option<String> {
+/// Root-relative variant for the portable repo-exposure artifact input
+/// identity (#2823): the same path-and-content boundary with the checkout
+/// root stripped from each path, so two equivalent checkouts of the same
+/// commit under different temporary roots produce the same manifest and
+/// lockfile identities. The LSP and seam-cache callers above keep the
+/// absolute-path identity, which is correct for a single live checkout.
+pub(crate) fn workspace_named_file_identities_relative(
+    root: &Path,
+) -> (Option<String>, Option<String>) {
+    let mut files = [Vec::new(), Vec::new()];
+    collect_named_workspace_files_by_name(root, root, &mut files);
+    let [manifest_files, lockfile_files] = files;
+    (
+        workspace_file_identity(manifest_files, Some(root)),
+        workspace_file_identity(lockfile_files, Some(root)),
+    )
+}
+
+fn workspace_file_identity(
+    mut files: Vec<(PathBuf, Vec<u8>)>,
+    strip_root: Option<&Path>,
+) -> Option<String> {
     files.sort_by(|left, right| left.0.cmp(&right.0));
     let mut input = String::new();
     for (path, bytes) in files {
-        input.push_str(&path.to_string_lossy().replace('\\', "/"));
+        let rendered = match strip_root.and_then(|root| path.strip_prefix(root).ok()) {
+            Some(relative) => relative.to_string_lossy().replace('\\', "/"),
+            None => path.to_string_lossy().replace('\\', "/"),
+        };
+        input.push_str(&rendered);
         input.push('\0');
         input.push_str(&hash_bytes(&bytes));
         input.push('\n');
