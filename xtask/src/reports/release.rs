@@ -1871,6 +1871,9 @@ fn run_authentic_repo_exposure_journey_in_fixture(
         &fixture.before_commit,
         &fixture.after_commit,
     )?;
+    // Retention is the caller's contract (see the chain's doc comment): the
+    // positive journey copies the five canonical artifacts into the
+    // release-readiness evidence directory.
     for (source, destination) in [
         ("before.repo-exposure.json", BOUNDARY_BEFORE_OUT),
         ("after.repo-exposure.json", BOUNDARY_AFTER_OUT),
@@ -1895,6 +1898,18 @@ fn run_authentic_repo_exposure_journey_in_fixture(
 /// (retention above) and the #2824 negative corpus, which re-produces the
 /// chain inside each cloned case workspace so artifact root binding stays
 /// honest. The installed binary remains the only artifact validator here.
+///
+/// Contract boundary: this function PRODUCES the chain artifacts inside
+/// `root` and never copies them out — retention is deliberately the caller's
+/// decision because the two callers retain differently (the positive journey
+/// copies the five canonical artifacts to `target/ripr/release-readiness/`;
+/// the negative corpus retains per-case receipts under its own case
+/// directories). The returned vector is human-readable report detail for the
+/// readiness markdown, not a machine-checked contract; the machine-checkable
+/// behavior is the produced artifact set plus the passing verify/receipt
+/// chain, exercised end-to-end by `cargo xtask release-readiness` and the
+/// negative-corpus acceptance run (a direct unit test would need a real
+/// installed producer binary, so no lighter honest pin exists in-process).
 pub(crate) fn produce_authentic_chain_in_fixture(
     binary: &Path,
     root: &Path,
