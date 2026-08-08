@@ -71,11 +71,8 @@ pub(in crate::analysis) fn find_related_tests<'a>(
         // test that genuinely calls a uniquely-named owner is not filtered out
         // before the strong signal can save it.
         let calls_owner = !owner_name.is_empty()
-            && (test
-                .calls
-                .iter()
-                .any(|call| contains_owner_call(&call.text, owner_name))
-                || contains_owner_call(&test.body, owner_name));
+            && (test.calls.iter().any(|call| call.name == owner_name)
+                || body_contains_owner_call(&test.body, owner_name));
 
         // #2971: Only apply the package-prefix guard to weak signals — tests
         // that do not directly call the owner, OR tests that call a bare name
@@ -184,36 +181,39 @@ fn package_prefix(path: &Path) -> Option<String> {
     None
 }
 
-/// True when `text` contains a call to `owner_name` that is not a method call
-/// on some other receiver.
+/// True when `body` mentions `owner_name` immediately followed by `(`.
 ///
-/// Matching is lexical because neither fact carries receiver or path
-/// information: `analysis/extract/calls.rs` records `CallFact.name` as the bare
-/// trailing identifier (`crate_a::score(1)` and `other.score(1)` both yield
-/// `score`) and `CallFact.text` as the whole trimmed source line. So the
-/// discrimination has to come from the character immediately before the name:
+/// A fallback for tests whose `calls` facts did not capture the call, e.g. a
+/// path-qualified `crate_under_test::internal::inner(10, 3)`.
 ///
-/// - `::` still names the owner — `crate_under_test::internal::inner(10, 3)` is
-///   a direct call to `inner`, so `:` must not block the match.
-/// - `.` is a method on another value — `other.score(1)` is not a call to the
-///   free function `score`, and crediting it is the token-coincidence
-///   false-`exposed` family.
-/// - an identifier byte means this is a longer name that merely ends in
-///   `owner_name`, such as `compute_score(1)`.
+/// The boundary check rejects a longer identifier that merely ends in
+/// `owner_name` (`compute_score(`), but deliberately does **not** reject a
+/// preceding `.`. A receiver is not evidence of a different function: the
+/// owner is frequently an impl method, and `ledger.apply(5)` is the only way a
+/// test can call `Ledger::apply` at all. #3047 tried rejecting `.` to suppress
+/// cross-crate `other.compute_hash(...)` matches and downgraded every
+/// method-owner fixture from `direct_owner_call` to `owner_named_test`.
 ///
-/// The name must also be followed by `(`, so a bare mention is not a call.
-fn contains_owner_call(text: &str, owner_name: &str) -> bool {
+/// That suppression is also unnecessary. `CallFact` carries no receiver or
+/// path information (`analysis/extract/calls.rs` keeps only the bare trailing
+/// identifier), so receiver identity cannot be recovered here — but the
+/// cross-crate bypass is already gated on the owner name being unique across
+/// `index.functions`, and `syntax/ra.rs` indexes impl methods alongside free
+/// functions. A same-named method on another type is therefore itself in the
+/// index, the name is not unique, and the bypass never fires. The uniqueness
+/// gate subsumes the receiver concern.
+fn body_contains_owner_call(body: &str, owner_name: &str) -> bool {
     if owner_name.is_empty() {
         return false;
     }
-    text.match_indices(owner_name).any(|(start, _)| {
+    body.match_indices(owner_name).any(|(start, _)| {
         let end = start.saturating_add(owner_name.len());
         let before_ok = start == 0
-            || !text
+            || !body
                 .as_bytes()
                 .get(start - 1)
-                .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_' || *byte == b'.');
-        let after_call = text
+                .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_');
+        let after_call = body
             .get(end..)
             .map(|tail| tail.trim_start().starts_with('('))
             .unwrap_or(false);
@@ -290,6 +290,39 @@ mod tests {
         assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
     }
 
+    /// An impl-method owner is reachable only through a receiver, so a `.`
+    /// before the name must not disqualify the call. The `propagate_*` goldens
+    /// are exactly this shape — owner `Ledger::apply`, test body
+    /// `ledger.apply(5);` — and a `.`-rejecting matcher silently downgraded
+    /// them from `direct_owner_call` to `owner_named_test`, weakening the
+    /// relation on every method owner in the corpus.
+    #[test]
+    fn given_method_owner_when_test_calls_through_receiver_then_direct_owner_call() {
+        let owner = function("src/lib.rs", "apply");
+        let index = RustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![TestSummary {
+                name: "changes_balance".to_string(),
+                file: PathBuf::from("tests/ledger_tests.rs"),
+                start_line: 1,
+                end_line: 4,
+                body: "let mut ledger = Ledger::new(100);\nledger.apply(5);".to_string(),
+                // Body-only: the receiver form is what must be credited.
+                calls: Vec::new(),
+                assertions: Vec::new(),
+                literals: Vec::new(),
+                attrs: Vec::new(),
+            }],
+            ..RustIndex::default()
+        };
+        let probe = probe("src/lib.rs", "self.persist(amount * 9)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true);
+
+        assert_eq!(related.len(), 1, "method owner must keep its calling test");
+        assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
     /// #2971 scope control: the same workspace as the positive control above,
     /// reached through a partial index. The diff path indexes only the changed
     /// files whenever `include_unchanged_tests` is false, and only the changed
@@ -297,89 +330,6 @@ mod tests {
     /// evidence that it is unique in the workspace. The bypass must not fire:
     /// a sibling crate's unindexed same-named function would otherwise be
     /// credited as the owner — the token-coincidence false-`exposed` family.
-    #[test]
-    fn given_wrong_receiver_when_cross_crate_test_calls_same_named_method_then_filtered() {
-        let owner = function("crates/digest/src/lib.rs", "compute_hash");
-        let index = RustIndex {
-            functions: vec![owner.clone()],
-            tests: vec![TestSummary {
-                name: "wrong_receiver_test".to_string(),
-                file: PathBuf::from("crates/digest-tests/tests/integration.rs"),
-                start_line: 1,
-                end_line: 2,
-                body: "let result = other.compute_hash(b\"input\");".to_string(),
-                calls: vec![CallFact {
-                    line: 1,
-                    name: "compute_hash".to_string(),
-                    text: "other.compute_hash(b\"input\")".to_string(),
-                }],
-                assertions: Vec::new(),
-                literals: Vec::new(),
-                attrs: Vec::new(),
-            }],
-            ..RustIndex::default()
-        };
-        let probe = probe("crates/digest/src/lib.rs", "compute_hash(input)");
-
-        let related = find_related_tests(&probe, Some(&owner), &index, true);
-
-        assert!(
-            related.is_empty(),
-            "a same-named method on another receiver must not bypass the package guard"
-        );
-    }
-
-    /// `CallFact.text` is the whole trimmed source line, not the call
-    /// expression (`analysis/extract/calls.rs`), so the owner name is normally
-    /// *not* at the start of it — it sits behind a `let` binding, an assertion
-    /// macro, or a path qualifier. A predicate anchored to the start of the
-    /// text rejects every one of those real shapes.
-    #[test]
-    fn given_qualified_or_bound_call_text_when_matching_owner_then_still_direct_call() {
-        let owner = function("crates/digest/src/lib.rs", "compute_hash");
-        for text in [
-            "let result = compute_hash(b\"input\");",
-            "let result = crate_digest::compute_hash(b\"input\");",
-            "assert_eq!(compute_hash(b\"input\"), expected);",
-            "compute_hash(b\"input\");",
-        ] {
-            let index = RustIndex {
-                functions: vec![owner.clone()],
-                tests: vec![TestSummary {
-                    name: "hash_integration_test".to_string(),
-                    file: PathBuf::from("crates/digest-tests/tests/integration.rs"),
-                    start_line: 1,
-                    end_line: 2,
-                    // Body deliberately empty so only `call.text` can match.
-                    body: String::new(),
-                    calls: vec![CallFact {
-                        line: 1,
-                        name: "compute_hash".to_string(),
-                        text: text.to_string(),
-                    }],
-                    assertions: Vec::new(),
-                    literals: Vec::new(),
-                    attrs: Vec::new(),
-                }],
-                ..RustIndex::default()
-            };
-            let probe = probe("crates/digest/src/lib.rs", "compute_hash(input)");
-
-            let related = find_related_tests(&probe, Some(&owner), &index, true);
-
-            assert_eq!(
-                related.len(),
-                1,
-                "call text {text:?} must count as a direct owner call"
-            );
-            assert_eq!(
-                related[0].1,
-                RelationReason::DirectOwnerCall,
-                "text {text:?}"
-            );
-        }
-    }
-
     #[test]
     fn given_incomplete_index_when_cross_crate_test_calls_owner_then_filtered() {
         let owner = function("crates/digest/src/lib.rs", "compute_hash");
