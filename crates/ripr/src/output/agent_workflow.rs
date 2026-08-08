@@ -290,8 +290,8 @@ mod tests {
     /// where the copied command still breaks, so the caveat is load-bearing and
     /// is pinned here rather than left to review.
     #[test]
-    fn workflow_markdown_does_not_offer_wsl_as_an_unqualified_windows_shell()
-    -> Result<(), String> {
+    fn workflow_markdown_does_not_offer_wsl_as_an_unqualified_windows_shell() -> Result<(), String>
+    {
         let rendered = render_agent_workflow_commands_md(&manifest());
 
         let wsl = rendered
