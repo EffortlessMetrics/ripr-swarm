@@ -344,10 +344,12 @@ mod tests {
             ("context", "--fromm", "--from"),
             ("context", "--perl-fact", "--perl-facts"),
         ] {
-            let message = unknown_argument(command, typo);
-            assert!(
-                message.contains(&format!("Did you mean `{expected}`?")),
-                "{command} {typo} should suggest {expected}; got: {message}"
+            assert_eq!(
+                unknown_argument(command, typo),
+                format!(
+                    "unknown {command} argument {typo:?}. \
+                     Did you mean `{expected}`? Run `ripr {command} --help`."
+                ),
             );
         }
     }
