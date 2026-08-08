@@ -44,9 +44,12 @@ pub use fix_instruction::{FixInstructionState, FixInstructionSummary};
 pub use language::{LanguageId, LanguageStatus, OwnerKind, StaticLimitKind};
 pub use probe::{
     ActivationEvidence, DeltaKind, Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind,
-    MISSING_DISCRIMINATOR_VALUE_PREFIX, MissingDiscriminatorFact, ORACLE_ALIGNMENT_VALUES, Probe,
-    ProbeFamily, RelatedTest, StopReason, ValueContext, ValueFact,
+    MissingDiscriminatorFact, ORACLE_ALIGNMENT_VALUES, Probe, ProbeFamily, RelatedTest, StopReason,
+    ValueContext, ValueFact,
 };
+// Internal formatting convention, not library API: `lib.rs` re-exports
+// `pub mod domain`, so this stays crate-private.
+pub(crate) use probe::MISSING_DISCRIMINATOR_VALUE_PREFIX;
 pub use summary::{LanguageFileCount, Summary};
 pub use support::{ProbeId, SourceLocation, SymbolId};
 pub use test_evidence_summary::{TestEvidenceEntry, TestEvidenceSummary};
