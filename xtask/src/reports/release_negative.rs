@@ -182,6 +182,7 @@ struct CaseReceipt {
     control_outcome: String,
     cleanup_outcome: String,
     status: String,
+    violations: Vec<String>,
     details: Vec<String>,
 }
 
@@ -210,6 +211,7 @@ impl CaseReceipt {
             control_outcome: "not_run".to_string(),
             cleanup_outcome: "not_run".to_string(),
             status: "fail".to_string(),
+            violations: Vec::new(),
             details: Vec::new(),
         }
     }
@@ -219,10 +221,14 @@ impl CaseReceipt {
             || self.process_outcome == "passed_with_pinned_projection";
         let restoration_ok = self.restoration_outcome == "restored_byte_exact"
             || self.restoration_outcome == "verified_unchanged";
+        // A recorded violation fails the case even when every outcome token
+        // matched: a corpus that records violations but ignores them would
+        // report passes on partial-output regressions (#2824 review).
         if passed
             && restoration_ok
             && self.control_outcome == "pass"
             && self.cleanup_outcome == "removed"
+            && self.violations.is_empty()
         {
             self.status = "pass".to_string();
         } else {
@@ -480,7 +486,7 @@ fn execute_case(
                         )),
                     }
                 }
-                receipt.details.append(&mut violations);
+                receipt.violations.append(&mut violations);
             }
             Expectation::Pass { out_file, pointers } => {
                 let (outcome, violations) = evaluate_pass(&run_cwd, out_file, pointers, &result);
@@ -496,7 +502,7 @@ fn execute_case(
             let source_path = run_cwd.join(source);
             if !source_path.is_file() {
                 receipt
-                    .details
+                    .violations
                     .push(format!("retained mutation source {source} is missing"));
                 continue;
             }
@@ -1084,7 +1090,11 @@ fn case_artifact_wrong_repository_root(env: &CaseEnv) -> Result<CaseExecution, S
     copy_dir_recursive(env.root, &second_root)?;
     execution.original = pair_digests(env)?;
     execution.mutated = artifact_digests(&second_root, &[BEFORE_ARTIFACT, AFTER_ARTIFACT])?;
-    execution.expected = Expectation::reject("does not match");
+    // The token must discriminate the concrete-root rejection ("agent verify
+    // <label> artifact repository root <A> does not match <B>") from the
+    // snapshot-identity rejection, which also contains "does not match"
+    // (#2824 review): `repository root` appears only in the root gate.
+    execution.expected = Expectation::reject("repository root");
     execution.run_cwd = Some(second_root.clone());
     execution.extra_cleanup = vec![second_root];
     execution.retain = vec![
@@ -1919,6 +1929,7 @@ fn case_receipt_json(receipt: &CaseReceipt) -> Value {
         "control_outcome": receipt.control_outcome,
         "cleanup_outcome": receipt.cleanup_outcome,
         "status": receipt.status,
+        "violations": receipt.violations,
         "details": receipt.details,
     })
 }
@@ -1957,6 +1968,11 @@ fn negative_corpus_json(report: &NegativeCorpusReport) -> Result<String, String>
             "total_cases": report.cases.len(),
             "passed": passed,
             "failed": report.cases.len() - passed,
+            "cases_with_violations": report
+                .cases
+                .iter()
+                .filter(|case| !case.violations.is_empty())
+                .count(),
             "not_applicable": report.dispositions.len(),
         },
     });
@@ -1988,11 +2004,11 @@ fn negative_corpus_markdown(report: &NegativeCorpusReport) -> String {
     }
     body.push('\n');
     body.push_str("## Case matrix\n\n");
-    body.push_str("| case | group | expected failure kind | actual failure kind | exit | process | restoration | control | status |\n");
-    body.push_str("| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n");
+    body.push_str("| case | group | expected failure kind | actual failure kind | exit | process | restoration | control | violations | status |\n");
+    body.push_str("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n");
     for case in &report.cases {
         body.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             case.case_id,
             case.group,
             md_escape_inline(&case.expected_failure_kind),
@@ -2003,8 +2019,24 @@ fn negative_corpus_markdown(report: &NegativeCorpusReport) -> String {
             case.process_outcome,
             case.restoration_outcome,
             case.control_outcome,
+            case.violations.len(),
             case.status
         ));
+    }
+    body.push('\n');
+    body.push_str("## Violations\n\n");
+    if report.cases.iter().all(|case| case.violations.is_empty()) {
+        body.push_str("None recorded — every case is clean.\n");
+    } else {
+        for case in report
+            .cases
+            .iter()
+            .filter(|case| !case.violations.is_empty())
+        {
+            for violation in &case.violations {
+                body.push_str(&format!("- `{}`: {violation}\n", case.case_id));
+            }
+        }
     }
     body.push('\n');
     body.push_str("## Deferred dispositions (not fabricated)\n\n");
@@ -2226,6 +2258,44 @@ mod tests {
     }
 
     #[test]
+    fn rejection_evaluation_discriminates_repository_root_from_snapshot_mismatch()
+    -> Result<(), String> {
+        // The wrong-repository-root case token must not match the
+        // snapshot-identity rejection, which also contains "does not match"
+        // (#2824 review): fabricated stderr with the snapshot rejection must
+        // evaluate to wrong_failure_kind for the root token.
+        let snapshot_rejection = "error: agent verify after artifact snapshot identity does not match the declared analysis input identity and repository head";
+        if !snapshot_rejection.contains("does not match") {
+            return Err("test premise drifted: snapshot rejection lost does-not-match".to_string());
+        }
+        let (outcome, actual, _) = evaluate_rejection(
+            "repository root",
+            &command_result(false, "", snapshot_rejection),
+        );
+        if outcome != "wrong_failure_kind" {
+            return Err(format!(
+                "snapshot rejection must not satisfy the root token: {outcome} / {actual}"
+            ));
+        }
+        // The real root rejection satisfies it.
+        let root_rejection =
+            "error: agent verify before artifact repository root /clone-b does not match /clone-a";
+        let (outcome, actual, violations) = evaluate_rejection(
+            "repository root",
+            &command_result(false, "", root_rejection),
+        );
+        if outcome != "rejected_as_expected" || actual != "repository root" {
+            return Err(format!(
+                "root rejection must satisfy the root token: {outcome} / {actual}"
+            ));
+        }
+        if !violations.is_empty() {
+            return Err(format!("unexpected violations: {violations:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn case_receipt_finalize_requires_the_full_chain() -> Result<(), String> {
         let spec = CaseSpec {
             id: "case",
@@ -2257,6 +2327,22 @@ mod tests {
         receipt.finalize();
         if receipt.status != "fail" {
             return Err("a failed control rerun must fail the case".to_string());
+        }
+        // A recorded violation fails the case even when every outcome token
+        // matched: violations are first-class, never informational (#2824
+        // review — finalize must consult them).
+        receipt.control_outcome = "pass".to_string();
+        receipt
+            .violations
+            .push("a rejected command must render nothing to stdout".to_string());
+        receipt.finalize();
+        if receipt.status != "fail" {
+            return Err("a recorded violation must fail the case".to_string());
+        }
+        receipt.violations.clear();
+        receipt.finalize();
+        if receipt.status != "pass" {
+            return Err("clearing violations must restore the pass".to_string());
         }
         Ok(())
     }
