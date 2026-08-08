@@ -66,7 +66,10 @@ pub(in crate::analysis) fn find_related_tests<'a>(
         // test that genuinely calls a uniquely-named owner is not filtered out
         // before the strong signal can save it.
         let calls_owner = !owner_name.is_empty()
-            && (test.calls.iter().any(|call| call.name == owner_name)
+            && (test
+                .calls
+                .iter()
+                .any(|call| direct_owner_call_text(&call.text, owner_name))
                 || body_contains_owner_call(&test.body, owner_name));
 
         // #2971: Only apply the package-prefix guard to weak signals — tests
@@ -176,6 +179,14 @@ fn package_prefix(path: &Path) -> Option<String> {
     None
 }
 
+fn direct_owner_call_text(text: &str, owner_name: &str) -> bool {
+    let trimmed = text.trim_start();
+    let Some(rest) = trimmed.strip_prefix(owner_name) else {
+        return false;
+    };
+    rest.trim_start().starts_with('(')
+}
+
 fn body_contains_owner_call(body: &str, owner_name: &str) -> bool {
     if owner_name.is_empty() {
         return false;
@@ -186,7 +197,12 @@ fn body_contains_owner_call(body: &str, owner_name: &str) -> bool {
             || !body
                 .as_bytes()
                 .get(start - 1)
-                .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_');
+                .is_some_and(|byte| {
+                    !byte.is_ascii_alphanumeric()
+                        && *byte != b'_'
+                        && *byte != b'.'
+                        && *byte != b':'
+                });
         let after_call = body
             .get(end..)
             .map(|tail| tail.trim_start().starts_with('('))
@@ -271,6 +287,38 @@ mod tests {
     /// evidence that it is unique in the workspace. The bypass must not fire:
     /// a sibling crate's unindexed same-named function would otherwise be
     /// credited as the owner — the token-coincidence false-`exposed` family.
+    #[test]
+    fn given_wrong_receiver_when_cross_crate_test_calls_same_named_method_then_filtered() {
+        let owner = function("crates/digest/src/lib.rs", "compute_hash");
+        let index = RustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![TestSummary {
+                name: "wrong_receiver_test".to_string(),
+                file: PathBuf::from("crates/digest-tests/tests/integration.rs"),
+                start_line: 1,
+                end_line: 2,
+                body: "let result = other.compute_hash(b\"input\");".to_string(),
+                calls: vec![CallFact {
+                    line: 1,
+                    name: "compute_hash".to_string(),
+                    text: "other.compute_hash(b\"input\")".to_string(),
+                }],
+                assertions: Vec::new(),
+                literals: Vec::new(),
+                attrs: Vec::new(),
+            }],
+            ..RustIndex::default()
+        };
+        let probe = probe("crates/digest/src/lib.rs", "compute_hash(input)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true);
+
+        assert!(
+            related.is_empty(),
+            "a same-named method on another receiver must not bypass the package guard"
+        );
+    }
+
     #[test]
     fn given_incomplete_index_when_cross_crate_test_calls_owner_then_filtered() {
         let owner = function("crates/digest/src/lib.rs", "compute_hash");
