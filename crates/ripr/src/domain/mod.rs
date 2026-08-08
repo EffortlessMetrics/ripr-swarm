@@ -44,8 +44,8 @@ pub use fix_instruction::{FixInstructionState, FixInstructionSummary};
 pub use language::{LanguageId, LanguageStatus, OwnerKind, StaticLimitKind};
 pub use probe::{
     ActivationEvidence, DeltaKind, Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind,
-    MissingDiscriminatorFact, ORACLE_ALIGNMENT_VALUES, Probe, ProbeFamily, RelatedTest, StopReason,
-    ValueContext, ValueFact,
+    MISSING_DISCRIMINATOR_VALUE_PREFIX, MissingDiscriminatorFact, ORACLE_ALIGNMENT_VALUES, Probe,
+    ProbeFamily, RelatedTest, StopReason, ValueContext, ValueFact,
 };
 pub use summary::{LanguageFileCount, Summary};
 pub use support::{ProbeId, SourceLocation, SymbolId};
