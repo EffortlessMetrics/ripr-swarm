@@ -26,8 +26,9 @@ are scoped or reviewed.
   pointer — and `ripr explain --fromm` did not report an argument error at
   all, because the positional-selector arm accepted any token, so `--fromm`
   was taken as the finding selector and analysis ran against it. Both parsers
-  now use the shared helper, and `explain`'s positional arm accepts only
-  non-flag tokens. Output becomes
+  now use the shared helper, and `explain`'s positional arm rejects a
+  `-`-prefixed token unless it is selector-shaped, so a `file:line` selector
+  whose path begins with `-` still resolves. Output becomes
   `unknown context argument "--fromm". Did you mean \`--from\`? Run \`ripr context --help\`.`
 
   Both commands are also registered in the help lookup and the command-path
