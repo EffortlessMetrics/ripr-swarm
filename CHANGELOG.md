@@ -94,7 +94,8 @@ are scoped or reviewed.
   committed disjointness, conditional/rolling exclusion, prerequisite ordering,
   parent accounting, and referential closure — each with a fixture that violates
   exactly that rule. Reports land at
-  `target/ripr/reports/release-targets.{json,md}`.
+  `target/ripr/reports/release-targets.{json,md}`, and the check runs inside
+  `cargo xtask precommit` and the CI policy-check pass.
 
   The checker deliberately does not parse release-goal issue prose. Those bodies
   write some membership as en-dash ranges (`#2665 / #2968-#2970`), so a prose

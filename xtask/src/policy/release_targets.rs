@@ -474,7 +474,7 @@ fn parse_issue_number(raw: &str) -> Result<u32, String> {
     }
     let issue: u32 = trimmed
         .parse()
-        .map_err(|_| format!("issue number `{trimmed}` is out of range"))?;
+        .map_err(|err| format!("issue number `{trimmed}` is out of range: {err}"))?;
     if issue == 0 {
         return Err("issue number `0` is not a real issue".to_string());
     }

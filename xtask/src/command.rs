@@ -1579,7 +1579,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "non_mutating_check",
             "target/ripr/reports/release-targets.{json,md}",
             false,
-            false,
+            true,
             "Checks policy/release-targets.toml for internal release graph integrity offline; never reads GitHub and never qualifies or publishes a candidate.",
         ),
         command_entry(

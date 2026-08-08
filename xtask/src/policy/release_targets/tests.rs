@@ -84,15 +84,18 @@ fn only_rule(text: &str, rule: &str) -> Vec<String> {
 }
 
 fn fired_rules(found: &[String]) -> BTreeSet<String> {
-    found
-        .iter()
-        .map(|violation| {
-            violation
-                .split_once(" :: ")
-                .map(|(rule, _)| rule.to_string())
-                .unwrap_or_else(|| panic!("violation `{violation}` names no rule"))
-        })
-        .collect()
+    let mut rules = BTreeSet::new();
+    for violation in found {
+        let named = violation.split_once(" :: ");
+        assert!(
+            named.is_some(),
+            "violation `{violation}` names no rule, so no fixture can be attributed to a rule"
+        );
+        if let Some((rule, _)) = named {
+            rules.insert(rule.to_string());
+        }
+    }
+    rules
 }
 
 /// Every negative fixture, paired with the rule it must trip. Each named test
@@ -431,12 +434,13 @@ fn every_rule_owns_a_negative_fixture() {
 
 #[test]
 fn the_repository_manifest_passes_every_rule() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("xtask has a parent workspace root")
-        .join(RELEASE_TARGETS_MANIFEST_PATH);
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent();
+    assert!(root.is_some(), "xtask has a parent workspace root");
+    let Some(root) = root else { return };
+    let path = root.join(RELEASE_TARGETS_MANIFEST_PATH);
+    let read = std::fs::read_to_string(&path);
+    assert!(read.is_ok(), "failed to read {}: {read:?}", path.display());
+    let Ok(text) = read else { return };
     let outcome = evaluate_release_targets(RELEASE_TARGETS_MANIFEST_PATH, &text);
     assert_eq!(outcome.violations, Vec::<String>::new());
     assert_eq!(outcome.releases.len(), 3);
