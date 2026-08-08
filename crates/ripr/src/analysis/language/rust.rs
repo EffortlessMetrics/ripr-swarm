@@ -10,8 +10,7 @@
 //! returned findings.
 
 use super::super::{
-    AnalysisMode, AnalysisOptions, classifier, classify, diff::ChangedFile, probes, rust_index,
-    workspace,
+    AnalysisOptions, classifier, classify, diff::ChangedFile, probes, rust_index, workspace,
 };
 use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route};
 use crate::analysis::cancellation;
@@ -1364,8 +1363,15 @@ impl RustAdapter {
         // so a same-named function in an unchanged file would be absent from
         // the uniqueness count — fail-closed by treating the index as
         // incomplete for those modes.
-        let workspace_index_complete =
-            matches!(options.mode, AnalysisMode::Deep | AnalysisMode::Ready);
+        //
+        // The mode alone does not decide this. `select_rust_files_for_mode`
+        // returns the changed files only whenever `include_unchanged_tests` is
+        // false, including under Deep and Ready, so keying on the mode would
+        // still mark a changed-files-only index complete. Ask the selection
+        // that actually built the index instead: it is a deduplicated subset
+        // of `analyzable_rust_files`, so an equal length means nothing was
+        // dropped. Any narrower selection leaves the index partial.
+        let workspace_index_complete = index_files.len() == analyzable_rust_files.len();
 
         for changed in analyzable_changed_files
             .iter()

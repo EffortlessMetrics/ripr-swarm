@@ -264,6 +264,38 @@ mod tests {
         assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
     }
 
+    /// #2971 scope control: the same workspace as the positive control above,
+    /// reached through a partial index. The diff path indexes only the changed
+    /// files whenever `include_unchanged_tests` is false, and only the changed
+    /// packages under Draft/Fast, so a name seen once in that index is not
+    /// evidence that it is unique in the workspace. The bypass must not fire:
+    /// a sibling crate's unindexed same-named function would otherwise be
+    /// credited as the owner — the token-coincidence false-`exposed` family.
+    #[test]
+    fn given_incomplete_index_when_cross_crate_test_calls_owner_then_filtered() {
+        let owner = function("crates/digest/src/lib.rs", "compute_hash");
+        let index = RustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "crates/digest-tests/tests/integration.rs",
+                "hash_integration_test",
+                "let result = compute_hash(b\"input\");",
+                "compute_hash",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = probe("crates/digest/src/lib.rs", "compute_hash(input)");
+
+        // The only difference from the positive control.
+        let related = find_related_tests(&probe, Some(&owner), &index, false);
+
+        assert!(
+            related.is_empty(),
+            "a partial index cannot establish name uniqueness, so the \
+             package-prefix guard must stay unconditional"
+        );
+    }
+
     /// #2971 / #3033 negative control: a cross-crate test calling an
     /// **ambiguously-named** function is filtered by the package-prefix guard.
     /// Both crate_a and crate_b define `score`, so a bare `score()` call in
