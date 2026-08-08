@@ -83,7 +83,7 @@ are scoped or reviewed.
   redirection, so copying one into cmd.exe (which treats `'` as a literal
   character) or PowerShell (which rejects the `'\''` escape) mis-passes or
   rejects quoted arguments. The note names Git Bash specifically rather than
-  "bash on Windows": generated paths keep their Windows drive prefix (`C:/...`),
+  "bash on Windows": generated paths keep their Windows drive-letter prefix,
   which WSL resolves as a relative path, so WSL needs each path translated to
   `/mnt/c/...` and `ripr` installed inside it. This is disclosure only: no
   command string, schema version, or existing field changed. A shell-neutral

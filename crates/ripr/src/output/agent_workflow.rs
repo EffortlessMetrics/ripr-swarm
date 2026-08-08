@@ -106,7 +106,7 @@ mod markdown {
         lines.push(String::new());
         lines.push("This workflow packet is advisory and source-edit-free. It gives a human or agent the static context and commands for one focused test loop.".to_string());
         lines.push(String::new());
-        lines.push("Generated commands are bash command lines. They use POSIX single-quote quoting and `>` redirection, so run them from bash — on Windows, Git Bash. cmd.exe and PowerShell do not interpret this quoting the same way and will mis-pass or reject the quoted arguments. WSL bash is not a drop-in substitute: paths here keep their Windows drive prefix (`C:/...`), which WSL resolves as a relative path, so running them there requires translating each path to `/mnt/c/...` and having ripr available inside WSL.".to_string());
+        lines.push("Generated commands are bash command lines. They use POSIX single-quote quoting and `>` redirection, so run them from bash — on Windows, Git Bash. cmd.exe and PowerShell do not interpret this quoting the same way and will mis-pass or reject the quoted arguments. WSL bash is not a drop-in substitute: paths here keep their Windows drive-letter prefix, which WSL resolves as a relative path, so running them there requires rewriting each path under `/mnt/` and having ripr available inside WSL.".to_string());
         lines.push(String::new());
     }
 
@@ -283,7 +283,7 @@ mod tests {
     }
 
     /// `display_path` (`agent::loop_commands`) only swaps `\` for `/`, so an
-    /// absolute Windows root stays `C:/...`. Git Bash resolves that; WSL bash
+    /// absolute Windows root keeps its drive-letter prefix. Git Bash resolves that; WSL bash
     /// reads it as a path relative to the current directory and the `>`
     /// redirection fails before ripr runs. Recommending "bash on Windows"
     /// without that distinction sends the one affected reader to an environment

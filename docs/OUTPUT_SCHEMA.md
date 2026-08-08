@@ -11876,7 +11876,7 @@ Field contract:
   output redirection uses `>`. Consumers on Windows must run them through Git
   Bash; cmd.exe treats `'` as a literal character and PowerShell rejects the
   `'\''` escape. WSL bash is not equivalent, because paths in this manifest keep
-  their Windows drive prefix (`C:/...`), which WSL resolves as a relative path.
+  their Windows drive-letter prefix, which WSL resolves as a relative path.
   `commands.md` states the same boundary in prose above its first command block.
   No shell-neutral argv form is emitted for this schema version.
 - `root`, `mode`, and `out_dir` - the selected workspace root, effective
