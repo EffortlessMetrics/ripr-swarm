@@ -62,7 +62,7 @@ impl RepoExposureArtifactContext {
             base_revision,
             manifest_identity,
             lockfile_identity,
-            crate::config::check_artifact_config_identity_hash(config),
+            crate::config::repo_exposure_config_identity_hash(config),
             env!("CARGO_PKG_VERSION"),
         );
         let input_identity = format!(
@@ -227,14 +227,20 @@ pub(crate) fn validate_repo_exposure_artifact(
     // deferred until a real migration producer exists (#2921 deferred
     // negatives — no fabricated migration authority here).
     let supported_prefix = format!("input:{INPUT_IDENTITY_VERSION}:");
-    if !identity
+    let valid_current_shape = identity
         .analysis
         .input_identity
-        .starts_with(&supported_prefix)
-        || identity.analysis.input_identity.len() == supported_prefix.len()
-    {
+        .strip_prefix(&supported_prefix)
+        .and_then(|digest| digest.strip_prefix("fnv1a64:"))
+        .is_some_and(|digest| {
+            digest.len() == 16
+                && digest
+                    .chars()
+                    .all(|character| character.is_ascii_hexdigit() && !character.is_ascii_uppercase())
+        });
+    if !valid_current_shape {
         return Err(format!(
-            "agent verify {label} artifact has unsupported input identity version `{}` (expected `{supported_prefix}<digest>`)",
+            "agent verify {label} artifact has unsupported input identity version or shape `{}` (expected `{supported_prefix}fnv1a64:<16 lowercase hex>`)",
             identity.analysis.input_identity
         ));
     }
