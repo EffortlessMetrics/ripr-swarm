@@ -11,6 +11,15 @@ are scoped or reviewed.
 
 ### Fixed
 
+- `ripr explain` and `ripr context` now suggest a near-miss flag instead of
+  failing bare. Both had fully documented help bodies, but neither was wired
+  into the help lookup that `unknown_argument` reads, so `ripr explain
+  --fromm` produced `unknown explain argument "--fromm".` with no suggestion.
+  These are the two commands the human digest points the reader to next, so
+  the slip is likely there. Both are also added to the registered command
+  paths, so the existing flag-parity guard covers them — it iterated the same
+  list they were missing from, and so could not see the omission.
+
 - Human output no longer restates the `Missing discriminator` label inside its
   own value. The classifier builds these entries as
   `Missing discriminator value: <value>`, so the digest rendered
