@@ -24,6 +24,23 @@ pub(in crate::analysis) fn find_related_tests<'a>(
         .unwrap_or("");
     let owner_package_prefix = owner_fn.and_then(|owner| package_prefix(&owner.file));
 
+    // #2971 ambiguity rule: a bare `call.name == owner_name` match can bypass
+    // the package-prefix guard only when the owner name is unique in the
+    // workspace. When multiple crates define functions with the same name, a
+    // bare call in crate_b calling `score()` cannot be attributed to
+    // crate_a::score — that is the token-coincidence false-exposed family.
+    // When the name IS unique, any call must refer to that sole function, so
+    // a cross-crate integration test that genuinely imports and calls the
+    // owner is correctly retained. This follows the owner_shape.rs precedent
+    // of scanning index.functions for same-name collision.
+    let owner_name_is_unique = !owner_name.is_empty()
+        && index
+            .functions
+            .iter()
+            .filter(|f| f.name == owner_name)
+            .count()
+            == 1;
+
     // For module-level struct/field probes (owner_fn is None) derive the package
     // prefix from the probe's source file so cross-crate spurious matches are
     // still filtered out.
@@ -41,8 +58,20 @@ pub(in crate::analysis) fn find_related_tests<'a>(
         .collect();
 
     for test in &index.tests {
+        // Compute calls_owner BEFORE the package-prefix guard so a cross-crate
+        // test that genuinely calls a uniquely-named owner is not filtered out
+        // before the strong signal can save it.
+        let calls_owner = !owner_name.is_empty()
+            && (test.calls.iter().any(|call| call.name == owner_name)
+                || body_contains_owner_call(&test.body, owner_name));
+
+        // #2971: Only apply the package-prefix guard to weak signals — tests
+        // that do not directly call the owner, OR tests that call a bare name
+        // that is ambiguous across crates. A cross-crate test that calls a
+        // uniquely-named owner is genuinely related and must not be suppressed.
         if let Some(prefix) = &owner_package_prefix
             && !normalize_path(&test.file).starts_with(prefix)
+            && !(calls_owner && owner_name_is_unique)
         {
             continue;
         }
@@ -52,9 +81,6 @@ pub(in crate::analysis) fn find_related_tests<'a>(
         {
             continue;
         }
-        let calls_owner = !owner_name.is_empty()
-            && (test.calls.iter().any(|call| call.name == owner_name)
-                || body_contains_owner_call(&test.body, owner_name));
 
         // Signal: a test's assertion observed_tokens intersect the probe's
         // long-enough identifier tokens. Only fires when the probe has no named
@@ -178,6 +204,10 @@ mod tests {
     fn given_owner_function_when_tests_share_name_across_packages_then_filters_to_package() {
         let owner = function("crates/crate_a/src/lib.rs", "score");
         let index = RustIndex {
+            functions: vec![
+                function("crates/crate_a/src/lib.rs", "score"),
+                function("crates/crate_b/src/lib.rs", "score"),
+            ],
             tests: vec![
                 test(
                     "crates/crate_b/tests/score.rs",
@@ -197,6 +227,76 @@ mod tests {
         let related = find_related_tests(&probe, Some(&owner), &index);
 
         assert_eq!(related.len(), 1);
+        assert_eq!(related[0].0.name, "crate_a_score_test");
+    }
+
+    /// #2971 / #3033 positive control: a cross-crate test that calls a
+    /// **uniquely-named** owner is retained via `DirectOwnerCall`. The owner
+    /// name `compute_hash` appears once in the workspace, so the bare call in
+    /// a separate crate's integration test is unambiguously calling the owner.
+    #[test]
+    fn given_unique_owner_when_cross_crate_test_calls_owner_then_retained() {
+        let owner = function("crates/digest/src/lib.rs", "compute_hash");
+        let index = RustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "crates/digest-tests/tests/integration.rs",
+                "hash_integration_test",
+                "let result = compute_hash(b\"input\");",
+                "compute_hash",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = probe("crates/digest/src/lib.rs", "compute_hash(input)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index);
+
+        assert_eq!(
+            related.len(),
+            1,
+            "cross-crate test calling unique owner should be retained"
+        );
+        assert_eq!(related[0].0.name, "hash_integration_test");
+        assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    /// #2971 / #3033 negative control: a cross-crate test calling an
+    /// **ambiguously-named** function is filtered by the package-prefix guard.
+    /// Both crate_a and crate_b define `score`, so a bare `score()` call in
+    /// crate_b cannot be attributed to crate_a::score.
+    #[test]
+    fn given_ambiguous_owner_when_cross_crate_test_calls_same_name_then_filtered() {
+        let owner = function("crates/crate_a/src/lib.rs", "score");
+        let crate_b_fn = function("crates/crate_b/src/lib.rs", "score");
+        let index = RustIndex {
+            functions: vec![owner.clone(), crate_b_fn],
+            tests: vec![
+                test_with_call(
+                    "crates/crate_b/tests/score.rs",
+                    "crate_b_calls_score",
+                    "score(42)",
+                    "score",
+                ),
+                test(
+                    "crates/crate_a/tests/score.rs",
+                    "crate_a_score_test",
+                    "score(1)",
+                ),
+            ],
+            ..RustIndex::default()
+        };
+        let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
+
+        let related = find_related_tests(&probe, Some(&owner), &index);
+
+        // The crate_a test is in-package and passes; the crate_b test is
+        // cross-crate and filtered despite calling `score()` because the name
+        // is ambiguous across crates.
+        assert_eq!(
+            related.len(),
+            1,
+            "ambiguous-name cross-crate test must be filtered"
+        );
         assert_eq!(related[0].0.name, "crate_a_score_test");
     }
 
@@ -355,6 +455,26 @@ mod tests {
             calls: vec![CallFact {
                 line: 1,
                 name: "score".to_string(),
+                text: body.to_string(),
+            }],
+            assertions: Vec::new(),
+            literals: Vec::new(),
+            attrs: Vec::new(),
+        }
+    }
+
+    /// Like `test` but with a configurable call name — needed for cross-crate
+    /// tests where the owner name is not hardcoded to `"score"`.
+    fn test_with_call(file: &str, name: &str, body: &str, call_name: &str) -> TestSummary {
+        TestSummary {
+            name: name.to_string(),
+            file: PathBuf::from(file),
+            start_line: 1,
+            end_line: 4,
+            body: body.to_string(),
+            calls: vec![CallFact {
+                line: 1,
+                name: call_name.to_string(),
                 text: body.to_string(),
             }],
             assertions: Vec::new(),
