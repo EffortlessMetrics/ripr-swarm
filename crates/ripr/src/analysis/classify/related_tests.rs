@@ -24,6 +24,20 @@ pub(in crate::analysis) fn find_related_tests<'a>(
         .unwrap_or("");
     let owner_package_prefix = owner_fn.and_then(|owner| package_prefix(&owner.file));
 
+    // #3041: A bare `call.name == owner_name` match is ambiguous when multiple
+    // functions in the index share the same name across different crates. In
+    // that case, a test in crate_b calling `score()` is calling crate_b::score,
+    // not crate_a::score — crediting it as `calls_owner` is the token-coincidence
+    // false-`exposed` family. Only trust bare-name `calls_owner` to bypass the
+    // package-prefix guard when the owner name is unique in the index.
+    let owner_name_is_unique = !owner_name.is_empty()
+        && index
+            .functions
+            .iter()
+            .filter(|f| f.name == owner_name)
+            .count()
+            == 1;
+
     // For module-level struct/field probes (owner_fn is None) derive the package
     // prefix from the probe's source file so cross-crate spurious matches are
     // still filtered out.
@@ -44,9 +58,19 @@ pub(in crate::analysis) fn find_related_tests<'a>(
         // #2971: Compute calls_owner BEFORE the package-prefix guard so a
         // cross-crate test that genuinely calls the owner is not filtered out
         // before the strong signal can save it.
+        // #3041: When the owner name is NOT unique (multiple functions share it
+        // across crates), bare-name call matching is ambiguous and must not
+        // bypass the package-prefix guard — a test calling `score()` in crate_b
+        // is not calling crate_a::score. Only a test in the same package as the
+        // owner can safely bypass via bare-name match when the name is shared.
+        let test_in_owner_package = owner_package_prefix
+            .as_deref()
+            .map(|prefix| normalize_path(&test.file).starts_with(prefix))
+            .unwrap_or(true);
         let calls_owner = !owner_name.is_empty()
             && (test.calls.iter().any(|call| call.name == owner_name)
-                || body_contains_owner_call(&test.body, owner_name));
+                || body_contains_owner_call(&test.body, owner_name))
+            && (owner_name_is_unique || test_in_owner_package);
 
         // #2971: Only apply the package-prefix guard to WEAK signals (tests
         // that do not directly call the owner). A cross-crate test that calls
