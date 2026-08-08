@@ -3300,6 +3300,12 @@ mod tests {
                 std::env::current_exe().map_err(|err| format!("read current exe failed: {err}"))?;
 
             // A written stub with a live writable descriptor: the pre-fix state.
+            // Spawn through absolute paths. `run_command_in_dir` runs the child
+            // with its cwd set to `dir`, and these stub paths are
+            // checkout-relative, so a relative spawn fails with `ENOENT` before
+            // reaching `exec` — the #2823 defect the neighbouring journey test
+            // pins deliberately. Reaching the `exec` stage at all is the whole
+            // point here, so resolve first (#3051).
             let written = dir.join("written-stub");
             fs::copy(&source, &written).map_err(|err| format!("copy written stub: {err}"))?;
             let writer = fs::OpenOptions::new()
@@ -3307,7 +3313,9 @@ mod tests {
                 .open(&written)
                 .map_err(|err| format!("open writer on written stub: {err}"))?;
             let args = vec!["--list".to_string()];
-            let busy = super::run_command_in_dir(&written, &args, &dir, "written stub");
+            let written_absolute = fs::canonicalize(&written)
+                .map_err(|err| format!("resolve written stub failed: {err}"))?;
+            let busy = super::run_command_in_dir(&written_absolute, &args, &dir, "written stub");
             drop(writer);
             match busy {
                 Ok(outcome) => {
@@ -3327,7 +3335,9 @@ mod tests {
             // A linked stub never has a writer, so it executes unconditionally.
             let linked = dir.join("linked-stub");
             fs::hard_link(&source, &linked).map_err(|err| format!("link stub: {err}"))?;
-            super::run_command_in_dir(&linked, &args, &dir, "linked stub")
+            let linked_absolute = fs::canonicalize(&linked)
+                .map_err(|err| format!("resolve linked stub failed: {err}"))?;
+            super::run_command_in_dir(&linked_absolute, &args, &dir, "linked stub")
                 .map_err(|err| format!("linked stub must execute: {err}"))?;
             Ok(())
         })();
