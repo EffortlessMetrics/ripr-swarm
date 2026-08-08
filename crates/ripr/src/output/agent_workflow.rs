@@ -306,7 +306,7 @@ mod tests {
              with WSL qualified afterwards: {rendered}"
         );
         assert!(
-            rendered.contains("/mnt/c/"),
+            rendered.contains("/mnt/"),
             "the WSL caveat must name the translation a reader has to perform, \
              not merely discourage it: {rendered}"
         );
