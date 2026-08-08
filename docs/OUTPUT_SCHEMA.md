@@ -6365,8 +6365,12 @@ Field contract:
   This is the replay binding: a consumer that revalidates the artifacts can
   detect any byte change after verify, including one invisible to the
   movement render.
-- `artifact_currentness` - the pair's repository identity disclosure:
-  `current`, `dirty_worktree`, or `historical_noncurrent`. It does not claim
+- `artifact_currentness` - the pair's repository identity disclosure, one of:
+  `current`, `historical_noncurrent`, `historical_before_current_after`,
+  `current_before_historical_after`, `dirty_before`, `dirty_after`, or
+  `dirty_both`. A dirty side names the side (`dirty_before`, `dirty_after`,
+  or `dirty_both`); the clean expected transaction is
+  `historical_before_current_after`. It does not claim
   that tests ran or that the static gap is correct.
 - `summary.improved` - matched seams whose after `SeamGripClass` ranks higher
   than before.

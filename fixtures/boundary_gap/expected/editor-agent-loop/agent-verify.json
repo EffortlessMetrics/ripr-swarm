@@ -1,5 +1,5 @@
 {
-  "artifact_currentness": "dirty_worktree",
+  "artifact_currentness": "dirty_both",
   "changed_seams": [],
   "inputs": {
     "after": "target/ripr/test-agent-verify/after.repo-exposure.json",

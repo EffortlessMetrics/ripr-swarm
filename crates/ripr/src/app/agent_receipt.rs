@@ -87,17 +87,10 @@ pub(crate) fn validate_agent_receipt_verify_json(
             ),
         ));
     }
-    let artifact_currentness = match (&before_identity.currentness, &after_identity.currentness) {
-        (
-            crate::agent::artifact::ArtifactCurrentness::Current,
-            crate::agent::artifact::ArtifactCurrentness::Current,
-        ) => "current",
-        (
-            crate::agent::artifact::ArtifactCurrentness::Historical,
-            crate::agent::artifact::ArtifactCurrentness::Historical,
-        ) => "historical_noncurrent",
-        _ => "dirty_worktree",
-    };
+    let artifact_currentness = crate::agent::artifact::pair_currentness_label(
+        &before_identity.currentness,
+        &after_identity.currentness,
+    );
     let report = output::outcome::targeted_test_outcome_report_from_json(
         &before_json,
         &after_json,

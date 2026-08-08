@@ -54,8 +54,21 @@ analysis-input identities before movement calculation. It adds
 advisory output with one of:
 
 - `current`;
-- `dirty_worktree`;
-- `historical_noncurrent`.
+- `historical_noncurrent`;
+- `historical_before_current_after`;
+- `current_before_historical_after`;
+- `dirty_before`;
+- `dirty_after`;
+- `dirty_both`.
+
+The pair token states what each side of the pair is (#3027): a dirty side is
+named (`dirty_before`, `dirty_after`, or `dirty_both`) rather than every mixed
+pair collapsing into one dirty label, and the clean expected transaction —
+the repository moved past the before artifact while the after artifact is
+current — is `historical_before_current_after`. A fully current pair fails
+the movement gate and a current-before/historical-after pair fails the
+lineage gate, so `current` and `current_before_historical_after` close the
+vocabulary without being reachable verify outcomes today.
 
 When Git identity is unavailable, the producer discloses `unavailable` in the
 artifact and the verifier rejects it as unsuitable evidence.
@@ -102,7 +115,9 @@ after movement succeeds but discloses `historical_noncurrent`.
 
 - Producer output tests cover identity and streaming output.
 - CLI smoke tests cover a valid bound pair, a historical comparable pair,
-  dirty-worktree disclosure, tampered bytes, incomparable input identities,
+  mixed pair-currentness disclosure (historical-before/current-after,
+  dirty-before, dirty-after, and dirty-both, #3027), tampered bytes,
+  incomparable input identities,
   unsupported schema, malformed typed seam, plausible uncommitted JSON,
   fabricated verify JSON, altered verify movement, incomparable base revision,
   incomparable analysis inputs, verify replay against mutated artifact bytes,
@@ -115,10 +130,12 @@ after movement succeeds but discloses `historical_noncurrent`.
 
 ## Acceptance Examples
 
-### Current bound pair
+### Historical-before/current-after bound pair
 
-Two snapshots from the same root with the same base identity and current HEAD
-produce advisory movement with `artifact_currentness = "current"`.
+A before snapshot bound to a superseded revision and an after snapshot bound to
+the current HEAD — the expected clean before/after transaction — produce
+advisory movement with
+`artifact_currentness = "historical_before_current_after"` (#3027).
 
 ### Tampered or fabricated input
 
@@ -128,7 +145,8 @@ an unsupported schema fails before movement calculation.
 ## Test Mapping
 
 - `crates/ripr/src/agent/artifact.rs` tests the fixed commitment protocol and
-  duplicate-field rejection.
+  duplicate-field rejection, plus the closed pair-currentness vocabulary
+  (`pair_currentness_label`, #3027).
 - `crates/ripr/src/app/agent_receipt.rs` tests the fail-closed verify schema
   gate (`[unsupported_schema]`) ahead of any artifact IO.
 - `crates/ripr/tests/cli_smoke.rs` tests valid, tampered, fabricated, and
