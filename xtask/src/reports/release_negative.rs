@@ -201,10 +201,14 @@ impl CaseReceipt {
     }
 
     fn finalize(&mut self) {
-        let passed = self.process_outcome == "rejected_as_expected"
-            || self.process_outcome == "passed_with_pinned_projection";
-        let restoration_ok = self.restoration_outcome == "restored_byte_exact"
-            || self.restoration_outcome == "verified_unchanged";
+        // Real-producers-only (#2824 review): this slice emits exactly one
+        // passing shape — a Reject-arm case evaluated `rejected_as_expected`
+        // by evaluate_rejection, restored `restored_byte_exact` by
+        // restore_state. The pinned-projection pass token has no producer in
+        // this slice (the Expectation::Pass arm lands with the verify/receipt
+        // families) and must not be accepted before it exists.
+        let passed = self.process_outcome == "rejected_as_expected";
+        let restoration_ok = self.restoration_outcome == "restored_byte_exact";
         // A recorded violation fails the case even when every outcome token
         // matched: a corpus that records violations but ignores them would
         // report passes on partial-output regressions (#2824 review).
@@ -224,6 +228,9 @@ impl CaseReceipt {
 struct NegativeCorpusReport {
     version: String,
     status: String,
+    run_status: String,
+    covered_families: Vec<String>,
+    deferred_families: Vec<String>,
     candidate: CandidateIdentity,
     baseline_root: String,
     baseline_before_sha: String,
@@ -260,7 +267,7 @@ pub(crate) fn release_negative_corpus(args: &[String]) -> Result<(), String> {
                 "schema_version": "1",
                 "version": args.version,
                 "status": "fail",
-                "phase_error": phase_error,
+                "phase_error": phase_error.clone(),
             });
             let body = serde_json::to_string_pretty(&report)
                 .map_err(|err| format!("render phase-failure report failed: {err}"))?;
@@ -268,8 +275,7 @@ pub(crate) fn release_negative_corpus(args: &[String]) -> Result<(), String> {
             crate::write_report(
                 "release-negative-corpus.md",
                 &format!(
-                    "# release-negative-corpus\n\nStatus: fail\n\nThe corpus run failed before the case matrix completed:\n\n```text\n{}\n```\n",
-                    report["phase_error"]
+                    "# release-negative-corpus\n\nStatus: fail\n\nThe corpus run failed before the case matrix completed:\n\n```text\n{phase_error}\n```\n"
                 ),
             )?;
             Err(
@@ -284,6 +290,9 @@ fn run_negative_corpus(version: &str) -> Result<NegativeCorpusReport, String> {
     let (binary, candidate) = resolve_candidate(version)?;
     let baseline = build_baseline(&binary)?;
     let corpus_dir = Path::new(NEGATIVE_WORK_DIR);
+    // Never let stale per-case receipts from an older matrix linger next to
+    // a fresh run: the case evidence for this run starts empty (#2824).
+    let _ = fs::remove_dir_all(corpus_dir.join("cases"));
     let mut cases = Vec::new();
     for spec in case_specs() {
         cases.push(execute_case(
@@ -300,9 +309,21 @@ fn run_negative_corpus(version: &str) -> Result<NegativeCorpusReport, String> {
     } else {
         "fail"
     };
+    // Disclose the partial matrix truthfully (#2824 review): a slice that
+    // lands only some case families reports `families_deferred`, never a
+    // silent pass that reads as the full corpus.
+    let (covered_families, deferred_families) = family_coverage();
+    let run_status = if deferred_families.is_empty() {
+        "complete"
+    } else {
+        "families_deferred"
+    };
     Ok(NegativeCorpusReport {
         version: version.to_string(),
         status: status.to_string(),
+        run_status: run_status.to_string(),
+        covered_families,
+        deferred_families,
         candidate,
         baseline_root: crate::normalize_path(&baseline.fixture_root),
         baseline_before_sha: baseline.before_sha.clone(),
@@ -312,6 +333,34 @@ fn run_negative_corpus(version: &str) -> Result<NegativeCorpusReport, String> {
         cases,
         dispositions: deferred_dispositions(),
     })
+}
+
+/// The closed family vocabulary and the case group that produces each
+/// family. Coverage is derived from the actual case registry — never from
+/// hardcoded prose — so a slice cannot claim a family it does not run.
+const CASE_FAMILY_GROUPS: [(&str, &[&str]); 3] = [
+    ("artifact", &["artifact"]),
+    ("pair", &["pair"]),
+    ("verify_receipt", &["verify", "receipt"]),
+];
+
+fn family_coverage() -> (Vec<String>, Vec<String>) {
+    let groups = case_specs()
+        .iter()
+        .map(|spec| spec.group)
+        .collect::<Vec<_>>();
+    let mut covered = Vec::new();
+    let mut deferred = Vec::new();
+    for (group, families) in CASE_FAMILY_GROUPS {
+        for family in families {
+            if groups.contains(&group) {
+                covered.push(family.to_string());
+            } else {
+                deferred.push(family.to_string());
+            }
+        }
+    }
+    (covered, deferred)
 }
 
 /// Resolve the candidate exactly like `release_readiness`: the packaged crate
@@ -366,33 +415,37 @@ fn resolve_candidate(version: &str) -> Result<(PathBuf, CandidateIdentity), Stri
 
 /// Build the authentic baseline chain in a controlled external fixture with
 /// the shared journey producer and retain the immutable positive artifacts.
+/// Every failure path — chain production or retention — removes the external
+/// fixture root so a failed baseline never leaks it.
 fn build_baseline(binary: &Path) -> Result<BaselineContext, String> {
     let fixture = create_authentic_repo_exposure_fixture()?;
-    let chain = produce_authentic_chain_in_fixture(
-        binary,
-        &fixture.root,
-        &fixture.before_commit,
-        &fixture.after_commit,
-    );
-    if let Err(error) = chain {
+    let result = (|| {
+        produce_authentic_chain_in_fixture(
+            binary,
+            &fixture.root,
+            &fixture.before_commit,
+            &fixture.after_commit,
+        )
+        .map_err(|error| format!("authentic baseline chain failed: {error}"))?;
+        let baseline_dir = Path::new(NEGATIVE_WORK_DIR).join("baseline");
+        fs::create_dir_all(&baseline_dir)
+            .map_err(|err| format!("create baseline retention dir failed: {err}"))?;
+        let mut artifacts = Vec::new();
+        for name in CHAIN_FILES {
+            let retained = baseline_dir.join(name);
+            fs::copy(fixture.root.join(name), &retained)
+                .map_err(|err| format!("retain baseline artifact {name} failed: {err}"))?;
+            artifacts.push(artifact_digest(&baseline_dir, name)?);
+        }
+        Ok(BaselineContext {
+            fixture_root: fixture.root.clone(),
+            before_sha: fixture.before_commit.clone(),
+            after_sha: fixture.after_commit.clone(),
+            artifacts,
+        })
+    })();
+    result.inspect_err(|_error| {
         let _ = fs::remove_dir_all(&fixture.root);
-        return Err(format!("authentic baseline chain failed: {error}"));
-    }
-    let baseline_dir = Path::new(NEGATIVE_WORK_DIR).join("baseline");
-    fs::create_dir_all(&baseline_dir)
-        .map_err(|err| format!("create baseline retention dir failed: {err}"))?;
-    let mut artifacts = Vec::new();
-    for name in CHAIN_FILES {
-        let retained = baseline_dir.join(name);
-        fs::copy(fixture.root.join(name), &retained)
-            .map_err(|err| format!("retain baseline artifact {name} failed: {err}"))?;
-        artifacts.push(artifact_digest(&baseline_dir, name)?);
-    }
-    Ok(BaselineContext {
-        fixture_root: fixture.root,
-        before_sha: fixture.before_commit,
-        after_sha: fixture.after_commit,
-        artifacts,
     })
 }
 
@@ -722,29 +775,38 @@ fn set_json_string(value: &mut Value, pointer: &str, new_value: &str) -> Result<
     Ok(())
 }
 
+/// Locate the value span of the one `content_sha256` key in a raw artifact
+/// document. The exactly-one-key assertion is part of the contract, so every
+/// commitment mutation and recommitment site shares this single scanner
+/// (#2824 review); the returned range covers the bytes between the quotes.
+fn content_commitment_value_span(text: &str) -> Result<std::ops::Range<usize>, String> {
+    let key = "\"content_sha256\"";
+    if text.matches(key).count() != 1 {
+        return Err(format!("expected exactly one {key} key"));
+    }
+    let Some(key_start) = text.find(key) else {
+        return Err(format!("expected the {key} key"));
+    };
+    let value_search_start = key_start + key.len();
+    let Some(value_offset) = text[value_search_start..].find('"') else {
+        return Err(format!("{key} must have a string value"));
+    };
+    let value_start = value_search_start + value_offset + 1;
+    let Some(end_offset) = text[value_start..].find('"') else {
+        return Err(format!("{key} value must be terminated"));
+    };
+    Ok(value_start..value_start + end_offset)
+}
+
 /// Re-commit the artifact content commitment: replace the one
 /// `content_sha256` value with the fixed placeholder, hash the exact bytes,
 /// and write the recomputed digest back. Mirrors the producer's documented
 /// `raw_json_placeholder_v1` canonicalization; the installed binary remains
 /// the only authority that validates the result.
 fn recommit_repo_exposure_bytes(raw: &str) -> Result<String, String> {
-    let key = "\"content_sha256\"";
-    if raw.matches(key).count() != 1 {
-        return Err(format!("recommit requires exactly one {key} key"));
-    }
     let mut text = raw.to_string();
-    let Some(key_start) = text.find(key) else {
-        return Err(format!("recommit requires the {key} key"));
-    };
-    let value_search_start = key_start + key.len();
-    let Some(value_offset) = text[value_search_start..].find('"') else {
-        return Err("recommit requires a string content_sha256 value".to_string());
-    };
-    let value_start = value_search_start + value_offset + 1;
-    let Some(end_offset) = text[value_start..].find('"') else {
-        return Err("recommit requires a terminated content_sha256 value".to_string());
-    };
-    text.replace_range(value_start..value_start + end_offset, CONTENT_PLACEHOLDER);
+    let span = content_commitment_value_span(&text)?;
+    text.replace_range(span, CONTENT_PLACEHOLDER);
     if text.matches(CONTENT_PLACEHOLDER).count() != 1 {
         return Err("recommit placeholder must appear exactly once".to_string());
     }
@@ -757,22 +819,8 @@ fn recommit_repo_exposure_bytes(raw: &str) -> Result<String, String> {
 #[cfg(test)]
 fn recompute_content_commitment(raw: &str) -> Result<String, String> {
     let mut text = raw.to_string();
-    let key = "\"content_sha256\"";
-    if raw.matches(key).count() != 1 {
-        return Err(format!("recompute requires exactly one {key} key"));
-    }
-    let Some(key_start) = text.find(key) else {
-        return Err(format!("recompute requires the {key} key"));
-    };
-    let value_search_start = key_start + key.len();
-    let Some(value_offset) = text[value_search_start..].find('"') else {
-        return Err("recompute requires a string content_sha256 value".to_string());
-    };
-    let value_start = value_search_start + value_offset + 1;
-    let Some(end_offset) = text[value_start..].find('"') else {
-        return Err("recompute requires a terminated content_sha256 value".to_string());
-    };
-    text.replace_range(value_start..value_start + end_offset, CONTENT_PLACEHOLDER);
+    let span = content_commitment_value_span(&text)?;
+    text.replace_range(span, CONTENT_PLACEHOLDER);
     Ok(format!(
         "sha256:{}",
         hex_lower(&Sha256::digest(text.as_bytes()))
@@ -1088,19 +1136,8 @@ fn case_artifact_commitment_duplicate(env: &CaseEnv) -> Result<CaseExecution, St
     execution.original = artifact_digests(env.root, &[AFTER_ARTIFACT])?;
     let path = env.root.join(AFTER_ARTIFACT);
     let text = crate::read_text_lossy(&path)?;
-    let key = "\"content_sha256\"";
-    let Some(key_start) = text.find(key) else {
-        return Err("after artifact content_sha256 key is missing".to_string());
-    };
-    let value_search_start = key_start + key.len();
-    let Some(value_offset) = text[value_search_start..].find('"') else {
-        return Err("after artifact content_sha256 value is missing".to_string());
-    };
-    let value_start = value_search_start + value_offset + 1;
-    let Some(end_offset) = text[value_start..].find('"') else {
-        return Err("after artifact content_sha256 value is unterminated".to_string());
-    };
-    let insertion_point = value_start + end_offset + 1;
+    let span = content_commitment_value_span(&text)?;
+    let insertion_point = span.end + 1;
     let duplicate = ",\n    \"content_sha256\": \"sha256:1111111111111111111111111111111111111111111111111111111111111111\"";
     let mut mutated = text;
     mutated.insert_str(insertion_point, duplicate);
@@ -1304,6 +1341,9 @@ fn negative_corpus_json(report: &NegativeCorpusReport) -> Result<String, String>
             .map(|(case_id, disposition)| json!({ "case_id": case_id, "disposition": disposition }))
             .collect::<Vec<_>>(),
         "summary": {
+            "run_status": report.run_status,
+            "covered_families": report.covered_families,
+            "deferred_families": report.deferred_families,
             "total_cases": report.cases.len(),
             "passed": passed,
             "failed": report.cases.len() - passed,
@@ -1323,6 +1363,16 @@ fn negative_corpus_markdown(report: &NegativeCorpusReport) -> String {
     let mut body = String::new();
     body.push_str("# release-negative-corpus\n\n");
     body.push_str(&format!("Status: {}\n\n", report.status));
+    body.push_str(&format!(
+        "Run status: `{}` — covered families: {}; deferred families: {}\n\n",
+        report.run_status,
+        report.covered_families.join(", "),
+        if report.deferred_families.is_empty() {
+            "none".to_string()
+        } else {
+            report.deferred_families.join(", ")
+        }
+    ));
     body.push_str(&format!("Version: {}\n\n", report.version));
     body.push_str("Integrated negative corpus for the release-readiness artifact/pair/verify/receipt authority chain (#2824). The installed candidate binary is the only validator; every case asserts exit status first, then the closed reason token, then byte-exact restoration and a passing control rerun.\n\n");
     body.push_str("## Candidate\n\n");
@@ -1356,8 +1406,8 @@ fn negative_corpus_markdown(report: &NegativeCorpusReport) -> String {
                 .map(|status| status.to_string())
                 .unwrap_or_else(|| "n/a".to_string()),
             case.process_outcome,
-            case.restoration_outcome,
-            case.control_outcome,
+            md_escape_inline(&case.restoration_outcome),
+            md_escape_inline(&case.control_outcome),
             case.violations.len(),
             case.status
         ));
@@ -1431,6 +1481,7 @@ fn release_negative_usage() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_string()).collect()
@@ -1673,6 +1724,150 @@ mod tests {
                 required.len()
             ));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn family_coverage_discloses_the_deferred_families() -> Result<(), String> {
+        let (covered, deferred) = family_coverage();
+        if covered != vec!["artifact".to_string()] {
+            return Err(format!(
+                "this slice covers only the artifact family: {covered:?}"
+            ));
+        }
+        let expected_deferred = vec![
+            "pair".to_string(),
+            "verify".to_string(),
+            "receipt".to_string(),
+        ];
+        if deferred != expected_deferred {
+            return Err(format!(
+                "deferred families must be derived from the case registry: {deferred:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn replace_once_requires_a_unique_anchor() -> Result<(), String> {
+        if replace_once("nothing to find here", "anchor", "x").is_ok() {
+            return Err("replace_once accepted a missing anchor".to_string());
+        }
+        // The whole-string "anchor anchor" contains the anchor twice.
+        if replace_once("anchor anchor", "anchor", "x").is_ok() {
+            return Err("replace_once accepted a repeated anchor".to_string());
+        }
+        let replaced = replace_once("one anchor only", "anchor", "x")?;
+        if replaced != "one x only" {
+            return Err(format!("unexpected replacement: {replaced}"));
+        }
+        Ok(())
+    }
+
+    fn snapshot_fixture_root(label: &str) -> Result<PathBuf, String> {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|err| format!("read clock failed: {err}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-negative-corpus-restore-{label}-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).map_err(|err| format!("create restore fixture failed: {err}"))?;
+        run_fixture_git_command(&root, &["init", "--quiet", "--template="], "initialize")?;
+        run_fixture_git_command(
+            &root,
+            &["config", "user.name", "RIPR Corpus Test"],
+            "user name",
+        )?;
+        run_fixture_git_command(
+            &root,
+            &["config", "user.email", "corpus-test@example.invalid"],
+            "user email",
+        )?;
+        run_fixture_git_command(&root, &["config", "commit.gpgSign", "false"], "signing")?;
+        fs::write(root.join("marker.txt"), "fixture\n")
+            .map_err(|err| format!("write restore fixture marker failed: {err}"))?;
+        run_fixture_git_command(&root, &["-c", "core.hooksPath=", "add", "."], "stage")?;
+        run_fixture_git_command(
+            &root,
+            &[
+                "-c",
+                "core.hooksPath=",
+                "commit",
+                "--quiet",
+                "-m",
+                "fixture",
+            ],
+            "commit",
+        )?;
+        Ok(root)
+    }
+
+    fn write_chain_files(root: &Path, marker: &str) -> Result<(), String> {
+        for name in CHAIN_FILES {
+            fs::write(root.join(name), format!("{marker}:{name}\n"))
+                .map_err(|err| format!("write chain file {name} failed: {err}"))?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn restore_state_recovers_bytes_and_head_after_mutation() -> Result<(), String> {
+        let root = snapshot_fixture_root("roundtrip")?;
+        let result = (|| -> Result<(), String> {
+            write_chain_files(&root, "original")?;
+            let snapshot = snapshot_state(&root)?;
+            write_chain_files(&root, "mutated")?;
+            restore_state(&root, &snapshot)?;
+            for name in CHAIN_FILES {
+                let restored = crate::read_text_lossy(&root.join(name))?;
+                if restored != format!("original:{name}\n") {
+                    return Err(format!("restored bytes drifted for {name}"));
+                }
+            }
+            if fixture_head(&root)? != snapshot.head {
+                return Err("restored head does not match the snapshot head".to_string());
+            }
+            Ok(())
+        })();
+        let cleanup = fs::remove_dir_all(&root);
+        result?;
+        cleanup.map_err(|err| format!("remove restore fixture failed: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn restore_state_rejects_digest_mismatch_and_unreturnable_head() -> Result<(), String> {
+        let root = snapshot_fixture_root("reject")?;
+        let result = (|| -> Result<(), String> {
+            write_chain_files(&root, "original")?;
+            let snapshot = snapshot_state(&root)?;
+            // A snapshot whose recorded digest does not match its own bytes
+            // must fail the digest verification, not restore silently.
+            let mut corrupted = snapshot.clone();
+            for file in &mut corrupted.files {
+                file.sha256 =
+                    "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                        .to_string();
+            }
+            if restore_state(&root, &corrupted).is_ok() {
+                return Err("a digest-mismatched snapshot must be rejected".to_string());
+            }
+            // A snapshot head the repository cannot return to must fail the
+            // restoration, not leave the workspace on a drifted revision.
+            let unreturnable = StateSnapshot {
+                head: "0123456789abcdef0123456789abcdef01234567".to_string(),
+                files: Vec::new(),
+            };
+            if restore_state(&root, &unreturnable).is_ok() {
+                return Err("an unreturnable snapshot head must be rejected".to_string());
+            }
+            Ok(())
+        })();
+        let cleanup = fs::remove_dir_all(&root);
+        result?;
+        cleanup.map_err(|err| format!("remove restore fixture failed: {err}"))?;
         Ok(())
     }
 
