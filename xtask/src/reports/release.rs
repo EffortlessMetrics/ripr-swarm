@@ -3278,8 +3278,12 @@ mod tests {
     /// condition. This holds before and after the fix; it is the invariant, not
     /// the regression.
     ///
-    /// It uses `std::process::Command` directly because `run_command_in_dir`
-    /// stringifies the `io::Error` and discards the `ErrorKind` this needs.
+    /// It spawns through `run_command_in_dir`, the same seam the journey test
+    /// uses, and pins the busy-executable error text the way the neighbouring
+    /// relative-spawn assertion pins the not-found class. `run_command_in_dir`
+    /// stringifies the `io::Error`, so the `ErrorKind` is not available here;
+    /// reconstructing that classification in xtask would fork the policy
+    /// `doctor_spawn_failure_is_retryable` already owns.
     #[cfg(unix)]
     #[test]
     fn an_open_writer_is_what_makes_a_published_binary_unexecutable() -> Result<(), String> {
@@ -3302,24 +3306,28 @@ mod tests {
                 .write(true)
                 .open(&written)
                 .map_err(|err| format!("open writer on written stub: {err}"))?;
-            let kind = std::process::Command::new(&written)
-                .arg("--list")
-                .output()
-                .err()
-                .map(|err| err.kind());
+            let args = vec!["--list".to_string()];
+            let busy = super::run_command_in_dir(&written, &args, &dir, "written stub");
             drop(writer);
-            if kind != Some(std::io::ErrorKind::ExecutableFileBusy) {
-                return Err(format!(
-                    "expected ExecutableFileBusy while a writer is open on the stub, got {kind:?}"
-                ));
+            match busy {
+                Ok(outcome) => {
+                    return Err(format!(
+                        "a stub with an open writer unexpectedly executed: {outcome:?}"
+                    ));
+                }
+                Err(error) if error.contains("os error 26") || error.contains("Text file busy") => {
+                }
+                Err(error) => {
+                    return Err(format!(
+                        "expected a busy-executable failure while a writer is open, got: {error}"
+                    ));
+                }
             }
 
             // A linked stub never has a writer, so it executes unconditionally.
             let linked = dir.join("linked-stub");
             fs::hard_link(&source, &linked).map_err(|err| format!("link stub: {err}"))?;
-            std::process::Command::new(&linked)
-                .arg("--list")
-                .output()
+            super::run_command_in_dir(&linked, &args, &dir, "linked stub")
                 .map_err(|err| format!("linked stub must execute: {err}"))?;
             Ok(())
         })();
