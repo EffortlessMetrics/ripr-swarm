@@ -76,6 +76,17 @@ are scoped or reviewed.
 
 ### Added
 
+- The `ripr agent start` workflow packet now states that its generated commands
+  assume bash. `commands.md` carries a prose note above the first command block,
+  and `workflow.json` gains an additive `command_shell: "bash"` field. The
+  command strings have always used POSIX single-quote quoting and `>`
+  redirection, so copying one into cmd.exe (which treats `'` as a literal
+  character) or PowerShell (which rejects the `'\''` escape) mis-passes or
+  rejects quoted arguments. This is disclosure only: no command string, schema
+  version, or existing field changed. A shell-neutral argv form (#1617) and a
+  PowerShell variant (#2964) remain separate work
+  ([#2963](https://github.com/EffortlessMetrics/ripr-swarm/issues/2963)).
+
 - `[profile.dev]` now uses `debug = "line-tables-only"` instead of the cargo
   default (`debug = "full"`). Line tables give backtraces with file:line
   resolution without the full variable-debuginfo cost, cutting link time and

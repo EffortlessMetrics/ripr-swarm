@@ -117,6 +117,15 @@ The manifest names the selected seam, missing discriminator or observation,
 recommended test target when available, artifact paths, and exact commands for
 the rest of the loop.
 
+Every generated command string in this loop — including the `agent verify` and
+receipt commands — is a bash command line. RIPR quotes arguments with POSIX
+single quotes and appends `>` redirection, and `commands.md` fences the commands
+as `bash`. `workflow.json` states the same boundary in `command_shell`. Run the
+commands from bash; on Windows that means Git Bash or WSL. cmd.exe treats `'` as
+a literal character, and PowerShell rejects the `'\''` escape, so either shell
+will pass or reject a quoted argument incorrectly. Emitting a shell-neutral argv
+form is tracked separately (#1617); a PowerShell variant is tracked in #2964.
+
 If the operator needs the full seam packet as well:
 
 ```bash

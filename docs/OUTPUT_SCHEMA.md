@@ -11804,6 +11804,7 @@ JSON shape:
   "schema_version": "0.1",
   "tool": "ripr",
   "status": "ready",
+  "command_shell": "bash",
   "root": ".",
   "mode": "draft",
   "out_dir": "target/ripr/workflow",
@@ -11870,6 +11871,12 @@ Field contract:
 
 - `schema_version` - currently `"0.1"`.
 - `status` - currently `"ready"` when the manifest was written.
+- `command_shell` - currently `"bash"`. Every `command` string in this manifest
+  is a bash command line: arguments are quoted with POSIX single quotes and
+  output redirection uses `>`. Consumers on Windows must run them through bash
+  (Git Bash or WSL); cmd.exe treats `'` as a literal character and PowerShell
+  rejects the `'\''` escape. `commands.md` states the same boundary in prose
+  above its first command block. A shell-neutral argv form is not emitted here.
 - `root`, `mode`, and `out_dir` - the selected workspace root, effective
   analysis mode, and workflow output directory.
 - `seam` - the selected seam fields copied from the generated agent brief.
