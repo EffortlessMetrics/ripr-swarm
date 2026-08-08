@@ -232,7 +232,7 @@ use policy::{
     check_allow_attributes, check_ci_lane_whitelist, check_doc_roles, check_droid_review_config,
     check_executable_files, check_file_policy, check_local_context, check_network_policy,
     check_no_panic_family, check_positioning_language, check_process_policy, check_product_copy,
-    check_proof_packs, check_static_language, check_workflows,
+    check_proof_packs, check_release_targets, check_static_language, check_workflows,
 };
 #[cfg(test)]
 use repo_readiness::{PrReadyStep, pr_ready_next_action, pr_ready_status_from_report_status};
