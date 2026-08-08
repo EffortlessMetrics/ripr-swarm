@@ -275,7 +275,7 @@ fn write_fabricated_agent_verify_json(
         path,
         format!(
             r#"{{
-  "schema_version": "0.2",
+  "schema_version": "0.3",
   "tool": "ripr",
   "status": "advisory",
   "inputs": {{"before": "{}", "after": "{}"}},
@@ -2629,7 +2629,7 @@ fn agent_verify_compares_before_after_repo_exposure_json() -> Result<(), Box<dyn
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(r#""schema_version": "0.2""#));
+    assert!(stdout.contains(r#""schema_version": "0.3""#));
     assert!(stdout.contains(r#""improved": 1"#));
     assert!(stdout.contains(r#""change": "improved""#));
     assert!(stdout.contains(r#""seam_id": "seam-a""#));
@@ -3715,7 +3715,7 @@ fn agent_verify_binds_artifact_content_commitments() -> Result<(), Box<dyn std::
     let verify: serde_json::Value = serde_json::from_str(&verify_text)?;
     let before_digest = repo_exposure_artifact_content_digest(&before)?;
     let after_digest = repo_exposure_artifact_content_digest(&after)?;
-    assert_eq!(json_pointer_str(&verify, "/schema_version")?, "0.2");
+    assert_eq!(json_pointer_str(&verify, "/schema_version")?, "0.3");
     assert_eq!(
         json_pointer_str(&verify, "/inputs/before_content_sha256")?,
         before_digest
@@ -3858,9 +3858,11 @@ fn agent_receipt_rejects_tampered_pair_binding_fields() -> Result<(), Box<dyn st
 
 #[test]
 fn agent_receipt_rejects_unsupported_verify_schema() -> Result<(), Box<dyn std::error::Error>> {
-    // Schema-version fail-closed (#2922 PR B): verify JSON from an older or
-    // newer schema than the canonical 0.2 binding shape is rejected for one
-    // bounded typed reason before any artifact work.
+    // Schema-version fail-closed (#2922 PR B, #3027): verify JSON from an
+    // older or newer schema than the canonical 0.3 binding shape is rejected
+    // for one bounded typed reason before any artifact work. A 0.2 document
+    // that is canonical in every other way is NOT recomputed into a valid
+    // 0.3 receipt — there is no silent migration.
     let root = unique_temp_workspace("agent-receipt-schema");
     std::fs::create_dir_all(&root)?;
     init_git_fixture_repo(&root)?;
@@ -3870,16 +3872,16 @@ fn agent_receipt_rejects_unsupported_verify_schema() -> Result<(), Box<dyn std::
         r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#,
     )?;
 
-    // Positive control: the canonical 0.2 output receipts.
+    // Positive control: the canonical 0.3 output receipts.
     let control = run_agent_receipt_command(&root, &verify, "seam-a", None);
     assert_success(&control);
 
-    for (label, version) in [("older", "0.1"), ("newer", "9.9")] {
-        let rewritten = root.join(format!("agent-verify-schema-{label}.json"));
+    for (label, version) in [("older", "0.1"), ("older", "0.2"), ("newer", "9.9")] {
+        let rewritten = root.join(format!("agent-verify-schema-{label}-{version}.json"));
         std::fs::write(
             &rewritten,
             verify_text.replace(
-                "\"schema_version\": \"0.2\"",
+                "\"schema_version\": \"0.3\"",
                 &format!("\"schema_version\": \"{version}\""),
             ),
         )?;
@@ -3888,7 +3890,7 @@ fn agent_receipt_rejects_unsupported_verify_schema() -> Result<(), Box<dyn std::
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
             stderr.contains("[unsupported_schema]"),
-            "mutation: rewrote verify JSON schema_version 0.2 -> {version} ({label} schema); expected failure kind [unsupported_schema]; actual stderr: {stderr}"
+            "mutation: rewrote verify JSON schema_version 0.3 -> {version} ({label} schema); expected failure kind [unsupported_schema]; actual stderr: {stderr}"
         );
     }
     std::fs::remove_dir_all(root)?;

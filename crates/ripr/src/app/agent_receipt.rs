@@ -189,6 +189,10 @@ mod tests {
         for (case, document) in [
             ("missing schema_version", r#"{"tool":"ripr"}"#),
             ("older schema 0.1", r#"{"schema_version":"0.1"}"#),
+            // A 0.2 verify document — canonical in every other way — is not
+            // current evidence after the #3027 vocabulary correction; it is
+            // rejected, never migrated.
+            ("older schema 0.2", r#"{"schema_version":"0.2"}"#),
             ("newer schema", r#"{"schema_version":"9.9"}"#),
             ("non-string schema", r#"{"schema_version":2}"#),
         ] {

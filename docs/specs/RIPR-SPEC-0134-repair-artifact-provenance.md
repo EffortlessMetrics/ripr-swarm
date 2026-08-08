@@ -96,11 +96,16 @@ rejected before receipt issuance.
 Verify schema `0.2` (#2922) binds the result to the exact artifact bytes it
 compared: canonical output carries `inputs.before_content_sha256` and
 `inputs.after_content_sha256`, the validated `artifact.content_sha256`
-commitments of the pair. The receipt's canonical recomputation therefore
+commitments of the pair. Schema `0.3` (#3027) keeps that binding and corrects
+the pair-level `artifact_currentness` value domain, a breaking family change
+for consumers dispatching on the old catch-all `dirty_worktree` pair token.
+The receipt's canonical recomputation therefore
 rejects a verify result replayed against different or mutated artifact bytes —
 including mutations invisible to the movement render — with one typed
 `[not_canonical]` reason, and rejects any verify JSON whose schema version is
 not the canonical one with `[unsupported_schema]` before any artifact work. A
+0.2 document that is canonical in every other way is rejected the same way;
+there is no migration path, only a fresh verify. A
 verify result produced while the pair was current is stale after repository
 movement and is rejected on the same canonical comparison; a fresh verify
 after movement succeeds but discloses `historical_noncurrent`.
@@ -111,7 +116,8 @@ after movement succeeds but discloses `historical_noncurrent`.
   process.
 - `agent verify` still compares static before/after evidence only; it does not
   execute tests or runtime mutation testing.
-- The schema `0.2` content-commitment binding (#2922) is byte-level replay
+- The schema `0.2`/`0.3` content-commitment binding (#2922, #3027) is
+  byte-level replay
   defense, not a signature: it detects replayed, stale, or mutated evidence,
   but command execution binding, configuration binding, and receipt signatures
   remain follow-up slices under #1941.
