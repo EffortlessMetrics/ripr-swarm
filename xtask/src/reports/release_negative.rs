@@ -2225,6 +2225,62 @@ fn release_negative_usage() -> String {
     "Usage: cargo xtask release-negative-corpus --version <version>".to_string()
 }
 
+/// Run the fixture's own test suite from inside a running `cargo test`
+/// process without inheriting the parent's build state (#2824 review):
+/// `CARGO_TARGET_DIR` lives inside the fixture root so the nested build
+/// never shares the parent's lock region or CARGO_* settings, and
+/// `--offline` keeps a network failure from ever reading as fixture evidence
+/// (the fixture has no dependencies). The outcome is classified before any
+/// fixture conclusion, mirroring the repo's infra-vs-real-failure doctrine:
+/// a spawn failure or lock/busy contention is an infrastructure error — a
+/// persistent lock error gets exactly one bounded retry and is still
+/// reported as infrastructure — and only a genuine non-zero cargo exit
+/// (compile or test diagnostic) is fixture evidence.
+#[cfg(test)]
+fn run_nested_fixture_cargo_test(root: &Path) -> Result<CommandResult, String> {
+    let target_dir = root.join("target").join("nested-cargo");
+    let target = target_dir.to_string_lossy().into_owned();
+    let args = vec!["test".to_string(), "--offline".to_string()];
+    let envs = [("CARGO_TARGET_DIR", target.as_str())];
+    let spawn = |attempt: &str| {
+        crate::run::capture_output_in_dir_with_envs(
+            "cargo",
+            &args,
+            root,
+            "two-seam fixture cargo test",
+            &envs,
+            &[],
+        )
+        .map_err(|err| format!("infrastructure error: {attempt} nested cargo spawn failed: {err}"))
+        .map(|output| CommandResult {
+            status: output.status.code(),
+            success: output.status.success(),
+            stdout: output.stdout,
+            stderr: output.stderr,
+        })
+    };
+    let output = spawn("initial")?;
+    if !output.success && nested_cargo_lock_contention(&output.stderr) {
+        let retry = spawn("retry")?;
+        if !retry.success && nested_cargo_lock_contention(&retry.stderr) {
+            return Err(format!(
+                "infrastructure error: nested cargo lock contention persisted after one retry: {}",
+                retry.stderr.trim().lines().next().unwrap_or("<no stderr>")
+            ));
+        }
+        return Ok(retry);
+    }
+    Ok(output)
+}
+
+#[cfg(test)]
+fn nested_cargo_lock_contention(stderr: &str) -> bool {
+    stderr.contains("Blocking waiting for file lock")
+        || stderr.contains("Text file busy")
+        || stderr.contains("os error 26")
+        || stderr.contains("resource temporarily unavailable")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2882,15 +2938,14 @@ mod tests {
             let before_sha = fixture_head(&root)?;
             let (_before_two_seam, after_two_seam) = build_two_seam_commits(&root, &before_sha)?;
             checkout_fixture_commit(&root, &after_two_seam)?;
-            let cargo = run_command_in_dir(
-                "cargo",
-                &["test".to_string()],
-                &root,
-                "two-seam fixture cargo test",
-            )?;
+            // Infrastructure errors (spawn, lock contention) are already
+            // classified inside the helper and never reach this conclusion;
+            // a non-zero exit here is a compile or test diagnostic and is
+            // the only shape that counts as fixture evidence.
+            let cargo = run_nested_fixture_cargo_test(&root)?;
             if !cargo.success {
                 return Err(format!(
-                    "the two-seam honesty fixture must compile and pass its tests: {}",
+                    "fixture evidence: the two-seam honesty fixture failed to compile or its tests failed: {}",
                     command_details(&cargo).join("; ")
                 ));
             }
