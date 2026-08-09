@@ -1,0 +1,103 @@
+# RIPR-SPEC-0148: Source-Promotion Preflight Receipt
+
+Status: accepted
+
+Owner: release control / swarm operations
+
+Created: 2026-08-09
+
+Linked issues:
+
+- #1492 — compile a source-promotion preflight receipt.
+- #1478 — consume the exact parent pair before constructing the join.
+
+Support-tier impact:
+
+- No product or support-tier change. This is a maintainer-facing, read-only
+  control-plane report.
+
+Policy impact:
+
+- No source integration, version, workflow, credential, publication, or
+  secret change.
+
+## Problem
+
+The source release process must preserve the complete squashed-PR history in
+the swarm parent while proving that source and swarm inputs are the exact
+transaction-boundary repositories and commits. Hand-built merge audits are
+easy to repeat incorrectly, confuse all-reachable with first-parent counts,
+and can accidentally mutate an authoritative checkout during conflict
+inspection.
+
+## Behavior
+
+`cargo xtask source-promotion preflight` consumes complete source and swarm
+parent SHAs plus explicit local repository roots. It verifies origin identity,
+exact commit identity, the held source main, and swarm-parent reachability. A
+disposable repository fetches both exact objects, computes the merge base and
+separately named all-reachable/first-parent counts, inventories changed paths,
+and runs `git merge-tree --write-tree` for textual conflict evidence.
+
+JSON and Markdown are projections of one deterministic receipt. The ordered
+SHA digest uses:
+
+```text
+git rev-list --first-parent --reverse MERGE_BASE..PARENT
+UTF-8 SHA lines joined with LF, then SHA-256
+```
+
+The receipt records source survivors, swarm authority paths requiring review,
+version/changelog observations, invalidation rules, and next actions. It does
+not create a join or modify either authoritative checkout.
+
+## Required Evidence
+
+- complete parent SHAs resolve exactly in their named repositories;
+- source parent equals the declared current source main;
+- swarm parent is an ancestor of the declared swarm main;
+- origin remotes identify the declared repositories;
+- merge base, both denominator variants, and ordered digest recipe are present;
+- disposable merge diagnostics and conflict paths are present;
+- JSON and Markdown are deterministic projections with no temporary path or
+  capture timestamp;
+- invalidation rules name parent, main, identity, ancestry, digest, conflict,
+  and tree changes.
+
+## Non-Goals
+
+- constructing or committing the history-preserving join;
+- changing versions or changelog metadata;
+- qualifying artifacts or authorizing publication;
+- tagging, publishing, signing, marketplace mutation, or back-sync;
+- treating a clean textual merge as proof that semantic overlap is absent.
+
+## Acceptance Examples
+
+- Diverged source/swarm repositories with a shared base report
+  `two_parent_join` and preserve each first-parent denominator.
+- A shared-path edit reports the `git merge-tree` conflict without changing
+  either checkout.
+- An abbreviated SHA, wrong origin, stale source main, or candidate outside
+  swarm main fails with an actionable error.
+
+## Test Mapping
+
+- `xtask/src/reports/source_promotion.rs` unit tests cover SHA validation,
+  digest order, remote identity, authority-path classification, fixture shape,
+  and a disposable conflicting repository pair.
+- `fixtures/source_promotion/diverged-conflict.json` pins the discriminating
+  divergent/conflict expectation.
+
+## Implementation Mapping
+
+- `xtask/src/reports/source_promotion.rs`
+- `xtask/src/command.rs`
+- `xtask/src/dispatch.rs`
+- `docs/SOURCE_PROMOTION_PREFLIGHT.md`
+
+## Metrics
+
+No product metric is emitted. Receipt fields provide the source-promotion
+denominator, digest, conflict, and identity evidence needed by the release
+operator.
