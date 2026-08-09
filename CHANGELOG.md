@@ -11,6 +11,87 @@ are scoped or reviewed.
 
 ### Fixed
 
+- The README's example output was missing two lines the renderer has been
+  emitting: the `Why <class>:` classification hint, and the whole
+  `Next: drill into the top finding:` block naming the `explain` and `context`
+  commands. The second is the most actionable thing on screen — the product's
+  own advertisement of its output omitted the step that tells a reader what to
+  run next. Both now match `fixtures/boundary_gap/expected/human.txt`, which is
+  the same example.
+
+- `ripr explain` and `ripr context` now reject a mistyped flag with a
+  suggestion. Neither parser routed through the shared unknown-argument
+  helper: `ripr context --fromm` failed with a bare
+  `unexpected context argument "--fromm"` — no suggestion and no help
+  pointer — and `ripr explain --fromm` did not report an argument error at
+  all, because the positional-selector arm accepted any token, so `--fromm`
+  was taken as the finding selector and analysis ran against it. Both parsers
+  now use the shared helper, and `explain`'s positional arm rejects a
+  `-`-prefixed token unless it is selector-shaped, so a `file:line` selector
+  whose path begins with `-` still resolves. Output becomes
+  `unknown context argument "--fromm". Did you mean \`--from\`? Run \`ripr context --help\`.`
+
+  Both commands are also registered in the help lookup and the command-path
+  list the flag-parity guard iterates, which previously omitted them from both
+  sides and so could not see the gap.
+
+- The release external-cwd journey test no longer flakes with `Text file busy`
+  under the full `reports::release` filter. It published its spawnable stub with
+  `fs::copy` from the running test binary, which holds a writable descriptor open
+  across a multi-megabyte transfer. `ETXTBSY` is raised while any process holds
+  the file open for writing, and `FD_CLOEXEC` closes an inherited descriptor at
+  `exec`, not during the fork/exec window — so a peer test forking inside that
+  transfer left the stub transiently un-executable. This is the same mechanism
+  recorded for the doctor atomic-publication test (#2441), but it is removed
+  rather than retried here: the stub is now published by hard link, so no
+  writable descriptor ever exists on the executed inode and the precondition for
+  `ETXTBSY` cannot arise. A staged copy-then-rename fallback covers hosts without
+  hard links. Test-only change; no `ripr` behavior is affected
+  ([#3051](https://github.com/EffortlessMetrics/ripr-swarm/issues/3051)).
+
+- `cargo xtask check-public-api` now observes the transitive public surface.
+  Its collector matched two line prefixes in `crates/ripr/src/lib.rs`, so every
+  `pub` item reachable through an allowlisted `pub mod` was invisible: a new
+  `pub const` in `domain/mod.rs` was reported as `pass`. The gate now parses the
+  crate's module tree and records module-level items whose visibility is a bare
+  `pub`, following `pub mod` into other files. `policy/public_api.txt` is
+  rewritten as a `<kind> <path>` recording of the surface that already existed —
+  214 entries where 18 lines were recorded before. No item's visibility changed;
+  the previously unrecorded items were already public. The gate does not cover
+  public struct fields, enum variants, trait items, or associated functions in
+  `impl` blocks, and it records a glob re-export as a glob because a syntax walk
+  cannot expand one. Both limits are stated in the gate's own report.
+
+  Three blind spots in that first walk are closed. `cfg` predicates were
+  decided by looking for the identifiers `test` and `not` anywhere in the
+  predicate, which was wrong in both directions: `#[cfg(any(test, feature =
+  "x"))]` was dropped although a feature-enabled build exports it, so an
+  accidental public addition passed the gate, and `#[cfg(all(test, not(feature
+  = "x")))]` was recorded although nothing but a test build compiles it. Each
+  predicate is now evaluated with `test = false` and every other option left
+  unknown, and an item is dropped only when no non-test build can compile it.
+  Non-`pub` modules were skipped entirely, so a `#[macro_export] macro_rules!`
+  declared in one was missed even though it binds at the crate root whatever
+  the declaring module's visibility; such modules are now walked for their
+  exported macros and nothing else. Completed work was keyed by file path
+  alone, so with two `#[path]` modules sharing one file only the first path was
+  recorded; it is now keyed by file and module path, with a separate
+  in-progress set bounding a module tree that names itself. A `#[path]` on a
+  module declared at the top level of a non-`mod.rs` file also resolved against
+  the wrong base directory — it is relative to the directory holding that file,
+  not to the file's child-module directory, which is how
+  `crates/ripr/src/cli/commands.rs` declares its subcommands.
+
+  `policy/public_api.txt` is unchanged: none of these corrections moves the
+  `ripr` crate's own recorded surface.
+
+- The `fabricated_result` case in `fixtures/assurance_vocabulary/assurance/corpus.json`
+  omitted `runtime_mutation`, so it failed the assurance schema for a missing
+  required field rather than for the producer-bound digest mismatch it exists to
+  demonstrate. The field is now present and the case discriminates on its
+  intended axis
+  ([#2923](https://github.com/EffortlessMetrics/ripr-swarm/issues/2923)).
+
 - Human output no longer restates the `Missing discriminator` label inside its
   own value. The classifier builds these entries as
   `Missing discriminator value: <value>`, so the digest rendered
@@ -75,6 +156,47 @@ are scoped or reviewed.
   ([#2592](https://github.com/EffortlessMetrics/ripr-swarm/issues/2592)).
 
 ### Added
+
+- The `ripr agent start` workflow packet now states that its generated commands
+  assume bash. `commands.md` carries a prose note above the first command block,
+  and `workflow.json` gains an additive `command_shell: "bash"` field. The
+  command strings have always used POSIX single-quote quoting and `>`
+  redirection, so copying one into cmd.exe (which treats `'` as a literal
+  character) or PowerShell (which rejects the `'\''` escape) mis-passes or
+  rejects quoted arguments. The note names Git Bash specifically rather than
+  "bash on Windows": generated paths keep their Windows drive-letter prefix,
+  which WSL resolves as a relative path, so WSL needs each path translated to
+  `/mnt/c/...` and `ripr` installed inside it. This is disclosure only: no
+  command string, schema version, or existing field changed. A shell-neutral
+  argv form (#1617) and a PowerShell variant (#2964) remain separate work
+  ([#2963](https://github.com/EffortlessMetrics/ripr-swarm/issues/2963)).
+
+- Published schemas that had only a reverse-direction `schema_version` check are
+  now bound to real producer bytes by the verification-contract registry. The
+  Rust repair trust corpus of record (`metrics/rust-repair-trust/corpus.json`)
+  validates as itself rather than through a copy; the `command_spec` and
+  `verification_command_spec` shapes in `schemas/ripr/repair-assurance.schema.json`
+  validate against the `command_specs` a generated agent packet actually emits;
+  and the design-only `RepairAssuranceV1` envelope validates against the
+  assurance vocabulary corpus records that carry a `record` and are not marked
+  `invalid`, making a claim that `fixtures/assurance_vocabulary/SPEC.md`
+  previously stated but nothing enforced. Patch-shaped cases and advertised
+  negatives stay outside that walk and are covered by their own tests, so the
+  subject count does not imply coverage it lacks. Each pair carries a negative mutation that must fail.
+  `docs/verification/schema-producer-audit.md` records the producer, canonical
+  subject, negative mutation, and explicit exemption for every published schema
+  — including the `riprAgent` protocol schemas, which remain reserved and
+  routed to [#3009](https://github.com/EffortlessMetrics/ripr-swarm/issues/3009)
+  ([#2923](https://github.com/EffortlessMetrics/ripr-swarm/issues/2923)).
+
+- The contract validator now evaluates `oneOf`, `if`/`then`/`else`, `not`,
+  `minItems`, `maxItems`, `uniqueItems`, `maximum`, and `pattern`. Conditional
+  requirements and identity commitments — 40-character head SHAs, `sha256:`
+  digests, and the relative `working_directory` constraint — were declared by
+  the published schemas and enforced by nothing. `pattern` support is
+  fail-closed: an uninterpretable expression is reported as a violation instead
+  of assumed to match
+  ([#2923](https://github.com/EffortlessMetrics/ripr-swarm/issues/2923)).
 
 - `[profile.dev]` now uses `debug = "line-tables-only"` instead of the cargo
   default (`debug = "full"`). Line tables give backtraces with file:line

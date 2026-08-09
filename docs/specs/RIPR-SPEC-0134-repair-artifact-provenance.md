@@ -68,8 +68,21 @@ analysis-input identities before movement calculation. It adds
 advisory output with one of:
 
 - `current`;
-- `dirty_worktree`;
-- `historical_noncurrent`.
+- `historical_noncurrent`;
+- `historical_before_current_after`;
+- `current_before_historical_after`;
+- `dirty_before`;
+- `dirty_after`;
+- `dirty_both`.
+
+The pair token states what each side of the pair is (#3027): a dirty side is
+named (`dirty_before`, `dirty_after`, or `dirty_both`) rather than every mixed
+pair collapsing into one dirty label, and the clean expected transaction —
+the repository moved past the before artifact while the after artifact is
+current — is `historical_before_current_after`. A fully current pair fails
+the movement gate and a current-before/historical-after pair fails the
+lineage gate, so `current` and `current_before_historical_after` close the
+vocabulary without being reachable verify outcomes today.
 
 When Git identity is unavailable, the producer discloses `unavailable` in the
 artifact and the verifier rejects it as unsuitable evidence.
@@ -83,11 +96,16 @@ rejected before receipt issuance.
 Verify schema `0.2` (#2922) binds the result to the exact artifact bytes it
 compared: canonical output carries `inputs.before_content_sha256` and
 `inputs.after_content_sha256`, the validated `artifact.content_sha256`
-commitments of the pair. The receipt's canonical recomputation therefore
+commitments of the pair. Schema `0.3` (#3027) keeps that binding and corrects
+the pair-level `artifact_currentness` value domain, a breaking family change
+for consumers dispatching on the old catch-all `dirty_worktree` pair token.
+The receipt's canonical recomputation therefore
 rejects a verify result replayed against different or mutated artifact bytes —
 including mutations invisible to the movement render — with one typed
 `[not_canonical]` reason, and rejects any verify JSON whose schema version is
 not the canonical one with `[unsupported_schema]` before any artifact work. A
+0.2 document that is canonical in every other way is rejected the same way;
+there is no migration path, only a fresh verify. A
 verify result produced while the pair was current is stale after repository
 movement and is rejected on the same canonical comparison; a fresh verify
 after movement succeeds but discloses `historical_noncurrent`.
@@ -98,7 +116,8 @@ after movement succeeds but discloses `historical_noncurrent`.
   process.
 - `agent verify` still compares static before/after evidence only; it does not
   execute tests or runtime mutation testing.
-- The schema `0.2` content-commitment binding (#2922) is byte-level replay
+- The schema `0.2`/`0.3` content-commitment binding (#2922, #3027) is
+  byte-level replay
   defense, not a signature: it detects replayed, stale, or mutated evidence,
   but command execution binding, configuration binding, and receipt signatures
   remain follow-up slices under #1941.
@@ -116,7 +135,9 @@ after movement succeeds but discloses `historical_noncurrent`.
 
 - Producer output tests cover identity and streaming output.
 - CLI smoke tests cover a valid bound pair, a historical comparable pair,
-  dirty-worktree disclosure, tampered bytes, incomparable input identities,
+  mixed pair-currentness disclosure (historical-before/current-after,
+  dirty-before, dirty-after, and dirty-both, #3027), tampered bytes,
+  incomparable input identities,
   unsupported schema, malformed typed seam, plausible uncommitted JSON,
   fabricated verify JSON, altered verify movement, incomparable base revision,
   incomparable analysis inputs, verify replay against mutated artifact bytes,
@@ -126,13 +147,38 @@ after movement succeeds but discloses `historical_noncurrent`.
   different seam moves.
 - The editor repair-loop fixture consumes bound artifacts and records explicit
   currentness.
+- The integrated installed-candidate negative corpus (`cargo xtask
+  release-negative-corpus --version <version>`, #2824) runs the packaged
+  candidate through the authentic readiness chain in a controlled external
+  fixture and injects exactly one mutation per case — artifact identity,
+  revision, snapshot, and commitment mutations; pair comparability, lineage,
+  and movement mutations; verify schema, replay, staleness, and tamper
+  mutations; and receipt issuance failures. Each case asserts the process
+  exit status first and the closed reason token second, restores the original
+  bytes/state byte-exactly (verified by digest), and reruns the original
+  command to a passing control before a per-case failure receipt is retained
+  under `target/ripr/release-negative-corpus/`. Output-contract breaches
+  (stdout rendered on a rejection, a rejected issuance creating or updating
+  its out file, a stale prior receipt digest drifting, a retained mutation
+  source missing) are recorded as first-class receipt `violations`, and any
+  recorded violation fails the case even when every outcome token matched.
+  The report summary discloses matrix completeness from the case registry:
+  a slice that lands only some case families reports
+  `run_status: "families_deferred"` with explicit `covered_families` /
+  `deferred_families` lists; the full matrix reports `run_status:
+  "complete"`. Deferred negatives without a
+  real producer on main (migration claims of fresh production, binary/artifact
+  inventory disagreement) are recorded as explicit `not_applicable`
+  dispositions, never fabricated rejections.
 
 ## Acceptance Examples
 
-### Current bound pair
+### Historical-before/current-after bound pair
 
-Two snapshots from the same root with the same base identity and current HEAD
-produce advisory movement with `artifact_currentness = "current"`.
+A before snapshot bound to a superseded revision and an after snapshot bound to
+the current HEAD — the expected clean before/after transaction — produce
+advisory movement with
+`artifact_currentness = "historical_before_current_after"` (#3027).
 
 ### Tampered or fabricated input
 
@@ -142,7 +188,8 @@ an unsupported schema fails before movement calculation.
 ## Test Mapping
 
 - `crates/ripr/src/agent/artifact.rs` tests the fixed commitment protocol and
-  duplicate-field rejection, plus the portable input-identity contract (#2823):
+  duplicate-field rejection, plus the closed pair-currentness vocabulary
+  (`pair_currentness_label`, #3027) and the portable input-identity contract (#2823):
   identity portability across equivalent checkout roots, concrete-root
   rejection at an equivalent clone, revision-only snapshot movement, semantic
   input drift (mode, base, config, manifest, lockfile), the scoped
@@ -159,6 +206,15 @@ an unsupported schema fails before movement calculation.
   older/newer verify schema versions, stale verify replay after repository
   movement, an absent receipt target, and the unmoved-retained-target
   projection honesty case.
+- `xtask/src/reports/release_negative.rs` (#2824) is the integrated
+  installed-candidate negative corpus: it shares the release-readiness
+  package/install and authentic-journey helpers (the installed binary stays
+  the only validator), and its unit tests pin the mutation/receipt machinery
+  — recommit binding and stale-commitment detection, unique-anchor
+  replacement, hex-identity shifting, exit-status-before-token rejection
+  evaluation, receipt finalization, the required case matrix, the deferred
+  `not_applicable` dispositions, fail-closed fixture copying, and the
+  JSON/Markdown report shape.
 
 ## Implementation Mapping
 
@@ -170,6 +226,11 @@ an unsupported schema fails before movement calculation.
 - `crates/ripr/src/output/outcome/render_json.rs` discloses currentness and
   renders the artifact content-commitment binding (`AgentVerifyArtifactBinding`
   in `crates/ripr/src/output/outcome/mod.rs`).
+- `xtask/src/reports/release_negative.rs` orchestrates the #2824 negative
+  corpus (fixture cloning, one-mutation injection, execution, retention,
+  byte-exact restoration, reporting); it owns no validation authority itself
+  and reuses the `xtask/src/reports/release.rs` candidate-install and
+  authentic-chain helpers.
 
 ## Metrics
 

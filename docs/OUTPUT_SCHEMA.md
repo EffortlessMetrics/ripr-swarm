@@ -44,7 +44,7 @@ map is:
 | `ripr doctor --json` | `schema_version` | `0.2` |
 | `ripr agent packet` | `schema_version` | `0.4` |
 | `ripr agent receipt` | `schema_version` | `0.5` |
-| `ripr agent verify` | `schema_version` | `0.2` |
+| `ripr agent verify` | `schema_version` | `0.3` |
 | `ripr agent status` | `schema_version` | `0.1` |
 | `ripr agent review-summary` | `schema_version` | `0.1` |
 | `ripr receipt write/check` | `schema_version` | `0.1` |
@@ -6296,7 +6296,7 @@ JSON shape:
 
 ```json
 {
-  "schema_version": "0.2",
+  "schema_version": "0.3",
   "tool": "ripr",
   "status": "advisory",
   "inputs": {
@@ -6370,11 +6370,14 @@ JSON shape:
 
 Field contract:
 
-- `schema_version` - currently `"0.2"`. Version `0.2` added the artifact
+- `schema_version` - currently `"0.3"`. Version `0.2` added the artifact
   content-commitment binding (`inputs.before_content_sha256` /
   `inputs.after_content_sha256`) so a verify result is bound to the exact
-  artifact bytes it compared; `agent receipt` fails closed on any other
-  schema version.
+  artifact bytes it compared. Version `0.3` (#3027) corrects the pair-level
+  `artifact_currentness` value domain — a closed-vocabulary correction that
+  removes the old catch-all `dirty_worktree` pair token — so consumers
+  dispatching on 0.2 values must re-verify; `agent receipt` fails closed on
+  any other schema version and never migrates a 0.2 document.
 - `status` - always `"advisory"`; this is an agent verification hint, not a CI
   policy.
 - `inputs.before` / `inputs.after` - the compared snapshot paths.
@@ -6383,8 +6386,12 @@ Field contract:
   This is the replay binding: a consumer that revalidates the artifacts can
   detect any byte change after verify, including one invisible to the
   movement render.
-- `artifact_currentness` - the pair's repository identity disclosure:
-  `current`, `dirty_worktree`, or `historical_noncurrent`. It does not claim
+- `artifact_currentness` - the pair's repository identity disclosure, one of:
+  `current`, `historical_noncurrent`, `historical_before_current_after`,
+  `current_before_historical_after`, `dirty_before`, `dirty_after`, or
+  `dirty_both`. A dirty side names the side (`dirty_before`, `dirty_after`,
+  or `dirty_both`); the clean expected transaction is
+  `historical_before_current_after`. It does not claim
   that tests ran or that the static gap is correct.
 - `summary.improved` - matched seams whose after `SeamGripClass` ranks higher
   than before.
@@ -11804,6 +11811,7 @@ JSON shape:
   "schema_version": "0.1",
   "tool": "ripr",
   "status": "ready",
+  "command_shell": "bash",
   "root": ".",
   "mode": "draft",
   "out_dir": "target/ripr/workflow",
@@ -11870,6 +11878,14 @@ Field contract:
 
 - `schema_version` - currently `"0.1"`.
 - `status` - currently `"ready"` when the manifest was written.
+- `command_shell` - currently `"bash"`. Every `command` string in this manifest
+  is a bash command line: arguments are quoted with POSIX single quotes and
+  output redirection uses `>`. Consumers on Windows must run them through Git
+  Bash; cmd.exe treats `'` as a literal character and PowerShell rejects the
+  `'\''` escape. WSL bash is not equivalent, because paths in this manifest keep
+  their Windows drive-letter prefix, which WSL resolves as a relative path.
+  `commands.md` states the same boundary in prose above its first command block.
+  No shell-neutral argv form is emitted for this schema version.
 - `root`, `mode`, and `out_dir` - the selected workspace root, effective
   analysis mode, and workflow output directory.
 - `seam` - the selected seam fields copied from the generated agent brief.
@@ -12146,7 +12162,7 @@ unreviewed references and legacy-only projections.
 `source.github_repository` pins the GitHub repository whose retained authority
 may be imported; captures from another repository are rejected.
 `source.provisional_review_cutoff_sha` optionally pins the fixed review cutoff
-used by #2832. Each record may also carry `claim_refs[]`,
+used by #2832 and extended through the selected development cut by #2825. Each record may also carry `claim_refs[]`,
 `reference_capture_status` (`not_captured`, `captured`,
 `no_linked_authority`, `ambiguous`, or `unavailable`), and
 `reference_capture_limitation`. `candidate_tree_state_pending` is the
@@ -12155,10 +12171,12 @@ adjudicated; it is only valid with `operator_decision_required`. The optional
 `candidate_selection` object is the #2766/#2871 selected-claim authority, not a
 claim inferred from numeric issue or PR references.
 
-The checked provisional fixture also retains the #2832 adjudication batch
-receipt in each reviewed record's `review_refs[]`, and its candidate-tree
-commit list is the ordered projection of reviewed `candidate_tree_state` values.
-Rows after the pinned cutoff remain pending and do not enter that projection.
+The checked provisional fixture also retains the #2832 and #2825 adjudication
+batch receipts in each reviewed record's `review_refs[]`, and its
+candidate-tree commit list is the ordered projection of reviewed
+`candidate_tree_state` values. Unreviewed rows after a pinned cutoff remain
+pending and do not enter that projection; once adjudicated through the
+selected cut, each row carries its reviewed tree state into the projection.
 
 ## Operator Cockpit Report
 

@@ -275,7 +275,7 @@ fn write_fabricated_agent_verify_json(
         path,
         format!(
             r#"{{
-  "schema_version": "0.2",
+  "schema_version": "0.3",
   "tool": "ripr",
   "status": "advisory",
   "inputs": {{"before": "{}", "after": "{}"}},
@@ -2435,6 +2435,54 @@ fn agent_start_writes_source_edit_free_workflow_packet() -> Result<(), Box<dyn s
 }
 
 #[test]
+fn agent_start_packet_discloses_that_generated_commands_assume_bash()
+-> Result<(), Box<dyn std::error::Error>> {
+    let out_dir = unique_temp_workspace("agent-start-shell-disclosure");
+    let out = out_dir
+        .to_str()
+        .ok_or("workflow output path should be utf-8")?;
+
+    let output = run_ripr_in_workspace(&[
+        "agent",
+        "start",
+        "--root",
+        "fixtures/boundary_gap/input",
+        "--seam-id",
+        "67fc764ba37d77bd",
+        "--out",
+        out,
+    ])?;
+    assert_success(&output);
+
+    let commands_md = std::fs::read_to_string(out_dir.join("commands.md"))?;
+    let workflow_json = std::fs::read_to_string(out_dir.join("workflow.json"))?;
+
+    // The commands are already fenced as ```bash, so a bare `bash` substring is
+    // not evidence. Require the prose disclosure ahead of the first fence.
+    let disclosure = commands_md
+        .find("Generated commands are bash command lines.")
+        .ok_or_else(|| format!("commands.md must disclose the bash assumption:\n{commands_md}"))?;
+    let first_fence = commands_md
+        .find("```bash")
+        .ok_or("commands.md must still fence commands as bash")?;
+    assert!(
+        disclosure < first_fence,
+        "bash disclosure must precede the first copyable command in commands.md"
+    );
+    assert!(
+        commands_md.contains("PowerShell"),
+        "commands.md must name the shells that do not accept these commands:\n{commands_md}"
+    );
+    assert!(
+        workflow_json.contains(r#""command_shell": "bash""#),
+        "workflow.json must name the shell its command strings assume:\n{workflow_json}"
+    );
+
+    std::fs::remove_dir_all(out_dir)?;
+    Ok(())
+}
+
+#[test]
 fn agent_repair_phases_materialize_snapshots_and_verify_json()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = unique_temp_workspace("agent-repair-phases");
@@ -2629,7 +2677,7 @@ fn agent_verify_compares_before_after_repo_exposure_json() -> Result<(), Box<dyn
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(r#""schema_version": "0.2""#));
+    assert!(stdout.contains(r#""schema_version": "0.3""#));
     assert!(stdout.contains(r#""improved": 1"#));
     assert!(stdout.contains(r#""change": "improved""#));
     assert!(stdout.contains(r#""seam_id": "seam-a""#));
@@ -2878,7 +2926,13 @@ fn agent_verify_accepts_historical_comparable_pair_with_disclosure()
         "--json",
     ]);
     assert_success(&output);
-    assert!(String::from_utf8_lossy(&output.stdout).contains("historical_noncurrent"));
+    // Both artifacts stayed bound to the superseded revision, so the pair is
+    // (Historical, Historical) (#3027).
+    let verify: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(
+        json_pointer_str(&verify, "/artifact_currentness")?,
+        "historical_noncurrent"
+    );
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
@@ -2910,8 +2964,134 @@ fn agent_verify_discloses_current_head_with_dirty_worktree()
         "--json",
     ]);
     assert_success(&output);
-    assert!(String::from_utf8_lossy(&output.stdout).contains("dirty_worktree"));
+    // Both sides are bound to the live head with a dirty worktree, so the
+    // pair token names both dirty sides (#3027); `dirty_worktree` stays
+    // reserved for per-artifact evidence.
+    let verify: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(
+        json_pointer_str(&verify, "/artifact_currentness")?,
+        "dirty_both"
+    );
     std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
+fn agent_verify_and_receipt_disclose_historical_before_current_after_pair()
+-> Result<(), Box<dyn std::error::Error>> {
+    // The expected clean before/after transaction (#3027): the repository
+    // moved past the before artifact, so the pair is (Historical, Current) —
+    // not a dirty worktree. The receipt path recomputes the same token and
+    // its canonical byte comparison must accept the verify output.
+    let root = unique_temp_workspace("agent-verify-historical-before");
+    std::fs::create_dir_all(&root)?;
+    init_git_fixture_repo(&root)?;
+    let before = root.join("before.repo-exposure.json");
+    let after = root.join("after.repo-exposure.json");
+    write_bound_repo_exposure_fixture(
+        &root,
+        &before,
+        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#,
+    )?;
+    advance_fixture_head(&root, "after movement")?;
+    write_bound_repo_exposure_fixture(
+        &root,
+        &after,
+        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#,
+    )?;
+
+    let output = run_ripr(&[
+        "agent",
+        "verify",
+        "--root",
+        &root.display().to_string(),
+        "--before",
+        &before.display().to_string(),
+        "--after",
+        &after.display().to_string(),
+        "--json",
+    ]);
+    assert_success(&output);
+    let verify: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(
+        json_pointer_str(&verify, "/artifact_currentness")?,
+        "historical_before_current_after"
+    );
+
+    let verify_path = root.join("agent-verify.json");
+    std::fs::write(&verify_path, &output.stdout)?;
+    let receipt = root.join("agent-receipt.json");
+    let receipt_output = run_ripr(&[
+        "agent",
+        "receipt",
+        "--root",
+        &root.display().to_string(),
+        "--verify-json",
+        &verify_path.display().to_string(),
+        "--seam-id",
+        "seam-a",
+        "--json",
+        "--out",
+        &receipt.display().to_string(),
+    ]);
+    assert_success(&receipt_output);
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
+fn agent_verify_discloses_dirty_before_and_dirty_after_pairs()
+-> Result<(), Box<dyn std::error::Error>> {
+    // A declared dirty worktree on exactly one side names that side (#3027).
+    // Both artifacts stay bound to the live head; a single-dirty pair is
+    // admissible at the same revision because the movement gate only rejects
+    // a fully current pair (#2922).
+    for (label, dirty_side, expected) in [
+        ("dirty-before", "before", "dirty_before"),
+        ("dirty-after", "after", "dirty_after"),
+    ] {
+        let root = unique_temp_workspace(&format!("agent-verify-{label}"));
+        std::fs::create_dir_all(&root)?;
+        init_git_fixture_repo(&root)?;
+        let before = root.join("before.repo-exposure.json");
+        let after = root.join("after.repo-exposure.json");
+        let seam = r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#;
+        write_bound_repo_exposure_fixture(&root, &before, seam)?;
+        write_bound_repo_exposure_fixture(&root, &after, seam)?;
+        let dirty_path = if dirty_side == "before" {
+            &before
+        } else {
+            &after
+        };
+        let declared_dirty = std::fs::read_to_string(dirty_path)?
+            .replace("\"worktree\": \"clean\"", "\"worktree\": \"dirty\"");
+        assert_ne!(
+            declared_dirty,
+            std::fs::read_to_string(dirty_path)?,
+            "{label}: fixture must declare a clean worktree before the flip"
+        );
+        std::fs::write(dirty_path, recommit_repo_exposure_json(declared_dirty))?;
+
+        let output = run_ripr(&[
+            "agent",
+            "verify",
+            "--root",
+            &root.display().to_string(),
+            "--before",
+            &before.display().to_string(),
+            "--after",
+            &after.display().to_string(),
+            "--json",
+        ]);
+        assert_success(&output);
+        let verify: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        assert_eq!(
+            json_pointer_str(&verify, "/artifact_currentness")?,
+            expected,
+            "{label}"
+        );
+        std::fs::remove_dir_all(root)?;
+    }
     Ok(())
 }
 
@@ -3583,7 +3763,7 @@ fn agent_verify_binds_artifact_content_commitments() -> Result<(), Box<dyn std::
     let verify: serde_json::Value = serde_json::from_str(&verify_text)?;
     let before_digest = repo_exposure_artifact_content_digest(&before)?;
     let after_digest = repo_exposure_artifact_content_digest(&after)?;
-    assert_eq!(json_pointer_str(&verify, "/schema_version")?, "0.2");
+    assert_eq!(json_pointer_str(&verify, "/schema_version")?, "0.3");
     assert_eq!(
         json_pointer_str(&verify, "/inputs/before_content_sha256")?,
         before_digest
@@ -3726,9 +3906,11 @@ fn agent_receipt_rejects_tampered_pair_binding_fields() -> Result<(), Box<dyn st
 
 #[test]
 fn agent_receipt_rejects_unsupported_verify_schema() -> Result<(), Box<dyn std::error::Error>> {
-    // Schema-version fail-closed (#2922 PR B): verify JSON from an older or
-    // newer schema than the canonical 0.2 binding shape is rejected for one
-    // bounded typed reason before any artifact work.
+    // Schema-version fail-closed (#2922 PR B, #3027): verify JSON from an
+    // older or newer schema than the canonical 0.3 binding shape is rejected
+    // for one bounded typed reason before any artifact work. A 0.2 document
+    // that is canonical in every other way is NOT recomputed into a valid
+    // 0.3 receipt — there is no silent migration.
     let root = unique_temp_workspace("agent-receipt-schema");
     std::fs::create_dir_all(&root)?;
     init_git_fixture_repo(&root)?;
@@ -3738,16 +3920,16 @@ fn agent_receipt_rejects_unsupported_verify_schema() -> Result<(), Box<dyn std::
         r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#,
     )?;
 
-    // Positive control: the canonical 0.2 output receipts.
+    // Positive control: the canonical 0.3 output receipts.
     let control = run_agent_receipt_command(&root, &verify, "seam-a", None);
     assert_success(&control);
 
-    for (label, version) in [("older", "0.1"), ("newer", "9.9")] {
-        let rewritten = root.join(format!("agent-verify-schema-{label}.json"));
+    for (label, version) in [("older", "0.1"), ("older", "0.2"), ("newer", "9.9")] {
+        let rewritten = root.join(format!("agent-verify-schema-{label}-{version}.json"));
         std::fs::write(
             &rewritten,
             verify_text.replace(
-                "\"schema_version\": \"0.2\"",
+                "\"schema_version\": \"0.3\"",
                 &format!("\"schema_version\": \"{version}\""),
             ),
         )?;
@@ -3756,7 +3938,7 @@ fn agent_receipt_rejects_unsupported_verify_schema() -> Result<(), Box<dyn std::
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
             stderr.contains("[unsupported_schema]"),
-            "mutation: rewrote verify JSON schema_version 0.2 -> {version} ({label} schema); expected failure kind [unsupported_schema]; actual stderr: {stderr}"
+            "mutation: rewrote verify JSON schema_version 0.3 -> {version} ({label} schema); expected failure kind [unsupported_schema]; actual stderr: {stderr}"
         );
     }
     std::fs::remove_dir_all(root)?;
