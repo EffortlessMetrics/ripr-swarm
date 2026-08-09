@@ -999,23 +999,36 @@ mod tests {
     #[test]
     fn run_output_owned_with_envs_overlays_the_child_environment() -> Result<(), String> {
         let _cwd_guard = acquire_test_cwd_read_guard();
-        // `GIT_EDITOR`, not `GIT_AUTHOR_IDENT`. Resolving an author identity
-        // needs `user.name`/`user.email` from ambient config, which a CI runner
-        // does not have: the un-overlaid call then exits 128 with "empty ident
-        // name" and the test fails for a reason unrelated to env overlaying.
-        // `git var GIT_EDITOR` always resolves, so both calls depend only on the
-        // overlay under test.
-        let args = vec!["var".to_string(), "GIT_EDITOR".to_string()];
+        // Echo the variable through the platform shell rather than through
+        // `git`. Both earlier attempts used `git var`, and both failed on a CI
+        // runner for reasons that had nothing to do with env overlaying:
+        // `GIT_AUTHOR_IDENT` needs `user.name`/`user.email` from ambient config
+        // (exit 128), and `GIT_EDITOR` exits 1 with empty output when no editor
+        // resolves. A shell `echo` always exits 0 and prints exactly what the
+        // child environment holds, so this asserts the overlay and nothing else.
+        #[cfg(windows)]
+        let (program, args) = (
+            "cmd",
+            vec!["/C".to_string(), "echo %RIPR_ENV_PROBE%".to_string()],
+        );
+        #[cfg(not(windows))]
+        let (program, args) = (
+            "sh",
+            vec![
+                "-c".to_string(),
+                "printf %s \"$RIPR_ENV_PROBE\"".to_string(),
+            ],
+        );
 
         let overlaid =
-            run_output_owned_with_envs("git", &args, &[("GIT_EDITOR", "ripr-env-overlay")])?;
+            run_output_owned_with_envs(program, &args, &[("RIPR_ENV_PROBE", "ripr-env-overlay")])?;
         if !overlaid.contains("ripr-env-overlay") {
             return Err(format!(
                 "the overlaid value should reach the child: {overlaid}"
             ));
         }
 
-        let plain = run_output_owned("git", &args)?;
+        let plain = run_output_owned(program, &args)?;
         if plain.contains("ripr-env-overlay") {
             return Err(format!(
                 "an empty overlay must not set the variable: {plain}"
