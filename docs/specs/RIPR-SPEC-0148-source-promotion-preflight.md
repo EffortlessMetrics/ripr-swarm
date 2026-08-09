@@ -54,7 +54,7 @@ git rev-list --first-parent --reverse MERGE_BASE..PARENT
 UTF-8 SHA lines joined with LF, then SHA-256
 ```
 
-The receipt records source survivors, a non-dispositive inventory of
+The receipt records source-survivor candidates, a non-dispositive inventory of
 swarm-authority resolution candidates, exact-parent version/changelog
 observations (including Cargo.lock and npm lock roots), invalidation rules, and
 next actions. `preview_tree` is automatic merge-tree output only. A separate

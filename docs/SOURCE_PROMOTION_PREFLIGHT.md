@@ -52,7 +52,7 @@ git rev-list --first-parent --reverse MERGE_BASE..PARENT
 UTF-8 SHA lines joined with LF, then SHA-256
 ```
 
-It also inventories changed paths, source survivors, non-dispositive
+It also inventories changed paths, source-survivor candidates, non-dispositive
 swarm-authority resolution candidates, and a real `git merge-tree --write-tree`
 dry merge. The automatic `preview_tree` is never a final join tree. An
 optional `--resolved-tree <full-tree-sha>` records a separately reviewed
