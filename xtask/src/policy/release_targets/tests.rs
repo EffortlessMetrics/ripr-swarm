@@ -603,3 +603,21 @@ fn top_level_metadata_is_type_and_value_checked() {
         "a negative control_issue must be rejected: {found:#?}"
     );
 }
+
+/// Ordinal comparison cannot see a cycle inside one release: its members share
+/// an ordinal, so `parent > child` is false for every intra-release edge and
+/// `A requires B` beside `B requires A` passed every rule.
+#[test]
+fn an_intra_release_prerequisite_cycle_is_a_violation() {
+    let text = format!(
+        "{}\n[[prerequisite]]\nissue = 101\nrequires = 103\njustification = \"cycle back to the companion\"\n\n[[prerequisite]]\nissue = 103\nrequires = 101\njustification = \"and back again\"\n",
+        valid_manifest()
+    );
+    let found = only_rule(&text, "prerequisite_ordering");
+    assert!(
+        found
+            .iter()
+            .any(|violation| violation.contains("prerequisite cycle")),
+        "the violation must name the cycle: {found:#?}"
+    );
+}

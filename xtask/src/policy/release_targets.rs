@@ -951,6 +951,54 @@ fn check_prerequisite_ordering(
             ));
         }
     }
+
+    // Ordinal comparison cannot see a cycle inside one release: issues sharing
+    // a release share an ordinal, so `parent > child` is false for every
+    // intra-release edge and `A requires B` beside `B requires A` passes. The
+    // manifest already declares intra-release chains, so this is reachable.
+    let mut successors: BTreeMap<u32, Vec<(u32, usize)>> = BTreeMap::new();
+    for edge in edges {
+        if let (Some(issue), Some(requires)) = (edge.issue, edge.requires)
+            && issue != requires
+        {
+            successors
+                .entry(issue)
+                .or_default()
+                .push((requires, edge.line));
+        }
+    }
+    for start in successors.keys().copied() {
+        // Depth-first from each declared consumer. A path returning to its own
+        // start is a cycle; reporting from the smallest start keeps the message
+        // deterministic.
+        let mut stack = vec![(start, Vec::new())];
+        let mut seen: BTreeSet<u32> = BTreeSet::new();
+        while let Some((node, path_so_far)) = stack.pop() {
+            for (next, line) in successors.get(&node).map(Vec::as_slice).unwrap_or_default() {
+                let mut chain = path_so_far.clone();
+                chain.push(*next);
+                if *next == start {
+                    if start <= *chain.iter().min().unwrap_or(&start) {
+                        let rendered = std::iter::once(start)
+                            .chain(chain.iter().copied())
+                            .map(|issue| format!("#{issue}"))
+                            .collect::<Vec<_>>()
+                            .join(" -> ");
+                        violations.push(rule(
+                            RULE_PREREQUISITE_ORDERING,
+                            path,
+                            *line,
+                            &format!(
+                                "prerequisite cycle {rendered}; a cycle inside one release is invisible to ordinal comparison because its members share an ordinal"
+                            ),
+                        ));
+                    }
+                } else if seen.insert(*next) {
+                    stack.push((*next, chain));
+                }
+            }
+        }
+    }
 }
 
 fn check_referential_closure(
