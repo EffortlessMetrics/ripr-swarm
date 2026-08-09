@@ -3226,19 +3226,53 @@ mod tests {
             fs::write(&source, b"stub-payload-original")
                 .map_err(|err| format!("write source payload failed: {err}"))?;
 
+            // Establish whether this filesystem can link at all, using a probe
+            // separate from the code under test. `publish_spawnable_stub`
+            // advertises a staged copy-and-rename fallback for mounts without
+            // hard links, so requiring link semantics unconditionally would
+            // report that supported fallback as a failure.
+            let probe_source = dir.join("link-probe-source");
+            let probe_link = dir.join("link-probe-link");
+            fs::write(&probe_source, b"probe")
+                .map_err(|err| format!("write link probe failed: {err}"))?;
+            let links_supported = fs::hard_link(&probe_source, &probe_link).is_ok();
+
             publish_spawnable_stub(&source, &stub)?;
 
             fs::write(&source, b"stub-payload-relinked")
                 .map_err(|err| format!("rewrite source payload failed: {err}"))?;
             let published =
                 fs::read(&stub).map_err(|err| format!("read published payload failed: {err}"))?;
-            if published != b"stub-payload-relinked" {
-                return Err(
-                    "published stub did not track its source, so publication wrote a second copy \
-                     of the bytes through a descriptor held open across the transfer — the \
-                     ETXTBSY fork/exec window this fixture must not reopen (#3051)"
-                        .to_string(),
-                );
+
+            if links_supported {
+                // The discriminating case, and the one every supported CI host
+                // takes: a link shares storage, so rewriting the source is
+                // visible through the published path. A written copy is a
+                // snapshot and is not — which is exactly the descriptor held
+                // open across the transfer that this fixture must not reopen.
+                if published != b"stub-payload-relinked" {
+                    return Err(
+                        "published stub did not track its source on a link-capable filesystem, \
+                         so publication wrote a second copy of the bytes through a descriptor \
+                         held open across the transfer — the ETXTBSY fork/exec window this \
+                         fixture must not reopen (#3051)"
+                            .to_string(),
+                    );
+                }
+            } else {
+                // Fallback contract: the staged copy is closed and synced before
+                // the executable path exists, so it is a snapshot of the source
+                // as published. Requiring it to track later writes would assert
+                // link semantics the fallback never promised.
+                if published != b"stub-payload-original" {
+                    return Err(format!(
+                        "staged fallback published {published:?}, expected a byte-exact snapshot \
+                         of the source as it stood at publication (#3051)"
+                    ));
+                }
+                if !stub.exists() {
+                    return Err("staged fallback did not publish the stub path".to_string());
+                }
             }
             Ok(())
         })();
