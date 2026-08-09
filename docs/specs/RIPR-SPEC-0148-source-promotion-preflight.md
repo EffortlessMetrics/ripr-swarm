@@ -13,8 +13,8 @@ Linked issues:
 
 Support-tier impact:
 
-- No product or support-tier change. This is a maintainer-facing, read-only
-  control-plane report.
+- No product or [support-tier](../status/SUPPORT_TIERS.md) change. This is a
+  maintainer-facing, read-only control-plane report.
 
 Policy impact:
 

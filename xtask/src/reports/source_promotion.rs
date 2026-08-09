@@ -350,7 +350,6 @@ fn build_receipt(options: &Options) -> Result<Receipt, String> {
 struct InspectedRepository {
     identity: RepositoryIdentity,
     common_dir: PathBuf,
-    immutable_ref_sha: Option<String>,
     resolved_main: String,
 }
 
@@ -404,7 +403,6 @@ fn inspect_repository(
             remote_verified: true,
         },
         common_dir,
-        immutable_ref_sha,
         resolved_main,
     })
 }
