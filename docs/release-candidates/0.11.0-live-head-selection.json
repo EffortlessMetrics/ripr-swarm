@@ -23,7 +23,7 @@
   "non_claims": [
     "the authority reset does not select a floating head",
     "the authority reset does not authorize source integration or publication",
-    "the historical hard-cut and candidate-only receipts remain audit evidence",
+    "the historical hard-cut and candidate-only receipts are retained as audit evidence",
     "0.11.1 is re-baselined only after 0.11.0 publication"
   ],
   "supersedes": [

@@ -44,8 +44,9 @@ required survivor. Main movement alone never repins.
 
 The live-head rule ships all work reachable from the selected head. It does
 not construct a candidate-only projection, remove hunks from a shared file, or
-lock a T-bound denominator. The old hard-cut receipts remain immutable audit
-evidence and are superseded by the checked-in live-head decision.
+lock a T-bound denominator. The old hard-cut receipts are retained as
+historical audit evidence and are superseded by the checked-in live-head
+decision.
 
 The release-control report remains useful for read-only PR disposition and
 freshness observations, but its historical candidate-selection fields are not
