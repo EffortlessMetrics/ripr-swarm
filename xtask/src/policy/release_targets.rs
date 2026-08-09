@@ -111,7 +111,7 @@ struct RollingRecord {
 pub(crate) struct ReleaseTargetsOutcome {
     violations: Vec<String>,
     releases: Vec<ReleaseSummary>,
-    parents_outside_milestone: usize,
+    parents_outside_committed_sets: usize,
     prerequisite_edges: usize,
     rolling_issues: usize,
 }
@@ -139,7 +139,7 @@ pub(crate) fn check_release_targets() -> Result<(), String> {
                 &release_targets_json(&ReleaseTargetsOutcome {
                     violations: violations.clone(),
                     releases: Vec::new(),
-                    parents_outside_milestone: 0,
+                    parents_outside_committed_sets: 0,
                     prerequisite_edges: 0,
                     rolling_issues: 0,
                 }),
@@ -207,7 +207,7 @@ fn evaluate_release_targets(path: &str, text: &str) -> ReleaseTargetsOutcome {
     ReleaseTargetsOutcome {
         violations,
         releases: releases.iter().map(release_summary).collect(),
-        parents_outside_milestone: parents
+        parents_outside_committed_sets: parents
             .iter()
             .filter(|parent| parent.counted_in.as_deref() == Some("none"))
             .count(),
@@ -680,8 +680,23 @@ fn check_non_committed_exclusion(
             }
         }
     }
+    // A repeated `[[rolling]] issue = N` passed every rule while incrementing
+    // `rolling_issues` twice, so the reported denominator overstated the rolling
+    // set. Parents and release versions already reject duplicates; rolling had
+    // no equivalent.
+    let mut seen_rolling: BTreeMap<u32, usize> = BTreeMap::new();
     for record in rolling {
         let Some(issue) = record.issue else { continue };
+        if let Some(first) = seen_rolling.insert(issue, record.line) {
+            violations.push(rule(
+                RULE_NON_COMMITTED_EXCLUSION,
+                path,
+                record.line,
+                &format!(
+                    "issue #{issue} is declared rolling more than once (first at line {first}); a repeated record inflates the reported rolling denominator"
+                ),
+            ));
+        }
         if let Some(owner) = committed.get(&issue) {
             violations.push(rule(
                 RULE_NON_COMMITTED_EXCLUSION,
@@ -932,7 +947,7 @@ fn release_targets_json(outcome: &ReleaseTargetsOutcome) -> String {
         "network_used": false,
         "rules": RULE_IDS,
         "releases": releases,
-        "parents_outside_milestone": outcome.parents_outside_milestone,
+        "parents_outside_committed_sets": outcome.parents_outside_committed_sets,
         "prerequisite_edges": outcome.prerequisite_edges,
         "rolling_issues": outcome.rolling_issues,
         "violations": outcome.violations,

@@ -462,7 +462,16 @@ fn the_repository_manifest_passes_every_rule() {
             .collect::<Vec<_>>(),
         vec![3, 19, 16]
     );
-    assert!(outcome.parents_outside_milestone >= 6);
+    // Exact, not `>=`: a loose bound lets a record appear silently, which is
+    // the drift this manifest exists to surface. Nine parents declare
+    // `counted_in = "none"`. That is *not* the same as the six live-milestone
+    // divergences named in the manifest header -- #2664, #2665, and #2671 are
+    // umbrella parents that carry no milestone at all, so they are recorded
+    // correctly and diverge from nothing. This checker is network-free and
+    // cannot observe milestone membership; it counts what the manifest
+    // declares, which is why the field says `committed_sets` rather than
+    // `milestone`.
+    assert_eq!(outcome.parents_outside_committed_sets, 9);
 }
 
 #[test]
@@ -520,5 +529,23 @@ fn a_conditional_issue_may_not_name_two_destinations() {
             .iter()
             .any(|violation| violation.contains("#104 is conditional under both")),
         "the violation must name the issue and both releases: {found:#?}"
+    );
+}
+
+/// Parents and release versions already rejected duplicates; `[[rolling]]` did
+/// not. A repeated record passed every rule while counting twice, so the
+/// reported rolling denominator overstated the set.
+#[test]
+fn a_repeated_rolling_record_is_a_violation() {
+    let text = format!(
+        "{}\n[[rolling]]\nissue = 400\njustification = \"duplicate of the earlier record\"\n",
+        valid_manifest()
+    );
+    let found = only_rule(&text, "non_committed_exclusion");
+    assert!(
+        found
+            .iter()
+            .any(|violation| violation.contains("#400 is declared rolling more than once")),
+        "the violation must name the repeated issue: {found:#?}"
     );
 }
