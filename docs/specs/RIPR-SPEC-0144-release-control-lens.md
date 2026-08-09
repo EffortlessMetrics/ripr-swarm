@@ -76,7 +76,10 @@ all-reachable and first-parent counts, ordered SHA-list digest, PR dispositions,
 toolchain, claims, and non-claims. Exact swarm qualification and source
 preflight must consume those values unchanged. Later `main` movement is outside
 0.11.0. Repinning is allowed only for a release-invalidating exact-candidate or
-source-preflight failure; movement alone never repins.
+source-preflight failure; movement alone never repins. The historical
+`release-control --live` report is an observation/disposition producer, not the
+active pin producer. The future pin producer must bind the named swarm remote
+to `EffortlessMetrics/ripr-swarm` and fail closed on a different origin.
 
 The live-head rule includes all history reachable from the selected head. It
 does not construct candidate-only tree `T`, remove selected hunks, or make a
@@ -255,7 +258,8 @@ reconciliation-required state or any per-PR disposition.
 - no repository-wide convergence requirement or open-PR-zero gate;
 - no issue closure, merge queue, branch operation, or GitHub mutation;
 - no replacement for #2379, #1609, #1704, or #1706;
-- no candidate-only C-to-T construction as the active 0.11.0 path;
+- no historical candidate-only C-to-T construction as the active 0.11.0 path;
+- exact live-head qualification and source preflight remain required after pinning;
 - no source integration, versioning, tagging, publication, or marketplace
   mutation.
 

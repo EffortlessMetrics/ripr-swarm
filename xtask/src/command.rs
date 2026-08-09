@@ -939,7 +939,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
         ),
         command_entry(
             "release-control --live",
-            "report_only",
+            "external_state_read",
             "target/ripr/reports/release-control.{json,md}",
             false,
             false,

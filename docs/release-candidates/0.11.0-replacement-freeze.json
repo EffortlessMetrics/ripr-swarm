@@ -1,8 +1,7 @@
 {
   "schema_version": "1.0",
   "kind": "ripr_swarm_release_candidate_freeze",
-  "status": "historical_superseded",
-  "superseded_by": "docs/release-candidates/0.11.0-live-head-selection.json",
+  "status": "selected_ref_created_qualification_pending",
   "release_line": "0.11.0",
   "supersedes": {
     "candidate_sha": "3a80c634f2157dee0e7f74fc72b7975f07699143",
