@@ -12,6 +12,7 @@ Run it from a clean operator checkout with both repositories available locally:
 cargo xtask source-promotion preflight \
   --source-parent "$SOURCE_PARENT" \
   --swarm-parent "$SWARM_PARENT" \
+  --swarm-ref "$SWARM_REF" \
   --source-repo ../ripr \
   --swarm-repo ../ripr-swarm \
   --source-main origin/main \
@@ -22,31 +23,50 @@ cargo xtask source-promotion preflight \
 
 The parent arguments must be complete 40-character commit IDs. The source
 parent must equal the declared current source main. The swarm parent must be
-reachable from the declared swarm main. Repository roots must be distinct and
-their `origin` URLs must identify `EffortlessMetrics/ripr` and
-`EffortlessMetrics/ripr-swarm`; use `--source-remote`/`--swarm-remote` only for
-an explicitly reviewed mirror.
+reachable from the declared swarm main. Repository roots and Git common
+directories must be distinct, and their `origin` URLs must canonically identify
+`EffortlessMetrics/ripr` and `EffortlessMetrics/ripr-swarm`; suffix matches and
+URL query/path tricks are rejected. Use `--source-remote`/`--swarm-remote` only
+for an explicitly reviewed mirror.
+`SWARM_REF` is required, must use
+`refs/ripr/release-<version>-<SWARM_PARENT>`, and must resolve in the swarm
+repository to the exact `SWARM_PARENT`; a moved, missing, wrongly named, or
+wrong ref fails closed.
 
 The command writes deterministic `source-promotion-preflight.json` and `.md`
 files. It records the merge base, separately named all-reachable and
-first-parent counts for each parent range, and SHA-256 digests. The ordered
-digest recipe is:
+first-parent counts for each parent range, exact-parent version surfaces
+(workspace, crate, Cargo.lock ripr package, extension, npm lock root, and
+changelog), and SHA-256 digests. The
+all-reachable digest recipe is:
+
+```text
+git rev-list --topo-order --reverse MERGE_BASE..PARENT
+UTF-8 SHA lines joined with LF, then SHA-256
+```
+
+The ordered first-parent digest recipe is:
 
 ```text
 git rev-list --first-parent --reverse MERGE_BASE..PARENT
 UTF-8 SHA lines joined with LF, then SHA-256
 ```
 
-It also inventories changed paths, source survivors, swarm repository-authority
-paths, version/changelog state, and a real `git merge-tree --write-tree` dry
-merge. The dry merge runs in a disposable repository populated by fetching both
-exact commits. No branch, index, ref, working tree, version, tag, PR, or
-publication state in either authoritative checkout is changed.
+It also inventories changed paths, source survivors, non-dispositive
+swarm-authority resolution candidates, and a real `git merge-tree --write-tree`
+dry merge. The automatic `preview_tree` is never a final join tree. An
+optional `--resolved-tree <full-tree-sha>` records a separately reviewed
+resolved tree after verifying that the object exists in one supplied
+repository's common object store; omission remains visibly not finalized. The
+dry merge runs in a disposable repository populated by fetching both exact
+commits. No branch, index, ref, working tree, version, tag, PR, or publication
+state in either authoritative checkout is changed.
 
 ## Receipt boundary
 
 The receipt is invalid when either parent, declared main, repository identity,
-merge base, ancestry count, digest, conflict list, or resolved tree changes.
+immutable swarm ref or its resolved SHA, merge base, ancestry count, digest,
+conflict list, or resolved tree changes.
 Regenerate it if `main` moves before the transaction boundary. A clean dry
 merge is not proof that semantic overlap is absent; every textual and semantic
 resolution still needs review.

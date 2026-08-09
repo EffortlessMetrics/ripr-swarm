@@ -386,7 +386,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "release-denominator --capture-github --input <ledger.json> --output <capture.json>",
         "release-denominator --import-github --input <ledger.json> --capture <capture.json> --output <ledger.json>",
         "release-denominator --apply-adjudication --input <ledger.json> --decisions <adjudication.json> --output <ledger.json>",
-        "source-promotion preflight --source-parent <sha> --swarm-parent <sha> --source-repo <path> --swarm-repo <path> --version <version> [--swarm-main <rev>] [--source-main <rev>] [--out <dir>]",
+        "source-promotion preflight --source-parent <sha> --swarm-parent <sha> --swarm-ref <immutable-ref> --source-repo <path> --swarm-repo <path> --version <version> [--resolved-tree <full-tree-sha>] [--swarm-main <rev>] [--source-main <rev>] [--out <dir>]",
         "release-scope --input <scope.json>",
         "release-server-archive --version <version> --target <triple> --executable <name> --archive <zip|tar.gz>",
         "release-server-manifest --version <version> --repository <owner/repo>",
@@ -989,7 +989,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Applies a reviewed, range-complete #2832 adjudication manifest through the pinned provisional cutoff without qualifying a candidate.",
         ),
         command_entry(
-            "source-promotion preflight --source-parent <sha> --swarm-parent <sha> --source-repo <path> --swarm-repo <path> --version <version> [--swarm-main <rev>] [--source-main <rev>] [--out <dir>]",
+            "source-promotion preflight --source-parent <sha> --swarm-parent <sha> --swarm-ref <immutable-ref> --source-repo <path> --swarm-repo <path> --version <version> [--resolved-tree <full-tree-sha>] [--swarm-main <rev>] [--source-main <rev>] [--out <dir>]",
             "external_state_read",
             "<out>/source-promotion-preflight.{json,md}",
             false,

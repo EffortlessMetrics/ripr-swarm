@@ -40,29 +40,46 @@ separately named all-reachable/first-parent counts, inventories changed paths,
 and runs `git merge-tree --write-tree` for textual conflict evidence.
 
 JSON and Markdown are projections of one deterministic receipt. The ordered
-SHA digest uses:
+all-reachable SHA digest uses:
+
+```text
+git rev-list --topo-order --reverse MERGE_BASE..PARENT
+UTF-8 SHA lines joined with LF, then SHA-256
+```
+
+The ordered first-parent SHA digest uses:
 
 ```text
 git rev-list --first-parent --reverse MERGE_BASE..PARENT
 UTF-8 SHA lines joined with LF, then SHA-256
 ```
 
-The receipt records source survivors, swarm authority paths requiring review,
-version/changelog observations, invalidation rules, and next actions. It does
-not create a join or modify either authoritative checkout.
+The receipt records source survivors, a non-dispositive inventory of
+swarm-authority resolution candidates, exact-parent version/changelog
+observations (including Cargo.lock and npm lock roots), invalidation rules, and
+next actions. `preview_tree` is automatic merge-tree output only. A separate
+optional reviewed resolved-tree SHA is recorded and verified in the supplied
+repository object store; absent that input, finalization is visibly missing.
+It does not create a join or modify either authoritative checkout.
 
 ## Required Evidence
 
 - complete parent SHAs resolve exactly in their named repositories;
+- required immutable swarm ref uses
+  `refs/ripr/release-<version>-<SWARM_PARENT>` and resolves to exactly
+  SWARM_PARENT;
 - source parent equals the declared current source main;
 - swarm parent is an ancestor of the declared swarm main;
 - origin remotes identify the declared repositories;
 - merge base, both denominator variants, and ordered digest recipe are present;
 - disposable merge diagnostics and conflict paths are present;
+- automatic preview-tree output is distinct from an optional reviewed
+  resolved-tree input;
 - JSON and Markdown are deterministic projections with no temporary path or
   capture timestamp;
-- invalidation rules name parent, main, identity, ancestry, digest, conflict,
-  and tree changes.
+- exact-parent version observations include Cargo.lock ripr and npm lock root;
+- invalidation rules name parent, immutable ref, main, identity, ancestry,
+  digest, conflict, and tree changes.
 
 ## Non-Goals
 
@@ -84,8 +101,10 @@ not create a join or modify either authoritative checkout.
 ## Test Mapping
 
 - `xtask/src/reports/source_promotion.rs` unit tests cover SHA validation,
-  digest order, remote identity, authority-path classification, fixture shape,
-  and a disposable conflicting repository pair.
+  digest order, strict remote identity (including suffix-trick rejection),
+  authority-path classification, fixture shape, and disposable conflicting and
+  clean repository pairs, exact-parent version reads, and reviewed resolved-tree
+  verification for an unreachable `git write-tree` object.
 - `fixtures/source_promotion/diverged-conflict.json` pins the discriminating
   divergent/conflict expectation.
 
