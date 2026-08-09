@@ -5,7 +5,7 @@
   "created_at": "2026-08-08",
   "final_development_cut_sha": "b8b1c9ec78b013dfac6dcf929447839132835971",
   "observed_main_sha": "bac3614716307ee432c3fa51a7fa4dd18ea9f823",
-  "selected_claim_set_digest": "sha256:4eccc711246d246b17dc50cbf9df96a54f8835e6a1b080c3481225872cd6f958",
+  "selected_claim_set_digest": "sha256:68a338d9d08aeb009ce147ff8fef469fd0a5077eda1106ca95e0aadbcc21f5d5",
   "selected_claim_set_digest_recipe": "sha256 over `jq -cS .candidate_selection fixtures/release_denominator/current-main-provisional.json` at the freeze commit",
   "candidate_required_claims_pending": 0,
   "candidate_required_prs_pending": 0,
@@ -52,7 +52,7 @@
   "provisional_ordered_range_digest": "sha256:857911c214cd10a011ffc54fcf3226b81811a699a6e2364f10c03343c6a969c4",
   "provisional_record_set_digest": "sha256:4d8977b4a50e7697a5632f9e2e127bc83fde05640fddc09356dfc532bb72956a",
   "candidate_tree_digest": "sha256:025963fa597c4f2c068be06cea7576a43589ac49b34014c68119987f5bb59825",
-  "pre_candidate_proof_bundle_digest": "sha256:bfd9bb391aec3762ba9a13e58ec7e162d12a84cf9f85566952c989058f5e2423",
+  "pre_candidate_proof_bundle_digest": "sha256:3e99db98853bfa67b1d1fd8c64c7a9ce2d2bffff24e0710a7829be29c1849429",
   "pre_candidate_proof_bundle_recipe": "sha256 over the four-line manifest of sha256 digests (one per line, `digest  path`): target/ripr/reports/release-readiness.json, release-negative-corpus.json, release-denominator.json, release-control.json, all produced on the exact cut commit",
   "pre_candidate_proof": {
     "cut_sha": "b8b1c9ec78b013dfac6dcf929447839132835971",
