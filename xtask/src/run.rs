@@ -999,10 +999,16 @@ mod tests {
     #[test]
     fn run_output_owned_with_envs_overlays_the_child_environment() -> Result<(), String> {
         let _cwd_guard = acquire_test_cwd_read_guard();
-        let args = vec!["var".to_string(), "GIT_AUTHOR_IDENT".to_string()];
+        // `GIT_EDITOR`, not `GIT_AUTHOR_IDENT`. Resolving an author identity
+        // needs `user.name`/`user.email` from ambient config, which a CI runner
+        // does not have: the un-overlaid call then exits 128 with "empty ident
+        // name" and the test fails for a reason unrelated to env overlaying.
+        // `git var GIT_EDITOR` always resolves, so both calls depend only on the
+        // overlay under test.
+        let args = vec!["var".to_string(), "GIT_EDITOR".to_string()];
 
         let overlaid =
-            run_output_owned_with_envs("git", &args, &[("GIT_AUTHOR_NAME", "ripr-env-overlay")])?;
+            run_output_owned_with_envs("git", &args, &[("GIT_EDITOR", "ripr-env-overlay")])?;
         if !overlaid.contains("ripr-env-overlay") {
             return Err(format!(
                 "the overlaid value should reach the child: {overlaid}"
