@@ -254,6 +254,79 @@ fn check_top_level(path: &str, document: &crate::CiLedgerDocument, violations: &
             ));
         }
     }
+
+    // Presence alone is not a schema. Without these, `schema_version =
+    // "banana"`, a numeric `non_claim`, and a negative `control_issue` were all
+    // accepted, so schema-version compatibility could not work and a later
+    // standard TOML consumer could reject a document this gate blessed.
+    if let Some(value) = document.top_level.get("schema_version") {
+        match quoted_string(&value.raw) {
+            Some(version) if version == SUPPORTED_SCHEMA_VERSION => {}
+            Some(version) => violations.push(rule(
+                RULE_SCHEMA,
+                path,
+                value.line,
+                &format!(
+                    "`schema_version` is `{version}`, but this checker supports only `{SUPPORTED_SCHEMA_VERSION}`"
+                ),
+            )),
+            None => violations.push(rule(
+                RULE_SCHEMA,
+                path,
+                value.line,
+                &format!(
+                    "`schema_version` must be a quoted string, got `{}`",
+                    value.raw.trim()
+                ),
+            )),
+        }
+    }
+
+    if let Some(value) = document.top_level.get("non_claim") {
+        match quoted_string(&value.raw) {
+            Some(text) if !text.trim().is_empty() => {}
+            Some(_) => violations.push(rule(
+                RULE_SCHEMA,
+                path,
+                value.line,
+                "`non_claim` must state the boundary this manifest does not claim, not an empty string",
+            )),
+            None => violations.push(rule(
+                RULE_SCHEMA,
+                path,
+                value.line,
+                &format!(
+                    "`non_claim` must be a quoted string, got `{}`",
+                    value.raw.trim()
+                ),
+            )),
+        }
+    }
+
+    if let Some(value) = document.top_level.get("control_issue")
+        && let Err(message) = parse_issue_number(&value.raw)
+    {
+        violations.push(rule(
+            RULE_SCHEMA,
+            path,
+            value.line,
+            &format!("`control_issue`: {message}"),
+        ));
+    }
+}
+
+/// The one schema version this checker understands. A manifest declaring any
+/// other version is rejected rather than parsed on the assumption that the
+/// shape did not change.
+const SUPPORTED_SCHEMA_VERSION: &str = "0.1";
+
+/// Return the contents of a double-quoted scalar, or `None` when the raw value
+/// is not a quoted string at all.
+fn quoted_string(raw: &str) -> Option<&str> {
+    let trimmed = raw.trim();
+    trimmed
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
 }
 
 fn check_table_keys(

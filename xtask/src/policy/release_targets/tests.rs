@@ -549,3 +549,57 @@ fn a_repeated_rolling_record_is_a_violation() {
         "the violation must name the repeated issue: {found:#?}"
     );
 }
+
+/// Presence alone is not a schema. Before these checks the manifest metadata
+/// accepted `schema_version = "banana"`, a numeric `non_claim`, and a negative
+/// `control_issue`, so schema-version compatibility could not work and a later
+/// standard TOML consumer could reject a document this gate had blessed.
+#[test]
+fn top_level_metadata_is_type_and_value_checked() {
+    let unsupported =
+        valid_manifest().replace("schema_version = \"0.1\"", "schema_version = \"banana\"");
+    let found = only_rule(&unsupported, "schema");
+    assert!(
+        found.iter().any(|violation| violation
+            .contains("`schema_version` is `banana`, but this checker supports only `0.1`")),
+        "an unsupported schema version must be named: {found:#?}"
+    );
+
+    let unquoted = valid_manifest().replace("schema_version = \"0.1\"", "schema_version = 0.1");
+    let found = only_rule(&unquoted, "schema");
+    assert!(
+        found
+            .iter()
+            .any(|violation| violation.contains("`schema_version` must be a quoted string")),
+        "a non-string schema version must be rejected: {found:#?}"
+    );
+
+    let numeric_non_claim =
+        valid_manifest().replace("non_claim = \"no publication claim\"", "non_claim = 7");
+    let found = only_rule(&numeric_non_claim, "schema");
+    assert!(
+        found
+            .iter()
+            .any(|violation| violation.contains("`non_claim` must be a quoted string")),
+        "a numeric non_claim must be rejected: {found:#?}"
+    );
+
+    let empty_non_claim =
+        valid_manifest().replace("non_claim = \"no publication claim\"", "non_claim = \"\"");
+    let found = only_rule(&empty_non_claim, "schema");
+    assert!(
+        found
+            .iter()
+            .any(|violation| violation.contains("must state the boundary")),
+        "an empty non_claim must be rejected: {found:#?}"
+    );
+
+    let negative_control = valid_manifest().replace("control_issue = 9000", "control_issue = -1");
+    let found = only_rule(&negative_control, "schema");
+    assert!(
+        found
+            .iter()
+            .any(|violation| violation.contains("`control_issue`:")),
+        "a negative control_issue must be rejected: {found:#?}"
+    );
+}
