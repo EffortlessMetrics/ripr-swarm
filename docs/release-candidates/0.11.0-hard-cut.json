@@ -1,6 +1,8 @@
 {
   "schema_version": "1.0",
   "kind": "ripr_swarm_0_11_hard_cut_receipt",
+  "authority_status": "historical_superseded",
+  "superseded_by": "docs/release-candidates/0.11.0-live-head-selection.json",
   "issue": 2893,
   "created_at": "2026-08-08",
   "final_development_cut_sha": "b8b1c9ec78b013dfac6dcf929447839132835971",
