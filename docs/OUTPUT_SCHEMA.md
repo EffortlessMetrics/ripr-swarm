@@ -12165,8 +12165,9 @@ claim inferred from numeric issue or PR references.
 The checked provisional fixture also retains the #2832 and #2825 adjudication
 batch receipts in each reviewed record's `review_refs[]`, and its
 candidate-tree commit list is the ordered projection of reviewed
-`candidate_tree_state` values. Rows after the pinned cutoff, when present,
-remain pending and do not enter that projection.
+`candidate_tree_state` values. Unreviewed rows after a pinned cutoff remain
+pending and do not enter that projection; once adjudicated through the
+selected cut, each row carries its reviewed tree state into the projection.
 
 ## Operator Cockpit Report
 

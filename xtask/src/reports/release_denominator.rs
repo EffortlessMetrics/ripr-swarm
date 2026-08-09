@@ -610,11 +610,11 @@ fn apply_adjudication(input: &str, decisions_path: &str, output: &str) -> Result
         if batch.id.trim().is_empty()
             || !batch_ids.insert(batch.id.clone())
             || batch.review_ref.trim().is_empty()
-            || adjudication_review_prefix(&batch.review_ref).is_none()
+            || !is_adjudication_review_ref(&batch.review_ref)
             || batch.rationale.trim().is_empty()
         {
             return Err(
-                "adjudication batches require unique id, an accepted review:<issue>:* review_ref, and rationale"
+                "adjudication batches require unique id, a well-formed review:<issue>:<slug> review_ref, and rationale"
                     .to_string(),
             );
         }
@@ -659,8 +659,7 @@ fn apply_adjudication(input: &str, decisions_path: &str, output: &str) -> Result
             || override_record.position > cutoff_position
             || override_record.batch_id.trim().is_empty()
             || !batch_ids.contains(&override_record.batch_id)
-            || override_record.review_ref.trim().is_empty()
-            || adjudication_review_prefix(&override_record.review_ref).is_none()
+            || !is_adjudication_review_ref(&override_record.review_ref)
             || override_record.delivered_delta.trim().is_empty()
             || override_record.challenged_disposition.trim().is_empty()
             || override_record.candidate_effect.trim().is_empty()
@@ -1287,15 +1286,19 @@ fn validate_final_cut_authority(
 }
 
 fn is_adjudication_review_ref(value: &str) -> bool {
-    let trimmed = value.trim();
-    let Some(prefix) = adjudication_review_prefix(trimmed) else {
+    let Some(prefix) = adjudication_review_prefix(value) else {
         return false;
     };
-    let suffix = &trimmed[prefix.len()..];
-    !suffix.is_empty()
-        && !suffix.chars().any(char::is_whitespace)
-        && suffix.chars().all(|character| {
-            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.' | '/')
+    is_adjudication_review_slug(&value[prefix.len()..])
+}
+
+fn is_adjudication_review_slug(slug: &str) -> bool {
+    // Established shape: hyphen-joined non-empty ASCII-alphanumeric segments
+    // (review:2832:batch-A-product, review:2825:batch-J-defer), bounded length.
+    !slug.is_empty()
+        && slug.len() <= 64
+        && slug.split('-').all(|segment| {
+            !segment.is_empty() && segment.chars().all(|c| c.is_ascii_alphanumeric())
         })
 }
 
@@ -2821,8 +2824,11 @@ mod tests {
             "../../../fixtures/release_denominator/current-main-provisional.json"
         ))
         .map_err(|error| error.to_string())?;
-        // The adjudicated census has no pending rows; park two reviewed rows as
-        // pending to reproduce the post-cutoff projection boundary.
+        // The adjudicated census pins the provisional cutoff at C (index 332)
+        // and has no pending rows; move the cutoff back to the reviewed prefix
+        // so the two parked rows are genuinely post-provisional.
+        snapshot.source.provisional_review_cutoff_sha =
+            Some("fcbb30a7cf6a37027fa377abafb617632b2e6f57".to_string());
         for index in [230, 231] {
             let record = snapshot
                 .records
@@ -2863,6 +2869,43 @@ mod tests {
                 .iter()
                 .any(|commit_sha| commit_sha == &still_pending),
             "projection admitted a still-pending post-cutoff row",
+        )
+    }
+
+    #[test]
+    fn adjudication_review_refs_require_a_complete_slug_shape() -> Result<(), String> {
+        for accepted in [
+            "review:2832:batch-A-product",
+            "review:2832:exception-2767",
+            "review:2825:batch-E-product",
+            "review:2825:batch-J-defer",
+        ] {
+            require(
+                is_adjudication_review_ref(accepted),
+                format!("established review ref {accepted} was rejected"),
+            )?;
+        }
+        for rejected in [
+            "review:2825:",
+            "review:2825:bad value",
+            "review:2825:trailing ",
+            "review:2825:snake_case",
+            "review:2825:dot.slug",
+            "review:2825:path/slug",
+            "review:2825:-leading-hyphen",
+            "review:2825:trailing-hyphen-",
+            "review:2825:double--hyphen",
+            "review:9999:unknown-issue",
+        ] {
+            require(
+                !is_adjudication_review_ref(rejected),
+                format!("malformed review ref {rejected} was accepted"),
+            )?;
+        }
+        let overlong = format!("review:2825:{}", "a".repeat(65));
+        require(
+            !is_adjudication_review_ref(&overlong),
+            "overlong review-ref slug was accepted",
         )
     }
 

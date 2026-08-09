@@ -107,8 +107,9 @@ decision; final output is ready only after every record is reconciled.
 
 `fixtures/release_denominator/current-main-provisional.json` is the fixed
 captured census of `c86807ec..b8b1c9ec` observed on 2026-08-08. After the
-#2832 manifest (reviewed prefix through `fcbb30a7`) and the #2825 manifest
-(post-P delta through the selected development cut) are applied it carries 333
+reviewed-prefix manifest from issue #2832 (through `fcbb30a7`) and the post-P
+delta manifest from issue #2825 (through the selected development cut) are
+applied it carries 333
 first-parent records, 325 records present in the reviewed provisional tree,
 five whole-commit candidate-only dependency exclusions, three reviewed
 safe-deferral rows absent from the candidate tree, and zero rows through the
@@ -160,7 +161,7 @@ shared fail-closed validator. It does not close the final candidate decision
 tracked by #1609 or the dependent release-editor lane #2769.
 
 The implementation and fixture contract are mapped in `.ripr/traceability.toml`
-under `RIPR-SPEC-0146`. Focused proof is provided by the twenty-nine tests named there
+under `RIPR-SPEC-0146`. Focused proof is provided by the thirty tests named there
 and the complete/reconcile-required fixtures under
 `fixtures/release_denominator/`; hosted CI is the authoritative execution
 proof for this PR. The complete fixture pins the #2767/#2788 and #2768/#2790
@@ -209,13 +210,14 @@ decision in a final ledger, or disagreeing with live observations produces
 
 ## Test Mapping
 
-The twenty-nine focused tests listed in `.ripr/traceability.toml` cover deterministic
+The thirty focused tests listed in `.ripr/traceability.toml` cover deterministic
 normalization, missing/duplicate/out-of-range/order/tree failures, final
 operator decisions, live drift, JSON/Markdown claim-boundary parity, typed
 reference authority, compatibility projection mismatch, contradictory
 identity, the two known issue/merge-PR pairs, deterministic ordering, changed mappings, final unreviewed
 references, malformed reference evidence, numeric compatibility projection
-ordering, manual-mapping reasons, reused reference identity, and the current-main
+ordering, manual-mapping reasons, reused reference identity, adjudication
+review-ref slug shape, and the current-main
 census pinned to the final corrective cutoff, counts, excluded commit
 identities, and record-set digest.
 
