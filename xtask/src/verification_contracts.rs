@@ -478,16 +478,25 @@ fn validate_value_against_schema(
     location: String,
     violations: &mut Vec<String>,
 ) {
+    // `$ref` does not suppress its siblings. A schema may write
+    // `{"$ref": "...", "minItems": 1}`, and returning here would silently drop
+    // every sibling keyword — an empty array passed `minItems: 1` because this
+    // path never reached the array checks. Validate the referenced schema, then
+    // fall through so the sibling keywords on this schema object are evaluated
+    // too.
     if let Some(reference) = schema.get("$ref").and_then(Value::as_str) {
         match resolve_ref(root_schema, reference) {
-            Some(resolved) => {
-                validate_value_against_schema(value, resolved, root_schema, location, violations)
-            }
+            Some(resolved) => validate_value_against_schema(
+                value,
+                resolved,
+                root_schema,
+                location.clone(),
+                violations,
+            ),
             None => violations.push(format!(
                 "{location}: unresolved schema reference {reference}"
             )),
         }
-        return;
     }
 
     if let Some(all_of) = schema.get("allOf").and_then(Value::as_array) {
@@ -632,15 +641,21 @@ fn validate_object(
     let Some(object) = value.as_object() else {
         return;
     };
-    let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
-        return;
-    };
 
+    // `required` is independent of `properties`. A conditional `then` branch is
+    // routinely written as `{"required": ["duplicate_of"]}` with no
+    // `properties` at all, and returning early on a missing `properties` made
+    // every such branch unenforceable — the malformed value was accepted with
+    // zero violations.
     for field in string_array(schema.get("required")) {
         if !object.contains_key(&field) {
             violations.push(format!("{location}: missing required field `{field}`"));
         }
     }
+
+    let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
+        return;
+    };
 
     if schema.get("additionalProperties").and_then(Value::as_bool) == Some(false) {
         for field in object.keys() {
@@ -1036,6 +1051,119 @@ mod tests {
             "an incomplete status must still be rejected when analysis completed"
         );
         Ok(())
+    }
+
+    /// A conditional `then` branch is routinely written as bare `required`
+    /// with no `properties`. `validate_object` used to return early when
+    /// `properties` was absent, which made every such branch unenforceable:
+    /// the malformed value was accepted with zero violations, so the
+    /// conditional looked like a passing check while checking nothing.
+    #[test]
+    fn required_is_enforced_without_a_properties_sibling() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "allOf": [{
+                "if": {
+                    "properties": { "classification": { "const": "duplicate_observation" } },
+                    "required": ["classification"]
+                },
+                "then": { "required": ["duplicate_of"] }
+            }]
+        });
+
+        let missing = serde_json::json!({ "classification": "duplicate_observation" });
+        let mut violations = Vec::new();
+        validate_value_against_schema(
+            &missing,
+            &schema,
+            &schema,
+            "observation".to_string(),
+            &mut violations,
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("missing required field `duplicate_of`")),
+            "a required-only conditional branch must be enforced: {violations:#?}"
+        );
+
+        let present = serde_json::json!({
+            "classification": "duplicate_observation",
+            "duplicate_of": "obs-1"
+        });
+        let mut violations = Vec::new();
+        validate_value_against_schema(
+            &present,
+            &schema,
+            &schema,
+            "observation".to_string(),
+            &mut violations,
+        );
+        assert!(
+            violations.is_empty(),
+            "a satisfied conditional must not report violations: {violations:#?}"
+        );
+    }
+
+    /// `$ref` does not suppress its siblings. The validator used to return
+    /// immediately after resolving a reference, so a schema written as
+    /// `{"$ref": ..., "minItems": 1}` silently accepted an empty array — the
+    /// sibling constraint was never reached.
+    #[test]
+    fn keywords_beside_a_ref_are_still_evaluated() {
+        let schema = serde_json::json!({
+            "$defs": { "paths": { "type": "array", "items": { "type": "string" } } },
+            "type": "object",
+            "properties": {
+                "source_refs": { "$ref": "#/$defs/paths", "minItems": 1 }
+            }
+        });
+
+        let empty = serde_json::json!({ "source_refs": [] });
+        let mut violations = Vec::new();
+        validate_value_against_schema(
+            &empty,
+            &schema,
+            &schema,
+            "attempt".to_string(),
+            &mut violations,
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("minItems")),
+            "a minItems sibling of $ref must be evaluated: {violations:#?}"
+        );
+
+        // The referenced schema must still be applied, so a type error inside
+        // it is reported rather than lost to the sibling handling.
+        let wrong_type = serde_json::json!({ "source_refs": [7] });
+        let mut violations = Vec::new();
+        validate_value_against_schema(
+            &wrong_type,
+            &schema,
+            &schema,
+            "attempt".to_string(),
+            &mut violations,
+        );
+        assert!(
+            !violations.is_empty(),
+            "the referenced schema must still be applied: {violations:#?}"
+        );
+
+        let populated = serde_json::json!({ "source_refs": ["src/lib.rs"] });
+        let mut violations = Vec::new();
+        validate_value_against_schema(
+            &populated,
+            &schema,
+            &schema,
+            "attempt".to_string(),
+            &mut violations,
+        );
+        assert!(
+            violations.is_empty(),
+            "a satisfied ref-plus-sibling schema must not report violations: {violations:#?}"
+        );
     }
 
     #[test]
