@@ -12,6 +12,15 @@
 //! and associated functions in `impl` blocks are semver-relevant but are not
 //! collected here.
 //!
+//! Visibility boundary: a module is nameable only when a bare `pub` chain
+//! reaches it from the crate root. A non-`pub` module is still walked, because
+//! `#[macro_export]` binds a macro at the crate root whatever the declaring
+//! module's visibility; nothing else in such a module is recorded.
+//!
+//! Configuration boundary: `cfg` predicates are evaluated with `test = false`
+//! and every other option unknown, so an item is dropped only when no non-test
+//! build can compile it.
+//!
 //! Resolution boundary: this is a syntax walk, not a name resolution pass. A
 //! `pub use` records the name it binds in its own module, which is the
 //! nameable public path, without resolving what that name refers to. A glob
@@ -19,10 +28,11 @@
 //! recorded deliberately rather than passing silently.
 
 use std::collections::BTreeSet;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use ra_ap_syntax::ast::{self, HasAttrs, HasName, HasVisibility};
-use ra_ap_syntax::{AstNode, Edition, SourceFile, SyntaxKind, SyntaxNode};
+use ra_ap_syntax::{AstNode, Edition, SourceFile, SyntaxNode};
 
 use crate::read_text_lossy;
 
@@ -37,89 +47,122 @@ pub(crate) fn public_api_surface(
     root_file: &Path,
     crate_name: &str,
 ) -> Result<Vec<String>, String> {
-    let mut entries = BTreeSet::new();
-    let mut visited = BTreeSet::new();
-    collect_module_file(root_file, crate_name, &mut entries, &mut visited)?;
-    Ok(entries.into_iter().collect())
+    let mut collector = Collector::default();
+    collector.module_file(root_file, crate_name, Scope::Nameable)?;
+    Ok(collector.entries.into_iter().collect())
 }
 
-fn collect_module_file(
-    file: &Path,
-    module_path: &str,
-    entries: &mut BTreeSet<String>,
-    visited: &mut BTreeSet<PathBuf>,
-) -> Result<(), String> {
-    if !visited.insert(file.to_path_buf()) {
-        return Ok(());
-    }
-    let text = read_text_lossy(file)?;
-    let parse = SourceFile::parse(&text, Edition::Edition2024);
-    if !parse.errors().is_empty() {
-        return Err(format!(
-            "{}: the file does not parse, so its public surface cannot be collected",
-            file.display()
-        ));
-    }
-    let dir = child_module_dir(file)?;
-    collect_items(
-        parse.tree().syntax(),
-        &dir,
-        module_path,
-        file,
-        entries,
-        visited,
-    )
+/// What a module contributes to the surface.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Scope {
+    /// The module is nameable from outside the crate, so every bare-`pub`
+    /// module-level item in it is public API.
+    Nameable,
+    /// The module is not nameable from outside the crate. Its ordinary items
+    /// are invisible, but `#[macro_export]` still binds at the crate root, so
+    /// the walk continues for macros alone.
+    MacroExportsOnly,
 }
 
-fn collect_items(
-    node: &SyntaxNode,
-    dir: &Path,
-    module_path: &str,
-    owner: &Path,
-    entries: &mut BTreeSet<String>,
-    visited: &mut BTreeSet<PathBuf>,
-) -> Result<(), String> {
-    for child in node.children() {
-        let Some(item) = ast::Item::cast(child) else {
-            continue;
-        };
-        if is_cfg_test(&item) {
-            continue;
+#[derive(Default)]
+struct Collector {
+    entries: BTreeSet<String>,
+    /// Completed work, keyed by file *and* module path: one file reached under
+    /// two `#[path]` module declarations is nameable under both paths, so the
+    /// file alone is not the unit of work.
+    visited: BTreeSet<(PathBuf, String)>,
+    /// Files whose walk is in progress, so a module tree that names itself
+    /// terminates instead of growing a module path forever.
+    active: BTreeSet<PathBuf>,
+}
+
+impl Collector {
+    fn module_file(&mut self, file: &Path, module_path: &str, scope: Scope) -> Result<(), String> {
+        let key = visit_key(file);
+        if !self
+            .visited
+            .insert((key.clone(), format!("{}{module_path}", scope_tag(scope))))
+        {
+            return Ok(());
         }
-        match item {
-            ast::Item::Module(module) => {
-                collect_module(&module, dir, module_path, owner, entries, visited)?;
-            }
-            ast::Item::Use(use_item) if is_bare_pub(&use_item) => {
-                collect_use(&use_item, module_path, entries);
+        if !self.active.insert(key.clone()) {
+            return Ok(());
+        }
+        let result = self.walk_module_file(file, module_path, scope);
+        self.active.remove(&key);
+        result
+    }
+
+    fn walk_module_file(
+        &mut self,
+        file: &Path,
+        module_path: &str,
+        scope: Scope,
+    ) -> Result<(), String> {
+        let text = read_text_lossy(file)?;
+        let parse = SourceFile::parse(&text, Edition::Edition2024);
+        if !parse.errors().is_empty() {
+            return Err(format!(
+                "{}: the file does not parse, so its public surface cannot be collected",
+                file.display()
+            ));
+        }
+        let dirs = ModuleDirs::for_file(file)?;
+        self.items(parse.tree().syntax(), &dirs, module_path, file, scope)
+    }
+
+    fn items(
+        &mut self,
+        node: &SyntaxNode,
+        dirs: &ModuleDirs,
+        module_path: &str,
+        owner: &Path,
+        scope: Scope,
+    ) -> Result<(), String> {
+        for child in node.children() {
+            let Some(item) = ast::Item::cast(child) else {
+                continue;
+            };
+            if excluded_from_non_test_builds(&item) {
+                continue;
             }
             // `#[macro_export]` puts the macro at the crate root regardless of
-            // where it is declared, so its own visibility does not apply.
-            ast::Item::MacroRules(macro_rules) if has_macro_export(&macro_rules) => {
+            // where it is declared, so neither its own visibility nor its
+            // module's applies.
+            if let ast::Item::MacroRules(macro_rules) = &item
+                && has_macro_export(macro_rules)
+            {
                 let name = item_name(macro_rules.name());
-                entries.insert(format!("pub macro {}::{name}", crate_root(module_path)));
+                self.entries
+                    .insert(format!("pub macro {}::{name}", crate_root(module_path)));
+                continue;
             }
-            ast::Item::Fn(item) => insert_named(entries, &item, "fn", module_path, item.name()),
-            ast::Item::Struct(item) => {
-                insert_named(entries, &item, "struct", module_path, item.name());
+            if let ast::Item::Module(module) = &item {
+                self.module(module, dirs, module_path, owner, scope)?;
+                continue;
             }
-            ast::Item::Enum(item) => insert_named(entries, &item, "enum", module_path, item.name()),
-            ast::Item::Union(item) => {
-                insert_named(entries, &item, "union", module_path, item.name());
+            if scope == Scope::MacroExportsOnly {
+                continue;
             }
-            ast::Item::Trait(item) => {
-                insert_named(entries, &item, "trait", module_path, item.name());
+            self.nameable_item(&item, module_path);
+        }
+        Ok(())
+    }
+
+    fn nameable_item(&mut self, item: &ast::Item, module_path: &str) {
+        match item {
+            ast::Item::Use(use_item) if is_bare_pub(use_item) => {
+                self.uses(use_item, module_path);
             }
-            ast::Item::TypeAlias(item) => {
-                insert_named(entries, &item, "type", module_path, item.name());
-            }
-            ast::Item::Const(item) => {
-                insert_named(entries, &item, "const", module_path, item.name());
-            }
-            ast::Item::Static(item) => {
-                insert_named(entries, &item, "static", module_path, item.name());
-            }
-            ast::Item::ExternCrate(item) if is_bare_pub(&item) => {
+            ast::Item::Fn(item) => self.named(item, "fn", module_path, item.name()),
+            ast::Item::Struct(item) => self.named(item, "struct", module_path, item.name()),
+            ast::Item::Enum(item) => self.named(item, "enum", module_path, item.name()),
+            ast::Item::Union(item) => self.named(item, "union", module_path, item.name()),
+            ast::Item::Trait(item) => self.named(item, "trait", module_path, item.name()),
+            ast::Item::TypeAlias(item) => self.named(item, "type", module_path, item.name()),
+            ast::Item::Const(item) => self.named(item, "const", module_path, item.name()),
+            ast::Item::Static(item) => self.named(item, "static", module_path, item.name()),
+            ast::Item::ExternCrate(item) if is_bare_pub(item) => {
                 let name = match item.rename().and_then(|rename| rename.name()) {
                     Some(name) => name.text().to_string(),
                     None => match item.name_ref() {
@@ -127,71 +170,118 @@ fn collect_items(
                         None => "<unnamed>".to_string(),
                     },
                 };
-                entries.insert(format!("pub extern crate {module_path}::{name}"));
+                self.entries
+                    .insert(format!("pub extern crate {module_path}::{name}"));
             }
-            ast::Item::MacroDef(item) => {
-                insert_named(entries, &item, "macro", module_path, item.name());
-            }
+            ast::Item::MacroDef(item) => self.named(item, "macro", module_path, item.name()),
             // Items that are not bare `pub`, plus `impl` associated items,
             // `extern` blocks, and macro invocations, which are outside the
             // stated module-level scope of this collector.
             _ => {}
         }
     }
-    Ok(())
-}
 
-fn collect_module(
-    module: &ast::Module,
-    dir: &Path,
-    module_path: &str,
-    owner: &Path,
-    entries: &mut BTreeSet<String>,
-    visited: &mut BTreeSet<PathBuf>,
-) -> Result<(), String> {
-    if !is_bare_pub(module) {
-        // Items declared in a non-`pub` module are not nameable from outside
-        // the crate. Anything re-exported out of it is recorded at the `pub use`
-        // that binds the name.
-        return Ok(());
-    }
-    let name = item_name(module.name());
-    let child_path = format!("{module_path}::{name}");
-    entries.insert(format!("pub mod {child_path}"));
+    fn module(
+        &mut self,
+        module: &ast::Module,
+        dirs: &ModuleDirs,
+        module_path: &str,
+        owner: &Path,
+        scope: Scope,
+    ) -> Result<(), String> {
+        // A module is nameable only if it is bare `pub` inside an already
+        // nameable module. Items declared below a non-`pub` module are not
+        // nameable from outside the crate; anything re-exported out of one is
+        // recorded at the `pub use` that binds the name. The walk continues
+        // regardless, because `#[macro_export]` ignores module visibility.
+        let child_scope = if scope == Scope::Nameable && is_bare_pub(module) {
+            Scope::Nameable
+        } else {
+            Scope::MacroExportsOnly
+        };
+        let name = item_name(module.name());
+        let child_path = format!("{module_path}::{name}");
+        if child_scope == Scope::Nameable {
+            self.entries.insert(format!("pub mod {child_path}"));
+        }
 
-    if let Some(list) = module.item_list() {
-        return collect_items(
-            list.syntax(),
-            &dir.join(&name),
-            &child_path,
+        if let Some(list) = module.item_list() {
+            return self.items(
+                list.syntax(),
+                &dirs.inside_inline_module(&name),
+                &child_path,
+                owner,
+                child_scope,
+            );
+        }
+        let declaration = if is_bare_pub(module) {
+            "pub mod"
+        } else {
+            "mod"
+        };
+        let file = resolve_module_file(
+            dirs,
+            &name,
+            path_attribute(module).as_deref(),
             owner,
-            entries,
-            visited,
-        );
+            declaration,
+        )?;
+        self.module_file(&file, &child_path, child_scope)
     }
-    let file = resolve_module_file(dir, &name, path_attribute(module).as_deref(), owner)?;
-    collect_module_file(&file, &child_path, entries, visited)
-}
 
-fn collect_use(use_item: &ast::Use, module_path: &str, entries: &mut BTreeSet<String>) {
-    let Some(tree) = use_item.use_tree() else {
-        return;
-    };
-    let mut leaves = Vec::new();
-    expand_use_tree(&tree, &[], &mut leaves);
-    for leaf in leaves {
-        match leaf {
-            UseLeaf::Name(name) => {
-                entries.insert(format!("pub use {module_path}::{name}"));
-            }
-            // A syntax walk cannot enumerate what a glob re-exports. Recording
-            // the glob keeps it visible to the gate instead of silently
-            // widening the surface.
-            UseLeaf::Glob => {
-                entries.insert(format!("pub use {module_path}::*"));
+    fn uses(&mut self, use_item: &ast::Use, module_path: &str) {
+        let Some(tree) = use_item.use_tree() else {
+            return;
+        };
+        let mut leaves = Vec::new();
+        expand_use_tree(&tree, &[], &mut leaves);
+        for leaf in leaves {
+            match leaf {
+                UseLeaf::Name(name) => {
+                    self.entries
+                        .insert(format!("pub use {module_path}::{name}"));
+                }
+                // A syntax walk cannot enumerate what a glob re-exports.
+                // Recording the glob keeps it visible to the gate instead of
+                // silently widening the surface.
+                UseLeaf::Glob => {
+                    self.entries.insert(format!("pub use {module_path}::*"));
+                }
             }
         }
     }
+
+    fn named<T: HasVisibility>(
+        &mut self,
+        item: &T,
+        kind: &str,
+        module_path: &str,
+        name: Option<ast::Name>,
+    ) {
+        if !is_bare_pub(item) {
+            return;
+        }
+        self.entries
+            .insert(format!("pub {kind} {module_path}::{}", item_name(name)));
+    }
+}
+
+fn scope_tag(scope: Scope) -> &'static str {
+    match scope {
+        Scope::Nameable => "",
+        // A file first walked for macros alone must still be walked in full if
+        // a nameable path to it appears later.
+        Scope::MacroExportsOnly => "macro-only ",
+    }
+}
+
+/// The identity of a file for visit bookkeeping. `#[path]` attributes compose
+/// relative segments, so two spellings can name one file; canonicalizing keeps
+/// the cycle guard and the visited set keyed by the file itself. A path that
+/// cannot be canonicalized keeps its literal spelling and is still bounded by
+/// the module tree.
+fn visit_key(file: &Path) -> PathBuf {
+    fs::canonicalize(file).unwrap_or_else(|_| file.to_path_buf())
 }
 
 enum UseLeaf {
@@ -238,19 +328,6 @@ fn expand_use_tree(tree: &ast::UseTree, prefix: &[String], out: &mut Vec<UseLeaf
     out.push(UseLeaf::Name(last.clone()));
 }
 
-fn insert_named<T: HasVisibility>(
-    entries: &mut BTreeSet<String>,
-    item: &T,
-    kind: &str,
-    module_path: &str,
-    name: Option<ast::Name>,
-) {
-    if !is_bare_pub(item) {
-        return;
-    }
-    entries.insert(format!("pub {kind} {module_path}::{}", item_name(name)));
-}
-
 /// A bare `pub` is the only visibility that reaches outside the crate.
 /// `pub(crate)`, `pub(super)`, `pub(self)`, and `pub(in path)` all carry a
 /// `VisibilityInner` and are rejected.
@@ -277,23 +354,104 @@ fn crate_root(module_path: &str) -> &str {
     }
 }
 
-/// `#[cfg(test)]` items are not part of the published surface. An item whose
-/// `cfg` mentions both `test` and `not` is kept, because `#[cfg(not(test))]`
-/// items are present in a normal build.
-fn is_cfg_test<T: HasAttrs>(item: &T) -> bool {
-    for attr in item.attrs() {
-        let Some(ast::Meta::CfgMeta(cfg)) = attr.meta() else {
-            continue;
-        };
-        let Some(predicate) = cfg.cfg_predicate() else {
-            continue;
-        };
-        let identifiers = bare_identifiers(predicate.syntax());
-        if identifiers.contains("test") && !identifiers.contains("not") {
-            return true;
-        }
+/// Whether no non-test build can compile this item.
+///
+/// The baseline surface is what a normal `cargo build` exports, so each `cfg`
+/// predicate is evaluated with `test = false` and every other option left
+/// unknown; the item is dropped only when the predicate is false under every
+/// assignment of those unknowns. `#[cfg(any(test, feature = "x"))]` therefore
+/// survives — a feature-enabled build exports it — while
+/// `#[cfg(all(test, not(feature = "x")))]` does not. Stacked `#[cfg]`
+/// attributes are conjunctive, so one definitely-false predicate is enough.
+fn excluded_from_non_test_builds<T: HasAttrs>(item: &T) -> bool {
+    item.attrs().any(|attr| match attr.meta() {
+        Some(ast::Meta::CfgMeta(cfg)) => cfg
+            .cfg_predicate()
+            .is_some_and(|predicate| evaluate_cfg(&predicate) == Truth::False),
+        _ => false,
+    })
+}
+
+/// Three-valued because most `cfg` options (features, targets) are neither
+/// fixed nor decidable here; only a decided `False` may drop an item.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Truth {
+    True,
+    False,
+    Unknown,
+}
+
+fn evaluate_cfg(predicate: &ast::CfgPredicate) -> Truth {
+    match predicate {
+        ast::CfgPredicate::CfgAtom(atom) => evaluate_cfg_atom(atom),
+        ast::CfgPredicate::CfgComposite(composite) => evaluate_cfg_composite(composite),
     }
-    false
+}
+
+fn evaluate_cfg_atom(atom: &ast::CfgAtom) -> Truth {
+    if atom.true_token().is_some() {
+        return Truth::True;
+    }
+    if atom.false_token().is_some() {
+        return Truth::False;
+    }
+    // `test` is the one option this walk fixes. A `key = "value"` atom is never
+    // it, so `#[cfg(feature = "test")]` stays unknown rather than being read as
+    // the `test` option.
+    let is_bare_test = atom.eq_token().is_none()
+        && atom
+            .ident_token()
+            .is_some_and(|token| token.text() == "test");
+    if is_bare_test {
+        Truth::False
+    } else {
+        Truth::Unknown
+    }
+}
+
+fn evaluate_cfg_composite(composite: &ast::CfgComposite) -> Truth {
+    let operands: Vec<Truth> = composite
+        .cfg_predicates()
+        .map(|predicate| evaluate_cfg(&predicate))
+        .collect();
+    let keyword = composite.keyword();
+    match keyword.as_ref().map(|token| token.text()) {
+        Some("not") => match operands.as_slice() {
+            [inner] => negate(*inner),
+            // A malformed `not` decides nothing rather than dropping the item.
+            _ => Truth::Unknown,
+        },
+        // `all()` is true and `any()` is false on an empty operand list, which
+        // is what the empty folds below produce.
+        Some("all") => {
+            if operands.contains(&Truth::False) {
+                Truth::False
+            } else if operands.contains(&Truth::Unknown) {
+                Truth::Unknown
+            } else {
+                Truth::True
+            }
+        }
+        Some("any") => {
+            if operands.contains(&Truth::True) {
+                Truth::True
+            } else if operands.contains(&Truth::Unknown) {
+                Truth::Unknown
+            } else {
+                Truth::False
+            }
+        }
+        // An unrecognized combinator must not decide the item's fate.
+        _ => Truth::Unknown,
+    }
+}
+
+fn negate(value: Truth) -> Truth {
+    match value {
+        Truth::True => Truth::False,
+        Truth::False => Truth::True,
+        Truth::Unknown => Truth::Unknown,
+    }
 }
 
 fn has_macro_export(item: &ast::MacroRules) -> bool {
@@ -303,16 +461,6 @@ fn has_macro_export(item: &ast::MacroRules) -> bool {
             .is_some_and(|path| path.syntax().text().to_string().trim() == "macro_export"),
         _ => false,
     })
-}
-
-/// Identifier tokens only: text inside a string literal (`feature = "latest"`)
-/// is a single `STRING` token and never contributes an identifier.
-fn bare_identifiers(node: &SyntaxNode) -> BTreeSet<String> {
-    node.descendants_with_tokens()
-        .filter_map(|element| element.into_token())
-        .filter(|token| token.kind() == SyntaxKind::IDENT)
-        .map(|token| token.text().to_string())
-        .collect()
 }
 
 fn path_attribute(module: &ast::Module) -> Option<String> {
@@ -332,35 +480,64 @@ fn path_attribute(module: &ast::Module) -> Option<String> {
     None
 }
 
-/// The directory that owns a file's child modules: `lib.rs`, `main.rs`, and
-/// `mod.rs` own their own directory; `foo.rs` owns `foo/`.
-fn child_module_dir(file: &Path) -> Result<PathBuf, String> {
-    let parent = file
-        .parent()
-        .ok_or_else(|| format!("{} has no parent directory", file.display()))?;
-    let stem = file
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .ok_or_else(|| format!("{} has no readable file stem", file.display()))?;
-    if matches!(stem, "lib" | "main" | "mod") {
-        return Ok(parent.to_path_buf());
+/// The two base directories a `mod` declaration resolves against, which differ
+/// outside `lib.rs`/`main.rs`/`mod.rs`.
+///
+/// A name-resolved `mod foo;` in `bar.rs` looks in `bar/`, but a
+/// `#[path = "..."]` on a module declared at the top level of `bar.rs` is
+/// relative to the directory holding `bar.rs` itself. Inside an inline
+/// `mod block { ... }` both bases become the inline module's directory.
+struct ModuleDirs {
+    /// Where a name-resolved child module file is looked up.
+    children: PathBuf,
+    /// What a `#[path]` attribute is relative to.
+    path_attribute: PathBuf,
+}
+
+impl ModuleDirs {
+    fn for_file(file: &Path) -> Result<Self, String> {
+        let parent = file
+            .parent()
+            .ok_or_else(|| format!("{} has no parent directory", file.display()))?;
+        let stem = file
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .ok_or_else(|| format!("{} has no readable file stem", file.display()))?;
+        let children = if matches!(stem, "lib" | "main" | "mod") {
+            parent.to_path_buf()
+        } else {
+            parent.join(stem)
+        };
+        Ok(Self {
+            children,
+            path_attribute: parent.to_path_buf(),
+        })
     }
-    Ok(parent.join(stem))
+
+    fn inside_inline_module(&self, name: &str) -> Self {
+        let nested = self.children.join(name);
+        Self {
+            children: nested.clone(),
+            path_attribute: nested,
+        }
+    }
 }
 
 fn resolve_module_file(
-    dir: &Path,
+    dirs: &ModuleDirs,
     name: &str,
     path_attribute: Option<&str>,
     owner: &Path,
+    declaration: &str,
 ) -> Result<PathBuf, String> {
+    let dir = &dirs.children;
     if let Some(relative) = path_attribute {
-        let candidate = dir.join(relative);
+        let candidate = dirs.path_attribute.join(relative);
         if candidate.is_file() {
             return Ok(candidate);
         }
         return Err(format!(
-            "{}: `pub mod {name};` has #[path = \"{relative}\"] which does not resolve to {}",
+            "{}: `{declaration} {name};` has #[path = \"{relative}\"] which does not resolve to {}",
             owner.display(),
             candidate.display()
         ));
@@ -374,7 +551,7 @@ fn resolve_module_file(
         return Ok(nested);
     }
     Err(format!(
-        "{}: `pub mod {name};` resolves to neither {} nor {}, so its public surface cannot be collected",
+        "{}: `{declaration} {name};` resolves to neither {} nor {}, so its public surface cannot be collected",
         owner.display(),
         flat.display(),
         nested.display()

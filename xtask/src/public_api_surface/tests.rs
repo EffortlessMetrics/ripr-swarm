@@ -164,17 +164,109 @@ fn keeps_feature_gated_and_cfg_not_test_items() -> Result<(), String> {
         &dir.join("lib.rs"),
         "#[cfg(feature = \"lang-typescript\")]\npub const FEATURE_GATED: u8 = 0;\n\
          #[cfg(not(test))]\npub const NON_TEST: u8 = 0;\n\
-         #[cfg(any(test, feature = \"x\"))]\npub const TEST_OR_FEATURE: u8 = 0;\n",
+         #[cfg(any(test, feature = \"x\"))]\npub const TEST_OR_FEATURE: u8 = 0;\n\
+         #[cfg(not(any(test, feature = \"x\")))]\npub const NOT_ANY: u8 = 0;\n\
+         #[cfg(test)]\npub const TEST_ONLY: u8 = 0;\n\
+         #[cfg(all(test, feature = \"x\"))]\npub const TEST_AND_FEATURE: u8 = 0;\n\
+         #[cfg(all(test, not(feature = \"x\")))]\npub const TEST_AND_NOT_FEATURE: u8 = 0;\n\
+         #[cfg(feature = \"x\")]\n#[cfg(test)]\npub const STACKED_TEST: u8 = 0;\n",
     );
 
     let surface = public_api_surface(&dir.join("lib.rs"), "ripr")?;
     let expected = vec![
         "pub const ripr::FEATURE_GATED".to_string(),
         "pub const ripr::NON_TEST".to_string(),
+        "pub const ripr::NOT_ANY".to_string(),
+        "pub const ripr::TEST_OR_FEATURE".to_string(),
     ];
-    // The baseline is feature-independent, and `#[cfg(not(test))]` items are
-    // present in a normal build. `#[cfg(any(test, ...))]` is test-conditional
-    // and dropped.
+    // The predicate is evaluated with `test = false` and every other option
+    // left unknown, so an item is dropped only when no normal build can export
+    // it. `any(test, feature = "x")` is exported by a feature-enabled build and
+    // must survive; `all(test, not(feature = "x"))` cannot be, and must not.
+    // Neither decision is reachable by matching the identifiers `test`/`not`.
+    if surface != expected {
+        return Err(format!("expected {expected:?}, got {surface:?}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn records_a_macro_export_from_a_private_module() -> Result<(), String> {
+    // `#[macro_export]` binds the macro at the crate root whatever the
+    // declaring module's visibility, so a private module is still a public-API
+    // surface for macros — and only for macros.
+    let dir = temp_dir("public-api-private-macro");
+    write(&dir.join("lib.rs"), "mod hidden;\npub mod shown;\n");
+    write(
+        &dir.join("hidden.rs"),
+        "#[macro_export]\nmacro_rules! ripr_hidden { () => {} }\n\
+         macro_rules! ripr_local { () => {} }\n\
+         pub const NOT_NAMEABLE: u8 = 0;\n\
+         pub use crate::shown::VISIBLE as NOT_REEXPORTED;\n\
+         pub mod deeper {\n    pub const ALSO_NOT_NAMEABLE: u8 = 0;\n\
+             #[macro_export]\n    macro_rules! ripr_deep { () => {} }\n}\n\
+         #[cfg(test)]\nmod tests {\n    #[macro_export]\n    macro_rules! ripr_test { () => {} }\n}\n",
+    );
+    write(&dir.join("shown.rs"), "pub const VISIBLE: u8 = 0;\n");
+
+    let surface = public_api_surface(&dir.join("lib.rs"), "ripr")?;
+    let expected = vec![
+        "pub const ripr::shown::VISIBLE".to_string(),
+        "pub macro ripr::ripr_deep".to_string(),
+        "pub macro ripr::ripr_hidden".to_string(),
+        "pub mod ripr::shown".to_string(),
+    ];
+    // Discriminating in both directions: the private module contributes its
+    // exported macros and nothing else — no `pub mod ripr::hidden`, no
+    // `pub const`, no `pub use`, no unexported or test-only macro.
+    if surface != expected {
+        return Err(format!("expected {expected:?}, got {surface:?}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn records_one_file_under_every_public_module_path_naming_it() -> Result<(), String> {
+    // Two `#[path]` modules share a file. Both paths are nameable, so keying
+    // completed work by file alone loses the second one entirely.
+    let dir = temp_dir("public-api-shared-path");
+    write(
+        &dir.join("lib.rs"),
+        "#[path = \"shared.rs\"]\npub mod a;\n#[path = \"shared.rs\"]\npub mod b;\n",
+    );
+    write(&dir.join("shared.rs"), "pub struct X;\n");
+
+    let surface = public_api_surface(&dir.join("lib.rs"), "ripr")?;
+    let expected = vec![
+        "pub mod ripr::a".to_string(),
+        "pub mod ripr::b".to_string(),
+        "pub struct ripr::a::X".to_string(),
+        "pub struct ripr::b::X".to_string(),
+    ];
+    if surface != expected {
+        return Err(format!("expected {expected:?}, got {surface:?}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn terminates_on_a_self_referential_module_file() -> Result<(), String> {
+    // Keying by (file, module path) must not cost the cycle guard: this file
+    // names itself, so the module path grows without bound unless an
+    // in-progress file is refused.
+    let dir = temp_dir("public-api-cycle");
+    write(&dir.join("lib.rs"), "pub mod loops;\n");
+    write(
+        &dir.join("loops.rs"),
+        "#[path = \"loops.rs\"]\npub mod again;\npub const ONCE: u8 = 0;\n",
+    );
+
+    let surface = public_api_surface(&dir.join("lib.rs"), "ripr")?;
+    let expected = vec![
+        "pub const ripr::loops::ONCE".to_string(),
+        "pub mod ripr::loops".to_string(),
+        "pub mod ripr::loops::again".to_string(),
+    ];
     if surface != expected {
         return Err(format!("expected {expected:?}, got {surface:?}"));
     }
@@ -214,6 +306,39 @@ fn follows_a_path_attribute_on_a_public_module() -> Result<(), String> {
     let expected = vec![
         "pub const ripr::moved::RELOCATED".to_string(),
         "pub mod ripr::moved".to_string(),
+    ];
+    if surface != expected {
+        return Err(format!("expected {expected:?}, got {surface:?}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn resolves_a_path_attribute_against_the_declaring_file_directory() -> Result<(), String> {
+    // `#[path]` on a module declared at the top level of a non-`mod.rs` file is
+    // relative to the directory holding that file, while a name-resolved child
+    // of the same file lives in `commands/`. The two bases differ here, so a
+    // collector that reuses the child-module directory misresolves the `#[path]`
+    // module — which is exactly what `crates/ripr/src/cli/commands.rs` does.
+    let dir = temp_dir("public-api-path-base");
+    write(&dir.join("lib.rs"), "pub mod commands;\n");
+    write(
+        &dir.join("commands.rs"),
+        "#[path = \"commands/relocated.rs\"]\npub mod relocated;\npub mod named;\n",
+    );
+    write(
+        &dir.join("commands/relocated.rs"),
+        "pub const RELOCATED: u8 = 0;\n",
+    );
+    write(&dir.join("commands/named.rs"), "pub const NAMED: u8 = 0;\n");
+
+    let surface = public_api_surface(&dir.join("lib.rs"), "ripr")?;
+    let expected = vec![
+        "pub const ripr::commands::named::NAMED".to_string(),
+        "pub const ripr::commands::relocated::RELOCATED".to_string(),
+        "pub mod ripr::commands".to_string(),
+        "pub mod ripr::commands::named".to_string(),
+        "pub mod ripr::commands::relocated".to_string(),
     ];
     if surface != expected {
         return Err(format!("expected {expected:?}, got {surface:?}"));

@@ -48,6 +48,29 @@ are scoped or reviewed.
   `impl` blocks, and it records a glob re-export as a glob because a syntax walk
   cannot expand one. Both limits are stated in the gate's own report.
 
+  Three blind spots in that first walk are closed. `cfg` predicates were
+  decided by looking for the identifiers `test` and `not` anywhere in the
+  predicate, which was wrong in both directions: `#[cfg(any(test, feature =
+  "x"))]` was dropped although a feature-enabled build exports it, so an
+  accidental public addition passed the gate, and `#[cfg(all(test, not(feature
+  = "x")))]` was recorded although nothing but a test build compiles it. Each
+  predicate is now evaluated with `test = false` and every other option left
+  unknown, and an item is dropped only when no non-test build can compile it.
+  Non-`pub` modules were skipped entirely, so a `#[macro_export] macro_rules!`
+  declared in one was missed even though it binds at the crate root whatever
+  the declaring module's visibility; such modules are now walked for their
+  exported macros and nothing else. Completed work was keyed by file path
+  alone, so with two `#[path]` modules sharing one file only the first path was
+  recorded; it is now keyed by file and module path, with a separate
+  in-progress set bounding a module tree that names itself. A `#[path]` on a
+  module declared at the top level of a non-`mod.rs` file also resolved against
+  the wrong base directory — it is relative to the directory holding that file,
+  not to the file's child-module directory, which is how
+  `crates/ripr/src/cli/commands.rs` declares its subcommands.
+
+  `policy/public_api.txt` is unchanged: none of these corrections moves the
+  `ripr` crate's own recorded surface.
+
 - Human output no longer restates the `Missing discriminator` label inside its
   own value. The classifier builds these entries as
   `Missing discriminator value: <value>`, so the digest rendered
