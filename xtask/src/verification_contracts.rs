@@ -645,8 +645,19 @@ fn validate_value_against_schema(
 /// A corpus case the fixture advertises as invalid is a negative, never a
 /// positive contract subject. Shared by the subject selector and its test so
 /// the test asserts the retained selection rule rather than restating it.
+/// Fail closed on type drift. Matching `as_bool == Some(true)` would let
+/// `"invalid": "true"` or `"invalid": 1` fall through as a positive subject —
+/// the advertised negative would silently re-enter the passing count, which is
+/// the defect this predicate exists to prevent. Any present `invalid` that is
+/// not literally `false` is treated as a negative; `assurance_corpus_marks_invalid_with_a_boolean`
+/// rejects the non-boolean shape outright so the corpus cannot drift there
+/// unnoticed.
 fn is_advertised_negative(entry: &Value) -> bool {
-    entry.get("invalid").and_then(Value::as_bool) == Some(true)
+    match entry.get("invalid") {
+        None => false,
+        Some(Value::Bool(flag)) => *flag,
+        Some(_) => true,
+    }
 }
 
 fn validate_object(
@@ -1638,6 +1649,49 @@ mod tests {
             expected,
             "positive subject count must be exactly the valid record-carrying cases"
         );
+        Ok(())
+    }
+
+    /// The `invalid` marker decides whether a case is excluded from positive
+    /// subjects, so its type is load-bearing. A drift to `"invalid": "true"`
+    /// must be rejected outright rather than silently reinterpreted, and
+    /// `is_advertised_negative` must fail closed on any non-boolean it does see.
+    #[test]
+    fn assurance_corpus_marks_invalid_with_a_boolean() -> Result<(), String> {
+        let root = repo_root()?;
+        let corpus = read_json(root.join(ASSURANCE_CORPUS))?;
+        let cases = corpus["cases"]
+            .as_array()
+            .ok_or("the assurance corpus must declare cases")?;
+
+        for case in cases {
+            if let Some(marker) = case.get("invalid") {
+                let id = case
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("<unnamed>");
+                assert!(
+                    marker.is_boolean(),
+                    "case `{id}` declares a non-boolean `invalid` marker {marker};                      the exclusion rule is only meaningful for a boolean"
+                );
+            }
+        }
+
+        // The predicate itself must not reopen the hole the corpus check closes.
+        for drifted in [
+            serde_json::json!({ "invalid": "true" }),
+            serde_json::json!({ "invalid": 1 }),
+            serde_json::json!({ "invalid": serde_json::Value::Null }),
+        ] {
+            assert!(
+                is_advertised_negative(&drifted),
+                "a non-boolean `invalid` marker must fail closed: {drifted}"
+            );
+        }
+        assert!(!is_advertised_negative(&serde_json::json!({
+            "invalid": false
+        })));
+        assert!(!is_advertised_negative(&serde_json::json!({})));
         Ok(())
     }
 

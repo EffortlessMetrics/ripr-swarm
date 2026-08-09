@@ -113,10 +113,12 @@ are scoped or reviewed.
   validates as itself rather than through a copy; the `command_spec` and
   `verification_command_spec` shapes in `schemas/ripr/repair-assurance.schema.json`
   validate against the `command_specs` a generated agent packet actually emits;
-  and the design-only `RepairAssuranceV1` envelope validates against every
-  record in the assurance vocabulary corpus, making a claim that
-  `fixtures/assurance_vocabulary/SPEC.md` previously stated but nothing
-  enforced. Each pair carries a negative mutation that must fail.
+  and the design-only `RepairAssuranceV1` envelope validates against the
+  assurance vocabulary corpus records that carry a `record` and are not marked
+  `invalid`, making a claim that `fixtures/assurance_vocabulary/SPEC.md`
+  previously stated but nothing enforced. Patch-shaped cases and advertised
+  negatives stay outside that walk and are covered by their own tests, so the
+  subject count does not imply coverage it lacks. Each pair carries a negative mutation that must fail.
   `docs/verification/schema-producer-audit.md` records the producer, canonical
   subject, negative mutation, and explicit exemption for every published schema
   — including the `riprAgent` protocol schemas, which remain reserved and
