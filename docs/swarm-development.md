@@ -223,8 +223,11 @@ Each orchestrator should:
 
 ## Promotion Back To Source
 
-Promotion remains a source-repo pull request. Before opening it, confirm the
-promotion is carrying reviewed swarm state rather than active construction:
+Promotion remains a source-repo pull request. The release transaction pins one
+exact swarm head before this procedure begins; do not substitute a floating
+`swarm/main` ref while building or reviewing the join. Before opening it,
+confirm the promotion is carrying reviewed swarm state rather than active
+construction:
 
 ```bash
 gh pr list --repo EffortlessMetrics/ripr --state open
@@ -235,11 +238,23 @@ gh run list --repo EffortlessMetrics/ripr-swarm --workflow routed-rust.yml --bra
 
 The operator should see no ordinary source-repo development PRs, a protected
 `ripr-swarm/main` branch requiring `Ripr Rust Small Result`, and a recent green
-routed Rust result on swarm `main`. Open swarm PRs do not block promotion by
-themselves, but each one should be classified as included, deferred, superseded,
-or not release-relevant in the promotion PR body.
+routed Rust result on the selected swarm head. Open swarm PRs do not block
+promotion by themselves, but each one should be classified as included,
+deferred, superseded, or not release-relevant in the promotion PR body.
 
-Create the source promotion branch with a fast-forward-only merge:
+Record these immutable inputs before creating the source branch:
+
+```text
+SOURCE_PARENT  = exact ripr/main commit held for this transaction
+SWARM_PARENT   = exact selected ripr-swarm/main commit
+SWARM_REF      = immutable ref that points directly to SWARM_PARENT
+MERGE_BASE     = exact merge base of SOURCE_PARENT and SWARM_PARENT
+JOIN_TREE      = reviewed resolved tree identity from source preflight
+```
+
+The source promotion is a history-preserving join, not a tree copy. Create the
+promotion branch with the source parent first and the selected swarm parent
+second:
 
 ```bash
 git clone git@github.com:EffortlessMetrics/ripr.git ripr-promote
@@ -247,14 +262,54 @@ cd ripr-promote
 git remote add swarm git@github.com:EffortlessMetrics/ripr-swarm.git
 git fetch origin --prune --tags
 git fetch swarm --prune --tags
-git switch -c promote/swarm-main origin/main
-git merge --ff-only swarm/main
-git push origin promote/swarm-main
+git fetch swarm "$SWARM_REF:$SWARM_REF"
+git cat-file -e "$SOURCE_PARENT^{commit}"
+git cat-file -e "$SWARM_PARENT^{commit}"
+git rev-parse "$SWARM_REF^{commit}"
+git merge-base "$SOURCE_PARENT" "$SWARM_PARENT"
+git merge-base --is-ancestor "$SWARM_PARENT" swarm/main
+VERSION=0.11.0  # use the transaction's release version
+git switch -c "promote/${VERSION}-swarm" "$SOURCE_PARENT"
+git merge --no-ff --no-commit "$SWARM_PARENT"
+# Resolve only the conflicts recorded by the source preflight.
+git commit -m "promote: join frozen ripr-swarm candidate for ${VERSION}"
+J="$(git rev-parse HEAD)"
+git show -s --format='join %H%nparents %P' "$J"
+test "$(git show -s --format='%P' "$J" | awk '{print NF}')" -eq 2
+test "$(git show -s --format='%P' "$J" | awk '{print $1}')" = "$SOURCE_PARENT"
+test "$(git show -s --format='%P' "$J" | awk '{print $2}')" = "$SWARM_PARENT"
+git rev-parse "$J^{tree}"
+test "$(git rev-parse "$J^{tree}")" = "$JOIN_TREE"
+git merge-base --is-ancestor "$SOURCE_PARENT" "$J"
+git merge-base --is-ancestor "$SWARM_PARENT" "$J"
+git push --set-upstream origin "promote/${VERSION}-swarm"
 ```
 
-If `git merge --ff-only swarm/main` fails, stop. Do not resolve conflicts inside
-the promotion branch. First reconcile the source and swarm histories with an
-explicit source-sync or owner-approved promotion plan.
+The promotion join `J` must have exactly two ordered parents:
+
+```text
+J.parent[0] = SOURCE_PARENT
+J.parent[1] = SWARM_PARENT
+```
+
+The promotion PR head must itself be `J`; a valid join followed by repair
+commits is not the reviewed promotion head. Do not append a repair commit to
+make the PR green. If the preflight conflict list or resolved tree changes,
+rebuild and re-verify `J` from the same pinned parents.
+
+Never squash, rebase, cherry-pick, or reconstruct the swarm range. The source
+promotion PR must be merged with **Create a merge commit** while the head is
+still `J`:
+
+```bash
+gh pr merge <PR> --repo EffortlessMetrics/ripr \
+  --merge \
+  --match-head-commit "$J"
+```
+
+Do not bump versions or add the new changelog section in the promotion PR.
+Those are separate source release-preparation work after `J` reaches source
+`main`.
 
 Open the resulting source-repo PR as:
 
@@ -267,6 +322,10 @@ The PR body should include:
 ```text
 Included swarm range:
   <first promoted commit>..<last promoted commit>
+Join:
+  parent 1: <SOURCE_PARENT>
+  parent 2: <SWARM_PARENT>
+  join head: <J>
 
 Swarm proof:
   Ripr Rust Small Result on swarm/main: <run URL>
@@ -291,7 +350,9 @@ Abort promotion when any of these are true:
   `ripr-swarm`;
 - `ripr-swarm/main` is not protected by `Ripr Rust Small Result`;
 - the latest routed Rust result on swarm `main` failed or is missing;
-- the promotion is not a fast-forward from source `main` to swarm `main`;
+- `SOURCE_PARENT`, `SWARM_PARENT`, `SWARM_REF`, `MERGE_BASE`, or `J` is missing
+  or changed;
+- the promotion head is not the reviewed two-parent join;
 - release, publish, signing, marketplace, or GitHub Release secrets would need
   to move into `ripr-swarm`;
 - badge endpoint JSON changed outside the generated badge refresh path;
@@ -300,3 +361,81 @@ Abort promotion when any of these are true:
 The source repository CI remains the final release and publish proof. A green
 swarm route proves development readiness; it does not replace source release
 authority.
+
+## Post-Publication Back-Sync To Swarm
+
+After the source release is publicly verified, source release metadata,
+changelog, and publication receipts must become reachable from swarm before
+ordinary development resumes. This is a second history-preserving join, not a
+squash import and not an ordinary source PR cherry-pick.
+
+Freeze these inputs from the post-publication receipt:
+
+```text
+SWARM_BEFORE       = exact ripr-swarm/main head before back-sync
+SOURCE_RELEASE_HEAD = exact released ripr/main head
+BACK_SYNC_TREE      = reviewed resolved back-sync tree identity
+```
+
+Construct `K` from a fresh swarm checkout:
+
+```bash
+git clone git@github.com:EffortlessMetrics/ripr-swarm.git ripr-back-sync
+cd ripr-back-sync
+git remote add source git@github.com:EffortlessMetrics/ripr.git
+git fetch origin --prune --tags
+git fetch source --prune --tags
+git cat-file -e "$SWARM_BEFORE^{commit}"
+git cat-file -e "$SOURCE_RELEASE_HEAD^{commit}"
+VERSION=0.11.0  # use the published release version
+git switch -c "back-sync/${VERSION}" "$SWARM_BEFORE"
+git merge --no-ff --no-commit "$SOURCE_RELEASE_HEAD"
+# Preserve swarm settings, checks, runner topology, and development tooling.
+# Import the released version, changelog, and publication receipts.
+git commit -m "sync: back-sync released <version> from ripr"
+K="$(git rev-parse HEAD)"
+git show -s --format='join %H%nparents %P' "$K"
+test "$(git show -s --format='%P' "$K" | awk '{print NF}')" -eq 2
+test "$(git show -s --format='%P' "$K" | awk '{print $1}')" = "$SWARM_BEFORE"
+test "$(git show -s --format='%P' "$K" | awk '{print $2}')" = "$SOURCE_RELEASE_HEAD"
+git rev-parse "$K^{tree}"
+test "$(git rev-parse "$K^{tree}")" = "$BACK_SYNC_TREE"
+git merge-base --is-ancestor "$SWARM_BEFORE" "$K"
+git merge-base --is-ancestor "$SOURCE_RELEASE_HEAD" "$K"
+```
+
+The back-sync join must have exactly these ordered parents:
+
+```text
+K.parent[0] = SWARM_BEFORE
+K.parent[1] = SOURCE_RELEASE_HEAD
+```
+
+The resolved tree must retain swarm repository settings, checks, runner
+topology, and development-only authority. Source publication workflows and
+settings remain reachable in history but must not become swarm authority. The
+tree must import the final release version, changelog, and release receipts,
+plus any source-only product correction explicitly required for future swarm
+development.
+
+Before transporting `K`, refresh the protected branch and require the expected
+head to remain unchanged:
+
+```bash
+git fetch origin main
+test "$(git rev-parse origin/main)" = "$SWARM_BEFORE"
+```
+
+Where branch protection permits, review `K` and fast-forward `swarm/main` to
+`K` under an expected-head guard. Otherwise, obtain a narrowly scoped,
+owner-approved temporary exception allowing merge commits, merge only the
+reviewed `K` while the expected swarm head still equals `SWARM_BEFORE`, and
+restore the normal merge-commit-disabled policy immediately afterward. Record
+the before/after policy state and the exact `K` in the back-sync receipt. Do
+not force-push, squash, rebase, or merge unrelated work during this exception.
+
+`J` proves source promotion: source parent first, frozen swarm parent second.
+`K` proves release back-sync: swarm parent first, released source parent
+second. They are separate proof boundaries and neither substitutes for the
+other. Normal swarm development resumes only after `K` is reachable from
+`ripr-swarm/main`.
