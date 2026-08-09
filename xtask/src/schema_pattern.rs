@@ -633,11 +633,17 @@ mod tests {
     fn an_unanchored_pattern_matches_at_a_non_zero_offset() -> Result<(), String> {
         assert!(matches("b+", "aaabbb")?, "match starting after offset 0");
         assert!(matches("bbb$", "aaabbb")?, "end-anchored, non-zero start");
-        assert!(!matches("zzz", "aaabbb")?, "absent substring must not match");
+        assert!(
+            !matches("zzz", "aaabbb")?,
+            "absent substring must not match"
+        );
 
         // An anchored pattern must still refuse a non-zero start, or the sweep
         // would be over-permissive rather than merely present.
-        assert!(!matches("^bbb", "aaabbb")?, "start anchor must pin offset 0");
+        assert!(
+            !matches("^bbb", "aaabbb")?,
+            "start anchor must pin offset 0"
+        );
         assert!(matches("^aaa", "aaabbb")?);
         Ok(())
     }
