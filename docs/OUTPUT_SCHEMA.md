@@ -11811,6 +11811,7 @@ JSON shape:
   "schema_version": "0.1",
   "tool": "ripr",
   "status": "ready",
+  "command_shell": "bash",
   "root": ".",
   "mode": "draft",
   "out_dir": "target/ripr/workflow",
@@ -11877,6 +11878,14 @@ Field contract:
 
 - `schema_version` - currently `"0.1"`.
 - `status` - currently `"ready"` when the manifest was written.
+- `command_shell` - currently `"bash"`. Every `command` string in this manifest
+  is a bash command line: arguments are quoted with POSIX single quotes and
+  output redirection uses `>`. Consumers on Windows must run them through Git
+  Bash; cmd.exe treats `'` as a literal character and PowerShell rejects the
+  `'\''` escape. WSL bash is not equivalent, because paths in this manifest keep
+  their Windows drive-letter prefix, which WSL resolves as a relative path.
+  `commands.md` states the same boundary in prose above its first command block.
+  No shell-neutral argv form is emitted for this schema version.
 - `root`, `mode`, and `out_dir` - the selected workspace root, effective
   analysis mode, and workflow output directory.
 - `seam` - the selected seam fields copied from the generated agent brief.
@@ -12153,7 +12162,7 @@ unreviewed references and legacy-only projections.
 `source.github_repository` pins the GitHub repository whose retained authority
 may be imported; captures from another repository are rejected.
 `source.provisional_review_cutoff_sha` optionally pins the fixed review cutoff
-used by #2832. Each record may also carry `claim_refs[]`,
+used by #2832 and extended through the selected development cut by #2825. Each record may also carry `claim_refs[]`,
 `reference_capture_status` (`not_captured`, `captured`,
 `no_linked_authority`, `ambiguous`, or `unavailable`), and
 `reference_capture_limitation`. `candidate_tree_state_pending` is the
@@ -12162,10 +12171,12 @@ adjudicated; it is only valid with `operator_decision_required`. The optional
 `candidate_selection` object is the #2766/#2871 selected-claim authority, not a
 claim inferred from numeric issue or PR references.
 
-The checked provisional fixture also retains the #2832 adjudication batch
-receipt in each reviewed record's `review_refs[]`, and its candidate-tree
-commit list is the ordered projection of reviewed `candidate_tree_state` values.
-Rows after the pinned cutoff remain pending and do not enter that projection.
+The checked provisional fixture also retains the #2832 and #2825 adjudication
+batch receipts in each reviewed record's `review_refs[]`, and its
+candidate-tree commit list is the ordered projection of reviewed
+`candidate_tree_state` values. Unreviewed rows after a pinned cutoff remain
+pending and do not enter that projection; once adjudicated through the
+selected cut, each row carries its reviewed tree state into the projection.
 
 ## Operator Cockpit Report
 

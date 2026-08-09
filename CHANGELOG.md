@@ -35,6 +35,20 @@ are scoped or reviewed.
   list the flag-parity guard iterates, which previously omitted them from both
   sides and so could not see the gap.
 
+- The release external-cwd journey test no longer flakes with `Text file busy`
+  under the full `reports::release` filter. It published its spawnable stub with
+  `fs::copy` from the running test binary, which holds a writable descriptor open
+  across a multi-megabyte transfer. `ETXTBSY` is raised while any process holds
+  the file open for writing, and `FD_CLOEXEC` closes an inherited descriptor at
+  `exec`, not during the fork/exec window — so a peer test forking inside that
+  transfer left the stub transiently un-executable. This is the same mechanism
+  recorded for the doctor atomic-publication test (#2441), but it is removed
+  rather than retried here: the stub is now published by hard link, so no
+  writable descriptor ever exists on the executed inode and the precondition for
+  `ETXTBSY` cannot arise. A staged copy-then-rename fallback covers hosts without
+  hard links. Test-only change; no `ripr` behavior is affected
+  ([#3051](https://github.com/EffortlessMetrics/ripr-swarm/issues/3051)).
+
 - The `fabricated_result` case in `fixtures/assurance_vocabulary/assurance/corpus.json`
   omitted `runtime_mutation`, so it failed the assurance schema for a missing
   required field rather than for the producer-bound digest mismatch it exists to
@@ -106,6 +120,20 @@ are scoped or reviewed.
   ([#2592](https://github.com/EffortlessMetrics/ripr-swarm/issues/2592)).
 
 ### Added
+
+- The `ripr agent start` workflow packet now states that its generated commands
+  assume bash. `commands.md` carries a prose note above the first command block,
+  and `workflow.json` gains an additive `command_shell: "bash"` field. The
+  command strings have always used POSIX single-quote quoting and `>`
+  redirection, so copying one into cmd.exe (which treats `'` as a literal
+  character) or PowerShell (which rejects the `'\''` escape) mis-passes or
+  rejects quoted arguments. The note names Git Bash specifically rather than
+  "bash on Windows": generated paths keep their Windows drive-letter prefix,
+  which WSL resolves as a relative path, so WSL needs each path translated to
+  `/mnt/c/...` and `ripr` installed inside it. This is disclosure only: no
+  command string, schema version, or existing field changed. A shell-neutral
+  argv form (#1617) and a PowerShell variant (#2964) remain separate work
+  ([#2963](https://github.com/EffortlessMetrics/ripr-swarm/issues/2963)).
 
 - Published schemas that had only a reverse-direction `schema_version` check are
   now bound to real producer bytes by the verification-contract registry. The
