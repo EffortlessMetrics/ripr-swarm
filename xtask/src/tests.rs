@@ -46205,3 +46205,54 @@ fn count_policy_gates_have_no_stale_bounds() -> Result<(), String> {
         Ok(())
     })
 }
+
+/// Bind the #3054 claim one level above `run_fixture_outputs`: the
+/// golden-comparing entry point must also consume the cache the runner cleared.
+///
+/// `goldens_check`, `goldens_bless`, and `golden_drift` all reach a fixture only
+/// through `collect_golden_runs -> run_fixture -> run_fixture_outputs`, and the
+/// rebuild lives in `ripr_fixture_binary`, the single function every spawn
+/// reaches the binary through. Asserting here covers the aggregate wrappers
+/// without running all 222 fixtures: a stale entry seeded into the pinned cache
+/// must be gone after a golden-comparing run, and that run must still agree with
+/// its committed goldens.
+#[test]
+fn golden_comparison_runs_consume_the_cache_the_runner_cleared() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let name = "all_no_path_disclosure";
+        let fixture = PathBuf::from("fixtures").join(name);
+        let leaked = fixture.join("input").join("target");
+        let _ = fs::remove_dir_all(&leaked);
+
+        let cache_dir = super::fixture_cache_dir(name)?;
+        let stale = cache_dir
+            .join("repo-file-facts")
+            .join("0.2")
+            .join("stale-3054-golden.json");
+        let stale_parent = stale
+            .parent()
+            .ok_or_else(|| "seeded cache entry should have a parent".to_string())?;
+        fs::create_dir_all(stale_parent)
+            .map_err(|err| format!("create {}: {err}", stale_parent.display()))?;
+        fs::write(&stale, b"{\"stale\":true}")
+            .map_err(|err| format!("write {}: {err}", stale.display()))?;
+
+        let run = super::run_fixture(&fixture)?;
+
+        assert!(
+            !stale.exists(),
+            "a golden-comparing run must discard cached facts computed by a previous binary: {}",
+            stale.display()
+        );
+        assert!(
+            !leaked.exists(),
+            "a golden-comparing run must not write its cache into the tracked corpus: {}",
+            leaked.display()
+        );
+        assert!(
+            run.comparisons_all_match(),
+            "the fixture must still agree with its committed goldens after the cache clear"
+        );
+        Ok(())
+    })
+}

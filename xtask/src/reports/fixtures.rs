@@ -440,6 +440,11 @@ pub(crate) struct FixtureRun {
 }
 
 impl FixtureRun {
+    #[cfg(test)]
+    pub(crate) fn comparisons_all_match(&self) -> bool {
+        self.comparisons.iter().all(|comparison| comparison.matches)
+    }
+
     fn comparison_violations(&self) -> Vec<String> {
         self.comparisons
             .iter()
@@ -504,7 +509,7 @@ struct GoldenRunSet {
     violations: Vec<String>,
 }
 
-fn run_fixture(path: &Path) -> Result<FixtureRun, String> {
+pub(crate) fn run_fixture(path: &Path) -> Result<FixtureRun, String> {
     let run = run_fixture_outputs(path)?;
     let expected = path.join("expected");
     let comparisons = fixture_golden_comparisons(
