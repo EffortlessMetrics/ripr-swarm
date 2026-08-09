@@ -1,4 +1,13 @@
-//! A bounded, fail-closed matcher for JSON Schema `pattern` constraints.
+//! A fail-closed matcher for JSON Schema `pattern` constraints.
+//!
+//! "Fail-closed" is a claim about *construct coverage*, not about resource use:
+//! every unsupported construct is reported rather than assumed to match. The
+//! only bound enforced is `MAX_GROUP_DEPTH` on parse nesting. Match work and
+//! quantifier magnitude are **not** bounded, so a pathological pattern could
+//! stall rather than fail visibly. That is acceptable only because the inputs
+//! are the repository's own checked-in schemas rather than untrusted text; if
+//! this matcher is ever pointed at a pattern the repository does not control,
+//! a match-step budget has to come first.
 //!
 //! The repository's contract validator (`verification_contracts`) is the single
 //! authority that decides whether producer bytes satisfy a published schema. A
@@ -504,7 +513,14 @@ impl ClassMember {
             Self::Single(expected) => candidate == *expected,
             Self::Range(start, end) => candidate >= *start && candidate <= *end,
             Self::Digit(negated) => candidate.is_ascii_digit() != *negated,
-            Self::Word(negated) => (candidate.is_alphanumeric() || candidate == '_') != *negated,
+            // ECMA-262 defines `\w` as ASCII `[A-Za-z0-9_]`, and does not widen
+            // it under Unicode mode. `is_alphanumeric` is Unicode-aware, so it
+            // accepted characters the spec excludes — a matcher more permissive
+            // than the constraint it claims to enforce, which is the wrong
+            // direction for a fail-closed validator.
+            Self::Word(negated) => {
+                (candidate.is_ascii_alphanumeric() || candidate == '_') != *negated
+            }
             Self::Space(negated) => candidate.is_whitespace() != *negated,
         }
     }
@@ -605,6 +621,43 @@ mod tests {
         assert!(!matches("^a{2,}$", "a")?);
         assert!(matches("^a{2,3}$", "aa")?);
         assert!(!matches("^a{2,3}$", "aaaa")?);
+        Ok(())
+    }
+
+    /// JSON Schema `pattern` is a partial match: an unanchored pattern may
+    /// start anywhere in the value. Every other test here anchors with `^`, so
+    /// replacing the `(0..=characters.len())` start-offset sweep with a single
+    /// offset of `0` would leave them all green. This is the discriminator for
+    /// that sweep.
+    #[test]
+    fn an_unanchored_pattern_matches_at_a_non_zero_offset() -> Result<(), String> {
+        assert!(matches("b+", "aaabbb")?, "match starting after offset 0");
+        assert!(matches("bbb$", "aaabbb")?, "end-anchored, non-zero start");
+        assert!(!matches("zzz", "aaabbb")?, "absent substring must not match");
+
+        // An anchored pattern must still refuse a non-zero start, or the sweep
+        // would be over-permissive rather than merely present.
+        assert!(!matches("^bbb", "aaabbb")?, "start anchor must pin offset 0");
+        assert!(matches("^aaa", "aaabbb")?);
+        Ok(())
+    }
+
+    /// ECMA-262 defines `\w` as ASCII `[A-Za-z0-9_]` and does not widen it
+    /// under Unicode mode. A Unicode-aware implementation accepts characters
+    /// the constraint excludes, which for a fail-closed validator is the wrong
+    /// direction: the value passes a check the schema intended to reject.
+    #[test]
+    fn word_class_is_ascii_only() -> Result<(), String> {
+        assert!(matches(r"^\w+$", "abc_123")?);
+        assert!(
+            !matches(r"^\w+$", "abc\u{e9}")?,
+            "`\\w` must not accept non-ASCII"
+        );
+        assert!(
+            !matches(r"^\w+$", "\u{3042}")?,
+            "`\\w` must not accept non-ASCII"
+        );
+        assert!(matches(r"^\W$", "\u{e9}")?, "`\\W` is the complement");
         Ok(())
     }
 
