@@ -1582,7 +1582,10 @@ mod tests {
         );
 
         for case in &invalid {
-            let id = case.get("id").and_then(Value::as_str).unwrap_or("<unnamed>");
+            let id = case
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("<unnamed>");
             let schema_expressible = case.get("record_patch").is_some();
             let declares_authority = case
                 .get("expected_failure")
@@ -1595,14 +1598,46 @@ mod tests {
             );
         }
 
-        // The walk must not present them as passing subjects.
-        for case in &invalid {
-            let id = case.get("id").and_then(Value::as_str).unwrap_or("<unnamed>");
+        // Exercise the real selector, not the predicate. Asserting
+        // `is_advertised_negative` here would restate the rule and pass even if
+        // the selector stopped applying it.
+        let contract = CONTRACTS
+            .iter()
+            .find(|contract| contract.fixture_path == ASSURANCE_CORPUS)
+            .ok_or("the assurance corpus must be a registered contract")?;
+        let mut violations = Vec::new();
+        let subjects = contract.subjects(&corpus, &mut violations);
+        assert!(
+            violations.is_empty(),
+            "subject selection reported violations: {violations:#?}"
+        );
+        assert!(
+            !subjects.is_empty(),
+            "the corpus must still yield positive subjects"
+        );
+
+        let invalid_records = invalid
+            .iter()
+            .filter_map(|case| case.get("record"))
+            .collect::<Vec<_>>();
+        for record in &invalid_records {
             assert!(
-                is_advertised_negative(case),
-                "invalid case `{id}` must not be selected as a positive subject"
+                !subjects.iter().any(|(_, value)| *value == *record),
+                "an advertised negative reached positive subject selection"
             );
         }
+        // A case without `/record` (patch-shaped) was already excluded by the
+        // missing-pointer filter, so the expected count is the cases that both
+        // carry a record and are not advertised negatives.
+        let expected = cases
+            .iter()
+            .filter(|case| !is_advertised_negative(case) && case.get("record").is_some())
+            .count();
+        assert_eq!(
+            subjects.len(),
+            expected,
+            "positive subject count must be exactly the valid record-carrying cases"
+        );
         Ok(())
     }
 
