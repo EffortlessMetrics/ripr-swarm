@@ -197,6 +197,7 @@ fn evaluate_release_targets(path: &str, text: &str) -> ReleaseTargetsOutcome {
 
     check_release_identity(path, &releases, &mut violations);
     check_role_uniqueness(path, &releases, &mut violations);
+    check_conditional_ownership(path, &releases, &mut violations);
     check_committed_disjointness(path, &releases, &mut violations);
     check_non_committed_exclusion(path, &releases, &rolling, &mut violations);
     check_parent_accounting(path, &releases, &parents, &mut violations);
@@ -493,6 +494,20 @@ fn parse_version_ordinal(version: &str) -> Option<(u32, u32, u32)> {
 }
 
 fn check_release_identity(path: &str, releases: &[ReleaseRecord], violations: &mut Vec<String>) {
+    // A manifest with no releases makes every later rule vacuously true, so the
+    // command would exit 0 after the entire candidate denominator had been
+    // deleted. Zero subjects is not a passing check.
+    if releases.is_empty() {
+        violations.push(rule(
+            RULE_RELEASE_IDENTITY,
+            path,
+            1,
+            "the manifest declares no `[[release]]` record, so every membership rule \
+             would pass over an empty denominator; a release manifest must name at \
+             least one release",
+        ));
+    }
+
     let mut seen_versions: BTreeSet<&str> = BTreeSet::new();
     let mut seen_milestones: BTreeSet<&str> = BTreeSet::new();
     let mut previous: Option<(u32, u32, u32)> = None;
@@ -579,6 +594,35 @@ fn check_role_uniqueness(path: &str, releases: &[ReleaseRecord], violations: &mu
                         ),
                     ));
                 }
+            }
+        }
+    }
+}
+
+/// `check_role_uniqueness` scopes ownership to a single release, and
+/// `check_committed_disjointness` covers only committed sets, so a conditional
+/// issue could be declared under two releases with no rule firing. The report
+/// states the contract as one role in one release; without this the manifest
+/// could record two conflicting intended destinations while passing.
+fn check_conditional_ownership(
+    path: &str,
+    releases: &[ReleaseRecord],
+    violations: &mut Vec<String>,
+) {
+    let mut owner: BTreeMap<u32, String> = BTreeMap::new();
+    for release in releases {
+        for issue in release.role("conditional_issues") {
+            if let Some(existing) = owner.insert(*issue, release.version.clone()) {
+                violations.push(rule(
+                    RULE_ROLE_UNIQUENESS,
+                    path,
+                    release.line,
+                    &format!(
+                        "issue #{issue} is conditional under both `{existing}` and `{}`; \
+                         a conditional issue names one intended destination",
+                        release.version
+                    ),
+                ));
             }
         }
     }

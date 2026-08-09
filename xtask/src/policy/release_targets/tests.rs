@@ -483,3 +483,42 @@ fn json_report_records_the_failing_rule() {
     assert!(json.contains("\"status\": \"fail\""), "{json}");
     assert!(json.contains(RULE_REFERENTIAL_CLOSURE), "{json}");
 }
+
+/// A manifest with valid metadata and no `[[release]]` record made every
+/// membership rule vacuously true, so the command exited 0 after the entire
+/// candidate denominator had been deleted. Zero subjects is not a pass.
+#[test]
+fn an_empty_release_set_is_a_violation() {
+    let text = "\
+schema_version = \"0.1\"
+non_claim = \"no publication claim\"
+control_issue = 9000
+";
+    let found = only_rule(text, "release_identity");
+    assert!(
+        found
+            .iter()
+            .any(|violation| violation.contains("declares no `[[release]]` record")),
+        "the violation must name the empty denominator: {found:#?}"
+    );
+}
+
+/// `role_uniqueness` scoped ownership to one release and
+/// `committed_disjointness` covered only committed sets, so the same issue
+/// could be conditional under two releases with no rule firing — two
+/// conflicting intended destinations in a manifest claiming one role in one
+/// release.
+#[test]
+fn a_conditional_issue_may_not_name_two_destinations() {
+    let text = valid_manifest().replace(
+        "conditional_issues = [204]",
+        "conditional_issues = [204, 104]",
+    );
+    let found = only_rule(&text, "role_uniqueness");
+    assert!(
+        found
+            .iter()
+            .any(|violation| violation.contains("#104 is conditional under both")),
+        "the violation must name the issue and both releases: {found:#?}"
+    );
+}
