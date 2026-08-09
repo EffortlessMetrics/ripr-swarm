@@ -372,6 +372,17 @@ impl VerificationContract {
                     .iter()
                     .enumerate()
                     .filter_map(|(index, entry)| {
+                        // A case the corpus advertises as invalid is a negative,
+                        // not a positive subject. Feeding it here reported it as
+                        // a passing subject and inflated the denominator: the
+                        // record is schema-valid, because its invalidity is
+                        // semantic (root identity, producer-bound command
+                        // digest) and enforced by a narrower authority this path
+                        // never calls. The advertised negative was therefore
+                        // never exercised while the count implied it was.
+                        if is_advertised_negative(entry) {
+                            return None;
+                        }
                         let value = match item {
                             None => Some(entry),
                             Some(item) => entry.pointer(item),
@@ -629,6 +640,13 @@ fn validate_value_against_schema(
     if value.is_number() {
         validate_number(value, schema, &location, violations);
     }
+}
+
+/// A corpus case the fixture advertises as invalid is a negative, never a
+/// positive contract subject. Shared by the subject selector and its test so
+/// the test asserts the retained selection rule rather than restating it.
+fn is_advertised_negative(entry: &Value) -> bool {
+    entry.get("invalid").and_then(Value::as_bool) == Some(true)
 }
 
 fn validate_object(
@@ -1526,6 +1544,63 @@ mod tests {
                 case.get("record").is_some() || case.get("record_patch").is_some(),
                 "case {:?} exposes neither a record nor a record patch",
                 case.get("id")
+            );
+        }
+        Ok(())
+    }
+
+    /// Every case the corpus advertises as invalid must say why, and must not
+    /// be counted as a passing positive subject.
+    ///
+    /// `wrong_root` and `fabricated_result` are schema-valid: their invalidity
+    /// is semantic — root identity and producer-bound command-spec digest — and
+    /// is enforced by `VerificationExecutionResultV1::validate_against`, which
+    /// the contract walk never calls. Feeding them as positive subjects reported
+    /// them as passing, so the corpus claimed negative coverage it did not
+    /// deliver.
+    ///
+    /// This pins the honest boundary: an invalid case is excluded from positive
+    /// subjects, and it must declare either a schema-expressible negative
+    /// (`record_patch`, exercised by the test below) or an `expected_failure`
+    /// token naming the narrower authority that rejects it. Silence is not an
+    /// option, because silence is what let this pass.
+    #[test]
+    fn assurance_corpus_invalid_cases_declare_their_authority() -> Result<(), String> {
+        let root = repo_root()?;
+        let corpus = read_json(root.join(ASSURANCE_CORPUS))?;
+        let cases = corpus["cases"]
+            .as_array()
+            .ok_or("the assurance corpus must declare cases")?;
+
+        let invalid = cases
+            .iter()
+            .filter(|case| case.get("invalid").and_then(Value::as_bool) == Some(true))
+            .collect::<Vec<_>>();
+        assert!(
+            !invalid.is_empty(),
+            "the corpus must retain advertised negative cases"
+        );
+
+        for case in &invalid {
+            let id = case.get("id").and_then(Value::as_str).unwrap_or("<unnamed>");
+            let schema_expressible = case.get("record_patch").is_some();
+            let declares_authority = case
+                .get("expected_failure")
+                .and_then(Value::as_str)
+                .is_some_and(|token| !token.is_empty());
+            assert!(
+                schema_expressible || declares_authority,
+                "invalid case `{id}` declares neither a record_patch the schema can reject \
+                 nor an expected_failure naming the authority that rejects it"
+            );
+        }
+
+        // The walk must not present them as passing subjects.
+        for case in &invalid {
+            let id = case.get("id").and_then(Value::as_str).unwrap_or("<unnamed>");
+            assert!(
+                is_advertised_negative(case),
+                "invalid case `{id}` must not be selected as a positive subject"
             );
         }
         Ok(())
