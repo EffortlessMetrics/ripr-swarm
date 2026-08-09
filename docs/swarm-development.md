@@ -238,9 +238,23 @@ gh run list --repo EffortlessMetrics/ripr-swarm --workflow routed-rust.yml --bra
 
 The operator should see no ordinary source-repo development PRs, a protected
 `ripr-swarm/main` branch requiring `Ripr Rust Small Result`, and a recent green
-routed Rust result on the selected swarm head. Open swarm PRs do not block
-promotion by themselves, but each one should be classified as included,
-deferred, superseded, or not release-relevant in the promotion PR body.
+routed Rust result on the selected swarm head. Capture the run's exact SHA,
+conclusion, and URL and fail closed before creating `J`:
+
+```bash
+ROUTED_RUN="$(gh run list --repo EffortlessMetrics/ripr-swarm \
+  --workflow routed-rust.yml --branch main --limit 1 \
+  --json headSha,conclusion,url \
+  --jq '.[0] | [.headSha, .conclusion, .url] | @tsv')"
+IFS=$'\t' read -r ROUTED_HEAD ROUTED_CONCLUSION ROUTED_URL <<<"$ROUTED_RUN"
+test "$ROUTED_HEAD" = "$SWARM_PARENT"
+test "$ROUTED_CONCLUSION" = "success"
+```
+
+Retain `ROUTED_HEAD`, `ROUTED_CONCLUSION`, and `ROUTED_URL` in the promotion
+receipt and PR body. Open swarm PRs do not block promotion by themselves, but
+each one should be classified as included, deferred, superseded, or not
+release-relevant in the promotion PR body.
 
 Record these immutable inputs before creating the source branch:
 
@@ -265,8 +279,8 @@ git fetch swarm --prune --tags
 git fetch swarm "$SWARM_REF:$SWARM_REF"
 git cat-file -e "$SOURCE_PARENT^{commit}"
 git cat-file -e "$SWARM_PARENT^{commit}"
-git rev-parse "$SWARM_REF^{commit}"
-git merge-base "$SOURCE_PARENT" "$SWARM_PARENT"
+test "$(git rev-parse "$SWARM_REF^{commit}")" = "$SWARM_PARENT"
+test "$(git merge-base "$SOURCE_PARENT" "$SWARM_PARENT")" = "$MERGE_BASE"
 git merge-base --is-ancestor "$SWARM_PARENT" swarm/main
 VERSION=0.11.0  # use the transaction's release version
 git switch -c "promote/${VERSION}-swarm" "$SOURCE_PARENT"
@@ -328,7 +342,10 @@ Join:
   join head: <J>
 
 Swarm proof:
-  Ripr Rust Small Result on swarm/main: <run URL>
+  Ripr Rust Small Result on swarm/main:
+    head: <ROUTED_HEAD>
+    conclusion: <ROUTED_CONCLUSION>
+    run URL: <ROUTED_URL>
   latest routed target/reason: <target>/<reason>
 
 Source proof to run:
@@ -392,7 +409,7 @@ git switch -c "back-sync/${VERSION}" "$SWARM_BEFORE"
 git merge --no-ff --no-commit "$SOURCE_RELEASE_HEAD"
 # Preserve swarm settings, checks, runner topology, and development tooling.
 # Import the released version, changelog, and publication receipts.
-git commit -m "sync: back-sync released <version> from ripr"
+git commit -m "sync: back-sync released ${VERSION} from ripr"
 K="$(git rev-parse HEAD)"
 git show -s --format='join %H%nparents %P' "$K"
 test "$(git show -s --format='%P' "$K" | awk '{print NF}')" -eq 2
@@ -419,20 +436,33 @@ plus any source-only product correction explicitly required for future swarm
 development.
 
 Before transporting `K`, refresh the protected branch and require the expected
-head to remain unchanged:
+head to remain unchanged. The preferred transport is a same-repository PR only
+when its merge service provides an atomic expected-base-head guard; otherwise
+use the owner-approved guarded ref-update exception below:
 
 ```bash
 git fetch origin main
 test "$(git rev-parse origin/main)" = "$SWARM_BEFORE"
 ```
 
-Where branch protection permits, review `K` and fast-forward `swarm/main` to
-`K` under an expected-head guard. Otherwise, obtain a narrowly scoped,
-owner-approved temporary exception allowing merge commits, merge only the
-reviewed `K` while the expected swarm head still equals `SWARM_BEFORE`, and
-restore the normal merge-commit-disabled policy immediately afterward. Record
-the before/after policy state and the exact `K` in the back-sync receipt. Do
-not force-push, squash, rebase, or merge unrelated work during this exception.
+For the guarded ref-update exception, obtain owner approval, record the
+before-policy state, and temporarily permit this one non-force fast-forward
+update. With `back-sync/${VERSION}` based directly on `SWARM_BEFORE`, this push
+is the atomic expected-head guard: it rejects if `swarm/main` moved or if `K`
+is not a fast-forward.
+
+```bash
+git push origin "back-sync/${VERSION}:refs/heads/main"
+git fetch origin main
+test "$(git rev-parse origin/main)" = "$K"
+```
+
+If the same-repository PR route is used instead, merge only the reviewed `K`
+with the repository's expected-base-head guard and verify `origin/main == K`
+immediately afterward. In either route, restore the normal
+merge-commit-disabled policy immediately afterward and record the before/after
+policy state, transport route, and exact `K` in the back-sync receipt. Do not
+force-push, squash, rebase, or merge unrelated work during this exception.
 
 `J` proves source promotion: source parent first, frozen swarm parent second.
 `K` proves release back-sync: swarm parent first, released source parent
