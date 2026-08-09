@@ -1864,6 +1864,22 @@ fn fixtures_new(name: &str) -> Result<(), String> {
 }
 #[cfg(test)]
 mod tests {
+    /// Unique per process and per call. Fixed names under the shared temp
+    /// directory collide when two `cargo test` processes run at once — two
+    /// worktrees on one machine is the ordinary case here — and one process
+    /// then deletes the path the other just created, failing the gate for an
+    /// infrastructure reason. `xtask/src/run.rs` already builds temp paths this
+    /// way.
+    fn unique_temp_path(label: &str) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static COUNTER: AtomicU32 = AtomicU32::new(0);
+        let nonce = COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "ripr-xtask-3054-{label}-{}-{nonce}",
+            std::process::id()
+        ))
+    }
+
     use super::*;
 
     #[test]
@@ -1912,7 +1928,7 @@ mod tests {
     /// build.
     #[test]
     fn ripr_binary_build_runs_even_when_the_binary_is_already_present() -> Result<(), String> {
-        let dir = std::env::temp_dir().join("ripr-xtask-3054-present");
+        let dir = unique_temp_path("present");
         fs::create_dir_all(&dir).map_err(|err| format!("create {}: {err}", dir.display()))?;
         let binary = dir.join(format!("ripr{}", std::env::consts::EXE_SUFFIX));
         fs::write(&binary, b"stale").map_err(|err| format!("write {}: {err}", binary.display()))?;
@@ -1942,7 +1958,7 @@ mod tests {
     /// per fixture would serialise the corpus behind the package lock.
     #[test]
     fn ripr_binary_build_runs_once_per_process() -> Result<(), String> {
-        let binary = std::env::temp_dir().join("ripr-xtask-3054-once");
+        let binary = unique_temp_path("once");
         let builds = AtomicUsize::new(0);
         let cell = OnceLock::new();
         let build = || {
@@ -1965,7 +1981,7 @@ mod tests {
     /// disk" — that is exactly the stale-artifact validation #3054 removes.
     #[test]
     fn ripr_binary_build_failure_is_reported_instead_of_a_path() -> Result<(), String> {
-        let binary = std::env::temp_dir().join("ripr-xtask-3054-failure");
+        let binary = unique_temp_path("failure");
         let cell = OnceLock::new();
 
         let first = ripr_fixture_binary_built_by(binary.clone(), &cell, &|| {
@@ -2020,7 +2036,7 @@ mod tests {
 
     #[test]
     fn clear_fixture_cache_removes_entries_and_tolerates_absence() -> Result<(), String> {
-        let dir = std::env::temp_dir().join("ripr-xtask-3054-clear");
+        let dir = unique_temp_path("clear");
         let entry = dir.join("repo-file-facts").join("0.2").join("stale.json");
         let parent = entry
             .parent()
@@ -2041,7 +2057,7 @@ mod tests {
     /// never got.
     #[test]
     fn clear_fixture_cache_reports_a_removal_failure() -> Result<(), String> {
-        let path = std::env::temp_dir().join("ripr-xtask-3054-not-a-dir");
+        let path = unique_temp_path("not-a-dir");
         fs::write(&path, b"occupied").map_err(|err| format!("write {}: {err}", path.display()))?;
 
         let Err(err) = clear_fixture_cache(&path) else {
