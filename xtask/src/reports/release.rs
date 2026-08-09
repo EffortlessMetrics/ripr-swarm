@@ -16,7 +16,7 @@ const AGENT_VERIFY_OUT: &str = "target/ripr/release-readiness/agent-verify.json"
 const AGENT_RECEIPT_OUT: &str = "target/ripr/release-readiness/agent-receipt.json";
 const BOUNDARY_BEFORE_OUT: &str = "target/ripr/release-readiness/before.repo-exposure.json";
 const BOUNDARY_AFTER_OUT: &str = "target/ripr/release-readiness/after.repo-exposure.json";
-const BOUNDARY_GAP_SEAM_ID: &str = "67fc764ba37d77bd";
+pub(crate) const BOUNDARY_GAP_SEAM_ID: &str = "67fc764ba37d77bd";
 const BEFORE_EXPOSURE: &str =
     "fixtures/boundary_gap/calibration/before-targeted-test.repo-exposure.json";
 const AFTER_EXPOSURE: &str =
@@ -47,11 +47,11 @@ struct ReleaseReadinessCheck {
 }
 
 #[derive(Clone, Debug)]
-struct CommandResult {
-    status: Option<i32>,
-    success: bool,
-    stdout: String,
-    stderr: String,
+pub(crate) struct CommandResult {
+    pub(crate) status: Option<i32>,
+    pub(crate) success: bool,
+    pub(crate) stdout: String,
+    pub(crate) stderr: String,
 }
 
 struct PublicCliReceipt<'a> {
@@ -73,10 +73,10 @@ struct PublicCliJourney {
     details: Vec<String>,
 }
 
-struct AuthenticRepoExposureFixture {
-    root: PathBuf,
-    before_commit: String,
-    after_commit: String,
+pub(crate) struct AuthenticRepoExposureFixture {
+    pub(crate) root: PathBuf,
+    pub(crate) before_commit: String,
+    pub(crate) after_commit: String,
 }
 
 pub(crate) fn release_readiness(args: &[String]) -> Result<(), String> {
@@ -360,13 +360,13 @@ fn package_install_check(version: &str, crate_version: Option<&str>) -> ReleaseR
     }
 }
 
-struct PackageInstallResult {
-    success: bool,
-    artifacts: Vec<String>,
-    details: Vec<String>,
+pub(crate) struct PackageInstallResult {
+    pub(crate) success: bool,
+    pub(crate) artifacts: Vec<String>,
+    pub(crate) details: Vec<String>,
 }
 
-fn run_packaged_install(
+pub(crate) fn run_packaged_install(
     version: &str,
     crate_version: &str,
 ) -> Result<PackageInstallResult, String> {
@@ -734,7 +734,7 @@ fn external_cli_fixture_root() -> Result<PathBuf, String> {
     )))
 }
 
-fn release_temp_root() -> Result<PathBuf, String> {
+pub(crate) fn release_temp_root() -> Result<PathBuf, String> {
     let configured = std::env::temp_dir();
     let current = std::env::current_dir()
         .map_err(|err| format!("read current directory for release fixture failed: {err}"))?;
@@ -1736,7 +1736,7 @@ fn agent_verify_fixture_check(
 /// `installed_ripr_binary()` path would not resolve there. Resolve it before
 /// the journey begins; `fs::canonicalize` always returns an absolute path on
 /// success.
-fn absolute_installed_binary(binary: &Path) -> Result<PathBuf, String> {
+pub(crate) fn absolute_installed_binary(binary: &Path) -> Result<PathBuf, String> {
     fs::canonicalize(binary).map_err(|err| format!("canonicalize installed binary failed: {err}"))
 }
 
@@ -1756,7 +1756,8 @@ fn run_authentic_repo_exposure_journey(binary: &Path) -> Result<Vec<String>, Str
     Ok(details)
 }
 
-fn create_authentic_repo_exposure_fixture() -> Result<AuthenticRepoExposureFixture, String> {
+pub(crate) fn create_authentic_repo_exposure_fixture()
+-> Result<AuthenticRepoExposureFixture, String> {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|err| format!("system clock is before Unix epoch: {err}"))?
@@ -1864,24 +1865,67 @@ fn run_authentic_repo_exposure_journey_in_fixture(
     binary: &Path,
     fixture: &AuthenticRepoExposureFixture,
 ) -> Result<Vec<String>, String> {
+    let mut details = produce_authentic_chain_in_fixture(
+        binary,
+        &fixture.root,
+        &fixture.before_commit,
+        &fixture.after_commit,
+    )?;
+    // Retention is the caller's contract (see the chain's doc comment): the
+    // positive journey copies the five canonical artifacts into the
+    // release-readiness evidence directory.
+    for (source, destination) in [
+        ("before.repo-exposure.json", BOUNDARY_BEFORE_OUT),
+        ("after.repo-exposure.json", BOUNDARY_AFTER_OUT),
+        ("analysis-outcome.json", AGENT_ANALYSIS_OUTCOME_OUT),
+        ("agent-verify.json", AGENT_VERIFY_OUT),
+        ("agent-receipt.json", AGENT_RECEIPT_OUT),
+    ] {
+        fs::copy(fixture.root.join(source), destination).map_err(|err| {
+            format!("retain authentic artifact {source} at {destination} failed: {err}")
+        })?;
+    }
+    details.push(
+        "producer artifacts, canonical analysis outcome, verify output, and receipt retained under target/ripr/release-readiness".to_string(),
+    );
+    Ok(details)
+}
+
+/// Run the full producer-authentic readiness chain — before/after
+/// repo-exposure artifacts, canonical analysis outcome, agent verify, and
+/// agent receipt — inside one controlled external fixture with the installed
+/// candidate binary. Shared by the positive release-readiness journey
+/// (retention above) and the #2824 negative corpus, which re-produces the
+/// chain inside each cloned case workspace so artifact root binding stays
+/// honest. The installed binary remains the only artifact validator here.
+///
+/// Contract boundary: this function PRODUCES the chain artifacts inside
+/// `root` and never copies them out — retention is deliberately the caller's
+/// decision because the two callers retain differently (the positive journey
+/// copies the five canonical artifacts to `target/ripr/release-readiness/`;
+/// the negative corpus retains per-case receipts under its own case
+/// directories). The returned vector is human-readable report detail for the
+/// readiness markdown, not a machine-checked contract; the machine-checkable
+/// behavior is the produced artifact set plus the passing verify/receipt
+/// chain, exercised end-to-end by `cargo xtask release-readiness` and the
+/// negative-corpus acceptance run (a direct unit test would need a real
+/// installed producer binary, so no lighter honest pin exists in-process).
+pub(crate) fn produce_authentic_chain_in_fixture(
+    binary: &Path,
+    root: &Path,
+    before_commit: &str,
+    after_commit: &str,
+) -> Result<Vec<String>, String> {
     let before_name = "before.repo-exposure.json";
     let after_name = "after.repo-exposure.json";
-    checkout_fixture_commit(&fixture.root, &fixture.before_commit)?;
-    let _before = run_producer_check(binary, &fixture.root, before_name)?;
-    checkout_fixture_commit(&fixture.root, &fixture.after_commit)?;
-    let _after = run_producer_check(binary, &fixture.root, after_name)?;
-    validate_authentic_artifact(
-        &fixture.root.join(before_name),
-        &fixture.before_commit,
-        "before",
-    )?;
-    validate_authentic_artifact(
-        &fixture.root.join(after_name),
-        &fixture.after_commit,
-        "after",
-    )?;
-    let before_value = read_json_value(&fixture.root.join(before_name))?;
-    let after_value = read_json_value(&fixture.root.join(after_name))?;
+    checkout_fixture_commit(root, before_commit)?;
+    let _before = run_producer_check(binary, root, before_name)?;
+    checkout_fixture_commit(root, after_commit)?;
+    let _after = run_producer_check(binary, root, after_name)?;
+    validate_authentic_artifact(&root.join(before_name), before_commit, "before")?;
+    validate_authentic_artifact(&root.join(after_name), after_commit, "after")?;
+    let before_value = read_json_value(&root.join(before_name))?;
+    let after_value = read_json_value(&root.join(after_name))?;
     let before_input = artifact_string(&before_value, &["artifact", "analysis", "input_identity"])?;
     let after_input = artifact_string(&after_value, &["artifact", "analysis", "input_identity"])?;
     let before_snapshot = artifact_string(&before_value, &["artifact", "snapshot_identity"])?;
@@ -1892,7 +1936,7 @@ fn run_authentic_repo_exposure_journey_in_fixture(
                 .to_string(),
         );
     }
-    run_analysis_outcome_check(binary, &fixture.root)?;
+    run_analysis_outcome_check(binary, root)?;
     let verify_args = vec![
         "agent".to_string(),
         "verify".to_string(),
@@ -1904,19 +1948,14 @@ fn run_authentic_repo_exposure_journey_in_fixture(
         after_name.to_string(),
         "--json".to_string(),
     ];
-    let verify = run_command_in_dir(
-        binary,
-        &verify_args,
-        &fixture.root,
-        "authentic agent verify",
-    )?;
+    let verify = run_command_in_dir(binary, &verify_args, root, "authentic agent verify")?;
     if !verify.success {
         return Err(format!(
             "authentic agent verify failed: {}",
             command_details(&verify).join("; ")
         ));
     }
-    fs::write(fixture.root.join("agent-verify.json"), &verify.stdout)
+    fs::write(root.join("agent-verify.json"), &verify.stdout)
         .map_err(|err| format!("write authentic agent verify artifact failed: {err}"))?;
     let receipt_args = vec![
         "agent".to_string(),
@@ -1931,41 +1970,28 @@ fn run_authentic_repo_exposure_journey_in_fixture(
         "--out".to_string(),
         "agent-receipt.json".to_string(),
     ];
-    let receipt = run_command_in_dir(
-        binary,
-        &receipt_args,
-        &fixture.root,
-        "authentic agent receipt",
-    )?;
-    if !receipt.success || !fixture.root.join("agent-receipt.json").is_file() {
+    let receipt = run_command_in_dir(binary, &receipt_args, root, "authentic agent receipt")?;
+    if !receipt.success || !root.join("agent-receipt.json").is_file() {
         return Err(format!(
             "authentic agent receipt failed: {}",
             command_details(&receipt).join("; ")
         ));
     }
-    for (source, destination) in [
-        (before_name, BOUNDARY_BEFORE_OUT),
-        (after_name, BOUNDARY_AFTER_OUT),
-        ("analysis-outcome.json", AGENT_ANALYSIS_OUTCOME_OUT),
-        ("agent-verify.json", AGENT_VERIFY_OUT),
-        ("agent-receipt.json", AGENT_RECEIPT_OUT),
-    ] {
-        fs::copy(fixture.root.join(source), destination).map_err(|err| {
-            format!("retain authentic artifact {source} at {destination} failed: {err}")
-        })?;
-    }
     Ok(vec![
-        format!("authentic fixture before commit: {}", fixture.before_commit),
-        format!("authentic fixture after commit: {}", fixture.after_commit),
+        format!("authentic fixture before commit: {before_commit}"),
+        format!("authentic fixture after commit: {after_commit}"),
         format!("before input identity: {before_input}"),
         format!("after input identity: {after_input}"),
         format!("before snapshot identity: {before_snapshot}"),
         format!("after snapshot identity: {after_snapshot}"),
-        "producer artifacts, canonical analysis outcome, verify output, and receipt retained under target/ripr/release-readiness".to_string(),
     ])
 }
 
-fn run_producer_check(binary: &Path, root: &Path, artifact_name: &str) -> Result<Value, String> {
+pub(crate) fn run_producer_check(
+    binary: &Path,
+    root: &Path,
+    artifact_name: &str,
+) -> Result<Value, String> {
     let args = vec![
         "check".to_string(),
         "--root".to_string(),
@@ -2012,7 +2038,7 @@ fn run_analysis_outcome_check(binary: &Path, root: &Path) -> Result<(), String> 
         .map_err(|err| format!("write analysis outcome artifact failed: {err}"))
 }
 
-fn validate_authentic_artifact(
+pub(crate) fn validate_authentic_artifact(
     path: &Path,
     expected_head: &str,
     label: &str,
@@ -2041,7 +2067,7 @@ fn validate_authentic_artifact(
     Ok(())
 }
 
-fn artifact_string<'a>(value: &'a Value, path: &[&str]) -> Result<&'a str, String> {
+pub(crate) fn artifact_string<'a>(value: &'a Value, path: &[&str]) -> Result<&'a str, String> {
     let mut current = value;
     for key in path {
         current = current
@@ -2053,7 +2079,7 @@ fn artifact_string<'a>(value: &'a Value, path: &[&str]) -> Result<&'a str, Strin
         .ok_or_else(|| format!("artifact {} is not a string", path.join(".")))
 }
 
-fn checkout_fixture_commit(root: &Path, commit: &str) -> Result<(), String> {
+pub(crate) fn checkout_fixture_commit(root: &Path, commit: &str) -> Result<(), String> {
     let result = run_fixture_git_command(
         root,
         &["checkout", "--quiet", "--detach", commit],
@@ -2068,7 +2094,7 @@ fn checkout_fixture_commit(root: &Path, commit: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn fixture_head(root: &Path) -> Result<String, String> {
+pub(crate) fn fixture_head(root: &Path) -> Result<String, String> {
     let result = run_fixture_git_command(root, &["rev-parse", "HEAD"], "read fixture HEAD")?;
     if !result.success {
         return Err(format!(
@@ -2083,7 +2109,7 @@ fn fixture_head(root: &Path) -> Result<String, String> {
     Ok(head.to_string())
 }
 
-fn run_fixture_git_command(
+pub(crate) fn run_fixture_git_command(
     root: &Path,
     args: &[&str],
     operation: &str,
@@ -2102,7 +2128,7 @@ fn run_fixture_git_command(
     Ok(result)
 }
 
-fn run_command_in_dir(
+pub(crate) fn run_command_in_dir(
     program: impl AsRef<Path>,
     args: &[String],
     cwd: &Path,
@@ -2800,7 +2826,7 @@ fn md_escape_inline(value: &str) -> String {
     value.replace('|', "\\|").replace('\n', " ")
 }
 
-fn command_details(result: &CommandResult) -> Vec<String> {
+pub(crate) fn command_details(result: &CommandResult) -> Vec<String> {
     let mut details = Vec::new();
     details.push(match result.status {
         Some(code) => format!("exit code: {code}"),
@@ -2848,7 +2874,7 @@ enum PackageVersion {
 /// `extension-version-match` claims it compared the extension to the crate
 /// version, so this must return the real version or `None` — never a value it
 /// merely found nearby.
-fn read_crate_version(manifest: &Path, workspace_manifest: &Path) -> Option<String> {
+pub(crate) fn read_crate_version(manifest: &Path, workspace_manifest: &Path) -> Option<String> {
     let text = crate::read_text_lossy(manifest).ok()?;
     match package_version(&text, "package")? {
         PackageVersion::Literal(version) => Some(version),
@@ -2956,7 +2982,7 @@ fn inline_table_inherits_workspace(value: &str) -> bool {
     })
 }
 
-fn git_worktree_is_clean() -> Result<bool, String> {
+pub(crate) fn git_worktree_is_clean() -> Result<bool, String> {
     let result = run_command("git", &["status", "--porcelain"])?;
     if !result.success {
         return Err(command_details(&result).join("; "));
@@ -2964,7 +2990,7 @@ fn git_worktree_is_clean() -> Result<bool, String> {
     Ok(result.stdout.trim().is_empty())
 }
 
-fn installed_ripr_binary() -> PathBuf {
+pub(crate) fn installed_ripr_binary() -> PathBuf {
     Path::new(INSTALL_ROOT)
         .join("bin")
         .join(format!("ripr{}", std::env::consts::EXE_SUFFIX))
@@ -2979,7 +3005,7 @@ fn read_json_status(path: &Path) -> Result<String, String> {
         .ok_or_else(|| format!("{} is missing status", crate::normalize_path(path)))
 }
 
-fn read_json_value(path: &Path) -> Result<Value, String> {
+pub(crate) fn read_json_value(path: &Path) -> Result<Value, String> {
     let text = crate::read_text_lossy(path)?;
     serde_json::from_str(&text).map_err(|err| {
         format!(
@@ -3138,6 +3164,248 @@ mod tests {
         Ok(())
     }
 
+    /// Publish a spawnable copy of `source` at `stub` without any process ever
+    /// holding a writable descriptor on the published inode.
+    ///
+    /// `execve` fails with `ETXTBSY` while *any* process holds the target file
+    /// open for writing, and `FD_CLOEXEC` closes an inherited descriptor *at*
+    /// `exec` rather than during the fork/exec window (the same mechanism
+    /// documented on `probe_published_tool` in `crates/ripr/src/output/doctor.rs`
+    /// for #2441). A peer test forking inside a multi-megabyte `fs::copy` of the
+    /// running test binary is exactly that, which made the journey test below
+    /// flake with `Text file busy` under the full `reports::release` filter
+    /// (#3051). Hard-linking publishes the already-built, already-executing
+    /// inode, so the precondition for `ETXTBSY` never exists.
+    ///
+    /// The staged copy-then-rename fallback covers hosts where linking is
+    /// unavailable (cross-device, or a filesystem without hard links). Both
+    /// paths live under the same `target` root, so it is not expected to run; it
+    /// still narrows the exposure to this fixture's own descriptor, which is
+    /// closed and synced before the executable path exists.
+    fn publish_spawnable_stub(source: &Path, stub: &Path) -> Result<(), String> {
+        let link_error = match fs::hard_link(source, stub) {
+            Ok(()) => return Ok(()),
+            Err(err) => err,
+        };
+        let staged = stub.with_extension("staged");
+        let _ = fs::remove_file(&staged);
+        fs::copy(source, &staged).map_err(|err| {
+            format!("stage stub binary failed after link error ({link_error}): {err}")
+        })?;
+        let staged_file =
+            fs::File::open(&staged).map_err(|err| format!("open staged stub failed: {err}"))?;
+        staged_file
+            .sync_all()
+            .map_err(|err| format!("sync staged stub failed: {err}"))?;
+        drop(staged_file);
+        fs::rename(&staged, stub).map_err(|err| format!("publish staged stub failed: {err}"))
+    }
+
+    /// Primary discriminator for #3051, on every platform: publication must
+    /// link the source rather than write a second copy of its bytes. A link
+    /// shares storage with its source, so mutating the source through a fresh
+    /// handle is observable through the published path; a written copy is a
+    /// snapshot and is not. Only the link form guarantees that no descriptor
+    /// was ever opened for writing on the path that is about to be executed.
+    ///
+    /// Source and stub are created in the same directory, so the cross-device
+    /// fallback cannot legitimately fire here.
+    #[test]
+    fn spawnable_stub_publication_links_the_source_instead_of_copying_it() -> Result<(), String> {
+        let _cwd_guard = crate::acquire_test_cwd_write_guard();
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|err| format!("read clock failed: {err}"))?
+            .as_nanos();
+        let dir = Path::new("../target/ripr-release-test")
+            .join(format!("linked-publication-{}-{stamp}", std::process::id()));
+        fs::create_dir_all(&dir).map_err(|err| format!("create stub dir failed: {err}"))?;
+        let result = (|| -> Result<(), String> {
+            let source = dir.join("source-payload");
+            let stub = dir.join("published-payload");
+            fs::write(&source, b"stub-payload-original")
+                .map_err(|err| format!("write source payload failed: {err}"))?;
+
+            // Establish whether this filesystem can link at all, using a probe
+            // separate from the code under test. `publish_spawnable_stub`
+            // advertises a staged copy-and-rename fallback for mounts without
+            // hard links, so requiring link semantics unconditionally would
+            // report that supported fallback as a failure.
+            let probe_source = dir.join("link-probe-source");
+            let probe_link = dir.join("link-probe-link");
+            fs::write(&probe_source, b"probe")
+                .map_err(|err| format!("write link probe failed: {err}"))?;
+            let links_supported = fs::hard_link(&probe_source, &probe_link).is_ok();
+
+            publish_spawnable_stub(&source, &stub)?;
+
+            fs::write(&source, b"stub-payload-relinked")
+                .map_err(|err| format!("rewrite source payload failed: {err}"))?;
+            let published =
+                fs::read(&stub).map_err(|err| format!("read published payload failed: {err}"))?;
+
+            if links_supported {
+                // The discriminating case, and the one every supported CI host
+                // takes: a link shares storage, so rewriting the source is
+                // visible through the published path. A written copy is a
+                // snapshot and is not — which is exactly the descriptor held
+                // open across the transfer that this fixture must not reopen.
+                if published != b"stub-payload-relinked" {
+                    return Err(
+                        "published stub did not track its source on a link-capable filesystem, \
+                         so publication wrote a second copy of the bytes through a descriptor \
+                         held open across the transfer — the ETXTBSY fork/exec window this \
+                         fixture must not reopen (#3051)"
+                            .to_string(),
+                    );
+                }
+            } else {
+                // Fallback contract: the staged copy is closed and synced before
+                // the executable path exists, so it is a snapshot of the source
+                // as published. Requiring it to track later writes would assert
+                // link semantics the fallback never promised.
+                if published != b"stub-payload-original" {
+                    return Err(format!(
+                        "staged fallback published {published:?}, expected a byte-exact snapshot \
+                         of the source as it stood at publication (#3051)"
+                    ));
+                }
+                if !stub.exists() {
+                    return Err("staged fallback did not publish the stub path".to_string());
+                }
+            }
+            Ok(())
+        })();
+        let cleanup = fs::remove_dir_all(&dir);
+        result?;
+        cleanup.map_err(|err| format!("remove stub dir failed: {err}"))
+    }
+
+    /// Discriminator for #3051: the stub the journey test execs must be
+    /// published as a link to the running binary, never written byte by byte.
+    /// Sharing the source inode is what proves no writable descriptor was ever
+    /// opened on the path that is about to be executed; the copy this replaced
+    /// held one open for the whole multi-megabyte transfer, which is the
+    /// necessary condition for the `ETXTBSY` flake.
+    #[cfg(unix)]
+    #[test]
+    fn spawnable_stub_is_published_without_ever_opening_a_writer() -> Result<(), String> {
+        use std::os::unix::fs::MetadataExt;
+
+        // The stub directory is checkout-relative, matching the journey test's
+        // location so the link stays on the same device as `current_exe`.
+        let _cwd_guard = crate::acquire_test_cwd_write_guard();
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|err| format!("read clock failed: {err}"))?
+            .as_nanos();
+        let dir = Path::new("../target/ripr-release-test")
+            .join(format!("linked-stub-{}-{stamp}", std::process::id()));
+        fs::create_dir_all(&dir).map_err(|err| format!("create stub dir failed: {err}"))?;
+        let result = (|| -> Result<(), String> {
+            let source =
+                std::env::current_exe().map_err(|err| format!("read current exe failed: {err}"))?;
+            let stub = dir.join(format!("ripr-stub{}", std::env::consts::EXE_SUFFIX));
+
+            publish_spawnable_stub(&source, &stub)?;
+
+            let source_meta =
+                fs::metadata(&source).map_err(|err| format!("stat source failed: {err}"))?;
+            let stub_meta =
+                fs::metadata(&stub).map_err(|err| format!("stat stub failed: {err}"))?;
+            if source_meta.dev() != stub_meta.dev() || source_meta.ino() != stub_meta.ino() {
+                return Err(
+                    "published stub is a distinct inode, so its bytes were written through a \
+                     descriptor held open across the transfer — the ETXTBSY fork/exec window \
+                     this fixture must not reopen (#3051)"
+                        .to_string(),
+                );
+            }
+            if source_meta.nlink() < 2 {
+                return Err("published stub did not add a link to the source inode".to_string());
+            }
+            Ok(())
+        })();
+        let cleanup = fs::remove_dir_all(&dir);
+        result?;
+        cleanup.map_err(|err| format!("remove stub dir failed: {err}"))
+    }
+
+    /// Bind the discriminator above to the real error: an open writer is
+    /// exactly what makes a published binary un-executable, and a hard link —
+    /// which never has one — executes. Without this the inode assertion is an
+    /// unexplained stylistic preference rather than the removal of a necessary
+    /// condition. This holds before and after the fix; it is the invariant, not
+    /// the regression.
+    ///
+    /// It spawns through `run_command_in_dir`, the same seam the journey test
+    /// uses, and pins the busy-executable error text the way the neighbouring
+    /// relative-spawn assertion pins the not-found class. `run_command_in_dir`
+    /// stringifies the `io::Error`, so the `ErrorKind` is not available here;
+    /// reconstructing that classification in xtask would fork the policy
+    /// `doctor_spawn_failure_is_retryable` already owns.
+    #[cfg(unix)]
+    #[test]
+    fn an_open_writer_is_what_makes_a_published_binary_unexecutable() -> Result<(), String> {
+        let _cwd_guard = crate::acquire_test_cwd_write_guard();
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|err| format!("read clock failed: {err}"))?
+            .as_nanos();
+        let dir = Path::new("../target/ripr-release-test")
+            .join(format!("writer-blocks-exec-{}-{stamp}", std::process::id()));
+        fs::create_dir_all(&dir).map_err(|err| format!("create stub dir failed: {err}"))?;
+        let result = (|| -> Result<(), String> {
+            let source =
+                std::env::current_exe().map_err(|err| format!("read current exe failed: {err}"))?;
+
+            // A written stub with a live writable descriptor: the pre-fix state.
+            // Spawn through absolute paths. `run_command_in_dir` runs the child
+            // with its cwd set to `dir`, and these stub paths are
+            // checkout-relative, so a relative spawn fails with `ENOENT` before
+            // reaching `exec` — the #2823 defect the neighbouring journey test
+            // pins deliberately. Reaching the `exec` stage at all is the whole
+            // point here, so resolve first (#3051).
+            let written = dir.join("written-stub");
+            fs::copy(&source, &written).map_err(|err| format!("copy written stub: {err}"))?;
+            let writer = fs::OpenOptions::new()
+                .write(true)
+                .open(&written)
+                .map_err(|err| format!("open writer on written stub: {err}"))?;
+            let args = vec!["--list".to_string()];
+            let written_absolute = fs::canonicalize(&written)
+                .map_err(|err| format!("resolve written stub failed: {err}"))?;
+            let busy = super::run_command_in_dir(&written_absolute, &args, &dir, "written stub");
+            drop(writer);
+            match busy {
+                Ok(outcome) => {
+                    return Err(format!(
+                        "a stub with an open writer unexpectedly executed: {outcome:?}"
+                    ));
+                }
+                Err(error) if error.contains("os error 26") || error.contains("Text file busy") => {
+                }
+                Err(error) => {
+                    return Err(format!(
+                        "expected a busy-executable failure while a writer is open, got: {error}"
+                    ));
+                }
+            }
+
+            // A linked stub never has a writer, so it executes unconditionally.
+            let linked = dir.join("linked-stub");
+            fs::hard_link(&source, &linked).map_err(|err| format!("link stub: {err}"))?;
+            let linked_absolute = fs::canonicalize(&linked)
+                .map_err(|err| format!("resolve linked stub failed: {err}"))?;
+            super::run_command_in_dir(&linked_absolute, &args, &dir, "linked stub")
+                .map_err(|err| format!("linked stub must execute: {err}"))?;
+            Ok(())
+        })();
+        let cleanup = fs::remove_dir_all(&dir);
+        result?;
+        cleanup.map_err(|err| format!("remove stub dir failed: {err}"))
+    }
+
     /// Reproduce the defect mechanism from the clean-main #2823 failure: a
     /// checkout-relative binary path does not resolve when the child process
     /// runs from an unrelated external working directory (os error 2), while
@@ -3169,8 +3437,10 @@ mod tests {
             let stub = stub_dir.join(format!("ripr-stub{}", std::env::consts::EXE_SUFFIX));
             let current_exe =
                 std::env::current_exe().map_err(|err| format!("read current exe failed: {err}"))?;
-            fs::copy(&current_exe, &stub)
-                .map_err(|err| format!("copy stub binary failed: {err}"))?;
+            // Link rather than copy: a copy holds a writable descriptor open
+            // across a multi-megabyte transfer, and a peer test forking inside
+            // that window leaves the stub un-executable with `ETXTBSY` (#3051).
+            publish_spawnable_stub(&current_exe, &stub)?;
             let relative = Path::new("../target").join(
                 stub.strip_prefix("../target")
                     .map_err(|err| format!("relativize stub path failed: {err}"))?,
