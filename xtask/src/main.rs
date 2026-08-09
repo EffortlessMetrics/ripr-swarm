@@ -11523,7 +11523,7 @@ fn check_public_api() -> Result<(), String> {
         PolicyReportSpec {
             report_file: "public-api.md",
             check: "check-public-api",
-            why_it_matters: "The crate is the published product surface, so accidental public exports create compatibility expectations. This gate records every module-level `pub` item reachable from the crate root through `pub mod`, including items declared outside lib.rs (#3052). It does not cover public struct fields, enum variants, trait items, or associated functions in `impl` blocks, and it does not resolve names: a `pub use` is recorded as the name it binds, and a glob re-export is recorded as a glob because a syntax walk cannot expand it.",
+            why_it_matters: "The crate is the published product surface, so accidental public exports create compatibility expectations. This gate records every module-level `pub` item reachable from the crate root through `pub mod`, including items declared outside lib.rs (#3052). A `#[macro_export]` macro is recorded as `pub macro ripr::<name>` even when its declaring module is private, because Rust exports it at the crate root regardless of that module's visibility. It does not cover public struct fields, enum variants, trait items, or associated functions in `impl` blocks, and it does not resolve names: a `pub use` is recorded as the name it binds, and a glob re-export is recorded as a glob because a syntax walk cannot expand it.",
             fix_kind: FixKind::ReviewerDecisionRequired,
             recommended_fixes: &[
                 "Keep new implementation modules and items private unless they are part of the crate contract.",

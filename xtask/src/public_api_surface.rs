@@ -79,17 +79,21 @@ struct Collector {
 impl Collector {
     fn module_file(&mut self, file: &Path, module_path: &str, scope: Scope) -> Result<(), String> {
         let key = visit_key(file);
-        if !self
-            .visited
-            .insert((key.clone(), format!("{}{module_path}", scope_tag(scope))))
-        {
+        let visit = (key.clone(), format!("{}{module_path}", scope_tag(scope)));
+        if self.visited.contains(&visit) {
             return Ok(());
         }
+        // Check the cycle guard before recording completed work. Inserting into
+        // `visited` first meant a walk refused as cyclic still left its pair
+        // behind, so a later non-cyclic path reaching the same file at the same
+        // module path returned early and recorded nothing — a silent omission
+        // in a gate that must fail closed.
         if !self.active.insert(key.clone()) {
             return Ok(());
         }
         let result = self.walk_module_file(file, module_path, scope);
         self.active.remove(&key);
+        self.visited.insert(visit);
         result
     }
 

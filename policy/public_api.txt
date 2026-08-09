@@ -5,6 +5,10 @@
 # visible that the previous lib.rs-only collector never saw; nothing here was
 # newly exposed by that change. Narrowing any of it is separate work.
 #
+# A `#[macro_export]` macro appears as `pub macro ripr::<name>` even when its
+# declaring module is private: Rust exports it at the crate root regardless of
+# that module's visibility, so it is part of this surface.
+#
 # One line per module-level item reachable from `crates/ripr/src/lib.rs`
 # through `pub mod`, in the form `<kind> <path>`. The collector lives in
 # `xtask/src/public_api_surface.rs`.
