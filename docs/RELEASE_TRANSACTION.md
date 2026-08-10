@@ -33,7 +33,8 @@ exact SHAs and expected-head checks; never substitute floating `main`.
 ## Packet, authority reset, and stop points
 
 Create `target/ripr/release-transaction/<VERSION>/` outside tracked source.
-The packet must bind `SOURCE_PARENT`, `SWARM_PARENT`,
+The packet must bind `SOURCE_PARENT`, `SWARM_PARENT`, protected
+`refs/tags/ripr-release-<VERSION>-<SWARM_PARENT>`, local verifier
 `refs/ripr/release-<VERSION>-<SWARM_PARENT>`, `MERGE_BASE`, reviewed `JOIN_TREE`,
 `J`, `SWARM_BEFORE`, `SOURCE_RELEASE_HEAD`, reviewed `BACK_SYNC_TREE`, and `K`.
 Retain all-reachable and first-parent counts/digests, open-PR dispositions,
@@ -52,8 +53,10 @@ RELEASE_NOTES="$PACKET_ROOT/release-notes.md"
 PUBLICATION_RECEIPT="$PACKET_ROOT/publication-receipt.json"
 POLICY_BEFORE="$PACKET_ROOT/policy-before.json"
 POLICY_EXCEPTION="$PACKET_ROOT/policy-temporary-exception.json"
+POLICY_EXCEPTION_REQUEST="$PACKET_ROOT/policy-temporary-exception-request.json"
+POLICY_RESTORE_REQUEST="$PACKET_ROOT/policy-restore-request.json"
 POLICY_AFTER="$PACKET_ROOT/policy-after.json"
-POLICY_APPROVAL="$PACKET_ROOT/policy-owner-approval.txt"
+POLICY_APPROVAL="$PACKET_ROOT/policy-owner-approval.json"
 
 # [READ-ONLY] repo=operator shell; require caller-selected fresh roots
 SOURCE_ROOT="${SOURCE_ROOT:?set to the absolute path of a fresh ripr checkout}"
@@ -79,7 +82,7 @@ not release-relevant; do not close another owner's work to make the queue look
 empty.
 
 ```bash
-# [READ-ONLY] repo=both fresh operator checkouts; reconcile live state
+# [LOCAL-MUTATING] repo=both fresh operator checkouts; fetch and reconcile live state
 git -C "$SWARM_ROOT" fetch origin --prune --tags
 git -C "$SOURCE_ROOT" fetch origin --prune --tags
 git -C "$SWARM_ROOT" status --short --branch
@@ -127,10 +130,18 @@ The queue snapshot is produced by the two `gh pr list` calls above and bound
 to those exact parent SHAs. Keep the producer output, not a hand-edited table:
 
 ```bash
+# [LOCAL-MUTATING] repo=packet+swarm; copy and validate the checked-in selection template before W
+LIVE_HEAD_TEMPLATE="docs/release-candidates/0.11.0-live-head-selection.json"
+cp "$LIVE_HEAD_TEMPLATE" "$PACKET_ROOT/live-head-selection-template.json"
+jq -e '.schema_version == "1.0" and .status == "active_selection_template" and .selection_rule != null and .protected_candidate_tag == null' "$LIVE_HEAD_TEMPLATE" >/dev/null
+TEMPLATE_SHA256="$(sha256sum "$LIVE_HEAD_TEMPLATE" | awk '{print $1}')"
+```
+
+```bash
 # [LOCAL-MUTATING] repo=packet; produce and bind the live-head selection JSON
 gh pr list --repo EffortlessMetrics/ripr-swarm --state open --limit 100 --json number,title,headRefName,headRefOid,baseRefName,isDraft,updatedAt > "$PACKET_ROOT/swarm-open-prs.json"
 gh pr list --repo EffortlessMetrics/ripr --state open --limit 100 --json number,title,headRefName,headRefOid,baseRefName,isDraft,updatedAt > "$PACKET_ROOT/source-open-prs.json"
-jq -n --arg captured_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg source_parent "$SOURCE_PARENT" --arg swarm_parent "$SWARM_PARENT" --slurpfile swarm "$PACKET_ROOT/swarm-open-prs.json" --slurpfile source "$PACKET_ROOT/source-open-prs.json" '{schema_version: 1, producer: "gh pr list", captured_at_utc: $captured_at, source_parent: $source_parent, swarm_parent: $swarm_parent, queues: {swarm: $swarm[0], source: $source[0]}}' > "$PACKET_ROOT/live-head-selection.json"
+jq -n --arg captured_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg source_parent "$SOURCE_PARENT" --arg swarm_parent "$SWARM_PARENT" --arg template_sha256 "$TEMPLATE_SHA256" --slurpfile template "$PACKET_ROOT/live-head-selection-template.json" --slurpfile swarm "$PACKET_ROOT/swarm-open-prs.json" --slurpfile source "$PACKET_ROOT/source-open-prs.json" '{schema_version: 1, producer: "gh pr list + checked-in live-head template", captured_at_utc: $captured_at, template_sha256: $template_sha256, selection_rule: $template[0].selection_rule, source_parent: $source_parent, swarm_parent: $swarm_parent, queues: {swarm: $swarm[0], source: $source[0]}}' > "$PACKET_ROOT/live-head-selection.json"
 jq -e --arg source_parent "$SOURCE_PARENT" --arg swarm_parent "$SWARM_PARENT" '.source_parent == $source_parent and .swarm_parent == $swarm_parent' "$PACKET_ROOT/live-head-selection.json" >/dev/null
 ```
 
@@ -143,31 +154,48 @@ reconcile; never silently update the variable.
 
 ## 2. Guarded swarm pin
 
+`W` is the first successful push of the protected candidate tag below. The
+checked-in live-head selection template is updated and validated immediately
+before W; after W, any `origin/main` movement is drift/invalidation, never a
+silent membership update.
+
 ```bash
 # [LOCAL-MUTATING] repo=swarm root; create only the local transaction ref
 VERSION=0.11.0
 SWARM_REF="refs/ripr/release-${VERSION}-${SWARM_PARENT}"
+PIN_TAG="ripr-release-${VERSION}-${SWARM_PARENT}"
 git -C "$SWARM_ROOT" update-ref "$SWARM_REF" "$SWARM_PARENT"
 test "$(git -C "$SWARM_ROOT" rev-parse "$SWARM_REF^{commit}")" = "$SWARM_PARENT"
 ```
 
 ```bash
-# [EXTERNAL-PUBLISHING] repo=swarm remote; publish guarded pin ref only
-# A Git ref is not intrinsically immutable. Guard first publication and every
-# later observation; if it already exists, is deleted, or resolves to another
-# SHA, stop and invalidate this packet. A protected tag/ref ruleset may replace
-# this guard only when its exact update/deletion receipt is attached.
-PIN_BEFORE="$(git -C "$SWARM_ROOT" ls-remote origin "$SWARM_REF" | awk '{print $1}')"
+# [READ-ONLY] repo=swarm remote; require protected candidate-tag guarantee
+PIN_RULESET_ID="$(gh api repos/EffortlessMetrics/ripr-swarm/rulesets --paginate --jq '.[] | select(.name == "release-transaction-pins" and .target == "tag" and .enforcement == "active") | .id')"
+test "$(printf '%s\n' "$PIN_RULESET_ID" | awk 'NF {count++} END {print count + 0}')" -eq 1
+PIN_RULESET="$PACKET_ROOT/pin-ruleset.json"
+gh api "repos/EffortlessMetrics/ripr-swarm/rulesets/${PIN_RULESET_ID}" > "$PIN_RULESET"
+jq -e --arg tag "ripr-release-*" '(.target == "tag" and .enforcement == "active") and (any(.conditions.ref_name.include[]?; . == $tag)) and (any(.rules[]?; .type == "update")) and (any(.rules[]?; .type == "deletion"))' "$PIN_RULESET" >/dev/null
+```
+
+The exact ruleset receipt is a prerequisite, not a suggestion. If the named
+active tag ruleset, its `ripr-release-*` pattern, or both update/deletion rules
+are absent, stop before W; do not substitute an unprotected custom ref.
+
+```bash
+# [EXTERNAL-PUBLISHING] repo=swarm remote; publish protected candidate tag only
+PIN_BEFORE="$(git -C "$SWARM_ROOT" ls-remote origin "refs/tags/$PIN_TAG" | awk '{print $1}')"
 test -z "$PIN_BEFORE"
-git -C "$SWARM_ROOT" push origin "$SWARM_REF:$SWARM_REF"
-PIN_AFTER="$(git -C "$SWARM_ROOT" ls-remote origin "$SWARM_REF" | awk '{print $1}')"
+test -z "$(git -C "$SWARM_ROOT" show-ref --tags --verify "refs/tags/$PIN_TAG" 2>/dev/null || true)"
+git -C "$SWARM_ROOT" tag "$PIN_TAG" "$SWARM_PARENT"
+git -C "$SWARM_ROOT" push origin "refs/tags/$PIN_TAG:refs/tags/$PIN_TAG"
+PIN_AFTER="$(git -C "$SWARM_ROOT" ls-remote origin "refs/tags/$PIN_TAG" | awk '{print $1}')"
 test "$PIN_AFTER" = "$SWARM_PARENT"
 printf '%s\n' "$PIN_AFTER" > "$PACKET_ROOT/pin-remote.sha"
 ```
 
-At every later receipt, read `refs/ripr/release-${VERSION}-${SWARM_PARENT}`
-again and require the recorded SHA to remain `SWARM_PARENT`. This is a
-guarded direct ref, not a claim that an unprotected Git namespace is immutable.
+At every later receipt, read `refs/tags/$PIN_TAG` again and require the
+recorded SHA and the exact ruleset receipt to remain unchanged. The protected
+candidate tag, not the local verifier ref, is the W membership pin.
 
 The pin receipt records merge base, separately named all-reachable and
 first-parent counts, ordered SHA digests, exact ref resolution, open-PR
@@ -269,7 +297,7 @@ reconstruction fail the contract. Rebuild J from the held exact pair after a
 changed resolution or receipt.
 
 ```bash
-# [READ-ONLY] repo=source remote; expected-head guard before J transport
+# [LOCAL-MUTATING] repo=source remote; fetch and guard expected head before J transport
 git -C "$SOURCE_ROOT" fetch origin main
 test "$(git -C "$SOURCE_ROOT" rev-parse refs/remotes/origin/main)" = "$SOURCE_PARENT"
 ```
@@ -280,7 +308,7 @@ gh pr merge "$SOURCE_PROMOTION_PR" --repo EffortlessMetrics/ripr --merge --match
 ```
 
 ```bash
-# [READ-ONLY] repo=source remote; bind source main to J after transport
+# [LOCAL-MUTATING] repo=source remote; fetch and bind source main to J after transport
 git -C "$SOURCE_ROOT" fetch origin main
 test "$(git -C "$SOURCE_ROOT" rev-parse refs/remotes/origin/main)" = "$J"
 ```
@@ -384,12 +412,14 @@ test "$(gh release view "v${VERSION}" --repo EffortlessMetrics/ripr --json isDra
 
 ```bash
 # [EXTERNAL-PUBLISHING] repo=source; explicit #1470 server-artifact authorization only
+DISPATCHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 gh workflow run release-server-binaries.yml --repo EffortlessMetrics/ripr --ref "$SOURCE_RELEASE_HEAD" -f version="$VERSION"
 ```
 
 ```bash
-# [LOCAL-MUTATING] repo=packet; capture successful server run at exact release head
-SERVER_RUN_ID="$(gh run list --repo EffortlessMetrics/ripr --workflow release-server-binaries.yml --limit 20 --json databaseId,headSha,status,conclusion,url --jq ".[] | select(.headSha == \"$SOURCE_RELEASE_HEAD\" and .status == \"completed\" and .conclusion == \"success\") | .databaseId" | head -n 1)"
+# [LOCAL-MUTATING] repo=packet; paginate and bind the dispatched server run
+gh api --paginate --slurp "repos/EffortlessMetrics/ripr/actions/workflows/release-server-binaries.yml/runs?per_page=100&event=workflow_dispatch" | jq '[.[] | .workflow_runs[]]' > "$PACKET_ROOT/server-runs.json"
+SERVER_RUN_ID="$(jq -r --arg sha "$SOURCE_RELEASE_HEAD" --arg since "$DISPATCHED_AT" '[.[] | select(.head_sha == $sha and .event == "workflow_dispatch" and .created_at >= $since)] | sort_by(.created_at) | last | .database_id // empty' "$PACKET_ROOT/server-runs.json")"
 test -n "$SERVER_RUN_ID"
 gh run view "$SERVER_RUN_ID" --repo EffortlessMetrics/ripr --json databaseId,headSha,status,conclusion,url > "$PACKET_ROOT/server-run-receipt.json"
 jq -e --arg sha "$SOURCE_RELEASE_HEAD" '.headSha == $sha and .status == "completed" and .conclusion == "success"' "$PACKET_ROOT/server-run-receipt.json" >/dev/null
@@ -397,12 +427,14 @@ jq -e --arg sha "$SOURCE_RELEASE_HEAD" '.headSha == $sha and .status == "complet
 
 ```bash
 # [EXTERNAL-PUBLISHING] repo=source; explicit #1470 VS Marketplace authorization only
+DISPATCHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 gh workflow run publish-extension.yml --repo EffortlessMetrics/ripr --ref "$SOURCE_RELEASE_HEAD" -f version="$VERSION" -f publish_vs_marketplace=true -f publish_open_vsx=false
 ```
 
 ```bash
-# [LOCAL-MUTATING] repo=packet; capture successful VS Marketplace run at exact release head
-EXTENSION_RUN_ID="$(gh run list --repo EffortlessMetrics/ripr --workflow publish-extension.yml --limit 20 --json databaseId,headSha,status,conclusion,url --jq ".[] | select(.headSha == \"$SOURCE_RELEASE_HEAD\" and .status == \"completed\" and .conclusion == \"success\") | .databaseId" | head -n 1)"
+# [LOCAL-MUTATING] repo=packet; paginate and bind the dispatched VS Marketplace run
+gh api --paginate --slurp "repos/EffortlessMetrics/ripr/actions/workflows/publish-extension.yml/runs?per_page=100&event=workflow_dispatch" | jq '[.[] | .workflow_runs[]]' > "$PACKET_ROOT/extension-runs.json"
+EXTENSION_RUN_ID="$(jq -r --arg sha "$SOURCE_RELEASE_HEAD" --arg since "$DISPATCHED_AT" '[.[] | select(.head_sha == $sha and .event == "workflow_dispatch" and .created_at >= $since)] | sort_by(.created_at) | last | .database_id // empty' "$PACKET_ROOT/extension-runs.json")"
 test -n "$EXTENSION_RUN_ID"
 gh run view "$EXTENSION_RUN_ID" --repo EffortlessMetrics/ripr --json databaseId,headSha,status,conclusion,url > "$PACKET_ROOT/vs-marketplace-run-receipt.json"
 jq -e --arg sha "$SOURCE_RELEASE_HEAD" '.headSha == $sha and .status == "completed" and .conclusion == "success"' "$PACKET_ROOT/vs-marketplace-run-receipt.json" >/dev/null
@@ -410,12 +442,14 @@ jq -e --arg sha "$SOURCE_RELEASE_HEAD" '.headSha == $sha and .status == "complet
 
 ```bash
 # [EXTERNAL-PUBLISHING] repo=source; explicit #1470 Open VSX authorization only
+DISPATCHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 gh workflow run publish-extension.yml --repo EffortlessMetrics/ripr --ref "$SOURCE_RELEASE_HEAD" -f version="$VERSION" -f publish_vs_marketplace=false -f publish_open_vsx=true
 ```
 
 ```bash
-# [LOCAL-MUTATING] repo=packet; capture successful Open VSX run at exact release head
-OPENVSX_RUN_ID="$(gh run list --repo EffortlessMetrics/ripr --workflow publish-extension.yml --limit 20 --json databaseId,headSha,status,conclusion,url --jq ".[] | select(.headSha == \"$SOURCE_RELEASE_HEAD\" and .status == \"completed\" and .conclusion == \"success\") | .databaseId" | head -n 1)"
+# [LOCAL-MUTATING] repo=packet; paginate and bind the dispatched Open VSX run
+gh api --paginate --slurp "repos/EffortlessMetrics/ripr/actions/workflows/publish-extension.yml/runs?per_page=100&event=workflow_dispatch" | jq '[.[] | .workflow_runs[]]' > "$PACKET_ROOT/extension-runs-open-vsx.json"
+OPENVSX_RUN_ID="$(jq -r --arg sha "$SOURCE_RELEASE_HEAD" --arg since "$DISPATCHED_AT" '[.[] | select(.head_sha == $sha and .event == "workflow_dispatch" and .created_at >= $since)] | sort_by(.created_at) | last | .database_id // empty' "$PACKET_ROOT/extension-runs-open-vsx.json")"
 test -n "$OPENVSX_RUN_ID"
 gh run view "$OPENVSX_RUN_ID" --repo EffortlessMetrics/ripr --json databaseId,headSha,status,conclusion,url > "$PACKET_ROOT/open-vsx-run-receipt.json"
 jq -e --arg sha "$SOURCE_RELEASE_HEAD" '.headSha == $sha and .status == "completed" and .conclusion == "success"' "$PACKET_ROOT/open-vsx-run-receipt.json" >/dev/null
@@ -488,24 +522,80 @@ gh api repos/EffortlessMetrics/ripr-swarm/branches/main/protection > "$POLICY_BE
 ```
 
 ```bash
-# [READ-ONLY] repo=swarm policy; verify before-state and owner exception receipt
+# [LOCAL-MUTATING] repo=swarm+packet; fetch and verify before-state and owner authorization
 jq -e '.allow_force_pushes.enabled == false and .allow_deletions.enabled == false' "$POLICY_BEFORE" >/dev/null
 test -s "$POLICY_APPROVAL"
-grep -Fxq "ALLOW_ANCESTRY_PRESERVING_BACK_SYNC=${VERSION}" "$POLICY_APPROVAL"
-test -s "$POLICY_EXCEPTION"
-jq -e '.required_linear_history.enabled == false and .allow_force_pushes.enabled == false and .allow_deletions.enabled == false' "$POLICY_EXCEPTION" >/dev/null
+POLICY_OWNER_LOGIN="${POLICY_OWNER_LOGIN:?set the expected approving owner login}"
+test "$(gh api user --jq .login)" = "$POLICY_OWNER_LOGIN"
+POLICY_BEFORE_SHA="$(sha256sum "$POLICY_BEFORE" | awk '{print $1}')"
+jq -e --arg owner "$POLICY_OWNER_LOGIN" --arg version "$VERSION" --arg swarm "$SWARM_BEFORE" --arg source "$SOURCE_RELEASE_HEAD" --arg before_sha "$POLICY_BEFORE_SHA" '
+  .schema_version == 1 and .approval_issue == 3104 and
+  .owner.login == $owner and .approved_for == "ancestry-preserving-back-sync" and
+  .version == $version and .swarm_before == $swarm and
+  .source_release_head == $source and .before_sha256 == $before_sha and
+  (.expires_at | type == "string") and (.approved_at | type == "string")
+' "$POLICY_APPROVAL" >/dev/null
 git -C "$SWARM_ROOT" fetch origin main
 test "$(git -C "$SWARM_ROOT" rev-parse refs/remotes/origin/main)" = "$SWARM_BEFORE"
 ```
 
-If `required_linear_history.enabled` is `true`, the owner must use the
-approved control plane to apply the narrow temporary exception, save its
-response as `POLICY_EXCEPTION`, and then allow the guarded push. If it is
-already `false`, save the observed effective state as the exception receipt
-anyway; no policy mutation is needed. In both cases the owner approval must
-contain the exact `ALLOW_ANCESTRY_PRESERVING_BACK_SYNC` line. Restore the
-recorded before-state immediately after transport. Never force-push, squash,
-rebase, or merge unrelated work.
+The following is the copyable, owner-authorized external-setting operation.
+It is not run by this documentation PR. It preserves the current branch
+protection payload while changing only `required_linear_history` for the
+ancestry-preserving merge; if linear history is already disabled, it records
+the before response as the effective exception without changing settings.
+
+```bash
+# [LOCAL-MUTATING] repo=packet; build exact branch-protection exception request
+jq '{
+  required_status_checks: (if .required_status_checks == null then null else {strict: .required_status_checks.strict, contexts: .required_status_checks.contexts, checks: .required_status_checks.checks} end),
+  enforce_admins: .enforce_admins.enabled,
+  required_pull_request_reviews: (if .required_pull_request_reviews == null then null else {dismiss_stale_reviews: .required_pull_request_reviews.dismiss_stale_reviews, require_code_owner_reviews: .required_pull_request_reviews.require_code_owner_reviews, required_approving_review_count: .required_pull_request_reviews.required_approving_review_count, require_last_push_approval: .required_pull_request_reviews.require_last_push_approval} end),
+  restrictions: (if .restrictions == null then null else {users: .restrictions.users, teams: .restrictions.teams, apps: .restrictions.apps} end),
+  required_linear_history: false,
+  allow_force_pushes: .allow_force_pushes.enabled,
+  allow_deletions: .allow_deletions.enabled,
+  block_creations: .block_creations.enabled,
+  required_conversation_resolution: .required_conversation_resolution.enabled,
+  lock_branch: .lock_branch.enabled,
+  allow_fork_syncing: .allow_fork_syncing.enabled
+}' "$POLICY_BEFORE" > "$POLICY_EXCEPTION_REQUEST"
+```
+
+```bash
+# [EXTERNAL-PUBLISHING] repo=swarm branch protection; owner-approved setting mutation only
+if test "$(jq -r '.required_linear_history.enabled' "$POLICY_BEFORE")" = true; then
+  gh api --method PUT repos/EffortlessMetrics/ripr-swarm/branches/main/protection --input "$POLICY_EXCEPTION_REQUEST" > "$POLICY_EXCEPTION"
+else
+  cp "$POLICY_BEFORE" "$POLICY_EXCEPTION"
+fi
+```
+
+```bash
+# [READ-ONLY] repo=swarm policy; verify effective exception before K transport
+jq -e '.required_linear_history.enabled == false and .allow_force_pushes.enabled == false and .allow_deletions.enabled == false' "$POLICY_EXCEPTION" >/dev/null
+```
+
+Restore the recorded before-state immediately after transport. Never
+force-push, squash, rebase, or merge unrelated work.
+
+`POLICY_APPROVAL` is an owner-provided JSON receipt with this minimum schema;
+the owner login is also checked against the authenticated `gh api user`:
+
+```json
+{
+  "schema_version": 1,
+  "approval_issue": 3104,
+  "owner": {"login": "release-owner"},
+  "approved_for": "ancestry-preserving-back-sync",
+  "version": "0.11.0",
+  "swarm_before": "<40-hex-sha>",
+  "source_release_head": "<40-hex-sha>",
+  "before_sha256": "<64-hex-sha256>",
+  "approved_at": "<RFC3339>",
+  "expires_at": "<RFC3339>"
+}
+```
 
 ```bash
 # [EXTERNAL-PUBLISHING] repo=swarm remote/policy; owner-approved K transport only
@@ -513,14 +603,19 @@ git -C "$SWARM_ROOT" push origin "back-sync/${VERSION}:refs/heads/main"
 ```
 
 ```bash
-# [READ-ONLY] repo=swarm remote; bind swarm main to K after transport
+# [LOCAL-MUTATING] repo=swarm remote; fetch and bind swarm main to K after transport
 git -C "$SWARM_ROOT" fetch origin main
 test "$(git -C "$SWARM_ROOT" rev-parse refs/remotes/origin/main)" = "$K"
 ```
 
 ```bash
-# [LOCAL-MUTATING] repo=swarm policy; capture the restored policy response
-gh api repos/EffortlessMetrics/ripr-swarm/branches/main/protection > "$POLICY_AFTER"
+# [LOCAL-MUTATING] repo=packet; build exact before-state restoration request
+jq --argjson linear "$(jq -r '.required_linear_history.enabled' "$POLICY_BEFORE")" '.required_linear_history = $linear' "$POLICY_EXCEPTION_REQUEST" > "$POLICY_RESTORE_REQUEST"
+```
+
+```bash
+# [EXTERNAL-PUBLISHING] repo=swarm branch protection; restore exact before-state
+gh api --method PUT repos/EffortlessMetrics/ripr-swarm/branches/main/protection --input "$POLICY_RESTORE_REQUEST" > "$POLICY_AFTER"
 ```
 
 ```bash
@@ -540,7 +635,7 @@ publication receipt is complete may development resume. Re-baseline `0.11.1`
 from exact K, not a candidate or floating branch.
 
 ```bash
-# [READ-ONLY] repo=swarm; reopen development only from published K
+# [LOCAL-MUTATING] repo=swarm; fetch and reopen development only from published K
 git -C "$SWARM_ROOT" fetch origin main
 test "$(git -C "$SWARM_ROOT" rev-parse refs/remotes/origin/main)" = "$K"
 git -C "$SWARM_ROOT" log --oneline --decorate -n 5 "$K"
