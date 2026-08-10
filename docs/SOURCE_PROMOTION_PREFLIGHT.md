@@ -28,6 +28,8 @@ directories must be distinct, and their `origin` URLs must canonically identify
 `EffortlessMetrics/ripr` and `EffortlessMetrics/ripr-swarm`; suffix matches and
 URL query/path tricks are rejected. Use `--source-remote`/`--swarm-remote` only
 for an explicitly reviewed mirror.
+The receipt records only the stable verification result for the Git common
+directory comparison; it does not serialize an operator's local checkout path.
 `SWARM_REF` is required, must use
 `refs/ripr/release-<version>-<SWARM_PARENT>`, and must resolve in the swarm
 repository to the exact `SWARM_PARENT`; a moved, missing, wrongly named, or
@@ -37,7 +39,8 @@ The command writes deterministic `source-promotion-preflight.json` and `.md`
 files. It records the merge base, separately named all-reachable and
 first-parent counts for each parent range, exact-parent version surfaces
 (workspace, crate, Cargo.lock ripr package, extension, npm lock root, and
-changelog), and SHA-256 digests. The
+changelog, with missing changelog evidence represented as unknown), and
+SHA-256 digests. The
 all-reachable digest recipe is:
 
 ```text

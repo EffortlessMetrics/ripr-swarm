@@ -1,6 +1,6 @@
 # Source-promotion preflight fixture
 
-Spec: RIPR-SPEC-0147
+Spec: RIPR-SPEC-0148
 
 ## Given
 

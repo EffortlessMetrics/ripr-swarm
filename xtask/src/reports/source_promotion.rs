@@ -39,7 +39,7 @@ struct RepositoryIdentity {
     role: String,
     remote: String,
     expected_remote: String,
-    git_common_dir: String,
+    common_dir_verified: bool,
     immutable_ref: Option<String>,
     immutable_ref_sha: Option<String>,
     identity: String,
@@ -64,7 +64,7 @@ struct VersionSide {
     extension_version: Option<String>,
     cargo_lock_package_version: Option<String>,
     npm_lock_root_version: Option<String>,
-    changelog_mentions_version: bool,
+    changelog_mentions_version: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -382,9 +382,14 @@ fn inspect_repository(
             "source parent {parent} is not the declared current source main {resolved_main}; hold source main or repin"
         ));
     }
-    if role == "swarm" && !git_status_ok(&root, &["merge-base", "--is-ancestor", parent, main]) {
+    if role == "swarm"
+        && !git_status_ok(
+            &root,
+            &["merge-base", "--is-ancestor", parent, &resolved_main],
+        )
+    {
         return Err(format!(
-            "swarm parent {parent} is not reachable from declared swarm main {main}"
+            "swarm parent {parent} is not reachable from declared swarm main {main} ({resolved_main})"
         ));
     }
     let immutable_ref_sha = immutable_ref
@@ -395,7 +400,7 @@ fn inspect_repository(
             role: role.to_string(),
             remote,
             expected_remote: expected_remote.to_string(),
-            git_common_dir: common_dir.display().to_string(),
+            common_dir_verified: true,
             immutable_ref: immutable_ref.map(str::to_string),
             immutable_ref_sha: immutable_ref_sha.clone(),
             identity: "origin-remote-and-git-root-verified".to_string(),
@@ -594,8 +599,7 @@ fn with_disposable_repo<T>(
         "ripr-source-promotion-{nonce}-{}",
         std::process::id()
     ));
-    fs::create_dir_all(&path)
-        .map_err(|error| format!("failed to create disposable merge repo: {error}"))?;
+    create_disposable_repo_dir(&path)?;
     let result = (|| {
         git(&path, &["init", "--quiet"])?;
         git(
@@ -632,6 +636,10 @@ fn with_disposable_repo<T>(
             Err(format!("{action_error}; additionally, {cleanup_error}"))
         }
     }
+}
+
+fn create_disposable_repo_dir(path: &Path) -> Result<(), String> {
+    fs::create_dir(path).map_err(|error| format!("failed to create disposable merge repo: {error}"))
 }
 
 fn dry_merge_from_repo(
@@ -776,7 +784,7 @@ fn version_side(root: &Path, parent: &str, version: &str) -> VersionSide {
     let package = read("editors/vscode/package.json");
     let cargo_lock = read("Cargo.lock");
     let npm_lock = read("editors/vscode/package-lock.json");
-    let changelog = read("CHANGELOG.md").unwrap_or_default();
+    let changelog = read("CHANGELOG.md");
     let parse_version = |text: Option<String>| {
         text.and_then(|body| {
             body.lines()
@@ -810,8 +818,9 @@ fn version_side(root: &Path, parent: &str, version: &str) -> VersionSide {
         extension_version,
         cargo_lock_package_version,
         npm_lock_root_version,
-        changelog_mentions_version: changelog.contains(&format!("[{version}]"))
-            || changelog.contains(&format!("## {version}")),
+        changelog_mentions_version: changelog.map(|body| {
+            body.contains(&format!("[{version}]")) || body.contains(&format!("## {version}"))
+        }),
     }
 }
 
@@ -864,7 +873,7 @@ fn render_markdown(receipt: &Receipt) -> String {
         }
     };
     format!(
-        "# Source-promotion preflight\n\n- Schema: {}\n- Mode: {}\n- SOURCE_PARENT: {}\n- SWARM_PARENT: {}\n- SWARM_REF: {}\n- SWARM_REF_SHA: {}\n- MERGE_BASE: {}\n\n## Repository identity\n\n- source: {} (expected {}; git common dir {})\n- swarm: {} (expected {}; git common dir {})\n\n## Ancestry\n\n| range | all reachable | first parent | all digest | ordered first-parent digest |\n| --- | ---: | ---: | --- | --- |\n| source | {} | {} | {} | {} |\n| swarm | {} | {} | {} | {} |\n\nAll-reachable digest recipe: {}\nFirst-parent digest recipe: {}\n\n## Dry merge\n\nStatus: **{}**\nPreview tree (automatic, non-final): {:?}\nReviewed resolved tree: {:?}\nReviewed resolved tree verified in supplied repository object store: {}\n\nConflicts:\n{}\n\n## Source survivors\n\n{}\n## Swarm-only paths\n\n{}\n## Swarm authority-resolution candidates (non-dispositive)\n\n{}\n## Version state\n\n- requested: {}\n- source: workspace={:?}, crate={:?}, extension={:?}, cargo-lock-ripr={:?}, npm-lock-root={:?}, changelog-mentions={}\n- swarm: workspace={:?}, crate={:?}, extension={:?}, cargo-lock-ripr={:?}, npm-lock-root={:?}, changelog-mentions={}\n\n## Invalidation rules\n\n{}\n## Next commands\n\n{}",
+        "# Source-promotion preflight\n\n- Schema: {}\n- Mode: {}\n- SOURCE_PARENT: {}\n- SWARM_PARENT: {}\n- SWARM_REF: {}\n- SWARM_REF_SHA: {}\n- MERGE_BASE: {}\n\n## Repository identity\n\n- source: {} (expected {}; common dirs distinct={})\n- swarm: {} (expected {}; common dirs distinct={})\n\n## Ancestry\n\n| range | all reachable | first parent | all digest | ordered first-parent digest |\n| --- | ---: | ---: | --- | --- |\n| source | {} | {} | {} | {} |\n| swarm | {} | {} | {} | {} |\n\nAll-reachable digest recipe: {}\nFirst-parent digest recipe: {}\n\n## Dry merge\n\nStatus: **{}**\nPreview tree (automatic, non-final): {:?}\nReviewed resolved tree: {:?}\nReviewed resolved tree verified in supplied repository object store: {}\n\nConflicts:\n{}\n\n## Source survivors\n\n{}\n## Swarm-only paths\n\n{}\n## Swarm authority-resolution candidates (non-dispositive)\n\n{}\n## Version state\n\n- requested: {}\n- source: workspace={:?}, crate={:?}, extension={:?}, cargo-lock-ripr={:?}, npm-lock-root={:?}, changelog-mentions={:?}\n- swarm: workspace={:?}, crate={:?}, extension={:?}, cargo-lock-ripr={:?}, npm-lock-root={:?}, changelog-mentions={:?}\n\n## Invalidation rules\n\n{}\n## Next commands\n\n{}",
         receipt.schema,
         receipt.mode,
         receipt.source_parent,
@@ -874,10 +883,10 @@ fn render_markdown(receipt: &Receipt) -> String {
         receipt.merge_base,
         receipt.source_repository.remote,
         receipt.source_repository.expected_remote,
-        receipt.source_repository.git_common_dir,
+        receipt.source_repository.common_dir_verified,
         receipt.swarm_repository.remote,
         receipt.swarm_repository.expected_remote,
-        receipt.swarm_repository.git_common_dir,
+        receipt.swarm_repository.common_dir_verified,
         receipt.source_range.all_reachable_count,
         receipt.source_range.first_parent_count,
         receipt.source_range.all_reachable_sha256,
@@ -1031,7 +1040,113 @@ mod tests {
                 "lockfile version observations were not read from parent: {observed:?}"
             ));
         }
+        if observed.changelog_mentions_version.is_some() {
+            return Err(format!(
+                "missing changelog was reported as an observed boolean: {observed:?}"
+            ));
+        }
         fs::remove_dir_all(&root).map_err(|error| format!("cleanup failed: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn repository_identity_serialization_has_no_checkout_path() -> Result<(), String> {
+        let identity = RepositoryIdentity {
+            role: "source".to_string(),
+            remote: "https://github.com/EffortlessMetrics/ripr.git".to_string(),
+            expected_remote: "EffortlessMetrics/ripr".to_string(),
+            common_dir_verified: true,
+            immutable_ref: None,
+            immutable_ref_sha: None,
+            identity: "origin-remote-and-git-root-verified".to_string(),
+            root_verified: true,
+            remote_verified: true,
+        };
+        let json = serde_json::to_string(&identity)
+            .map_err(|error| format!("failed to serialize identity: {error}"))?;
+        if !json.contains("common_dir_verified") || json.contains("git_common_dir") {
+            return Err(format!(
+                "identity serialization is not location-independent: {json}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn disposable_repo_creation_rejects_existing_path() -> Result<(), String> {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| format!("system clock before epoch: {error}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("ripr-disposable-collision-{nonce}"));
+        fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let error = create_disposable_repo_dir(&root)
+            .err()
+            .ok_or_else(|| "existing disposable path was unexpectedly reused".to_string())?;
+        if !error.contains("failed to create disposable merge repo") {
+            return Err(format!("unexpected collision error: {error}"));
+        }
+        fs::remove_dir_all(&root).map_err(|error| format!("cleanup failed: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn swarm_parent_must_be_ancestor_of_declared_main() -> Result<(), String> {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| format!("system clock before epoch: {error}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("ripr-swarm-ancestry-{nonce}"));
+        fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        test_git(&root, &["init", "--quiet"])?;
+        test_git(&root, &["config", "user.email", "test@example.invalid"])?;
+        test_git(&root, &["config", "user.name", "test"])?;
+        test_git(
+            &root,
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/EffortlessMetrics/ripr-swarm.git",
+            ],
+        )?;
+        fs::write(root.join("base.txt"), "base\n").map_err(|error| error.to_string())?;
+        test_git(&root, &["add", "base.txt"])?;
+        test_git(&root, &["commit", "--quiet", "-m", "base"])?;
+        let parent = test_git_output(&root, &["rev-parse", "HEAD"])?;
+        test_git(&root, &["checkout", "--quiet", "--orphan", "unrelated"])?;
+        fs::remove_file(root.join("base.txt")).map_err(|error| error.to_string())?;
+        fs::write(root.join("unrelated.txt"), "unrelated\n").map_err(|error| error.to_string())?;
+        test_git(&root, &["add", "--all"])?;
+        test_git(&root, &["commit", "--quiet", "-m", "unrelated"])?;
+        test_git(&root, &["branch", "-M", "main"])?;
+        let error = inspect_repository(
+            "swarm",
+            &root,
+            "EffortlessMetrics/ripr-swarm",
+            &parent,
+            "main",
+            None,
+        )
+        .err()
+        .ok_or_else(|| "unrelated swarm main was unexpectedly accepted".to_string())?;
+        if !error.contains("not reachable") {
+            return Err(format!("unexpected ancestry error: {error}"));
+        }
+        fs::remove_dir_all(&root).map_err(|error| format!("cleanup failed: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn fixture_points_to_source_promotion_spec() -> Result<(), String> {
+        let text = fs::read_to_string("../fixtures/source_promotion/SPEC.md")
+            .map_err(|error| format!("failed to read source-promotion fixture: {error}"))?;
+        if !text
+            .lines()
+            .any(|line| line.trim() == "Spec: RIPR-SPEC-0148")
+        {
+            return Err("fixture does not reference RIPR-SPEC-0148".to_string());
+        }
         Ok(())
     }
 

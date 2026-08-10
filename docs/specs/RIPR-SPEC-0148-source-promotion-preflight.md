@@ -56,7 +56,8 @@ UTF-8 SHA lines joined with LF, then SHA-256
 
 The receipt records source-survivor candidates, a non-dispositive inventory of
 swarm-authority resolution candidates, exact-parent version/changelog
-observations (including Cargo.lock and npm lock roots), invalidation rules, and
+observations (including Cargo.lock and npm lock roots; missing changelog
+evidence remains unknown), invalidation rules, and
 next actions. `preview_tree` is automatic merge-tree output only. A separate
 optional reviewed resolved-tree SHA is recorded and verified in the supplied
 repository object store; absent that input, finalization is visibly missing.
@@ -104,7 +105,10 @@ It does not create a join or modify either authoritative checkout.
   digest order, strict remote identity (including suffix-trick rejection),
   authority-path classification, fixture shape, and disposable conflicting and
   clean repository pairs, exact-parent version reads, and reviewed resolved-tree
-  verification for an unreachable `git write-tree` object.
+  verification for an unreachable `git write-tree` object. They also cover
+  source-promotion fixture linkage, missing changelog unknown-state handling,
+  location-independent identity serialization, exclusive disposable-directory
+  creation, and rejection of a non-ancestor swarm main.
 - `fixtures/source_promotion/diverged-conflict.json` pins the discriminating
   divergent/conflict expectation.
 
