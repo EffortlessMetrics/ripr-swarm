@@ -90,14 +90,22 @@ bind_new_dispatch_run() {
   sha="$3"
   ref="$4"
   since="$5"
-  jq -n --slurpfile before "$before_file" --slurpfile after "$after_file" \
-    --arg sha "$sha" --arg ref "$ref" --arg since "$since" '
+  endpoint="$6"
+  deadline=$(( $(date +%s) + 300 ))
+  while test "$(date +%s)" -lt "$deadline"; do
+    gh api --paginate --slurp "$endpoint" | jq '[.[] | .workflow_runs[]]' > "$after_file"
+    jq -n --slurpfile before "$before_file" --slurpfile after "$after_file" \
+      --arg sha "$sha" --arg ref "$ref" --arg since "$since" '
     ($before[0] | map(.id)) as $old_ids |
     [$after[0][] | .id as $run_id | select(.head_sha == $sha and .head_branch == $ref and
       .event == "workflow_dispatch" and .created_at >= $since and
       (($old_ids | index($run_id)) | not))] | unique_by(.id)' > "${after_file%.json}-new.json"
-  test "$(jq 'length' "${after_file%.json}-new.json")" = 1
-  jq -r '.[0].id' "${after_file%.json}-new.json"
+    count="$(jq 'length' "${after_file%.json}-new.json")"
+    test "$count" -le 1 || return 1
+    test "$count" = 1 && { jq -r '.[0].id' "${after_file%.json}-new.json"; return 0; }
+    sleep 5
+  done
+  return 1
 }
 ```
 
@@ -285,6 +293,11 @@ git -C "$QUAL_ROOT" rev-parse HEAD
 (cd "$QUAL_ROOT" && cargo xtask check-pr)
 (cd "$QUAL_ROOT" && cargo xtask check-generated-clean)
 (cd "$QUAL_ROOT" && cargo xtask check-doc-index)
+QUALIFICATION_RECEIPT="$PACKET_ROOT/hosted-qualification-receipt.json"
+QUALIFICATION_RUN_URL="${QUALIFICATION_RUN_URL:?set the routed hosted qualification URL}"
+QUALIFICATION_HEAD_SHA="${QUALIFICATION_HEAD_SHA:?set the hosted qualification headSha}"
+jq -n --arg swarm "$SWARM_PARENT" --arg head "$QUALIFICATION_HEAD_SHA" --arg url "$QUALIFICATION_RUN_URL" '{schema_version: 1, swarm_parent: $swarm, headSha: $head, routed_ci_url: $url}' > "$QUALIFICATION_RECEIPT"
+jq -e --arg swarm "$SWARM_PARENT" --arg head "$SWARM_PARENT" '.swarm_parent == $swarm and .headSha == $head and (.routed_ci_url | startswith("https://"))' "$QUALIFICATION_RECEIPT" >/dev/null
 ```
 
 A missing, timed-out, or differently headed hosted result is unavailable, not
@@ -298,6 +311,8 @@ resolution manifest; the automatic `preview_tree` is never substituted.
 set -euo pipefail
 # [LOCAL-MUTATING] repo=swarm operator checkout; preflight writes local receipts, no J
 JOIN_TREE="${JOIN_TREE:?set to the separately reviewed full resolved-tree SHA from the resolution manifest}"
+test -s "$QUALIFICATION_RECEIPT"
+jq -e --arg swarm "$SWARM_PARENT" '.swarm_parent == $swarm and .headSha == $swarm and (.routed_ci_url | startswith("https://"))' "$QUALIFICATION_RECEIPT" >/dev/null
 (cd "$SWARM_ROOT" && cargo xtask source-promotion preflight \
   --source-parent "$SOURCE_PARENT" --swarm-parent "$SWARM_PARENT" \
   --swarm-ref "$SWARM_REF" --source-repo "$SOURCE_ROOT" --swarm-repo "$SWARM_ROOT" \
@@ -409,6 +424,14 @@ set -euo pipefail
 # [LOCAL-MUTATING] repo=source release-prep checkout at source join result; metadata only
 git -C "$SOURCE_ROOT" switch -c "release/${VERSION}" "$SOURCE_JOIN_HEAD"
 (cd "$SOURCE_ROOT" && cargo xtask bump-version "$VERSION")
+git -C "$SOURCE_ROOT" add Cargo.toml Cargo.lock crates docs
+git -C "$SOURCE_ROOT" commit -m "chore(release): bump ${VERSION} metadata"
+git -C "$SOURCE_ROOT" push origin "release/${VERSION}"
+SOURCE_METADATA_PR="$(gh pr create --repo EffortlessMetrics/ripr --head "release/${VERSION}" --base main --title "chore(release): bump ${VERSION} metadata" --body "Release metadata only; expected source join ${SOURCE_JOIN_HEAD}")"
+SOURCE_METADATA_PR_NUMBER="${SOURCE_METADATA_PR##*/}"
+gh pr view "$SOURCE_METADATA_PR_NUMBER" --repo EffortlessMetrics/ripr --json headRefOid --jq .headRefOid | tee "$PACKET_ROOT/source-metadata-pr-head.sha"
+test "$(cat "$PACKET_ROOT/source-metadata-pr-head.sha")" = "$(git -C "$SOURCE_ROOT" rev-parse HEAD)"
+gh pr merge "$SOURCE_METADATA_PR_NUMBER" --repo EffortlessMetrics/ripr --squash --match-head-commit "$(cat "$PACKET_ROOT/source-metadata-pr-head.sha")"
 ```
 
 Set `SOURCE_RELEASE_HEAD` to the exact source-main SHA after that PR. The ship
@@ -420,6 +443,9 @@ set -euo pipefail
 git -C "$SOURCE_ROOT" fetch origin main
 SOURCE_RELEASE_HEAD="$(git -C "$SOURCE_ROOT" rev-parse refs/remotes/origin/main)"
 test "$(git -C "$SOURCE_ROOT" rev-parse "$SOURCE_RELEASE_HEAD^{commit}")" = "$SOURCE_RELEASE_HEAD"
+git -C "$SOURCE_ROOT" switch --detach "$SOURCE_RELEASE_HEAD"
+test -z "$(git -C "$SOURCE_ROOT" status --short)"
+(cd "$SOURCE_ROOT" && cargo xtask release-readiness --version "$VERSION")
 ```
 
 | Surface | Repository/worktree and mode | Proof | Boundary |
@@ -490,7 +516,7 @@ set -euo pipefail
 ```bash
 set -euo pipefail
 # [READ-ONLY] repo=source/public; receipt crate publication before next channel
-curl -fsSL "https://crates.io/api/v1/crates/ripr/${VERSION}" | jq -e --arg version "$VERSION" '.version == $version' >/dev/null
+curl -fsSL -A "ripr-release-transaction/${VERSION} (+https://github.com/EffortlessMetrics/ripr)" "https://crates.io/api/v1/crates/ripr/${VERSION}" | jq -e --arg version "$VERSION" '.version == $version' >/dev/null
 ```
 
 ```bash
@@ -503,7 +529,8 @@ gh release create "v${VERSION}" --repo EffortlessMetrics/ripr --target "$SOURCE_
 set -euo pipefail
 # [READ-ONLY] repo=source/public; receipt GitHub release before next channel
 gh release view "v${VERSION}" --repo EffortlessMetrics/ripr --json tagName,targetCommitish,isDraft,isPrerelease,assets,url
-test "$(gh release view "v${VERSION}" --repo EffortlessMetrics/ripr --json isDraft --jq .isDraft)" = false
+gh release view "v${VERSION}" --repo EffortlessMetrics/ripr --json tagName,targetCommitish,isDraft,isPrerelease > "$PACKET_ROOT/github-release-receipt.json"
+jq -e --arg tag "v${VERSION}" --arg head "$SOURCE_RELEASE_HEAD" '.tagName == $tag and .targetCommitish == $head and .isDraft == false and .isPrerelease == false' "$PACKET_ROOT/github-release-receipt.json" >/dev/null
 ```
 
 ```bash
@@ -520,7 +547,7 @@ gh workflow run release-server-binaries.yml --repo EffortlessMetrics/ripr --ref 
 set -euo pipefail
 # [LOCAL-MUTATING] repo=packet; paginate and bind the dispatched server run
 gh api --paginate --slurp "repos/EffortlessMetrics/ripr/actions/workflows/release-server-binaries.yml/runs?per_page=100&event=workflow_dispatch" | jq '[.[] | .workflow_runs[]]' > "$PACKET_ROOT/server-runs-after.json"
-SERVER_RUN_ID="$(bind_new_dispatch_run "$PACKET_ROOT/server-runs-before.json" "$PACKET_ROOT/server-runs-after.json" "$SOURCE_RELEASE_HEAD" "$RELEASE_REF" "$DISPATCHED_AT")"
+SERVER_RUN_ID="$(bind_new_dispatch_run "$PACKET_ROOT/server-runs-before.json" "$PACKET_ROOT/server-runs-after.json" "$SOURCE_RELEASE_HEAD" "$RELEASE_REF" "$DISPATCHED_AT" "repos/EffortlessMetrics/ripr/actions/workflows/release-server-binaries.yml/runs?per_page=100&event=workflow_dispatch")"
 wait_for_run_success "$SERVER_RUN_ID"
 gh run view "$SERVER_RUN_ID" --repo EffortlessMetrics/ripr --json databaseId,headSha,status,conclusion,url > "$PACKET_ROOT/server-run-receipt.json"
 jq -e --arg sha "$SOURCE_RELEASE_HEAD" '.headSha == $sha and .status == "completed" and .conclusion == "success"' "$PACKET_ROOT/server-run-receipt.json" >/dev/null
@@ -538,7 +565,7 @@ gh workflow run publish-extension.yml --repo EffortlessMetrics/ripr --ref "$RELE
 set -euo pipefail
 # [LOCAL-MUTATING] repo=packet; paginate and bind the dispatched VS Marketplace run
 gh api --paginate --slurp "repos/EffortlessMetrics/ripr/actions/workflows/publish-extension.yml/runs?per_page=100&event=workflow_dispatch" | jq '[.[] | .workflow_runs[]]' > "$PACKET_ROOT/extension-runs-after.json"
-EXTENSION_RUN_ID="$(bind_new_dispatch_run "$PACKET_ROOT/extension-runs-before.json" "$PACKET_ROOT/extension-runs-after.json" "$SOURCE_RELEASE_HEAD" "$RELEASE_REF" "$DISPATCHED_AT")"
+EXTENSION_RUN_ID="$(bind_new_dispatch_run "$PACKET_ROOT/extension-runs-before.json" "$PACKET_ROOT/extension-runs-after.json" "$SOURCE_RELEASE_HEAD" "$RELEASE_REF" "$DISPATCHED_AT" "repos/EffortlessMetrics/ripr/actions/workflows/publish-extension.yml/runs?per_page=100&event=workflow_dispatch")"
 wait_for_run_success "$EXTENSION_RUN_ID"
 gh run view "$EXTENSION_RUN_ID" --repo EffortlessMetrics/ripr --json databaseId,headSha,status,conclusion,url > "$PACKET_ROOT/vs-marketplace-run-receipt.json"
 jq -e --arg sha "$SOURCE_RELEASE_HEAD" '.headSha == $sha and .status == "completed" and .conclusion == "success"' "$PACKET_ROOT/vs-marketplace-run-receipt.json" >/dev/null
@@ -556,7 +583,7 @@ gh workflow run publish-extension.yml --repo EffortlessMetrics/ripr --ref "$RELE
 set -euo pipefail
 # [LOCAL-MUTATING] repo=packet; paginate and bind the dispatched Open VSX run
 gh api --paginate --slurp "repos/EffortlessMetrics/ripr/actions/workflows/publish-extension.yml/runs?per_page=100&event=workflow_dispatch" | jq '[.[] | .workflow_runs[]]' > "$PACKET_ROOT/extension-runs-open-vsx-after.json"
-OPENVSX_RUN_ID="$(bind_new_dispatch_run "$PACKET_ROOT/extension-runs-open-vsx-before.json" "$PACKET_ROOT/extension-runs-open-vsx-after.json" "$SOURCE_RELEASE_HEAD" "$RELEASE_REF" "$DISPATCHED_AT")"
+OPENVSX_RUN_ID="$(bind_new_dispatch_run "$PACKET_ROOT/extension-runs-open-vsx-before.json" "$PACKET_ROOT/extension-runs-open-vsx-after.json" "$SOURCE_RELEASE_HEAD" "$RELEASE_REF" "$DISPATCHED_AT" "repos/EffortlessMetrics/ripr/actions/workflows/publish-extension.yml/runs?per_page=100&event=workflow_dispatch")"
 wait_for_run_success "$OPENVSX_RUN_ID"
 gh run view "$OPENVSX_RUN_ID" --repo EffortlessMetrics/ripr --json databaseId,headSha,status,conclusion,url > "$PACKET_ROOT/open-vsx-run-receipt.json"
 jq -e --arg sha "$SOURCE_RELEASE_HEAD" '.headSha == $sha and .status == "completed" and .conclusion == "success"' "$PACKET_ROOT/open-vsx-run-receipt.json" >/dev/null
@@ -657,6 +684,7 @@ POLICY_BEFORE_SHA="$(sha256sum "$POLICY_BEFORE" | awk '{print $1}')"
 POLICY_VALIDATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 POLICY_NOW_EPOCH="$(date -u -d "$POLICY_VALIDATED_AT" +%s)"
 POLICY_EXPIRES_AT="$(jq -r '.expires_at // empty' "$POLICY_APPROVAL")"
+printf '%s\n' "$POLICY_EXPIRES_AT" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(Z|[+-][0-9]{2}:[0-9]{2})$'
 POLICY_EXPIRES_EPOCH="$(date -u -d "$POLICY_EXPIRES_AT" +%s 2>/dev/null || true)"
 test -n "$POLICY_EXPIRES_EPOCH"
 test "$POLICY_EXPIRES_EPOCH" -gt "$POLICY_NOW_EPOCH"
@@ -711,7 +739,9 @@ fi
 for ruleset_id in $ACTIVE_RULESET_IDS; do
   RULESET_EXCEPTION_REQUEST="$PACKET_ROOT/ruleset-${ruleset_id}-exception-request.json"
   test -s "$RULESET_EXCEPTION_REQUEST"
+  jq -e --slurpfile before "$PACKET_ROOT/ruleset-${ruleset_id}-before.json" '(.name == $before[0].name and .target == $before[0].target and .conditions == $before[0].conditions)' "$RULESET_EXCEPTION_REQUEST" >/dev/null
   gh api --method PUT "repos/EffortlessMetrics/ripr-swarm/rulesets/${ruleset_id}" --input "$RULESET_EXCEPTION_REQUEST" > "$PACKET_ROOT/ruleset-${ruleset_id}-exception.json"
+  jq -e --slurpfile before "$PACKET_ROOT/ruleset-${ruleset_id}-before.json" '.name == $before[0].name and .target == $before[0].target' "$PACKET_ROOT/ruleset-${ruleset_id}-exception.json" >/dev/null
 done
 ```
 
