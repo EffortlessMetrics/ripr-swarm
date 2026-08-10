@@ -764,10 +764,16 @@ else
 fi
 for ruleset_id in $ACTIVE_RULESET_IDS; do
   RULESET_EXCEPTION_REQUEST="$PACKET_ROOT/ruleset-${ruleset_id}-exception-request.json"
-  test -s "$RULESET_EXCEPTION_REQUEST"
-  jq -e --slurpfile before "$PACKET_ROOT/ruleset-${ruleset_id}-before.json" '((del(.rules) == ($before[0] | del(.rules))) and (.rules | type == "array"))' "$RULESET_EXCEPTION_REQUEST" >/dev/null
-  gh api --method PUT "repos/EffortlessMetrics/ripr-swarm/rulesets/${ruleset_id}" --input "$RULESET_EXCEPTION_REQUEST" > "$PACKET_ROOT/ruleset-${ruleset_id}-exception.json"
-  jq -e --slurpfile before "$PACKET_ROOT/ruleset-${ruleset_id}-before.json" '((del(.rules) == ($before[0] | del(.rules))) and (.rules | type == "array"))' "$PACKET_ROOT/ruleset-${ruleset_id}-exception.json" >/dev/null
+  RULESET_BEFORE="$PACKET_ROOT/ruleset-${ruleset_id}-before.json"
+  jq '(.rules // []) as $rules | ($rules | map(select(.type == "pull_request" or .type == "required_linear_history"))) as $approved | if ($approved | length) > 0 then .rules = ($rules | map(select(.type != "pull_request" and .type != "required_linear_history"))) else . end' "$RULESET_BEFORE" > "$RULESET_EXCEPTION_REQUEST"
+  jq -e --slurpfile before "$RULESET_BEFORE" '((del(.rules) == ($before[0] | del(.rules))) and ((($before[0].rules // []) | map(select(.type == "pull_request" or .type == "required_linear_history")) | length) > 0) and ((.rules // []) | all(.type != "pull_request" and .type != "required_linear_history"))) or ((. == $before[0]) and (($before[0].rules // []) | map(select(.type == "pull_request" or .type == "required_linear_history")) | length) == 0)' "$RULESET_EXCEPTION_REQUEST" >/dev/null
+  if test "$(jq '[.rules[]? | select(.type == "pull_request" or .type == "required_linear_history")] | length' "$RULESET_BEFORE")" -gt 0; then
+    gh api --method PUT "repos/EffortlessMetrics/ripr-swarm/rulesets/${ruleset_id}" --input "$RULESET_EXCEPTION_REQUEST" > "$PACKET_ROOT/ruleset-${ruleset_id}-exception.json"
+  else
+    cp "$RULESET_BEFORE" "$PACKET_ROOT/ruleset-${ruleset_id}-exception.json"
+    printf '%s\n' "no approved K-blocking rules present; no ruleset mutation" > "$PACKET_ROOT/ruleset-${ruleset_id}-no-mutation.txt"
+  fi
+  jq -e --slurpfile before "$RULESET_BEFORE" '((del(.rules) == ($before[0] | del(.rules))) and ((.rules // []) == (($before[0].rules // []) | map(select(.type != "pull_request" and .type != "required_linear_history"))))) or (. == $before[0])' "$PACKET_ROOT/ruleset-${ruleset_id}-exception.json" >/dev/null
 done
 ```
 
