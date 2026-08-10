@@ -16,6 +16,8 @@ use serde_json::{Value, json};
 
 use crate::run;
 
+use super::ripr_fixture_binary;
+
 const DEFAULT_MANIFEST: &str = "fixtures/python-eval-sweep/manifest.json";
 const DEFAULT_CHECKOUT_ROOT: &str = "target/ripr/eval-sweep/checkouts";
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
@@ -426,7 +428,12 @@ impl RepoRun {
     }
 }
 
-fn run_repo(entry: &RepoEntry, manifest: &Manifest, args: &SweepArgs, binary: &Path) -> RepoRun {
+fn run_repo(
+    entry: &RepoEntry,
+    manifest: &Manifest,
+    args: &SweepArgs,
+    binary: Option<&Path>,
+) -> RepoRun {
     let checkout = PathBuf::from(&args.checkout_root).join(&entry.id);
     if args.clone {
         if let Err(err) = clone_repo(entry, &checkout) {
@@ -435,6 +442,16 @@ fn run_repo(entry: &RepoEntry, manifest: &Manifest, args: &SweepArgs, binary: &P
     } else if !checkout.exists() {
         return RepoRun::terminal(entry, Outcome::SkippedMissingCheckout, String::new());
     }
+
+    // Reaching analysis required `--clone` or an existing checkout; both set
+    // `will_run` in the caller, so the shared resolver already ran.
+    let Some(binary) = binary else {
+        return RepoRun::terminal(
+            entry,
+            Outcome::Crash,
+            "eval-sweep internal error: runnable repo without a resolved binary".to_string(),
+        );
+    };
 
     let diff = entry
         .synthetic_diff
@@ -540,18 +557,6 @@ fn run_check(binary: &Path, checkout: &Path, diff: &str, args: &SweepArgs) -> Ch
             alignment_counts: AlignmentCounts::default(),
         },
     }
-}
-
-fn ripr_binary_path() -> PathBuf {
-    PathBuf::from("target")
-        .join("debug")
-        .join(format!("ripr{}", std::env::consts::EXE_SUFFIX))
-}
-
-fn build_ripr() -> Result<(), String> {
-    run::run("cargo", &["build", "-p", "ripr", "--quiet"])
-        .map(|_| ())
-        .map_err(|err| format!("eval-sweep failed to build ripr before the sweep: {err}"))
 }
 
 fn clone_repo(entry: &RepoEntry, checkout: &Path) -> Result<(), String> {
@@ -868,19 +873,23 @@ pub(crate) fn eval_sweep(args: &[String]) -> Result<(), String> {
     let parsed = parse_args(args)?;
     let manifest = load_manifest(&parsed.manifest)?;
 
-    // Build ripr once and invoke the binary directly per repo, so recorded
-    // runtime measures analysis time rather than per-repo `cargo run` overhead.
-    // Only build when at least one repo will actually be analyzed.
-    let binary = ripr_binary_path();
+    // Resolve the ripr binary through the shared fixture resolver (#3097):
+    // it honors CARGO_TARGET_DIR (#2176) and owns the memoized unconditional
+    // build (#3054). Invoking the binary directly per repo keeps recorded
+    // runtime at analysis time rather than per-repo `cargo run` overhead.
+    // Only resolve — and therefore build — when at least one repo will
+    // actually be analyzed.
     let will_run = parsed.clone
         || manifest.repos.iter().any(|entry| {
             PathBuf::from(&parsed.checkout_root)
                 .join(&entry.id)
                 .exists()
         });
-    if will_run {
-        build_ripr()?;
-    }
+    let binary = if will_run {
+        Some(PathBuf::from(ripr_fixture_binary()?))
+    } else {
+        None
+    };
 
     let mut runs = Vec::new();
     for entry in &manifest.repos {
@@ -889,7 +898,7 @@ pub(crate) fn eval_sweep(args: &[String]) -> Result<(), String> {
         {
             continue;
         }
-        runs.push(run_repo(entry, &manifest, &parsed, &binary));
+        runs.push(run_repo(entry, &manifest, &parsed, binary.as_deref()));
     }
 
     let metrics = compute_metrics(&runs);
@@ -920,6 +929,24 @@ mod tests {
                 { "id": "a", "url": "https://example.com/a", "sha": "deadbeef", "license": "MIT", "shape": "pytest_library" }
             ]
         })
+    }
+
+    #[test]
+    fn binary_resolution_honors_cargo_target_dir() {
+        // #3097: the sweep obtains the ripr binary only through the shared
+        // `ripr_fixture_binary` resolver, which resolves its path with
+        // `ripr_debug_binary_in`. Pin the CARGO_TARGET_DIR handling eval_sweep
+        // delegates to, against the pure target-dir parameter (no process-env
+        // mutation); `ripr_debug_binary_honors_cargo_target_dir` pins the same
+        // contract at the crate root.
+        let custom = crate::ripr_debug_binary_in(Some(PathBuf::from("/ci/eval-sweep/target")));
+        let text = custom.to_string_lossy().replace('\\', "/");
+        assert!(text.starts_with("/ci/eval-sweep/target/debug/ripr"));
+        let default = crate::ripr_debug_binary_in(None);
+        assert!(
+            default
+                .ends_with(format!("target/debug/ripr{}", std::env::consts::EXE_SUFFIX).as_str())
+        );
     }
 
     #[test]
