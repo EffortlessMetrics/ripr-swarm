@@ -156,6 +156,18 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
     };
     let swarm_before = required("--swarm-before")?;
     let source_release_head = required("--source-release-head")?;
+    if let (Some(join), Some(k)) = (values.get("--join"), values.get("--k")) {
+        if join != k {
+            return Err("conflicting --join and --k values".to_string());
+        }
+    }
+    if let (Some(tree), Some(back_sync_tree)) =
+        (values.get("--tree"), values.get("--back-sync-tree"))
+    {
+        if tree != back_sync_tree {
+            return Err("conflicting --tree and --back-sync-tree values".to_string());
+        }
+    }
     let join = values
         .get("--join")
         .or_else(|| values.get("--k"))
@@ -200,7 +212,7 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
 }
 
 fn usage() -> String {
-    "usage: cargo xtask back-sync verify --swarm-before <sha> --source-release-head <sha> --source-release-tag <tag> --join <sha> --tree <tree-sha> --swarm-repo <path> --source-repo <path> --version <version> [--swarm-main <rev>] [--source-main <rev>] [--release-receipt <path>] [--policy-before <path>] [--policy-exception <path>] [--policy-after <path>] [--out <dir>]".to_string()
+    "usage: cargo xtask back-sync verify --swarm-before <sha> --source-release-head <sha> --source-release-tag <tag> --join <sha> --tree <tree-sha> --swarm-repo <path> --source-repo <path> --version <version> --release-receipt <path> --policy-before <path> --policy-exception <path> --policy-after <path> [--swarm-main <rev>] [--source-main <rev>] [--out <dir>]".to_string()
 }
 
 fn validate_sha(name: &str, kind: &str, value: &str) -> Result<(), String> {
@@ -271,9 +283,10 @@ fn build_receipt(options: &Options) -> Result<Receipt, String> {
             options.tree
         ));
     }
-    if !is_ancestor(&swarm_root, &options.swarm_before, &options.join)
-        || !is_ancestor(&swarm_root, &options.source_release_head, &options.join)
-    {
+    let swarm_before_reachable = is_ancestor(&swarm_root, &options.swarm_before, &options.join)?;
+    let source_release_reachable =
+        is_ancestor(&swarm_root, &options.source_release_head, &options.join)?;
+    if !swarm_before_reachable || !source_release_reachable {
         return Err("K does not make both exact parents reachable".to_string());
     }
     let mode = if current_swarm_main == options.swarm_before {
@@ -328,8 +341,8 @@ fn build_receipt(options: &Options) -> Result<Receipt, String> {
         supplied: true,
     };
     let changelog_reachable =
-        path_contains_at(&swarm_root, &options.join, "CHANGELOG.md", &options.version);
-    let release_doc_reachable = path_contains_at(
+        path_contains_version_entry(&swarm_root, &options.join, "CHANGELOG.md", &options.version)?;
+    let release_doc_reachable = path_contains_version_entry(
         &swarm_root,
         &options.join,
         "docs/RELEASE.md",
@@ -399,9 +412,9 @@ fn build_receipt(options: &Options) -> Result<Receipt, String> {
         current_source_main,
         source_release_tag_target,
         join_parents: parents,
-        swarm_before_reachable: true,
-        source_release_reachable: true,
-        tree_matches_reviewed: true,
+        swarm_before_reachable,
+        source_release_reachable,
+        tree_matches_reviewed: join_tree == options.tree,
         expected_head_guard: "PASS: declared swarm main was exactly SWARM_BEFORE (pre-transport) or K (post-transport); any other head fails closed".to_string(),
         swarm_development_surfaces_active: active,
         source_publication_paths_ancestry_only: source_paths,
@@ -410,13 +423,13 @@ fn build_receipt(options: &Options) -> Result<Receipt, String> {
             receipt: Some(release_receipt),
             changelog_reachable,
             publication_receipt_reachable: release_doc_reachable,
-            source_publication_is_ancestry_only: true,
+            source_publication_is_ancestry_only: authority_paths.is_empty(),
             receipt_bound_to_k,
         },
         policy,
         input_manifest: manifest,
         source_authority_paths_active: authority_paths,
-        source_authority_separation_verified: true,
+        source_authority_separation_verified: authority_paths.is_empty(),
         non_claims: vec![
             "Read-only verification does not construct or transport K.".to_string(),
             "Ancestry and tree equality do not prove release correctness, artifact adequacy, or publication success.".to_string(),
@@ -550,16 +563,30 @@ fn exact_tag_target(root: &Path, tag: &str) -> Result<String, String> {
     exact_rev(root, &reference)
 }
 
-fn is_ancestor(root: &Path, older: &str, newer: &str) -> bool {
-    Command::new("git")
+fn is_ancestor(root: &Path, older: &str, newer: &str) -> Result<bool, String> {
+    let status = Command::new("git")
         .current_dir(root)
         .args(["merge-base", "--is-ancestor", older, newer])
         .status()
-        .is_ok_and(|status| status.success())
+        .map_err(|error| format!("git ancestry probe failed: {error}"))?;
+    Ok(status.success())
 }
 
-fn path_contains_at(root: &Path, commit: &str, path: &str, needle: &str) -> bool {
-    git(root, &["show", &format!("{commit}:{path}")]).is_ok_and(|text| text.contains(needle))
+fn path_contains_version_entry(
+    root: &Path,
+    commit: &str,
+    path: &str,
+    version: &str,
+) -> Result<bool, String> {
+    let text = match git(root, &["show", &format!("{commit}:{path}")]) {
+        Ok(text) => text,
+        Err(error) if error.contains("does not exist") || error.contains("pathspec") => {
+            return Ok(false);
+        }
+        Err(error) => return Err(format!("version evidence probe failed: {error}")),
+    };
+    let marker = format!("## {version}");
+    Ok(text.lines().any(|line| line.trim() == marker))
 }
 
 fn required_development_surfaces() -> Vec<String> {
@@ -587,13 +614,19 @@ fn source_authority_paths_changed(
     before: &str,
     join: &str,
 ) -> Result<Vec<String>, String> {
-    let mut active = lines(git(root, &["diff", "--name-only", before, join])?)
+    let mut active = lines(git(root, &["diff", "--name-status", before, join])?)
         .into_iter()
-        .filter(|path| {
-            if path == ".github/settings.yml" {
-                return true;
+        .filter_map(|entry| {
+            let mut parts = entry.splitn(2, '\t');
+            let status = parts.next().unwrap_or_default();
+            let path = parts.next().unwrap_or_default().to_string();
+            if status == "D" {
+                return None;
             }
-            path.starts_with(".github/workflows/")
+            if path == ".github/settings.yml" {
+                return Some(path);
+            }
+            (path.starts_with(".github/workflows/")
                 && git(root, &["show", &format!("{join}:{path}")])
                     .map(|text| {
                         let text = text.to_ascii_lowercase();
@@ -608,7 +641,8 @@ fn source_authority_paths_changed(
                         .iter()
                         .any(|keyword| text.contains(keyword))
                     })
-                    .unwrap_or(true)
+                    .unwrap_or(true))
+            .then_some(path)
         })
         .collect::<Vec<_>>();
     active.sort();
