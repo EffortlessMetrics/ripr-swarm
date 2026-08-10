@@ -3,7 +3,7 @@
 //! body moved verbatim; test names and module path (`crate::tests`) are
 //! unchanged.
 
-use std::io::{Read, Write};
+use std::io::Read;
 
 use crate::acquire_test_cwd_write_guard;
 use ripr::output::receipt_lifecycle::{
@@ -30,8 +30,8 @@ use super::ripr_swarm_repair_route_quality_success_rate;
 use super::ripr_swarm_route_quality_from_ledger_value;
 use super::ripr_swarm_route_quality_report_json;
 use super::run::{
-    TimedFileOutput, TimedOutput, capture_output, run, run_output, run_output_optional,
-    run_output_owned,
+    TimedFileOutput, TimedOutput, capture_output, command_success_owned, run, run_output,
+    run_output_optional, run_output_owned,
 };
 use super::validate_bless_reason;
 use super::{
@@ -208,7 +208,7 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::ExitStatus;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub(crate) fn temp_dir(name: &str) -> PathBuf {
@@ -46325,37 +46325,34 @@ fn release_pin_ruleset_requires_fully_qualified_tag_ref() -> Result<(), String> 
         return Err("runbook does not carry the fully qualified ruleset pattern".to_string());
     }
 
-    let run_jq_predicate = |ruleset: &Value| -> Result<bool, String> {
-        let mut child = Command::new("jq")
-            .args(["-e", "--arg", "tag", REQUIRED_PATTERN, JQ_PREDICATE])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|error| format!("failed to execute documented jq predicate: {error}"))?;
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| "jq predicate stdin was unavailable".to_string())?;
+    let jq_root = temp_dir("release-pin-ruleset-jq");
+    let run_jq_predicate = |ruleset: &Value, name: &str| -> Result<bool, String> {
+        let path = jq_root.join(name);
         let input = serde_json::to_vec(ruleset)
             .map_err(|error| format!("failed to serialize jq predicate fixture: {error}"))?;
-        stdin
-            .write_all(&input)
+        fs::write(&path, input)
             .map_err(|error| format!("failed to write jq predicate fixture: {error}"))?;
-        drop(stdin);
-        let output = child
-            .wait_with_output()
-            .map_err(|error| format!("failed to collect jq predicate result: {error}"))?;
-        Ok(output.status.success())
+        let path_text = path
+            .to_str()
+            .ok_or_else(|| "jq predicate fixture path was not UTF-8".to_string())?;
+        let args = vec![
+            "-e".to_string(),
+            "--arg".to_string(),
+            "tag".to_string(),
+            REQUIRED_PATTERN.to_string(),
+            JQ_PREDICATE.to_string(),
+            path_text.to_string(),
+        ];
+        command_success_owned("jq", &args)
     };
 
-    if !run_jq_predicate(&fixture)? {
+    if !run_jq_predicate(&fixture, "full.json")? {
         return Err("documented jq predicate rejected the full fixture".to_string());
     }
-    if run_jq_predicate(&short)? {
+    if run_jq_predicate(&short, "short.json")? {
         return Err("documented jq predicate accepted the short fixture".to_string());
     }
-    if run_jq_predicate(&mixed)? {
+    if run_jq_predicate(&mixed, "mixed.json")? {
         return Err("documented jq predicate accepted the mixed fixture".to_string());
     }
 
