@@ -898,6 +898,7 @@ mod tests {
                 &format!("{}^{{tree}}", options.source_release_head),
             ],
         )?;
+        git(&swarm, &["update-ref", "refs/heads/main", &valid.join])?;
         if !verifier_error_contains(&options, "does not match reviewed tree")? {
             cleanup(&root);
             return Err("wrong-tree K was accepted by verifier".to_string());
