@@ -40,6 +40,20 @@ Retain all-reachable and first-parent counts/digests, open-PR dispositions,
 toolchain/version, routed-CI URL and `headSha`, conflict/resolution manifest,
 artifact receipts, authorization, channel results, policy-before/exception/
 after snapshots, and cleanup. JSON and Markdown projections must share inputs.
+Run the command blocks in one operator shell, or export the variables before
+continuing. The paths below are packet-local and are not repository authority.
+
+```bash
+# [LOCAL-MUTATING] repo=operator checkout; initialize transaction packet paths
+VERSION=0.11.0
+PACKET_ROOT="target/ripr/release-transaction/${VERSION}"
+mkdir -p "$PACKET_ROOT"
+RELEASE_NOTES="$PACKET_ROOT/release-notes.md"
+PUBLICATION_RECEIPT="$PACKET_ROOT/publication-receipt.json"
+POLICY_BEFORE="$PACKET_ROOT/policy-before.json"
+POLICY_EXCEPTION="$PACKET_ROOT/policy-temporary-exception.json"
+POLICY_AFTER="$PACKET_ROOT/policy-after.json"
+```
 
 Historical candidate-only `C -> T`, hard-cut, replacement-freeze, and
 candidate-ref receipts remain audit evidence but are superseded. They are not
