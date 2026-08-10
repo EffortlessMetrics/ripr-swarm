@@ -546,7 +546,7 @@ fn exact_tag_target(root: &Path, tag: &str) -> Result<String, String> {
     }
     let reference = format!("refs/tags/{tag}");
     git(root, &["show-ref", "--verify", "--quiet", &reference])
-        .map_err(|_| format!("source release tag {tag} does not exist as refs/tags/{tag}"))?;
+        .map_err(|error| format!("source release tag {tag} verification failed: {error}"))?;
     exact_rev(root, &reference)
 }
 
