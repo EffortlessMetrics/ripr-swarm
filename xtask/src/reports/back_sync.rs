@@ -358,6 +358,7 @@ fn build_receipt(options: &Options) -> Result<Receipt, String> {
             "K activates source publication authority paths: {authority_paths:?}"
         ));
     }
+    let authority_separation_verified = authority_paths.is_empty();
     let mut manifest = vec![
         InputEvidence {
             name: "SWARM_BEFORE".to_string(),
@@ -423,13 +424,13 @@ fn build_receipt(options: &Options) -> Result<Receipt, String> {
             receipt: Some(release_receipt),
             changelog_reachable,
             publication_receipt_reachable: release_doc_reachable,
-            source_publication_is_ancestry_only: authority_paths.is_empty(),
+            source_publication_is_ancestry_only: authority_separation_verified,
             receipt_bound_to_k,
         },
         policy,
         input_manifest: manifest,
         source_authority_paths_active: authority_paths,
-        source_authority_separation_verified: authority_paths.is_empty(),
+        source_authority_separation_verified: authority_separation_verified,
         non_claims: vec![
             "Read-only verification does not construct or transport K.".to_string(),
             "Ancestry and tree equality do not prove release correctness, artifact adequacy, or publication success.".to_string(),
