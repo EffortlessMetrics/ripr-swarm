@@ -6519,8 +6519,7 @@ name = "history-preserving back-sync verifier"
 spec = "docs/specs/RIPR-SPEC-0149-back-sync-verifier.md"
 tests = [
   "xtask/src/reports/back_sync.rs::tests::abbreviated_inputs_are_rejected",
-  "xtask/src/reports/back_sync.rs::tests::synthetic_graph_rejects_single_parent_repair_and_squash",
-  "xtask/src/reports/back_sync.rs::tests::synthetic_graph_preserves_required_parent_order_and_tree",
+  "xtask/src/reports/back_sync.rs::tests::synthetic_graph_adversarial_cases_invoke_verifier",
 ]
 fixtures = []
 code = [

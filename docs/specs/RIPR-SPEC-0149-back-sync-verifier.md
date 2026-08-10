@@ -19,12 +19,14 @@ heads must identify the exact release pair. The swarm head must be exactly
 `SWARM_BEFORE` before transport or exactly `K` after transport; this is the
 expected-head guard.
 
-The receipt records release/changelog/publication evidence, retained swarm
-settings/checks/runner/development surfaces, source publication paths as
-ancestry-only evidence, and hashes of supplied policy-before, temporary
-exception, and restoration evidence. The verifier reads these inputs and
-never mutates refs, branch protection, repository settings, tags, releases,
-publication channels, or metadata.
+The receipt requires and validates release/changelog/publication evidence
+bound to the requested version, released source head, K, and reviewed tree.
+It requires parseable policy-before, temporary-approved-exception, and
+restoration evidence, and fails closed when merge commits are not disabled
+before and after. It requires every retained swarm development surface and
+rejects source publication workflow/settings paths changed into K. The
+verifier reads these inputs and never mutates refs, branch protection,
+repository settings, tags, releases, publication channels, or metadata.
 
 ## Non-goals
 

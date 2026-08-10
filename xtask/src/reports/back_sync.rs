@@ -29,10 +29,10 @@ struct Options {
     source_main: String,
     version: String,
     source_release_tag: String,
-    release_receipt: Option<PathBuf>,
-    policy_before: Option<PathBuf>,
-    policy_exception: Option<PathBuf>,
-    policy_after: Option<PathBuf>,
+    release_receipt: PathBuf,
+    policy_before: PathBuf,
+    policy_exception: PathBuf,
+    policy_after: PathBuf,
     out: PathBuf,
 }
 
@@ -60,6 +60,7 @@ struct ReleaseEvidence {
     changelog_reachable: bool,
     publication_receipt_reachable: bool,
     source_publication_is_ancestry_only: bool,
+    receipt_bound_to_k: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -82,6 +83,8 @@ struct Receipt {
     expected_head_guard: String,
     swarm_development_surfaces_active: Vec<String>,
     source_publication_paths_ancestry_only: Vec<String>,
+    source_authority_paths_active: Vec<String>,
+    source_authority_separation_verified: bool,
     release: ReleaseEvidence,
     policy: PolicyEvidence,
     input_manifest: Vec<InputEvidence>,
@@ -185,10 +188,10 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
             .unwrap_or_else(|| "origin/main".to_string()),
         version,
         source_release_tag: required("--source-release-tag")?,
-        release_receipt: values.get("--release-receipt").map(PathBuf::from),
-        policy_before: values.get("--policy-before").map(PathBuf::from),
-        policy_exception: values.get("--policy-exception").map(PathBuf::from),
-        policy_after: values.get("--policy-after").map(PathBuf::from),
+        release_receipt: PathBuf::from(required("--release-receipt")?),
+        policy_before: PathBuf::from(required("--policy-before")?),
+        policy_exception: PathBuf::from(required("--policy-exception")?),
+        policy_after: PathBuf::from(required("--policy-after")?),
         out: values
             .get("--out")
             .map(PathBuf::from)
@@ -232,7 +235,7 @@ fn build_receipt(options: &Options) -> Result<Receipt, String> {
             options.source_release_head
         ));
     }
-    let source_release_tag_target = exact_rev(&source_root, &options.source_release_tag)?;
+    let source_release_tag_target = exact_tag_target(&source_root, &options.source_release_tag)?;
     if source_release_tag_target != options.source_release_head {
         return Err(format!(
             "source release tag resolves to {source_release_tag_target}, not SOURCE_RELEASE_HEAD {}",
@@ -283,11 +286,55 @@ fn build_receipt(options: &Options) -> Result<Receipt, String> {
         ));
     };
     let active = development_surfaces(&swarm_root, &options.join)?;
-    if active.is_empty() {
-        return Err("K tree does not retain required swarm development surfaces".to_string());
+    if active.len() != required_development_surfaces().len() {
+        return Err(format!(
+            "K tree is missing retained swarm development surfaces: expected {:?}, found {:?}",
+            required_development_surfaces(),
+            active
+        ));
     }
     let source_paths = source_publication_paths(&source_root, &options.source_release_head)?;
-    let release_receipt = evidence("release_receipt", options.release_receipt.as_deref())?;
+    let release_bytes = fs::read(&options.release_receipt).map_err(|error| {
+        format!(
+            "failed to read required release receipt {}: {error}",
+            options.release_receipt.display()
+        )
+    })?;
+    let release_text = String::from_utf8(release_bytes.clone())
+        .map_err(|error| format!("release receipt is not UTF-8: {error}"))?;
+    let receipt_bound_to_k = release_text.contains(&options.version)
+        && release_text.contains(&options.source_release_head)
+        && release_text.contains(&options.join)
+        && release_text.contains(&options.tree);
+    if !receipt_bound_to_k {
+        return Err(
+            "release receipt must name version, SOURCE_RELEASE_HEAD, K, and BACK_SYNC_TREE"
+                .to_string(),
+        );
+    }
+    let release_receipt = InputEvidence {
+        name: "release_receipt".to_string(),
+        sha256: Some(sha256_bytes(&release_bytes)),
+        supplied: true,
+    };
+    let changelog_reachable =
+        path_contains_at(&swarm_root, &options.join, "CHANGELOG.md", &options.version);
+    let release_doc_reachable = path_contains_at(
+        &swarm_root,
+        &options.join,
+        "docs/RELEASE.md",
+        &options.version,
+    );
+    if !changelog_reachable || !release_doc_reachable {
+        return Err("K must retain version-bound CHANGELOG.md and docs/RELEASE.md".to_string());
+    }
+    let authority_paths =
+        source_authority_paths_changed(&swarm_root, &options.swarm_before, &options.join)?;
+    if !authority_paths.is_empty() {
+        return Err(format!(
+            "K activates source publication authority paths: {authority_paths:?}"
+        ));
+    }
     let mut manifest = vec![
         InputEvidence {
             name: "SWARM_BEFORE".to_string(),
@@ -312,20 +359,17 @@ fn build_receipt(options: &Options) -> Result<Receipt, String> {
     ];
     manifest.push(release_receipt.clone());
     let policy = PolicyEvidence {
-        merge_commits_disabled_before: options.policy_before.as_deref().map(policy_disabled),
-        temporary_exception_supplied: options.policy_exception.is_some(),
-        restoration_supplied: options.policy_after.is_some(),
-        policy_restored: match (
-            options.policy_before.as_deref(),
-            options.policy_after.as_deref(),
-        ) {
-            (Some(before), Some(after)) => Some(policy_disabled(before) && policy_disabled(after)),
-            _ => None,
-        },
+        merge_commits_disabled_before: Some(read_policy_state(
+            &options.policy_before,
+            "policy-before",
+        )?),
+        temporary_exception_supplied: read_policy_exception(&options.policy_exception)?,
+        restoration_supplied: true,
+        policy_restored: Some(read_policy_state(&options.policy_after, "policy-after")?),
         evidence: vec![
-            evidence("policy_before", options.policy_before.as_deref())?,
-            evidence("temporary_exception", options.policy_exception.as_deref())?,
-            evidence("policy_after", options.policy_after.as_deref())?,
+            evidence("policy_before", Some(&options.policy_before))?,
+            evidence("temporary_exception", Some(&options.policy_exception))?,
+            evidence("policy_after", Some(&options.policy_after))?,
         ],
         mutation_claim:
             "Evidence only: this verifier never mutates branch protection or repository settings."
@@ -354,12 +398,15 @@ fn build_receipt(options: &Options) -> Result<Receipt, String> {
         release: ReleaseEvidence {
             version: options.version.clone(),
             receipt: Some(release_receipt),
-            changelog_reachable: path_exists_at(&swarm_root, &options.join, "CHANGELOG.md"),
-            publication_receipt_reachable: path_exists_at(&swarm_root, &options.join, "docs/RELEASE.md"),
+            changelog_reachable,
+            publication_receipt_reachable: release_doc_reachable,
             source_publication_is_ancestry_only: true,
+            receipt_bound_to_k,
         },
         policy,
         input_manifest: manifest,
+        source_authority_paths_active: authority_paths,
+        source_authority_separation_verified: true,
         non_claims: vec![
             "Read-only verification does not construct or transport K.".to_string(),
             "Ancestry and tree equality do not prove release correctness, artifact adequacy, or publication success.".to_string(),
@@ -483,6 +530,16 @@ fn exact_rev(root: &Path, rev: &str) -> Result<String, String> {
     .to_string())
 }
 
+fn exact_tag_target(root: &Path, tag: &str) -> Result<String, String> {
+    if tag.is_empty() || tag.starts_with('-') || tag.contains("..") || tag.contains("^{") {
+        return Err("source release tag is not a valid tag name".to_string());
+    }
+    let reference = format!("refs/tags/{tag}");
+    git(root, &["show-ref", "--verify", "--quiet", &reference])
+        .map_err(|_| format!("source release tag {tag} does not exist as refs/tags/{tag}"))?;
+    exact_rev(root, &reference)
+}
+
 fn is_ancestor(root: &Path, older: &str, newer: &str) -> bool {
     Command::new("git")
         .current_dir(root)
@@ -491,23 +548,49 @@ fn is_ancestor(root: &Path, older: &str, newer: &str) -> bool {
         .is_ok_and(|status| status.success())
 }
 
-fn path_exists_at(root: &Path, commit: &str, path: &str) -> bool {
-    git(root, &["cat-file", "-e", &format!("{commit}:{path}")]).is_ok()
+fn path_contains_at(root: &Path, commit: &str, path: &str, needle: &str) -> bool {
+    git(root, &["show", &format!("{commit}:{path}")]).is_ok_and(|text| text.contains(needle))
 }
 
-fn development_surfaces(root: &Path, commit: &str) -> Result<Vec<String>, String> {
-    let files = lines(git(root, &["ls-tree", "-r", "--name-only", commit])?);
-    let required = [
+fn required_development_surfaces() -> Vec<String> {
+    [
         "AGENTS.md",
         "docs/swarm-development.md",
         ".github/workflows/routed-rust.yml",
         "policy/process_allowlist.txt",
-    ];
-    Ok(required
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
+}
+
+fn development_surfaces(root: &Path, commit: &str) -> Result<Vec<String>, String> {
+    let files = lines(git(root, &["ls-tree", "-r", "--name-only", commit])?);
+    Ok(required_development_surfaces()
         .into_iter()
         .filter(|path| files.iter().any(|file| file == path))
-        .map(str::to_string)
         .collect())
+}
+
+fn source_authority_paths_changed(
+    root: &Path,
+    before: &str,
+    join: &str,
+) -> Result<Vec<String>, String> {
+    const AUTHORITY_PATHS: [&str; 5] = [
+        ".github/settings.yml",
+        ".github/workflows/publish-extension.yml",
+        ".github/workflows/release-server-binaries.yml",
+        ".github/workflows/publish.yml",
+        ".github/workflows/release.yml",
+    ];
+    let mut active = lines(git(root, &["diff", "--name-only", before, join])?)
+        .into_iter()
+        .filter(|path| AUTHORITY_PATHS.contains(&path.as_str()))
+        .collect::<Vec<_>>();
+    active.sort();
+    active.dedup();
+    Ok(active)
 }
 
 fn source_publication_paths(root: &Path, commit: &str) -> Result<Vec<String>, String> {
@@ -537,12 +620,38 @@ fn evidence(name: &str, path: Option<&Path>) -> Result<InputEvidence, String> {
     })
 }
 
-fn policy_disabled(path: &Path) -> bool {
-    fs::read_to_string(path)
-        .map(|text| {
-            text.contains("merge_commits = false") || text.contains("allow_merge_commits = false")
-        })
-        .unwrap_or(false)
+fn read_policy_text(path: &Path, label: &str) -> Result<String, String> {
+    let text = fs::read_to_string(path).map_err(|error| {
+        format!(
+            "failed to read required {label} {}: {error}",
+            path.display()
+        )
+    })?;
+    if text.trim().is_empty() {
+        return Err(format!("required {label} is empty"));
+    }
+    Ok(text)
+}
+
+fn read_policy_state(path: &Path, label: &str) -> Result<bool, String> {
+    let text = read_policy_text(path, label)?;
+    let disabled = text.contains("merge_commits = false")
+        || text.contains("allow_merge_commits = false")
+        || text.contains("\"allow_merge_commits\": false");
+    if !disabled {
+        return Err(format!("{label} does not prove merge commits are disabled"));
+    }
+    Ok(true)
+}
+
+fn read_policy_exception(path: &Path) -> Result<bool, String> {
+    let text = read_policy_text(path, "policy-exception")?.to_ascii_lowercase();
+    if !text.contains("temporary") || !text.contains("exception") || !text.contains("approved") {
+        return Err(
+            "policy-exception must identify a temporary approved merge exception".to_string(),
+        );
+    }
+    Ok(true)
 }
 
 fn sha256_text(value: &str) -> String {
@@ -603,7 +712,7 @@ fn render_markdown(receipt: &Receipt) -> String {
         list(&receipt.source_publication_paths_ancestry_only)
     );
     out.push_str("## Release and policy evidence\n\n");
-    out.push_str(&format!("- Version: `{}`\n- Source release tag target: `{:?}`\n- Changelog reachable: `{}`\n- Publication receipt reachable: `{}`\n- Merge commits disabled before: `{:?}`\n- Temporary exception supplied: `{}`\n- Restoration supplied: `{}`\n- Policy restored: `{:?}`\n\n", receipt.release.version, receipt.source_release_tag_target, receipt.release.changelog_reachable, receipt.release.publication_receipt_reachable, receipt.policy.merge_commits_disabled_before, receipt.policy.temporary_exception_supplied, receipt.policy.restoration_supplied, receipt.policy.policy_restored));
+    out.push_str(&format!("- Version: `{}`\n- Source release tag target: `{}`\n- Changelog reachable: `{}`\n- Publication receipt reachable: `{}`\n- Receipt bound to K: `{}`\n- Merge commits disabled before: `{:?}`\n- Temporary exception supplied: `{}`\n- Restoration supplied: `{}`\n- Policy restored: `{:?}`\n- Source-authority separation verified: `{}`\n\n", receipt.release.version, receipt.source_release_tag_target, receipt.release.changelog_reachable, receipt.release.publication_receipt_reachable, receipt.release.receipt_bound_to_k, receipt.policy.merge_commits_disabled_before, receipt.policy.temporary_exception_supplied, receipt.policy.restoration_supplied, receipt.policy.policy_restored, receipt.source_authority_separation_verified));
     out.push_str("## Input manifest\n\n");
     for input in &receipt.input_manifest {
         out.push_str(&format!(
@@ -655,55 +764,6 @@ mod tests {
     }
 
     #[test]
-    fn synthetic_graph_rejects_single_parent_repair_and_squash() -> Result<(), String> {
-        let root = temp_repo("back-sync-single-parent")?;
-        let first = commit_file(&root, "one", "one")?;
-        let second = commit_file(&root, "two", "two")?;
-        if first == second {
-            return Err("fixture commits were identical".to_string());
-        }
-        let parents = lines(git(&root, &["show", "-s", "--format=%P", &second])?);
-        if parents.first().map(|line| line.split_whitespace().count()) != Some(1) {
-            return Err("single-parent fixture was not single-parent".to_string());
-        }
-        cleanup(&root);
-        Ok(())
-    }
-
-    #[test]
-    fn synthetic_graph_preserves_required_parent_order_and_tree() -> Result<(), String> {
-        let root = temp_repo("back-sync-join")?;
-        let base = commit_file(&root, "base", "base")?;
-        let swarm = commit_file(&root, "swarm", "swarm")?;
-        let source = commit_file(&root, "source", "source")?;
-        let tree = git(&root, &["rev-parse", &format!("{}^{{tree}}", &source)])?
-            .trim()
-            .to_string();
-        let output = Command::new("git")
-            .current_dir(&root)
-            .args(["commit-tree", &tree, "-p", &swarm, "-p", &source])
-            .env("GIT_AUTHOR_NAME", "test")
-            .env("GIT_AUTHOR_EMAIL", "test@example.invalid")
-            .env("GIT_COMMITTER_NAME", "test")
-            .env("GIT_COMMITTER_EMAIL", "test@example.invalid")
-            .output()
-            .map_err(|error| error.to_string())?;
-        if !output.status.success() {
-            cleanup(&root);
-            return Err(String::from_utf8_lossy(&output.stderr).to_string());
-        }
-        let join = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let parents = git(&root, &["show", "-s", "--format=%P", &join])?;
-        if !parents.starts_with(&format!("{swarm} {source}")) || tree.is_empty() || base.is_empty()
-        {
-            cleanup(&root);
-            return Err("ordered join fixture failed".to_string());
-        }
-        cleanup(&root);
-        Ok(())
-    }
-
-    #[test]
     fn synthetic_graph_rejects_reversed_substituted_and_appended_parents() -> Result<(), String> {
         let expected = ["a".to_string(), "b".to_string()];
         for parents in [
@@ -721,24 +781,246 @@ mod tests {
         Ok(())
     }
 
-    fn temp_repo(label: &str) -> Result<PathBuf, String> {
+    #[test]
+    fn synthetic_graph_adversarial_cases_invoke_verifier() -> Result<(), String> {
+        let (root, mut options) = verifier_fixture("back-sync-adversarial")?;
+        let valid = build_receipt(&options)?;
+        if valid.join_parents
+            != vec![
+                options.swarm_before.clone(),
+                options.source_release_head.clone(),
+            ]
+            || !valid.tree_matches_reviewed
+            || !valid.policy_restored_for_test()
+        {
+            cleanup(&root);
+            return Err("valid verifier fixture did not produce a complete receipt".to_string());
+        }
+        let tree = options.tree.clone();
+        let single = commit_tree(&root.join("swarm"), &tree, &[&options.swarm_before])?;
+        options.join = single;
+        if build_receipt(&options).is_ok() {
+            cleanup(&root);
+            return Err("single-parent K was accepted by verifier".to_string());
+        }
+        let reversed = commit_tree(
+            &root.join("swarm"),
+            &tree,
+            &[&options.source_release_head, &options.swarm_before],
+        )?;
+        options.join = reversed;
+        if build_receipt(&options).is_ok() {
+            cleanup(&root);
+            return Err("reversed-parent K was accepted by verifier".to_string());
+        }
+        options.join = valid.join.clone();
+        options.tree = "0000000000000000000000000000000000000000".to_string();
+        if build_receipt(&options).is_ok() {
+            cleanup(&root);
+            return Err("wrong-tree K was accepted by verifier".to_string());
+        }
+        options.tree = tree;
+        options.source_release_tag = "HEAD".to_string();
+        if build_receipt(&options).is_ok() {
+            cleanup(&root);
+            return Err("branch substitution was accepted as a release tag".to_string());
+        }
+        options.source_release_tag = "v0.11.0".to_string();
+        let original_receipt =
+            fs::read_to_string(&options.release_receipt).map_err(|error| error.to_string())?;
+        fs::write(
+            &options.release_receipt,
+            original_receipt.replace("0.11.0", "0.10.0"),
+        )
+        .map_err(|error| error.to_string())?;
+        if build_receipt(&options).is_ok() {
+            cleanup(&root);
+            return Err("wrong-version release receipt was accepted".to_string());
+        }
+        fs::write(&options.release_receipt, original_receipt).map_err(|error| error.to_string())?;
+        if build_receipt(&options).is_err() {
+            cleanup(&root);
+            return Err("valid release evidence failed after restoration".to_string());
+        }
+        fs::write(&options.policy_before, "allow_merge_commits = true\n")
+            .map_err(|error| error.to_string())?;
+        if build_receipt(&options).is_ok() {
+            cleanup(&root);
+            return Err("non-disabled policy evidence was accepted".to_string());
+        }
+        fs::write(&options.policy_before, "allow_merge_commits = false\n")
+            .map_err(|error| error.to_string())?;
+        options.policy_after = root.join("missing-policy-after");
+        if build_receipt(&options).is_ok() {
+            cleanup(&root);
+            return Err("missing restoration policy was accepted".to_string());
+        }
+        options.policy_after = root.join("policy-after.txt");
+        let swarm = root.join("swarm");
+        fs::write(
+            swarm.join(".github/workflows/publish.yml"),
+            "name: publish\n",
+        )
+        .map_err(|error| error.to_string())?;
+        git(&swarm, &["add", ".github/workflows/publish.yml"])?;
+        git(&swarm, &["commit", "--quiet", "-m", "authority"])?;
+        let authority_tree = git(&swarm, &["rev-parse", "HEAD^{tree}"])?
+            .trim()
+            .to_string();
+        let authority_join = commit_tree(
+            &swarm,
+            &authority_tree,
+            &[&options.swarm_before, &options.source_release_head],
+        )?;
+        options.join = authority_join;
+        options.tree = authority_tree;
+        git(&swarm, &["update-ref", "refs/heads/main", &options.join])?;
+        if build_receipt(&options).is_ok() {
+            cleanup(&root);
+            return Err("source publication workflow activation was accepted".to_string());
+        }
+        cleanup(&root);
+        Ok(())
+    }
+
+    impl Receipt {
+        fn policy_restored_for_test(&self) -> bool {
+            self.policy.policy_restored == Some(true)
+                && self.policy.temporary_exception_supplied
+                && self.release.receipt_bound_to_k
+        }
+    }
+
+    fn verifier_fixture(label: &str) -> Result<(PathBuf, Options), String> {
+        let root = temp_root(label)?;
+        let source = root.join("source");
+        init_repo(&source)?;
+        git(
+            &source,
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/EffortlessMetrics/ripr.git",
+            ],
+        )?;
+        for (path, body) in [
+            ("AGENTS.md", "swarm development\n"),
+            ("docs/swarm-development.md", "back-sync operator\n"),
+            (".github/workflows/routed-rust.yml", "name: routed\n"),
+            ("policy/process_allowlist.txt", "merge_commits = false\n"),
+            ("CHANGELOG.md", "## 0.11.0\n"),
+            ("docs/RELEASE.md", "0.11.0 release\n"),
+        ] {
+            let path = source.join(path);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            }
+            fs::write(path, body).map_err(|error| error.to_string())?;
+        }
+        git(&source, &["add", "."])?;
+        git(&source, &["commit", "--quiet", "-m", "release"])?;
+        let source_head = git(&source, &["rev-parse", "HEAD"])?.trim().to_string();
+        git(&source, &["tag", "v0.11.0"])?;
+        let swarm = root.join("swarm");
+        git(
+            &root,
+            &[
+                "clone",
+                source.to_string_lossy().as_ref(),
+                swarm.to_string_lossy().as_ref(),
+            ],
+        )?;
+        git(
+            &swarm,
+            &[
+                "remote",
+                "set-url",
+                "origin",
+                "https://github.com/EffortlessMetrics/ripr-swarm.git",
+            ],
+        )?;
+        git(&swarm, &["config", "user.name", "test"])?;
+        git(&swarm, &["config", "user.email", "test@example.invalid"])?;
+        fs::write(swarm.join("swarm.txt"), "swarm\n").map_err(|error| error.to_string())?;
+        git(&swarm, &["add", "swarm.txt"])?;
+        git(&swarm, &["commit", "--quiet", "-m", "swarm"])?;
+        let swarm_before = git(&swarm, &["rev-parse", "HEAD"])?.trim().to_string();
+        git(&swarm, &["branch", "-M", "main"])?;
+        let tree = git(&swarm, &["rev-parse", &format!("{swarm_before}^{{tree}}")])?
+            .trim()
+            .to_string();
+        let join = commit_tree(&swarm, &tree, &[&swarm_before, &source_head])?;
+        git(&swarm, &["update-ref", "refs/heads/main", &join])?;
+        let receipt_path = root.join("release-receipt.json");
+        fs::write(&receipt_path, format!("{{\"version\":\"0.11.0\",\"source_release_head\":\"{source_head}\",\"join\":\"{join}\",\"tree\":\"{tree}\"}}\n")).map_err(|error| error.to_string())?;
+        let before = root.join("policy-before.txt");
+        let exception = root.join("policy-exception.txt");
+        let after = root.join("policy-after.txt");
+        fs::write(&before, "allow_merge_commits = false\n").map_err(|error| error.to_string())?;
+        fs::write(&exception, "temporary approved merge exception\n")
+            .map_err(|error| error.to_string())?;
+        fs::write(&after, "allow_merge_commits = false\n").map_err(|error| error.to_string())?;
+        let out = root.join("out");
+        Ok((
+            root,
+            Options {
+                swarm_before,
+                source_release_head: source_head,
+                join,
+                tree,
+                swarm_repo: swarm,
+                source_repo: source,
+                swarm_main: "main".to_string(),
+                source_main: "HEAD".to_string(),
+                version: "0.11.0".to_string(),
+                source_release_tag: "v0.11.0".to_string(),
+                release_receipt: receipt_path,
+                policy_before: before,
+                policy_exception: exception,
+                policy_after: after,
+                out,
+            },
+        ))
+    }
+
+    fn temp_root(label: &str) -> Result<PathBuf, String> {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|error| error.to_string())?
             .as_nanos();
         let root = std::env::temp_dir().join(format!("ripr-{label}-{nonce}"));
         fs::create_dir_all(&root).map_err(|error| error.to_string())?;
-        git(&root, &["init", "--quiet"])?;
-        git(&root, &["config", "user.name", "test"])?;
-        git(&root, &["config", "user.email", "test@example.invalid"])?;
         Ok(root)
     }
-    fn commit_file(root: &Path, name: &str, body: &str) -> Result<String, String> {
-        fs::write(root.join(name), body).map_err(|error| error.to_string())?;
-        git(root, &["add", name])?;
-        git(root, &["commit", "--quiet", "-m", name])?;
-        Ok(git(root, &["rev-parse", "HEAD"])?.trim().to_string())
+
+    fn init_repo(root: &Path) -> Result<(), String> {
+        fs::create_dir_all(root).map_err(|error| error.to_string())?;
+        git(root, &["init", "--quiet"])?;
+        git(root, &["config", "user.name", "test"])?;
+        git(root, &["config", "user.email", "test@example.invalid"])
     }
+
+    fn commit_tree(root: &Path, tree: &str, parents: &[&str]) -> Result<String, String> {
+        let mut args = vec!["commit-tree", tree];
+        for parent in parents {
+            args.extend(["-p", parent]);
+        }
+        let output = Command::new("git")
+            .current_dir(root)
+            .args(args)
+            .env("GIT_AUTHOR_NAME", "test")
+            .env("GIT_AUTHOR_EMAIL", "test@example.invalid")
+            .env("GIT_COMMITTER_NAME", "test")
+            .env("GIT_COMMITTER_EMAIL", "test@example.invalid")
+            .output()
+            .map_err(|error| error.to_string())?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).to_string());
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
     fn cleanup(root: &Path) {
         let _ = fs::remove_dir_all(root);
     }
