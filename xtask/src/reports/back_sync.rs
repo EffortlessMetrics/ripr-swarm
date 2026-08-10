@@ -156,17 +156,16 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
     };
     let swarm_before = required("--swarm-before")?;
     let source_release_head = required("--source-release-head")?;
-    if let (Some(join), Some(k)) = (values.get("--join"), values.get("--k")) {
-        if join != k {
-            return Err("conflicting --join and --k values".to_string());
-        }
+    if let (Some(join), Some(k)) = (values.get("--join"), values.get("--k"))
+        && join != k
+    {
+        return Err("conflicting --join and --k values".to_string());
     }
     if let (Some(tree), Some(back_sync_tree)) =
         (values.get("--tree"), values.get("--back-sync-tree"))
+        && tree != back_sync_tree
     {
-        if tree != back_sync_tree {
-            return Err("conflicting --tree and --back-sync-tree values".to_string());
-        }
+        return Err("conflicting --tree and --back-sync-tree values".to_string());
     }
     let join = values
         .get("--join")
@@ -872,10 +871,7 @@ mod tests {
         let tree = options.tree.clone();
         let single = commit_tree(&root.join("swarm"), &tree, &[&options.swarm_before])?;
         options.join = single;
-        if !build_receipt(&options)
-            .expect_err("single-parent K unexpectedly accepted")
-            .contains("exactly two parents")
-        {
+        if !verifier_error_contains(&options, "exactly two parents")? {
             cleanup(&root);
             return Err("single-parent K was accepted by verifier".to_string());
         }
@@ -885,10 +881,7 @@ mod tests {
             &[&options.source_release_head, &options.swarm_before],
         )?;
         options.join = reversed;
-        if !build_receipt(&options)
-            .expect_err("reversed-parent K unexpectedly accepted")
-            .contains("K parents must be")
-        {
+        if !verifier_error_contains(&options, "K parents must be")? {
             cleanup(&root);
             return Err("reversed-parent K was accepted by verifier".to_string());
         }
@@ -905,10 +898,7 @@ mod tests {
                 &format!("{}^{{tree}}", options.source_release_head),
             ],
         )?;
-        if !build_receipt(&options)
-            .expect_err("wrong-tree K unexpectedly accepted")
-            .contains("does not match reviewed tree")
-        {
+        if !verifier_error_contains(&options, "does not match reviewed tree")? {
             cleanup(&root);
             return Err("wrong-tree K was accepted by verifier".to_string());
         }
@@ -995,6 +985,13 @@ mod tests {
             self.policy.policy_restored == Some(true)
                 && self.policy.temporary_exception_supplied
                 && self.release.receipt_bound_to_k
+        }
+    }
+
+    fn verifier_error_contains(options: &Options, needle: &str) -> Result<bool, String> {
+        match build_receipt(options) {
+            Ok(_) => Ok(false),
+            Err(error) => Ok(error.contains(needle)),
         }
     }
 
