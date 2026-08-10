@@ -7,7 +7,7 @@
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -169,15 +169,15 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
     let source_parent = required("--source-parent")?;
     let swarm_parent = required("--swarm-parent")?;
     let swarm_ref = required("--swarm-ref")?;
-    validate_sha("--source-parent", &source_parent)?;
-    validate_sha("--swarm-parent", &swarm_parent)?;
+    validate_sha("--source-parent", "commit", &source_parent)?;
+    validate_sha("--swarm-parent", "commit", &swarm_parent)?;
     let version = required("--version")?;
     validate_swarm_ref(&swarm_ref, &version, &swarm_parent)?;
     let source_repo = PathBuf::from(required("--source-repo")?);
     let swarm_repo = PathBuf::from(required("--swarm-repo")?);
     let resolved_tree = values.get("--resolved-tree").cloned();
     if let Some(tree) = &resolved_tree {
-        validate_sha("--resolved-tree", tree)?;
+        validate_sha("--resolved-tree", "tree", tree)?;
     }
     Ok(Options {
         source_parent,
@@ -214,10 +214,10 @@ fn usage() -> String {
     "usage: cargo xtask source-promotion preflight --source-parent <full-sha> --swarm-parent <full-sha> --swarm-ref <immutable-ref> --source-repo <path> --swarm-repo <path> --version <version> [--resolved-tree <full-tree-sha>] [--source-main <rev>] [--swarm-main <rev>] [--source-remote <owner/repo>] [--swarm-remote <owner/repo>] [--out <dir>]".to_string()
 }
 
-fn validate_sha(name: &str, value: &str) -> Result<(), String> {
+fn validate_sha(name: &str, object_kind: &str, value: &str) -> Result<(), String> {
     if value.len() != 40 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(format!(
-            "{name} must be a complete 40-character hexadecimal commit SHA"
+            "{name} must be a complete 40-character hexadecimal {object_kind} SHA"
         ));
     }
     Ok(())
@@ -252,12 +252,12 @@ fn build_receipt(options: &Options) -> Result<Receipt, String> {
     )?;
     let source_root = repository_root(&options.source_repo)?;
     let swarm_root = repository_root(&options.swarm_repo)?;
-    if source_root == swarm_root || source.common_dir == swarm.common_dir {
-        return Err(
-            "source and swarm must be distinct repositories; refusing an ambiguous identity"
-                .to_string(),
-        );
-    }
+    ensure_distinct_repositories(
+        &source_root,
+        &swarm_root,
+        &source.common_dir,
+        &swarm.common_dir,
+    )?;
     let reviewed_resolved_tree_verified = options
         .resolved_tree
         .as_deref()
@@ -298,7 +298,14 @@ fn build_receipt(options: &Options) -> Result<Receipt, String> {
                 ))
             },
         )?;
-    let mut swarm_authority_resolution_candidates = swarm_paths
+    let source_path_set = source_paths.iter().cloned().collect::<BTreeSet<_>>();
+    let mut swarm_only_paths = swarm_paths
+        .iter()
+        .filter(|path| !source_path_set.contains(*path))
+        .cloned()
+        .collect::<Vec<_>>();
+    swarm_only_paths.sort();
+    let mut swarm_authority_resolution_candidates = swarm_only_paths
         .iter()
         .filter(|path| is_swarm_authority_path(path))
         .cloned()
@@ -327,7 +334,7 @@ fn build_receipt(options: &Options) -> Result<Receipt, String> {
         source_range,
         swarm_range,
         source_survivor_candidates: source_paths,
-        swarm_only_paths: swarm_paths,
+        swarm_only_paths,
         swarm_authority_resolution_candidates,
         dry_merge,
         version_state: VersionState {
@@ -336,8 +343,8 @@ fn build_receipt(options: &Options) -> Result<Receipt, String> {
             swarm: version_side(&swarm_root, &options.swarm_parent, &options.version),
         },
         invalidation_rules: vec![
-            "Any change to SOURCE_PARENT, SWARM_PARENT, SWARM_REF resolution, source main, or swarm main invalidates this receipt; regenerate rather than editing it.".to_string(),
-            "A changed repository remote, merge base, ancestry count, ordered SHA digest, conflict list, or resolved tree requires a fresh receipt.".to_string(),
+            "Any change to SOURCE_PARENT or the declared source main, SWARM_PARENT or the declared swarm main, or SWARM_REF resolution invalidates this receipt; regenerate rather than editing it.".to_string(),
+            "A changed repository identity, merge base, ancestry count or order, ordered SHA digest, machine-readable conflict path list, or resolved tree requires a fresh receipt.".to_string(),
             "This receipt does not construct or prove the source join, version metadata, qualification, publication, or back-sync.".to_string(),
         ],
         next_commands: vec![
@@ -345,6 +352,21 @@ fn build_receipt(options: &Options) -> Result<Receipt, String> {
             "Pass this exact parent pair, validated SWARM_REF, and receipt to source preflight; do not substitute a branch name or later main.".to_string(),
         ],
     })
+}
+
+fn ensure_distinct_repositories(
+    source_root: &Path,
+    swarm_root: &Path,
+    source_common_dir: &Path,
+    swarm_common_dir: &Path,
+) -> Result<(), String> {
+    if source_root == swarm_root || source_common_dir == swarm_common_dir {
+        return Err(
+            "source and swarm must be distinct repositories; refusing an ambiguous identity"
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 struct InspectedRepository {
@@ -441,6 +463,15 @@ fn git_common_dir(root: &Path) -> Result<PathBuf, String> {
 }
 
 fn exact_commit(repo: &Path, sha: &str, role: &str) -> Result<String, String> {
+    let object_type = git(repo, &["cat-file", "-t", sha])
+        .map_err(|error| format!("{role} parent {sha} does not resolve to an object: {error}"))?
+        .trim()
+        .to_string();
+    if object_type != "commit" {
+        return Err(format!(
+            "{role} parent {sha} resolves to object type {object_type}, expected commit"
+        ));
+    }
     let resolved = git(
         repo,
         &["rev-parse", "--verify", &format!("{sha}^{{commit}}")],
@@ -550,8 +581,8 @@ fn commit_range(repo: &Path, base: &str, head: &str) -> Result<CommitRange, Stri
         first_parent_ordered_recipe: "git rev-list --first-parent --reverse MERGE_BASE..PARENT; UTF-8 SHA lines joined with LF; SHA-256".to_string(),
     })
     .and_then(|range| {
-        if first_forward.len() != first.len() {
-            Err("git produced inconsistent first-parent range output".to_string())
+        if first.iter().rev().ne(first_forward.iter()) {
+            Err("git produced inconsistent first-parent reverse ordering".to_string())
         } else {
             Ok(range)
         }
@@ -649,12 +680,14 @@ fn dry_merge_from_repo(
     reviewed_resolved_tree: Option<&str>,
     reviewed_resolved_tree_verified: bool,
 ) -> Result<DryMerge, String> {
+    ensure_merge_tree_capability(repo)?;
     let output = Command::new("git")
         .current_dir(repo)
         .args([
             "merge-tree",
             "--write-tree",
-            "--messages",
+            "--name-only",
+            "-z",
             source_parent,
             swarm_parent,
         ])
@@ -668,12 +701,21 @@ fn dry_merge_from_repo(
             output.status
         ));
     }
-    let diagnostics = lines(format!("{stdout}{stderr}"));
-    let conflicts = diagnostics
-        .iter()
-        .filter_map(|line| line.strip_prefix("CONFLICT "))
-        .map(|line| line.to_string())
+    let (tree_line, paths) = stdout.split_once('\n').unwrap_or((stdout.as_str(), ""));
+    let preview_tree = tree_line
+        .trim()
+        .strip_suffix('\0')
+        .unwrap_or(tree_line.trim())
+        .to_string();
+    let mut conflicts = paths
+        .split('\0')
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(str::to_string)
         .collect::<Vec<_>>();
+    conflicts.sort();
+    conflicts.dedup();
+    let diagnostics = lines(stderr);
     if !output.status.success() && conflicts.is_empty() {
         return Err(format!(
             "disposable git merge-tree failed ({}): {}",
@@ -681,11 +723,10 @@ fn dry_merge_from_repo(
             diagnostics.join(" | ")
         ));
     }
-    let preview_tree = stdout
-        .lines()
-        .next()
-        .filter(|line| line.len() == 40)
-        .map(str::to_string);
+    let preview_tree = (preview_tree.is_ascii()
+        && preview_tree.len() == 40
+        && preview_tree.chars().all(|c| c.is_ascii_hexdigit()))
+    .then_some(preview_tree);
     if output.status.success() && preview_tree.is_none() {
         return Err(format!(
             "disposable git merge-tree returned success without a merged tree: {}",
@@ -705,6 +746,30 @@ fn dry_merge_from_repo(
         conflicts,
         diagnostics,
     })
+}
+
+fn ensure_merge_tree_capability(repo: &Path) -> Result<(), String> {
+    let version = git(repo, &["version"])?;
+    if !git_version_at_least(&version, 2, 38) {
+        return Err(format!(
+            "git merge-tree --write-tree requires Git >= 2.38; observed {version:?}"
+        ));
+    }
+    Ok(())
+}
+
+fn git_version_at_least(output: &str, required_major: u32, required_minor: u32) -> bool {
+    let Some(version) = output.trim().strip_prefix("git version ") else {
+        return false;
+    };
+    let mut parts = version.split('.');
+    let Some(major) = parts.next().and_then(|value| value.parse::<u32>().ok()) else {
+        return false;
+    };
+    let Some(minor) = parts.next().and_then(|value| value.parse::<u32>().ok()) else {
+        return false;
+    };
+    (major, minor) >= (required_major, required_minor)
 }
 
 fn verify_tree_object(repo: &Path, tree: &str) -> Result<bool, String> {
@@ -785,13 +850,8 @@ fn version_side(root: &Path, parent: &str, version: &str) -> VersionSide {
     let cargo_lock = read("Cargo.lock");
     let npm_lock = read("editors/vscode/package-lock.json");
     let changelog = read("CHANGELOG.md");
-    let parse_version = |text: Option<String>| {
-        text.and_then(|body| {
-            body.lines()
-                .find_map(|line| line.trim().strip_prefix("version = \"")?.split('"').next())
-                .map(str::to_string)
-        })
-    };
+    let (workspace_version, crate_version) =
+        cargo_version_surfaces(cargo.as_deref(), crate_manifest.as_deref());
     let extension_version = package.and_then(|body| {
         body.lines().find_map(|line| {
             let line = line.trim();
@@ -813,8 +873,8 @@ fn version_side(root: &Path, parent: &str, version: &str) -> VersionSide {
             .map(str::to_string)
     });
     VersionSide {
-        workspace_version: parse_version(cargo),
-        crate_version: parse_version(crate_manifest),
+        workspace_version,
+        crate_version,
         extension_version,
         cargo_lock_package_version,
         npm_lock_root_version,
@@ -822,6 +882,35 @@ fn version_side(root: &Path, parent: &str, version: &str) -> VersionSide {
             body.contains(&format!("[{version}]")) || body.contains(&format!("## {version}"))
         }),
     }
+}
+
+fn cargo_version_surfaces(
+    workspace_manifest: Option<&str>,
+    crate_manifest: Option<&str>,
+) -> (Option<String>, Option<String>) {
+    let workspace_value = workspace_manifest.and_then(|body| body.parse::<toml::Value>().ok());
+    let workspace_version = workspace_value
+        .as_ref()
+        .and_then(|value| value.get("workspace"))
+        .and_then(|value| value.get("package"))
+        .and_then(|value| value.get("version"))
+        .and_then(toml::Value::as_str)
+        .map(str::to_string);
+    let crate_value = crate_manifest.and_then(|body| body.parse::<toml::Value>().ok());
+    let package = crate_value.as_ref().and_then(|value| value.get("package"));
+    let crate_version = package
+        .and_then(|value| value.get("version"))
+        .and_then(toml::Value::as_str)
+        .map(str::to_string)
+        .or_else(|| {
+            package
+                .and_then(|value| value.get("version"))
+                .and_then(|value| value.get("workspace"))
+                .and_then(toml::Value::as_bool)
+                .and_then(|workspace| workspace.then(|| workspace_version.clone()))
+                .flatten()
+        });
+    (workspace_version, crate_version)
 }
 
 fn lock_package_version(text: &str, package_name: &str) -> Option<String> {
@@ -872,54 +961,54 @@ fn render_markdown(receipt: &Receipt) -> String {
             items.iter().map(|item| format!("- `{item}`\n")).collect()
         }
     };
+    let schema = &receipt.schema;
+    let mode = &receipt.mode;
+    let source_parent = &receipt.source_parent;
+    let swarm_parent = &receipt.swarm_parent;
+    let swarm_ref = &receipt.swarm_ref;
+    let swarm_ref_sha = &receipt.swarm_ref_sha;
+    let merge_base = &receipt.merge_base;
+    let source_remote = &receipt.source_repository.remote;
+    let source_expected_remote = &receipt.source_repository.expected_remote;
+    let source_common_dir_verified = receipt.source_repository.common_dir_verified;
+    let swarm_remote = &receipt.swarm_repository.remote;
+    let swarm_expected_remote = &receipt.swarm_repository.expected_remote;
+    let swarm_common_dir_verified = receipt.swarm_repository.common_dir_verified;
+    let source_all_count = receipt.source_range.all_reachable_count;
+    let source_first_count = receipt.source_range.first_parent_count;
+    let source_all_digest = &receipt.source_range.all_reachable_sha256;
+    let source_first_digest = &receipt.source_range.first_parent_ordered_sha256;
+    let swarm_all_count = receipt.swarm_range.all_reachable_count;
+    let swarm_first_count = receipt.swarm_range.first_parent_count;
+    let swarm_all_digest = &receipt.swarm_range.all_reachable_sha256;
+    let swarm_first_digest = &receipt.swarm_range.first_parent_ordered_sha256;
+    let all_recipe = &receipt.source_range.all_reachable_ordered_recipe;
+    let first_recipe = &receipt.source_range.first_parent_ordered_recipe;
+    let dry_status = &receipt.dry_merge.status;
+    let preview_tree = &receipt.dry_merge.preview_tree;
+    let reviewed_tree = &receipt.dry_merge.reviewed_resolved_tree;
+    let reviewed_tree_verified = receipt.dry_merge.reviewed_resolved_tree_verified;
+    let conflicts = list(&receipt.dry_merge.conflicts);
+    let source_survivors = list(&receipt.source_survivor_candidates);
+    let swarm_only = list(&receipt.swarm_only_paths);
+    let authority_candidates = list(&receipt.swarm_authority_resolution_candidates);
+    let requested_version = &receipt.version_state.requested_version;
+    let source_workspace = &receipt.version_state.source.workspace_version;
+    let source_crate = &receipt.version_state.source.crate_version;
+    let source_extension = &receipt.version_state.source.extension_version;
+    let source_cargo_lock = &receipt.version_state.source.cargo_lock_package_version;
+    let source_npm_lock = &receipt.version_state.source.npm_lock_root_version;
+    let source_changelog = &receipt.version_state.source.changelog_mentions_version;
+    let swarm_workspace = &receipt.version_state.swarm.workspace_version;
+    let swarm_crate = &receipt.version_state.swarm.crate_version;
+    let swarm_extension = &receipt.version_state.swarm.extension_version;
+    let swarm_cargo_lock = &receipt.version_state.swarm.cargo_lock_package_version;
+    let swarm_npm_lock = &receipt.version_state.swarm.npm_lock_root_version;
+    let swarm_changelog = &receipt.version_state.swarm.changelog_mentions_version;
+    let invalidation_rules = list(&receipt.invalidation_rules);
+    let next_commands = list(&receipt.next_commands);
     format!(
-        "# Source-promotion preflight\n\n- Schema: {}\n- Mode: {}\n- SOURCE_PARENT: {}\n- SWARM_PARENT: {}\n- SWARM_REF: {}\n- SWARM_REF_SHA: {}\n- MERGE_BASE: {}\n\n## Repository identity\n\n- source: {} (expected {}; common dirs distinct={})\n- swarm: {} (expected {}; common dirs distinct={})\n\n## Ancestry\n\n| range | all reachable | first parent | all digest | ordered first-parent digest |\n| --- | ---: | ---: | --- | --- |\n| source | {} | {} | {} | {} |\n| swarm | {} | {} | {} | {} |\n\nAll-reachable digest recipe: {}\nFirst-parent digest recipe: {}\n\n## Dry merge\n\nStatus: **{}**\nPreview tree (automatic, non-final): {:?}\nReviewed resolved tree: {:?}\nReviewed resolved tree verified in supplied repository object store: {}\n\nConflicts:\n{}\n\n## Source survivors\n\n{}\n## Swarm-only paths\n\n{}\n## Swarm authority-resolution candidates (non-dispositive)\n\n{}\n## Version state\n\n- requested: {}\n- source: workspace={:?}, crate={:?}, extension={:?}, cargo-lock-ripr={:?}, npm-lock-root={:?}, changelog-mentions={:?}\n- swarm: workspace={:?}, crate={:?}, extension={:?}, cargo-lock-ripr={:?}, npm-lock-root={:?}, changelog-mentions={:?}\n\n## Invalidation rules\n\n{}\n## Next commands\n\n{}",
-        receipt.schema,
-        receipt.mode,
-        receipt.source_parent,
-        receipt.swarm_parent,
-        receipt.swarm_ref,
-        receipt.swarm_ref_sha,
-        receipt.merge_base,
-        receipt.source_repository.remote,
-        receipt.source_repository.expected_remote,
-        receipt.source_repository.common_dir_verified,
-        receipt.swarm_repository.remote,
-        receipt.swarm_repository.expected_remote,
-        receipt.swarm_repository.common_dir_verified,
-        receipt.source_range.all_reachable_count,
-        receipt.source_range.first_parent_count,
-        receipt.source_range.all_reachable_sha256,
-        receipt.source_range.first_parent_ordered_sha256,
-        receipt.swarm_range.all_reachable_count,
-        receipt.swarm_range.first_parent_count,
-        receipt.swarm_range.all_reachable_sha256,
-        receipt.swarm_range.first_parent_ordered_sha256,
-        receipt.swarm_range.all_reachable_ordered_recipe,
-        receipt.swarm_range.first_parent_ordered_recipe,
-        receipt.dry_merge.status,
-        receipt.dry_merge.preview_tree,
-        receipt.dry_merge.reviewed_resolved_tree,
-        receipt.dry_merge.reviewed_resolved_tree_verified,
-        list(&receipt.dry_merge.conflicts),
-        list(&receipt.source_survivor_candidates),
-        list(&receipt.swarm_only_paths),
-        list(&receipt.swarm_authority_resolution_candidates),
-        receipt.version_state.requested_version,
-        receipt.version_state.source.workspace_version,
-        receipt.version_state.source.crate_version,
-        receipt.version_state.source.extension_version,
-        receipt.version_state.source.cargo_lock_package_version,
-        receipt.version_state.source.npm_lock_root_version,
-        receipt.version_state.source.changelog_mentions_version,
-        receipt.version_state.swarm.workspace_version,
-        receipt.version_state.swarm.crate_version,
-        receipt.version_state.swarm.extension_version,
-        receipt.version_state.swarm.cargo_lock_package_version,
-        receipt.version_state.swarm.npm_lock_root_version,
-        receipt.version_state.swarm.changelog_mentions_version,
-        list(&receipt.invalidation_rules),
-        list(&receipt.next_commands),
+        "# Source-promotion preflight\n\n- Schema: {schema}\n- Mode: {mode}\n- SOURCE_PARENT: {source_parent}\n- SWARM_PARENT: {swarm_parent}\n- SWARM_REF: {swarm_ref}\n- SWARM_REF_SHA: {swarm_ref_sha}\n- MERGE_BASE: {merge_base}\n\n## Repository identity\n\n- source: {source_remote} (expected {source_expected_remote}; common dirs distinct={source_common_dir_verified})\n- swarm: {swarm_remote} (expected {swarm_expected_remote}; common dirs distinct={swarm_common_dir_verified})\n\n## Ancestry\n\n| range | all reachable | first parent | all digest | ordered first-parent digest |\n| --- | ---: | ---: | --- | --- |\n| source | {source_all_count} | {source_first_count} | {source_all_digest} | {source_first_digest} |\n| swarm | {swarm_all_count} | {swarm_first_count} | {swarm_all_digest} | {swarm_first_digest} |\n\nAll-reachable digest recipe: {all_recipe}\nFirst-parent digest recipe: {first_recipe}\n\n## Dry merge\n\nStatus: **{dry_status}**\nPreview tree (automatic, non-final): {preview_tree:?}\nReviewed resolved tree: {reviewed_tree:?}\nReviewed resolved tree verified in supplied repository object store: {reviewed_tree_verified}\n\nConflicts:\n{conflicts}\n\n## Source survivors\n\n{source_survivors}\n## Swarm-only paths\n\n{swarm_only}\n## Swarm authority-resolution candidates (non-dispositive)\n\n{authority_candidates}\n## Version state\n\n- requested: {requested_version}\n- source: workspace={source_workspace:?}, crate={source_crate:?}, extension={source_extension:?}, cargo-lock-ripr={source_cargo_lock:?}, npm-lock-root={source_npm_lock:?}, changelog-mentions={source_changelog:?}\n- swarm: workspace={swarm_workspace:?}, crate={swarm_crate:?}, extension={swarm_extension:?}, cargo-lock-ripr={swarm_cargo_lock:?}, npm-lock-root={swarm_npm_lock:?}, changelog-mentions={swarm_changelog:?}\n\n## Invalidation rules\n\n{invalidation_rules}\n## Next commands\n\n{next_commands}",
     )
 }
 
@@ -937,6 +1026,22 @@ mod tests {
         ]);
         if result.is_ok() {
             return Err("abbreviated SHA unexpectedly accepted".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn sha_validation_names_the_required_object_kind() -> Result<(), String> {
+        let commit_error = validate_sha("--source-parent", "commit", "deadbeef")
+            .err()
+            .ok_or_else(|| "abbreviated commit SHA unexpectedly accepted".to_string())?;
+        let tree_error = validate_sha("--resolved-tree", "tree", "deadbeef")
+            .err()
+            .ok_or_else(|| "abbreviated tree SHA unexpectedly accepted".to_string())?;
+        if !commit_error.contains("commit SHA") || !tree_error.contains("tree SHA") {
+            return Err(format!(
+                "SHA validation errors omitted object kinds: {commit_error:?}, {tree_error:?}"
+            ));
         }
         Ok(())
     }
@@ -982,6 +1087,23 @@ mod tests {
         let right = digest_lines(&["b".to_string(), "a".to_string()]);
         if left == right {
             return Err("ordered digest ignored input order".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn git_version_gate_is_fail_closed() -> Result<(), String> {
+        if !git_version_at_least("git version 2.38.0.windows.1", 2, 38)
+            || !git_version_at_least("git version 3.0.0", 2, 38)
+        {
+            return Err("supported Git versions were rejected".to_string());
+        }
+        for version in ["git version 2.37.9", "Git version 2.54.0", "git unknown"] {
+            if git_version_at_least(version, 2, 38) {
+                return Err(format!(
+                    "unsupported or malformed Git version accepted: {version}"
+                ));
+            }
         }
         Ok(())
     }
@@ -1050,6 +1172,20 @@ mod tests {
     }
 
     #[test]
+    fn inherited_crate_version_resolves_workspace_authority() -> Result<(), String> {
+        let (workspace, crate_version) = cargo_version_surfaces(
+            Some("[workspace.package]\nversion = \"0.10.1\"\n"),
+            Some("[package]\nversion.workspace = true\n"),
+        );
+        if workspace.as_deref() != Some("0.10.1") || crate_version.as_deref() != Some("0.10.1") {
+            return Err(format!(
+                "workspace-inherited crate version was not resolved: {workspace:?}, {crate_version:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn repository_identity_serialization_has_no_checkout_path() -> Result<(), String> {
         let identity = RepositoryIdentity {
             role: "source".to_string(),
@@ -1069,6 +1205,132 @@ mod tests {
                 "identity serialization is not location-independent: {json}"
             ));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn source_parent_must_equal_declared_source_main() -> Result<(), String> {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| format!("system clock before epoch: {error}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("ripr-source-main-{nonce}"));
+        fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        test_git(&root, &["init", "--quiet"])?;
+        test_git(&root, &["config", "user.email", "test@example.invalid"])?;
+        test_git(&root, &["config", "user.name", "test"])?;
+        test_git(
+            &root,
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/EffortlessMetrics/ripr.git",
+            ],
+        )?;
+        fs::write(root.join("file"), "one\n").map_err(|error| error.to_string())?;
+        test_git(&root, &["add", "file"])?;
+        test_git(&root, &["commit", "--quiet", "-m", "one"])?;
+        let parent = test_git_output(&root, &["rev-parse", "HEAD"])?;
+        fs::write(root.join("file"), "two\n").map_err(|error| error.to_string())?;
+        test_git(&root, &["commit", "--quiet", "-am", "two"])?;
+        let error = inspect_repository(
+            "source",
+            &root,
+            "EffortlessMetrics/ripr",
+            &parent,
+            "HEAD",
+            None,
+        )
+        .err()
+        .ok_or_else(|| "stale source parent was unexpectedly accepted".to_string())?;
+        if !error.contains("not the declared current source main") {
+            return Err(format!("unexpected source-main error: {error}"));
+        }
+        fs::remove_dir_all(&root).map_err(|error| format!("cleanup failed: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn parent_sha_rejects_non_commit_object_with_kind() -> Result<(), String> {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| format!("system clock before epoch: {error}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("ripr-object-kind-{nonce}"));
+        fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        test_git(&root, &["init", "--quiet"])?;
+        fs::write(root.join("blob"), "not a commit\n").map_err(|error| error.to_string())?;
+        let blob = test_git_output(&root, &["hash-object", "-w", "blob"])?;
+        let error = exact_commit(&root, &blob, "source")
+            .err()
+            .ok_or_else(|| "blob object was unexpectedly accepted as a parent".to_string())?;
+        if !error.contains("object type blob") || !error.contains("expected commit") {
+            return Err(format!("non-commit kind was not reported: {error}"));
+        }
+        fs::remove_dir_all(&root).map_err(|error| format!("cleanup failed: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn shared_common_dir_is_rejected() -> Result<(), String> {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| format!("system clock before epoch: {error}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("ripr-common-dir-{nonce}"));
+        let worktree = root.join("worktree");
+        fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        test_git(&root, &["init", "--quiet"])?;
+        test_git(&root, &["config", "user.email", "test@example.invalid"])?;
+        test_git(&root, &["config", "user.name", "test"])?;
+        test_git(
+            &root,
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/EffortlessMetrics/ripr.git",
+            ],
+        )?;
+        fs::write(root.join("file"), "one\n").map_err(|error| error.to_string())?;
+        test_git(&root, &["add", "file"])?;
+        test_git(&root, &["commit", "--quiet", "-m", "one"])?;
+        let parent = test_git_output(&root, &["rev-parse", "HEAD"])?;
+        test_git(
+            &root,
+            &[
+                "worktree",
+                "add",
+                "--quiet",
+                worktree.to_string_lossy().as_ref(),
+                &parent,
+            ],
+        )?;
+        if git_common_dir(&root)? != git_common_dir(&worktree)? {
+            return Err("linked worktree did not share the common directory".to_string());
+        }
+        let error = ensure_distinct_repositories(
+            &repository_root(&root)?,
+            &repository_root(&worktree)?,
+            &git_common_dir(&root)?,
+            &git_common_dir(&worktree)?,
+        )
+        .err()
+        .ok_or_else(|| "shared common directory was unexpectedly accepted".to_string())?;
+        if !error.contains("distinct repositories") {
+            return Err(format!("unexpected common-dir error: {error}"));
+        }
+        test_git(
+            &root,
+            &[
+                "worktree",
+                "remove",
+                "--force",
+                worktree.to_string_lossy().as_ref(),
+            ],
+        )?;
+        fs::remove_dir_all(&root).map_err(|error| format!("cleanup failed: {error}"))?;
         Ok(())
     }
 
@@ -1254,6 +1516,10 @@ mod tests {
             .map_err(|error| format!("failed to parse source-promotion fixture: {error}"))?;
         if value["expected"]["mode"] != "two_parent_join"
             || value["expected"]["dry_merge_status"] != "conflicts"
+            || value["expected"]["conflict_paths"][0] != "shared.txt"
+            || !value["expected"]["swarm_only_paths"]
+                .as_array()
+                .is_some_and(Vec::is_empty)
             || value["expected"]["source_first_parent_count"] != 1
             || value["expected"]["swarm_first_parent_count"] != 1
         {
@@ -1331,6 +1597,12 @@ mod tests {
             return Err(
                 "diverged fixture did not produce a conflicting two-parent receipt".to_string(),
             );
+        }
+        if receipt.dry_merge.conflicts != ["shared.txt"] || !receipt.swarm_only_paths.is_empty() {
+            return Err(format!(
+                "shared path was not classified by stable set semantics: conflicts={:?}, swarm_only={:?}",
+                receipt.dry_merge.conflicts, receipt.swarm_only_paths
+            ));
         }
         if receipt.source_range.first_parent_count != 1
             || receipt.swarm_range.first_parent_count != 1
@@ -1427,12 +1699,18 @@ mod tests {
     }
 
     fn test_git_output(repo: &Path, args: &[&str]) -> Result<String, String> {
-        test_git(repo, args)?;
         let output = Command::new("git")
             .current_dir(repo)
             .args(args)
             .output()
             .map_err(|error| format!("test git failed to start: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "test git {} failed: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 }

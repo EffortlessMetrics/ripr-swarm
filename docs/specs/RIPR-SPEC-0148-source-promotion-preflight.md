@@ -37,7 +37,9 @@ parent SHAs plus explicit local repository roots. It verifies origin identity,
 exact commit identity, the held source main, and swarm-parent reachability. A
 disposable repository fetches both exact objects, computes the merge base and
 separately named all-reachable/first-parent counts, inventories changed paths,
-and runs `git merge-tree --write-tree` for textual conflict evidence.
+and runs `git merge-tree --write-tree --name-only -z` for machine-readable
+conflict-path evidence. This requires Git 2.38 or newer; older or malformed
+Git versions fail closed before the merge probe.
 
 JSON and Markdown are projections of one deterministic receipt. The ordered
 all-reachable SHA digest uses:
@@ -54,7 +56,8 @@ git rev-list --first-parent --reverse MERGE_BASE..PARENT
 UTF-8 SHA lines joined with LF, then SHA-256
 ```
 
-The receipt records source-survivor candidates, a non-dispositive inventory of
+The receipt records source-survivor candidates, a set-differenced inventory of
+paths changed only on the swarm side, and a non-dispositive inventory of
 swarm-authority resolution candidates, exact-parent version/changelog
 observations (including Cargo.lock and npm lock roots; missing changelog
 evidence remains unknown), invalidation rules, and
@@ -73,14 +76,14 @@ It does not create a join or modify either authoritative checkout.
 - swarm parent is an ancestor of the declared swarm main;
 - origin remotes identify the declared repositories;
 - merge base, both denominator variants, and ordered digest recipe are present;
-- disposable merge diagnostics and conflict paths are present;
+- disposable merge diagnostics and machine-readable conflict paths are present;
 - automatic preview-tree output is distinct from an optional reviewed
   resolved-tree input;
 - JSON and Markdown are deterministic projections with no temporary path or
   capture timestamp;
 - exact-parent version observations include Cargo.lock ripr and npm lock root;
-- invalidation rules name parent, immutable ref, main, identity, ancestry,
-  digest, conflict, and tree changes.
+- invalidation rules name each source/swarm parent and declared main, immutable
+  ref resolution, identity, ancestry, digest, conflict, and tree changes.
 
 ## Non-Goals
 

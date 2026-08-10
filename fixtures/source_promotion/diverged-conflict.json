@@ -4,6 +4,8 @@
   "expected": {
     "mode": "two_parent_join",
     "dry_merge_status": "conflicts",
+    "conflict_paths": ["shared.txt"],
+    "swarm_only_paths": [],
     "source_first_parent_count": 1,
     "swarm_first_parent_count": 1
   }

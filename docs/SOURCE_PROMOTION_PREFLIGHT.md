@@ -4,6 +4,10 @@
 receipt consumed by the source release preflight. It preserves the complete
 swarm history as the selected parent; it does not create the join.
 
+The disposable merge probe requires Git 2.38 or newer because it uses
+`git merge-tree --write-tree --name-only -z`. The command fails closed on an
+older or malformed Git version rather than falling back to localized prose.
+
 ## Command
 
 Run it from a clean operator checkout with both repositories available locally:
@@ -55,9 +59,12 @@ git rev-list --first-parent --reverse MERGE_BASE..PARENT
 UTF-8 SHA lines joined with LF, then SHA-256
 ```
 
-It also inventories changed paths, source-survivor candidates, non-dispositive
-swarm-authority resolution candidates, and a real `git merge-tree --write-tree`
-dry merge. The automatic `preview_tree` is never a final join tree. An
+It also inventories changed paths, source-survivor candidates, a
+set-differenced list of paths changed only on the swarm side, non-dispositive
+swarm-authority resolution candidates, and a real
+`git merge-tree --write-tree --name-only -z` dry merge with machine-readable
+conflict paths. The automatic `preview_tree` is
+never a final join tree. An
 optional `--resolved-tree <full-tree-sha>` records a separately reviewed
 resolved tree after verifying that the object exists in one supplied
 repository's common object store; omission remains visibly not finalized. The
