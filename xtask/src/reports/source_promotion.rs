@@ -899,7 +899,8 @@ fn cargo_version_surfaces(
     workspace_manifest: Option<&str>,
     crate_manifest: Option<&str>,
 ) -> (Option<String>, Option<String>) {
-    let workspace_value = workspace_manifest.and_then(|body| body.parse::<toml::Value>().ok());
+    let workspace_value =
+        workspace_manifest.and_then(|body| toml::from_str::<toml::Value>(body).ok());
     let workspace_version = workspace_value
         .as_ref()
         .and_then(|value| value.get("workspace"))
@@ -907,7 +908,7 @@ fn cargo_version_surfaces(
         .and_then(|value| value.get("version"))
         .and_then(toml::Value::as_str)
         .map(str::to_string);
-    let crate_value = crate_manifest.and_then(|body| body.parse::<toml::Value>().ok());
+    let crate_value = crate_manifest.and_then(|body| toml::from_str::<toml::Value>(body).ok());
     let package = crate_value.as_ref().and_then(|value| value.get("package"));
     let crate_version = package
         .and_then(|value| value.get("version"))
