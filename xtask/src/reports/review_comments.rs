@@ -170,12 +170,12 @@ where
 
 /// #3070: when the producer run already failed (e.g. timed out), a later
 /// contract-validation failure must not present itself as the primary cause.
-/// Name the run failure so the operator sees the timeout rather than only a
-/// downstream schema mismatch.
+/// Lead with the run failure so the operator sees the timeout first, with the
+/// validation diagnostics kept as downstream context.
 fn with_run_cause(validation_error: String, run_cause: Option<&str>) -> String {
     match run_cause {
         Some(cause) => format!(
-            "{validation_error}\nrun cause: the ripr review-comments producer run failed before validation: {cause}"
+            "the ripr review-comments producer run failed before validation: {cause}\nvalidation diagnostics: {validation_error}"
         ),
         None => validation_error,
     }
@@ -1448,7 +1448,7 @@ mod tests {
     #[test]
     fn validation_failure_names_the_run_cause() {
         // #3070: a producer run that already failed (e.g. timed out) followed
-        // by a contract-validation failure must name the run cause, not
+        // by a contract-validation failure must lead with the run cause, not
         // surface only as a downstream schema mismatch.
         let wrapped = with_run_cause(
             "review comments contract violations:\n- status mismatch".to_string(),
@@ -1456,6 +1456,12 @@ mod tests {
         );
         assert!(wrapped.contains("status mismatch"));
         assert!(wrapped.contains("timed out after 60 seconds"));
+        let cause_pos = wrapped.find("timed out after 60 seconds");
+        let validation_pos = wrapped.find("status mismatch");
+        assert!(
+            matches!((cause_pos, validation_pos), (Some(cause), Some(validation)) if cause < validation),
+            "the run cause must lead the validation diagnostics: {wrapped}"
+        );
         assert_eq!(with_run_cause("violation".to_string(), None), "violation");
     }
 
