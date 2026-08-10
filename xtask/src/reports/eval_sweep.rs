@@ -865,6 +865,34 @@ fn render_markdown(metrics: &Metrics, runs: &[RepoRun]) -> String {
     out
 }
 
+/// Repos the run loop will process, honoring `--repo`. Shared with the
+/// `will_run` check so a checkout the loop would skip cannot trigger a build.
+fn selected_repos<'a>(
+    parsed: &'a SweepArgs,
+    manifest: &'a Manifest,
+) -> impl Iterator<Item = &'a RepoEntry> {
+    manifest.repos.iter().filter(|entry| {
+        parsed
+            .only_repo
+            .as_ref()
+            .is_none_or(|only| &entry.id == only)
+    })
+}
+
+/// Resolve the sweep binary through `resolve` (the shared fixture resolver in
+/// production, #3097) only when a selected repo will actually be analyzed, so
+/// a manifest with no runnable checkouts stays build-free.
+fn sweep_binary_in(
+    will_run: bool,
+    resolve: &dyn Fn() -> Result<String, String>,
+) -> Result<Option<PathBuf>, String> {
+    if will_run {
+        Ok(Some(PathBuf::from(resolve()?)))
+    } else {
+        Ok(None)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
@@ -877,27 +905,18 @@ pub(crate) fn eval_sweep(args: &[String]) -> Result<(), String> {
     // it honors CARGO_TARGET_DIR (#2176) and owns the memoized unconditional
     // build (#3054). Invoking the binary directly per repo keeps recorded
     // runtime at analysis time rather than per-repo `cargo run` overhead.
-    // Only resolve — and therefore build — when at least one repo will
-    // actually be analyzed.
+    // Only resolve — and therefore build — when at least one selected repo
+    // will actually be analyzed.
     let will_run = parsed.clone
-        || manifest.repos.iter().any(|entry| {
+        || selected_repos(&parsed, &manifest).any(|entry| {
             PathBuf::from(&parsed.checkout_root)
                 .join(&entry.id)
                 .exists()
         });
-    let binary = if will_run {
-        Some(PathBuf::from(ripr_fixture_binary()?))
-    } else {
-        None
-    };
+    let binary = sweep_binary_in(will_run, &ripr_fixture_binary)?;
 
     let mut runs = Vec::new();
-    for entry in &manifest.repos {
-        if let Some(only) = &parsed.only_repo
-            && &entry.id != only
-        {
-            continue;
-        }
+    for entry in selected_repos(&parsed, &manifest) {
         runs.push(run_repo(entry, &manifest, &parsed, binary.as_deref()));
     }
 
@@ -932,21 +951,51 @@ mod tests {
     }
 
     #[test]
-    fn binary_resolution_honors_cargo_target_dir() {
+    fn binary_resolution_delegates_to_shared_resolver_lazily() {
         // #3097: the sweep obtains the ripr binary only through the shared
-        // `ripr_fixture_binary` resolver, which resolves its path with
-        // `ripr_debug_binary_in`. Pin the CARGO_TARGET_DIR handling eval_sweep
-        // delegates to, against the pure target-dir parameter (no process-env
-        // mutation); `ripr_debug_binary_honors_cargo_target_dir` pins the same
-        // contract at the crate root.
-        let custom = crate::ripr_debug_binary_in(Some(PathBuf::from("/ci/eval-sweep/target")));
-        let text = custom.to_string_lossy().replace('\\', "/");
-        assert!(text.starts_with("/ci/eval-sweep/target/debug/ripr"));
-        let default = crate::ripr_debug_binary_in(None);
+        // resolver, and only when a selected repo will actually be analyzed.
+        // Drive the delegation seam with a probe resolver so a regression to
+        // a private path helper fails here without building ripr.
+        let resolved = sweep_binary_in(true, &|| Ok("/shared/resolver/ripr".to_string()));
         assert!(
-            default
-                .ends_with(format!("target/debug/ripr{}", std::env::consts::EXE_SUFFIX).as_str())
+            matches!(resolved, Ok(Some(ref path)) if path == Path::new("/shared/resolver/ripr"))
         );
+
+        let unresolved = sweep_binary_in(false, &|| {
+            Err("resolver must not run when nothing will be analyzed".to_string())
+        });
+        assert!(matches!(unresolved, Ok(None)));
+
+        let propagated = sweep_binary_in(true, &|| Err("build failed".to_string()));
+        assert!(matches!(propagated, Err(ref err) if err == "build failed"));
+    }
+
+    #[test]
+    fn only_repo_filter_selects_exactly_the_named_repo() {
+        // The will_run check and the run loop share `selected_repos`, so a
+        // checkout belonging to a repo `--repo` excludes can never trigger a
+        // build by itself.
+        let manifest_json = json!({
+            "synthetic_diff": "d.diff",
+            "repos": [
+                { "id": "a", "url": "https://x/a", "sha": "1", "license": "MIT", "shape": "s" },
+                { "id": "b", "url": "https://x/b", "sha": "2", "license": "MIT", "shape": "s" }
+            ]
+        });
+        let manifest = parse_manifest(&manifest_json);
+        assert!(manifest.is_ok());
+        if let Ok(manifest) = manifest {
+            let mut args = SweepArgs::defaults();
+            let all = selected_repos(&args, &manifest)
+                .map(|entry| entry.id.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(all, vec!["a", "b"]);
+            args.only_repo = Some("b".to_string());
+            let selected = selected_repos(&args, &manifest)
+                .map(|entry| entry.id.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(selected, vec!["b"]);
+        }
     }
 
     #[test]
