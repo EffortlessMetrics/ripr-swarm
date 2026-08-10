@@ -46278,6 +46278,9 @@ fn release_pin_ruleset_requires_fully_qualified_tag_ref() -> Result<(), String> 
                     include
                         .iter()
                         .any(|value| value.as_str() == Some(REQUIRED_PATTERN))
+                        && include
+                            .iter()
+                            .all(|value| value.as_str() != Some(SHORT_PATTERN))
                 })
             && ruleset
                 .get("rules")
@@ -46296,9 +46299,10 @@ fn release_pin_ruleset_requires_fully_qualified_tag_ref() -> Result<(), String> 
         return Err("fully qualified tag ruleset fixture was rejected".to_string());
     }
 
-    let mut short = fixture.clone();
-    short["conditions"]["ref_name"]["include"] = serde_json::json!([SHORT_PATTERN]);
-    if accepts_required_pin(&short) {
+    let mut mixed = fixture.clone();
+    mixed["conditions"]["ref_name"]["include"] =
+        serde_json::json!([REQUIRED_PATTERN, SHORT_PATTERN]);
+    if accepts_required_pin(&mixed) {
         return Err("unqualified tag pattern was accepted as a protected pin".to_string());
     }
 
