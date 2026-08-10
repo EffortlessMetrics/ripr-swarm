@@ -8,7 +8,13 @@ Created: 2026-08-09
 
 Linked issue: #3100
 
-## Contract
+## Problem
+
+Back-sync transport must preserve the complete swarm development history while
+making the released source history reachable, without allowing the verifier to
+construct merges, mutate policy, or publish anything.
+
+## Behavior
 
 `cargo xtask back-sync verify` consumes exact `SWARM_BEFORE`,
 `SOURCE_RELEASE_HEAD`, reviewed `BACK_SYNC_TREE`, and an exact candidate `K`.
@@ -18,6 +24,8 @@ and `K^{tree}` equals the reviewed tree. The source and swarm declared main
 heads must identify the exact release pair. The swarm head must be exactly
 `SWARM_BEFORE` before transport or exactly `K` after transport; this is the
 expected-head guard.
+
+## Required Evidence
 
 The receipt requires and validates release/changelog/publication evidence
 bound to the requested version, released source head, K, and reviewed tree.
