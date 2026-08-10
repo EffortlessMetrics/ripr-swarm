@@ -748,7 +748,6 @@ fn parse_merge_tree_output(stdout: &[u8]) -> Result<(String, Vec<String>), Strin
         .filter(|field| !field.is_empty())
         .map(|field| {
             std::str::from_utf8(field)
-                .map(str::trim)
                 .map(str::to_string)
                 .map_err(|error| {
                     format!("disposable git merge-tree returned a non-UTF-8 path: {error}")
@@ -1062,9 +1061,13 @@ mod tests {
     #[test]
     fn merge_tree_z_output_preserves_conflict_paths() -> Result<(), String> {
         let tree = "0123456789abcdef0123456789abcdef01234567";
-        let output = format!("{tree}\0shared.txt\0nested/conflict.rs\0shared.txt\0");
+        let output = format!(
+            "{tree}\0shared.txt\0nested/conflict.rs\0shared.txt\0 leading-and-trailing \0"
+        );
         let (parsed_tree, paths) = parse_merge_tree_output(output.as_bytes())?;
-        if parsed_tree != tree || paths != ["nested/conflict.rs", "shared.txt"] {
+        if parsed_tree != tree
+            || paths != [" leading-and-trailing ", "nested/conflict.rs", "shared.txt"]
+        {
             return Err(format!(
                 "NUL-delimited merge-tree output was misparsed: tree={parsed_tree:?}, paths={paths:?}"
             ));
