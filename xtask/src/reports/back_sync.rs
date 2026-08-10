@@ -302,10 +302,20 @@ fn build_receipt(options: &Options) -> Result<Receipt, String> {
     })?;
     let release_text = String::from_utf8(release_bytes.clone())
         .map_err(|error| format!("release receipt is not UTF-8: {error}"))?;
-    let receipt_bound_to_k = release_text.contains(&options.version)
-        && release_text.contains(&options.source_release_head)
-        && release_text.contains(&options.join)
-        && release_text.contains(&options.tree);
+    let release_json: serde_json::Value = serde_json::from_str(&release_text)
+        .map_err(|error| format!("release receipt is not structured JSON: {error}"))?;
+    let receipt_bound_to_k = release_json
+        .get("version")
+        .and_then(serde_json::Value::as_str)
+        == Some(options.version.as_str())
+        && release_json
+            .get("source_release_head")
+            .and_then(serde_json::Value::as_str)
+            == Some(options.source_release_head.as_str())
+        && release_json.get("join").and_then(serde_json::Value::as_str)
+            == Some(options.join.as_str())
+        && release_json.get("tree").and_then(serde_json::Value::as_str)
+            == Some(options.tree.as_str());
     if !receipt_bound_to_k {
         return Err(
             "release receipt must name version, SOURCE_RELEASE_HEAD, K, and BACK_SYNC_TREE"
@@ -577,16 +587,29 @@ fn source_authority_paths_changed(
     before: &str,
     join: &str,
 ) -> Result<Vec<String>, String> {
-    const AUTHORITY_PATHS: [&str; 5] = [
-        ".github/settings.yml",
-        ".github/workflows/publish-extension.yml",
-        ".github/workflows/release-server-binaries.yml",
-        ".github/workflows/publish.yml",
-        ".github/workflows/release.yml",
-    ];
     let mut active = lines(git(root, &["diff", "--name-only", before, join])?)
         .into_iter()
-        .filter(|path| AUTHORITY_PATHS.contains(&path.as_str()))
+        .filter(|path| {
+            if path == ".github/settings.yml" {
+                return true;
+            }
+            path.starts_with(".github/workflows/")
+                && git(root, &["show", &format!("{join}:{path}")])
+                    .map(|text| {
+                        let text = text.to_ascii_lowercase();
+                        [
+                            "publish",
+                            "release",
+                            "crates.io",
+                            "marketplace",
+                            "open-vsx",
+                            "signing",
+                        ]
+                        .iter()
+                        .any(|keyword| text.contains(keyword))
+                    })
+                    .unwrap_or(true)
+        })
         .collect::<Vec<_>>();
     active.sort();
     active.dedup();
@@ -634,19 +657,33 @@ fn read_policy_text(path: &Path, label: &str) -> Result<String, String> {
 }
 
 fn read_policy_state(path: &Path, label: &str) -> Result<bool, String> {
-    let text = read_policy_text(path, label)?;
-    let disabled = text.contains("merge_commits = false")
-        || text.contains("allow_merge_commits = false")
-        || text.contains("\"allow_merge_commits\": false");
-    if !disabled {
+    let value: serde_json::Value = serde_json::from_str(&read_policy_text(path, label)?)
+        .map_err(|error| format!("{label} is not structured JSON: {error}"))?;
+    if value
+        .get("allow_merge_commits")
+        .and_then(serde_json::Value::as_bool)
+        != Some(false)
+        || value
+            .get("merge_commits_disabled")
+            .and_then(serde_json::Value::as_bool)
+            != Some(true)
+    {
         return Err(format!("{label} does not prove merge commits are disabled"));
     }
     Ok(true)
 }
 
 fn read_policy_exception(path: &Path) -> Result<bool, String> {
-    let text = read_policy_text(path, "policy-exception")?.to_ascii_lowercase();
-    if !text.contains("temporary") || !text.contains("exception") || !text.contains("approved") {
+    let value: serde_json::Value =
+        serde_json::from_str(&read_policy_text(path, "policy-exception")?)
+            .map_err(|error| format!("policy-exception is not structured JSON: {error}"))?;
+    if value.get("temporary").and_then(serde_json::Value::as_bool) != Some(true)
+        || value.get("approved").and_then(serde_json::Value::as_bool) != Some(true)
+        || value
+            .get("scope")
+            .and_then(serde_json::Value::as_str)
+            .is_none()
+    {
         return Err(
             "policy-exception must identify a temporary approved merge exception".to_string(),
         );
@@ -826,6 +863,17 @@ mod tests {
             return Err("branch substitution was accepted as a release tag".to_string());
         }
         options.source_release_tag = "v0.11.0".to_string();
+        let unexpected = commit_tree(&root.join("swarm"), &tree, &[&valid.join])?;
+        git(
+            &root.join("swarm"),
+            &["update-ref", "refs/heads/unexpected", &unexpected],
+        )?;
+        options.swarm_main = "refs/heads/unexpected".to_string();
+        if build_receipt(&options).is_ok() {
+            cleanup(&root);
+            return Err("unexpected current head was accepted".to_string());
+        }
+        options.swarm_main = "refs/heads/main".to_string();
         let original_receipt =
             fs::read_to_string(&options.release_receipt).map_err(|error| error.to_string())?;
         fs::write(
@@ -842,14 +890,17 @@ mod tests {
             cleanup(&root);
             return Err("valid release evidence failed after restoration".to_string());
         }
-        fs::write(&options.policy_before, "allow_merge_commits = true\n")
+        fs::write(&options.policy_before, "{\"allow_merge_commits\":true}\n")
             .map_err(|error| error.to_string())?;
         if build_receipt(&options).is_ok() {
             cleanup(&root);
             return Err("non-disabled policy evidence was accepted".to_string());
         }
-        fs::write(&options.policy_before, "allow_merge_commits = false\n")
-            .map_err(|error| error.to_string())?;
+        fs::write(
+            &options.policy_before,
+            "{\"allow_merge_commits\":false,\"merge_commits_disabled\":true}\n",
+        )
+        .map_err(|error| error.to_string())?;
         options.policy_after = root.join("missing-policy-after");
         if build_receipt(&options).is_ok() {
             cleanup(&root);
@@ -957,10 +1008,21 @@ mod tests {
         let before = root.join("policy-before.txt");
         let exception = root.join("policy-exception.txt");
         let after = root.join("policy-after.txt");
-        fs::write(&before, "allow_merge_commits = false\n").map_err(|error| error.to_string())?;
-        fs::write(&exception, "temporary approved merge exception\n")
-            .map_err(|error| error.to_string())?;
-        fs::write(&after, "allow_merge_commits = false\n").map_err(|error| error.to_string())?;
+        fs::write(
+            &before,
+            "{\"allow_merge_commits\":false,\"merge_commits_disabled\":true}\n",
+        )
+        .map_err(|error| error.to_string())?;
+        fs::write(
+            &exception,
+            "{\"temporary\":true,\"approved\":true,\"scope\":\"single back-sync\"}\n",
+        )
+        .map_err(|error| error.to_string())?;
+        fs::write(
+            &after,
+            "{\"allow_merge_commits\":false,\"merge_commits_disabled\":true}\n",
+        )
+        .map_err(|error| error.to_string())?;
         let out = root.join("out");
         Ok((
             root,
@@ -998,7 +1060,8 @@ mod tests {
         fs::create_dir_all(root).map_err(|error| error.to_string())?;
         git(root, &["init", "--quiet"])?;
         git(root, &["config", "user.name", "test"])?;
-        git(root, &["config", "user.email", "test@example.invalid"])
+        git(root, &["config", "user.email", "test@example.invalid"])?;
+        Ok(())
     }
 
     fn commit_tree(root: &Path, tree: &str, parents: &[&str]) -> Result<String, String> {
