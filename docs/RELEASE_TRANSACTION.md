@@ -228,6 +228,17 @@ gh api "repos/EffortlessMetrics/ripr-swarm/rulesets/${PIN_RULESET_ID}" > "$PIN_R
 jq -e --arg tag "ripr-release-*" '(.target == "tag" and .enforcement == "active") and (any(.conditions.ref_name.include[]?; . == $tag)) and (any(.rules[]?; .type == "update")) and (any(.rules[]?; .type == "deletion"))' "$PIN_RULESET" >/dev/null
 ```
 
+```bash
+set -euo pipefail
+assert_live_pin_guard() {
+  test "$(git -C "$SWARM_ROOT" ls-remote origin "refs/tags/$PIN_TAG" | awk '{print $1}')" = "$SWARM_PARENT"
+  gh api "repos/EffortlessMetrics/ripr-swarm/rulesets/${PIN_RULESET_ID}" > "$PACKET_ROOT/pin-ruleset-live.json"
+  cmp "$PIN_RULESET" "$PACKET_ROOT/pin-ruleset-live.json"
+  test "$(sha256sum "$PACKET_ROOT/pin-ruleset-live.json" | awk '{print $1}')" = "$(sha256sum "$PIN_RULESET" | awk '{print $1}')"
+  test "$(sha256sum "$PACKET_ROOT/pin-remote.sha" | awk '{print $1}')" = "$PIN_DIGEST"
+}
+```
+
 The exact ruleset receipt is a prerequisite, not a suggestion. If the named
 active tag ruleset, its `ripr-release-*` pattern, or both update/deletion rules
 are absent, stop before W; do not substitute an unprotected custom ref.
@@ -243,6 +254,7 @@ git -C "$SWARM_ROOT" push origin "refs/tags/$PIN_TAG:refs/tags/$PIN_TAG"
 PIN_AFTER="$(git -C "$SWARM_ROOT" ls-remote origin "refs/tags/$PIN_TAG" | awk '{print $1}')"
 test "$PIN_AFTER" = "$SWARM_PARENT"
 printf '%s\n' "$PIN_AFTER" > "$PACKET_ROOT/pin-remote.sha"
+PIN_DIGEST="$(sha256sum "$PACKET_ROOT/pin-remote.sha" | awk '{print $1}')"
 ```
 
 ```bash
@@ -288,6 +300,7 @@ test "$(git -C "$QUAL_ROOT" rev-parse HEAD)" = "$SWARM_PARENT"
 ```bash
 set -euo pipefail
 # [LOCAL-MUTATING] repo=swarm qualification worktree; checks write local reports
+assert_live_pin_guard
 git -C "$QUAL_ROOT" status --short --branch
 git -C "$QUAL_ROOT" rev-parse HEAD
 (cd "$QUAL_ROOT" && cargo xtask check-pr)
@@ -295,9 +308,11 @@ git -C "$QUAL_ROOT" rev-parse HEAD
 (cd "$QUAL_ROOT" && cargo xtask check-doc-index)
 QUALIFICATION_RECEIPT="$PACKET_ROOT/hosted-qualification-receipt.json"
 QUALIFICATION_RUN_URL="${QUALIFICATION_RUN_URL:?set the routed hosted qualification URL}"
+QUALIFICATION_RUN_ID="${QUALIFICATION_RUN_ID:?set the hosted qualification run ID}"
 QUALIFICATION_HEAD_SHA="${QUALIFICATION_HEAD_SHA:?set the hosted qualification headSha}"
-jq -n --arg swarm "$SWARM_PARENT" --arg head "$QUALIFICATION_HEAD_SHA" --arg url "$QUALIFICATION_RUN_URL" '{schema_version: 1, swarm_parent: $swarm, headSha: $head, routed_ci_url: $url}' > "$QUALIFICATION_RECEIPT"
-jq -e --arg swarm "$SWARM_PARENT" --arg head "$SWARM_PARENT" '.swarm_parent == $swarm and .headSha == $head and (.routed_ci_url | startswith("https://"))' "$QUALIFICATION_RECEIPT" >/dev/null
+gh api "repos/EffortlessMetrics/ripr/actions/runs/${QUALIFICATION_RUN_ID}" > "$PACKET_ROOT/hosted-qualification-live.json"
+jq -n --arg swarm "$SWARM_PARENT" --arg head "$QUALIFICATION_HEAD_SHA" --arg url "$QUALIFICATION_RUN_URL" --arg id "$QUALIFICATION_RUN_ID" --slurpfile run "$PACKET_ROOT/hosted-qualification-live.json" '{schema_version: 1, swarm_parent: $swarm, headSha: $head, run_id: $id, routed_ci_url: $url, status: $run[0].status, conclusion: $run[0].conclusion}' > "$QUALIFICATION_RECEIPT"
+jq -e --arg swarm "$SWARM_PARENT" --arg head "$SWARM_PARENT" --arg id "$QUALIFICATION_RUN_ID" '.swarm_parent == $swarm and .headSha == $head and .run_id == $id and .status == "completed" and .conclusion == "success" and (.routed_ci_url | startswith("https://"))' "$QUALIFICATION_RECEIPT" >/dev/null
 ```
 
 A missing, timed-out, or differently headed hosted result is unavailable, not
@@ -311,6 +326,7 @@ resolution manifest; the automatic `preview_tree` is never substituted.
 set -euo pipefail
 # [LOCAL-MUTATING] repo=swarm operator checkout; preflight writes local receipts, no J
 JOIN_TREE="${JOIN_TREE:?set to the separately reviewed full resolved-tree SHA from the resolution manifest}"
+assert_live_pin_guard
 test -s "$QUALIFICATION_RECEIPT"
 jq -e --arg swarm "$SWARM_PARENT" '.swarm_parent == $swarm and .headSha == $swarm and (.routed_ci_url | startswith("https://"))' "$QUALIFICATION_RECEIPT" >/dev/null
 (cd "$SWARM_ROOT" && cargo xtask source-promotion preflight \
@@ -473,6 +489,7 @@ channels/order. If absent, stale, or silent, stop.
 ```bash
 set -euo pipefail
 # [LOCAL-MUTATING] repo=packet; capture #1470 authorization and public state
+assert_live_pin_guard
 AUTHORIZATION_RECEIPT="$PACKET_ROOT/publication-authorization.json"
 AUTHORIZATION_BODY="$PACKET_ROOT/publication-authorization.md"
 gh issue view 1470 --repo EffortlessMetrics/ripr --json state,title,body,url > "$AUTHORIZATION_RECEIPT"
@@ -685,7 +702,9 @@ POLICY_VALIDATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 POLICY_NOW_EPOCH="$(date -u -d "$POLICY_VALIDATED_AT" +%s)"
 POLICY_EXPIRES_AT="$(jq -r '.expires_at // empty' "$POLICY_APPROVAL")"
 printf '%s\n' "$POLICY_EXPIRES_AT" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(Z|[+-][0-9]{2}:[0-9]{2})$'
+printf '%s\n' "$POLICY_EXPIRES_AT" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
 POLICY_EXPIRES_EPOCH="$(date -u -d "$POLICY_EXPIRES_AT" +%s 2>/dev/null || true)"
+test "$(date -u -d "@$POLICY_EXPIRES_EPOCH" +%Y-%m-%dT%H:%M:%SZ)" = "$POLICY_EXPIRES_AT"
 test -n "$POLICY_EXPIRES_EPOCH"
 test "$POLICY_EXPIRES_EPOCH" -gt "$POLICY_NOW_EPOCH"
 jq -n --arg validated_at "$POLICY_VALIDATED_AT" --arg expires_at "$POLICY_EXPIRES_AT" --argjson validated_epoch "$POLICY_NOW_EPOCH" --argjson expires_epoch "$POLICY_EXPIRES_EPOCH" '{schema_version: 1, validated_at: $validated_at, expires_at: $expires_at, validated_epoch: $validated_epoch, expires_epoch: $expires_epoch}' > "$PACKET_ROOT/policy-approval-validation.json"
@@ -808,7 +827,7 @@ test "$(git -C "$SWARM_ROOT" rev-parse refs/remotes/origin/main)" = "$K"
 ```bash
 set -euo pipefail
 # [LOCAL-MUTATING] repo=packet; build exact before-state restoration request
-jq --argjson linear "$(jq -r '.required_linear_history.enabled' "$POLICY_BEFORE")" '.required_linear_history = $linear' "$POLICY_EXCEPTION_REQUEST" > "$POLICY_RESTORE_REQUEST"
+jq '{required_status_checks: (if .required_status_checks == null then null else {strict: .required_status_checks.strict, contexts: .required_status_checks.contexts, checks: .required_status_checks.checks} end), enforce_admins: .enforce_admins.enabled, required_pull_request_reviews: (if .required_pull_request_reviews == null then null else {dismiss_stale_reviews: .required_pull_request_reviews.dismiss_stale_reviews, require_code_owner_reviews: .required_pull_request_reviews.require_code_owner_reviews, required_approving_review_count: .required_pull_request_reviews.required_approving_review_count, require_last_push_approval: .required_pull_request_reviews.require_last_push_approval} end), restrictions: (if .restrictions == null then null else {users: .restrictions.users, teams: .restrictions.teams, apps: .restrictions.apps} end), required_linear_history: .required_linear_history.enabled, allow_force_pushes: .allow_force_pushes.enabled, allow_deletions: .allow_deletions.enabled, block_creations: .block_creations.enabled, required_conversation_resolution: .required_conversation_resolution.enabled, lock_branch: .lock_branch.enabled, allow_fork_syncing: .allow_fork_syncing.enabled}' "$POLICY_BEFORE" > "$POLICY_RESTORE_REQUEST"
 ```
 
 ```bash
@@ -820,7 +839,7 @@ gh api --method PUT repos/EffortlessMetrics/ripr-swarm/branches/main/protection 
 ```bash
 set -euo pipefail
 # [READ-ONLY] repo=swarm policy; prove normal enforcement is restored
-jq -e --slurpfile before "$POLICY_BEFORE" '.required_linear_history.enabled == ($before[0].required_linear_history.enabled) and .allow_force_pushes.enabled == false and .allow_deletions.enabled == false' "$POLICY_AFTER" >/dev/null
+jq -e --slurpfile before "$POLICY_BEFORE" '(.required_status_checks == $before[0].required_status_checks) and (.enforce_admins == $before[0].enforce_admins) and (.required_pull_request_reviews == $before[0].required_pull_request_reviews) and (.restrictions == $before[0].restrictions) and (.required_linear_history == $before[0].required_linear_history) and (.allow_force_pushes == $before[0].allow_force_pushes) and (.allow_deletions == $before[0].allow_deletions) and (.block_creations == $before[0].block_creations) and (.required_conversation_resolution == $before[0].required_conversation_resolution) and (.lock_branch == $before[0].lock_branch) and (.allow_fork_syncing == $before[0].allow_fork_syncing)' "$POLICY_AFTER" >/dev/null
 for ruleset_id in $ACTIVE_RULESET_IDS; do
   jq -S '{name,target,enforcement,conditions,rules}' "$PACKET_ROOT/ruleset-${ruleset_id}-before.json" > "$PACKET_ROOT/ruleset-${ruleset_id}-before-shape.json"
   jq -S '{name,target,enforcement,conditions,rules}' "$PACKET_ROOT/ruleset-${ruleset_id}-after.json" > "$PACKET_ROOT/ruleset-${ruleset_id}-after-shape.json"
