@@ -744,17 +744,16 @@ fn parse_merge_tree_output(stdout: &[u8]) -> Result<(String, Vec<String>), Strin
         .map_err(|error| format!("disposable git merge-tree returned a non-UTF-8 tree: {error}"))?
         .trim()
         .to_string();
-    let mut conflicts = fields
-        .filter(|field| !field.is_empty())
-        .map(|field| {
+    let mut conflicts = Vec::new();
+    for field in fields.take_while(|field| !field.is_empty()) {
+        conflicts.push(
             std::str::from_utf8(field)
                 .map(str::to_string)
                 .map_err(|error| {
                     format!("disposable git merge-tree returned a non-UTF-8 path: {error}")
-                })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    conflicts.retain(|path| !path.is_empty());
+                })?,
+        );
+    }
     conflicts.sort();
     conflicts.dedup();
     Ok((tree, conflicts))
@@ -1062,7 +1061,7 @@ mod tests {
     fn merge_tree_z_output_preserves_conflict_paths() -> Result<(), String> {
         let tree = "0123456789abcdef0123456789abcdef01234567";
         let output = format!(
-            "{tree}\0shared.txt\0nested/conflict.rs\0shared.txt\0 leading-and-trailing \0"
+            "{tree}\0shared.txt\0nested/conflict.rs\0shared.txt\0 leading-and-trailing \0\01\0shared.txt\0Auto-merging\0"
         );
         let (parsed_tree, paths) = parse_merge_tree_output(output.as_bytes())?;
         if parsed_tree != tree
@@ -1649,7 +1648,9 @@ mod tests {
             .find("## Source survivors")
             .ok_or_else(|| "Markdown omitted the named source-survivors section".to_string())?;
         if conflicts == 0 || source_survivors <= dry_merge {
-            return Err("Markdown named fields were not rendered in their governed sections".to_string());
+            return Err(
+                "Markdown named fields were not rendered in their governed sections".to_string(),
+            );
         }
         if test_git_output(&source, &["rev-parse", "HEAD"])? != source_head_before
             || test_git_output(&swarm, &["rev-parse", "HEAD"])? != swarm_head_before
