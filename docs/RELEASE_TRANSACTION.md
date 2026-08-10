@@ -79,6 +79,21 @@ wait_for_run_success() {
     sleep 15
   done
 }
+bind_new_dispatch_run() {
+  before_file="$1"
+  after_file="$2"
+  sha="$3"
+  ref="$4"
+  since="$5"
+  jq -n --slurpfile before "$before_file" --slurpfile after "$after_file" \
+    --arg sha "$sha" --arg ref "$ref" --arg since "$since" '
+    ($before[0] | map(.id)) as $old_ids |
+    [$after[0][] | .id as $run_id | select(.head_sha == $sha and .head_branch == $ref and
+      .event == "workflow_dispatch" and .created_at >= $since and
+      (($old_ids | index($run_id)) | not))] | unique_by(.id)' > "${after_file%.json}-new.json"
+  test "$(jq 'length' "${after_file%.json}-new.json")" = 1
+  jq -r '.[0].id' "${after_file%.json}-new.json"
+}
 ```
 
 Historical candidate-only `C -> T`, hard-cut, replacement-freeze, and
@@ -448,14 +463,14 @@ test "$(gh release view "v${VERSION}" --repo EffortlessMetrics/ripr --json isDra
 DISPATCHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 RELEASE_REF="v${VERSION}"
 test "$(gh api "repos/EffortlessMetrics/ripr/git/ref/tags/${RELEASE_REF}" --jq .object.sha)" = "$SOURCE_RELEASE_HEAD"
+gh api --paginate --slurp "repos/EffortlessMetrics/ripr/actions/workflows/release-server-binaries.yml/runs?per_page=100&event=workflow_dispatch" | jq '[.[] | .workflow_runs[]]' > "$PACKET_ROOT/server-runs-before.json"
 gh workflow run release-server-binaries.yml --repo EffortlessMetrics/ripr --ref "$RELEASE_REF" -f version="$VERSION"
 ```
 
 ```bash
 # [LOCAL-MUTATING] repo=packet; paginate and bind the dispatched server run
-gh api --paginate --slurp "repos/EffortlessMetrics/ripr/actions/workflows/release-server-binaries.yml/runs?per_page=100&event=workflow_dispatch" | jq '[.[] | .workflow_runs[]]' > "$PACKET_ROOT/server-runs.json"
-SERVER_RUN_ID="$(jq -r --arg sha "$SOURCE_RELEASE_HEAD" --arg since "$DISPATCHED_AT" '[.[] | select(.head_sha == $sha and .event == "workflow_dispatch" and .created_at >= $since)] | sort_by(.created_at) | last | .id // empty' "$PACKET_ROOT/server-runs.json")"
-test -n "$SERVER_RUN_ID"
+gh api --paginate --slurp "repos/EffortlessMetrics/ripr/actions/workflows/release-server-binaries.yml/runs?per_page=100&event=workflow_dispatch" | jq '[.[] | .workflow_runs[]]' > "$PACKET_ROOT/server-runs-after.json"
+SERVER_RUN_ID="$(bind_new_dispatch_run "$PACKET_ROOT/server-runs-before.json" "$PACKET_ROOT/server-runs-after.json" "$SOURCE_RELEASE_HEAD" "$RELEASE_REF" "$DISPATCHED_AT")"
 wait_for_run_success "$SERVER_RUN_ID"
 gh run view "$SERVER_RUN_ID" --repo EffortlessMetrics/ripr --json databaseId,headSha,status,conclusion,url > "$PACKET_ROOT/server-run-receipt.json"
 jq -e --arg sha "$SOURCE_RELEASE_HEAD" '.headSha == $sha and .status == "completed" and .conclusion == "success"' "$PACKET_ROOT/server-run-receipt.json" >/dev/null
@@ -464,14 +479,14 @@ jq -e --arg sha "$SOURCE_RELEASE_HEAD" '.headSha == $sha and .status == "complet
 ```bash
 # [EXTERNAL-PUBLISHING] repo=source; explicit #1470 VS Marketplace authorization only
 DISPATCHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+gh api --paginate --slurp "repos/EffortlessMetrics/ripr/actions/workflows/publish-extension.yml/runs?per_page=100&event=workflow_dispatch" | jq '[.[] | .workflow_runs[]]' > "$PACKET_ROOT/extension-runs-before.json"
 gh workflow run publish-extension.yml --repo EffortlessMetrics/ripr --ref "$RELEASE_REF" -f version="$VERSION" -f publish_vs_marketplace=true -f publish_open_vsx=false
 ```
 
 ```bash
 # [LOCAL-MUTATING] repo=packet; paginate and bind the dispatched VS Marketplace run
-gh api --paginate --slurp "repos/EffortlessMetrics/ripr/actions/workflows/publish-extension.yml/runs?per_page=100&event=workflow_dispatch" | jq '[.[] | .workflow_runs[]]' > "$PACKET_ROOT/extension-runs.json"
-EXTENSION_RUN_ID="$(jq -r --arg sha "$SOURCE_RELEASE_HEAD" --arg since "$DISPATCHED_AT" '[.[] | select(.head_sha == $sha and .event == "workflow_dispatch" and .created_at >= $since)] | sort_by(.created_at) | last | .id // empty' "$PACKET_ROOT/extension-runs.json")"
-test -n "$EXTENSION_RUN_ID"
+gh api --paginate --slurp "repos/EffortlessMetrics/ripr/actions/workflows/publish-extension.yml/runs?per_page=100&event=workflow_dispatch" | jq '[.[] | .workflow_runs[]]' > "$PACKET_ROOT/extension-runs-after.json"
+EXTENSION_RUN_ID="$(bind_new_dispatch_run "$PACKET_ROOT/extension-runs-before.json" "$PACKET_ROOT/extension-runs-after.json" "$SOURCE_RELEASE_HEAD" "$RELEASE_REF" "$DISPATCHED_AT")"
 wait_for_run_success "$EXTENSION_RUN_ID"
 gh run view "$EXTENSION_RUN_ID" --repo EffortlessMetrics/ripr --json databaseId,headSha,status,conclusion,url > "$PACKET_ROOT/vs-marketplace-run-receipt.json"
 jq -e --arg sha "$SOURCE_RELEASE_HEAD" '.headSha == $sha and .status == "completed" and .conclusion == "success"' "$PACKET_ROOT/vs-marketplace-run-receipt.json" >/dev/null
@@ -480,14 +495,14 @@ jq -e --arg sha "$SOURCE_RELEASE_HEAD" '.headSha == $sha and .status == "complet
 ```bash
 # [EXTERNAL-PUBLISHING] repo=source; explicit #1470 Open VSX authorization only
 DISPATCHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+gh api --paginate --slurp "repos/EffortlessMetrics/ripr/actions/workflows/publish-extension.yml/runs?per_page=100&event=workflow_dispatch" | jq '[.[] | .workflow_runs[]]' > "$PACKET_ROOT/extension-runs-open-vsx-before.json"
 gh workflow run publish-extension.yml --repo EffortlessMetrics/ripr --ref "$RELEASE_REF" -f version="$VERSION" -f publish_vs_marketplace=false -f publish_open_vsx=true
 ```
 
 ```bash
 # [LOCAL-MUTATING] repo=packet; paginate and bind the dispatched Open VSX run
-gh api --paginate --slurp "repos/EffortlessMetrics/ripr/actions/workflows/publish-extension.yml/runs?per_page=100&event=workflow_dispatch" | jq '[.[] | .workflow_runs[]]' > "$PACKET_ROOT/extension-runs-open-vsx.json"
-OPENVSX_RUN_ID="$(jq -r --arg sha "$SOURCE_RELEASE_HEAD" --arg since "$DISPATCHED_AT" '[.[] | select(.head_sha == $sha and .event == "workflow_dispatch" and .created_at >= $since)] | sort_by(.created_at) | last | .id // empty' "$PACKET_ROOT/extension-runs-open-vsx.json")"
-test -n "$OPENVSX_RUN_ID"
+gh api --paginate --slurp "repos/EffortlessMetrics/ripr/actions/workflows/publish-extension.yml/runs?per_page=100&event=workflow_dispatch" | jq '[.[] | .workflow_runs[]]' > "$PACKET_ROOT/extension-runs-open-vsx-after.json"
+OPENVSX_RUN_ID="$(bind_new_dispatch_run "$PACKET_ROOT/extension-runs-open-vsx-before.json" "$PACKET_ROOT/extension-runs-open-vsx-after.json" "$SOURCE_RELEASE_HEAD" "$RELEASE_REF" "$DISPATCHED_AT")"
 wait_for_run_success "$OPENVSX_RUN_ID"
 gh run view "$OPENVSX_RUN_ID" --repo EffortlessMetrics/ripr --json databaseId,headSha,status,conclusion,url > "$PACKET_ROOT/open-vsx-run-receipt.json"
 jq -e --arg sha "$SOURCE_RELEASE_HEAD" '.headSha == $sha and .status == "completed" and .conclusion == "success"' "$PACKET_ROOT/open-vsx-run-receipt.json" >/dev/null
@@ -579,6 +594,13 @@ test -s "$POLICY_APPROVAL"
 POLICY_OWNER_LOGIN="${POLICY_OWNER_LOGIN:?set the expected approving owner login}"
 test "$(gh api user --jq .login)" = "$POLICY_OWNER_LOGIN"
 POLICY_BEFORE_SHA="$(sha256sum "$POLICY_BEFORE" | awk '{print $1}')"
+POLICY_VALIDATED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+POLICY_NOW_EPOCH="$(date -u -d "$POLICY_VALIDATED_AT" +%s)"
+POLICY_EXPIRES_AT="$(jq -r '.expires_at // empty' "$POLICY_APPROVAL")"
+POLICY_EXPIRES_EPOCH="$(date -u -d "$POLICY_EXPIRES_AT" +%s 2>/dev/null || true)"
+test -n "$POLICY_EXPIRES_EPOCH"
+test "$POLICY_EXPIRES_EPOCH" -gt "$POLICY_NOW_EPOCH"
+jq -n --arg validated_at "$POLICY_VALIDATED_AT" --arg expires_at "$POLICY_EXPIRES_AT" --argjson validated_epoch "$POLICY_NOW_EPOCH" --argjson expires_epoch "$POLICY_EXPIRES_EPOCH" '{schema_version: 1, validated_at: $validated_at, expires_at: $expires_at, validated_epoch: $validated_epoch, expires_epoch: $expires_epoch}' > "$PACKET_ROOT/policy-approval-validation.json"
 jq -e --arg owner "$POLICY_OWNER_LOGIN" --arg version "$VERSION" --arg swarm "$SWARM_BEFORE" --arg source "$SOURCE_RELEASE_HEAD" --arg before_sha "$POLICY_BEFORE_SHA" '
   .schema_version == 1 and .approval_issue == 3104 and
   .owner.login == $owner and .approved_for == "ancestry-preserving-back-sync" and
