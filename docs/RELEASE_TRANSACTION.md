@@ -605,7 +605,7 @@ the before response as the effective exception without changing settings.
 jq '{
   required_status_checks: (if .required_status_checks == null then null else {strict: .required_status_checks.strict, contexts: .required_status_checks.contexts, checks: .required_status_checks.checks} end),
   enforce_admins: .enforce_admins.enabled,
-  required_pull_request_reviews: (if .required_pull_request_reviews == null then null else {dismiss_stale_reviews: .required_pull_request_reviews.dismiss_stale_reviews, require_code_owner_reviews: .required_pull_request_reviews.require_code_owner_reviews, required_approving_review_count: .required_pull_request_reviews.required_approving_review_count, require_last_push_approval: .required_pull_request_reviews.require_last_push_approval} end),
+  required_pull_request_reviews: null,
   restrictions: (if .restrictions == null then null else {users: .restrictions.users, teams: .restrictions.teams, apps: .restrictions.apps} end),
   required_linear_history: false,
   allow_force_pushes: .allow_force_pushes.enabled,
@@ -634,11 +634,18 @@ done
 Each active ruleset is reviewed as a separate protection layer. A ruleset may
 be listed as unchanged in the owner receipt, but a layer that blocks the exact
 K direct update requires its own owner-created PUT payload and temporary
-response. No unrelated rule may be weakened.
+response. The branch exception clears only the main-branch pull-request review
+requirement needed for this direct K update; required status checks, force-push
+protection, deletion protection, and every unrelated rule remain enabled. No
+unrelated rule may be weakened.
 
 ```bash
 # [READ-ONLY] repo=swarm policy; verify effective exception before K transport
 jq -e '.required_linear_history.enabled == false and .allow_force_pushes.enabled == false and .allow_deletions.enabled == false' "$POLICY_EXCEPTION" >/dev/null
+jq -e '.required_pull_request_reviews == null' "$POLICY_EXCEPTION" >/dev/null
+for ruleset_id in $ACTIVE_RULESET_IDS; do
+  test -s "$PACKET_ROOT/ruleset-${ruleset_id}-exception.json"
+done
 ```
 
 Restore the recorded before-state immediately after transport. Never
@@ -665,6 +672,8 @@ the owner login is also checked against the authenticated `gh api user`:
 
 ```bash
 # [EXTERNAL-PUBLISHING] repo=swarm remote/policy; owner-approved K transport only
+git -C "$SWARM_ROOT" fetch origin main
+test "$(git -C "$SWARM_ROOT" rev-parse refs/remotes/origin/main)" = "$SWARM_BEFORE"
 git -C "$SWARM_ROOT" push origin "back-sync/${VERSION}:refs/heads/main"
 for ruleset_id in $ACTIVE_RULESET_IDS; do
   RULESET_BEFORE_REQUEST="$PACKET_ROOT/ruleset-${ruleset_id}-before-request.json"
