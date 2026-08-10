@@ -1014,7 +1014,7 @@ mod tests {
             (".github/workflows/routed-rust.yml", "name: routed\n"),
             ("policy/process_allowlist.txt", "merge_commits = false\n"),
             ("CHANGELOG.md", "## 0.11.0\n"),
-            ("docs/RELEASE.md", "0.11.0 release\n"),
+            ("docs/RELEASE.md", "## 0.11.0\nrelease evidence\n"),
         ] {
             let path = source.join(path);
             if let Some(parent) = path.parent() {
