@@ -617,7 +617,7 @@ fn source_authority_paths_changed(
     let mut active = lines(git(root, &["diff", "--name-status", before, join])?)
         .into_iter()
         .filter_map(|entry| {
-            let mut parts = entry.splitn(2, '\t');
+            let mut parts = entry.split_whitespace();
             let status = parts.next().unwrap_or_default();
             let path = parts.next().unwrap_or_default().to_string();
             if status == "D" {
@@ -855,6 +855,7 @@ mod tests {
     #[test]
     fn synthetic_graph_adversarial_cases_invoke_verifier() -> Result<(), String> {
         let (root, mut options) = verifier_fixture("back-sync-adversarial")?;
+        let _cleanup = Cleanup(root.clone());
         let valid = build_receipt(&options)?;
         if valid.join_parents
             != vec![
@@ -870,7 +871,10 @@ mod tests {
         let tree = options.tree.clone();
         let single = commit_tree(&root.join("swarm"), &tree, &[&options.swarm_before])?;
         options.join = single;
-        if build_receipt(&options).is_ok() {
+        if !build_receipt(&options)
+            .expect_err("single-parent K unexpectedly accepted")
+            .contains("exactly two parents")
+        {
             cleanup(&root);
             return Err("single-parent K was accepted by verifier".to_string());
         }
@@ -880,13 +884,25 @@ mod tests {
             &[&options.source_release_head, &options.swarm_before],
         )?;
         options.join = reversed;
-        if build_receipt(&options).is_ok() {
+        if !build_receipt(&options)
+            .expect_err("reversed-parent K unexpectedly accepted")
+            .contains("K parents must be")
+        {
             cleanup(&root);
             return Err("reversed-parent K was accepted by verifier".to_string());
         }
         options.join = valid.join.clone();
-        options.tree = "0000000000000000000000000000000000000000".to_string();
-        if build_receipt(&options).is_ok() {
+        options.tree = git(
+            &root.join("source"),
+            &[
+                "rev-parse",
+                &format!("{}^{{tree}}", options.source_release_head),
+            ],
+        )?;
+        if !build_receipt(&options)
+            .expect_err("wrong-tree K unexpectedly accepted")
+            .contains("does not match reviewed tree")
+        {
             cleanup(&root);
             return Err("wrong-tree K was accepted by verifier".to_string());
         }
@@ -1120,5 +1136,13 @@ mod tests {
 
     fn cleanup(root: &Path) {
         let _ = fs::remove_dir_all(root);
+    }
+
+    struct Cleanup(PathBuf);
+
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            cleanup(&self.0);
+        }
     }
 }
