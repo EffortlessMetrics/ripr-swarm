@@ -361,6 +361,7 @@ Use its verifier and receipt; this runbook does not duplicate its semantics.
 ```bash
 set -euo pipefail
 # [LOCAL-MUTATING] repo=source promotion checkout; construct reviewed J
+assert_live_pin_guard
 git -C "$SOURCE_ROOT" fetch "$SWARM_ORIGIN" "$SWARM_PARENT"
 test "$(git -C "$SOURCE_ROOT" rev-parse "$SWARM_PARENT^{commit}")" = "$SWARM_PARENT"
 git -C "$SOURCE_ROOT" switch -c "promote/${VERSION}-swarm" "$SOURCE_PARENT"
@@ -391,6 +392,7 @@ test -n "$SOURCE_PROMOTION_PR"
 ```bash
 set -euo pipefail
 # [READ-ONLY] repo=source promotion checkout; exact J shape/tree/ancestry
+assert_live_pin_guard
 test "$(git -C "$SOURCE_ROOT" show -s --format='%P' "$J" | awk '{print NF}')" -eq 2
 test "$(git -C "$SOURCE_ROOT" show -s --format='%P' "$J" | awk '{print $1}')" = "$SOURCE_PARENT"
 test "$(git -C "$SOURCE_ROOT" show -s --format='%P' "$J" | awk '{print $2}')" = "$SWARM_PARENT"
@@ -413,12 +415,14 @@ test "$(git -C "$SOURCE_ROOT" rev-parse refs/remotes/origin/main)" = "$SOURCE_PA
 ```bash
 set -euo pipefail
 # [EXTERNAL-PUBLISHING] repo=source PR; merge only reviewed J with expected head
+assert_live_pin_guard
 gh pr merge "$SOURCE_PROMOTION_PR" --repo EffortlessMetrics/ripr --merge --match-head-commit "$J"
 ```
 
 ```bash
 set -euo pipefail
 # [LOCAL-MUTATING] repo=source remote; fetch and bind source main to the new merge result
+assert_live_pin_guard
 git -C "$SOURCE_ROOT" fetch origin main
 SOURCE_JOIN_HEAD="$(git -C "$SOURCE_ROOT" rev-parse refs/remotes/origin/main)"
 test "$SOURCE_JOIN_HEAD" != "$J"
@@ -513,6 +517,7 @@ require #1470; they are not permission to publish from this documentation PR.
 ```bash
 set -euo pipefail
 # [EXTERNAL-PUBLISHING] repo=source; explicit #1470 crate/tag authorization only
+assert_live_pin_guard
 test -z "$(git -C "$SOURCE_ROOT" ls-remote origin "refs/tags/v${VERSION}" | awk '{print $1}')"
 git -C "$SOURCE_ROOT" push origin "$SOURCE_RELEASE_HEAD:refs/tags/v${VERSION}"
 ```
@@ -539,6 +544,7 @@ curl -fsSL -A "ripr-release-transaction/${VERSION} (+https://github.com/Effortle
 ```bash
 set -euo pipefail
 # [EXTERNAL-PUBLISHING] repo=source; explicit #1470 GitHub-release authorization only
+assert_live_pin_guard
 gh release create "v${VERSION}" --repo EffortlessMetrics/ripr --target "$SOURCE_RELEASE_HEAD" --title "ripr ${VERSION}" --notes-file "$RELEASE_NOTES"
 ```
 
@@ -656,6 +662,7 @@ test "$(git -C "$SOURCE_ROOT" rev-parse "$SOURCE_RELEASE_HEAD^{commit}")" = "$SO
 ```bash
 set -euo pipefail
 # [LOCAL-MUTATING] repo=swarm back-sync checkout; construct reviewed K
+assert_live_pin_guard
 git -C "$SWARM_ROOT" fetch "$SOURCE_ORIGIN" "$SOURCE_RELEASE_HEAD"
 test "$(git -C "$SWARM_ROOT" rev-parse "$SOURCE_RELEASE_HEAD^{commit}")" = "$SOURCE_RELEASE_HEAD"
 git -C "$SWARM_ROOT" switch -c "back-sync/${VERSION}" "$SWARM_BEFORE"
@@ -758,9 +765,9 @@ fi
 for ruleset_id in $ACTIVE_RULESET_IDS; do
   RULESET_EXCEPTION_REQUEST="$PACKET_ROOT/ruleset-${ruleset_id}-exception-request.json"
   test -s "$RULESET_EXCEPTION_REQUEST"
-  jq -e --slurpfile before "$PACKET_ROOT/ruleset-${ruleset_id}-before.json" '(.name == $before[0].name and .target == $before[0].target and .conditions == $before[0].conditions)' "$RULESET_EXCEPTION_REQUEST" >/dev/null
+  jq -e --slurpfile before "$PACKET_ROOT/ruleset-${ruleset_id}-before.json" '((del(.rules) == ($before[0] | del(.rules))) and (.rules | type == "array"))' "$RULESET_EXCEPTION_REQUEST" >/dev/null
   gh api --method PUT "repos/EffortlessMetrics/ripr-swarm/rulesets/${ruleset_id}" --input "$RULESET_EXCEPTION_REQUEST" > "$PACKET_ROOT/ruleset-${ruleset_id}-exception.json"
-  jq -e --slurpfile before "$PACKET_ROOT/ruleset-${ruleset_id}-before.json" '.name == $before[0].name and .target == $before[0].target' "$PACKET_ROOT/ruleset-${ruleset_id}-exception.json" >/dev/null
+  jq -e --slurpfile before "$PACKET_ROOT/ruleset-${ruleset_id}-before.json" '((del(.rules) == ($before[0] | del(.rules))) and (.rules | type == "array"))' "$PACKET_ROOT/ruleset-${ruleset_id}-exception.json" >/dev/null
 done
 ```
 
