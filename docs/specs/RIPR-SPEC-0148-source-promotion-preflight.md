@@ -82,8 +82,9 @@ It does not create a join or modify either authoritative checkout.
 - JSON and Markdown are deterministic projections with no temporary path or
   capture timestamp;
 - exact-parent version observations include Cargo.lock ripr and npm lock root;
-- invalidation rules name each source/swarm parent and declared main, immutable
-  ref resolution, identity, ancestry, digest, conflict, and tree changes.
+- invalidation rules name changes to the source parent, swarm parent, declared
+  main, immutable ref resolution, identity, ancestry, digest, conflict, and
+  tree.
 
 ## Non-Goals
 
