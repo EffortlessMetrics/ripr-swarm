@@ -46624,8 +46624,10 @@ fn check_pr_report_publication_failure_is_distinguishable() {
 
     assert!(
         matches!(result, Err(ref err) if err.contains("gate-a")
+            && err.contains("reproduce: run a")
+            && err.contains("gate exploded")
             && err.contains("disk full")
             && err.contains("publishing the failure report also failed")),
-        "a failed gate plus failed report publication must stay distinguishable: {result:?}"
+        "a failed gate plus failed report publication must stay distinguishable and preserve the gate diagnostic and reproduce command: {result:?}"
     );
 }

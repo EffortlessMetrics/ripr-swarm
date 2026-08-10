@@ -813,8 +813,10 @@ struct CheckPrGateFailure {
 /// Run the gates in order and stop at the first failure (#3036). On failure,
 /// the current failure report is published via `write_failure_report` before
 /// the labeled gate error is returned; a report-publication failure is
-/// returned as a distinct error so "gate failed" and "report failed" are
-/// never conflated.
+/// returned as a distinct error that still carries the original gate
+/// diagnostic and reproduce command, so "gate failed" and "report failed"
+/// are never conflated and no failure evidence is discarded precisely when
+/// it is most needed.
 fn run_check_pr_gates(
     gates: &[CheckPrGate],
     write_failure_report: &dyn Fn(&CheckPrGateFailure) -> Result<(), String>,
@@ -832,8 +834,8 @@ fn run_check_pr_gates(
             };
             write_failure_report(&failure).map_err(|write_err| {
                 format!(
-                    "check-pr gate `{}` failed, and publishing the failure report also failed: {write_err}",
-                    gate.name
+                    "check-pr gate `{}` failed, and publishing the failure report also failed: {write_err}\nreproduce: {}\n{err}",
+                    gate.name, gate.reproduce
                 )
             })?;
             return label_check_pr_gate(gate.name, gate.reproduce, Err(err));
