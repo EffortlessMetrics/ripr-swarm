@@ -1374,7 +1374,7 @@ mod tests {
         fs::write(source.join("reviewed.txt"), "reviewed\n").map_err(|error| error.to_string())?;
         test_git(&source, &["add", "reviewed.txt"])?;
         let reviewed_tree = test_git_output(&source, &["write-tree"])?;
-        if verify_tree_object(&source, &reviewed_tree)? != true {
+        if !verify_tree_object(&source, &reviewed_tree)? {
             return Err("write-tree did not create a source object-store tree".to_string());
         }
         fs::write(swarm.join("swarm.txt"), "swarm\n").map_err(|error| error.to_string())?;
