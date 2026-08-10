@@ -893,8 +893,13 @@ mod tests {
             return Err("reversed-parent K was accepted by verifier".to_string());
         }
         options.join = valid.join.clone();
+        let swarm = root.join("swarm");
+        fs::write(swarm.join("wrong-tree-marker"), "alternate reviewed tree\n")
+            .map_err(|error| error.to_string())?;
+        git(&swarm, &["add", "wrong-tree-marker"])?;
+        git(&swarm, &["commit", "--quiet", "-m", "alternate tree"])?;
         options.tree = git(
-            &root.join("source"),
+            &swarm,
             &[
                 "rev-parse",
                 &format!("{}^{{tree}}", options.source_release_head),
