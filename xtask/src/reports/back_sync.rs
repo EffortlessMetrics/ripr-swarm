@@ -347,7 +347,7 @@ fn build_receipt(options: &Options) -> Result<Receipt, String> {
         &options.join,
         "docs/RELEASE.md",
         &options.version,
-    );
+    )?;
     if !changelog_reachable || !release_doc_reachable {
         return Err("K must retain version-bound CHANGELOG.md and docs/RELEASE.md".to_string());
     }
