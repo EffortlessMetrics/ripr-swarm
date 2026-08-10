@@ -36,16 +36,36 @@ rejects source publication workflow/settings paths changed into K. The
 verifier reads these inputs and never mutates refs, branch protection,
 repository settings, tags, releases, publication channels, or metadata.
 
-## Non-goals
+## Non-Goals
 
 - merge construction, cherry-pick, squash, rebase, force-push, or transport;
 - source-side exact-`J` verification;
 - policy mutation, publication, signing, or release action;
 - a claim of release correctness or artifact adequacy.
 
-## Proof mapping
+## Acceptance Examples
+
+- Accept a candidate whose exact parents are `[SWARM_BEFORE,
+  SOURCE_RELEASE_HEAD]`, whose tree equals `BACK_SYNC_TREE`, and whose
+  structured receipts and policy evidence match those exact values.
+- Reject a single-parent, reversed-parent, wrong-tree, unexpected-head, stale
+  receipt, malformed-policy, or source-publication-authority candidate.
+
+## Test Mapping
+
+- `xtask/src/reports/back_sync.rs::synthetic_graph_adversarial_cases_invoke_verifier`
+  invokes the verifier for the valid and adversarial graph/evidence cases.
+
+## Implementation Mapping
 
 - `xtask/src/reports/back_sync.rs` contains exact-input validation, receipt
-  rendering, and synthetic single-parent/ordered-join graph tests.
+  rendering, policy parsing, authority checks, and synthetic Git fixtures.
 - `docs/BACK_SYNC_VERIFIER.md` contains the repeatable operator command.
 - `docs/RELEASE.md` and `docs/swarm-development.md` define the J/K boundary.
+
+## Metrics
+
+The verifier emits deterministic JSON and Markdown receipts containing the
+exact input SHAs, parent order, tree comparison, reachability results, policy
+evidence hashes, and source-authority findings. It reports no release or
+publication success metric; those actions are explicitly outside its scope.
