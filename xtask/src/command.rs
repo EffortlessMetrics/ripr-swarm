@@ -1000,6 +1000,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Validates exact source/swarm parents, repository identity and reachability, deterministic ancestry counts/digests, and a disposable merge-tree conflict inventory; it never mutates either repository, constructs a join, changes versions, or publishes.",
         ),
         command_entry(
+            "back-sync verify --swarm-before <sha> --source-release-head <sha> --source-release-tag <tag> --join <sha> --tree <tree-sha> --swarm-repo <path> --source-repo <path> --version <version> [--swarm-main <rev>] [--source-main <rev>] [--release-receipt <path>] [--policy-before <path>] [--policy-exception <path>] [--policy-after <path>] [--out <dir>]",
+            "external_state_read",
+            "<out>/back-sync-verification.{json,md}",
+            true,
+            false,
+            "Verifies the exact ancestry-preserving source-to-swarm back-sync object, release tag and policy-transition evidence; it writes only deterministic receipts and never mutates repository refs, settings, or publication state.",
+        ),
+        command_entry(
             "release-scope --input <scope.json>",
             "report_only",
             "target/ripr/reports/release-scope.{json,md}",
