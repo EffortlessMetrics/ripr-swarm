@@ -47,7 +47,7 @@ continuing. The paths below are packet-local and are not repository authority.
 ```bash
 # [LOCAL-MUTATING] repo=operator checkout; initialize transaction packet paths
 VERSION=0.11.0
-PACKET_ROOT="target/ripr/release-transaction/${VERSION}"
+PACKET_ROOT="$(pwd)/target/ripr/release-transaction/${VERSION}"
 mkdir -p "$PACKET_ROOT"
 RELEASE_NOTES="$PACKET_ROOT/release-notes.md"
 PUBLICATION_RECEIPT="$PACKET_ROOT/publication-receipt.json"
@@ -63,6 +63,22 @@ SOURCE_ROOT="${SOURCE_ROOT:?set to the absolute path of a fresh ripr checkout}"
 SWARM_ROOT="${SWARM_ROOT:?set to the absolute path of a fresh ripr-swarm checkout}"
 test "$(git -C "$SOURCE_ROOT" rev-parse --is-inside-work-tree)" = true
 test "$(git -C "$SWARM_ROOT" rev-parse --is-inside-work-tree)" = true
+RUN_WAIT_SECONDS=1800
+wait_for_run_success() {
+  run_id="$1"
+  deadline=$(( $(date +%s) + RUN_WAIT_SECONDS ))
+  while true; do
+    run_state="$(gh run view "$run_id" --repo EffortlessMetrics/ripr --json status,conclusion --jq '[.status, (.conclusion // "")] | @tsv')"
+    status="${run_state%%$'\t'*}"
+    conclusion="${run_state#*$'\t'}"
+    if test "$status" = completed; then
+      test "$conclusion" = success
+      return 0
+    fi
+    test "$(date +%s)" -lt "$deadline" || { echo "workflow $run_id did not complete within $RUN_WAIT_SECONDS seconds" >&2; return 1; }
+    sleep 15
+  done
+}
 ```
 
 Historical candidate-only `C -> T`, hard-cut, replacement-freeze, and
@@ -221,9 +237,9 @@ test "$(git -C "$QUAL_ROOT" rev-parse HEAD)" = "$SWARM_PARENT"
 # [LOCAL-MUTATING] repo=swarm qualification worktree; checks write local reports
 git -C "$QUAL_ROOT" status --short --branch
 git -C "$QUAL_ROOT" rev-parse HEAD
-cargo xtask check-pr
-cargo xtask check-generated-clean
-cargo xtask check-doc-index
+(cd "$QUAL_ROOT" && cargo xtask check-pr)
+(cd "$QUAL_ROOT" && cargo xtask check-generated-clean)
+(cd "$QUAL_ROOT" && cargo xtask check-doc-index)
 ```
 
 A missing, timed-out, or differently headed hosted result is unavailable, not
@@ -236,12 +252,12 @@ resolution manifest; the automatic `preview_tree` is never substituted.
 ```bash
 # [LOCAL-MUTATING] repo=swarm operator checkout; preflight writes local receipts, no J
 JOIN_TREE="${JOIN_TREE:?set to the separately reviewed full resolved-tree SHA from the resolution manifest}"
-cargo xtask source-promotion preflight \
+(cd "$SWARM_ROOT" && cargo xtask source-promotion preflight \
   --source-parent "$SOURCE_PARENT" --swarm-parent "$SWARM_PARENT" \
   --swarm-ref "$SWARM_REF" --source-repo "$SOURCE_ROOT" --swarm-repo "$SWARM_ROOT" \
   --source-main "$SOURCE_PARENT" --swarm-main "$SWARM_PARENT" \
   --version "$VERSION" --resolved-tree "$JOIN_TREE" \
-  --out "target/ripr/release-transaction/$VERSION/source-promotion"
+  --out "$PACKET_ROOT/source-promotion")
 PREFLIGHT_JSON="$PACKET_ROOT/source-promotion/source-promotion-preflight.json"
 test "$(jq -r '.dry_merge.reviewed_resolved_tree // empty' "$PREFLIGHT_JSON")" = "$JOIN_TREE"
 ```
@@ -277,6 +293,16 @@ J="$(git -C "$SOURCE_ROOT" rev-parse HEAD)"
 ```
 
 ```bash
+# [EXTERNAL-PUBLISHING] repo=source; publish the reviewed promotion branch
+git -C "$SOURCE_ROOT" push origin "promote/${VERSION}-swarm:refs/heads/promote/${VERSION}-swarm"
+REMOTE_PROMOTION_HEAD="$(git -C "$SOURCE_ROOT" ls-remote origin "refs/heads/promote/${VERSION}-swarm" | awk '{print $1}')"
+test "$REMOTE_PROMOTION_HEAD" = "$J"
+SOURCE_PROMOTION_PR_URL="$(gh pr create --repo EffortlessMetrics/ripr --head "promote/${VERSION}-swarm" --base main --title "promote: join frozen swarm ${VERSION}" --body "Review exact J=${J}; parents are SOURCE_PARENT=${SOURCE_PARENT} and SWARM_PARENT=${SWARM_PARENT}. Ref #1493.")"
+SOURCE_PROMOTION_PR="${SOURCE_PROMOTION_PR_URL##*/}"
+test -n "$SOURCE_PROMOTION_PR"
+```
+
+```bash
 # [READ-ONLY] repo=source; bind exactly one reviewed promotion PR
 SOURCE_PROMOTION_PR="$(gh pr list --repo EffortlessMetrics/ripr --head "$(git -C "$SOURCE_ROOT" branch --show-current)" --state open --json number --jq 'if length == 1 then .[0].number else empty end')"
 test -n "$SOURCE_PROMOTION_PR"
@@ -308,9 +334,16 @@ gh pr merge "$SOURCE_PROMOTION_PR" --repo EffortlessMetrics/ripr --merge --match
 ```
 
 ```bash
-# [LOCAL-MUTATING] repo=source remote; fetch and bind source main to J after transport
+# [LOCAL-MUTATING] repo=source remote; fetch and bind source main to the new merge result
 git -C "$SOURCE_ROOT" fetch origin main
-test "$(git -C "$SOURCE_ROOT" rev-parse refs/remotes/origin/main)" = "$J"
+SOURCE_JOIN_HEAD="$(git -C "$SOURCE_ROOT" rev-parse refs/remotes/origin/main)"
+test "$SOURCE_JOIN_HEAD" != "$J"
+test "$(git -C "$SOURCE_ROOT" show -s --format='%P' "$SOURCE_JOIN_HEAD" | awk '{print NF}')" -eq 2
+test "$(git -C "$SOURCE_ROOT" show -s --format='%P' "$SOURCE_JOIN_HEAD" | awk '{print $1}')" = "$SOURCE_PARENT"
+test "$(git -C "$SOURCE_ROOT" show -s --format='%P' "$SOURCE_JOIN_HEAD" | awk '{print $2}')" = "$J"
+test "$(git -C "$SOURCE_ROOT" show -s --format='%P' "$J" | awk '{print NF}')" -eq 2
+test "$(git -C "$SOURCE_ROOT" show -s --format='%P' "$J" | awk '{print $1}')" = "$SOURCE_PARENT"
+test "$(git -C "$SOURCE_ROOT" show -s --format='%P' "$J" | awk '{print $2}')" = "$SWARM_PARENT"
 ```
 
 ## 5. Metadata and source artifact qualification
@@ -319,8 +352,8 @@ J carries the promoted graph. Version/changelog metadata is a separate source
 release-preparation change after J reaches source main; never bump J.
 
 ```bash
-# [LOCAL-MUTATING] repo=source release-prep checkout at J; metadata only
-git -C "$SOURCE_ROOT" switch -c "release/${VERSION}" "$J"
+# [LOCAL-MUTATING] repo=source release-prep checkout at source join result; metadata only
+git -C "$SOURCE_ROOT" switch -c "release/${VERSION}" "$SOURCE_JOIN_HEAD"
 (cd "$SOURCE_ROOT" && cargo xtask bump-version "$VERSION")
 ```
 
@@ -335,13 +368,13 @@ test "$(git -C "$SOURCE_ROOT" rev-parse "$SOURCE_RELEASE_HEAD^{commit}")" = "$SO
 ```
 
 | Surface | Repository/worktree and mode | Proof | Boundary |
-| Crate | source exact release checkout, **[LOCAL-MUTATING]** for package output; **[READ-ONLY]** dry-run query | `cargo package -p ripr --list`; `cargo publish -p ripr --dry-run` | Package/publishability, not publication |
-| Installed CLI | source exact release checkout, **[LOCAL-MUTATING]** | `cargo install --path crates/ripr --locked --force --root target/ripr/install-smoke` plus version/doctor/fixture smoke | Local installed binary |
-| Readiness/consumer | source exact release checkout, **[LOCAL-MUTATING]** | `cargo xtask release-readiness --version <VERSION>` | Version alignment and journey receipt |
+| Crate | source exact release checkout, **[LOCAL-MUTATING]** for package output; **[READ-ONLY]** dry-run query | `(cd "$SOURCE_ROOT" && cargo package -p ripr --list)`; `(cd "$SOURCE_ROOT" && cargo publish -p ripr --dry-run)` | Package/publishability, not publication |
+| Installed CLI | source exact release checkout, **[LOCAL-MUTATING]** | `(cd "$SOURCE_ROOT" && cargo install --path crates/ripr --locked --force --root target/ripr/install-smoke)` plus version/doctor/fixture smoke | Local installed binary |
+| Readiness/consumer | source exact release checkout, **[LOCAL-MUTATING]** | `(cd "$SOURCE_ROOT" && cargo xtask release-readiness --version <VERSION>)` | Version alignment and journey receipt |
 | Linux/Windows | source release workflow artifacts, **[READ-ONLY]** when inspecting exact `SOURCE_RELEASE_HEAD` outputs | Workflow artifacts bound to `SOURCE_RELEASE_HEAD` | Platform proof; one OS is not the other |
-| Server | source exact release checkout, **[LOCAL-MUTATING]** | `cargo xtask release-server-archive ...`; `cargo xtask release-server-manifest ...` | Archive, manifest, checksum shape |
+| Server | source exact release checkout, **[LOCAL-MUTATING]** | `(cd "$SOURCE_ROOT" && cargo xtask release-server-archive ...)`; `(cd "$SOURCE_ROOT" && cargo xtask release-server-manifest ...)` | Archive, manifest, checksum shape |
 | VSIX | source exact release checkout, **[LOCAL-MUTATING]** | `npm --prefix editors/vscode ci`, compile, package | Local package/version proof |
-| Badge | source exact release checkout, **[LOCAL-MUTATING]** | `cargo xtask repo-badge-artifacts` plus generated-clean/badge policy checks | Generated endpoint/freshness proof |
+| Badge | source exact release checkout, **[LOCAL-MUTATING]** | `(cd "$SOURCE_ROOT" && cargo xtask repo-badge-artifacts)` plus generated-clean/badge policy checks | Generated endpoint/freshness proof |
 
 Use [`RELEASE_BINARIES.md`](RELEASE_BINARIES.md),
 [`RELEASE_MARKETPLACE.md`](RELEASE_MARKETPLACE.md),
@@ -391,7 +424,7 @@ test "$(tr -d '\r\n' < "$PACKET_ROOT/tag-object.sha")" = "$SOURCE_RELEASE_HEAD"
 
 ```bash
 # [EXTERNAL-PUBLISHING] repo=source; explicit #1470 crate authorization only
-cargo publish -p ripr
+(cd "$SOURCE_ROOT" && cargo publish -p ripr)
 ```
 
 ```bash
@@ -413,14 +446,17 @@ test "$(gh release view "v${VERSION}" --repo EffortlessMetrics/ripr --json isDra
 ```bash
 # [EXTERNAL-PUBLISHING] repo=source; explicit #1470 server-artifact authorization only
 DISPATCHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-gh workflow run release-server-binaries.yml --repo EffortlessMetrics/ripr --ref "$SOURCE_RELEASE_HEAD" -f version="$VERSION"
+RELEASE_REF="v${VERSION}"
+test "$(gh api "repos/EffortlessMetrics/ripr/git/ref/tags/${RELEASE_REF}" --jq .object.sha)" = "$SOURCE_RELEASE_HEAD"
+gh workflow run release-server-binaries.yml --repo EffortlessMetrics/ripr --ref "$RELEASE_REF" -f version="$VERSION"
 ```
 
 ```bash
 # [LOCAL-MUTATING] repo=packet; paginate and bind the dispatched server run
 gh api --paginate --slurp "repos/EffortlessMetrics/ripr/actions/workflows/release-server-binaries.yml/runs?per_page=100&event=workflow_dispatch" | jq '[.[] | .workflow_runs[]]' > "$PACKET_ROOT/server-runs.json"
-SERVER_RUN_ID="$(jq -r --arg sha "$SOURCE_RELEASE_HEAD" --arg since "$DISPATCHED_AT" '[.[] | select(.head_sha == $sha and .event == "workflow_dispatch" and .created_at >= $since)] | sort_by(.created_at) | last | .database_id // empty' "$PACKET_ROOT/server-runs.json")"
+SERVER_RUN_ID="$(jq -r --arg sha "$SOURCE_RELEASE_HEAD" --arg since "$DISPATCHED_AT" '[.[] | select(.head_sha == $sha and .event == "workflow_dispatch" and .created_at >= $since)] | sort_by(.created_at) | last | .id // empty' "$PACKET_ROOT/server-runs.json")"
 test -n "$SERVER_RUN_ID"
+wait_for_run_success "$SERVER_RUN_ID"
 gh run view "$SERVER_RUN_ID" --repo EffortlessMetrics/ripr --json databaseId,headSha,status,conclusion,url > "$PACKET_ROOT/server-run-receipt.json"
 jq -e --arg sha "$SOURCE_RELEASE_HEAD" '.headSha == $sha and .status == "completed" and .conclusion == "success"' "$PACKET_ROOT/server-run-receipt.json" >/dev/null
 ```
@@ -428,14 +464,15 @@ jq -e --arg sha "$SOURCE_RELEASE_HEAD" '.headSha == $sha and .status == "complet
 ```bash
 # [EXTERNAL-PUBLISHING] repo=source; explicit #1470 VS Marketplace authorization only
 DISPATCHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-gh workflow run publish-extension.yml --repo EffortlessMetrics/ripr --ref "$SOURCE_RELEASE_HEAD" -f version="$VERSION" -f publish_vs_marketplace=true -f publish_open_vsx=false
+gh workflow run publish-extension.yml --repo EffortlessMetrics/ripr --ref "$RELEASE_REF" -f version="$VERSION" -f publish_vs_marketplace=true -f publish_open_vsx=false
 ```
 
 ```bash
 # [LOCAL-MUTATING] repo=packet; paginate and bind the dispatched VS Marketplace run
 gh api --paginate --slurp "repos/EffortlessMetrics/ripr/actions/workflows/publish-extension.yml/runs?per_page=100&event=workflow_dispatch" | jq '[.[] | .workflow_runs[]]' > "$PACKET_ROOT/extension-runs.json"
-EXTENSION_RUN_ID="$(jq -r --arg sha "$SOURCE_RELEASE_HEAD" --arg since "$DISPATCHED_AT" '[.[] | select(.head_sha == $sha and .event == "workflow_dispatch" and .created_at >= $since)] | sort_by(.created_at) | last | .database_id // empty' "$PACKET_ROOT/extension-runs.json")"
+EXTENSION_RUN_ID="$(jq -r --arg sha "$SOURCE_RELEASE_HEAD" --arg since "$DISPATCHED_AT" '[.[] | select(.head_sha == $sha and .event == "workflow_dispatch" and .created_at >= $since)] | sort_by(.created_at) | last | .id // empty' "$PACKET_ROOT/extension-runs.json")"
 test -n "$EXTENSION_RUN_ID"
+wait_for_run_success "$EXTENSION_RUN_ID"
 gh run view "$EXTENSION_RUN_ID" --repo EffortlessMetrics/ripr --json databaseId,headSha,status,conclusion,url > "$PACKET_ROOT/vs-marketplace-run-receipt.json"
 jq -e --arg sha "$SOURCE_RELEASE_HEAD" '.headSha == $sha and .status == "completed" and .conclusion == "success"' "$PACKET_ROOT/vs-marketplace-run-receipt.json" >/dev/null
 ```
@@ -443,14 +480,15 @@ jq -e --arg sha "$SOURCE_RELEASE_HEAD" '.headSha == $sha and .status == "complet
 ```bash
 # [EXTERNAL-PUBLISHING] repo=source; explicit #1470 Open VSX authorization only
 DISPATCHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-gh workflow run publish-extension.yml --repo EffortlessMetrics/ripr --ref "$SOURCE_RELEASE_HEAD" -f version="$VERSION" -f publish_vs_marketplace=false -f publish_open_vsx=true
+gh workflow run publish-extension.yml --repo EffortlessMetrics/ripr --ref "$RELEASE_REF" -f version="$VERSION" -f publish_vs_marketplace=false -f publish_open_vsx=true
 ```
 
 ```bash
 # [LOCAL-MUTATING] repo=packet; paginate and bind the dispatched Open VSX run
 gh api --paginate --slurp "repos/EffortlessMetrics/ripr/actions/workflows/publish-extension.yml/runs?per_page=100&event=workflow_dispatch" | jq '[.[] | .workflow_runs[]]' > "$PACKET_ROOT/extension-runs-open-vsx.json"
-OPENVSX_RUN_ID="$(jq -r --arg sha "$SOURCE_RELEASE_HEAD" --arg since "$DISPATCHED_AT" '[.[] | select(.head_sha == $sha and .event == "workflow_dispatch" and .created_at >= $since)] | sort_by(.created_at) | last | .database_id // empty' "$PACKET_ROOT/extension-runs-open-vsx.json")"
+OPENVSX_RUN_ID="$(jq -r --arg sha "$SOURCE_RELEASE_HEAD" --arg since "$DISPATCHED_AT" '[.[] | select(.head_sha == $sha and .event == "workflow_dispatch" and .created_at >= $since)] | sort_by(.created_at) | last | .id // empty' "$PACKET_ROOT/extension-runs-open-vsx.json")"
 test -n "$OPENVSX_RUN_ID"
+wait_for_run_success "$OPENVSX_RUN_ID"
 gh run view "$OPENVSX_RUN_ID" --repo EffortlessMetrics/ripr --json databaseId,headSha,status,conclusion,url > "$PACKET_ROOT/open-vsx-run-receipt.json"
 jq -e --arg sha "$SOURCE_RELEASE_HEAD" '.headSha == $sha and .status == "completed" and .conclusion == "success"' "$PACKET_ROOT/open-vsx-run-receipt.json" >/dev/null
 ```
@@ -509,16 +547,29 @@ git -C "$SWARM_ROOT" merge --no-ff --no-commit "$SOURCE_RELEASE_HEAD"
 # Retain swarm checks/runners/settings/authority; import release receipts only.
 git -C "$SWARM_ROOT" commit -m "sync: back-sync released ${VERSION} from ripr"
 K="$(git -C "$SWARM_ROOT" rev-parse HEAD)"
+BACK_SYNC_TREE="${BACK_SYNC_TREE:?set to the separately reviewed back-sync tree SHA}"
+test "$(git -C "$SWARM_ROOT" rev-parse "$K^{tree}")" = "$BACK_SYNC_TREE"
 ```
 
-Run the existing exact-K verifier before and after transport using exact
-`--swarm-main` and `--source-main` SHAs, release receipt, and policy snapshots;
-the copyable command lives in [`BACK_SYNC_VERIFIER.md`](BACK_SYNC_VERIFIER.md)
-so verifier semantics have one owner.
+After K, BACK_SYNC_TREE, and all authorized channel receipts are available,
+produce the exact release-receipt schema consumed by the K verifier. Do this
+before either verifier invocation; its semantics remain owned by
+[`BACK_SYNC_VERIFIER.md`](BACK_SYNC_VERIFIER.md).
+
+```bash
+# [LOCAL-MUTATING] repo=packet; produce verifier-bound publication receipt
+jq -n --arg version "$VERSION" --arg source_release_head "$SOURCE_RELEASE_HEAD" --arg join "$K" --arg tree "$BACK_SYNC_TREE" --arg source_release_tag "v${VERSION}" --slurpfile server "$PACKET_ROOT/server-run-receipt.json" --slurpfile marketplace "$PACKET_ROOT/vs-marketplace-run-receipt.json" --slurpfile open_vsx "$PACKET_ROOT/open-vsx-run-receipt.json" '{schema_version: 1, version: $version, source_release_head: $source_release_head, join: $join, tree: $tree, source_release_tag: $source_release_tag, channels: {server_binaries: $server[0], vs_marketplace: $marketplace[0], open_vsx: $open_vsx[0]}}' > "$PUBLICATION_RECEIPT"
+jq -e --arg version "$VERSION" --arg source_release_head "$SOURCE_RELEASE_HEAD" --arg join "$K" --arg tree "$BACK_SYNC_TREE" '.version == $version and .source_release_head == $source_release_head and .join == $join and .tree == $tree and .source_release_tag == ("v" + $version) and (.channels | keys | sort) == ["open_vsx", "server_binaries", "vs_marketplace"]' "$PUBLICATION_RECEIPT" >/dev/null
+```
 
 ```bash
 # [LOCAL-MUTATING] repo=swarm; write policy-before evidence
 gh api repos/EffortlessMetrics/ripr-swarm/branches/main/protection > "$POLICY_BEFORE"
+gh api --paginate --slurp repos/EffortlessMetrics/ripr-swarm/rulesets > "$PACKET_ROOT/policy-rulesets-before.json"
+ACTIVE_RULESET_IDS="$(jq -r '.[][] | select(.enforcement == "active" and .target == "branch") | .id' "$PACKET_ROOT/policy-rulesets-before.json")"
+for ruleset_id in $ACTIVE_RULESET_IDS; do
+  gh api "repos/EffortlessMetrics/ripr-swarm/rulesets/${ruleset_id}" > "$PACKET_ROOT/ruleset-${ruleset_id}-before.json"
+done
 ```
 
 ```bash
@@ -533,8 +584,12 @@ jq -e --arg owner "$POLICY_OWNER_LOGIN" --arg version "$VERSION" --arg swarm "$S
   .owner.login == $owner and .approved_for == "ancestry-preserving-back-sync" and
   .version == $version and .swarm_before == $swarm and
   .source_release_head == $source and .before_sha256 == $before_sha and
+  (.protected_layers | type == "array") and
   (.expires_at | type == "string") and (.approved_at | type == "string")
 ' "$POLICY_APPROVAL" >/dev/null
+for ruleset_id in $ACTIVE_RULESET_IDS; do
+  jq -e --arg id "$ruleset_id" '.protected_layers | index("ruleset:" + $id) != null' "$POLICY_APPROVAL" >/dev/null
+done
 git -C "$SWARM_ROOT" fetch origin main
 test "$(git -C "$SWARM_ROOT" rev-parse refs/remotes/origin/main)" = "$SWARM_BEFORE"
 ```
@@ -569,7 +624,17 @@ if test "$(jq -r '.required_linear_history.enabled' "$POLICY_BEFORE")" = true; t
 else
   cp "$POLICY_BEFORE" "$POLICY_EXCEPTION"
 fi
+for ruleset_id in $ACTIVE_RULESET_IDS; do
+  RULESET_EXCEPTION_REQUEST="$PACKET_ROOT/ruleset-${ruleset_id}-exception-request.json"
+  test -s "$RULESET_EXCEPTION_REQUEST"
+  gh api --method PUT "repos/EffortlessMetrics/ripr-swarm/rulesets/${ruleset_id}" --input "$RULESET_EXCEPTION_REQUEST" > "$PACKET_ROOT/ruleset-${ruleset_id}-exception.json"
+done
 ```
+
+Each active ruleset is reviewed as a separate protection layer. A ruleset may
+be listed as unchanged in the owner receipt, but a layer that blocks the exact
+K direct update requires its own owner-created PUT payload and temporary
+response. No unrelated rule may be weakened.
 
 ```bash
 # [READ-ONLY] repo=swarm policy; verify effective exception before K transport
@@ -592,6 +657,7 @@ the owner login is also checked against the authenticated `gh api user`:
   "swarm_before": "<40-hex-sha>",
   "source_release_head": "<40-hex-sha>",
   "before_sha256": "<64-hex-sha256>",
+  "protected_layers": ["branch:main", "ruleset:<id>"],
   "approved_at": "<RFC3339>",
   "expires_at": "<RFC3339>"
 }
@@ -600,6 +666,11 @@ the owner login is also checked against the authenticated `gh api user`:
 ```bash
 # [EXTERNAL-PUBLISHING] repo=swarm remote/policy; owner-approved K transport only
 git -C "$SWARM_ROOT" push origin "back-sync/${VERSION}:refs/heads/main"
+for ruleset_id in $ACTIVE_RULESET_IDS; do
+  RULESET_BEFORE_REQUEST="$PACKET_ROOT/ruleset-${ruleset_id}-before-request.json"
+  test -s "$RULESET_BEFORE_REQUEST"
+  gh api --method PUT "repos/EffortlessMetrics/ripr-swarm/rulesets/${ruleset_id}" --input "$RULESET_BEFORE_REQUEST" > "$PACKET_ROOT/ruleset-${ruleset_id}-after.json"
+done
 ```
 
 ```bash
@@ -621,6 +692,23 @@ gh api --method PUT repos/EffortlessMetrics/ripr-swarm/branches/main/protection 
 ```bash
 # [READ-ONLY] repo=swarm policy; prove normal enforcement is restored
 jq -e --slurpfile before "$POLICY_BEFORE" '.required_linear_history.enabled == ($before[0].required_linear_history.enabled) and .allow_force_pushes.enabled == false and .allow_deletions.enabled == false' "$POLICY_AFTER" >/dev/null
+for ruleset_id in $ACTIVE_RULESET_IDS; do
+  jq -S '{name,target,enforcement,conditions,rules}' "$PACKET_ROOT/ruleset-${ruleset_id}-before.json" > "$PACKET_ROOT/ruleset-${ruleset_id}-before-shape.json"
+  jq -S '{name,target,enforcement,conditions,rules}' "$PACKET_ROOT/ruleset-${ruleset_id}-after.json" > "$PACKET_ROOT/ruleset-${ruleset_id}-after-shape.json"
+  cmp "$PACKET_ROOT/ruleset-${ruleset_id}-before-shape.json" "$PACKET_ROOT/ruleset-${ruleset_id}-after-shape.json"
+done
+```
+
+```bash
+# [READ-ONLY] repo=swarm+source; verify exact K after transport and restoration
+(cd "$SWARM_ROOT" && cargo xtask back-sync verify \
+  --swarm-before "$SWARM_BEFORE" --source-release-head "$SOURCE_RELEASE_HEAD" \
+  --source-release-tag "v${VERSION}" --join "$K" --tree "$BACK_SYNC_TREE" \
+  --swarm-repo "$SWARM_ROOT" --source-repo "$SOURCE_ROOT" --version "$VERSION" \
+  --release-receipt "$PUBLICATION_RECEIPT" --policy-before "$POLICY_BEFORE" \
+  --policy-exception "$POLICY_EXCEPTION" --policy-after "$POLICY_AFTER" \
+  --swarm-main "$K" --source-main "$SOURCE_RELEASE_HEAD" \
+  --out "$PACKET_ROOT/back-sync-after")
 ```
 
 J is `[SOURCE_PARENT, SWARM_PARENT]`; K is `[SWARM_BEFORE,
