@@ -802,7 +802,8 @@ struct CheckPrGate<'a> {
 
 /// The first failed gate plus the bounded evidence the failure report
 /// retains (#3036): the reproduce command, up to five CRLF-normalized error
-/// lines, and the gates that were never invoked.
+/// lines (with an explicit truncation marker when more were dropped), and
+/// the gates that were never invoked.
 struct CheckPrGateFailure {
     name: String,
     reproduce: String,
@@ -846,13 +847,21 @@ fn run_check_pr_gates(
 
 /// Bound the retained first-failure evidence to five lines with CRLF
 /// normalized away (#3036). An empty error stays empty; the report composer
-/// is responsible for making that state explicit.
+/// is responsible for making that state explicit. When lines are dropped, an
+/// explicit truncation marker records how many, so bounded evidence never
+/// presents itself as the whole diagnostic.
 fn bound_first_failure_lines(err: &str) -> String {
-    err.replace("\r\n", "\n")
-        .lines()
+    let normalized = err.replace("\r\n", "\n");
+    let lines: Vec<&str> = normalized.lines().collect();
+    let mut kept: Vec<String> = lines
+        .iter()
         .take(5)
-        .collect::<Vec<_>>()
-        .join("\n  ")
+        .map(|line| (*line).to_string())
+        .collect();
+    if lines.len() > 5 {
+        kept.push(format!("(+{} more lines truncated)", lines.len() - 5));
+    }
+    kept.join("\n  ")
 }
 
 /// Attribute a `check-pr` sub-gate failure to the gate that produced it, with the
@@ -4002,7 +4011,9 @@ fn precommit_report_body() -> String {
 /// authority owns the status line, checks inventory, and footer so the
 /// success and failure artifacts cannot drift apart; a failure report names
 /// the failed gate, its reproduce command, bounded error lines, and the
-/// gates that were never run, and never carries a `Status: pass` line.
+/// gates that were never run, never carries a `Status: pass` line, and
+/// marks `pr-summary.md` as not refreshed because the failure path returns
+/// before `pr_summary()` runs.
 fn check_pr_report(failure: Option<&CheckPrGateFailure>) -> String {
     let status = if failure.is_some() { "fail" } else { "pass" };
     let mut body = format!("# ripr check-pr report\n\nStatus: {status}\n");
@@ -4024,7 +4035,14 @@ fn check_pr_report(failure: Option<&CheckPrGateFailure>) -> String {
             }
         }
     }
-    body.push_str("\nChecks:\n\n- `cargo xtask ci-fast`\n- `cargo clippy --workspace --all-targets -- -D warnings`\n- `cargo doc --workspace --no-deps`\n- `cargo xtask pr-summary`\n\nReports:\n\n- `target/ripr/reports/pr-summary.md`\n- `target/ripr/reports/check-pr.md`\n\nRelease/package gates are intentionally left to `cargo xtask ci-full` or release-specific workflows.\n");
+    let pr_summary_entry = if failure.is_some() {
+        // The failure path returns before pr_summary() runs, so advertising
+        // it without the marker would present a stale artifact as current.
+        "- `target/ripr/reports/pr-summary.md` (not refreshed — the run stopped at the first failed gate)"
+    } else {
+        "- `target/ripr/reports/pr-summary.md`"
+    };
+    body.push_str(&format!("\nChecks:\n\n- `cargo xtask ci-fast`\n- `cargo clippy --workspace --all-targets -- -D warnings`\n- `cargo doc --workspace --no-deps`\n- `cargo xtask pr-summary`\n\nReports:\n\n{pr_summary_entry}\n- `target/ripr/reports/check-pr.md`\n\nRelease/package gates are intentionally left to `cargo xtask ci-full` or release-specific workflows.\n"));
     body
 }
 

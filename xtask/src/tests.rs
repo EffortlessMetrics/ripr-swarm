@@ -46548,12 +46548,16 @@ fn check_pr_failure_report_handles_empty_error_text() {
         run: &run_a,
     }];
     let published = std::cell::RefCell::new(Vec::new());
-    let _ = super::run_check_pr_gates(&gates, &|failure| {
+    let result = super::run_check_pr_gates(&gates, &|failure| {
         published
             .borrow_mut()
             .push(super::check_pr_report(Some(failure)));
         Ok(())
     });
+    assert!(
+        result.is_err(),
+        "an empty gate error is still a failure, not a pass: {result:?}"
+    );
 
     let report = published.borrow()[0].clone();
     assert!(
@@ -46563,6 +46567,10 @@ fn check_pr_failure_report_handles_empty_error_text() {
     assert!(
         report.contains("(none — the failed gate was the last)"),
         "a failure on the last gate has an explicit empty not-run list: {report}"
+    );
+    assert!(
+        report.contains("pr-summary.md` (not refreshed"),
+        "the failure path returns before pr_summary() runs, so the report must mark it stale: {report}"
     );
 }
 
@@ -46575,10 +46583,17 @@ fn check_pr_bounded_error_lines_are_crlf_normalized_and_capped() {
     );
 
     let more = super::bound_first_failure_lines("l1\nl2\nl3\nl4\nl5\nl6\nl7");
-    assert_eq!(more, "l1\n  l2\n  l3\n  l4\n  l5");
+    assert_eq!(
+        more,
+        "l1\n  l2\n  l3\n  l4\n  l5\n  (+2 more lines truncated)"
+    );
     assert!(
         !more.contains("l6"),
         "more than five lines are bounded to five: {more}"
+    );
+    assert!(
+        more.contains("truncated"),
+        "dropped lines must leave an explicit marker, not silent truncation: {more}"
     );
 
     let crlf = super::bound_first_failure_lines("alpha\r\nbeta\r\n");
@@ -46589,26 +46604,50 @@ fn check_pr_bounded_error_lines_are_crlf_normalized_and_capped() {
 #[test]
 fn check_pr_failure_report_replaces_stale_success_report() -> Result<(), String> {
     with_repo_cwd(|| {
-        super::write_report("check-pr.md", &super::check_pr_report(None))?;
-        let run_a = || Err("stale-replacement probe".to_string());
-        let gates = [super::CheckPrGate {
-            name: "gate-a",
-            reproduce: "run a",
-            run: &run_a,
-        }];
-        let result = super::run_check_pr_gates(&gates, &|failure| {
-            super::write_report("check-pr.md", &super::check_pr_report(Some(failure)))
-        });
-        assert!(result.is_err());
+        // Preserve any pre-existing report so the test leaves no false
+        // failure artifact behind for a real check-pr reader.
+        let report_path = Path::new("target")
+            .join("ripr")
+            .join("reports")
+            .join("check-pr.md");
+        let original = fs::read(&report_path).ok();
+        let outcome = (|| -> Result<(), String> {
+            super::write_report("check-pr.md", &super::check_pr_report(None))?;
+            let run_a = || Err("stale-replacement probe".to_string());
+            let gates = [super::CheckPrGate {
+                name: "gate-a",
+                reproduce: "run a",
+                run: &run_a,
+            }];
+            let result = super::run_check_pr_gates(&gates, &|failure| {
+                super::write_report("check-pr.md", &super::check_pr_report(Some(failure)))
+            });
+            assert!(result.is_err());
 
-        let text = fs::read_to_string("target/ripr/reports/check-pr.md")
-            .map_err(|err| format!("read check-pr.md: {err}"))?;
-        assert!(
-            text.contains("Status: fail"),
-            "the failed current run must replace the stale success report"
-        );
-        assert!(!text.contains("Status: pass"));
-        Ok(())
+            let text = fs::read_to_string("target/ripr/reports/check-pr.md")
+                .map_err(|err| format!("read check-pr.md: {err}"))?;
+            assert!(
+                text.contains("Status: fail"),
+                "the failed current run must replace the stale success report"
+            );
+            assert!(!text.contains("Status: pass"));
+            Ok(())
+        })();
+        let restore = match &original {
+            Some(bytes) => fs::write(&report_path, bytes).map_err(|err| {
+                format!("failed to restore {}: {err}", normalize_path(&report_path))
+            }),
+            None => match fs::remove_file(&report_path) {
+                Ok(()) => Ok(()),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(err) => Err(format!(
+                    "failed to clear {}: {err}",
+                    normalize_path(&report_path)
+                )),
+            },
+        };
+        restore?;
+        outcome
     })
 }
 
