@@ -202,14 +202,20 @@ A missing, timed-out, or differently headed hosted result is unavailable, not
 a pass. Run the existing exact-pair preflight with exact SHA declarations; its
 contract is [`SOURCE_PROMOTION_PREFLIGHT.md`](SOURCE_PROMOTION_PREFLIGHT.md)
 and [`RIPR-SPEC-0148`](specs/RIPR-SPEC-0148-source-promotion-preflight.md).
+The resolution reviewer produces `JOIN_TREE` as a full tree SHA in the
+resolution manifest; the automatic `preview_tree` is never substituted.
 
 ```bash
 # [LOCAL-MUTATING] repo=swarm operator checkout; preflight writes local receipts, no J
+JOIN_TREE="${JOIN_TREE:?set to the separately reviewed full resolved-tree SHA from the resolution manifest}"
 cargo xtask source-promotion preflight \
   --source-parent "$SOURCE_PARENT" --swarm-parent "$SWARM_PARENT" \
   --swarm-ref "$SWARM_REF" --source-repo "$SOURCE_ROOT" --swarm-repo "$SWARM_ROOT" \
   --source-main "$SOURCE_PARENT" --swarm-main "$SWARM_PARENT" \
-  --version "$VERSION" --out "target/ripr/release-transaction/$VERSION/source-promotion"
+  --version "$VERSION" --resolved-tree "$JOIN_TREE" \
+  --out "target/ripr/release-transaction/$VERSION/source-promotion"
+PREFLIGHT_JSON="$PACKET_ROOT/source-promotion/source-promotion-preflight.json"
+test "$(jq -r '.dry_merge.reviewed_resolved_tree // empty' "$PREFLIGHT_JSON")" = "$JOIN_TREE"
 ```
 
 Review every conflict path, survivor, swarm exclusion, authority candidate,
