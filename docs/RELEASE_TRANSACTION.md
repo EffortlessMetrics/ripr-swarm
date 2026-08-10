@@ -225,7 +225,10 @@ PIN_RULESET_ID="$(gh api repos/EffortlessMetrics/ripr-swarm/rulesets --paginate 
 test "$(printf '%s\n' "$PIN_RULESET_ID" | awk 'NF {count++} END {print count + 0}')" -eq 1
 PIN_RULESET="$PACKET_ROOT/pin-ruleset.json"
 gh api "repos/EffortlessMetrics/ripr-swarm/rulesets/${PIN_RULESET_ID}" > "$PIN_RULESET"
-jq -e --arg tag "ripr-release-*" '(.target == "tag" and .enforcement == "active") and (any(.conditions.ref_name.include[]?; . == $tag)) and (any(.rules[]?; .type == "update")) and (any(.rules[]?; .type == "deletion"))' "$PIN_RULESET" >/dev/null
+# GitHub ruleset ref_name conditions match fully qualified refs. Keep the
+# candidate tag name below unqualified (`ripr-release-...`), but require the
+# protection pattern to cover only the tag namespace.
+jq -e --arg tag "refs/tags/ripr-release-*" '(.target == "tag" and .enforcement == "active") and (any(.conditions.ref_name.include[]?; . == $tag)) and (any(.rules[]?; .type == "update")) and (any(.rules[]?; .type == "deletion"))' "$PIN_RULESET" >/dev/null
 ```
 
 ```bash
@@ -240,8 +243,9 @@ assert_live_pin_guard() {
 ```
 
 The exact ruleset receipt is a prerequisite, not a suggestion. If the named
-active tag ruleset, its `ripr-release-*` pattern, or both update/deletion rules
-are absent, stop before W; do not substitute an unprotected custom ref.
+active tag ruleset, its exact `refs/tags/ripr-release-*` pattern, or both
+update/deletion rules are absent, stop before W; do not substitute an
+unprotected custom ref.
 
 ```bash
 set -euo pipefail

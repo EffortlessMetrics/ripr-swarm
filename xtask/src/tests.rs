@@ -46256,3 +46256,86 @@ fn golden_comparison_runs_consume_the_cache_the_runner_cleared() -> Result<(), S
         Ok(())
     })
 }
+
+#[test]
+fn release_pin_ruleset_requires_fully_qualified_tag_ref() -> Result<(), String> {
+    const REQUIRED_PATTERN: &str = "refs/tags/ripr-release-*";
+    const SHORT_PATTERN: &str = "ripr-release-*";
+
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../fixtures/release_control/pin-ruleset.json"
+    ))
+    .map_err(|error| format!("failed to parse pin ruleset fixture: {error}"))?;
+
+    let accepts_required_pin = |ruleset: &Value| {
+        ruleset.get("name").and_then(Value::as_str) == Some("release-transaction-pins")
+            && ruleset.get("target").and_then(Value::as_str) == Some("tag")
+            && ruleset.get("enforcement").and_then(Value::as_str) == Some("active")
+            && ruleset
+                .pointer("/conditions/ref_name/include")
+                .and_then(Value::as_array)
+                .is_some_and(|include| {
+                    include
+                        .iter()
+                        .any(|value| value.as_str() == Some(REQUIRED_PATTERN))
+                })
+            && ruleset
+                .get("rules")
+                .and_then(Value::as_array)
+                .is_some_and(|rules| {
+                    rules
+                        .iter()
+                        .any(|rule| rule.get("type").and_then(Value::as_str) == Some("update"))
+                        && rules.iter().any(|rule| {
+                            rule.get("type").and_then(Value::as_str) == Some("deletion")
+                        })
+                })
+    };
+
+    if !accepts_required_pin(&fixture) {
+        return Err("fully qualified tag ruleset fixture was rejected".to_string());
+    }
+
+    let mut short = fixture.clone();
+    short["conditions"]["ref_name"]["include"] = serde_json::json!([SHORT_PATTERN]);
+    if accepts_required_pin(&short) {
+        return Err("unqualified tag pattern was accepted as a protected pin".to_string());
+    }
+
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "xtask manifest should have a repository parent".to_string())?;
+    let runbook = fs::read_to_string(repo_root.join("docs/RELEASE_TRANSACTION.md"))
+        .map_err(|error| format!("failed to read release transaction runbook: {error}"))?;
+    if !runbook.contains("--arg tag \"refs/tags/ripr-release-*\"")
+        || runbook.contains("--arg tag \"ripr-release-*\"")
+        || !runbook.contains("exact `refs/tags/ripr-release-*` pattern")
+        || !runbook.contains("PIN_TAG=\"ripr-release-${VERSION}-${SWARM_PARENT}\"")
+    {
+        return Err("runbook does not carry the fully qualified ruleset pattern".to_string());
+    }
+
+    let template: Value = serde_json::from_str(include_str!(
+        "../../docs/release-candidates/0.11.0-live-head-selection.json"
+    ))
+    .map_err(|error| format!("failed to parse live-head template: {error}"))?;
+    let remote_binding = template
+        .pointer("/pin_recipe/remote_binding")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "live-head template remote binding is missing".to_string())?;
+    if !remote_binding.contains(REQUIRED_PATTERN)
+        || remote_binding.contains("matches ripr-release-*")
+    {
+        return Err("live-head template does not carry the fully qualified pattern".to_string());
+    }
+    if template
+        .pointer("/pin_recipe/protected_candidate_tag_format")
+        .and_then(Value::as_str)
+        != Some(
+            "refs/tags/ripr-release-0.11.0-<SWARM_PARENT> (protected candidate tag; local verifier ref remains refs/ripr/release-0.11.0-<SWARM_PARENT>)",
+        )
+    {
+        return Err("candidate tag format drifted from the release contract".to_string());
+    }
+    Ok(())
+}
