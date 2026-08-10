@@ -3,7 +3,7 @@
 //! body moved verbatim; test names and module path (`crate::tests`) are
 //! unchanged.
 
-use std::io::Read;
+use std::io::{Read, Write};
 
 use crate::acquire_test_cwd_write_guard;
 use ripr::output::receipt_lifecycle::{
@@ -208,7 +208,7 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::ExitStatus;
+use std::process::{Command, ExitStatus, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub(crate) fn temp_dir(name: &str) -> PathBuf {
@@ -46261,6 +46261,7 @@ fn golden_comparison_runs_consume_the_cache_the_runner_cleared() -> Result<(), S
 fn release_pin_ruleset_requires_fully_qualified_tag_ref() -> Result<(), String> {
     const REQUIRED_PATTERN: &str = "refs/tags/ripr-release-*";
     const SHORT_PATTERN: &str = "ripr-release-*";
+    const JQ_PREDICATE: &str = r#"(.target == "tag" and .enforcement == "active") and (.conditions.ref_name.include == [$tag]) and (any(.rules[]?; .type == "update")) and (any(.rules[]?; .type == "deletion"))"#;
 
     let fixture: Value = serde_json::from_str(include_str!(
         "../../fixtures/release_control/pin-ruleset.json"
@@ -46275,12 +46276,8 @@ fn release_pin_ruleset_requires_fully_qualified_tag_ref() -> Result<(), String> 
                 .pointer("/conditions/ref_name/include")
                 .and_then(Value::as_array)
                 .is_some_and(|include| {
-                    include
-                        .iter()
-                        .any(|value| value.as_str() == Some(REQUIRED_PATTERN))
-                        && include
-                            .iter()
-                            .all(|value| value.as_str() != Some(SHORT_PATTERN))
+                    include.len() == 1
+                        && include.first().and_then(Value::as_str) == Some(REQUIRED_PATTERN)
                 })
             && ruleset
                 .get("rules")
@@ -46299,11 +46296,17 @@ fn release_pin_ruleset_requires_fully_qualified_tag_ref() -> Result<(), String> 
         return Err("fully qualified tag ruleset fixture was rejected".to_string());
     }
 
+    let mut short = fixture.clone();
+    short["conditions"]["ref_name"]["include"] = serde_json::json!([SHORT_PATTERN]);
+    if accepts_required_pin(&short) {
+        return Err("unqualified tag pattern was accepted as a protected pin".to_string());
+    }
+
     let mut mixed = fixture.clone();
     mixed["conditions"]["ref_name"]["include"] =
         serde_json::json!([REQUIRED_PATTERN, SHORT_PATTERN]);
     if accepts_required_pin(&mixed) {
-        return Err("unqualified tag pattern was accepted as a protected pin".to_string());
+        return Err("mixed qualified and unqualified patterns were accepted".to_string());
     }
 
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -46315,8 +46318,45 @@ fn release_pin_ruleset_requires_fully_qualified_tag_ref() -> Result<(), String> 
         || runbook.contains("--arg tag \"ripr-release-*\"")
         || !runbook.contains("exact `refs/tags/ripr-release-*` pattern")
         || !runbook.contains("PIN_TAG=\"ripr-release-${VERSION}-${SWARM_PARENT}\"")
+        || !runbook.contains(&format!(
+            "jq -e --arg tag \"{REQUIRED_PATTERN}\" '{JQ_PREDICATE}'"
+        ))
     {
         return Err("runbook does not carry the fully qualified ruleset pattern".to_string());
+    }
+
+    let run_jq_predicate = |ruleset: &Value| -> Result<bool, String> {
+        let mut child = Command::new("jq")
+            .args(["-e", "--arg", "tag", REQUIRED_PATTERN, JQ_PREDICATE])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| format!("failed to execute documented jq predicate: {error}"))?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "jq predicate stdin was unavailable".to_string())?;
+        let input = serde_json::to_vec(ruleset)
+            .map_err(|error| format!("failed to serialize jq predicate fixture: {error}"))?;
+        stdin
+            .write_all(&input)
+            .map_err(|error| format!("failed to write jq predicate fixture: {error}"))?;
+        drop(stdin);
+        let output = child
+            .wait_with_output()
+            .map_err(|error| format!("failed to collect jq predicate result: {error}"))?;
+        Ok(output.status.success())
+    };
+
+    if !run_jq_predicate(&fixture)? {
+        return Err("documented jq predicate rejected the full fixture".to_string());
+    }
+    if run_jq_predicate(&short)? {
+        return Err("documented jq predicate accepted the short fixture".to_string());
+    }
+    if run_jq_predicate(&mixed)? {
+        return Err("documented jq predicate accepted the mixed fixture".to_string());
     }
 
     let template: Value = serde_json::from_str(include_str!(

@@ -233,7 +233,7 @@ gh api "repos/EffortlessMetrics/ripr-swarm/rulesets/${PIN_RULESET_ID}" > "$PIN_R
 # fail-closed policy contract to cover only the tag namespace. The checked-in
 # fixture/test proves that local contract; it does not prove GitHub server
 # acceptance or rejection. Verify live settings through the read-only receipt.
-jq -e --arg tag "refs/tags/ripr-release-*" '(.target == "tag" and .enforcement == "active") and (any(.conditions.ref_name.include[]?; . == $tag)) and (any(.rules[]?; .type == "update")) and (any(.rules[]?; .type == "deletion"))' "$PIN_RULESET" >/dev/null
+jq -e --arg tag "refs/tags/ripr-release-*" '(.target == "tag" and .enforcement == "active") and (.conditions.ref_name.include == [$tag]) and (any(.rules[]?; .type == "update")) and (any(.rules[]?; .type == "deletion"))' "$PIN_RULESET" >/dev/null
 ```
 
 ```bash
