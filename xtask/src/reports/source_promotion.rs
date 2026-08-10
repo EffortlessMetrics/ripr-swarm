@@ -693,28 +693,14 @@ fn dry_merge_from_repo(
         ])
         .output()
         .map_err(|error| format!("failed to execute disposable git merge-tree: {error}"))?;
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    if !output.status.success() && stdout.trim().is_empty() && stderr.trim().is_empty() {
+    if !output.status.success() && output.stdout.is_empty() && stderr.trim().is_empty() {
         return Err(format!(
             "disposable git merge-tree failed ({})",
             output.status
         ));
     }
-    let (tree_line, paths) = stdout.split_once('\n').unwrap_or((stdout.as_str(), ""));
-    let preview_tree = tree_line
-        .trim()
-        .strip_suffix('\0')
-        .unwrap_or(tree_line.trim())
-        .to_string();
-    let mut conflicts = paths
-        .split('\0')
-        .map(str::trim)
-        .filter(|path| !path.is_empty())
-        .map(str::to_string)
-        .collect::<Vec<_>>();
-    conflicts.sort();
-    conflicts.dedup();
+    let (preview_tree, conflicts) = parse_merge_tree_output(&output.stdout)?;
     let diagnostics = lines(stderr);
     if !output.status.success() && conflicts.is_empty() {
         return Err(format!(
@@ -746,6 +732,33 @@ fn dry_merge_from_repo(
         conflicts,
         diagnostics,
     })
+}
+
+fn parse_merge_tree_output(stdout: &[u8]) -> Result<(String, Vec<String>), String> {
+    let mut fields = stdout.split(|byte| *byte == 0);
+    let tree = fields
+        .next()
+        .filter(|field| !field.is_empty())
+        .ok_or_else(|| "disposable git merge-tree returned no tree field".to_string())?;
+    let tree = std::str::from_utf8(tree)
+        .map_err(|error| format!("disposable git merge-tree returned a non-UTF-8 tree: {error}"))?
+        .trim()
+        .to_string();
+    let mut conflicts = fields
+        .filter(|field| !field.is_empty())
+        .map(|field| {
+            std::str::from_utf8(field)
+                .map(str::trim)
+                .map(str::to_string)
+                .map_err(|error| {
+                    format!("disposable git merge-tree returned a non-UTF-8 path: {error}")
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    conflicts.retain(|path| !path.is_empty());
+    conflicts.sort();
+    conflicts.dedup();
+    Ok((tree, conflicts))
 }
 
 fn ensure_merge_tree_capability(repo: &Path) -> Result<(), String> {
@@ -1041,6 +1054,19 @@ mod tests {
         if !commit_error.contains("commit SHA") || !tree_error.contains("tree SHA") {
             return Err(format!(
                 "SHA validation errors omitted object kinds: {commit_error:?}, {tree_error:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn merge_tree_z_output_preserves_conflict_paths() -> Result<(), String> {
+        let tree = "0123456789abcdef0123456789abcdef01234567";
+        let output = format!("{tree}\0shared.txt\0nested/conflict.rs\0shared.txt\0");
+        let (parsed_tree, paths) = parse_merge_tree_output(output.as_bytes())?;
+        if parsed_tree != tree || paths != ["nested/conflict.rs", "shared.txt"] {
+            return Err(format!(
+                "NUL-delimited merge-tree output was misparsed: tree={parsed_tree:?}, paths={paths:?}"
             ));
         }
         Ok(())
@@ -1608,6 +1634,19 @@ mod tests {
             || receipt.swarm_range.first_parent_count != 1
         {
             return Err("first-parent denominator was not preserved".to_string());
+        }
+        let markdown = render_markdown(&receipt);
+        let dry_merge = markdown
+            .find("## Dry merge")
+            .ok_or_else(|| "Markdown omitted the named dry-merge section".to_string())?;
+        let conflicts = markdown[dry_merge..]
+            .find("Conflicts:\n- `shared.txt`")
+            .ok_or_else(|| "Markdown misplaced the named conflict field".to_string())?;
+        let source_survivors = markdown
+            .find("## Source survivors")
+            .ok_or_else(|| "Markdown omitted the named source-survivors section".to_string())?;
+        if conflicts == 0 || source_survivors <= dry_merge {
+            return Err("Markdown named fields were not rendered in their governed sections".to_string());
         }
         if test_git_output(&source, &["rev-parse", "HEAD"])? != source_head_before
             || test_git_output(&swarm, &["rev-parse", "HEAD"])? != swarm_head_before
