@@ -856,7 +856,7 @@ mod tests {
             cleanup(&root);
             return Err("wrong-tree K was accepted by verifier".to_string());
         }
-        options.tree = tree;
+        options.tree = tree.clone();
         options.source_release_tag = "HEAD".to_string();
         if build_receipt(&options).is_ok() {
             cleanup(&root);
