@@ -172,6 +172,28 @@ mod tests {
     }
 
     #[test]
+    fn before_lock_reports_an_unusable_lock_path() -> Result<(), String> {
+        let root = test_root("unusable-path")?;
+        let lock_path = root
+            .join(crate::app::repair_attempt::REPAIR_ATTEMPT_DIRECTORY)
+            .join(".before.lock");
+        std::fs::create_dir_all(&lock_path)
+            .map_err(|error| {
+                format!(
+                    "create lock collision {} failed: {error}",
+                    lock_path.display()
+                )
+            })?;
+        let result = lock_before_repair_attempt(&root);
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        match result {
+            Err(error) if error.contains("create") && error.contains(".before.lock") => Ok(()),
+            other => Err(format!("unusable lock path was not reported: {other:?}")),
+        }
+    }
+
+    #[test]
     fn before_repair_attempt_selects_only_the_before_phase() -> Result<(), String> {
         let before = before_repair_attempt(&args(&[
             "ripr",
