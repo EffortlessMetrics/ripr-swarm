@@ -1605,6 +1605,10 @@ pub(crate) enum PathDependencyResolution {
     /// Resolved lexically inside the scan root, but the target is missing or
     /// is not a directory on disk.
     TargetMissing,
+    /// The manifest declares an absolute POSIX or Windows path. It is a valid
+    /// Cargo path dependency, but it has no repo-relative identity for this
+    /// inventory and is therefore retained as an explicit boundary.
+    UnsupportedAbsolutePath,
     /// `workspace = true` was declared but no nearest-ancestor workspace root
     /// with a matching `[workspace.dependencies]` entry was found, so no path
     /// authority exists. This is a typed limitation, not a missing edge.
@@ -1642,6 +1646,8 @@ type WorkspaceDependencyTables = Vec<(String, Vec<(String, Option<String>)>)>;
 /// - a manifest whose repo-relative path is not UTF-8 contributes no edges;
 ///   the gap is surfaced in `path_dependency_limitations` instead of a
 ///   lossy-corrupted path identity;
+/// - absolute POSIX and Windows drive-prefixed paths remain explicit edges with
+///   `UnsupportedAbsolutePath` and no fabricated repo-relative identity;
 /// - a `[package] workspace = "..."` redirect is not followed: V1 resolves
 ///   inheritance against the nearest ancestor manifest with a `[workspace]`
 ///   table only;
@@ -1876,6 +1882,18 @@ fn portable_manifest_dir_text(manifest_path: &Path) -> Option<String> {
 /// path convention. Returns the normalized identity; `escaped` is true when
 /// resolution climbs above the scan root, in which case the identity keeps
 /// its leading `..` segments.
+/// True when a declared Cargo path is absolute in either the POSIX or
+/// Windows drive-prefixed sense. Absolute paths are valid Cargo inputs, but
+/// they cannot be represented as repo-relative identities without observing
+/// the host filesystem root.
+fn is_absolute_declared_path(declared: &str) -> bool {
+    declared.starts_with('/')
+        || declared
+            .as_bytes()
+            .get(1)
+            .is_some_and(|byte| *byte == b':')
+}
+
 fn resolve_repo_relative(base: &str, declared: &str) -> (String, bool) {
     let mut components: Vec<&str> = base
         .split('/')
@@ -1950,13 +1968,18 @@ fn collect_path_dependency_edges(
                 // `workspace = true` is also present (Cargo rejects that
                 // combination; capture stays total).
                 let declared = declared.replace('\\', "/");
-                let (resolved, escaped) = resolve_repo_relative(manifest_dir, &declared);
-                let resolution = if escaped {
-                    PathDependencyResolution::ResolvedOutsideWorkspace
-                } else if root.join(&resolved).is_dir() {
-                    PathDependencyResolution::Resolved
+                let (resolved_path, resolution) = if is_absolute_declared_path(&declared) {
+                    (None, PathDependencyResolution::UnsupportedAbsolutePath)
                 } else {
-                    PathDependencyResolution::TargetMissing
+                    let (resolved, escaped) = resolve_repo_relative(manifest_dir, &declared);
+                    let resolution = if escaped {
+                        PathDependencyResolution::ResolvedOutsideWorkspace
+                    } else if root.join(&resolved).is_dir() {
+                        PathDependencyResolution::Resolved
+                    } else {
+                        PathDependencyResolution::TargetMissing
+                    };
+                    (Some(resolved), resolution)
                 };
                 edges.push(PathDependencyEdge {
                     from_manifest: manifest_text.to_string(),
@@ -1964,20 +1987,25 @@ fn collect_path_dependency_edges(
                     target: target.map(str::to_string),
                     dependency_name: dependency_name.clone(),
                     declared_path: Some(declared),
-                    resolved_path: Some(resolved),
+                    resolved_path,
                     resolution,
                     source: PathDependencySource::Package,
                 });
             } else if dep_table.get("workspace").and_then(toml::Value::as_bool) == Some(true) {
                 match workspace_dependency_path(workspace_tables, manifest_dir, dependency_name) {
                     Some((root_dir, Some(declared))) => {
-                        let (resolved, escaped) = resolve_repo_relative(&root_dir, &declared);
-                        let resolution = if escaped {
-                            PathDependencyResolution::ResolvedOutsideWorkspace
-                        } else if root.join(&resolved).is_dir() {
-                            PathDependencyResolution::Resolved
+                        let (resolved_path, resolution) = if is_absolute_declared_path(&declared) {
+                            (None, PathDependencyResolution::UnsupportedAbsolutePath)
                         } else {
-                            PathDependencyResolution::TargetMissing
+                            let (resolved, escaped) = resolve_repo_relative(&root_dir, &declared);
+                            let resolution = if escaped {
+                                PathDependencyResolution::ResolvedOutsideWorkspace
+                            } else if root.join(&resolved).is_dir() {
+                                PathDependencyResolution::Resolved
+                            } else {
+                                PathDependencyResolution::TargetMissing
+                            };
+                            (Some(resolved), resolution)
                         };
                         edges.push(PathDependencyEdge {
                             from_manifest: manifest_text.to_string(),
@@ -1985,7 +2013,7 @@ fn collect_path_dependency_edges(
                             target: target.map(str::to_string),
                             dependency_name: dependency_name.clone(),
                             declared_path: Some(declared),
-                            resolved_path: Some(resolved),
+                            resolved_path,
                             resolution,
                             source: PathDependencySource::WorkspaceInherited,
                         });
@@ -3007,6 +3035,22 @@ mod tests {
     }
 
     #[test]
+    fn workspace_dependency_path_stops_at_nearest_workspace_authority() {
+        let tables = vec![
+            (
+                String::new(),
+                vec![(String::from("shared"), Some(String::from("shared")))],
+            ),
+            (String::from("crates/inner"), Vec::new()),
+        ];
+        assert_eq!(
+            workspace_dependency_path(&tables, "crates/inner/member", "shared"),
+            None,
+            "an inner workspace without the entry must not inherit from an outer workspace"
+        );
+    }
+
+    #[test]
     fn path_dependency_edges_capture_target_specific_sections() -> Result<(), String> {
         let root = isolated_dir("path-dep-target-specific");
         let _ = std::fs::remove_dir_all(&root);
@@ -3129,6 +3173,40 @@ mod tests {
         // Sorted by dependency_name: "plain" < "winstyle".
         assert_eq!(edges[0].declared_path.as_deref(), Some("../shared"));
         assert_eq!(edges[1].declared_path.as_deref(), Some("../shared"));
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn path_dependency_edges_keep_absolute_paths_explicit() -> Result<(), String> {
+        let root = isolated_dir("path-dep-absolute");
+        let _ = std::fs::remove_dir_all(&root);
+        write_manifest(
+            &root,
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"crates/app\"]\n",
+        )?;
+        write_manifest(
+            &root,
+            "crates/app/Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\nposix = { path = \"/opt/shared\" }\n             windows = { path = \"C:/shared\" }\n",
+        )?;
+
+        let provenance = workspace_graph_provenance(&root);
+        let edges = &provenance.path_dependency_edges;
+        assert_eq!(edges.len(), 2, "{edges:?}");
+        assert_eq!(edges[0].dependency_name, "posix");
+        assert_eq!(edges[1].dependency_name, "windows");
+        for edge in edges {
+            assert_eq!(
+                edge.resolution,
+                PathDependencyResolution::UnsupportedAbsolutePath
+            );
+            assert_eq!(edge.resolved_path, None);
+            assert!(edge.declared_path.is_some());
+        }
 
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
