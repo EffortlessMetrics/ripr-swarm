@@ -721,7 +721,9 @@ mod tests {
             // own `rustc 1.` version string, while no transient outcome does,
             // so retry the transient class and assert only on a definitive
             // verdict.
-            let shim = shim.to_str().ok_or_else(|| "shim path is not UTF-8".to_string())?;
+            let shim = shim
+                .to_str()
+                .ok_or_else(|| "shim path is not UTF-8".to_string())?;
             let mut attempt = 0usize;
             loop {
                 attempt += 1;
