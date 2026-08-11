@@ -8839,10 +8839,9 @@ fn server_archive_ruleset_shape_fixtures_are_strict_and_discriminating() -> Resu
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .ok_or_else(|| "xtask manifest should have a repository parent".to_string())?;
-    let workflow = fs::read_to_string(repo_root.join(
-        ".github/workflows/server-archive-qualification.yml",
-    ))
-    .map_err(|error| format!("failed to read qualification workflow: {error}"))?;
+    let workflow =
+        fs::read_to_string(repo_root.join(".github/workflows/server-archive-qualification.yml"))
+            .map_err(|error| format!("failed to read qualification workflow: {error}"))?;
     let predicate_marker = "if jq -e --argjson expected_id \"${ruleset_id}\" '";
     let predicate_start = workflow
         .find(predicate_marker)
