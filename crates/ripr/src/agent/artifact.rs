@@ -1253,9 +1253,9 @@ mod tests {
         // shared mapping without being ordinary CLI verify outcomes: a fully
         // current pair shares one revision and fails the movement gate, and a
         // current-before/historical-after pair passes the lineage gate only
-        // when the after head descends from the live HEAD it is not (the
-        // lineage gate rejects reversed or unrelated ancestry, not that
-        // descendant arrangement).
+        // when the after head descends from the live HEAD and is not the
+        // live HEAD itself (the lineage gate rejects reversed or unrelated
+        // ancestry, not that descendant arrangement).
         let cases = [
             ((Current, Current), "current"),
             ((Historical, Historical), "historical_noncurrent"),

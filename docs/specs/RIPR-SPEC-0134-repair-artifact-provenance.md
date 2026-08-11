@@ -87,7 +87,9 @@ clean. Two cells close the vocabulary without being ordinary verify outcomes:
 pair is bound to one shared revision and fails the movement gate; and
 `current_before_historical_after` is reachable only when the after artifact
 is bound to a descendant of the live verify-time HEAD that is not the HEAD
-itself (for example an artifact produced on a branch or in another clone) —
+itself (for example an artifact produced while a descendant branch was
+checked out in the same root; an artifact from another clone fails root
+validation before lineage) —
 the lineage gate rejects the pair when the after head does not descend from
 the before head, but it does not reject that descendant arrangement.
 
@@ -183,7 +185,7 @@ after movement succeeds but discloses `historical_noncurrent`.
 ### Historical-before/current-after bound pair
 
 A before snapshot bound to a superseded revision and an after snapshot bound to
-the current HEAD — the expected clean before/after transaction — produce
+the current HEAD — the expected before/after transaction — produce
 advisory movement with
 `artifact_currentness = "historical_before_current_after"` (#3027).
 
