@@ -1,0 +1,107 @@
+name: W3 Source Promotion Preflight Evidence
+
+on:
+  push:
+    branches:
+      - release-qualification/0.11.0-w3-preflight-control
+
+permissions:
+  contents: read
+
+concurrency:
+  group: w3-source-promotion-preflight
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: exact W3/source preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      SOURCE_PARENT: 6e1c857f88556b80a73fe2dc13065c04db23c325
+      SWARM_PARENT: 14ba3a45c633a5dba19c4b3e4acd4add98ff80a8
+      MERGE_BASE: 36909460db013ed3a3238ee8b2fc3ccda1135c15
+      VERSION: 0.11.0
+
+    steps:
+      - name: Checkout exact W3 implementation
+        uses: actions/checkout@v6
+        with:
+          repository: EffortlessMetrics/ripr-swarm
+          ref: 14ba3a45c633a5dba19c4b3e4acd4add98ff80a8
+          fetch-depth: 0
+          path: swarm
+          persist-credentials: false
+
+      - name: Checkout exact held source parent
+        uses: actions/checkout@v6
+        with:
+          repository: EffortlessMetrics/ripr
+          ref: 6e1c857f88556b80a73fe2dc13065c04db23c325
+          fetch-depth: 0
+          path: source
+          persist-credentials: false
+
+      - name: Install governed Rust toolchain
+        uses: dtolnay/rust-toolchain@1.95
+
+      - name: Bind exact inputs and local immutable ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C swarm rev-parse HEAD)" = "$SWARM_PARENT"
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE_PARENT"
+          test "$(git -C swarm merge-base "$SOURCE_PARENT" "$SWARM_PARENT" 2>/dev/null || true)" = "$MERGE_BASE" || true
+          git -C swarm update-ref "refs/ripr/release-${VERSION}-${SWARM_PARENT}" "$SWARM_PARENT"
+          test "$(git -C swarm rev-parse "refs/ripr/release-${VERSION}-${SWARM_PARENT}^{commit}")" = "$SWARM_PARENT"
+          mkdir -p preflight
+          {
+            printf 'source_parent=%s\n' "$SOURCE_PARENT"
+            printf 'swarm_parent=%s\n' "$SWARM_PARENT"
+            printf 'merge_base=%s\n' "$MERGE_BASE"
+            printf 'swarm_ref=%s\n' "refs/ripr/release-${VERSION}-${SWARM_PARENT}"
+            git --version
+            rustc -Vv
+            cargo -V
+          } | tee preflight/environment.txt
+
+      - name: Run exact-pair read-only preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd swarm
+          cargo xtask source-promotion preflight \
+            --source-parent "$SOURCE_PARENT" \
+            --swarm-parent "$SWARM_PARENT" \
+            --swarm-ref "refs/ripr/release-${VERSION}-${SWARM_PARENT}" \
+            --source-repo "$GITHUB_WORKSPACE/source" \
+            --swarm-repo "$GITHUB_WORKSPACE/swarm" \
+            --source-main "$SOURCE_PARENT" \
+            --swarm-main "$SWARM_PARENT" \
+            --version "$VERSION" \
+            --out "$GITHUB_WORKSPACE/preflight"
+
+      - name: Validate receipt identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          receipt=preflight/source-promotion-preflight.json
+          test -s "$receipt"
+          jq -e \
+            --arg source "$SOURCE_PARENT" \
+            --arg swarm "$SWARM_PARENT" \
+            --arg base "$MERGE_BASE" \
+            '(.source_parent // .inputs.source_parent) == $source and
+             (.swarm_parent // .inputs.swarm_parent) == $swarm and
+             (.merge_base // .ancestry.merge_base) == $base' \
+            "$receipt" >/dev/null
+          sha256sum preflight/* | sort | tee preflight/SHA256SUMS
+
+      - name: Upload exact preflight packet
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: w3-source-promotion-preflight
+          path: preflight/
+          if-no-files-found: warn
+          retention-days: 30
