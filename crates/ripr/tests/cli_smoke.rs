@@ -87,8 +87,11 @@ fn snapshot_tree(root: &Path) -> Result<Vec<String>, std::io::Error> {
             if metadata.is_dir() {
                 entries.push(format!("dir:{relative}"));
                 visit(root, &child, entries)?;
+            } else if metadata.is_file() {
+                let content = std::fs::read(&child)?;
+                entries.push(format!("file:{relative}:{}", sha256_hex_bytes(&content)));
             } else {
-                entries.push(format!("file:{relative}:{}", metadata.len()));
+                entries.push(format!("other:{relative}"));
             }
         }
         Ok(())
@@ -98,6 +101,24 @@ fn snapshot_tree(root: &Path) -> Result<Vec<String>, std::io::Error> {
     visit(root, root, &mut entries)?;
     entries.sort();
     Ok(entries)
+}
+
+fn snapshot_diff(before: &[String], after: &[String]) -> String {
+    let removed = before
+        .iter()
+        .filter(|entry| !after.contains(entry))
+        .map(|entry| format!("- {entry}"))
+        .collect::<Vec<_>>();
+    let added = after
+        .iter()
+        .filter(|entry| !before.contains(entry))
+        .map(|entry| format!("+ {entry}"))
+        .collect::<Vec<_>>();
+    removed
+        .into_iter()
+        .chain(added)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn run_git(root: &Path, args: &[&str]) -> Result<(), String> {
@@ -789,13 +810,24 @@ fn isolated_installed_binary_version_contract_is_side_effect_free() -> Result<()
                     .into());
                 }
             } else if args[0] == "check" {
+                let is_diff_file_case = args.len() == 3 && args[1] == "--diff";
                 if output.status.success()
                     || stdout.contains("ripr —")
                     || stdout.contains(expected_version.trim_end())
-                    || stderr.contains(&workspace_text)
+                    || stderr.contains(expected_version.trim_end())
                 {
                     return Err(format!(
                         "check version-like input escaped its command boundary for {args:?}: status={:?}, stdout={stdout:?}, stderr={stderr:?}",
+                        output.status.code()
+                    )
+                    .into());
+                }
+                if is_diff_file_case
+                    && (!stderr.contains("resolved workspace root to ")
+                        || !stderr.contains("failed to read diff file --version"))
+                {
+                    return Err(format!(
+                        "check --diff --version did not report the expected workspace/diff diagnostic: status={:?}, stderr={stderr:?}",
                         output.status.code()
                     )
                     .into());
@@ -808,17 +840,23 @@ fn isolated_installed_binary_version_contract_is_side_effect_free() -> Result<()
                 .into());
             }
 
-            if snapshot_tree(&root)? != before {
-                return Err(
-                    format!("version-like input changed the isolated cwd for {args:?}").into(),
-                );
+            let after = snapshot_tree(&root)?;
+            if after != before {
+                return Err(format!(
+                    "version-like input changed the isolated cwd for {args:?}:\n{}",
+                    snapshot_diff(&before, &after)
+                )
+                .into());
             }
             if config_path.exists() || artifact_path.exists() {
                 return Err(
                     format!("version-like input wrote config/artifact paths for {args:?}").into(),
                 );
             }
-            if stdout.contains(&workspace_text) || stderr.contains(&workspace_text) {
+            let is_diff_file_case = args.len() == 3 && args[1] == "--diff";
+            if !is_diff_file_case
+                && (stdout.contains(&workspace_text) || stderr.contains(&workspace_text))
+            {
                 return Err(format!(
                     "version-like input depended on the workspace path for {args:?}"
                 )
