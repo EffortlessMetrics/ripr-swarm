@@ -1887,11 +1887,7 @@ fn portable_manifest_dir_text(manifest_path: &Path) -> Option<String> {
 /// they cannot be represented as repo-relative identities without observing
 /// the host filesystem root.
 fn is_absolute_declared_path(declared: &str) -> bool {
-    declared.starts_with('/')
-        || declared
-            .as_bytes()
-            .get(1)
-            .is_some_and(|byte| *byte == b':')
+    declared.starts_with('/') || declared.as_bytes().get(1).is_some_and(|byte| *byte == b':')
 }
 
 fn resolve_repo_relative(base: &str, declared: &str) -> (String, bool) {
@@ -3275,8 +3271,7 @@ mod tests {
         assert_eq!(edges[1].from_manifest, "crates/b/Cargo.toml");
         assert_eq!(edges[1].dependency_name, "a");
         assert!(edges.iter().all(|edge| {
-            edge.resolution == PathDependencyResolution::Resolved
-                && edge.resolved_path.is_some()
+            edge.resolution == PathDependencyResolution::Resolved && edge.resolved_path.is_some()
         }));
 
         let _ = std::fs::remove_dir_all(&root);
