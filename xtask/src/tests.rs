@@ -8613,66 +8613,140 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
     let workflow = fs::read_to_string(&workflow_path)
         .map_err(|err| format!("read {}: {err}", workflow_path.display()))?;
 
-    for required in [
-        "candidate_sha",
-        "ref: ${{ inputs.candidate_sha }}",
-        "candidate_sha=\"${CANDIDATE_SHA,,}\"",
-        "persist-credentials: false",
-        "^[0-9a-fA-F]{40}$",
-        "git rev-parse HEAD",
-        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
-        "release-server-archive",
-        "release-server-manifest",
-        "SHA256SUMS",
-        "test \"${version}\" = \"${expected_binary_version}\"",
-        "$version -ne $expectedBinaryVersion",
-        "Verify requested version matches candidate package",
-        "release_assets_created: false",
-    ] {
-        if !workflow.contains(required) {
-            return Err(format!("qualification workflow is missing `{required}`"));
-        }
-    }
-    if workflow.matches("persist-credentials: false").count() != 3 {
-        return Err("every checkout must disable credential persistence".to_owned());
-    }
-    if workflow
-        .matches("Verify requested version matches candidate package")
-        .count()
-        != 2
-    {
-        return Err(
-            "both runner platforms must bind the requested version before packaging".to_owned(),
-        );
-    }
-
-    for forbidden in [
-        "contents: write",
-        "release-upload-assets",
-        "GH_TOKEN",
-        "github.token",
-        "secrets.",
-        "gh release",
-    ] {
-        if workflow.contains(forbidden) {
+    let validate = |candidate: &str| -> Result<(), String> {
+        let checkout_blocks: Vec<&str> = candidate
+            .split("      - uses: actions/checkout@")
+            .skip(1)
+            .map(|block| block.split("      - ").next().unwrap_or(block))
+            .collect();
+        if checkout_blocks.len() != 3 {
             return Err(format!(
-                "qualification workflow contains forbidden publication surface `{forbidden}`"
+                "expected three structured checkout steps, got {}",
+                checkout_blocks.len()
             ));
         }
-    }
+        for block in checkout_blocks {
+            if !block.contains("ref: ${{ inputs.candidate_sha }}")
+                || !block.contains("persist-credentials: false")
+            {
+                return Err(
+                    "every checkout must bind the candidate ref and disable credential persistence"
+                        .to_owned(),
+                );
+            }
+        }
+        if !candidate.contains("permissions:\n  contents: read")
+            || candidate.contains("contents: write")
+        {
+            return Err("workflow permissions must be read-only contents".to_owned());
+        }
+        if !candidate.contains("candidate_sha=\"${CANDIDATE_SHA,,}\"")
+            || !candidate.contains("git ls-remote --refs origin")
+            || !candidate.contains("git cat-file -t")
+            || !candidate.contains("test \"${CANDIDATE_TAG}\" = \"${tag}\"")
+            || !candidate.contains("^ripr-release-[0-9]+\\.[0-9]+\\.[0-9]+$")
+        {
+            return Err("candidate tag must be strict, remote-bound, and commit-typed".to_owned());
+        }
+        if !candidate.contains("target == \"tag\" and .enforcement == \"active\"")
+            || !candidate.contains("index(\"refs/tags/ripr-release-*\")")
+            || !candidate.contains("index(\"update\")")
+            || !candidate.contains("index(\"deletion\")")
+        {
+            return Err(
+                "active protected tag ruleset update/deletion checks are missing".to_owned(),
+            );
+        }
+        let targets = [
+            "x86_64-pc-windows-msvc",
+            "x86_64-unknown-linux-gnu",
+            "aarch64-unknown-linux-gnu",
+            "x86_64-apple-darwin",
+            "aarch64-apple-darwin",
+        ];
+        let matrix = candidate
+            .split("matrix:\n")
+            .nth(1)
+            .and_then(|rest| rest.split("\n\n    steps:").next())
+            .unwrap_or_default();
+        if targets
+            .iter()
+            .filter(|target| matrix.matches(*target).count() == 1)
+            .count()
+            != 5
+        {
+            return Err(
+                "the exact five-target matrix inventory is missing or duplicated".to_owned(),
+            );
+        }
+        if candidate
+            .matches("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a")
+            .count()
+            != 2
+            || candidate
+                .matches("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c")
+                .count()
+                != 1
+            || candidate.contains("release-upload-assets")
+            || candidate.contains("gh release")
+            || candidate.contains("secrets.")
+        {
+            return Err(
+                "workflow output must be Actions-artifact-only with no publication or secrets"
+                    .to_owned(),
+            );
+        }
+        for marker in [
+            "expected-archive-entries.txt",
+            "diff -u expected-archive-entries.txt actual-archive-entries.txt",
+            "Compare-Object $expectedEntries $actualEntries",
+            "expected-dist-files.txt",
+            "diff -u expected-dist-files.txt actual-dist-files.txt",
+            "(.assets | keys == ($targets | sort))",
+            "release_assets_created: false",
+        ] {
+            if !candidate.contains(marker) {
+                return Err(format!(
+                    "structured runtime inventory marker missing `{marker}`"
+                ));
+            }
+        }
+        Ok(())
+    };
 
-    let targets = [
-        "x86_64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-        "x86_64-apple-darwin",
-        "aarch64-apple-darwin",
-    ];
-    for target in targets {
-        if workflow.matches(target).count() < 1 {
-            return Err(format!(
-                "qualification workflow is missing target `{target}`"
-            ));
+    validate(&workflow)?;
+    for (name, broken) in [
+        (
+            "writable permissions",
+            workflow.replacen("contents: read", "contents: write", 1),
+        ),
+        (
+            "credential persistence",
+            workflow.replacen("persist-credentials: false", "persist-credentials: true", 1),
+        ),
+        (
+            "publication",
+            workflow.replacen(
+                "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+                "actions/upload-release-asset@deadbeef",
+                1,
+            ),
+        ),
+        (
+            "tag protection",
+            workflow.replacen("index(\"deletion\")", "index(\"create\")", 1),
+        ),
+        (
+            "manifest inventory",
+            workflow.replacen(
+                "diff -u expected-dist-files.txt actual-dist-files.txt",
+                "true",
+                1,
+            ),
+        ),
+    ] {
+        if validate(&broken).is_ok() {
+            return Err(format!("negative fixture `{name}` was not rejected"));
         }
     }
     Ok(())

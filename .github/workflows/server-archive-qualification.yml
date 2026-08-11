@@ -41,6 +41,8 @@ jobs:
 
       - name: Verify candidate SHA and optional tag
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           [[ "${CANDIDATE_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]
@@ -48,7 +50,29 @@ jobs:
           test "$(git rev-parse HEAD)" = "${candidate_sha}"
           if [[ -n "${CANDIDATE_TAG}" ]]; then
             tag="${CANDIDATE_TAG#refs/tags/}"
+            test "${CANDIDATE_TAG}" = "${tag}"
+            [[ "${tag}" =~ ^ripr-release-[0-9]+\.[0-9]+\.[0-9]+$ ]]
+            remote_tag="$(git ls-remote --refs origin "refs/tags/${tag}")"
+            test "$(printf '%s\n' "${remote_tag}" | awk 'NF {count++} END {print count + 0}')" = "1"
+            remote_sha="$(printf '%s\n' "${remote_tag}" | awk '{print $1}')"
+            test "${remote_sha}" = "${candidate_sha}"
+            test "$(git cat-file -t "${remote_sha}")" = "commit"
             test "$(git rev-list -n 1 "refs/tags/${tag}")" = "${candidate_sha}"
+
+            ruleset_ids="$(gh api "repos/${REPOSITORY}/rulesets?includes_parents=true" --paginate | jq -r '.[] | select(.target == "tag" and .enforcement == "active") | .id')"
+            ruleset_verified=false
+            while IFS= read -r ruleset_id; do
+              [[ -z "${ruleset_id}" ]] && continue
+              if gh api "repos/${REPOSITORY}/rulesets/${ruleset_id}" | jq -e --arg tag "${tag}" '
+                (.conditions.ref_name.include // []) | index("refs/tags/ripr-release-*") != null
+              ' >/dev/null && gh api "repos/${REPOSITORY}/rulesets/${ruleset_id}" | jq -e '
+                ([.rules[]?.type] | index("update") != null) and ([.rules[]?.type] | index("deletion") != null)
+              ' >/dev/null; then
+                ruleset_verified=true
+                break
+              fi
+            done <<< "${ruleset_ids}"
+            test "${ruleset_verified}" = true
           fi
   build:
     name: build and qualify ${{ matrix.target }}
@@ -129,6 +153,11 @@ jobs:
           expected="$(tr -d '[:space:]' < "${archive}.sha256")"
           actual="$(sha256sum "${archive}" | cut -d ' ' -f 1)"
           test "${actual}" = "${expected}"
+          expected_entries=("LICENSE-APACHE" "LICENSE-MIT" "README-server.txt" "${EXECUTABLE}")
+          printf '%s\n' "${expected_entries[@]}" | sort > expected-archive-entries.txt
+          tar -tzf "${archive}" | sed 's#^\./##' | grep -v '^$' | sort > actual-archive-entries.txt
+          diff -u expected-archive-entries.txt actual-archive-entries.txt
+          ! grep -q '/' actual-archive-entries.txt
           mkdir extracted
           tar -xzf "${archive}" -C extracted
           test -f "extracted/${EXECUTABLE}"
@@ -154,6 +183,10 @@ jobs:
           $actual = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
           if ($actual -ne $expected.ToLowerInvariant()) { throw "archive checksum mismatch" }
           Expand-Archive -LiteralPath $archive -DestinationPath extracted -Force
+          $expectedEntries = @('LICENSE-APACHE', 'LICENSE-MIT', 'README-server.txt', $env:EXECUTABLE) | Sort-Object
+          $actualEntries = @(Get-ChildItem extracted -Recurse -Force | ForEach-Object { $_.FullName.Substring((Resolve-Path extracted).Path.Length + 1) } | Sort-Object)
+          if ((Compare-Object $expectedEntries $actualEntries).Count -ne 0) { throw "archive contains unexpected or nested entries" }
+          if (@(Get-ChildItem extracted -Recurse -Directory).Count -ne 0) { throw "archive contains nested directories" }
           if (-not (Test-Path "extracted\$env:EXECUTABLE")) { throw "archive executable missing" }
           if (-not (Test-Path extracted\LICENSE-MIT)) { throw "MIT license missing" }
           if (-not (Test-Path extracted\LICENSE-APACHE)) { throw "Apache license missing" }
@@ -195,6 +228,30 @@ jobs:
       - name: Generate manifest and checksums
         shell: bash
         run: cargo xtask release-server-manifest --version "$QUALIFICATION_VERSION" --repository "$REPOSITORY"
+
+      - name: Verify exact manifest inventory
+        shell: bash
+        env:
+          EXPECTED_TARGETS: '["x86_64-pc-windows-msvc","x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-apple-darwin","aarch64-apple-darwin"]'
+        run: |
+          set -euo pipefail
+          version="${QUALIFICATION_VERSION#v}"
+          expected_files=()
+          while IFS= read -r target; do
+            expected_files+=("ripr-server-v${version}-${target}.tar.gz" "ripr-server-v${version}-${target}.tar.gz.sha256")
+          done < <(jq -r '.[]' <<< "${EXPECTED_TARGETS}")
+          expected_files+=("ripr-server-manifest-v${version}.json" "SHA256SUMS")
+          printf '%s\n' "${expected_files[@]}" | sort > expected-dist-files.txt
+          find dist -mindepth 1 -maxdepth 1 ! -type f -print -quit | grep -q . && exit 1 || true
+          find dist -mindepth 1 -maxdepth 1 -type f -printf '%f\n' | sort > actual-dist-files.txt
+          diff -u expected-dist-files.txt actual-dist-files.txt
+          manifest="dist/ripr-server-manifest-v${version}.json"
+          test -f "${manifest}"
+          jq -e --arg version "${version}" --arg repository "${REPOSITORY}" --argjson targets "${EXPECTED_TARGETS}" '
+            .version == $version and
+            (.assets | keys == ($targets | sort)) and
+            (all(.assets[]; (.sha256 | test("^[0-9a-f]{64}$")) and (.url | startswith("https://github.com/" + $repository + "/releases/download/v" + $version + "/"))))
+          ' "${manifest}" >/dev/null
 
       - name: Verify aggregate checksums and write receipt
         shell: bash
