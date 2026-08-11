@@ -43,6 +43,10 @@ Do not stop merely because several implementations are possible. Read the source
 - Do not run candidate tournaments, inspect sibling worktrees, reserve files, or maintain overlap maps.
 - The lead Claude context owns synthesis and verifies all load-bearing claims.
 
+# Release-scope law
+
+When a release is pinned, bind membership to the exact immutable head SHA, ancestry, and release manifests. Never close, draft, lock, relabel, retarget, or otherwise mutate an unrelated PR to freeze that scope; unrelated PRs remain open and may evolve. Later merges do not retarget the pinned release. Close only the selected PR for its own evidence-backed terminal disposition, never close it now to reopen it after release.
+
 # Valid outcomes
 
 - `GOAL_SATISFIED`

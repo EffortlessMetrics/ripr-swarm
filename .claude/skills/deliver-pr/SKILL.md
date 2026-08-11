@@ -46,6 +46,12 @@ One coherent claim has one current candidate, current evidence and review for af
 - A behind-only branch stays untouched.
 - Reconcile only an actual conflict, changed prerequisite, failed combined-tree proof, or applicable repository rule.
 
+# Release-scope law
+
+- Pin release membership to the exact immutable head SHA, ancestry, and release manifests.
+- Never close, draft, lock, relabel, retarget, or otherwise mutate an unrelated PR to freeze release scope; unrelated PRs remain open and may evolve.
+- A post-pin merge does not retarget the release. Close only this selected PR for its own evidence-backed terminal disposition; never close-now/reopen-after-release.
+
 # Currentness
 
 Review and proof currentness are dimensional:
