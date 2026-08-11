@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
-      SOURCE_PARENT: __SOURCE_PARENT_AFTER_1532_MERGE__
+      SOURCE_PARENT: 0b6073f88696ab70832dc7ea6410a0c285dc0f53
       SWARM_PARENT: 544a34a4b0f6fc9d2bcacb6453bc502ca059dad3
       EXPECTED_MERGE_BASE: 36909460db013ed3a3238ee8b2fc3ccda1135c15
       VERSION: 0.11.0
