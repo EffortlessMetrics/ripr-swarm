@@ -1,0 +1,205 @@
+name: W4 Exact-Head Hosted Qualification
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: ripr-0.11.0-w4-exact-head-hosted-qualification
+  cancel-in-progress: false
+
+jobs:
+  dispatch-and-bind:
+    name: dispatch existing workflows at exact W4
+    if: github.head_ref == 'release-qualification/0.11.0-w4-dispatch-control'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: EffortlessMetrics/ripr-swarm
+      W4_REF: release-qualification/0.11.0-w4
+      W4_SHA: 544a34a4b0f6fc9d2bcacb6453bc502ca059dad3
+
+    steps:
+      - name: Verify exact branch binding
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote="$(gh api "repos/$REPO/git/ref/heads/$W4_REF" --jq '.object.sha')"
+          test "$remote" = "$W4_SHA"
+          mkdir -p receipt/windows
+          printf '%s\n' "$remote" > receipt/w4-branch.sha
+
+      - name: Snapshot and dispatch exact-head workflows
+        id: dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          snapshot() {
+            workflow="$1"
+            out="$2"
+            gh api --paginate --slurp \
+              "repos/$REPO/actions/workflows/$workflow/runs?event=workflow_dispatch&per_page=100" \
+              | jq '[.[] | .workflow_runs[] | .id]' > "$out"
+          }
+
+          bind_new_run() {
+            workflow="$1"
+            before="$2"
+            out="$3"
+            deadline=$(( $(date +%s) + 300 ))
+            while test "$(date +%s)" -lt "$deadline"; do
+              gh api --paginate --slurp \
+                "repos/$REPO/actions/workflows/$workflow/runs?event=workflow_dispatch&per_page=100" \
+                | jq '[.[] | .workflow_runs[]]' > receipt/runs-current.json
+              jq --slurpfile before "$before" \
+                 --arg sha "$W4_SHA" \
+                 --arg branch "$W4_REF" '
+                   [.[] |
+                     select(.event == "workflow_dispatch") |
+                     select(.head_sha == $sha) |
+                     select(.head_branch == $branch) |
+                     select((.id as $id | $before[0] | index($id)) == null)]
+                   | unique_by(.id)
+                 ' receipt/runs-current.json > "$out"
+              count="$(jq 'length' "$out")"
+              test "$count" -le 1
+              if test "$count" = 1; then
+                jq -r '.[0].id' "$out"
+                return 0
+              fi
+              sleep 5
+            done
+            return 1
+          }
+
+          snapshot ci.yml receipt/ci-before.json
+          snapshot routed-rust.yml receipt/routed-before.json
+          snapshot windows-advisory.yml receipt/windows-before.json
+
+          gh workflow run ci.yml --repo "$REPO" --ref "$W4_REF"
+          gh workflow run routed-rust.yml --repo "$REPO" --ref "$W4_REF"
+          gh workflow run windows-advisory.yml --repo "$REPO" --ref "$W4_REF"
+
+          ci_id="$(bind_new_run ci.yml receipt/ci-before.json receipt/ci-new.json)"
+          routed_id="$(bind_new_run routed-rust.yml receipt/routed-before.json receipt/routed-new.json)"
+          windows_id="$(bind_new_run windows-advisory.yml receipt/windows-before.json receipt/windows-new.json)"
+
+          printf 'ci_id=%s\n' "$ci_id" >> "$GITHUB_OUTPUT"
+          printf 'routed_id=%s\n' "$routed_id" >> "$GITHUB_OUTPUT"
+          printf 'windows_id=%s\n' "$windows_id" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for exact-head terminal success
+        shell: bash
+        env:
+          CI_ID: ${{ steps.dispatch.outputs.ci_id }}
+          ROUTED_ID: ${{ steps.dispatch.outputs.routed_id }}
+          WINDOWS_ID: ${{ steps.dispatch.outputs.windows_id }}
+        run: |
+          set -euo pipefail
+
+          wait_for_success() {
+            run_id="$1"
+            name="$2"
+            deadline=$(( $(date +%s) + 6600 ))
+            while test "$(date +%s)" -lt "$deadline"; do
+              gh run view "$run_id" --repo "$REPO" \
+                --json databaseId,event,headBranch,headSha,status,conclusion,url \
+                > "receipt/${name}-run.json"
+              jq -e --arg sha "$W4_SHA" --arg branch "$W4_REF" '
+                .event == "workflow_dispatch" and
+                .headSha == $sha and
+                .headBranch == $branch
+              ' "receipt/${name}-run.json" >/dev/null
+              status="$(jq -r '.status' "receipt/${name}-run.json")"
+              if test "$status" = completed; then
+                jq -e '.conclusion == "success"' "receipt/${name}-run.json" >/dev/null
+                return 0
+              fi
+              sleep 15
+            done
+            echo "$name workflow $run_id did not complete before timeout" >&2
+            return 1
+          }
+
+          wait_for_success "$CI_ID" ci
+          wait_for_success "$ROUTED_ID" routed
+          wait_for_success "$WINDOWS_ID" windows
+
+      - name: Inspect exact-head Windows statuses
+        shell: bash
+        env:
+          WINDOWS_ID: ${{ steps.dispatch.outputs.windows_id }}
+        run: |
+          set -euo pipefail
+          gh run download "$WINDOWS_ID" --repo "$REPO" \
+            --name ripr-windows-advisory \
+            --dir receipt/windows
+
+          for name in nofeatures-check nofeatures-test allfeatures-check windows-run1 windows-run2; do
+            file="receipt/windows/${name}.status"
+            test -s "$file"
+            status="$(tr -d '\r\n' < "$file")"
+            test "$status" = 0
+          done
+          test -s receipt/windows/windows-verdict.md
+          test -s receipt/windows/windows-env.log
+
+      - name: Write exact-head qualification receipt
+        shell: bash
+        env:
+          CI_ID: ${{ steps.dispatch.outputs.ci_id }}
+          ROUTED_ID: ${{ steps.dispatch.outputs.routed_id }}
+          WINDOWS_ID: ${{ steps.dispatch.outputs.windows_id }}
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg schema 'ripr.hosted_exact_head_qualification.v1' \
+            --arg swarm_parent "$W4_SHA" \
+            --arg branch "$W4_REF" \
+            --slurpfile ci receipt/ci-run.json \
+            --slurpfile routed receipt/routed-run.json \
+            --slurpfile windows receipt/windows-run.json \
+            '{
+              schema: $schema,
+              status: "qualified",
+              swarm_parent: $swarm_parent,
+              exact_branch: $branch,
+              runs: {
+                ci: $ci[0],
+                routed_rust: $routed[0],
+                windows_advisory: $windows[0]
+              },
+              windows_statuses: {
+                no_default_check: 0,
+                no_default_test: 0,
+                all_features_check: 0,
+                workspace_run_1: 0,
+                workspace_run_2: 0
+              },
+              checks: {
+                every_run_is_workflow_dispatch: true,
+                every_run_head_sha_is_swarm_parent: true,
+                every_run_head_branch_is_exact_branch: true,
+                every_run_terminal_success: true,
+                windows_feature_matrix_zero: true,
+                windows_repeated_workspace_zero: true
+              },
+              boundary: "Hosted qualification only; no source join, release metadata, public v0.11.0 tag, publication, signing, marketplace mutation, secret use, or K back-sync."
+            }' > receipt/hosted-exact-head-qualification.json
+
+          sha256sum receipt/*.json receipt/windows/* | sort > receipt/SHA256SUMS
+
+      - name: Upload exact-head qualification packet
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ripr-0.11.0-w4-exact-head-qualification
+          path: receipt/
+          if-no-files-found: error
+          retention-days: 90
