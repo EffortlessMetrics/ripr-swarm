@@ -44,10 +44,11 @@ jobs:
         run: |
           set -euo pipefail
           [[ "${CANDIDATE_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]
-          test "$(git rev-parse HEAD)" = "${CANDIDATE_SHA}"
+          candidate_sha="${CANDIDATE_SHA,,}"
+          test "$(git rev-parse HEAD)" = "${candidate_sha}"
           if [[ -n "${CANDIDATE_TAG}" ]]; then
             tag="${CANDIDATE_TAG#refs/tags/}"
-            test "$(git rev-list -n 1 "refs/tags/${tag}")" = "${CANDIDATE_SHA}"
+            test "$(git rev-list -n 1 "refs/tags/${tag}")" = "${candidate_sha}"
           fi
   build:
     name: build and qualify ${{ matrix.target }}
@@ -89,6 +90,23 @@ jobs:
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
+
+      - name: Verify requested version matches candidate package
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${QUALIFICATION_VERSION#v}"
+          expected_binary_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "ripr") | .version')"
+          test "${version}" = "${expected_binary_version}"
+
+      - name: Verify requested version matches candidate package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = $env:QUALIFICATION_VERSION.TrimStart('v')
+          $expectedBinaryVersion = ((cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages | Where-Object name -eq 'ripr').version
+          if ($version -ne $expectedBinaryVersion) { throw "qualification version does not match package version" }
 
       - name: Build ripr
         shell: bash

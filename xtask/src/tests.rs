@@ -8616,6 +8616,7 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
     for required in [
         "candidate_sha",
         "ref: ${{ inputs.candidate_sha }}",
+        "candidate_sha=\"${CANDIDATE_SHA,,}\"",
         "persist-credentials: false",
         "^[0-9a-fA-F]{40}$",
         "git rev-parse HEAD",
@@ -8625,6 +8626,7 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
         "SHA256SUMS",
         "test \"${version}\" = \"${expected_binary_version}\"",
         "$version -ne $expectedBinaryVersion",
+        "Verify requested version matches candidate package",
         "release_assets_created: false",
     ] {
         if !workflow.contains(required) {
@@ -8633,6 +8635,15 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
     }
     if workflow.matches("persist-credentials: false").count() != 3 {
         return Err("every checkout must disable credential persistence".to_owned());
+    }
+    if workflow
+        .matches("Verify requested version matches candidate package")
+        .count()
+        != 2
+    {
+        return Err(
+            "both runner platforms must bind the requested version before packaging".to_owned(),
+        );
     }
 
     for forbidden in [
