@@ -12,7 +12,8 @@ pub(crate) use value::expect_value;
 ///
 /// Only leading flags participate. A command-local contract such as
 /// `ripr lsp --version` must continue to reach that command.
-pub(crate) fn top_level_version_requested(args: &[String]) -> bool {
+#[doc(hidden)]
+pub fn top_level_version_requested(args: &[String]) -> bool {
     args.iter()
         .skip(1)
         .take_while(|arg| arg.starts_with('-'))
