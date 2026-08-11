@@ -3751,6 +3751,16 @@ mod tests {
             .map(|status| status.success())
             .unwrap_or(false);
         if !cargo_available {
+            // Fail closed: an unobserved differential must not report as a
+            // pass with zero compared subjects. Environments that genuinely
+            // lack a cargo binary opt out explicitly.
+            if std::env::var_os("RIPR_ALLOW_MISSING_CARGO").is_none() {
+                return Err(
+                    "cargo metadata differential not_run: no cargo binary available; set \
+                     RIPR_ALLOW_MISSING_CARGO=1 to accept an unobserved differential"
+                        .to_string(),
+                );
+            }
             eprintln!("skipping cargo metadata differential: cargo binary unavailable");
             return Ok(());
         }
