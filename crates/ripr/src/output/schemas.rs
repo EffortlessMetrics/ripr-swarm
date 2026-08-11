@@ -69,6 +69,24 @@ pub(crate) const TARGETED_TEST_OUTCOME_SCHEMA_VERSION: &str = "0.1";
 ///   algorithm is versioned separately (`artifact::INPUT_IDENTITY_VERSION`).
 pub(crate) const ARTIFACT_IDENTITY_SCHEMA_VERSION: &str = "1";
 
+/// Full-repo exposure JSON (`output/repo_exposure.rs`) — the evidence
+/// artifact `agent verify` consumes and validates.
+///
+/// - `0.3`: current repo-exposure shape; the artifact envelope above binds
+///   the analysis-input identity separately.
+pub(crate) const REPO_EXPOSURE_SCHEMA_VERSION: &str = "0.3";
+
+/// Repo-exposure summary JSON (`output/repo_exposure.rs`) — the bounded
+/// summary surface derived from the full exposure artifact.
+///
+/// - `0.1`: initial versioned summary; unchanged since introduction.
+pub(crate) const REPO_EXPOSURE_SUMMARY_SCHEMA_VERSION: &str = "0.1";
+
+/// `ripr agent review-summary` JSON (`app/agent_review_summary/types.rs`).
+///
+/// - `0.1`: initial versioned review summary; unchanged since introduction.
+pub(crate) const AGENT_REVIEW_SUMMARY_SCHEMA_VERSION: &str = "0.1";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,6 +108,17 @@ mod tests {
                 "0.1",
             ),
             ("artifact_identity", ARTIFACT_IDENTITY_SCHEMA_VERSION, "1"),
+            ("repo_exposure", REPO_EXPOSURE_SCHEMA_VERSION, "0.3"),
+            (
+                "repo_exposure_summary",
+                REPO_EXPOSURE_SUMMARY_SCHEMA_VERSION,
+                "0.1",
+            ),
+            (
+                "agent_review_summary",
+                AGENT_REVIEW_SUMMARY_SCHEMA_VERSION,
+                "0.1",
+            ),
         ];
         for (artifact, actual, pinned) in expected {
             assert_eq!(actual, pinned, "{artifact} schema version drifted");
