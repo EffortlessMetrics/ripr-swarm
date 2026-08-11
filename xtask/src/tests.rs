@@ -8616,17 +8616,23 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
     for required in [
         "candidate_sha",
         "ref: ${{ inputs.candidate_sha }}",
+        "persist-credentials: false",
         "^[0-9a-fA-F]{40}$",
         "git rev-parse HEAD",
         "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
         "release-server-archive",
         "release-server-manifest",
         "SHA256SUMS",
+        "test \"${version}\" = \"${expected_binary_version}\"",
+        "$version -ne $expectedBinaryVersion",
         "release_assets_created: false",
     ] {
         if !workflow.contains(required) {
             return Err(format!("qualification workflow is missing `{required}`"));
         }
+    }
+    if workflow.matches("persist-credentials: false").count() != 3 {
+        return Err("every checkout must disable credential persistence".to_owned());
     }
 
     for forbidden in [
@@ -8653,7 +8659,9 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
     ];
     for target in targets {
         if workflow.matches(target).count() < 1 {
-            return Err(format!("qualification workflow is missing target `{target}`"));
+            return Err(format!(
+                "qualification workflow is missing target `{target}`"
+            ));
         }
     }
     Ok(())

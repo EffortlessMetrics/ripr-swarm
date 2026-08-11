@@ -35,7 +35,8 @@ must be checked before any publication decision. It requires an immutable
 when that tag resolves to the same commit. Every matrix job checks out that
 SHA, builds the existing five-target server matrix, verifies the archive
 checksum, extracts the flat package, and checks both the archive label and the
-candidate-built binary's `--version` command. The manifest job verifies
+candidate-built binary's `--version` command, including that the requested
+qualification version matches the candidate package version. The manifest job verifies
 `SHA256SUMS` and emits a
 machine-readable and Markdown qualification receipt.
 
