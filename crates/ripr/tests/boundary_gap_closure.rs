@@ -227,8 +227,7 @@ fn equality_boundary_repair_closes_across_repo_exposure_and_outcome() -> Result<
             .and_then(Value::as_array)
             .is_some_and(|tests| {
                 tests.iter().any(|test| {
-                    test.get("name").and_then(Value::as_str)
-                        == Some("equality_boundary_discounts")
+                    test.get("name").and_then(Value::as_str) == Some("equality_boundary_discounts")
                 })
             })
     );
