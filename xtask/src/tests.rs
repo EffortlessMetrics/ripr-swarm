@@ -8726,6 +8726,8 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
             "assets[$target].sha256",
             "(.assets | keys == ($targets | sort))",
             "curl --silent --show-error --location --connect-timeout 10 --max-time 20 --dump-header",
+            "ruleset_transport_ok",
+            "^[0-9]{1,20}$",
             "ruleset verification request failed",
             "ruleset verification shape mismatch",
             "ruleset_safe_summary",

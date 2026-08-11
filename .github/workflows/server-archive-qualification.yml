@@ -87,13 +87,20 @@ jobs:
             for attempt in 1 2 3; do
               : > "${ruleset_file}"
               : > "${ruleset_headers}"
-              ruleset_status="$(curl --silent --show-error --location --connect-timeout 10 --max-time 20 --dump-header "${ruleset_headers}" --output "${ruleset_file}" --write-out '%{http_code}' "${ruleset_source_url}" || true)"
+              if ruleset_status="$(curl --silent --show-error --location --connect-timeout 10 --max-time 20 --dump-header "${ruleset_headers}" --output "${ruleset_file}" --write-out '%{http_code}' "${ruleset_source_url}")"; then
+                ruleset_transport_ok=true
+              else
+                ruleset_transport_ok=false
+              fi
               ruleset_rate_remaining="$(awk 'BEGIN {IGNORECASE=1} /^x-ratelimit-remaining:/ {sub("\r", "", $2); print $2}' "${ruleset_headers}" | tail -n 1)"
               ruleset_rate_reset="$(awk 'BEGIN {IGNORECASE=1} /^x-ratelimit-reset:/ {sub("\r", "", $2); print $2}' "${ruleset_headers}" | tail -n 1)"
-              ruleset_rate_remaining="${ruleset_rate_remaining:-unknown}"
-              ruleset_rate_reset="${ruleset_rate_reset:-unknown}"
-              ruleset_response_digest="$(sha256sum "${ruleset_file}" 2>/dev/null | awk '{print $1}')"
-              ruleset_response_digest="${ruleset_response_digest:-unavailable}"
+              [[ "${ruleset_rate_remaining}" =~ ^[0-9]{1,20}$ ]] || ruleset_rate_remaining=unknown
+              [[ "${ruleset_rate_reset}" =~ ^[0-9]{1,20}$ ]] || ruleset_rate_reset=unknown
+              if [[ "${ruleset_transport_ok}" == true ]]; then
+                ruleset_response_digest="$(sha256sum "${ruleset_file}" | awk '{print $1}')"
+              else
+                ruleset_response_digest=unavailable
+              fi
               if [[ "${ruleset_status}" == "200" ]]; then
                 break
               fi
