@@ -1564,6 +1564,115 @@ pub(crate) fn stable_input_hash(bytes: &[u8]) -> String {
     hash_bytes(bytes)
 }
 
+/// Cargo section scope of a path-dependency declaration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum PathDependencySection {
+    Dependencies,
+    DevDependencies,
+    BuildDependencies,
+}
+
+impl PathDependencySection {
+    fn from_table_name(name: &str) -> Option<Self> {
+        match name {
+            "dependencies" => Some(Self::Dependencies),
+            "dev-dependencies" => Some(Self::DevDependencies),
+            "build-dependencies" => Some(Self::BuildDependencies),
+            _ => None,
+        }
+    }
+}
+
+/// Where the path authority for a dependency edge lives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum PathDependencySource {
+    /// `path = "..."` spelled directly in the declaring package manifest.
+    Package,
+    /// `workspace = true` in the declaring manifest, with the `path` resolved
+    /// from the nearest ancestor workspace root's `[workspace.dependencies]`.
+    WorkspaceInherited,
+}
+
+/// Resolution outcome for one captured path-dependency edge.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum PathDependencyResolution {
+    /// Resolved lexically to a repo-relative path that stays inside the scan
+    /// root and names an existing directory.
+    Resolved,
+    /// Resolved lexically but the path climbs above the scan root; the
+    /// repo-relative identity keeps its leading `..` segments.
+    ResolvedOutsideWorkspace,
+    /// Resolved lexically inside the scan root, but the target is missing or
+    /// is not a directory on disk.
+    TargetMissing,
+    /// `workspace = true` was declared but no nearest-ancestor workspace root
+    /// with a matching `[workspace.dependencies]` entry was found, so no path
+    /// authority exists. This is a typed limitation, not a missing edge.
+    UnresolvedWorkspaceInheritance,
+}
+
+/// Inheritance authority for `workspace = true` dependencies: per workspace
+/// root, the repo-relative directory text and the `(name, path)` entries of
+/// its `[workspace.dependencies]` (`None` path = version-only registry
+/// entry, not a path edge).
+type WorkspaceDependencyTables = Vec<(String, Vec<(String, Option<String>)>)>;
+
+/// One captured Cargo path-dependency declaration (#2968, typed in #3037).
+///
+/// V1 denominator: an edge is recorded for every path-bearing dependency
+/// declaration visible in a scanned manifest:
+///
+/// - `dep = { path = "...", ... }` inline tables in `[dependencies]`,
+///   `[dev-dependencies]`, and `[build-dependencies]` (target = `None`);
+/// - the same inline-table form under `[target.<spec>.<section>]`
+///   (target = `Some(spec)`);
+/// - `dep = { workspace = true }` in any of those scopes whose nearest
+///   ancestor workspace root declares `dep` with a `path` in
+///   `[workspace.dependencies]` (source = `WorkspaceInherited`; the path is
+///   resolved relative to the workspace root manifest directory, per Cargo).
+///
+/// Explicitly out of the denominator (documented boundaries, never silent):
+///
+/// - string-form `dep = "1.0"` and table-form entries without `path` or
+///   `workspace = true` are registry/git declarations, not path edges;
+/// - `workspace = true` resolving to a workspace entry without `path` is a
+///   registry inheritance, not a path edge;
+/// - bare `[workspace.dependencies]` entries are inheritance authority only —
+///   they have no consumer, so they are not edges;
+/// - a manifest whose repo-relative path is not UTF-8 contributes no edges;
+///   the gap is surfaced in `path_dependency_limitations` instead of a
+///   lossy-corrupted path identity;
+/// - a `[package] workspace = "..."` redirect is not followed: V1 resolves
+///   inheritance against the nearest ancestor manifest with a `[workspace]`
+///   table only;
+/// - an entry carrying both `path` and `workspace = true` (Cargo rejects
+///   this) takes the explicit `path` deterministically.
+///
+/// Ordering is fully sorted and exact duplicate records are deduplicated, so
+/// the inventory is deterministic under manifest enumeration changes. Cycles
+/// are preserved as-is (a cycle is distinct records, never a duplicate);
+/// later traversal (#2969/#2970) must see them rather than have capture
+/// erase them.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct PathDependencyEdge {
+    /// Repo-relative manifest that declares the dependency, `/`-separated.
+    pub(crate) from_manifest: String,
+    /// Section scope of the declaration.
+    pub(crate) section: PathDependencySection,
+    /// Target-specific scope (the `[target.<spec>...]` key), if any.
+    pub(crate) target: Option<String>,
+    pub(crate) dependency_name: String,
+    /// Path as spelled in the manifest holding the path authority,
+    /// normalized to `/` separators. `None` when no path authority was found
+    /// (`UnresolvedWorkspaceInheritance`).
+    pub(crate) declared_path: Option<String>,
+    /// Lexically resolved repo-relative identity, `/`-separated. `None` when
+    /// no path authority was found.
+    pub(crate) resolved_path: Option<String>,
+    pub(crate) resolution: PathDependencyResolution,
+    pub(crate) source: PathDependencySource,
+}
+
 /// Producer-owned provenance for the local Cargo package and feature graphs.
 /// External dependency metadata is never resolved here: targeted reruns must
 /// not perform network work or imply that registry graph facts were observed.
@@ -1577,10 +1686,20 @@ pub(crate) struct WorkspaceGraphProvenance {
     pub(crate) feature_graph_detail: Option<String>,
     pub(crate) external_dependency_graph_status: String,
     pub(crate) external_dependency_graph_detail: String,
-    /// #2968: path dependencies discovered in Cargo.toml `[dependencies]`
-    /// tables with `path = "..."` values. Each entry is `(from_manifest, dep_name, resolved_path)`.
-    /// Preserved but not yet walked (#2969/#2970 consume this).
-    pub(crate) path_dependency_edges: Vec<(String, String, String)>,
+    /// #2968/#3037: typed path-dependency edges captured from Cargo manifests;
+    /// see [`PathDependencyEdge`] for the exact V1 denominator. Preserved but
+    /// not yet walked (#2969/#2970 consume this).
+    ///
+    /// Currentness contract: this field is deliberately excluded from
+    /// `package_graph_hash` (the hash predates the field and covers package /
+    /// feature facts only). Edges are recomputed on every provenance build,
+    /// so consumers must rebuild provenance for current edges and must not
+    /// read hash stability as edge stability.
+    pub(crate) path_dependency_edges: Vec<PathDependencyEdge>,
+    /// Explicit capture limitations (for example a non-UTF-8 manifest path).
+    /// A non-empty list means `path_dependency_edges` is a partial inventory
+    /// and must not be treated as a complete path-dependency graph.
+    pub(crate) path_dependency_limitations: Vec<String>,
 }
 
 /// Read local Cargo manifests and derive deterministic package/feature graph
@@ -1605,22 +1724,58 @@ pub(crate) fn workspace_graph_provenance(root: &Path) -> WorkspaceGraphProvenanc
         };
     }
 
-    let mut package_facts = Vec::new();
-    let mut path_dep_edges: Vec<(String, String, String)> = Vec::new();
-    let mut feature_facts = Vec::new();
     let mut parse_errors = Vec::new();
+    let mut parsed_manifests = Vec::new();
     for (path, bytes) in &manifests {
         let path_text = path.to_string_lossy().replace('\\', "/");
-        let value = match std::str::from_utf8(bytes)
+        match std::str::from_utf8(bytes)
             .map_err(|err| err.to_string())
             .and_then(|text| toml::from_str::<toml::Value>(text).map_err(|err| err.to_string()))
         {
-            Ok(value) => value,
-            Err(err) => {
-                parse_errors.push(format!("{path_text}: {err}"));
-                continue;
-            }
+            Ok(value) => parsed_manifests.push((path, path_text, value)),
+            Err(err) => parse_errors.push(format!("{path_text}: {err}")),
+        }
+    }
+
+    // Inheritance authority for `workspace = true` dependencies: for every
+    // manifest with a `[workspace]` table, the repo-relative directory text
+    // and the `(name, path)` entries of its `[workspace.dependencies]`
+    // (`None` path = version-only registry entry). A non-UTF-8 workspace
+    // root is not an authority (the same boundary as edge capture); its
+    // members report `UnresolvedWorkspaceInheritance`.
+    let mut workspace_tables: WorkspaceDependencyTables = Vec::new();
+    for (path, _, value) in &parsed_manifests {
+        let Some(workspace) = value.get("workspace").and_then(toml::Value::as_table) else {
+            continue;
         };
+        let Some(dir_text) = portable_manifest_dir_text(path) else {
+            continue;
+        };
+        let entries = workspace
+            .get("dependencies")
+            .and_then(toml::Value::as_table)
+            .map(|table| {
+                table
+                    .iter()
+                    .map(|(name, dep)| {
+                        let declared = dep
+                            .as_table()
+                            .and_then(|dep_table| dep_table.get("path"))
+                            .and_then(toml::Value::as_str)
+                            .map(|path| path.replace('\\', "/"));
+                        (name.clone(), declared)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        workspace_tables.push((dir_text, entries));
+    }
+
+    let mut package_facts = Vec::new();
+    let mut path_dep_edges: Vec<PathDependencyEdge> = Vec::new();
+    let mut path_dep_limitations: Vec<String> = Vec::new();
+    let mut feature_facts = Vec::new();
+    for (path, path_text, value) in &parsed_manifests {
         let package = value.get("package").and_then(toml::Value::as_table);
         let package_name = package
             .and_then(|table| table.get("name"))
@@ -1639,22 +1794,22 @@ pub(crate) fn workspace_graph_provenance(root: &Path) -> WorkspaceGraphProvenanc
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
-        // #2968: also preserve path-dep values so #2969 can build the adjacency graph.
-        let manifest_dir = path.parent().unwrap_or(Path::new("."));
-        for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
-            if let Some(table) = value.get(section).and_then(toml::Value::as_table) {
-                for (dep_name, dep_value) in table {
-                    if let Some(path_str) = dep_value
-                        .as_table()
-                        .and_then(|t| t.get("path"))
-                        .and_then(toml::Value::as_str)
-                    {
-                        let resolved = manifest_dir.join(path_str);
-                        let resolved_str = resolved.to_string_lossy().replace('\\', "/");
-                        path_dep_edges.push((path_text.clone(), dep_name.clone(), resolved_str));
-                    }
-                }
-            }
+        // #2968/#3037: capture typed path-dependency edges for #2969/#2970.
+        // A non-UTF-8 manifest path cannot produce a portable repo-relative
+        // identity, so it contributes a limitation instead of lossy edges.
+        match portable_manifest_dir_text(path) {
+            Some(dir_text) => collect_path_dependency_edges(
+                root,
+                path_text,
+                &dir_text,
+                value,
+                &workspace_tables,
+                &mut path_dep_edges,
+            ),
+            None => path_dep_limitations.push(format!(
+                "path-dependency edges not captured for a manifest with a non-UTF-8 \
+                 repo-relative path (lossy spelling: {path_text})"
+            )),
         }
         package_facts.push(format!(
             "{path_text}\0package={package_name}\0members={workspace_members}\0dependencies={dependencies:?}"
@@ -1688,6 +1843,9 @@ pub(crate) fn workspace_graph_provenance(root: &Path) -> WorkspaceGraphProvenanc
     };
     package_facts.sort();
     feature_facts.sort();
+    path_dep_edges.sort();
+    path_dep_edges.dedup();
+    path_dep_limitations.sort();
     WorkspaceGraphProvenance {
         package_graph_status: package_graph_status.to_string(),
         package_graph_hash: (!package_facts.is_empty())
@@ -1700,6 +1858,185 @@ pub(crate) fn workspace_graph_provenance(root: &Path) -> WorkspaceGraphProvenanc
         external_dependency_graph_detail:
             "external dependency metadata is not resolved; no network access was used".to_string(),
         path_dependency_edges: path_dep_edges,
+        path_dependency_limitations: path_dep_limitations,
+    }
+}
+
+/// Repo-relative, `/`-separated directory text of a manifest path, or `None`
+/// when the path is not valid UTF-8 (the supported-path boundary: no lossy
+/// conversion). The root manifest's directory is the empty string.
+fn portable_manifest_dir_text(manifest_path: &Path) -> Option<String> {
+    let dir = manifest_path.parent().unwrap_or_else(|| Path::new(""));
+    Some(dir.to_str()?.replace('\\', "/"))
+}
+
+/// Lexically resolve a `/`-separated declared path against a `/`-separated
+/// repo-relative directory, without touching the filesystem. `\` has already
+/// been normalized to `/` by the caller, matching the workspace-wide portable
+/// path convention. Returns the normalized identity; `escaped` is true when
+/// resolution climbs above the scan root, in which case the identity keeps
+/// its leading `..` segments.
+fn resolve_repo_relative(base: &str, declared: &str) -> (String, bool) {
+    let mut components: Vec<&str> = base
+        .split('/')
+        .filter(|component| !component.is_empty() && *component != ".")
+        .collect();
+    for component in declared.split('/') {
+        match component {
+            "" | "." => {}
+            ".." => match components.last() {
+                Some(&"..") | None => components.push(".."),
+                Some(_) => {
+                    components.pop();
+                }
+            },
+            _ => components.push(component),
+        }
+    }
+    let escaped = components.first() == Some(&"..");
+    (components.join("/"), escaped)
+}
+
+/// Find the path authority for a `workspace = true` dependency: the nearest
+/// ancestor directory (inclusive) with a `[workspace]` manifest, then the
+/// dependency's entry in its `[workspace.dependencies]`. Returns the
+/// workspace root directory text and the entry's declared path (`None` =
+/// version-only registry entry, not a path edge). `None` overall means no
+/// authority was found at all.
+fn workspace_dependency_path(
+    workspace_tables: &WorkspaceDependencyTables,
+    manifest_dir: &str,
+    dependency_name: &str,
+) -> Option<(String, Option<String>)> {
+    let mut ancestor = manifest_dir.to_string();
+    loop {
+        if let Some((_, entries)) = workspace_tables.iter().find(|(dir, _)| dir == &ancestor) {
+            return entries
+                .iter()
+                .find(|(name, _)| name == dependency_name)
+                .map(|(_, path)| (ancestor.clone(), path.clone()));
+        }
+        if ancestor.is_empty() {
+            return None;
+        }
+        ancestor = ancestor
+            .rsplit_once('/')
+            .map(|(head, _)| head.to_string())
+            .unwrap_or_default();
+    }
+}
+
+/// Capture the V1 path-dependency edge denominator (see
+/// [`PathDependencyEdge`]) from one parsed manifest.
+fn collect_path_dependency_edges(
+    root: &Path,
+    manifest_text: &str,
+    manifest_dir: &str,
+    value: &toml::Value,
+    workspace_tables: &WorkspaceDependencyTables,
+    edges: &mut Vec<PathDependencyEdge>,
+) {
+    let mut collect_section = |section: PathDependencySection,
+                               target: Option<&str>,
+                               table: &toml::Table| {
+        for (dependency_name, dep_value) in table {
+            let Some(dep_table) = dep_value.as_table() else {
+                // String form (`dep = "1.0"`): registry declaration, never a
+                // path edge.
+                continue;
+            };
+            if let Some(declared) = dep_table.get("path").and_then(toml::Value::as_str) {
+                // An explicit `path` wins deterministically even if
+                // `workspace = true` is also present (Cargo rejects that
+                // combination; capture stays total).
+                let declared = declared.replace('\\', "/");
+                let (resolved, escaped) = resolve_repo_relative(manifest_dir, &declared);
+                let resolution = if escaped {
+                    PathDependencyResolution::ResolvedOutsideWorkspace
+                } else if root.join(&resolved).is_dir() {
+                    PathDependencyResolution::Resolved
+                } else {
+                    PathDependencyResolution::TargetMissing
+                };
+                edges.push(PathDependencyEdge {
+                    from_manifest: manifest_text.to_string(),
+                    section,
+                    target: target.map(str::to_string),
+                    dependency_name: dependency_name.clone(),
+                    declared_path: Some(declared),
+                    resolved_path: Some(resolved),
+                    resolution,
+                    source: PathDependencySource::Package,
+                });
+            } else if dep_table.get("workspace").and_then(toml::Value::as_bool) == Some(true) {
+                match workspace_dependency_path(workspace_tables, manifest_dir, dependency_name) {
+                    Some((root_dir, Some(declared))) => {
+                        let (resolved, escaped) = resolve_repo_relative(&root_dir, &declared);
+                        let resolution = if escaped {
+                            PathDependencyResolution::ResolvedOutsideWorkspace
+                        } else if root.join(&resolved).is_dir() {
+                            PathDependencyResolution::Resolved
+                        } else {
+                            PathDependencyResolution::TargetMissing
+                        };
+                        edges.push(PathDependencyEdge {
+                            from_manifest: manifest_text.to_string(),
+                            section,
+                            target: target.map(str::to_string),
+                            dependency_name: dependency_name.clone(),
+                            declared_path: Some(declared),
+                            resolved_path: Some(resolved),
+                            resolution,
+                            source: PathDependencySource::WorkspaceInherited,
+                        });
+                    }
+                    Some((_, None)) => {
+                        // Version-only workspace entry: a registry
+                        // inheritance, not a path edge.
+                    }
+                    None => edges.push(PathDependencyEdge {
+                        from_manifest: manifest_text.to_string(),
+                        section,
+                        target: target.map(str::to_string),
+                        dependency_name: dependency_name.clone(),
+                        declared_path: None,
+                        resolved_path: None,
+                        resolution: PathDependencyResolution::UnresolvedWorkspaceInheritance,
+                        source: PathDependencySource::WorkspaceInherited,
+                    }),
+                }
+            }
+            // Table-form entries with neither `path` nor `workspace = true`
+            // are registry/git declarations, not path edges.
+        }
+    };
+
+    for (section_name, section) in [
+        ("dependencies", PathDependencySection::Dependencies),
+        ("dev-dependencies", PathDependencySection::DevDependencies),
+        (
+            "build-dependencies",
+            PathDependencySection::BuildDependencies,
+        ),
+    ] {
+        if let Some(table) = value.get(section_name).and_then(toml::Value::as_table) {
+            collect_section(section, None, table);
+        }
+    }
+    if let Some(targets) = value.get("target").and_then(toml::Value::as_table) {
+        for (spec, target_value) in targets {
+            let Some(target_table) = target_value.as_table() else {
+                continue;
+            };
+            for (section_name, table) in target_table {
+                if let (Some(section), Some(table)) = (
+                    PathDependencySection::from_table_name(section_name),
+                    table.as_table(),
+                ) {
+                    collect_section(section, Some(spec), table);
+                }
+            }
+        }
     }
 }
 
@@ -2535,6 +2872,393 @@ mod tests {
         assert_eq!(malformed.feature_graph_status, "limited");
         assert!(malformed.package_graph_detail.is_some());
         assert!(malformed.feature_graph_detail.is_some());
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    fn write_manifest(root: &Path, relative: &str, text: &str) -> Result<(), String> {
+        let path = root.join(relative);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|err| format!("create {}: {err}", parent.display()))?;
+        }
+        std::fs::write(&path, text).map_err(|err| format!("write {}: {err}", path.display()))
+    }
+
+    #[test]
+    fn resolve_repo_relative_normalizes_lexically() {
+        assert_eq!(
+            resolve_repo_relative("crates/app", "../shared"),
+            ("crates/shared".to_string(), false)
+        );
+        assert_eq!(
+            resolve_repo_relative("crates/app", "../../../outside"),
+            ("../outside".to_string(), true)
+        );
+        assert_eq!(
+            resolve_repo_relative("", "a/./b/../c"),
+            ("a/c".to_string(), false)
+        );
+        assert_eq!(resolve_repo_relative("a", ".."), (String::new(), false));
+    }
+
+    #[test]
+    fn path_dependency_edges_capture_package_dev_and_build_sections() -> Result<(), String> {
+        let root = isolated_dir("path-dep-sections");
+        let _ = std::fs::remove_dir_all(&root);
+        write_manifest(
+            &root,
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"crates/app\"]\n",
+        )?;
+        write_manifest(
+            &root,
+            "crates/shared/Cargo.toml",
+            "[package]\nname = \"shared\"\nversion = \"0.1.0\"\n",
+        )?;
+        write_manifest(
+            &root,
+            "crates/app/Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\nshared = { path = \"../shared\" }\n\n\
+             [dev-dependencies]\ndevhelper = { path = \"../shared\" }\n\n\
+             [build-dependencies]\nbuildtool = { path = \"../shared\" }\n",
+        )?;
+
+        let provenance = workspace_graph_provenance(&root);
+        let edges = &provenance.path_dependency_edges;
+        assert_eq!(edges.len(), 3, "expected one edge per section: {edges:?}");
+        // Sorted: Dependencies < DevDependencies < BuildDependencies.
+        assert_eq!(edges[0].section, PathDependencySection::Dependencies);
+        assert_eq!(edges[0].dependency_name, "shared");
+        assert_eq!(edges[1].section, PathDependencySection::DevDependencies);
+        assert_eq!(edges[1].dependency_name, "devhelper");
+        assert_eq!(edges[2].section, PathDependencySection::BuildDependencies);
+        assert_eq!(edges[2].dependency_name, "buildtool");
+        for edge in edges {
+            assert_eq!(edge.from_manifest, "crates/app/Cargo.toml");
+            assert_eq!(edge.target, None);
+            assert_eq!(edge.declared_path.as_deref(), Some("../shared"));
+            assert_eq!(edge.resolved_path.as_deref(), Some("crates/shared"));
+            assert_eq!(edge.resolution, PathDependencyResolution::Resolved);
+            assert_eq!(edge.source, PathDependencySource::Package);
+        }
+        assert!(provenance.path_dependency_limitations.is_empty());
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn path_dependency_edges_resolve_workspace_inherited_dependencies() -> Result<(), String> {
+        let root = isolated_dir("path-dep-workspace-inherit");
+        let _ = std::fs::remove_dir_all(&root);
+        write_manifest(
+            &root,
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"crates/app\"]\n\n\
+             [workspace.dependencies]\nshared = { path = \"crates/shared\" }\nregistry = \"1.0\"\n",
+        )?;
+        write_manifest(
+            &root,
+            "crates/shared/Cargo.toml",
+            "[package]\nname = \"shared\"\nversion = \"0.1.0\"\n",
+        )?;
+        write_manifest(
+            &root,
+            "crates/app/Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\nshared = { workspace = true }\n\
+             unknown = { workspace = true }\nregistry = { workspace = true }\n",
+        )?;
+
+        let provenance = workspace_graph_provenance(&root);
+        let edges = &provenance.path_dependency_edges;
+        assert_eq!(
+            edges.len(),
+            2,
+            "workspace-inherited path dep plus one unresolved inheritance: {edges:?}"
+        );
+        // Sorted by dependency_name: "shared" < "unknown".
+        let inherited = &edges[0];
+        assert_eq!(inherited.dependency_name, "shared");
+        assert_eq!(inherited.source, PathDependencySource::WorkspaceInherited);
+        // Workspace dependency paths resolve relative to the workspace root.
+        assert_eq!(inherited.declared_path.as_deref(), Some("crates/shared"));
+        assert_eq!(inherited.resolved_path.as_deref(), Some("crates/shared"));
+        assert_eq!(inherited.resolution, PathDependencyResolution::Resolved);
+
+        let unresolved = &edges[1];
+        assert_eq!(unresolved.dependency_name, "unknown");
+        assert_eq!(
+            unresolved.resolution,
+            PathDependencyResolution::UnresolvedWorkspaceInheritance
+        );
+        assert_eq!(unresolved.declared_path, None);
+        assert_eq!(unresolved.resolved_path, None);
+
+        // `registry` inherits a version-only workspace entry: a registry
+        // inheritance, not a path edge.
+        assert!(edges.iter().all(|edge| edge.dependency_name != "registry"));
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn path_dependency_edges_capture_target_specific_sections() -> Result<(), String> {
+        let root = isolated_dir("path-dep-target-specific");
+        let _ = std::fs::remove_dir_all(&root);
+        write_manifest(
+            &root,
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"crates/app\"]\n",
+        )?;
+        write_manifest(
+            &root,
+            "crates/shared/Cargo.toml",
+            "[package]\nname = \"shared\"\nversion = \"0.1.0\"\n",
+        )?;
+        write_manifest(
+            &root,
+            "crates/app/Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n\
+             [target.'cfg(windows)'.dependencies]\nwindep = { path = \"../shared\" }\n\n\
+             [target.x86_64-unknown-linux-gnu.build-dependencies]\nlinuxbuild = { path = \"../shared\" }\n",
+        )?;
+
+        let provenance = workspace_graph_provenance(&root);
+        let edges = &provenance.path_dependency_edges;
+        assert_eq!(edges.len(), 2, "one edge per target table: {edges:?}");
+        // Sorted by target text: "cfg(windows)" < "x86_64-...".
+        assert_eq!(edges[0].target.as_deref(), Some("cfg(windows)"));
+        assert_eq!(edges[0].section, PathDependencySection::Dependencies);
+        assert_eq!(edges[0].dependency_name, "windep");
+        assert_eq!(edges[1].target.as_deref(), Some("x86_64-unknown-linux-gnu"));
+        assert_eq!(edges[1].section, PathDependencySection::BuildDependencies);
+        assert_eq!(edges[1].dependency_name, "linuxbuild");
+        for edge in edges {
+            assert_eq!(edge.resolved_path.as_deref(), Some("crates/shared"));
+            assert_eq!(edge.resolution, PathDependencyResolution::Resolved);
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn path_dependency_edges_keep_governed_forms_distinct_and_deterministic() -> Result<(), String>
+    {
+        let root = isolated_dir("path-dep-governed-forms");
+        let _ = std::fs::remove_dir_all(&root);
+        write_manifest(
+            &root,
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"crates/app\"]\n\n\
+             [workspace.dependencies]\nshared = { path = \"crates/shared\" }\n",
+        )?;
+        write_manifest(
+            &root,
+            "crates/shared/Cargo.toml",
+            "[package]\nname = \"shared\"\nversion = \"0.1.0\"\n",
+        )?;
+        write_manifest(
+            &root,
+            "crates/app/Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\nshared = { path = \"../shared\" }\n\n\
+             [dev-dependencies]\nshared = { workspace = true }\n",
+        )?;
+
+        let first = workspace_graph_provenance(&root);
+        let second = workspace_graph_provenance(&root);
+        assert_eq!(
+            first.path_dependency_edges, second.path_dependency_edges,
+            "edge capture must be deterministic across runs"
+        );
+        let edges = &first.path_dependency_edges;
+        assert_eq!(
+            edges.len(),
+            2,
+            "the same dep under two governed forms is two distinct edges, not a dedup: {edges:?}"
+        );
+        let mut sorted = edges.clone();
+        sorted.sort();
+        assert_eq!(*edges, sorted, "edges must be emitted fully sorted");
+        // The direct package declaration and the workspace-inherited form
+        // stay distinct records with their own sources.
+        assert_eq!(edges[0].section, PathDependencySection::Dependencies);
+        assert_eq!(edges[0].source, PathDependencySource::Package);
+        assert_eq!(edges[1].section, PathDependencySection::DevDependencies);
+        assert_eq!(edges[1].source, PathDependencySource::WorkspaceInherited);
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn path_dependency_edges_normalize_separators_spaces_and_non_ascii() -> Result<(), String> {
+        let root = isolated_dir("path-dep-portable-identity");
+        let _ = std::fs::remove_dir_all(&root);
+        write_manifest(&root, "Cargo.toml", "[workspace]\nmembers = []\n")?;
+        write_manifest(
+            &root,
+            "crates/shared/Cargo.toml",
+            "[package]\nname = \"shared\"\nversion = \"0.1.0\"\n",
+        )?;
+        // Directory with spaces and non-ASCII; one dep spells its path with a
+        // Windows-style separator (TOML `\\` decodes to a single `\`), which
+        // the portable identity normalizes to `/`.
+        write_manifest(
+            &root,
+            "crates/mý äpp/Cargo.toml",
+            "[package]\nname = \"my-app\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\nplain = { path = \"../shared\" }\n\
+             winstyle = { path = \"..\\\\shared\" }\n",
+        )?;
+
+        let provenance = workspace_graph_provenance(&root);
+        let edges = &provenance.path_dependency_edges;
+        assert_eq!(edges.len(), 2, "{edges:?}");
+        for edge in edges {
+            assert_eq!(edge.from_manifest, "crates/mý äpp/Cargo.toml");
+            assert_eq!(edge.resolved_path.as_deref(), Some("crates/shared"));
+            assert_eq!(edge.resolution, PathDependencyResolution::Resolved);
+        }
+        // Sorted by dependency_name: "plain" < "winstyle".
+        assert_eq!(edges[0].declared_path.as_deref(), Some("../shared"));
+        assert_eq!(edges[1].declared_path.as_deref(), Some("../shared"));
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn path_dependency_edges_mark_outside_workspace_and_missing_targets() -> Result<(), String> {
+        let root = isolated_dir("path-dep-resolution-status");
+        let _ = std::fs::remove_dir_all(&root);
+        write_manifest(
+            &root,
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"crates/app\"]\n",
+        )?;
+        write_manifest(
+            &root,
+            "crates/app/Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\nghost = { path = \"../ghost\" }\noutside = { path = \"../../../outside\" }\n",
+        )?;
+
+        let provenance = workspace_graph_provenance(&root);
+        let edges = &provenance.path_dependency_edges;
+        assert_eq!(edges.len(), 2, "{edges:?}");
+        // Sorted by dependency_name: "ghost" < "outside".
+        assert_eq!(edges[0].dependency_name, "ghost");
+        assert_eq!(edges[0].resolved_path.as_deref(), Some("crates/ghost"));
+        assert_eq!(edges[0].resolution, PathDependencyResolution::TargetMissing);
+        assert_eq!(edges[1].dependency_name, "outside");
+        assert_eq!(edges[1].resolved_path.as_deref(), Some("../outside"));
+        assert_eq!(
+            edges[1].resolution,
+            PathDependencyResolution::ResolvedOutsideWorkspace
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn path_dependency_edges_skip_non_utf8_manifest_with_explicit_limitation() -> Result<(), String>
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let root = isolated_dir("path-dep-non-utf8");
+        let _ = std::fs::remove_dir_all(&root);
+        write_manifest(&root, "Cargo.toml", "[workspace]\nmembers = []\n")?;
+        let bad_dir = root.join(std::ffi::OsStr::from_bytes(b"bad\xffdir"));
+        std::fs::create_dir_all(&bad_dir).map_err(|err| format!("create bad dir: {err}"))?;
+        std::fs::write(
+            bad_dir.join("Cargo.toml"),
+            "[package]\nname = \"bad\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\nshared = { path = \"../shared\" }\n",
+        )
+        .map_err(|err| format!("write bad manifest: {err}"))?;
+
+        let provenance = workspace_graph_provenance(&root);
+        assert!(
+            provenance.path_dependency_edges.is_empty(),
+            "a non-UTF-8 manifest path must not contribute lossy edges: {:?}",
+            provenance.path_dependency_edges
+        );
+        assert_eq!(
+            provenance.path_dependency_limitations.len(),
+            1,
+            "the capture gap must be an explicit limitation: {:?}",
+            provenance.path_dependency_limitations
+        );
+        assert!(provenance.path_dependency_limitations[0].contains("non-UTF-8"));
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn package_graph_hash_excludes_path_dependency_edges() -> Result<(), String> {
+        let root = isolated_dir("path-dep-hash-exclusion");
+        let _ = std::fs::remove_dir_all(&root);
+        write_manifest(
+            &root,
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"crates/app\"]\n",
+        )?;
+        for member in ["a", "b"] {
+            write_manifest(
+                &root,
+                &format!("crates/{member}/Cargo.toml"),
+                &format!("[package]\nname = \"{member}\"\nversion = \"0.1.0\"\n"),
+            )?;
+        }
+        write_manifest(
+            &root,
+            "crates/app/Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\nshared = { path = \"../a\" }\n",
+        )?;
+
+        let first = workspace_graph_provenance(&root);
+        assert_eq!(first.path_dependency_edges.len(), 1);
+        assert_eq!(
+            first.path_dependency_edges[0].resolved_path.as_deref(),
+            Some("crates/a")
+        );
+
+        // Changing only the path value (same dep name) must change the edges
+        // but not the package graph hash: the field is additive and excluded.
+        write_manifest(
+            &root,
+            "crates/app/Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\nshared = { path = \"../b\" }\n",
+        )?;
+        let second = workspace_graph_provenance(&root);
+        assert_eq!(
+            first.package_graph_hash, second.package_graph_hash,
+            "path-dependency edges must not feed package_graph_hash"
+        );
+        assert_ne!(first.path_dependency_edges, second.path_dependency_edges);
+
+        // A target-specific path dep is likewise excluded from hash inputs.
+        write_manifest(
+            &root,
+            "crates/app/Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\nshared = { path = \"../b\" }\n\n\
+             [target.'cfg(unix)'.dependencies]\nextra = { path = \"../a\" }\n",
+        )?;
+        let third = workspace_graph_provenance(&root);
+        assert_eq!(second.package_graph_hash, third.package_graph_hash);
+        assert_eq!(third.path_dependency_edges.len(), 2);
 
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
