@@ -2073,11 +2073,12 @@ site a test could observe) was mapped to `CallDeletion` (a diff-level
 removed-call detection), and the crosswalk itself admitted the round trip
 was lossy. Preview languages deliberately keep per-language behavior-kind
 vocabularies that diverge from the Rust seam names — Python renders
-`ErrorPath` as `exception_path` and folds `SideEffect`/`CallDeletion` into
-`call_or_output_effect` — so forcing them through the Rust `SeamKind`
-vocabulary would be a semantic downgrade, not a unification. A mapping that
-returns `None` for the families preview languages produce most
-(`StaticUnknown`, `CallDeletion`) is not a bridge. When a shared vocabulary
+`ErrorPath` as `exception_path` and its downstream projection may fold
+side-effect evidence into `call_or_output_effect` — so forcing them through the
+Rust `SeamKind` vocabulary would be a semantic downgrade, not a unification.
+`StaticUnknown` is a common preview fallback, while `CallDeletion` belongs to
+the Rust diff-probe producer rather than the preview classifiers; a mapping
+that returns `None` for either family is not a bridge. When a shared vocabulary
 is wanted, first check whether each side's names are deliberate; retract an
 unused "canonical bridge" rather than keep it as latent false-confidence
 surface. This is the token-coincidence family applied to taxonomy design:
