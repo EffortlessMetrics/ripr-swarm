@@ -8621,6 +8621,10 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
                 != 3
             || !candidate.contains("-c credential.helper= -c http.extraheader= fetch")
             || !candidate.contains("git -c credential.helper= -c http.extraheader= ls-remote")
+            || candidate
+                .matches("https://github.com/EffortlessMetrics/ripr-swarm.git")
+                .count()
+                != 4
         {
             return Err(
                 "candidate source must use three isolated unauthenticated git fetches".to_owned(),
@@ -8731,8 +8735,20 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
             workflow.replacen("contents: read", "contents: write", 1),
         ),
         (
-            "credential persistence",
-            workflow.replacen("persist-credentials: false", "persist-credentials: true", 1),
+            "credential clearing",
+            workflow.replacen(
+                "-c credential.helper= -c http.extraheader= fetch",
+                "fetch",
+                1,
+            ),
+        ),
+        (
+            "fixed public repository",
+            workflow.replacen(
+                "https://github.com/EffortlessMetrics/ripr-swarm.git",
+                "https://github.com/${REPOSITORY}.git",
+                1,
+            ),
         ),
         (
             "publication",
