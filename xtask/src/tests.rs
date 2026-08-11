@@ -8620,7 +8620,10 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
                 .matches("git init \"${GITHUB_WORKSPACE}\"")
                 .count()
                 != 3
-            || !candidate.contains("-c credential.helper= -c http.extraheader= fetch")
+            || candidate
+                .matches("-c credential.helper= -c http.extraheader= fetch")
+                .count()
+                != 3
             || !candidate.contains("git -c credential.helper= -c http.extraheader= ls-remote")
             || candidate
                 .matches("https://github.com/EffortlessMetrics/ripr-swarm.git")
@@ -8704,8 +8707,8 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
             "Compare-Object $expectedEntries $actualEntries",
             "expected-dist-files.txt",
             "diff -u expected-dist-files.txt actual-dist-files.txt",
-            "archive = \"tar.gz\"",
-            "archive = \"zip\"",
+            "archive: tar.gz",
+            "archive: zip",
             "refs/tags/${tag}^{}",
             "resolved_sha=\"${peeled_sha:-${remote_sha}}\"",
             "actual_sha=\"$(sha256sum",
@@ -8781,7 +8784,11 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
         ),
         (
             "matrix inventory",
-            workflow.replacen("x86_64-pc-windows-msvc", "x86_64-pc-windows-msvc-extra", 1),
+            workflow.replacen(
+                "          - target: x86_64-pc-windows-msvc\n",
+                "          - target: x86_64-pc-windows-msvc\n          - target: x86_64-pc-windows-msvc\n",
+                1,
+            ),
         ),
         (
             "required marker",
