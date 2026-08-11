@@ -1130,16 +1130,49 @@ mod tests {
             .iter()
             .position(|line| line.starts_with("- name: Isolate package installation"))
             .ok_or_else(|| "workflow must isolate package installation".to_string())?;
-        let package = lines
+        let package_line = lines
             .iter()
-            .position(|line| line.contains(" package -p ripr --locked"))
+            .position(|line| line.contains(" package --target-dir"))
             .ok_or_else(|| "workflow must package the exact crate".to_string())?;
-        let install = lines
+        let install_line = lines
             .iter()
-            .position(|line| line.contains(" install --path $packageDir.FullName"))
+            .position(|line| line.contains(" install --target-dir"))
             .ok_or_else(|| "workflow must install the extracted crate".to_string())?;
-        if !(isolate < package && package < install) {
+        if !(isolate < package_line && package_line < install_line) {
             return Err("Cargo temp isolation must precede both package builds".to_string());
+        }
+        let package = lines[package_line].split_whitespace().collect::<Vec<_>>();
+        let install = lines[install_line].split_whitespace().collect::<Vec<_>>();
+        let position = |tokens: &[&str], token: &str| {
+            tokens
+                .iter()
+                .position(|candidate| *candidate == token)
+                .ok_or_else(|| format!("command must contain {token:?}"))
+        };
+        let package_command = position(&package, "package")?;
+        let package_target = position(&package, "--target-dir")?;
+        let package_name = position(&package, "-p")?;
+        let package_locked = position(&package, "--locked")?;
+        if !(package_command < package_target
+            && package_target < package_name
+            && package_name < package_locked
+            && package.get(package_name + 1) == Some(&"ripr"))
+        {
+            return Err(
+                "package command must order package, target-dir, -p ripr, and locked".to_string(),
+            );
+        }
+        let install_command = position(&install, "install")?;
+        let install_target = position(&install, "--target-dir")?;
+        let install_path = position(&install, "--path")?;
+        if !(install_command < install_target
+            && install_target < install_path
+            && install.get(install_path + 1) == Some(&"$packageDir.FullName"))
+        {
+            return Err(
+                "install command must order install, target-dir, and --path package dir"
+                    .to_string(),
+            );
         }
         if !packaged_temp_wiring_is_complete(workflow) {
             return Err(
@@ -1158,8 +1191,6 @@ mod tests {
             "TMP = { value = '$tomlTemp', force = true, relative = false }",
             "TMPDIR = { value = '$tomlTemp', force = true, relative = false }",
             "New-Item -ItemType Directory -Force -Path $env:CARGO_HOME, $env:CARGO_TARGET_DIR, $env:CARGO_TEMP_DIR",
-            "cargo --config $env:CARGO_TEMP_CONFIG package --target-dir $env:CARGO_TARGET_DIR",
-            "cargo --config $env:CARGO_TEMP_CONFIG install --target-dir $env:CARGO_TARGET_DIR",
             "\"CARGO_TEMP_DIR=$env:CARGO_TEMP_DIR\" >> $env:GITHUB_ENV",
             "\"CARGO_TEMP_CONFIG=$env:CARGO_TEMP_CONFIG\" >> $env:GITHUB_ENV",
             "\"CARGO_TARGET_DIR=$env:CARGO_TARGET_DIR\" >> $env:GITHUB_ENV",
