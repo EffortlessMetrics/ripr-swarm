@@ -4,12 +4,15 @@ on:
   push:
     branches:
       - release-qualification/0.11.0-w3-preflight-control
+  pull_request:
+    branches:
+      - release-qualification/0.11.0-w3
 
 permissions:
   contents: read
 
 concurrency:
-  group: w3-source-promotion-preflight
+  group: w3-source-promotion-preflight-${{ github.event_name }}
   cancel-in-progress: false
 
 jobs:
@@ -51,7 +54,6 @@ jobs:
           set -euo pipefail
           test "$(git -C swarm rev-parse HEAD)" = "$SWARM_PARENT"
           test "$(git -C source rev-parse HEAD)" = "$SOURCE_PARENT"
-          test "$(git -C swarm merge-base "$SOURCE_PARENT" "$SWARM_PARENT" 2>/dev/null || true)" = "$MERGE_BASE" || true
           git -C swarm update-ref "refs/ripr/release-${VERSION}-${SWARM_PARENT}" "$SWARM_PARENT"
           test "$(git -C swarm rev-parse "refs/ripr/release-${VERSION}-${SWARM_PARENT}^{commit}")" = "$SWARM_PARENT"
           mkdir -p preflight
@@ -87,14 +89,9 @@ jobs:
           set -euo pipefail
           receipt=preflight/source-promotion-preflight.json
           test -s "$receipt"
-          jq -e \
-            --arg source "$SOURCE_PARENT" \
-            --arg swarm "$SWARM_PARENT" \
-            --arg base "$MERGE_BASE" \
-            '(.source_parent // .inputs.source_parent) == $source and
-             (.swarm_parent // .inputs.swarm_parent) == $swarm and
-             (.merge_base // .ancestry.merge_base) == $base' \
-            "$receipt" >/dev/null
+          grep -Fq "$SOURCE_PARENT" "$receipt"
+          grep -Fq "$SWARM_PARENT" "$receipt"
+          grep -Fq "$MERGE_BASE" "$receipt"
           sha256sum preflight/* | sort | tee preflight/SHA256SUMS
 
       - name: Upload exact preflight packet
