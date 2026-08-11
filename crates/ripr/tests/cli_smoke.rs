@@ -672,11 +672,39 @@ fn fixture_repository_head_rejects_whitespace_padded_success_output() -> Result<
 }
 
 #[test]
-fn version_runs() {
-    let output = run_ripr(&["--version"]);
-    assert_success(&output);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("ripr"));
+fn version_is_exact_and_precedes_help_or_output_flags() {
+    let expected = format!("ripr {}\n", env!("CARGO_PKG_VERSION"));
+    for args in [
+        &["--version"][..],
+        &["-V"][..],
+        &["--version", "--json"][..],
+        &["--json", "--version"][..],
+        &["--version", "--help"][..],
+        &["--verbose", "--version"][..],
+        &["--version", "--verbose"][..],
+    ] {
+        let output = run_ripr(args);
+        assert_success(&output);
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            expected,
+            "version argv {args:?} must emit only the package version"
+        );
+        assert!(
+            output.stderr.is_empty(),
+            "version argv {args:?} emitted diagnostics: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let lsp = run_ripr(&["lsp", "--version"]);
+    assert_success(&lsp);
+    assert_eq!(
+        String::from_utf8_lossy(&lsp.stdout),
+        format!("ripr-lsp {}\n", env!("CARGO_PKG_VERSION")),
+        "command-local LSP version must retain its public output"
+    );
+    assert!(lsp.stderr.is_empty());
 }
 
 #[test]
