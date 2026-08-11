@@ -23,7 +23,7 @@ pub fn top_level_version_requested(args: &[String]) -> bool {
 pub(super) fn parse_args(args: Vec<String>) -> Result<CliCommand, String> {
     // Version is a process-level identity query. Resolve it before dispatch so
     // an output-looking flag (or a help-looking flag) cannot turn a version
-    // request into analysis/help output. The executable handles `--verbose`
+    // request into analysis/help output. The CLI dispatch handles `--verbose`
     // separately; keeping this precedence in the parser makes the same rule
     // hold for library callers and installed-binary invocations.
     if top_level_version_requested(&args) {
