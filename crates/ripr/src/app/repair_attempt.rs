@@ -374,6 +374,15 @@ fn validate_manifest(manifest: &RepairAttemptManifest) -> Result<(), String> {
     }) {
         return Err("repair attempt manifest contains an invalid artifact".to_string());
     }
+    let mut roles = BTreeSet::new();
+    let mut paths = BTreeSet::new();
+    if manifest
+        .artifacts
+        .iter()
+        .any(|artifact| !roles.insert(&artifact.role) || !paths.insert(&artifact.path))
+    {
+        return Err("repair attempt manifest contains duplicate artifact identity".to_string());
+    }
     Ok(())
 }
 
@@ -679,6 +688,17 @@ mod tests {
             }),
             ("artifact path is blank", |manifest| {
                 manifest.artifacts[0].path.clear();
+            }),
+            ("artifact role is duplicated", |manifest| {
+                let mut duplicate = manifest.artifacts[0].clone();
+                duplicate.path =
+                    "target/ripr/repair-attempts/sample/artifacts/other.json".to_string();
+                manifest.artifacts.push(duplicate);
+            }),
+            ("artifact path is duplicated", |manifest| {
+                let mut duplicate = manifest.artifacts[0].clone();
+                duplicate.role = "other_snapshot".to_string();
+                manifest.artifacts.push(duplicate);
             }),
             ("artifact sha256 is missing the prefix", |manifest| {
                 manifest.artifacts[0].sha256 =
