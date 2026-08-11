@@ -27,6 +27,35 @@ x86_64-unknown-linux-gnu
 aarch64-unknown-linux-gnu
 ```
 
+## Exact-candidate qualification (read-only)
+
+Use `.github/workflows/server-archive-qualification.yml` when archive shape
+must be checked before any publication decision. It requires an immutable
+40-character `candidate_sha`; an optional `candidate_tag` is accepted only
+when that tag resolves to the same commit. Every matrix job checks out that
+SHA, builds the existing five-target server matrix, verifies the archive
+checksum, extracts the flat package, and checks both the archive label and the
+candidate-built binary's `--version` command. The manifest job verifies
+`SHA256SUMS` and emits a
+machine-readable and Markdown qualification receipt.
+
+Dispatch with the already selected candidate identity:
+
+```bash
+gh workflow run server-archive-qualification.yml \
+  -f candidate_sha=<40-character-candidate-sha> \
+  -f candidate_tag=<optional-immutable-tag> \
+  -f version=<version>
+```
+
+This workflow has `contents: read`, does not call `release-upload-assets`, and
+does not use `GH_TOKEN` or repository secrets. Its only writes are scoped
+GitHub Actions artifacts containing the archives, manifest, checksums, and
+qualification receipt. An Actions artifact is rehearsal evidence, not a
+GitHub Release asset and not publication proof. The existing
+`release-server-binaries.yml` workflow remains the separate publication
+authority and must not be used as the qualification receipt.
+
 
 Packaging and manifest assembly intentionally live in Rust-first automation:
 

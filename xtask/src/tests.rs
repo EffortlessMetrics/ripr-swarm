@@ -8606,6 +8606,60 @@ jobs:
 }
 
 #[test]
+fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> Result<(), String> {
+    let workflow_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(".github/workflows/server-archive-qualification.yml");
+    let workflow = fs::read_to_string(&workflow_path)
+        .map_err(|err| format!("read {}: {err}", workflow_path.display()))?;
+
+    for required in [
+        "candidate_sha",
+        "ref: ${{ inputs.candidate_sha }}",
+        "^[0-9a-fA-F]{40}$",
+        "git rev-parse HEAD",
+        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+        "release-server-archive",
+        "release-server-manifest",
+        "SHA256SUMS",
+        "release_assets_created: false",
+    ] {
+        if !workflow.contains(required) {
+            return Err(format!("qualification workflow is missing `{required}`"));
+        }
+    }
+
+    for forbidden in [
+        "contents: write",
+        "release-upload-assets",
+        "GH_TOKEN",
+        "github.token",
+        "secrets.",
+        "gh release",
+    ] {
+        if workflow.contains(forbidden) {
+            return Err(format!(
+                "qualification workflow contains forbidden publication surface `{forbidden}`"
+            ));
+        }
+    }
+
+    let targets = [
+        "x86_64-pc-windows-msvc",
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-apple-darwin",
+        "aarch64-apple-darwin",
+    ];
+    for target in targets {
+        if workflow.matches(target).count() < 1 {
+            return Err(format!("qualification workflow is missing target `{target}`"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn workflow_runtime_policy_ignores_node20_outside_extension_workflows() {
     let workflow = r#"
 jobs:
