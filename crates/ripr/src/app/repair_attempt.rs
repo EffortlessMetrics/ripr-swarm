@@ -65,6 +65,7 @@ pub(crate) enum RepairAttemptState {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct RepairAttemptArtifact {
     pub(crate) role: String,
     pub(crate) path: String,
@@ -73,6 +74,7 @@ pub(crate) struct RepairAttemptArtifact {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct RepairAttemptManifest {
     pub(crate) schema_version: String,
     pub(crate) kind: String,
@@ -562,6 +564,18 @@ mod tests {
             .map_err(|error| format!("decode repair attempt manifest failed: {error}"))?;
         if decoded != manifest {
             return Err("repair attempt manifest changed during round trip".to_string());
+        }
+        let mut unknown_top_level = serde_json::to_value(&manifest)
+            .map_err(|error| format!("encode manifest for unknown-field test failed: {error}"))?;
+        unknown_top_level["unexpected"] = serde_json::Value::Bool(true);
+        if serde_json::from_value::<RepairAttemptManifest>(unknown_top_level).is_ok() {
+            return Err("manifest decoder accepted an unknown top-level field".to_string());
+        }
+        let mut unknown_artifact = serde_json::to_value(&manifest)
+            .map_err(|error| format!("encode artifact for unknown-field test failed: {error}"))?;
+        unknown_artifact["artifacts"][0]["unexpected"] = serde_json::Value::Bool(true);
+        if serde_json::from_value::<RepairAttemptManifest>(unknown_artifact).is_ok() {
+            return Err("manifest decoder accepted an unknown artifact field".to_string());
         }
         let leftovers = std::fs::read_dir(
             path.parent()
