@@ -8655,11 +8655,14 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
             "x86_64-apple-darwin",
             "aarch64-apple-darwin",
         ];
-        let matrix = candidate
+        let Some(matrix) = candidate
             .split("matrix:\n")
             .nth(1)
-            .and_then(|rest| rest.split("\n\n    steps:").next())
-            .unwrap_or_default();
+            .and_then(|rest| rest.split_once("\n\n    steps:"))
+            .map(|(matrix, _)| matrix)
+        else {
+            return Err("matrix block delimiters were not found".to_owned());
+        };
         if targets
             .iter()
             .filter(|target| matrix.matches(*target).count() == 1)
@@ -8748,6 +8751,26 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
             workflow.replacen(
                 "diff -u expected-dist-files.txt actual-dist-files.txt",
                 "true",
+                1,
+            ),
+        ),
+        (
+            "tag syntax",
+            workflow.replacen(
+                "^ripr-release-[0-9]+\\.[0-9]+\\.[0-9]+$",
+                "^ripr-release-.*$",
+                1,
+            ),
+        ),
+        (
+            "matrix inventory",
+            workflow.replacen("x86_64-pc-windows-msvc", "x86_64-pc-windows-msvc-extra", 1),
+        ),
+        (
+            "required marker",
+            workflow.replacen(
+                "release_assets_created: false",
+                "release_assets_created: true",
                 1,
             ),
         ),

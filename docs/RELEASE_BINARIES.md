@@ -31,8 +31,9 @@ aarch64-unknown-linux-gnu
 
 Use `.github/workflows/server-archive-qualification.yml` when archive shape
 must be checked before any publication decision. It requires an immutable
-40-character `candidate_sha`; an optional `candidate_tag` is accepted only
-when that tag resolves to the same commit. Every matrix job checks out that
+40-character `candidate_sha`; an optional `candidate_tag` must use the
+`ripr-release-MAJOR.MINOR.PATCH` format and may be lightweight or annotated,
+but must resolve to the same commit. Every matrix job fetches that
 SHA, builds the existing five-target server matrix, verifies the archive
 checksum, extracts the flat package, and checks both the archive label and the
 candidate-built binary's `--version` command, including that the requested
