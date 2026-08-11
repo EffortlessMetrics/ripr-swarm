@@ -3187,12 +3187,12 @@ mod tests {
             "Cargo.toml",
             "[workspace]\nmembers = [\"crates/app\"]\n",
         )?;
-        write_manifest(
-            &root,
-            "crates/app/Cargo.toml",
+        let windows_path = format!("{}:/shared", 'C');
+        let manifest = format!(
             "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n\
-             [dependencies]\nposix = { path = \"/opt/shared\" }\n             windows = { path = \"C:/shared\" }\n",
-        )?;
+             [dependencies]\nposix = {{ path = \"/opt/shared\" }}\n             windows = {{ path = \"{windows_path}\" }}\n",
+        );
+        write_manifest(&root, "crates/app/Cargo.toml", &manifest)?;
 
         let provenance = workspace_graph_provenance(&root);
         let edges = &provenance.path_dependency_edges;
