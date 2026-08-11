@@ -97,8 +97,7 @@ jobs:
               if [[ "${ruleset_status}" == "200" ]]; then
                 break
               fi
-              message="$(jq -r '.message // empty' "${ruleset_file}" 2>/dev/null || true)"
-              echo "::warning::ruleset verification request failed: attempt=${attempt}/3 http_status=${ruleset_status:-transport-error} rate_limit_remaining=${ruleset_rate_remaining} rate_limit_reset=${ruleset_rate_reset} response_sha256=${ruleset_response_digest}${message:+ message=${message}}" >&2
+              echo "::warning::ruleset verification request failed: attempt=${attempt}/3 http_status=${ruleset_status:-transport-error} rate_limit_remaining=${ruleset_rate_remaining} rate_limit_reset=${ruleset_rate_reset} response_sha256=${ruleset_response_digest}" >&2
               sleep "$((attempt * 2))"
             done
             ruleset_verified=false
@@ -116,8 +115,8 @@ jobs:
                 ruleset_mode="public-rest"
                 ruleset_response_sha256="${ruleset_response_digest}"
               else
-                ruleset_shape="$(jq -c '{id, target, enforcement, include: (.conditions.ref_name.include // null), exclude: (.conditions.ref_name.exclude // null), rules: ([.rules[]?.type] // [])}' "${ruleset_file}" 2>/dev/null || echo invalid-json)"
-                echo "::error::ruleset verification shape mismatch: http_status=200 rate_limit_remaining=${ruleset_rate_remaining} rate_limit_reset=${ruleset_rate_reset} response_sha256=${ruleset_response_digest} observed=${ruleset_shape}" >&2
+                ruleset_safe_summary="$(jq -c 'if type == "object" then {json_object: true, include_count: ((.conditions.ref_name.include // []) | if type == "array" then length else 0 end), exclude_count: ((.conditions.ref_name.exclude // []) | if type == "array" then length else 0 end), rule_count: ((.rules // []) | if type == "array" then length else 0 end)} else {json_object: false, include_count: 0, exclude_count: 0, rule_count: 0} end' "${ruleset_file}" 2>/dev/null || echo '{"json_object":false,"include_count":0,"exclude_count":0,"rule_count":0}')"
+                echo "::error::ruleset verification shape mismatch: http_status=200 rate_limit_remaining=${ruleset_rate_remaining} rate_limit_reset=${ruleset_rate_reset} response_sha256=${ruleset_response_digest} summary=${ruleset_safe_summary}" >&2
               fi
             else
               echo "::error::ruleset verification unavailable after 3 attempts: http_status=${ruleset_status:-transport-error} rate_limit_remaining=${ruleset_rate_remaining} rate_limit_reset=${ruleset_rate_reset} response_sha256=${ruleset_response_digest}" >&2
