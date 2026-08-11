@@ -22,9 +22,6 @@ Projection:
 - Coverage/grip frontier: not available
 - Gate: not configured
 
-Warnings:
-- None.
-
 Limits:
 - Static RIPR evidence only.
 - Advisory by default.
