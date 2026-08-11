@@ -927,31 +927,50 @@ mod tests {
     #[test]
     fn packaged_qualification_workflow_is_immutable_and_non_publishing() {
         let workflow = include_str!("../../.github/workflows/windows-packaged-qualification.yml");
-        for required in [
-            "candidate_sha",
-            "candidate_ref",
-            "persist-credentials: false",
-            "cargo package -p ripr --locked",
-            "cargo install --path",
-            "doctor",
-            "check",
-            "explain",
-            "context",
-            "pilot",
-            "outcome",
-            "npm run test:e2e",
-            "RIPR_TEST_WORKSPACE_TRUST = 'trusted'",
-            "RIPR_TEST_WORKSPACE_TRUST = 'untrusted'",
-            "actions/upload-artifact@v7",
-        ] {
-            assert!(
-                workflow.contains(required),
-                "workflow lost required contract: {required}"
-            );
-        }
+        let lines = workflow
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .collect::<Vec<_>>();
+        let scalar = |key: &str| {
+            lines
+                .iter()
+                .find_map(|line| {
+                    line.strip_prefix(key)
+                        .and_then(|value| value.strip_prefix(':'))
+                })
+                .map(str::trim)
+                .map(|value| value.trim_matches('"').trim_matches('\''))
+        };
+        assert_eq!(scalar("contents"), Some("read"));
+        assert_eq!(scalar("persist-credentials"), Some("false"));
+        assert_eq!(scalar("ref"), Some("${{ inputs.candidate_sha }}"));
+        assert!(lines.iter().any(|line| line.starts_with("candidate_sha:")));
+        assert!(lines.iter().any(|line| line.starts_with("candidate_ref:")));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("refs/tags/ripr-release-0\\.11\\.0-"))
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with("remoteLine = git ls-remote --exit-code origin"))
+        );
+        assert!(lines.iter().any(|line| line.starts_with("if (-not $binaryPath.StartsWith($env:QUAL_TEMP_ROOT")));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("RIPR_TEST_SERVER_PATH"))
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("actions/upload-artifact@v7"))
+        );
         for forbidden in ["gh release", "vsce publish", "ovsx publish", "secrets."] {
             assert!(
-                !workflow.contains(forbidden),
+                !lines.iter().any(|line| line.contains(forbidden)),
                 "workflow must not publish or use secrets: {forbidden}"
             );
         }

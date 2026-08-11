@@ -45,11 +45,15 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if ($env:CANDIDATE_SHA -notmatch '^[0-9a-fA-F]{40}$') { throw 'candidate_sha must be a full 40-character commit SHA' }
-          if ([string]::IsNullOrWhiteSpace($env:CANDIDATE_REF) -or $env:CANDIDATE_REF -match '^refs/heads/' -or $env:CANDIDATE_REF -in @('main', 'origin/main')) { throw 'candidate_ref must be a non-branch immutable tag/ref' }
+          if ($env:CANDIDATE_REF -notmatch '^refs/tags/ripr-release-0\.11\.0-[0-9a-fA-F]{40}$') { throw 'candidate_ref must be refs/tags/ripr-release-0.11.0-<40 hex SHA>' }
           $head = (git rev-parse HEAD).Trim()
           if ($head -ne $env:CANDIDATE_SHA.ToLowerInvariant()) { throw "checkout identity mismatch: HEAD=$head candidate_sha=$env:CANDIDATE_SHA" }
+          $remoteLine = git ls-remote --exit-code origin $env:CANDIDATE_REF
+          if ($LASTEXITCODE -ne 0) { throw "candidate tag was not found on origin: $env:CANDIDATE_REF" }
+          $remoteSha = ($remoteLine -split '\s+')[0].Trim()
+          if ($remoteSha -ne $head) { throw "origin tag does not resolve directly to candidate_sha: $env:CANDIDATE_REF -> $remoteSha" }
           $refSha = (git rev-parse "$env:CANDIDATE_REF^{commit}").Trim()
-          if ($refSha -ne $head) { throw "candidate_ref does not resolve to candidate_sha: $env:CANDIDATE_REF -> $refSha" }
+          if ($refSha -ne $head) { throw "local candidate ref does not resolve to candidate_sha: $env:CANDIDATE_REF -> $refSha" }
           New-Item -ItemType Directory -Force -Path $env:QUAL_ROOT | Out-Null
           [ordered]@{ candidate_sha = $head; candidate_ref = $env:CANDIDATE_REF; candidate_parent = (git rev-parse "$head^"); repository = $env:GITHUB_REPOSITORY; workflow_run = $env:GITHUB_RUN_ID } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $env:QUAL_ROOT 'candidate-identity.json')
 
@@ -69,8 +73,10 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $root = $env:QUAL_ROOT
-          $env:CARGO_HOME = Join-Path $root 'cargo-home'
-          $env:CARGO_TARGET_DIR = Join-Path $root 'cargo-target'
+          $temp = Join-Path $env:RUNNER_TEMP 'ripr-windows-packaged-qualification'
+          $env:CARGO_HOME = Join-Path $temp 'cargo-home'
+          $env:CARGO_TARGET_DIR = Join-Path $temp 'cargo-target'
+          "QUAL_TEMP_ROOT=$temp" >> $env:GITHUB_ENV
           New-Item -ItemType Directory -Force -Path $env:CARGO_HOME, $env:CARGO_TARGET_DIR | Out-Null
           "CARGO_HOME=$env:CARGO_HOME" >> $env:GITHUB_ENV
           "CARGO_TARGET_DIR=$env:CARGO_TARGET_DIR" >> $env:GITHUB_ENV
@@ -87,7 +93,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "cargo package failed with exit $LASTEXITCODE" }
           $crate = Get-ChildItem (Join-Path $env:CARGO_TARGET_DIR 'package\*.crate') | Sort-Object LastWriteTime | Select-Object -Last 1
           if ($null -eq $crate) { throw 'cargo package did not produce a .crate' }
-          $packageRoot = Join-Path $root 'crate-source'; $installRoot = Join-Path $root 'install'
+          $packageRoot = Join-Path $env:QUAL_TEMP_ROOT 'crate-source'; $installRoot = Join-Path $env:QUAL_TEMP_ROOT 'install'
           New-Item -ItemType Directory -Force -Path $packageRoot, $installRoot | Out-Null
           $crateHash = (Get-FileHash $crate.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           tar -tf $crate.FullName | Set-Content -Encoding utf8 (Join-Path $root 'crate-files.txt')
@@ -99,7 +105,7 @@ jobs:
           $binary = Join-Path $installRoot 'bin\ripr.exe'
           if (-not (Test-Path $binary)) { throw "isolated binary missing: $binary" }
           $binaryPath = (Resolve-Path $binary).Path
-          if ($binaryPath.StartsWith($env:GITHUB_WORKSPACE, [System.StringComparison]::OrdinalIgnoreCase)) { throw "installed binary escaped its isolated prefix: $binaryPath" }
+          if (-not $binaryPath.StartsWith($env:QUAL_TEMP_ROOT, [System.StringComparison]::OrdinalIgnoreCase)) { throw "installed binary escaped its runner-temp prefix: $binaryPath" }
           $metadata = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages | Where-Object name -eq 'ripr' | Select-Object -First 1
           $binaryHash = (Get-FileHash $binary -Algorithm SHA256).Hash.ToLowerInvariant()
           [ordered]@{ crate = $crate.Name; crate_sha256 = $crateHash; package_dir = $packageDir.FullName; binary = $binaryPath; binary_sha256 = $binaryHash; version = $metadata.version } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $root 'crate-install-identity.json')
