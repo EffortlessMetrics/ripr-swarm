@@ -2449,18 +2449,18 @@ mod tests {
 
     #[test]
     fn workspace_portable_identity_ignores_text_line_ending_spelling() -> Result<(), String> {
-        let lf = vec![(
+        let canonical = vec![(
             PathBuf::from("Cargo.toml"),
-            b"[workspace]\nmembers = [\"crates/app\"]\n".to_vec(),
+            b"[workspace]\nmembers = [\"crates/app\"]\n# trailing comment\n".to_vec(),
         )];
-        let crlf = vec![(
+        let mixed = vec![(
             PathBuf::from("Cargo.toml"),
-            b"[workspace]\r\nmembers = [\"crates/app\"]\r\n".to_vec(),
+            b"[workspace]\r\nmembers = [\"crates/app\"]\r# trailing comment\r".to_vec(),
         )];
-        if workspace_file_identity_portable(lf) == workspace_file_identity_portable(crlf) {
+        if workspace_file_identity_portable(canonical) == workspace_file_identity_portable(mixed) {
             return Ok(());
         }
-        Err("portable workspace identities must ignore CRLF versus LF spelling".to_string())
+        Err("portable workspace identities must ignore CRLF, lone CR, and LF spelling".to_string())
     }
 
     #[test]
