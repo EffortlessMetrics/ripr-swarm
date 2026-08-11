@@ -34,6 +34,9 @@ impl Finding {
                     .as_ref()
                     .map_or("unknown", |reason| reason.as_str())
                     .to_string(),
+                // A diff Finding has no producer-owned TestTargetEvidence.
+                // Preserve that absence instead of inferring authority from a
+                // path/name/line tuple.
                 has_test_target: false,
             })
             .collect::<Vec<_>>();
@@ -41,49 +44,10 @@ impl Finding {
             .activation
             .missing_discriminators
             .iter()
-            .map(|fact| {
-                format!(
-                    "{}:{}",
-                    normalize_text(&fact.value),
-                    normalize_text(&fact.reason)
-                )
-            })
+            .map(|fact| fact.value.clone())
             .collect::<Vec<_>>();
-        summary_from_parts(seam_id, entries, &missing)
-    }
-}
 
-fn summary_from_parts(
-    seam_id: String,
-    mut entries: Vec<TestEvidenceEntry>,
-    missing_discriminators: &[String],
-) -> TestEvidenceSummary {
-    entries.sort_by(|left, right| {
-        oracle_strength_rank(&right.oracle_strength)
-            .cmp(&oracle_strength_rank(&left.oracle_strength))
-            .then_with(|| left.relation_reason.cmp(&right.relation_reason))
-            .then_with(|| left.file.cmp(&right.file))
-            .then_with(|| left.test_name.cmp(&right.test_name))
-            .then_with(|| left.line.cmp(&right.line))
-    });
-    let base = TestEvidenceSummary::compute_fingerprint(&entries);
-    let mut missing = missing_discriminators
-        .iter()
-        .map(|value| normalize_text(value))
-        .collect::<Vec<_>>();
-    missing.sort();
-    missing.dedup();
-    let fingerprint = if missing.is_empty() {
-        base
-    } else {
-        format!("{base}|missing:{}", missing.join(";"))
-    };
-    TestEvidenceSummary {
-        seam_id,
-        missing_discriminator_count: missing.len(),
-        strongest_oracle: TestEvidenceSummary::strongest_oracle_from(&entries),
-        fingerprint,
-        related_tests: entries,
+        TestEvidenceSummary::from_parts(seam_id, entries, &missing)
     }
 }
 
@@ -95,92 +59,13 @@ fn normalize_path(path: &str) -> String {
         .to_string()
 }
 
-fn normalize_text(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn oracle_strength_rank(strength: &str) -> u8 {
-    match strength {
-        "strong" => 5,
-        "medium" => 4,
-        "weak" => 3,
-        "smoke" => 2,
-        "none" => 1,
-        _ => 0,
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    fn entry(name: &str, path: &str, strength: &str) -> TestEvidenceEntry {
-        TestEvidenceEntry {
-            test_name: name.to_string(),
-            file: normalize_path(path),
-            line: 10,
-            oracle_kind: "exact_value".to_string(),
-            oracle_strength: strength.to_string(),
-            relation_reason: "direct_owner_call".to_string(),
-            has_test_target: false,
-        }
-    }
+    use super::normalize_path;
 
     #[test]
-    fn summary_orders_strongest_evidence_and_preserves_target_absence() {
-        let summary = summary_from_parts(
-            "gap:boundary".to_string(),
-            vec![
-                entry("weak_test", "tests\\pricing.rs", "weak"),
-                entry("strong_test", "./tests/pricing.rs", "strong"),
-            ],
-            &[],
-        );
-        assert_eq!(summary.related_tests[0].test_name, "strong_test");
-        assert_eq!(summary.related_tests[0].file, "tests/pricing.rs");
-        assert_eq!(summary.strongest_oracle, "strong");
-        assert!(
-            summary
-                .related_tests
-                .iter()
-                .all(|test| !test.has_test_target)
-        );
-    }
-
-    #[test]
-    fn missing_discriminator_changes_the_semantic_fingerprint() {
-        let entries = vec![entry("boundary_test", "tests/pricing.rs", "strong")];
-        let before = summary_from_parts(
-            "gap:boundary".to_string(),
-            entries.clone(),
-            &["amount   == threshold".to_string()],
-        );
-        let after = summary_from_parts("gap:boundary".to_string(), entries, &[]);
-        assert_eq!(before.missing_discriminator_count, 1);
-        assert_eq!(after.missing_discriminator_count, 0);
-        assert_ne!(before.fingerprint, after.fingerprint);
-        assert!(before.fingerprint.contains("amount == threshold"));
-    }
-
-    #[test]
-    fn missing_discriminator_order_and_whitespace_do_not_change_identity() {
-        let entries = vec![entry("boundary_test", "tests/pricing.rs", "strong")];
-        let left = summary_from_parts(
-            "gap:boundary".to_string(),
-            entries.clone(),
-            &[
-                " field   status ".to_string(),
-                "amount == threshold".to_string(),
-            ],
-        );
-        let right = summary_from_parts(
-            "gap:boundary".to_string(),
-            entries,
-            &[
-                "amount == threshold".to_string(),
-                "field status".to_string(),
-            ],
-        );
-        assert_eq!(left.fingerprint, right.fingerprint);
+    fn related_test_paths_are_transport_normalized() {
+        assert_eq!(normalize_path("tests\\pricing.rs"), "tests/pricing.rs");
+        assert_eq!(normalize_path("./tests/pricing.rs"), "tests/pricing.rs");
     }
 }
