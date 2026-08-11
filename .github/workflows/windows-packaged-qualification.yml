@@ -33,8 +33,12 @@ jobs:
       QUAL_ROOT: ${{ github.workspace }}\target\ripr\windows-packaged-qualification
 
     steps:
+      - name: Initialize receipt root
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force -Path $env:QUAL_ROOT | Out-Null
+
       - name: Checkout immutable candidate
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ inputs.candidate_sha }}
           fetch-depth: 0
@@ -46,6 +50,8 @@ jobs:
           $ErrorActionPreference = 'Stop'
           if ($env:CANDIDATE_SHA -notmatch '^[0-9a-fA-F]{40}$') { throw 'candidate_sha must be a full 40-character commit SHA' }
           if ($env:CANDIDATE_REF -notmatch '^refs/tags/ripr-release-0\.11\.0-[0-9a-fA-F]{40}$') { throw 'candidate_ref must be refs/tags/ripr-release-0.11.0-<40 hex SHA>' }
+          $candidateTagSha = ($env:CANDIDATE_REF -split '-')[-1].ToLowerInvariant()
+          if ($candidateTagSha -ne $env:CANDIDATE_SHA.ToLowerInvariant()) { throw 'candidate_ref tag suffix must equal candidate_sha' }
           $head = (git rev-parse HEAD).Trim()
           if ($head -ne $env:CANDIDATE_SHA.ToLowerInvariant()) { throw "checkout identity mismatch: HEAD=$head candidate_sha=$env:CANDIDATE_SHA" }
           $remoteLine = git ls-remote --exit-code origin $env:CANDIDATE_REF
@@ -54,15 +60,14 @@ jobs:
           if ($remoteSha -ne $head) { throw "origin tag does not resolve directly to candidate_sha: $env:CANDIDATE_REF -> $remoteSha" }
           $refSha = (git rev-parse "$env:CANDIDATE_REF^{commit}").Trim()
           if ($refSha -ne $head) { throw "local candidate ref does not resolve to candidate_sha: $env:CANDIDATE_REF -> $refSha" }
-          New-Item -ItemType Directory -Force -Path $env:QUAL_ROOT | Out-Null
           [ordered]@{ candidate_sha = $head; candidate_ref = $env:CANDIDATE_REF; candidate_parent = (git rev-parse "$head^"); repository = $env:GITHUB_REPOSITORY; workflow_run = $env:GITHUB_RUN_ID } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $env:QUAL_ROOT 'candidate-identity.json')
 
       - name: Set up Rust and Node
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: 1.95.0
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
           cache: npm
@@ -184,7 +189,7 @@ jobs:
 
       - name: Upload Actions-only receipts
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: windows-packaged-qualification-${{ inputs.candidate_sha }}
           path: ${{ github.workspace }}/target/ripr/windows-packaged-qualification

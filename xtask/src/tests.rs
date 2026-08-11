@@ -43700,7 +43700,8 @@ fn vscode_e2e_preserves_installed_server_selection() -> Result<(), String> {
     assert_eq!(selected, (installed.clone(), false));
     assert_eq!(select_vscode_test_server(None, &built)?, (built, true));
     let missing = root.join("missing-ripr.exe");
-    assert!(select_vscode_test_server(Some(&missing), &installed).is_err());
+    let error = select_vscode_test_server(Some(&missing), &installed).unwrap_err();
+    assert!(error.contains("installed server binary"));
 
     fs::remove_dir_all(&root).map_err(|err| format!("remove test directory: {err}"))?;
     Ok(())

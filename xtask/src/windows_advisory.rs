@@ -957,6 +957,25 @@ mod tests {
                 .iter()
                 .any(|line| line.starts_with("remoteLine = git ls-remote --exit-code origin"))
         );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("$remoteSha -ne $head"))
+        );
+        assert!(lines.iter().any(|line| line.contains("$refSha -ne $head")));
+        assert!(lines.iter().any(|line| {
+            line.contains("$candidateTagSha -ne $env:CANDIDATE_SHA.ToLowerInvariant()")
+        }));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("RIPR_TEST_SERVER_PATH = $env:RIPR_PACKAGED"))
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("if ($LASTEXITCODE -ne 0)"))
+        );
         assert!(lines.iter().any(|line| line.starts_with("if (-not $binaryPath.StartsWith($env:QUAL_TEMP_ROOT")));
         assert!(
             lines
