@@ -147,10 +147,7 @@ pub(crate) struct EditCageVerdict {
     pub(crate) violations: Vec<EditCageViolation>,
 }
 
-pub(crate) fn evaluate_edit_cage(
-    policy: &EditCagePolicy,
-    delta: &AttemptDelta,
-) -> EditCageVerdict {
+pub(crate) fn evaluate_edit_cage(policy: &EditCagePolicy, delta: &AttemptDelta) -> EditCageVerdict {
     if !delta.comparable {
         return EditCageVerdict {
             status: EditCageVerdictStatus::Incomparable,
@@ -428,11 +425,7 @@ mod tests {
     fn parent_drive_and_unc_paths_fail_closed() -> Result<(), String> {
         let drive_path = format!("{}:\\tests\\pricing.rs", 'C');
         let unc_path = ["", "", "server", "share", "test.rs"].join("\\");
-        for path in [
-            "../tests/pricing.rs".to_string(),
-            drive_path,
-            unc_path,
-        ] {
+        for path in ["../tests/pricing.rs".to_string(), drive_path, unc_path] {
             let verdict = evaluate_edit_cage(
                 &policy()?,
                 &AttemptDelta {
