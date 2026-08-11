@@ -8614,26 +8614,17 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
         .map_err(|err| format!("read {}: {err}", workflow_path.display()))?;
 
     let validate = |candidate: &str| -> Result<(), String> {
-        let checkout_blocks: Vec<&str> = candidate
-            .split("      - uses: actions/checkout@")
-            .skip(1)
-            .map(|block| block.split("      - ").next().unwrap_or(block))
-            .collect();
-        if checkout_blocks.len() != 3 {
-            return Err(format!(
-                "expected three structured checkout steps, got {}",
-                checkout_blocks.len()
-            ));
-        }
-        for block in checkout_blocks {
-            if !block.contains("ref: ${{ inputs.candidate_sha }}")
-                || !block.contains("persist-credentials: false")
-            {
-                return Err(
-                    "every checkout must bind the candidate ref and disable credential persistence"
-                        .to_owned(),
-                );
-            }
+        if candidate.contains("actions/checkout@")
+            || candidate
+                .matches("git init \"${GITHUB_WORKSPACE}\"")
+                .count()
+                != 3
+            || !candidate.contains("-c credential.helper= -c http.extraheader= fetch")
+            || !candidate.contains("git -c credential.helper= -c http.extraheader= ls-remote")
+        {
+            return Err(
+                "candidate source must use three isolated unauthenticated git fetches".to_owned(),
+            );
         }
         if !candidate.contains("permissions:\n  contents: read")
             || candidate.contains("contents: write")
@@ -8707,6 +8698,10 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
             "diff -u expected-dist-files.txt actual-dist-files.txt",
             "archive = \"tar.gz\"",
             "archive = \"zip\"",
+            "refs/tags/${tag}^{}",
+            "resolved_sha=\"${peeled_sha:-${remote_sha}}\"",
+            "actual_sha=\"$(sha256sum",
+            "assets[$target].sha256",
             "(.assets | keys == ($targets | sort))",
             "curl --silent --show-error --location",
             "ruleset API attempt",
