@@ -67,8 +67,13 @@ matters. The age is the committer timestamp of the last commit that changed
 the spec file, resolved with the exact path-safe invocation:
 
 ```bash
-git log -1 --format=%ct -- docs/specs/RIPR-SPEC-NNNN-*.md
+git log -1 --format=%ct -- "<spec-path>"
 ```
+
+Use the exact spec path (for example
+`docs/specs/RIPR-SPEC-0108-evidence-promotion-honesty.md`), never a `*`
+wildcard: a wildcard can match multiple spec files and Git would return the
+timestamp of a different spec's last commit.
 
 Missing age evidence is fail-closed and visible: an untracked spec, an
 unavailable repository, a malformed timestamp, or a commit date in the

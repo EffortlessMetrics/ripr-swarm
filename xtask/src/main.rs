@@ -5334,7 +5334,17 @@ fn proposed_spec_age_finding(normalized: &str) -> Option<String> {
              malformed commit timestamp `{timestamp}`"
         ));
     };
-    proposed_spec_age_violation(normalized, commit_unix, now_unix_seconds())
+    let now_unix = match now_unix_seconds() {
+        Ok(now_unix) => now_unix,
+        Err(err) => {
+            return Some(format!(
+                "{normalized} proposed-age evidence is not_proven: {err}; the \
+                 lifecycle check requires a real current-time read and never \
+                 fabricates one"
+            ));
+        }
+    };
+    proposed_spec_age_violation(normalized, commit_unix, now_unix)
 }
 
 fn proposed_spec_age_violation(
@@ -5366,11 +5376,11 @@ fn proposed_spec_age_violation(
     ))
 }
 
-fn now_unix_seconds() -> u64 {
+fn now_unix_seconds() -> Result<u64, String> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
-        .unwrap_or(0)
+        .map_err(|err| format!("failed to read current Unix time: {err}"))
 }
 
 fn specs(args: &[String]) -> Result<(), String> {

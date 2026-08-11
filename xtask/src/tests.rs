@@ -25747,6 +25747,21 @@ fn proposed_spec_age_violation_compares_against_threshold() -> Result<(), String
         "a 10-day-old commit should pass"
     );
     assert!(
+        proposed_spec_age_violation(path, now - 90 * 24 * 60 * 60, now).is_none(),
+        "a commit exactly 90 days old is inside the inclusive threshold and passes"
+    );
+    let Some(threshold_finding) =
+        proposed_spec_age_violation(path, now - (90 * 24 * 60 * 60 + 1), now)
+    else {
+        return Err(
+            "a commit 90 days plus one second old should produce a lifecycle finding".to_string(),
+        );
+    };
+    assert!(
+        threshold_finding.contains("has been `proposed` for 90 days without review"),
+        "90 days plus one second must trip the lifecycle finding, got: {threshold_finding}"
+    );
+    assert!(
         proposed_spec_age_violation(path, now + 60, now).is_none(),
         "a commit seconds in the future is ordinary clock skew and passes"
     );
