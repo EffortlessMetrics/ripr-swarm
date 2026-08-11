@@ -3246,6 +3246,43 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn path_dependency_edges_preserve_cycles() -> Result<(), String> {
+        let root = isolated_dir("path-dep-cycle");
+        let _ = std::fs::remove_dir_all(&root);
+        write_manifest(
+            &root,
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"crates/a\", \"crates/b\"]\n",
+        )?;
+        write_manifest(
+            &root,
+            "crates/a/Cargo.toml",
+            "[package]\nname = \"a\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\nb = { path = \"../b\" }\n",
+        )?;
+        write_manifest(
+            &root,
+            "crates/b/Cargo.toml",
+            "[package]\nname = \"b\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\na = { path = \"../a\" }\n",
+        )?;
+
+        let edges = workspace_graph_provenance(&root).path_dependency_edges;
+        assert_eq!(edges.len(), 2, "{edges:?}");
+        assert_eq!(edges[0].from_manifest, "crates/a/Cargo.toml");
+        assert_eq!(edges[0].dependency_name, "b");
+        assert_eq!(edges[1].from_manifest, "crates/b/Cargo.toml");
+        assert_eq!(edges[1].dependency_name, "a");
+        assert!(edges.iter().all(|edge| {
+            edge.resolution == PathDependencyResolution::Resolved
+                && edge.resolved_path.is_some()
+        }));
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
     #[cfg(unix)]
     #[test]
     fn path_dependency_edges_skip_non_utf8_manifest_with_explicit_limitation() -> Result<(), String>
