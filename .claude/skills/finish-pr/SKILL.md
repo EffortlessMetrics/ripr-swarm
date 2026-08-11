@@ -47,7 +47,7 @@ A committed candidate with `REVIEW_INCOMPLETE` may enter so the PR can be publis
 
 # Release-scope law
 
-For a pinned release, use the exact immutable head SHA, ancestry, and release manifests as membership authority. Do not close, draft, lock, relabel, retarget, or otherwise mutate unrelated PRs to freeze scope; they remain open and may evolve, and post-pin merges do not retarget the release. Close only this selected PR for its own evidence-backed terminal disposition, never close-now/reopen-after-release.
+For a pinned release, treat the reviewed immutable pin receipt as the sole membership authority: qualification, source preflight, and finalization consume its exact ref, ancestry, ordered SHA digest, PR dispositions, and manifests unchanged. Ordinary `main` or swarm movement never repins or changes membership; repin only after a release-invalidating exact-candidate qualification or source-preflight failure, with an explicit superseding receipt. Do not close, draft, lock, relabel, retarget, or otherwise mutate unrelated PRs to freeze scope; they remain open and may evolve, and post-pin merges do not retarget the release. Close only this selected PR for its own evidence-backed terminal disposition, never close-now/reopen-after-release.
 
 # Review independence
 

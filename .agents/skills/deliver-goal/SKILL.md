@@ -41,7 +41,7 @@ The existence of several reasonable engineering choices does not require escalat
 
 # Release-scope law
 
-When a release is pinned, bind membership to its exact immutable head SHA, ancestry, and release manifests. Never close, draft, lock, relabel, retarget, or otherwise mutate an unrelated PR to freeze that scope; unrelated PRs stay open and may evolve. Later merges do not retarget the pinned release. Close only the selected PR for its own evidence-backed terminal disposition—never close it now to reopen it after release.
+When a release is pinned, the reviewed immutable pin receipt is the sole membership authority; qualification, source preflight, and finalization consume its exact ref, ancestry, ordered SHA digest, PR dispositions, and manifests unchanged. Ordinary `main` or swarm movement never repins or changes membership. Repin only after a release-invalidating exact-candidate qualification or source-preflight failure, with an explicit superseding receipt. Never close, draft, lock, relabel, retarget, or otherwise mutate an unrelated PR to freeze that scope; unrelated PRs stay open and may evolve. Later merges do not retarget the pinned release. Close only the selected PR for its own evidence-backed terminal disposition—never close it now to reopen it after release.
 
 # Concurrency law
 
