@@ -46,11 +46,18 @@ Dispatch with the already selected candidate identity:
 gh workflow run server-archive-qualification.yml \
   -f candidate_sha=<40-character-candidate-sha> \
   -f candidate_tag=<optional-immutable-tag> \
-  -f version=<version>
+  -f version=<version> \
+  -f ruleset_receipt_url=<public-receipt-url> \
+  -f ruleset_receipt_sha256=<receipt-sha256>
 ```
 
 This workflow has `contents: read`, does not call `release-upload-assets`, and
-does not use `GH_TOKEN` or repository secrets. Its only writes are scoped
+does not use `GH_TOKEN`, `github.token`, or repository secrets. When a tag is
+supplied, it verifies the public GitHub ruleset endpoint without credentials;
+bounded HTTP retries report rate-limit or transport diagnostics. If that
+unauthenticated endpoint is unavailable, both receipt inputs are required and
+the downloaded receipt is hash-checked and bound to the repository, candidate
+SHA, candidate tag, protected pattern, and update/deletion rules. Its only writes are scoped
 GitHub Actions artifacts containing the archives, manifest, checksums, and
 qualification receipt. An Actions artifact is rehearsal evidence, not a
 GitHub Release asset and not publication proof. The existing

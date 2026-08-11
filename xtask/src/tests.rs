@@ -8689,6 +8689,9 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
                 != 1
             || candidate.contains("release-upload-assets")
             || candidate.contains("gh release")
+            || candidate.contains("gh api")
+            || candidate.contains("GH_TOKEN")
+            || candidate.contains("github.token")
             || candidate.contains("secrets.")
         {
             return Err(
@@ -8703,6 +8706,11 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
             "expected-dist-files.txt",
             "diff -u expected-dist-files.txt actual-dist-files.txt",
             "(.assets | keys == ($targets | sort))",
+            "curl --silent --show-error --location",
+            "ruleset_receipt_url",
+            "ruleset_receipt_sha256",
+            "RULESET_RECEIPT_URL",
+            "ruleset API attempt",
             "release_assets_created: false",
         ] {
             if !candidate.contains(marker) {
@@ -8743,6 +8751,14 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
                 "true",
                 1,
             ),
+        ),
+        (
+            "authenticated API",
+            workflow.replacen("curl --silent --show-error", "gh api", 1),
+        ),
+        (
+            "token credential",
+            workflow.replacen("ruleset_receipt_url", "GH_TOKEN", 1),
         ),
     ] {
         if validate(&broken).is_ok() {

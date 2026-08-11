@@ -12,6 +12,16 @@ on:
         required: false
         default: ""
         type: string
+      ruleset_receipt_url:
+        description: "Public governed ruleset receipt URL used only when GitHub's unauthenticated API is unavailable"
+        required: false
+        default: ""
+        type: string
+      ruleset_receipt_sha256:
+        description: "SHA-256 for the public governed ruleset receipt"
+        required: false
+        default: ""
+        type: string
       version:
         description: "Archive version label, for example 0.11.0"
         required: true
@@ -25,6 +35,8 @@ permissions:
 env:
   CANDIDATE_SHA: ${{ inputs.candidate_sha }}
   CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+  RULESET_RECEIPT_URL: ${{ inputs.ruleset_receipt_url }}
+  RULESET_RECEIPT_SHA256: ${{ inputs.ruleset_receipt_sha256 }}
   QUALIFICATION_VERSION: ${{ inputs.version }}
   REPOSITORY: ${{ github.repository }}
 
@@ -41,8 +53,6 @@ jobs:
 
       - name: Verify candidate SHA and optional tag
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           [[ "${CANDIDATE_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]
@@ -59,19 +69,47 @@ jobs:
             test "$(git cat-file -t "${remote_sha}")" = "commit"
             test "$(git rev-list -n 1 "refs/tags/${tag}")" = "${candidate_sha}"
 
-            ruleset_ids="$(gh api "repos/${REPOSITORY}/rulesets?includes_parents=true" --paginate | jq -r '.[] | select(.target == "tag" and .enforcement == "active") | .id')"
-            ruleset_verified=false
-            while IFS= read -r ruleset_id; do
-              [[ -z "${ruleset_id}" ]] && continue
-              if gh api "repos/${REPOSITORY}/rulesets/${ruleset_id}" | jq -e --arg tag "${tag}" '
-                (.conditions.ref_name.include // []) | index("refs/tags/ripr-release-*") != null
-              ' >/dev/null && gh api "repos/${REPOSITORY}/rulesets/${ruleset_id}" | jq -e '
-                ([.rules[]?.type] | index("update") != null) and ([.rules[]?.type] | index("deletion") != null)
-              ' >/dev/null; then
-                ruleset_verified=true
+            ruleset_file="$(mktemp)"
+            ruleset_status=""
+            for attempt in 1 2 3; do
+              ruleset_status="$(curl --silent --show-error --location --connect-timeout 10 --max-time 20 --output "${ruleset_file}" --write-out '%{http_code}' "https://api.github.com/repos/${REPOSITORY}/rulesets?includes_parents=true" || true)"
+              if [[ "${ruleset_status}" == "200" ]]; then
                 break
               fi
-            done <<< "${ruleset_ids}"
+              message="$(jq -r '.message // empty' "${ruleset_file}" 2>/dev/null || true)"
+              echo "public ruleset API attempt ${attempt} returned HTTP ${ruleset_status:-transport-error}${message:+: ${message}}" >&2
+              sleep "$((attempt * 2))"
+            done
+            ruleset_verified=false
+            if [[ "${ruleset_status}" == "200" ]]; then
+              while IFS= read -r ruleset_id; do
+                [[ -z "${ruleset_id}" ]] && continue
+                detail_file="$(mktemp)"
+                detail_status="$(curl --silent --show-error --location --connect-timeout 10 --max-time 20 --output "${detail_file}" --write-out '%{http_code}' "https://api.github.com/repos/${REPOSITORY}/rulesets/${ruleset_id}" || true)"
+                if [[ "${detail_status}" == "200" ]] && jq -e '
+                  (.target == "tag" and .enforcement == "active") and
+                  ((.conditions.ref_name.include // []) | index("refs/tags/ripr-release-*") != null) and
+                  (([.rules[]?.type] | index("update") != null) and ([.rules[]?.type] | index("deletion") != null))
+                ' "${detail_file}" >/dev/null; then
+                  ruleset_verified=true
+                  break
+                fi
+              done < <(jq -r '.[] | select(.target == "tag" and .enforcement == "active") | .id' "${ruleset_file}")
+            else
+              test -n "${RULESET_RECEIPT_URL}" && [[ "${RULESET_RECEIPT_SHA256}" =~ ^[0-9a-fA-F]{64}$ ]]
+              receipt_file="$(mktemp)"
+              curl --fail --silent --show-error --location --connect-timeout 10 --max-time 20 "${RULESET_RECEIPT_URL}" -o "${receipt_file}"
+              test "$(sha256sum "${receipt_file}" | awk '{print $1}')" = "${RULESET_RECEIPT_SHA256,,}"
+              jq -e --arg repository "${REPOSITORY}" --arg candidate_sha "${candidate_sha}" --arg candidate_tag "${tag}" '
+                .repository == $repository and
+                ((.candidate_sha | ascii_downcase) == $candidate_sha) and
+                .candidate_tag == $candidate_tag and
+                .ruleset.target == "tag" and .ruleset.enforcement == "active" and
+                .ruleset.pattern == "refs/tags/ripr-release-*" and
+                ((.ruleset.rules | index("update") != null) and (.ruleset.rules | index("deletion") != null))
+              ' "${receipt_file}" >/dev/null
+              ruleset_verified=true
+            fi
             test "${ruleset_verified}" = true
           fi
   build:
