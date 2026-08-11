@@ -955,7 +955,7 @@ mod tests {
         assert!(
             lines
                 .iter()
-                .any(|line| line.starts_with("remoteLine = git ls-remote --exit-code origin"))
+                .any(|line| line.starts_with("$remoteLine = git ls-remote --exit-code origin"))
         );
         assert!(
             lines
@@ -982,11 +982,9 @@ mod tests {
                 .iter()
                 .any(|line| line.contains("RIPR_TEST_SERVER_PATH"))
         );
-        assert!(
-            lines
-                .iter()
-                .any(|line| line.contains("actions/upload-artifact@v7"))
-        );
+        assert!(lines.iter().any(|line| {
+            line.contains("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a")
+        }));
         for forbidden in ["gh release", "vsce publish", "ovsx publish", "secrets."] {
             assert!(
                 !lines.iter().any(|line| line.contains(forbidden)),
