@@ -8647,13 +8647,22 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
         {
             return Err("candidate tag must be strict, remote-bound, and commit-typed".to_owned());
         }
-        if !candidate.contains("target == \"tag\" and .enforcement == \"active\"")
-            || !candidate.contains("index(\"refs/tags/ripr-release-*\")")
+        if candidate.contains("rulesets?includes_parents=true")
+            || !candidate.contains(
+                "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/rulesets/${ruleset_id}",
+            )
+            || !candidate.contains("ruleset_id=\"20661783\"")
+            || !candidate.contains("(.id == $expected_id)")
+            || !candidate.contains(".target == \"tag\"")
+            || !candidate.contains(".enforcement == \"active\"")
+            || !candidate.contains("type == \"array\" and length == 1")
+            || !candidate.contains(".conditions.ref_name.exclude")
             || !candidate.contains("index(\"update\")")
             || !candidate.contains("index(\"deletion\")")
         {
             return Err(
-                "active protected tag ruleset update/deletion checks are missing".to_owned(),
+                "fixed ruleset endpoint or strict protected tag shape checks are missing"
+                    .to_owned(),
             );
         }
         let targets = [
@@ -8714,8 +8723,12 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
             "actual_sha=\"$(sha256sum",
             "assets[$target].sha256",
             "(.assets | keys == ($targets | sort))",
-            "curl --silent --show-error --location",
-            "ruleset API attempt",
+            "curl --silent --show-error --location --connect-timeout 10 --max-time 20 --dump-header",
+            "ruleset verification request failed",
+            "ruleset verification shape mismatch",
+            "rate_limit_remaining",
+            "rate_limit_reset",
+            "response_sha256",
             "ruleset_mode",
             "ruleset_source_url",
             "ruleset_response_sha256",
@@ -8810,6 +8823,59 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
         if validate(&broken).is_ok() {
             return Err(format!("negative fixture `{name}` was not rejected"));
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn server_archive_ruleset_shape_fixtures_are_strict_and_discriminating() -> Result<(), String> {
+    const EXPECTED_ID: u64 = 20_661_783;
+    const EXPECTED_INCLUDE: &str = "refs/tags/ripr-release-*";
+    let accepts = |ruleset: &Value| {
+        ruleset.get("id").and_then(Value::as_u64) == Some(EXPECTED_ID)
+            && ruleset.get("target").and_then(Value::as_str) == Some("tag")
+            && ruleset.get("enforcement").and_then(Value::as_str) == Some("active")
+            && ruleset
+                .pointer("/conditions/ref_name/include")
+                .and_then(Value::as_array)
+                .is_some_and(|include| {
+                    include.len() == 1
+                        && include.first().and_then(Value::as_str) == Some(EXPECTED_INCLUDE)
+                })
+            && ruleset
+                .pointer("/conditions/ref_name/exclude")
+                .and_then(Value::as_array)
+                .is_some_and(Vec::is_empty)
+            && ruleset
+                .get("rules")
+                .and_then(Value::as_array)
+                .is_some_and(|rules| {
+                    rules
+                        .iter()
+                        .any(|rule| rule.get("type").and_then(Value::as_str) == Some("update"))
+                        && rules.iter().any(|rule| {
+                            rule.get("type").and_then(Value::as_str) == Some("deletion")
+                        })
+                })
+    };
+
+    let positive: Value = serde_json::from_str(include_str!(
+        "../../fixtures/release_control/server-ruleset-20661783.json"
+    ))
+    .map_err(|error| format!("failed to parse positive ruleset fixture: {error}"))?;
+    if !accepts(&positive) {
+        return Err("actual public ruleset fixture was rejected".to_owned());
+    }
+
+    let negative: Value = serde_json::from_str(include_str!(
+        "../../fixtures/release_control/server-ruleset-20661783-invalid.json"
+    ))
+    .map_err(|error| format!("failed to parse negative ruleset fixture: {error}"))?;
+    if accepts(&negative) {
+        return Err(
+            "ruleset fixture with extra include/exclude and missing deletion was accepted"
+                .to_owned(),
+        );
     }
     Ok(())
 }
