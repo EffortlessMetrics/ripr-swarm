@@ -778,8 +778,10 @@ fn isolated_installed_binary_version_contract_is_side_effect_free() -> Result<()
         let installed_binary = bin_dir.join(if cfg!(windows) { "ripr.exe" } else { "ripr" });
         std::fs::copy(source_binary, &installed_binary)?;
 
-        let before = snapshot_tree(&root)?;
         let config_path = root.join("ripr.toml");
+        std::fs::write(&config_path, "this is not valid TOML\n")?;
+        let config_before = std::fs::read(&config_path)?;
+        let before = snapshot_tree(&root)?;
         let artifact_path = root.join("target/ripr/reports/version.json");
         let expected_version = format!("ripr {}\n", env!("CARGO_PKG_VERSION"));
         let expected_lsp_version = format!("ripr-lsp {}\n", env!("CARGO_PKG_VERSION"));
@@ -811,6 +813,7 @@ fn isolated_installed_binary_version_contract_is_side_effect_free() -> Result<()
                 }
             } else if args[0] == "check" {
                 let is_diff_file_case = args.len() == 3 && args[1] == "--diff";
+                let has_config_error = stderr.contains("invalid ripr.toml");
                 if output.status.success()
                     || stdout.contains("ripr —")
                     || stdout.contains(expected_version.trim_end())
@@ -823,6 +826,7 @@ fn isolated_installed_binary_version_contract_is_side_effect_free() -> Result<()
                     .into());
                 }
                 if is_diff_file_case
+                    && !has_config_error
                     && (!stderr.contains("resolved workspace root to ")
                         || !stderr.contains("failed to read diff file --version"))
                 {
@@ -848,10 +852,18 @@ fn isolated_installed_binary_version_contract_is_side_effect_free() -> Result<()
                 )
                 .into());
             }
-            if config_path.exists() || artifact_path.exists() {
-                return Err(
-                    format!("version-like input wrote config/artifact paths for {args:?}").into(),
-                );
+            if !config_path.exists() || artifact_path.exists() {
+                return Err(format!(
+                    "version-like input changed config/artifact paths for {args:?}"
+                )
+                .into());
+            }
+            let config_after = std::fs::read(&config_path)?;
+            if config_after != config_before {
+                return Err(format!(
+                    "version-like input changed the pre-existing config for {args:?}"
+                )
+                .into());
             }
             let is_diff_file_case = args.len() == 3 && args[1] == "--diff";
             if !is_diff_file_case
