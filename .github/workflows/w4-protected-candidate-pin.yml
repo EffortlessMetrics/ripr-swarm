@@ -1,0 +1,111 @@
+name: W4 Protected Candidate Pin
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ripr-0.11.0-w4-protected-pin
+  cancel-in-progress: false
+
+jobs:
+  pin:
+    name: verify and create exact protected W4 tag
+    if: github.head_ref == 'release-qualification/0.11.0-w4-pin-control'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SWARM_PARENT: 544a34a4b0f6fc9d2bcacb6453bc502ca059dad3
+      VERSION: 0.11.0
+      RULESET_ID: '20661783'
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout control branch with complete candidate history
+        uses: actions/checkout@v6
+        with:
+          ref: release-qualification/0.11.0-w4-pin-control
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: true
+
+      - name: Revalidate exact candidate and protected-tag authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/ripr/release-transaction/0.11.0/w4-pin
+          packet=target/ripr/release-transaction/0.11.0/w4-pin
+          remote_main="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          test "$remote_main" = "$SWARM_PARENT"
+          git cat-file -e "$SWARM_PARENT^{commit}"
+          ruleset="$packet/ruleset.json"
+          gh api "repos/EffortlessMetrics/ripr-swarm/rulesets/$RULESET_ID" > "$ruleset"
+          jq -e --arg pattern 'refs/tags/ripr-release-*' '
+            .id == 20661783 and
+            .name == "release-transaction-pins" and
+            .target == "tag" and
+            .enforcement == "active" and
+            .conditions.ref_name.include == [$pattern] and
+            .conditions.ref_name.exclude == [] and
+            ([.rules[].type] | sort) == ["deletion", "update"]
+          ' "$ruleset" >/dev/null
+          sha256sum "$ruleset" | awk '{print $1}' > "$packet/ruleset.sha256"
+          printf '%s\n' "$remote_main" > "$packet/remote-main.sha"
+
+      - name: Create or verify immutable W4 candidate tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          packet=target/ripr/release-transaction/0.11.0/w4-pin
+          tag="ripr-release-${VERSION}-${SWARM_PARENT}"
+          remote="$(git ls-remote origin "refs/tags/$tag" | awk '{print $1}')"
+          if [ -z "$remote" ]; then
+            git tag "$tag" "$SWARM_PARENT"
+            git push origin "refs/tags/$tag:refs/tags/$tag"
+            disposition=created
+          else
+            test "$remote" = "$SWARM_PARENT"
+            disposition=already_exact
+          fi
+          verified="$(git ls-remote origin "refs/tags/$tag" | awk '{print $1}')"
+          test "$verified" = "$SWARM_PARENT"
+          printf '%s\n' "$verified" > "$packet/remote-tag.sha"
+          printf '%s\n' "$disposition" > "$packet/disposition.txt"
+          jq -n \
+            --arg schema 'ripr.release_candidate_pin.v1' \
+            --arg version "$VERSION" \
+            --arg swarm_parent "$SWARM_PARENT" \
+            --arg tag "refs/tags/$tag" \
+            --arg ruleset_id "$RULESET_ID" \
+            --arg ruleset_sha256 "$(cat "$packet/ruleset.sha256")" \
+            --arg disposition "$disposition" \
+            --arg workflow_head "$GITHUB_SHA" \
+            '{
+              schema: $schema,
+              version: $version,
+              swarm_parent: $swarm_parent,
+              protected_candidate_tag: $tag,
+              ruleset_id: ($ruleset_id | tonumber),
+              ruleset_sha256: $ruleset_sha256,
+              disposition: $disposition,
+              control_workflow_head: $workflow_head,
+              checks: {
+                remote_main_exact: true,
+                ruleset_exact: true,
+                tag_resolves_directly_to_swarm_parent: true
+              },
+              boundary: "Candidate pin only; no source join, release metadata, public v0.11.0 tag, publication, signing, marketplace mutation, or K back-sync."
+            }' > "$packet/w4-pin-receipt.json"
+          sha256sum "$packet"/* | sort > "$packet/SHA256SUMS"
+
+      - name: Upload protected-pin receipt
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ripr-0.11.0-w4-protected-pin
+          path: target/ripr/release-transaction/0.11.0/w4-pin/
+          if-no-files-found: error
+          retention-days: 90
