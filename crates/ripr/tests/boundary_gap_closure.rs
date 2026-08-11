@@ -125,7 +125,10 @@ fn run_repo_exposure(root: &Path) -> Result<String, String> {
         .output()
         .map_err(|error| format!("ripr check failed to start: {error}"))?;
     if !output.status.success() {
-        return Err(command_failure("ripr check --format repo-exposure-json", &output));
+        return Err(command_failure(
+            "ripr check --format repo-exposure-json",
+            &output,
+        ));
     }
     String::from_utf8(output.stdout)
         .map_err(|error| format!("ripr repo exposure emitted non-UTF-8 stdout: {error}"))
@@ -161,7 +164,9 @@ fn boundary_seam(value: &Value) -> Result<&Value, String> {
                     && seam
                         .get("expression")
                         .and_then(Value::as_str)
-                        .is_some_and(|expression| expression.contains("amount >= discount_threshold"))
+                        .is_some_and(|expression| {
+                            expression.contains("amount >= discount_threshold")
+                        })
             })
         })
         .ok_or_else(|| "repo exposure did not contain the boundary predicate seam".to_string())
@@ -186,7 +191,9 @@ fn equality_boundary_repair_closes_across_repo_exposure_and_outcome() -> Result<
         Some("weakly_gripped")
     );
     assert_eq!(
-        before_seam.get("headline_eligible").and_then(Value::as_bool),
+        before_seam
+            .get("headline_eligible")
+            .and_then(Value::as_bool),
         Some(true)
     );
     assert!(missing_discriminators(before_seam)?.iter().any(|fact| {
@@ -218,10 +225,12 @@ fn equality_boundary_repair_closes_across_repo_exposure_and_outcome() -> Result<
         after_seam
             .get("related_tests")
             .and_then(Value::as_array)
-            .is_some_and(|tests| tests.iter().any(|test| {
-                test.get("name").and_then(Value::as_str)
-                    == Some("equality_boundary_discounts")
-            }))
+            .is_some_and(|tests| {
+                tests.iter().any(|test| {
+                    test.get("name").and_then(Value::as_str)
+                        == Some("equality_boundary_discounts")
+                })
+            })
     );
 
     let after_path = repo.root.join("after.repo-exposure.json");
@@ -229,7 +238,10 @@ fn equality_boundary_repair_closes_across_repo_exposure_and_outcome() -> Result<
         .map_err(|error| format!("write after snapshot failed: {error}"))?;
 
     let outcome = run_outcome(&before_path, &after_path)?;
-    assert_eq!(outcome.pointer("/summary/moved").and_then(Value::as_u64), Some(1));
+    assert_eq!(
+        outcome.pointer("/summary/moved").and_then(Value::as_u64),
+        Some(1)
+    );
     assert_eq!(
         outcome
             .pointer("/summary/unchanged")
@@ -260,10 +272,12 @@ fn equality_boundary_repair_closes_across_repo_exposure_and_outcome() -> Result<
         outcome
             .pointer("/moved/0/missing_discriminators_resolved")
             .and_then(Value::as_array)
-            .is_some_and(|items| items.iter().any(|item| {
-                item.as_str()
-                    .is_some_and(|value| value.contains("equality boundary"))
-            }))
+            .is_some_and(|items| {
+                items.iter().any(|item| {
+                    item.as_str()
+                        .is_some_and(|value| value.contains("equality boundary"))
+                })
+            })
     );
 
     Ok(())
