@@ -64,13 +64,30 @@ fn run_isolated_binary(
     binary: &Path,
     current_dir: &Path,
     args: &[&str],
+    coverage_profile: Option<&Path>,
 ) -> Result<Output, std::io::Error> {
     let mut command = Command::new(binary);
     command.current_dir(current_dir).env_clear();
     if let Ok(path) = std::env::var("PATH") {
         command.env("PATH", path);
     }
+    if let Some(profile) = coverage_profile {
+        command.env("LLVM_PROFILE_FILE", profile);
+    }
     command.args(args).output()
+}
+
+fn cleanup_temp_dir(path: Option<&Path>) -> Result<(), std::io::Error> {
+    if let Some(path) = path {
+        if path.exists() {
+            std::fs::remove_dir_all(path)?;
+        }
+    }
+    Ok(())
+}
+
+fn inherited_coverage_is_enabled() -> bool {
+    std::env::var_os("LLVM_PROFILE_FILE").is_some() || std::env::var_os("CARGO_LLVM_COV").is_some()
 }
 
 fn snapshot_tree(root: &Path) -> Result<Vec<String>, std::io::Error> {
@@ -771,7 +788,14 @@ fn version_is_exact_and_precedes_help_or_output_flags() {
 #[test]
 fn isolated_installed_binary_version_contract_is_side_effect_free() -> Result<(), String> {
     let root = unique_temp_workspace("version-installed");
+    // Coverage runtimes own only this external directory; the product prefix
+    // below remains a strict snapshot and rejects every non-harness mutation.
+    let coverage_root =
+        inherited_coverage_is_enabled().then(|| unique_temp_workspace("version-installed-profile"));
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(profile_root) = &coverage_root {
+            std::fs::create_dir_all(profile_root)?;
+        }
         let bin_dir = root.join("bin");
         std::fs::create_dir_all(&bin_dir)?;
         let source_binary = std::path::Path::new(env!("CARGO_BIN_EXE_ripr"));
@@ -799,7 +823,10 @@ fn isolated_installed_binary_version_contract_is_side_effect_free() -> Result<()
 
         for args in cases {
             let args = args.as_slice();
-            let output = run_isolated_binary(&installed_binary, &root, args)?;
+            let profile = coverage_root
+                .as_ref()
+                .map(|root| root.join("ripr-%p-%m.profraw"));
+            let output = run_isolated_binary(&installed_binary, &root, args, profile.as_deref())?;
             let stdout = String::from_utf8(output.stdout.clone())?;
             let stderr = String::from_utf8(output.stderr.clone())?;
             if args[0] == "lsp" {
@@ -878,12 +905,23 @@ fn isolated_installed_binary_version_contract_is_side_effect_free() -> Result<()
         Ok(())
     })();
     let cleanup = std::fs::remove_dir_all(&root);
-    match (result, cleanup) {
-        (Ok(()), Ok(())) => Ok(()),
-        (Err(error), Ok(())) => Err(error.to_string()),
-        (Ok(()), Err(error)) => Err(format!("cleanup failed: {error}")),
-        (Err(error), Err(cleanup_error)) => Err(format!(
+    let profile_cleanup = cleanup_temp_dir(coverage_root.as_deref());
+    match (result, cleanup, profile_cleanup) {
+        (Ok(()), Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(()), Ok(())) => Err(error.to_string()),
+        (Ok(()), Err(error), Ok(())) => Err(format!("cleanup failed: {error}")),
+        (Ok(()), Ok(()), Err(error)) => Err(format!("coverage cleanup failed: {error}")),
+        (Err(error), Err(cleanup_error), Ok(())) => Err(format!(
             "version contract failed: {error}; cleanup failed: {cleanup_error}"
+        )),
+        (Err(error), Ok(()), Err(profile_error)) => Err(format!(
+            "version contract failed: {error}; coverage cleanup failed: {profile_error}"
+        )),
+        (Ok(()), Err(cleanup_error), Err(profile_error)) => Err(format!(
+            "cleanup failed: {cleanup_error}; coverage cleanup failed: {profile_error}"
+        )),
+        (Err(error), Err(cleanup_error), Err(profile_error)) => Err(format!(
+            "version contract failed: {error}; cleanup failed: {cleanup_error}; coverage cleanup failed: {profile_error}"
         )),
     }
 }
