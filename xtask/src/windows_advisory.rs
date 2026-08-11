@@ -923,4 +923,37 @@ mod tests {
             "a stray positional must be refused"
         );
     }
+
+    #[test]
+    fn packaged_qualification_workflow_is_immutable_and_non_publishing() {
+        let workflow = include_str!("../../.github/workflows/windows-packaged-qualification.yml");
+        for required in [
+            "candidate_sha",
+            "candidate_ref",
+            "persist-credentials: false",
+            "cargo package -p ripr --locked",
+            "cargo install --path",
+            "doctor",
+            "check",
+            "explain",
+            "context",
+            "pilot",
+            "outcome",
+            "npm run test:e2e",
+            "RIPR_TEST_WORKSPACE_TRUST = 'trusted'",
+            "RIPR_TEST_WORKSPACE_TRUST = 'untrusted'",
+            "actions/upload-artifact@v7",
+        ] {
+            assert!(
+                workflow.contains(required),
+                "workflow lost required contract: {required}"
+            );
+        }
+        for forbidden in ["gh release", "vsce publish", "ovsx publish", "secrets."] {
+            assert!(
+                !workflow.contains(forbidden),
+                "workflow must not publish or use secrets: {forbidden}"
+            );
+        }
+    }
 }
