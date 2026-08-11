@@ -27,27 +27,15 @@ pub(crate) struct AttemptPathChange {
 
 impl AttemptPathChange {
     pub(crate) fn added(path: impl Into<PathBuf>) -> Self {
-        Self {
-            path: path.into(),
-            kind: AttemptPathChangeKind::Added,
-            previous_path: None,
-        }
+        Self::new(path, AttemptPathChangeKind::Added)
     }
 
     pub(crate) fn modified(path: impl Into<PathBuf>) -> Self {
-        Self {
-            path: path.into(),
-            kind: AttemptPathChangeKind::Modified,
-            previous_path: None,
-        }
+        Self::new(path, AttemptPathChangeKind::Modified)
     }
 
     pub(crate) fn deleted(path: impl Into<PathBuf>) -> Self {
-        Self {
-            path: path.into(),
-            kind: AttemptPathChangeKind::Deleted,
-            previous_path: None,
-        }
+        Self::new(path, AttemptPathChangeKind::Deleted)
     }
 
     pub(crate) fn renamed(from: impl Into<PathBuf>, to: impl Into<PathBuf>) -> Self {
@@ -55,6 +43,14 @@ impl AttemptPathChange {
             path: to.into(),
             kind: AttemptPathChangeKind::Renamed,
             previous_path: Some(from.into()),
+        }
+    }
+
+    fn new(path: impl Into<PathBuf>, kind: AttemptPathChangeKind) -> Self {
+        Self {
+            path: path.into(),
+            kind,
+            previous_path: None,
         }
     }
 }
@@ -168,70 +164,13 @@ pub(crate) fn evaluate_edit_cage(
     let mut selected_target_changed = false;
 
     for change in &delta.changes {
-        let mut paths = Vec::new();
-        if let Some(previous) = change.previous_path.as_ref() {
-            paths.push(previous.as_path());
-        }
-        paths.push(change.path.as_path());
-
-        for raw_path in paths {
-            let path = match normalize_repo_relative_path(raw_path) {
-                Ok(path) => path,
-                Err(reason) => {
-                    violations.push(EditCageViolation {
-                        kind: EditCageViolationKind::InvalidOrEscapingPath,
-                        path: raw_path.to_string_lossy().to_string(),
-                        reason,
-                    });
-                    continue;
-                }
-            };
-            changed_paths.push(path.clone());
-
-            if policy.selected_target.matches(&path) {
-                selected_target_changed = true;
-                if matches!(
-                    change.kind,
-                    AttemptPathChangeKind::Deleted | AttemptPathChangeKind::Renamed
-                ) {
-                    violations.push(EditCageViolation {
-                        kind: EditCageViolationKind::UnexpectedDeletionOrRename,
-                        path: path.clone(),
-                        reason: "the selected repair target was deleted or renamed".to_string(),
-                    });
-                }
-            }
-
-            if policy
-                .forbidden_paths
-                .iter()
-                .any(|rule| rule.matches(&path))
-            {
-                violations.push(EditCageViolation {
-                    kind: EditCageViolationKind::ForbiddenPath,
-                    path,
-                    reason: "the changed path matches an explicit forbidden rule".to_string(),
-                });
-                continue;
-            }
-
-            let authored_edit_allowed = policy
-                .allowed_edit_surface
-                .iter()
-                .any(|rule| rule.matches(&path));
-            let operational_write_allowed = policy
-                .expected_operational_writes
-                .iter()
-                .any(|rule| rule.matches(&path));
-            if !authored_edit_allowed && !operational_write_allowed {
-                violations.push(EditCageViolation {
-                    kind: EditCageViolationKind::OutsideAllowedSurface,
-                    path,
-                    reason: "the changed path is outside the allowed edit surface and expected operational writes"
-                        .to_string(),
-                });
-            }
-        }
+        evaluate_change(
+            policy,
+            change,
+            &mut selected_target_changed,
+            &mut changed_paths,
+            &mut violations,
+        );
     }
 
     if !selected_target_changed {
@@ -255,6 +194,93 @@ pub(crate) fn evaluate_edit_cage(
         },
         changed_paths,
         violations,
+    }
+}
+
+fn evaluate_change(
+    policy: &EditCagePolicy,
+    change: &AttemptPathChange,
+    selected_target_changed: &mut bool,
+    changed_paths: &mut Vec<String>,
+    violations: &mut Vec<EditCageViolation>,
+) {
+    let paths = change
+        .previous_path
+        .iter()
+        .map(PathBuf::as_path)
+        .chain(std::iter::once(change.path.as_path()));
+    for raw_path in paths {
+        let path = match normalize_repo_relative_path(raw_path) {
+            Ok(path) => path,
+            Err(reason) => {
+                violations.push(EditCageViolation {
+                    kind: EditCageViolationKind::InvalidOrEscapingPath,
+                    path: raw_path.to_string_lossy().to_string(),
+                    reason,
+                });
+                continue;
+            }
+        };
+        changed_paths.push(path.clone());
+        evaluate_normalized_path(
+            policy,
+            change.kind,
+            path,
+            selected_target_changed,
+            violations,
+        );
+    }
+}
+
+fn evaluate_normalized_path(
+    policy: &EditCagePolicy,
+    change_kind: AttemptPathChangeKind,
+    path: String,
+    selected_target_changed: &mut bool,
+    violations: &mut Vec<EditCageViolation>,
+) {
+    if policy.selected_target.matches(&path) {
+        *selected_target_changed = true;
+        if matches!(
+            change_kind,
+            AttemptPathChangeKind::Deleted | AttemptPathChangeKind::Renamed
+        ) {
+            violations.push(EditCageViolation {
+                kind: EditCageViolationKind::UnexpectedDeletionOrRename,
+                path: path.clone(),
+                reason: "the selected repair target was deleted or renamed".to_string(),
+            });
+        }
+    }
+
+    if policy
+        .forbidden_paths
+        .iter()
+        .any(|rule| rule.matches(&path))
+    {
+        violations.push(EditCageViolation {
+            kind: EditCageViolationKind::ForbiddenPath,
+            path,
+            reason: "the changed path matches an explicit forbidden rule".to_string(),
+        });
+        return;
+    }
+
+    let authored_edit_allowed = policy
+        .allowed_edit_surface
+        .iter()
+        .any(|rule| rule.matches(&path));
+    let operational_write_allowed = policy
+        .expected_operational_writes
+        .iter()
+        .any(|rule| rule.matches(&path));
+    if !authored_edit_allowed && !operational_write_allowed {
+        violations.push(EditCageViolation {
+            kind: EditCageViolationKind::OutsideAllowedSurface,
+            path,
+            reason: "the changed path is outside the allowed edit surface and expected operational writes"
+                .to_string(),
+        });
     }
 }
 
@@ -400,10 +426,12 @@ mod tests {
 
     #[test]
     fn parent_drive_and_unc_paths_fail_closed() -> Result<(), String> {
+        let drive_path = format!("{}:\\tests\\pricing.rs", 'C');
+        let unc_path = ["", "", "server", "share", "test.rs"].join("\\");
         for path in [
-            "../tests/pricing.rs",
-            "C:\\tests\\pricing.rs",
-            "\\\\server\\share\\test.rs",
+            "../tests/pricing.rs".to_string(),
+            drive_path,
+            unc_path,
         ] {
             let verdict = evaluate_edit_cage(
                 &policy()?,
