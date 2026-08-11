@@ -8705,12 +8705,15 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
             "Compare-Object $expectedEntries $actualEntries",
             "expected-dist-files.txt",
             "diff -u expected-dist-files.txt actual-dist-files.txt",
+            "archive = \"tar.gz\"",
+            "archive = \"zip\"",
             "(.assets | keys == ($targets | sort))",
             "curl --silent --show-error --location",
-            "ruleset_receipt_url",
-            "ruleset_receipt_sha256",
-            "RULESET_RECEIPT_URL",
             "ruleset API attempt",
+            "ruleset_mode",
+            "ruleset_source_url",
+            "ruleset_response_sha256",
+            "ruleset_id",
             "release_assets_created: false",
         ] {
             if !candidate.contains(marker) {
@@ -8758,7 +8761,7 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
         ),
         (
             "token credential",
-            workflow.replacen("ruleset_receipt_url", "GH_TOKEN", 1),
+            workflow.replacen("ruleset_mode", "GH_TOKEN", 1),
         ),
     ] {
         if validate(&broken).is_ok() {
