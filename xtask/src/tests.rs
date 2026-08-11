@@ -8633,7 +8633,7 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
         }
         if !candidate.contains("candidate_sha=\"${CANDIDATE_SHA,,}\"")
             || !candidate.contains("git ls-remote --refs origin")
-            || !candidate.contains("git cat-file -t")
+            || !candidate.contains("git -C \"${GITHUB_WORKSPACE}\" cat-file -t")
             || !candidate.contains("test \"${CANDIDATE_TAG}\" = \"${tag}\"")
             || !candidate.contains("^ripr-release-[0-9]+\\.[0-9]+\\.[0-9]+$")
         {
