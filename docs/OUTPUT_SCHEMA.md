@@ -51,6 +51,16 @@ map is:
 | badge JSON | `schema_version` | `0.8` |
 | `ripr cache status --json` | `schema_version` | `0.1` |
 
+The agent repair-loop artifact versions — `agent brief`, `agent packet`,
+`agent verify`, `agent receipt`, `agent workflow`, `agent status`,
+`agent review-summary`, targeted-test-outcome, repo-exposure (full and
+summary), and the artifact identity envelope — have a single definition
+site in the central registry `crates/ripr/src/output/schemas.rs` (#2973).
+The table rows above mirror that registry; a version bump is one edit there,
+pinned by the registry's own drift test, and each constant carries its
+changelog. The `ripr receipt write/check` artifact (RIPR-SPEC-0079) is a
+separate family whose version stays at `app::receipt::RECEIPT_SCHEMA_VERSION`.
+
 Bump rules below apply per contract: a breaking change to one family bumps
 that family's version only.
 
