@@ -8607,6 +8607,7 @@ jobs:
 
 #[test]
 fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> Result<(), String> {
+    const QUALIFICATION_COMMIT_TYPE_COMMAND: &str = r#"git -C "${GITHUB_WORKSPACE}" cat-file -t"#;
     let workflow_path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join(".github/workflows/server-archive-qualification.yml");
@@ -8636,8 +8637,8 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
             return Err("workflow permissions must be read-only contents".to_owned());
         }
         if !candidate.contains("candidate_sha=\"${CANDIDATE_SHA,,}\"")
-            || !candidate.contains("git ls-remote --refs origin")
-            || !candidate.contains("git -C \"${GITHUB_WORKSPACE}\" cat-file -t")
+            || !candidate.contains("git -c credential.helper= -c http.extraheader= ls-remote")
+            || !candidate.contains(QUALIFICATION_COMMIT_TYPE_COMMAND)
             || !candidate.contains("test \"${CANDIDATE_TAG}\" = \"${tag}\"")
             || !candidate.contains("^ripr-release-[0-9]+\\.[0-9]+\\.[0-9]+$")
         {
