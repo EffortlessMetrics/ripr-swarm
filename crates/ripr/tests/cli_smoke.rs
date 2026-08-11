@@ -78,10 +78,10 @@ fn run_isolated_binary(
 }
 
 fn cleanup_temp_dir(path: Option<&Path>) -> Result<(), std::io::Error> {
-    if let Some(path) = path {
-        if path.exists() {
-            std::fs::remove_dir_all(path)?;
-        }
+    if let Some(path) = path
+        && path.exists()
+    {
+        std::fs::remove_dir_all(path)?;
     }
     Ok(())
 }
