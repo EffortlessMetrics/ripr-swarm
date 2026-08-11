@@ -2,11 +2,7 @@
 
 pub(crate) fn run() -> Result<(), String> {
     let mut args = collect_args();
-    let version_requested = args
-        .iter()
-        .skip(1)
-        .take_while(|arg| arg.starts_with('-'))
-        .any(|arg| matches!(arg.as_str(), "--version" | "-V"));
+    let version_requested = ripr::cli::top_level_version_requested(&args);
     // #2610: extract --verbose before command dispatch so it works with any
     // subcommand. The flag is consumed and not passed to the command parser.
     // Version is a side-effect-free identity query, so it must not emit the

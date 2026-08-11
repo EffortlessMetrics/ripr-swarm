@@ -8,18 +8,24 @@ pub(crate) use format::parse_format;
 pub(crate) use mode::parse_mode;
 pub(crate) use value::expect_value;
 
+/// Whether argv requests the package version before a top-level command.
+///
+/// Only leading flags participate. A command-local contract such as
+/// `ripr lsp --version` must continue to reach that command.
+pub(crate) fn top_level_version_requested(args: &[String]) -> bool {
+    args.iter()
+        .skip(1)
+        .take_while(|arg| arg.starts_with('-'))
+        .any(|arg| matches!(arg.as_str(), "--version" | "-V"))
+}
+
 pub(super) fn parse_args(args: Vec<String>) -> Result<CliCommand, String> {
     // Version is a process-level identity query. Resolve it before dispatch so
     // an output-looking flag (or a help-looking flag) cannot turn a version
     // request into analysis/help output. The executable handles `--verbose`
     // separately; keeping this precedence in the parser makes the same rule
     // hold for library callers and installed-binary invocations.
-    if args
-        .iter()
-        .skip(1)
-        .take_while(|arg| arg.starts_with('-'))
-        .any(|arg| matches!(arg.as_str(), "--version" | "-V"))
-    {
+    if top_level_version_requested(&args) {
         return Ok(CliCommand::Version);
     }
 
@@ -126,6 +132,30 @@ mod tests {
                 "agent-result.json"
             ])))
         );
+    }
+
+    #[test]
+    fn top_level_version_predicate_stops_at_command_boundary() {
+        for argv in [
+            args(&["ripr", "--version"]),
+            args(&["ripr", "--help", "--version"]),
+            args(&["ripr", "-v", "--version"]),
+            args(&["ripr", "--version", "-v"]),
+        ] {
+            assert!(
+                top_level_version_requested(&argv),
+                "leading version flags should be top-level: {argv:?}"
+            );
+        }
+        for argv in [
+            args(&["ripr", "check", "--version"]),
+            args(&["ripr", "lsp", "--version"]),
+        ] {
+            assert!(
+                !top_level_version_requested(&argv),
+                "command-local version flags must not be intercepted: {argv:?}"
+            );
+        }
     }
 
     #[test]

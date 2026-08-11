@@ -12,6 +12,8 @@ mod parse;
 mod rerun;
 mod suggest;
 
+pub(crate) use parse::top_level_version_requested;
+
 pub fn run(args: Vec<String>) -> Result<(), String> {
     execute::execute(parse::parse_args(args)?)
 }

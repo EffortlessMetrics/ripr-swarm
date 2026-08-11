@@ -60,6 +60,46 @@ fn run_command_with_env(
     spawn_command(program, Some(current_dir), args, env)
 }
 
+fn run_isolated_binary(
+    binary: &Path,
+    current_dir: &Path,
+    args: &[&str],
+) -> Result<Output, std::io::Error> {
+    let mut command = Command::new(binary);
+    command.current_dir(current_dir).env_clear();
+    if let Ok(path) = std::env::var("PATH") {
+        command.env("PATH", path);
+    }
+    command.args(args).output()
+}
+
+fn snapshot_tree(root: &Path) -> Result<Vec<String>, std::io::Error> {
+    fn visit(root: &Path, path: &Path, entries: &mut Vec<String>) -> Result<(), std::io::Error> {
+        for entry in std::fs::read_dir(path)? {
+            let entry = entry?;
+            let child = entry.path();
+            let relative = child
+                .strip_prefix(root)
+                .map_err(std::io::Error::other)?
+                .to_string_lossy()
+                .replace('\\', "/");
+            let metadata = entry.metadata()?;
+            if metadata.is_dir() {
+                entries.push(format!("dir:{relative}"));
+                visit(root, &child, entries)?;
+            } else {
+                entries.push(format!("file:{relative}:{}", metadata.len()));
+            }
+        }
+        Ok(())
+    }
+
+    let mut entries = Vec::new();
+    visit(root, root, &mut entries)?;
+    entries.sort();
+    Ok(entries)
+}
+
 fn run_git(root: &Path, args: &[&str]) -> Result<(), String> {
     let output = run_command("git", Some(root), args)
         .map_err(|err| format!("failed to run git {args:?}: {err}"))?;
@@ -705,6 +745,97 @@ fn version_is_exact_and_precedes_help_or_output_flags() {
         "command-local LSP version must retain its public output"
     );
     assert!(lsp.stderr.is_empty());
+}
+
+#[test]
+fn isolated_installed_binary_version_contract_is_side_effect_free() -> Result<(), String> {
+    let root = unique_temp_workspace("version-installed");
+    let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+        let bin_dir = root.join("bin");
+        std::fs::create_dir_all(&bin_dir)?;
+        let source_binary = std::path::Path::new(env!("CARGO_BIN_EXE_ripr"));
+        let installed_binary = bin_dir.join(if cfg!(windows) { "ripr.exe" } else { "ripr" });
+        std::fs::copy(source_binary, &installed_binary)?;
+
+        let before = snapshot_tree(&root)?;
+        let config_path = root.join("ripr.toml");
+        let artifact_path = root.join("target/ripr/reports/version.json");
+        let expected_version = format!("ripr {}\n", env!("CARGO_PKG_VERSION"));
+        let expected_lsp_version = format!("ripr-lsp {}\n", env!("CARGO_PKG_VERSION"));
+        let workspace_text = workspace_root().to_string_lossy().to_string();
+        let cases = [
+            vec!["--version"],
+            vec!["-V"],
+            vec!["--help", "--version"],
+            vec!["-v", "--version"],
+            vec!["--version", "-v"],
+            vec!["check", "--version"],
+            vec!["check", "--diff", "--version"],
+            vec!["lsp", "--version"],
+        ];
+
+        for args in cases {
+            let args = args.as_slice();
+            let output = run_isolated_binary(&installed_binary, &root, args)?;
+            let stdout = String::from_utf8(output.stdout.clone())?;
+            let stderr = String::from_utf8(output.stderr.clone())?;
+            if args[0] == "lsp" {
+                if !output.status.success() || stdout != expected_lsp_version || !stderr.is_empty()
+                {
+                    return Err(format!(
+                        "isolated lsp version contract failed for {args:?}: status={:?}, stdout={stdout:?}, stderr={stderr:?}",
+                        output.status.code()
+                    )
+                    .into());
+                }
+            } else if args[0] == "check" {
+                if output.status.success()
+                    || stdout.contains("ripr —")
+                    || stdout.contains(expected_version.trim_end())
+                    || stderr.contains(&workspace_text)
+                {
+                    return Err(format!(
+                        "check version-like input escaped its command boundary for {args:?}: status={:?}, stdout={stdout:?}, stderr={stderr:?}",
+                        output.status.code()
+                    )
+                    .into());
+                }
+            } else if !output.status.success() || stdout != expected_version || !stderr.is_empty() {
+                return Err(format!(
+                    "isolated top-level version contract failed for {args:?}: status={:?}, stdout={stdout:?}, stderr={stderr:?}",
+                    output.status.code()
+                )
+                .into());
+            }
+
+            if snapshot_tree(&root)? != before {
+                return Err(
+                    format!("version-like input changed the isolated cwd for {args:?}").into(),
+                );
+            }
+            if config_path.exists() || artifact_path.exists() {
+                return Err(
+                    format!("version-like input wrote config/artifact paths for {args:?}").into(),
+                );
+            }
+            if stdout.contains(&workspace_text) || stderr.contains(&workspace_text) {
+                return Err(format!(
+                    "version-like input depended on the workspace path for {args:?}"
+                )
+                .into());
+            }
+        }
+        Ok(())
+    })();
+    let cleanup = std::fs::remove_dir_all(&root);
+    match (result, cleanup) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) => Err(error.to_string()),
+        (Ok(()), Err(error)) => Err(format!("cleanup failed: {error}")),
+        (Err(error), Err(cleanup_error)) => Err(format!(
+            "version contract failed: {error}; cleanup failed: {cleanup_error}"
+        )),
+    }
 }
 
 #[test]
