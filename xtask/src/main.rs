@@ -5295,6 +5295,10 @@ fn check_spec_format() -> Result<(), String> {
 /// (#2708).
 const PROPOSED_SPEC_MAX_AGE_SECS: u64 = 90 * 24 * 60 * 60;
 const SECONDS_PER_DAY: u64 = 24 * 60 * 60;
+/// Tolerated future-dating of the last spec-changing commit before the age
+/// evidence is rejected as not_proven (#3035 review): ordinary clock skew
+/// between committer and runner stays within a day.
+const PROPOSED_SPEC_CLOCK_SKEW_SECS: u64 = SECONDS_PER_DAY;
 
 /// #3035: proposed-spec review age is judged on repository evidence, never on
 /// filesystem mtime. Git does not preserve tracked-file mtime across
@@ -5338,6 +5342,18 @@ fn proposed_spec_age_violation(
     commit_unix: u64,
     now_unix: u64,
 ) -> Option<String> {
+    // A committer date beyond a bounded clock-skew window is corrupted or
+    // forged age evidence (for example an explicit `GIT_COMMITTER_DATE`):
+    // fail closed as not_proven rather than letting `saturating_sub` turn a
+    // far-future timestamp into a silent pass (#3035 review).
+    if commit_unix > now_unix + PROPOSED_SPEC_CLOCK_SKEW_SECS {
+        return Some(format!(
+            "{normalized} proposed-age evidence is not_proven: the last Git commit \
+             that changed the spec is dated in the future beyond the tolerated \
+             clock skew; correct the commit metadata — the check never falls back \
+             to filesystem mtime"
+        ));
+    }
     let age_secs = now_unix.saturating_sub(commit_unix);
     if age_secs <= PROPOSED_SPEC_MAX_AGE_SECS {
         return None;

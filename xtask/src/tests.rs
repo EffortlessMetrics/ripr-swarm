@@ -25748,7 +25748,15 @@ fn proposed_spec_age_violation_compares_against_threshold() -> Result<(), String
     );
     assert!(
         proposed_spec_age_violation(path, now + 60, now).is_none(),
-        "a future-dated commit saturates to zero age instead of firing"
+        "a commit seconds in the future is ordinary clock skew and passes"
+    );
+    let Some(future_finding) = proposed_spec_age_violation(path, now + 30 * 24 * 60 * 60, now)
+    else {
+        return Err("a far-future commit date must fail closed as not_proven".to_string());
+    };
+    assert!(
+        future_finding.contains("not_proven"),
+        "far-future evidence must be named not_proven, got: {future_finding}"
     );
     Ok(())
 }

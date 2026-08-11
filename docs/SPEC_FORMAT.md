@@ -71,8 +71,9 @@ git log -1 --format=%ct -- docs/specs/RIPR-SPEC-NNNN-*.md
 ```
 
 Missing age evidence is fail-closed and visible: an untracked spec, an
-unavailable repository, or a malformed timestamp produces an explicit
-`not_proven` finding, never a silent pass.
+unavailable repository, a malformed timestamp, or a commit date in the
+future beyond tolerated clock skew produces an explicit `not_proven`
+finding, never a silent pass.
 
 ## Checks
 
