@@ -302,6 +302,7 @@ jobs:
             --arg candidate_sha "${CANDIDATE_SHA}" \
             --arg candidate_tag "${CANDIDATE_TAG}" \
             --arg version "${version}" \
+            --arg repository "${REPOSITORY}" \
             --arg ruleset_mode "${RULESET_MODE}" \
             --arg ruleset_source_url "${RULESET_SOURCE_URL}" \
             --arg ruleset_response_sha256 "${RULESET_RESPONSE_SHA256}" \

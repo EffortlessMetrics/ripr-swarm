@@ -8714,6 +8714,7 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
             "ruleset_source_url",
             "ruleset_response_sha256",
             "ruleset_id",
+            "--arg repository \"${REPOSITORY}\"",
             "release_assets_created: false",
         ] {
             if !candidate.contains(marker) {
