@@ -19,9 +19,21 @@ outcome` to report the gap as closed.
 
 Scratch workspace:
 
-```text
-target/ripr/case-study/boundary-gap
+```bash
+rm -rf target/ripr/case-study/boundary-gap
+mkdir -p target/ripr/case-study/boundary-gap/reports
+cp -R fixtures/boundary_gap/input/. target/ripr/case-study/boundary-gap/
+git -C target/ripr/case-study/boundary-gap init -q
+git -C target/ripr/case-study/boundary-gap config user.name "ripr fixture"
+git -C target/ripr/case-study/boundary-gap config user.email "fixture@ripr.invalid"
+git -C target/ripr/case-study/boundary-gap config core.autocrlf false
+git -C target/ripr/case-study/boundary-gap add Cargo.toml src tests
+git -C target/ripr/case-study/boundary-gap commit -qm "initial boundary fixture"
 ```
+
+These commands create the same before-state Git repository used by the
+executable regression. Apply the focused test below as an uncommitted change
+before capturing the after snapshot.
 
 Before snapshot:
 
