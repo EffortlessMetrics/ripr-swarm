@@ -140,6 +140,28 @@ pub(crate) fn run_git_output_with_deadline_and_limit(
     collect_output_with_deadline_and_limit(&mut command, timeout, max_output_bytes, &describe)
 }
 
+#[cfg(test)]
+pub(crate) fn run_git_output_with_deadline_and_limit_isolated(
+    root: &Path,
+    args: &[&str],
+    timeout: Duration,
+    max_output_bytes: usize,
+) -> Result<Output, String> {
+    if max_output_bytes == 0 {
+        return Err("git output limit must be greater than zero".to_string());
+    }
+    let describe = format!("isolated git -C {} {:?}", root.display(), args);
+    let mut command = git_command(root, args);
+    let null_config = if cfg!(windows) { "NUL" } else { "/dev/null" };
+    command
+        .env("GIT_CONFIG_GLOBAL", null_config)
+        .env("GIT_CONFIG_SYSTEM", null_config)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE");
+    collect_output_with_deadline_and_limit(&mut command, timeout, max_output_bytes, &describe)
+}
+
 fn collect_output_with_deadline_and_limit(
     command: &mut Command,
     timeout: Duration,
@@ -169,10 +191,12 @@ fn collect_output_with_deadline_and_limit(
     let wait = poll_child(&mut child, Some(timeout), describe);
     let timed_out = !matches!(&wait, ChildWait::Exited(_));
     let drain_deadline = timed_out.then(|| Instant::now() + POST_KILL_DRAIN_GRACE);
-    let stdout =
-        drain_bounded_pipe_reader(stdout_reader, timed_out, drain_deadline, "stdout", describe)?;
-    let stderr =
-        drain_bounded_pipe_reader(stderr_reader, timed_out, drain_deadline, "stderr", describe)?;
+    let stdout_result =
+        drain_bounded_pipe_reader(stdout_reader, timed_out, drain_deadline, "stdout", describe);
+    let stderr_result =
+        drain_bounded_pipe_reader(stderr_reader, timed_out, drain_deadline, "stderr", describe);
+    let stdout = stdout_result?;
+    let stderr = stderr_result?;
 
     match wait {
         ChildWait::Exited(_) if stdout.exceeded || stderr.exceeded => Err(format!(
@@ -217,6 +241,7 @@ fn spawn_bounded_pipe_reader(
                     retained.extend_from_slice(&chunk[..keep]);
                     exceeded |= keep < read;
                 }
+                Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(err) => {
                     let _ = sender.send(BoundedPipeOutput {
                         bytes: retained,
@@ -875,6 +900,38 @@ mod tests {
             .ok_or_else(|| "pipe read error was accepted as EOF".to_string())?;
         if !error.contains("injected pipe failure") {
             return Err(format!("unexpected pipe read error: {error}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn bounded_pipe_reader_retries_interrupted_reads() -> Result<(), String> {
+        struct InterruptedThenBytes {
+            state: u8,
+        }
+
+        impl std::io::Read for InterruptedThenBytes {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                match self.state {
+                    0 => {
+                        self.state = 1;
+                        Err(std::io::Error::from(std::io::ErrorKind::Interrupted))
+                    }
+                    1 => {
+                        self.state = 2;
+                        buffer[..2].copy_from_slice(b"ok");
+                        Ok(2)
+                    }
+                    _ => Ok(0),
+                }
+            }
+        }
+
+        let reader = spawn_bounded_pipe_reader(InterruptedThenBytes { state: 0 }, 16);
+        let output =
+            drain_bounded_pipe_reader(Some(reader), false, None, "stdout", "interrupt-test")?;
+        if output.bytes != b"ok" {
+            return Err(format!("interrupted read lost bytes: {:?}", output.bytes));
         }
         Ok(())
     }

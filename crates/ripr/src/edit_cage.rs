@@ -15,6 +15,7 @@ use std::time::Duration;
 
 const MAX_CAPTURE_PATHS: usize = 10_000;
 const MAX_CAPTURE_FILE_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_CAPTURE_TOTAL_FILE_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -160,12 +161,13 @@ fn capture_repository_state(
     let mut paths = BTreeMap::new();
     let mut case_keys = BTreeSet::new();
     let mut ambiguous = false;
-    for (index, raw_path) in nul_records(&tracked)
+    let mut remaining_file_bytes = MAX_CAPTURE_TOTAL_FILE_BYTES;
+    for (path_index, raw_path) in nul_records(&tracked)
         .chain(nul_records(&untracked))
         .chain(nul_records(&ignored))
         .enumerate()
     {
-        if index >= MAX_CAPTURE_PATHS {
+        if path_index >= MAX_CAPTURE_PATHS {
             ambiguous = true;
             break;
         }
@@ -174,7 +176,7 @@ fn capture_repository_state(
         if !case_keys.insert(path.to_lowercase()) {
             ambiguous = true;
         }
-        let worktree_identity = worktree_identity(&root, &path)?;
+        let worktree_identity = worktree_identity(&root, &path, &mut remaining_file_bytes)?;
         ambiguous |= worktree_identity == WorktreeIdentity::Other;
         paths.insert(
             path,
@@ -202,11 +204,14 @@ fn capture_repository_state(
             "-z",
         ],
     )?;
-    let stable_worktree = paths.iter().all(|(path, state)| {
-        worktree_identity(&root, path)
-            .map(|identity| identity == state.worktree_identity)
-            .unwrap_or(false)
-    });
+    let mut stable_worktree = true;
+    for (path, state) in &paths {
+        let identity = worktree_identity(&root, path, &mut remaining_file_bytes);
+        if !matches!(identity, Ok(identity) if identity == state.worktree_identity) {
+            stable_worktree = false;
+            break;
+        }
+    }
     if stable_head != head
         || stable_index != index
         || stable_tracked != tracked
@@ -358,7 +363,11 @@ fn nul_records(bytes: &[u8]) -> impl Iterator<Item = Result<&str, String>> {
         })
 }
 
-fn worktree_identity(root: &Path, relative: &str) -> Result<WorktreeIdentity, String> {
+fn worktree_identity(
+    root: &Path,
+    relative: &str,
+    remaining_file_bytes: &mut u64,
+) -> Result<WorktreeIdentity, String> {
     let path = root.join(relative);
     let metadata = match fs::symlink_metadata(&path) {
         Ok(metadata) => metadata,
@@ -373,7 +382,7 @@ fn worktree_identity(root: &Path, relative: &str) -> Result<WorktreeIdentity, St
         return Ok(WorktreeIdentity::Symlink(target));
     }
     if metadata.is_file() {
-        if metadata.len() > MAX_CAPTURE_FILE_BYTES {
+        if metadata.len() > MAX_CAPTURE_FILE_BYTES || metadata.len() > *remaining_file_bytes {
             return Ok(WorktreeIdentity::Other);
         }
         let file = match open_regular_file_no_follow(&path) {
@@ -396,6 +405,7 @@ fn worktree_identity(root: &Path, relative: &str) -> Result<WorktreeIdentity, St
         if bytes.len() as u64 > MAX_CAPTURE_FILE_BYTES {
             return Ok(WorktreeIdentity::Other);
         }
+        *remaining_file_bytes = remaining_file_bytes.saturating_sub(bytes.len() as u64);
         let rechecked = match fs::symlink_metadata(&path) {
             Ok(metadata) => metadata,
             Err(_) => return Ok(WorktreeIdentity::Other),
@@ -425,14 +435,20 @@ fn is_executable(_metadata: &fs::Metadata) -> bool {
 fn open_regular_file_no_follow(path: &Path) -> Result<fs::File, std::io::Error> {
     let mut options = fs::OpenOptions::new();
     options.read(true);
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
     {
         use std::os::unix::fs::OpenOptionsExt as _;
         // Linux O_NOFOLLOW | O_NONBLOCK. The nonblocking bit prevents FIFO or
         // device replacement from stalling capture before handle validation.
         options.custom_flags(0x0002_0000 | 0x0000_0800);
     }
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[cfg(all(
+        target_os = "macos",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
     {
         use std::os::unix::fs::OpenOptionsExt as _;
         // Darwin O_NOFOLLOW | O_NONBLOCK.
@@ -448,6 +464,23 @@ fn open_regular_file_no_follow(path: &Path) -> Result<fs::File, std::io::Error> 
         options
             .custom_flags(0x0020_0000)
             .share_mode(0x0000_0001 | 0x0000_0002);
+    }
+    #[cfg(not(any(
+        windows,
+        all(
+            target_os = "linux",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        ),
+        all(
+            target_os = "macos",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    )))]
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "safe no-follow capture is unsupported on this target",
+        ));
     }
     options.open(path)
 }
@@ -930,17 +963,34 @@ mod tests {
             .map_err(|err| format!("write production file: {err}"))?;
         fs::write(root.join("Cargo.toml"), "[workspace]\n")
             .map_err(|err| format!("write config: {err}"))?;
-        git_ok(&root, &["init", "-q"])?;
+        git_ok(&root, &["-c", "init.templateDir=", "init", "-q"])?;
         git_ok(&root, &["config", "user.email", "ripr@example.invalid"])?;
         git_ok(&root, &["config", "user.name", "RIPR Test"])?;
         git_ok(&root, &["config", "commit.gpgSign", "false"])?;
+        git_ok(&root, &["config", "core.fileMode", "true"])?;
+        git_ok(&root, &["config", "core.autocrlf", "false"])?;
+        git_ok(&root, &["config", "core.symlinks", "true"])?;
+        git_ok(&root, &["config", "core.hooksPath", ".no-hooks"])?;
         git_ok(&root, &["add", "."])?;
         git_ok(&root, &["commit", "-qm", "baseline"])?;
         Ok(GitFixture { root })
     }
 
     fn git_ok(root: &Path, args: &[&str]) -> Result<(), String> {
-        git_bytes(root, args).map(|_| ())
+        let output = crate::git::run_git_output_with_deadline_and_limit_isolated(
+            root,
+            args,
+            Duration::from_secs(10),
+            4 * 1024 * 1024,
+        )?;
+        if output.status.success() {
+            return Ok(());
+        }
+        Err(format!(
+            "isolated fixture git {args:?} failed in {}: {}",
+            root.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
     }
 
     fn policy() -> Result<EditCagePolicy, String> {
@@ -1045,6 +1095,22 @@ mod tests {
             evaluate_repository_edit_cage(&baseline)?.status,
             EditCageVerdictStatus::Incomparable
         );
+        Ok(())
+    }
+
+    #[test]
+    fn aggregate_file_budget_fails_closed_before_reading() -> Result<(), String> {
+        let fixture = git_fixture("aggregate-budget")?;
+        let mut remaining = 1;
+        let identity = worktree_identity(&fixture.root, "tests/pricing.rs", &mut remaining)?;
+        if identity != WorktreeIdentity::Other {
+            return Err(format!(
+                "file larger than remaining aggregate budget was accepted: {identity:?}"
+            ));
+        }
+        if remaining != 1 {
+            return Err("rejected file consumed aggregate budget".to_string());
+        }
         Ok(())
     }
 
