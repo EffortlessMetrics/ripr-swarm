@@ -191,6 +191,7 @@ fn collect_output_with_deadline_and_limit(
 struct BoundedPipeOutput {
     bytes: Vec<u8>,
     exceeded: bool,
+    read_error: Option<String>,
 }
 
 type BoundedPipeReader = (
@@ -209,18 +210,27 @@ fn spawn_bounded_pipe_reader(
         let mut chunk = [0_u8; 8192];
         loop {
             match pipe.read(&mut chunk) {
-                Ok(0) | Err(_) => break,
+                Ok(0) => break,
                 Ok(read) => {
                     let remaining = max_bytes.saturating_sub(retained.len());
                     let keep = read.min(remaining);
                     retained.extend_from_slice(&chunk[..keep]);
                     exceeded |= keep < read;
                 }
+                Err(err) => {
+                    let _ = sender.send(BoundedPipeOutput {
+                        bytes: retained,
+                        exceeded,
+                        read_error: Some(err.to_string()),
+                    });
+                    return;
+                }
             }
         }
         let _ = sender.send(BoundedPipeOutput {
             bytes: retained,
             exceeded,
+            read_error: None,
         });
     });
     (handle, receiver)
@@ -237,6 +247,7 @@ fn drain_bounded_pipe_reader(
         return Ok(BoundedPipeOutput {
             bytes: Vec::new(),
             exceeded: false,
+            read_error: None,
         });
     };
     let received = match deadline {
@@ -250,11 +261,17 @@ fn drain_bounded_pipe_reader(
             handle.join().map_err(|_panic_payload| {
                 format!("{stream_name} pipe reader panicked while collecting {describe}")
             })?;
+            if let Some(error) = &output.read_error {
+                return Err(format!(
+                    "failed while reading {stream_name} from {describe}: {error}"
+                ));
+            }
             Ok(output)
         }
         Err(mpsc::RecvTimeoutError::Timeout) if timed_out => Ok(BoundedPipeOutput {
             bytes: Vec::new(),
             exceeded: false,
+            read_error: None,
         }),
         Err(mpsc::RecvTimeoutError::Timeout) => Err(format!(
             "{stream_name} pipe did not drain after {describe} completed"
@@ -830,6 +847,34 @@ mod tests {
         }
         if !output.exceeded {
             return Err("bounded reader did not report discarded output".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn bounded_pipe_reader_propagates_error_after_valid_prefix() -> Result<(), String> {
+        struct PrefixThenError {
+            emitted: bool,
+        }
+
+        impl std::io::Read for PrefixThenError {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                if self.emitted {
+                    return Err(std::io::Error::other("injected pipe failure"));
+                }
+                self.emitted = true;
+                let prefix = b"complete\0";
+                buffer[..prefix.len()].copy_from_slice(prefix);
+                Ok(prefix.len())
+            }
+        }
+
+        let reader = spawn_bounded_pipe_reader(PrefixThenError { emitted: false }, 1_024);
+        let error = drain_bounded_pipe_reader(Some(reader), false, None, "stdout", "error-test")
+            .err()
+            .ok_or_else(|| "pipe read error was accepted as EOF".to_string())?;
+        if !error.contains("injected pipe failure") {
+            return Err(format!("unexpected pipe read error: {error}"));
         }
         Ok(())
     }

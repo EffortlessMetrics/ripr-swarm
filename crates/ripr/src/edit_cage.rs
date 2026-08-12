@@ -184,29 +184,7 @@ fn capture_repository_state(
             },
         );
     }
-    for (record_index, record) in nul_records(&index).enumerate() {
-        if record_index >= MAX_CAPTURE_PATHS {
-            ambiguous = true;
-            break;
-        }
-        let record = record?;
-        let Some((metadata, raw_path)) = record.split_once('\t') else {
-            return Err(format!(
-                "git ls-files emitted malformed index record `{record}`"
-            ));
-        };
-        let path = normalize_repo_relative_path(Path::new(raw_path))?;
-        let entry = paths.entry(path).or_insert(RepositoryPathState {
-            index_entry: None,
-            worktree_identity: WorktreeIdentity::Missing,
-        });
-        if metadata.starts_with("120000 ")
-            && !matches!(&entry.worktree_identity, WorktreeIdentity::Symlink(_))
-        {
-            ambiguous = true;
-        }
-        entry.index_entry = Some(metadata.to_string());
-    }
+    apply_index_records(&mut paths, &mut ambiguous, &index)?;
 
     // A capture is usable only when its repository identity stayed stable
     // while paths and content identities were read.
@@ -246,6 +224,50 @@ fn capture_repository_state(
         paths,
         ambiguous,
     })
+}
+
+fn apply_index_records(
+    paths: &mut BTreeMap<String, RepositoryPathState>,
+    ambiguous: &mut bool,
+    index: &[u8],
+) -> Result<(), String> {
+    let mut seen = BTreeSet::new();
+    for (record_index, record) in nul_records(index).enumerate() {
+        if record_index >= MAX_CAPTURE_PATHS {
+            *ambiguous = true;
+            break;
+        }
+        let record = record?;
+        let Some((metadata, raw_path)) = record.split_once('\t') else {
+            return Err(format!(
+                "git ls-files emitted malformed index record `{record}`"
+            ));
+        };
+        let path = normalize_repo_relative_path(Path::new(raw_path))?;
+        let mut fields = metadata.split_ascii_whitespace();
+        let mode = fields.next();
+        let object = fields.next();
+        let stage = fields.next();
+        if mode.is_none() || object.is_none() || stage.is_none() || fields.next().is_some() {
+            return Err(format!(
+                "git ls-files emitted malformed stage metadata `{metadata}`"
+            ));
+        }
+        if stage != Some("0") || !seen.insert(path.clone()) {
+            *ambiguous = true;
+        }
+        let entry = paths.entry(path).or_insert(RepositoryPathState {
+            index_entry: None,
+            worktree_identity: WorktreeIdentity::Missing,
+        });
+        if mode == Some("120000")
+            && !matches!(&entry.worktree_identity, WorktreeIdentity::Symlink(_))
+        {
+            *ambiguous = true;
+        }
+        entry.index_entry = Some(metadata.to_string());
+    }
+    Ok(())
 }
 
 fn delta_from_repository_states(before: &AttemptBaseline, after: &AttemptBaseline) -> AttemptDelta {
@@ -356,13 +378,31 @@ fn worktree_identity(root: &Path, relative: &str) -> Result<WorktreeIdentity, St
         if metadata.len() > MAX_CAPTURE_FILE_BYTES {
             return Ok(WorktreeIdentity::Other);
         }
-        let file =
-            fs::File::open(&path).map_err(|err| format!("open {}: {err}", path.display()))?;
+        let file = match open_regular_file_no_follow(&path) {
+            Ok(file) => file,
+            Err(_) => return Ok(WorktreeIdentity::Other),
+        };
+        let opened_metadata = file
+            .metadata()
+            .map_err(|err| format!("inspect opened file {}: {err}", path.display()))?;
+        if !opened_metadata.is_file()
+            || opened_metadata.len() > MAX_CAPTURE_FILE_BYTES
+            || !same_file_object(&metadata, &opened_metadata)
+        {
+            return Ok(WorktreeIdentity::Other);
+        }
         let mut bytes = Vec::new();
         file.take(MAX_CAPTURE_FILE_BYTES + 1)
             .read_to_end(&mut bytes)
             .map_err(|err| format!("read bounded content from {}: {err}", path.display()))?;
         if bytes.len() as u64 > MAX_CAPTURE_FILE_BYTES {
+            return Ok(WorktreeIdentity::Other);
+        }
+        let rechecked = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(_) => return Ok(WorktreeIdentity::Other),
+        };
+        if !rechecked.is_file() || !same_file_object(&opened_metadata, &rechecked) {
             return Ok(WorktreeIdentity::Other);
         }
         return Ok(WorktreeIdentity::File(format!(
@@ -371,6 +411,55 @@ fn worktree_identity(root: &Path, relative: &str) -> Result<WorktreeIdentity, St
         )));
     }
     Ok(WorktreeIdentity::Other)
+}
+
+fn open_regular_file_no_follow(path: &Path) -> Result<fs::File, std::io::Error> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        // Linux O_NOFOLLOW | O_NONBLOCK. The nonblocking bit prevents FIFO or
+        // device replacement from stalling capture before handle validation.
+        options.custom_flags(0x0002_0000 | 0x0000_0800);
+    }
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        // Darwin O_NOFOLLOW | O_NONBLOCK.
+        options.custom_flags(0x0000_0100 | 0x0000_0004);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        // FILE_FLAG_OPEN_REPARSE_POINT keeps a replacement symlink from being
+        // followed; opened-handle metadata below then rejects the reparse point.
+        options.custom_flags(0x0020_0000);
+    }
+    options.open(path)
+}
+
+#[cfg(unix)]
+fn same_file_object(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+    left.dev() == right.dev() && left.ino() == right.ino()
+}
+
+#[cfg(windows)]
+fn same_file_object(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt as _;
+    // Stable Rust does not expose Windows file IDs. OPEN_REPARSE_POINT keeps
+    // link replacement from being followed; compare the strongest stable
+    // handle/path snapshot fields before and after the bounded read.
+    left.file_attributes() == right.file_attributes()
+        && left.creation_time() == right.creation_time()
+        && left.last_write_time() == right.last_write_time()
+        && left.file_size() == right.file_size()
+}
+
+#[cfg(not(any(unix, windows)))]
+fn same_file_object(_left: &fs::Metadata, _right: &fs::Metadata) -> bool {
+    false
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -1049,6 +1138,85 @@ mod tests {
             evaluate_repository_edit_cage(&symlink_baseline)?.status,
             EditCageVerdictStatus::Incomparable
         );
+        Ok(())
+    }
+
+    #[test]
+    fn nonzero_or_duplicate_index_stages_are_explicitly_ambiguous() -> Result<(), String> {
+        let oid = "0".repeat(40);
+        let nonzero = format!("100644 {oid} 2\ttests/pricing.rs\0");
+        let mut paths = BTreeMap::new();
+        let mut ambiguous = false;
+        apply_index_records(&mut paths, &mut ambiguous, nonzero.as_bytes())?;
+        if !ambiguous {
+            return Err("nonzero index stage was accepted as comparable".to_string());
+        }
+
+        let duplicate =
+            format!("100644 {oid} 0\ttests/pricing.rs\0100644 {oid} 0\ttests/pricing.rs\0");
+        paths.clear();
+        ambiguous = false;
+        apply_index_records(&mut paths, &mut ambiguous, duplicate.as_bytes())?;
+        if !ambiguous {
+            return Err("duplicate index path was accepted as comparable".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn real_merge_conflict_index_cannot_earn_compliance() -> Result<(), String> {
+        let fixture = git_fixture("index-conflict")?;
+        git_ok(&fixture.root, &["checkout", "-qb", "other"])?;
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn other() {}\n")
+            .map_err(|err| format!("write other branch: {err}"))?;
+        git_ok(&fixture.root, &["commit", "-qam", "other branch"])?;
+        git_ok(&fixture.root, &["checkout", "-q", "-"])?;
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn primary() {}\n")
+            .map_err(|err| format!("write primary branch: {err}"))?;
+        git_ok(&fixture.root, &["commit", "-qam", "primary branch"])?;
+        let merge_result = git_bytes(&fixture.root, &["merge", "other"]);
+        if merge_result.is_ok() {
+            return Err("fixture merge unexpectedly avoided a conflict".to_string());
+        }
+        let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
+        if !baseline.ambiguous {
+            return Err("real unmerged index was accepted as comparable".to_string());
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn no_follow_open_rejects_replacement_symlink_before_reading() -> Result<(), String> {
+        use std::os::unix::fs::symlink;
+
+        let fixture = git_fixture("no-follow-symlink")?;
+        let path = fixture.root.join("replacement");
+        symlink("tests/pricing.rs", &path)
+            .map_err(|err| format!("create replacement symlink: {err}"))?;
+        if open_regular_file_no_follow(&path).is_ok() {
+            return Err("no-follow adapter opened a replacement symlink".to_string());
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nonblocking_open_rejects_fifo_without_waiting_for_a_writer() -> Result<(), String> {
+        let fixture = git_fixture("nonblocking-fifo")?;
+        git_ok(
+            &fixture.root,
+            &[
+                "-c",
+                "alias.make-fifo=!mkfifo",
+                "make-fifo",
+                "replacement-fifo",
+            ],
+        )?;
+        let identity = worktree_identity(&fixture.root, "replacement-fifo")?;
+        if identity != WorktreeIdentity::Other {
+            return Err(format!("FIFO was not rejected, got {identity:?}"));
+        }
         Ok(())
     }
 
