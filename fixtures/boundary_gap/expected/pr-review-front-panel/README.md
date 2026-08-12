@@ -28,6 +28,8 @@ The corpus intentionally covers:
 - missing proof or first-action input;
 - flat coverage with improved static grip;
 - mixed assistant-health outcomes that keep repair-bearing proof visible.
+- same-path regenerated receipt content that fails closed when its movement no
+  longer matches the selected proof.
 
 Case directories:
 
@@ -41,6 +43,7 @@ Case directories:
 - `missing-proof/`
 - `coverage-flat-grip-improved/`
 - `mixed-health/`
+- `stale-same-path-receipt/`
 
 Each case pins status, top-issue state, policy state, placement, movement,
 coverage/grip state, summary counts, artifact groups, warnings, and advisory
