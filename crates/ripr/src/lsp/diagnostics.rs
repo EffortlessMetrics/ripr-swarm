@@ -12,7 +12,7 @@ use crate::analysis::inventory_classified_seams_at_with_config;
 use crate::analysis::seams::SeamGripClass;
 use crate::analysis_outcome::AnalysisOutcome;
 use crate::app::causal_projection::{CausalDeltaArtifact, insert_canonical_delta_fields};
-use crate::app::check_workspace_with_config;
+use crate::app::check_workspace_worktree_with_config;
 use crate::config::{ConfigSeverity, LspDiagnosticProfile, SeverityConfig};
 #[cfg(test)]
 use crate::domain::RelatedTest;
@@ -718,7 +718,12 @@ pub(super) fn workspace_diagnostics_with_config(
     defer_seam_inventory: bool,
 ) -> Result<WorkspaceDiagnostics, String> {
     let input = config.check_input(root);
-    let output = match check_workspace_with_config(input, config.repo_config()) {
+    // Saved-workspace authority (#3183): editor refreshes analyze the live
+    // tracked working tree, including staged and unstaged bytes that the
+    // client has persisted, through the same canonical path as
+    // `ripr check --worktree`. Document quarantine remains the independent
+    // authority that prevents unsaved buffers from being served as current.
+    let output = match check_workspace_worktree_with_config(input, config.repo_config()) {
         Ok(output) => output,
         // #2303: a git invocation that exceeded the configured cooperative
         // deadline commits a limited snapshot (zero findings, one typed

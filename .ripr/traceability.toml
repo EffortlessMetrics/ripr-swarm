@@ -7019,15 +7019,22 @@ tests = [
   "crates/ripr/src/analysis/diff/load.rs::tests::tracked_change_detector_ignores_untracked_only_files",
   "crates/ripr/src/analysis/diff/load.rs::tests::tracked_change_detector_detects_tracked_edit",
   "crates/ripr/src/analysis/diff/load.rs::tests::tracked_change_detector_ignores_parent_repo_changes_outside_root",
+  "crates/ripr/src/lsp/tests.rs::lsp_saved_worktree_refresh_analyzes_uncommitted_tracked_edit",
+  "crates/ripr/src/lsp/tests.rs::framed_code_lens_refresh_follows_semantic_lens_view_changes",
+  "crates/ripr/src/lsp/tests.rs::workspace_diagnostics_include_saved_tracked_edits_and_exclude_untracked_files",
+  "crates/ripr/src/lsp/tests.rs::framed_lsp_saved_workspace_session_serves_saved_state_across_dirty_save",
 ]
 fixtures = []
 code = [
   "crates/ripr/src/app.rs",
+  "crates/ripr/src/app/check.rs",
   "crates/ripr/src/analysis/mod.rs",
   "crates/ripr/src/analysis/pipeline.rs",
   "crates/ripr/src/analysis/diff/load.rs",
   "crates/ripr/src/cli/commands.rs",
   "crates/ripr/src/cli/help/core.rs",
+  "crates/ripr/src/lsp/diagnostics.rs",
+  "crates/ripr/src/lsp/backend.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0116-check-worktree-mode.md",

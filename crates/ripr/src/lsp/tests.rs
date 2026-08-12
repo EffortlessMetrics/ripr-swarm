@@ -1643,16 +1643,30 @@ fn framed_code_lens_refresh_follows_semantic_lens_view_changes() -> Result<(), S
             "a byte-identical re-commit must not send workspace/codeLens/refresh"
         );
 
-        // Refresh 3: the saved workspace changes semantically (a committed
-        // second changed predicate alters the base..HEAD diff and with it
-        // the visible lens set), so exactly one new request must arrive.
+        // Refresh 3 (#3183): the saved workspace changes semantically through
+        // a tracked on-disk edit that has not been committed. The editor is a
+        // draft-time surface, so the canonical worktree diff must include the
+        // new predicate and change the visible lens set without requiring a
+        // commit.
         fs::write(
             root.path.join("src/lib.rs"),
             "pub fn gate_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n\npub fn second_gate(level: u8) -> bool {\n    level > 3\n}\n",
         )
         .map_err(|err| format!("write second production change failed: {err}"))?;
-        run_lsp_scope_git(&root.path, &["add", "src/lib.rs"])?;
-        run_lsp_scope_git(&root.path, &["commit", "-m", "add second gate"])?;
+        let worktree = lsp_scope_git_output(
+            &root.path,
+            &["diff", "--name-only", "HEAD", "--"],
+        )?;
+        if !worktree.status.success()
+            || String::from_utf8_lossy(&worktree.stdout).trim() != "src/lib.rs"
+        {
+            return Err(format!(
+                "fixture must contain exactly the saved tracked source edit before refresh: status={} stdout={:?} stderr={:?}",
+                worktree.status,
+                String::from_utf8_lossy(&worktree.stdout),
+                String::from_utf8_lossy(&worktree.stderr)
+            ));
+        }
         write_lsp_message(
             &mut client_write,
             serde_json::json!({
@@ -1672,10 +1686,35 @@ fn framed_code_lens_refresh_follows_semantic_lens_view_changes() -> Result<(), S
         assert!(refresh.get("error").is_none());
         assert_eq!(
             refresh_requests, 1,
-            "a semantic lens-view change must send exactly one workspace/codeLens/refresh"
+            "a saved tracked worktree edit must change the lens view without requiring a commit"
         );
 
-        // Refresh 4 (RIPR-SPEC-0138, review): removing the workspace root
+        // Refresh 4: the explicit full refresh must consume the same worktree
+        // diff authority. It still owns the full seam inventory, but the
+        // unchanged saved-worktree lens view must not emit a duplicate refresh.
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "workspace/executeCommand",
+                "params": {
+                    "command": REFRESH_COMMAND,
+                    "arguments": []
+                }
+            }),
+        )
+        .await?;
+        let (refresh, refresh_requests) =
+            read_response_answering_code_lens_refresh(&mut client_read, &mut client_write, 5)
+                .await?;
+        assert!(refresh.get("error").is_none());
+        assert_eq!(
+            refresh_requests, 0,
+            "an unchanged explicit full refresh must preserve the worktree-derived lens view"
+        );
+
+        // Refresh 5 (RIPR-SPEC-0138, review): removing the workspace root
         // clears analysis state — every lens is now stale — so the server
         // must send one more refresh for the cleared view.
         write_lsp_message(
@@ -1714,13 +1753,13 @@ fn framed_code_lens_refresh_follows_semantic_lens_view_changes() -> Result<(), S
             &mut client_write,
             serde_json::json!({
                 "jsonrpc": "2.0",
-                "id": 5,
+                "id": 6,
                 "method": "shutdown",
                 "params": null
             }),
         )
         .await?;
-        let shutdown = read_lsp_response(&mut client_read, 5).await?;
+        let shutdown = read_lsp_response(&mut client_read, 6).await?;
         assert!(shutdown.get("error").is_none());
         write_lsp_message(
             &mut client_write,
@@ -1746,6 +1785,80 @@ fn framed_code_lens_refresh_follows_semantic_lens_view_changes() -> Result<(), S
         }
         Ok(())
     })
+}
+
+#[test]
+fn lsp_saved_worktree_refresh_analyzes_uncommitted_tracked_edit() -> Result<(), String> {
+    let root = unique_lsp_test_root("saved-worktree-diff-authority")?;
+    write_lsp_scope_fixture(root.path())?;
+    run_lsp_scope_git(root.path(), &["init"])?;
+    run_lsp_scope_git(
+        root.path(),
+        &["config", "user.email", "ripr@example.invalid"],
+    )?;
+    run_lsp_scope_git(root.path(), &["config", "user.name", "RIPR Test"])?;
+    run_lsp_scope_git(
+        root.path(),
+        &["add", "Cargo.toml", "src/lib.rs", "tests/end_to_end.rs"],
+    )?;
+    run_lsp_scope_git(root.path(), &["commit", "-m", "base"])?;
+
+    fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn gate_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
+    )
+    .map_err(|err| format!("persist saved tracked source edit failed: {err}"))?;
+
+    // Discriminating setup: committed-history mode has no subject, while the
+    // canonical worktree diff has exactly one tracked source file. A nearby
+    // fix that only changes status or seam inventory cannot satisfy this.
+    let committed =
+        lsp_scope_git_output(root.path(), &["diff", "--name-only", "HEAD...HEAD", "--"])?;
+    if !committed.status.success() || !committed.stdout.is_empty() {
+        return Err(format!(
+            "fixture committed diff must be empty: status={} stdout={:?} stderr={:?}",
+            committed.status,
+            String::from_utf8_lossy(&committed.stdout),
+            String::from_utf8_lossy(&committed.stderr)
+        ));
+    }
+    let worktree = lsp_scope_git_output(root.path(), &["diff", "--name-only", "HEAD", "--"])?;
+    if !worktree.status.success()
+        || String::from_utf8_lossy(&worktree.stdout).trim() != "src/lib.rs"
+    {
+        return Err(format!(
+            "fixture worktree diff must contain exactly src/lib.rs: status={} stdout={:?} stderr={:?}",
+            worktree.status,
+            String::from_utf8_lossy(&worktree.stdout),
+            String::from_utf8_lossy(&worktree.stderr)
+        ));
+    }
+
+    let config = LspAnalysisConfig {
+        base_ref: Some("HEAD".to_string()),
+        mode: Mode::Instant,
+        diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
+        ..LspAnalysisConfig::default()
+    };
+    let diagnostics = workspace_diagnostics_with_config(root.path(), &config, true)?;
+    if !diagnostics.snapshot.seams_deferred {
+        return Err("interactive saved-worktree proof must defer seam inventory".to_string());
+    }
+    if diagnostics.snapshot.findings.is_empty() {
+        return Err(
+            "saved tracked edit produced no diff-scoped findings; the LSP refresh still appears to analyze HEAD instead of the worktree"
+                .to_string(),
+        );
+    }
+    let source_uri = file_uri_for_path(&root.path().join("src/lib.rs"))?;
+    if !diagnostics
+        .batches
+        .iter()
+        .any(|batch| batch.uri == source_uri && !batch.diagnostics.is_empty())
+    {
+        return Err("saved tracked source edit did not reach the LSP diagnostic batch".to_string());
+    }
+    Ok(())
 }
 
 fn published_seam_diagnostic(
@@ -9682,6 +9795,111 @@ fn workspace_diagnostics_exclude_changed_test_files_from_published_findings() ->
 }
 
 #[test]
+fn workspace_diagnostics_include_saved_tracked_edits_and_exclude_untracked_files()
+-> Result<(), String> {
+    let fixture = boundary_gap_git_fixture_root("saved-tracked-worktree")?;
+    let root = fixture.path();
+    let config = boundary_gap_lsp_config(crate::config::RiprConfig::default());
+    let lib_path = root.join("src/lib.rs");
+    let baseline = std::fs::read_to_string(&lib_path)
+        .map_err(|err| format!("read saved-worktree fixture failed: {err}"))?;
+    let edited = baseline.replace(">=", ">");
+    if edited == baseline {
+        return Err("saved-worktree fixture no longer carries the equality boundary".to_string());
+    }
+    std::fs::write(&lib_path, edited)
+        .map_err(|err| format!("write unstaged tracked edit failed: {err}"))?;
+    let untracked_path = root.join("src/untracked.rs");
+    std::fs::write(
+        &untracked_path,
+        "pub fn untracked_boundary(left: i32, right: i32) -> bool { left >= right }\n",
+    )
+    .map_err(|err| format!("write untracked fixture failed: {err}"))?;
+
+    let interactive = workspace_diagnostics_with_config(root, &config, true)?;
+    let tracked_count = lsp_test_scope_diagnostic_count(&interactive, root, "src/lib.rs")?;
+    if tracked_count == 0 {
+        return Err(
+            "unstaged tracked equality-boundary edit received no LSP diagnostics".to_string(),
+        );
+    }
+    if !interactive
+        .snapshot
+        .findings
+        .iter()
+        .any(|finding| finding.probe.location.file.ends_with("src/lib.rs"))
+    {
+        return Err("unstaged tracked edit produced no diff-scoped finding".to_string());
+    }
+    assert!(
+        interactive.snapshot.seams_deferred,
+        "interactive saved-state analysis must keep seam inventory deferred"
+    );
+    let untracked_uri = file_uri_for_path(&untracked_path)?;
+    if interactive
+        .batches
+        .iter()
+        .any(|batch| batch.uri == untracked_uri)
+    {
+        return Err("untracked file entered the saved-worktree LSP authority".to_string());
+    }
+
+    run_lsp_scope_git(root, &["add", "src/lib.rs"])?;
+    let staged = workspace_diagnostics_with_config(root, &config, true)?;
+    let staged_count = lsp_test_scope_diagnostic_count(&staged, root, "src/lib.rs")?;
+    if staged_count == 0 {
+        return Err(
+            "staged tracked equality-boundary edit received no LSP diagnostics".to_string(),
+        );
+    }
+    assert!(
+        staged.snapshot.seams_deferred,
+        "staged proof must not pass through full seam-inventory fallback"
+    );
+    if !staged
+        .snapshot
+        .findings
+        .iter()
+        .any(|finding| finding.probe.location.file.ends_with("src/lib.rs"))
+    {
+        return Err("staged tracked edit produced no diff-scoped finding".to_string());
+    }
+    if staged
+        .snapshot
+        .findings
+        .iter()
+        .any(|finding| finding.probe.location.file.ends_with("src/untracked.rs"))
+    {
+        return Err("untracked file entered the staged worktree diff authority".to_string());
+    }
+
+    let untracked_only = boundary_gap_git_fixture_root("untracked-only-worktree")?;
+    let untracked_only_root = untracked_only.path();
+    let untracked_only_path = untracked_only_root.join("src/untracked.rs");
+    std::fs::write(
+        &untracked_only_path,
+        "pub fn untracked_boundary(left: i32, right: i32) -> bool { left >= right }\n",
+    )
+    .map_err(|err| format!("write untracked-only fixture failed: {err}"))?;
+    let negative = workspace_diagnostics_with_config(untracked_only_root, &config, true)?;
+    if !negative.snapshot.findings.is_empty() {
+        return Err(format!(
+            "untracked-only workspace produced diff-scoped findings: {:?}",
+            negative.snapshot.findings
+        ));
+    }
+    let untracked_only_uri = file_uri_for_path(&untracked_only_path)?;
+    if negative
+        .batches
+        .iter()
+        .any(|batch| batch.uri == untracked_only_uri)
+    {
+        return Err("untracked-only source entered LSP diagnostics".to_string());
+    }
+    Ok(())
+}
+
+#[test]
 fn boundary_gap_workspace_diagnostics_include_live_seam_diagnostic() -> Result<(), String> {
     let fixture = boundary_gap_git_fixture_root("workspace-diagnostics")?;
     let fixture_root = fixture.path();
@@ -9730,12 +9948,17 @@ fn write_lsp_scope_fixture(root: &Path) -> Result<(), String> {
     .map_err(|err| format!("write fixture test file failed: {err}"))
 }
 
-pub(crate) fn run_lsp_scope_git(root: &Path, args: &[&str]) -> Result<(), String> {
+fn lsp_scope_git_output(root: &Path, args: &[&str]) -> Result<std::process::Output, String> {
     let output = Command::new("git")
         .args(args)
         .current_dir(root)
         .output()
         .map_err(|err| format!("run git {args:?} failed: {err}"))?;
+    Ok(output)
+}
+
+pub(crate) fn run_lsp_scope_git(root: &Path, args: &[&str]) -> Result<(), String> {
+    let output = lsp_scope_git_output(root, args)?;
     if output.status.success() {
         return Ok(());
     }
@@ -12820,7 +13043,7 @@ fn execute_command_collect_workspace_status_with_snapshot_returns_diagnostics_co
         );
         assert_eq!(
             status["limits_note"],
-            "Static evidence only; advisory, not a gate decision."
+            "Static evidence only; staged and unstaged tracked files are analyzed; untracked files remain out of scope until staged or supplied through an explicit diff."
         );
         Ok(())
     })
@@ -15857,7 +16080,10 @@ fn framed_lsp_saved_workspace_session_serves_saved_state_across_dirty_save() -> 
         }
 
         // didChange: the buffer diverges from the analyzed saved content.
-        let dirty_text = format!("{saved_text}// unsaved buffer note\n");
+        let dirty_text = saved_text.replace(">=", ">");
+        if dirty_text == saved_text {
+            return Err("saved-workspace fixture no longer carries the equality boundary".to_string());
+        }
         write_lsp_message(
             &mut client_write,
             serde_json::json!({
@@ -15940,9 +16166,23 @@ fn framed_lsp_saved_workspace_session_serves_saved_state_across_dirty_save() -> 
             framed_pull_document_report(&mut client_read, &mut client_write, next_id, &text_uri)
                 .await?;
         next_id += 1;
-        let (kind, _) = report_kind_and_items(&re_served);
-        if kind != Some("full") {
-            return Err(format!("expected a full re-served report: {re_served}"));
+        let (kind, items) = report_kind_and_items(&re_served);
+        if kind != Some("full") || items == 0 {
+            return Err(format!(
+                "expected didSave to analyze the unstaged tracked equality-boundary edit: {re_served}"
+            ));
+        }
+        let saved_items = re_served
+            .get("items")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| format!("didSave report carried no items array: {re_served}"))?;
+        if !saved_items.iter().any(|item| {
+            item.get("source").and_then(serde_json::Value::as_str) == Some("ripr")
+                && item["range"]["start"]["line"].as_u64() == Some(1)
+        }) {
+            return Err(format!(
+                "didSave must publish the RIPR diagnostic on the changed src/lib.rs line: {re_served}"
+            ));
         }
         let re_served_id = re_served
             .get("resultId")
