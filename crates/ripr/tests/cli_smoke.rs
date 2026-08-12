@@ -2896,9 +2896,16 @@ fn first_useful_action_corpus_pins_routing_cases() -> Result<(), Box<dyn std::er
                 sha256_hex_bytes(&after_bytes)
             );
             let verify_artifact = json_pointer_str(&receipt, "/inputs/agent_verify_json")?;
-            let verify: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
-                workspace_root().join(verify_artifact),
-            )?)?;
+            let verify_bytes = std::fs::read(workspace_root().join(verify_artifact))?;
+            let verify: serde_json::Value = serde_json::from_slice(&verify_bytes)?;
+            assert_eq!(
+                json_pointer_str(&receipt, "/provenance/verify_artifact/path")?,
+                verify_artifact
+            );
+            assert_eq!(
+                json_pointer_str(&receipt, "/provenance/verify_artifact/sha256")?,
+                sha256_hex_bytes(&verify_bytes)
+            );
             assert_eq!(
                 json_pointer_str(&verify, "/inputs/before")?,
                 before_artifact
