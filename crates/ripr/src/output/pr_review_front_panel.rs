@@ -813,7 +813,37 @@ fn select_candidate(
             placement: "not_available".to_string(),
         };
     }
-    if coverage_grip.state == "flat_coverage_grip_improved" {
+    if movement.state == "unchanged" {
+        return Candidate {
+            top_issue: top_issue_from_assistant_health(input, parsed),
+            top_issue_state: "unchanged_after_attempt".to_string(),
+            headline: "Static grip stayed unchanged after the focused attempt.".to_string(),
+            placement: placement_from_assistant_health(parsed.assistant_health.as_ref()),
+        };
+    }
+    if movement.state == "regressed" {
+        return Candidate {
+            top_issue: top_issue_from_assistant_health(input, parsed),
+            top_issue_state: "actionable".to_string(),
+            headline: "Static grip regressed after the focused attempt.".to_string(),
+            placement: placement_from_assistant_health(parsed.assistant_health.as_ref()),
+        };
+    }
+    if movement.state == "unknown" && assistant_health_has_repair_work(parsed) {
+        let top_issue = top_issue_from_assistant_health(input, parsed);
+        return Candidate {
+            top_issue_state: if top_issue.is_some() {
+                "actionable".to_string()
+            } else {
+                "missing_required_input".to_string()
+            },
+            top_issue,
+            headline: "Refresh incomplete assistant proof before treating grip as improved."
+                .to_string(),
+            placement: placement_from_assistant_health(parsed.assistant_health.as_ref()),
+        };
+    }
+    if coverage_grip.state == "flat_coverage_grip_improved" && movement.state == "improved" {
         return Candidate {
             top_issue: top_issue_from_assistant_health(input, parsed)
                 .map(|issue| already_improved_top_issue(issue, movement)),
@@ -1042,21 +1072,31 @@ fn status(policy: &PanelPolicy, candidate: &Candidate) -> String {
         "config_error" => "config_error".to_string(),
         "acknowledged" => "acknowledged".to_string(),
         "pass" => "pass".to_string(),
+        _ if candidate.top_issue_state == "missing_required_input" => "incomplete".to_string(),
         _ if candidate.headline.contains("Suppressed") => "advisory".to_string(),
         _ => "advisory".to_string(),
     }
 }
 
+fn assistant_health_has_repair_work(parsed: &ParsedPanelSources) -> bool {
+    parsed
+        .assistant_health
+        .as_ref()
+        .and_then(|health| usize_path(health, &["summary", "repair_queue"]))
+        .unwrap_or(0)
+        > 0
+}
+
 fn movement(input: &PrReviewFrontPanelInput, parsed: &ParsedPanelSources) -> PanelMovement {
     if input.coverage_frontier_path.is_some()
         && let Some(health) = parsed.assistant_health.as_ref()
-        && usize_path(health, &["summary", "improved"]).unwrap_or(0) > 0
+        && let Some(proof) = selected_assistant_health_proof(health)
+        && let Some(state) = string_path(proof, &["movement_state"])
     {
         return PanelMovement {
-            state: "improved".to_string(),
-            before_class: string_path(health, &["proofs", "0", "movement", "before_class"])
-                .map(normalize_class),
-            after_class: string_path(health, &["proofs", "0", "movement", "after_class"]),
+            state,
+            before_class: string_path(proof, &["movement", "before_class"]).map(normalize_class),
+            after_class: string_path(proof, &["movement", "after_class"]),
             source_artifact: input.assistant_health_path.clone(),
         };
     }
@@ -1238,6 +1278,12 @@ fn artifacts(
                     available: false,
                     required: true,
                 });
+            } else if let Some(path) = &inputs.assistant_health {
+                artifacts.push(repair_artifact(
+                    "Assistant loop health",
+                    &json_path_to_md(path),
+                    parsed.assistant_health.is_some(),
+                ));
             }
             push_first_action_artifact(&mut artifacts, inputs, parsed);
         }
@@ -1269,6 +1315,15 @@ fn artifacts(
                 ));
             }
         }
+        "actionable" if inputs.first_action.is_none() && inputs.assistant_health.is_some() => {
+            if let Some(path) = &inputs.assistant_health {
+                artifacts.push(repair_artifact(
+                    "Assistant loop health",
+                    &json_path_to_md(path),
+                    parsed.assistant_health.is_some(),
+                ));
+            }
+        }
         "actionable" => {
             if let Some(path) = &inputs.assistant_proof {
                 artifacts.push(repair_artifact(
@@ -1294,23 +1349,10 @@ fn artifacts(
                 ));
             }
         }
-        "already_improved" if summary.coverage_grip_state == "flat_coverage_grip_improved" => {
-            if let Some(path) = &inputs.assistant_health {
-                artifacts.push(repair_artifact(
-                    "Assistant loop health",
-                    &json_path_to_md(path),
-                    parsed.assistant_health.is_some(),
-                ));
-            }
-            if let Some(path) = &inputs.coverage_frontier {
-                artifacts.push(PanelArtifact {
-                    group: "calibration".to_string(),
-                    label: "Coverage/grip frontier".to_string(),
-                    path: json_path_to_md(path),
-                    available: parsed.coverage_frontier.is_some(),
-                    required: false,
-                });
-            }
+        "unchanged_after_attempt" | "already_improved"
+            if summary.coverage_grip_state == "flat_coverage_grip_improved" =>
+        {
+            push_assistant_health_and_coverage_artifacts(&mut artifacts, inputs, parsed);
         }
         "already_improved" => {
             if let Some(path) = &inputs.baseline_delta {
@@ -1352,6 +1394,29 @@ fn artifacts(
         }
     }
     artifacts
+}
+
+fn push_assistant_health_and_coverage_artifacts(
+    artifacts: &mut Vec<PanelArtifact>,
+    inputs: &PanelInputs,
+    parsed: &ParsedPanelSources,
+) {
+    if let Some(path) = &inputs.assistant_health {
+        artifacts.push(repair_artifact(
+            "Assistant loop health",
+            &json_path_to_md(path),
+            parsed.assistant_health.is_some(),
+        ));
+    }
+    if let Some(path) = &inputs.coverage_frontier {
+        artifacts.push(PanelArtifact {
+            group: "calibration".to_string(),
+            label: "Coverage/grip frontier".to_string(),
+            path: json_path_to_md(path),
+            available: parsed.coverage_frontier.is_some(),
+            required: false,
+        });
+    }
 }
 
 fn push_first_action_artifact(
@@ -1619,11 +1684,8 @@ fn top_issue_from_assistant_health(
     parsed: &ParsedPanelSources,
 ) -> Option<PanelTopIssue> {
     let health = parsed.assistant_health.as_ref()?;
-    let proof = health
-        .get("proofs")
-        .and_then(Value::as_array)
-        .and_then(|proofs| proofs.first())?;
-    let seam = proof.get("seam")?;
+    let proof = selected_assistant_health_proof(health)?;
+    let seam = proof.get("seam").filter(|seam| seam.is_object())?;
     let recommendation = proof.get("recommendation");
     let handoff = proof.get("handoff");
     let receipt = proof.get("receipt");
@@ -1673,6 +1735,36 @@ fn top_issue_from_assistant_health(
                 .unwrap_or_else(|| RECEIPT_MISSING.to_string()),
         },
     })
+}
+
+fn selected_assistant_health_proof(health: &Value) -> Option<&Value> {
+    let proofs = health.get("proofs").and_then(Value::as_array)?;
+    proofs
+        .iter()
+        .find(|proof| {
+            string_path(proof, &["movement_state"]).is_some_and(|state| state == "regressed")
+        })
+        .or_else(|| {
+            proofs.iter().find(|proof| {
+                string_path(proof, &["movement_state"]).is_some_and(|state| state == "unchanged")
+            })
+        })
+        .or_else(|| {
+            proofs.iter().find(|proof| {
+                string_path(proof, &["proof_state"])
+                    .is_some_and(|state| state == "missing_required_input")
+                    || string_path(proof, &["movement_state"])
+                        .is_some_and(|state| state == "unknown")
+            })
+        })
+        .or_else(|| proofs.first())
+}
+
+fn placement_from_assistant_health(health: Option<&Value>) -> String {
+    health
+        .and_then(selected_assistant_health_proof)
+        .and_then(|proof| string_path(proof, &["recommendation", "placement"]))
+        .unwrap_or_else(|| "not_available".to_string())
 }
 
 fn top_issue_from_python_no_action_ledger(
@@ -2275,6 +2367,70 @@ mod tests {
             compact_suggested_test("Review RIPR evidence."),
             "review ripr evidence."
         );
+    }
+
+    #[test]
+    fn mixed_assistant_health_keeps_unresolved_repair_visible() -> Result<(), String> {
+        let repo_root = repo_root()?;
+        let inputs = serde_json::json!({
+            "assistant_health": "fixtures/boundary_gap/expected/assistant-loop-health/multi-proof/assistant-loop-health.json",
+            "coverage_frontier": "fixtures/boundary_gap/expected/pr-review-front-panel/coverage-flat-grip-improved/coverage-grip-frontier.json"
+        });
+        let expected_md_path = repo_root.join(
+            "fixtures/boundary_gap/expected/pr-review-front-panel/mixed-health/pr-review-front-panel.md",
+        );
+        let input = fixture_input(&repo_root, &inputs, &expected_md_path)?;
+        let report = build_pr_review_front_panel_report(input);
+        let json = render_pr_review_front_panel_json(&report)?;
+        let markdown = render_pr_review_front_panel_markdown(&report);
+
+        assert!(json.contains("\"top_issue_state\": \"unchanged_after_attempt\""));
+        assert!(json.contains("\"movement_state\": \"unchanged\""));
+        assert!(json.contains("\"missing_discriminator\": \"input that hits the boundary"));
+        assert!(json.contains("unchanged-after-attempt/agent-receipt.json"));
+        assert!(!json.contains("\"top_issue_state\": \"already_improved\""));
+        assert!(markdown.contains("Repair route: focused_test"));
+        assert!(!markdown.contains("no further repair is recommended"));
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_assistant_health_fails_closed_before_aggregate_improvement() -> Result<(), String> {
+        let repo_root = repo_root()?;
+        let inputs = serde_json::json!({
+            "assistant_health": "fixtures/boundary_gap/expected/assistant-loop-health/multi-proof/assistant-loop-health.json",
+            "coverage_frontier": "fixtures/boundary_gap/expected/pr-review-front-panel/coverage-flat-grip-improved/coverage-grip-frontier.json"
+        });
+        let expected_md_path = repo_root.join(
+            "fixtures/boundary_gap/expected/pr-review-front-panel/mixed-health/pr-review-front-panel.md",
+        );
+        let mut input = fixture_input(&repo_root, &inputs, &expected_md_path)?;
+        input.assistant_health_json = Some(Ok(serde_json::json!({
+            "summary": {"improved": 1, "unknown_movement": 1, "repair_queue": 1},
+            "proofs": [
+                {
+                    "proof_state": "complete",
+                    "movement_state": "improved",
+                    "seam": {"seam_id": "improved-seam"},
+                    "movement": {"before_class": "weakly_gripped", "after_class": "strongly_gripped"}
+                },
+                {
+                    "proof_state": "missing_required_input",
+                    "movement_state": "unknown",
+                    "seam": null,
+                    "movement": {"before_class": null, "after_class": null}
+                }
+            ]
+        })
+        .to_string()));
+
+        let report = build_pr_review_front_panel_report(input);
+        let json = render_pr_review_front_panel_json(&report)?;
+        assert!(json.contains("\"status\": \"incomplete\""));
+        assert!(json.contains("\"top_issue_state\": \"missing_required_input\""));
+        assert!(json.contains("\"movement_state\": \"unknown\""));
+        assert!(!json.contains("\"top_issue_state\": \"already_improved\""));
+        Ok(())
     }
 
     fn fixture_input(

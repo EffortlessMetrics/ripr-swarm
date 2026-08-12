@@ -247,6 +247,29 @@
         "warnings": 0
       },
       "reason": "The front panel should teach that behavioral grip can improve even when line coverage does not move."
+    },
+    {
+      "id": "mixed_health_keeps_repair_visible",
+      "scenario": "aggregate assistant health contains improved, unchanged, and unknown proof outcomes",
+      "inputs": {
+        "assistant_health": "fixtures/boundary_gap/expected/assistant-loop-health/multi-proof/assistant-loop-health.json",
+        "coverage_frontier": "fixtures/boundary_gap/expected/pr-review-front-panel/coverage-flat-grip-improved/coverage-grip-frontier.json"
+      },
+      "expected_report": "fixtures/boundary_gap/expected/pr-review-front-panel/mixed-health/pr-review-front-panel.json",
+      "expected_markdown": "fixtures/boundary_gap/expected/pr-review-front-panel/mixed-health/pr-review-front-panel.md",
+      "expected": {
+        "status": "advisory",
+        "top_issue_state": "unchanged_after_attempt",
+        "policy_state": "none",
+        "placement": "changed_line",
+        "movement_state": "unchanged",
+        "coverage_grip_state": "flat_coverage_grip_improved",
+        "new_policy_eligible": 0,
+        "baseline_resolved": 0,
+        "blocking_candidates": 0,
+        "warnings": 0
+      },
+      "reason": "A repair-bearing proof must outrank aggregate improvement so unchanged and unknown work cannot collapse to a no-repair panel."
     }
   ]
 }
