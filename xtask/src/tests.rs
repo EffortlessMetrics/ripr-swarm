@@ -17,6 +17,7 @@ use super::RiprSwarmCommand;
 use super::RiprSwarmReadinessInput;
 use super::XtaskCommand;
 use super::dispatch;
+use super::is_network_policy_candidate;
 use super::lane1_runtime_status_full;
 use super::policy::droid_review::{
     active_yaml_lines, check_droid_action_refs, check_droid_common,
@@ -26147,6 +26148,76 @@ fn policy_checker_facade_runs_current_repo_checks() -> Result<(), String> {
         check_droid_review_config()?;
         check_process_policy()?;
         check_network_policy()
+    })
+}
+
+#[test]
+fn network_policy_candidate_extensions_cover_supported_script_sources() {
+    for path in [
+        "src/client.rs",
+        "src/client.ts",
+        "src/client.tsx",
+        "src/client.py",
+        "src/client.js",
+        "src/client.jsx",
+        "scripts/check.sh",
+        "scripts/check.ps1",
+        ".github/workflows/check.yml",
+        ".github/workflows/check.yaml",
+    ] {
+        assert!(
+            is_network_policy_candidate(path),
+            "expected network-policy candidate: {path}"
+        );
+    }
+
+    assert!(!is_network_policy_candidate("docs/network-policy.md"));
+}
+
+#[test]
+fn network_policy_rejects_fetch_in_tsx_and_accepts_clean_jsx() -> Result<(), String> {
+    with_temp_cwd("network-policy-jsx-tsx", |root| {
+        write(&root.join("policy/network_allowlist.txt"), "");
+        write(
+            &root.join("src/networked.tsx"),
+            concat!("export const load = () => fet", "ch('/api/data');\n"),
+        );
+        write(
+            &root.join("src/presentational.jsx"),
+            "export const Label = () => <span>ready</span>;\n",
+        );
+
+        let init = run("git", &["init", "--quiet"])?;
+        if !init.success() {
+            return Err(format!("temporary git init failed with {init}"));
+        }
+        let add = run(
+            "git",
+            &[
+                "add",
+                "policy/network_allowlist.txt",
+                "src/networked.tsx",
+                "src/presentational.jsx",
+            ],
+        )?;
+        if !add.success() {
+            return Err(format!("temporary git add failed with {add}"));
+        }
+
+        let failure = check_network_policy()
+            .expect_err("an unallowlisted fetch in tracked TSX must fail network policy");
+        assert!(
+            failure.contains(concat!(
+                "src/networked.tsx contains `fet",
+                "ch(` 1 time(s), allowed 0"
+            )),
+            "unexpected network-policy failure: {failure}"
+        );
+        assert!(
+            !failure.contains("src/presentational.jsx"),
+            "clean JSX control must not be reported: {failure}"
+        );
+        Ok(())
     })
 }
 
