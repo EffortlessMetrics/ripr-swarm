@@ -20635,7 +20635,7 @@ linked_spec = "RIPR-SPEC-0001"
     );
     write_support_tier_fixture(
         root,
-        "| Source-of-truth artifact graph | `stable building block` | docs | `cargo xtask check-doc-artifacts` | Registered graph only. |\n| Source-of-truth workflow | `stable building block` | CI | `cargo xtask check-doc-artifacts` | Workflow contract only. |\n",
+        "| Rust gap repair loop | `usable alpha` | CLI and editor | `cargo xtask rust-repair-trust-report` | Governed promotion authority is incomplete. |\n| Source-of-truth artifact graph | `stable building block` | docs | `cargo xtask check-doc-artifacts` | Registered graph only. |\n| Source-of-truth workflow | `stable building block` | CI | `cargo xtask check-doc-artifacts` | Workflow contract only. |\n",
     );
 
     if include_active_goal {
@@ -22253,6 +22253,20 @@ fn repo_contract_report_command_writes_indexable_report_files() -> Result<(), St
         assert_eq!(value["schema_version"], "0.1");
         assert_eq!(value["report_id"], "source_of_truth_graph");
         assert_eq!(value["status"], "pass");
+        let rust_repair_rows = value["support_tiers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|row| row["capability"] == "Rust gap repair loop")
+            .collect::<Vec<_>>();
+        assert_eq!(rust_repair_rows.len(), 1, "{value:#}");
+        assert_eq!(
+            rust_repair_rows
+                .first()
+                .and_then(|row| row.get("tier"))
+                .and_then(Value::as_str),
+            Some("`usable alpha`")
+        );
         Ok(())
     })
 }
