@@ -6,6 +6,8 @@ use ra_ap_syntax::{Edition, SourceFile, SyntaxKind};
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 
+mod replay;
+
 pub(crate) const MANIFEST_PATH: &str = "metrics/rust-judged-behavior-panel/manifest.json";
 const DIFF_ROOT: &str = "metrics/rust-judged-behavior-panel/diffs";
 const RERUN_COMMAND: &str = "cargo xtask rust-judged-panel check";
@@ -248,8 +250,9 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             );
             Ok(())
         }
+        [subcommand, rest @ ..] if subcommand == "replay" => replay::run(rest),
         [] => Err(format!(
-            "rust-judged-panel requires the `check` subcommand\nrerun: {RERUN_COMMAND}"
+            "rust-judged-panel requires `check` or `replay --ripr-bin <path> --out <path>`\nrerun: {RERUN_COMMAND}"
         )),
         _ => Err(format!(
             "unknown rust-judged-panel arguments `{}`\nrerun: {RERUN_COMMAND}",

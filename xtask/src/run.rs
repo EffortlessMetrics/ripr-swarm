@@ -395,9 +395,28 @@ pub(crate) fn capture_output_with_timeout(
     timeout: Duration,
     error_context: &str,
 ) -> Result<TimedOutput, String> {
+    capture_output_in_dir_with_timeout(program, args, envs, None, timeout, error_context)
+}
+
+/// Deadline-aware process capture with an optional working directory.
+///
+/// This preserves the shared process-group/tree cleanup authority while letting
+/// deterministic fixture journeys use stable relative argv instead of leaking
+/// host-specific scratch paths into retained output.
+pub(crate) fn capture_output_in_dir_with_timeout(
+    program: &str,
+    args: &[String],
+    envs: &[(&str, &str)],
+    cwd: Option<&Path>,
+    timeout: Duration,
+    error_context: &str,
+) -> Result<TimedOutput, String> {
     let started = Instant::now();
     let mut command = Command::new(program);
     command.args(args);
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
     configure_timed_child_command(&mut command);
     for (name, value) in envs {
         command.env(name, value);

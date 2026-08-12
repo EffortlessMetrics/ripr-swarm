@@ -52,6 +52,32 @@ same checker is reached by required precommit policy. Passing it establishes
 only that the selected seed is internally coherent; it does not establish an
 analyzer result, replay identity, judgment, rate, or support claim.
 
+## Offline replay packets
+
+Build the workspace binary and replay the selected denominator without using
+PATH or the network:
+
+```bash
+cargo build -p ripr
+cargo xtask rust-judged-panel replay \
+  --ripr-bin target/debug/ripr \
+  --out target/ripr/rust-judged-panel
+```
+
+The replay command consumes this manifest through the same strict validator,
+materializes deterministic Git repositories for all three directions, invokes
+only the explicitly supplied binary under a bounded process-tree deadline, and
+retains raw stdout/stderr plus one internal packet per case. Packets bind the
+manifest row, selected diff, Git base/head/tree, governed source/test/config
+bytes, binary digest/version, stable argv, analyzer input identity, raw-output
+digests, and exactly one anchor projection. Scratch paths and wall-clock time
+are excluded from packet identity.
+
+These packets are replay evidence, not judgments. Judgment labels stay null,
+runtime calibration stays `not_run`, and the command emits no rate, badge,
+support-tier, release, mutation-adequacy, or correctness claim. Generated
+packets live under `target/` and are not committed source truth.
+
 ## Item contract
 
 Each `items[]` row carries:

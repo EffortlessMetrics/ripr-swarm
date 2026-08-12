@@ -355,6 +355,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "metrics",
         "rust-repair-trust-report",
         "rust-judged-panel check",
+        "rust-judged-panel replay --ripr-bin <path> --out <path>",
         "check-rust-judged-panel",
         "test-oracle-report",
         "check-test-oracles",
@@ -700,6 +701,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Validates the governed Rust judged-panel seed manifest and anchored diffs.",
+        ),
+        command_entry(
+            "rust-judged-panel replay --ripr-bin <path> --out <path>",
+            "mutating",
+            "target/ripr/rust-judged-panel",
+            true,
+            false,
+            "Materializes the fixed three-case seed offline and retains exact-binary replay packets without judgment or runtime calibration.",
         ),
         command_entry(
             "check-rust-judged-panel",
