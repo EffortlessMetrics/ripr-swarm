@@ -1,8 +1,10 @@
 import * as assert from 'assert';
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { probeStandardLspCompatibility } from '../../src/lspCompatibility';
+import { probeServerVersion } from '../../src/serverResolver';
 
 suite('Standard LSP compatibility probe', () => {
   const temporaryRoots: string[] = [];
@@ -14,11 +16,15 @@ suite('Standard LSP compatibility probe', () => {
   });
 
   test('accepts the real packaged server through initialize and shutdown', async function () {
-    const server = process.env.RIPR_TEST_SERVER_PATH;
+    const server = process.env.RIPR_TEST_PACKAGED_SERVER_PATH;
     if (!server) {
       this.skip();
       return;
     }
+    const expectedDigest = process.env.RIPR_TEST_PACKAGED_SERVER_SHA256;
+    assert.ok(expectedDigest, 'packaged server proof requires the archive extraction digest');
+    const actualDigest = crypto.createHash('sha256').update(fs.readFileSync(server)).digest('hex');
+    assert.strictEqual(actualDigest, expectedDigest, 'the probed executable must be the extracted archive member');
     const result = await probeStandardLspCompatibility(server, false, 10_000);
     assert.strictEqual(result.status, 'compatible', JSON.stringify(result));
     if (result.status === 'compatible') {
@@ -35,7 +41,7 @@ suite('Standard LSP compatibility probe', () => {
     assert.ok(result.status === 'incompatible' && ['framing_failure', 'process_failure'].includes(result.kind));
   });
 
-  test('requires the exercised baseline but records optional omissions', async () => {
+  test('requires the exercised baseline but records genuinely optional omissions', async () => {
     const missing = fakeServer('missing-hover');
     const rejected = await probeStandardLspCompatibility(missing.command, missing.useShell, 1000);
     assert.deepStrictEqual(
@@ -43,18 +49,54 @@ suite('Standard LSP compatibility probe', () => {
       'missing_required_capability'
     );
 
-    const optional = fakeServer('optional-omitted');
+    const optional = fakeServer('valid');
     const accepted = await probeStandardLspCompatibility(optional.command, optional.useShell, 1000);
     assert.strictEqual(accepted.status, 'compatible', JSON.stringify(accepted));
     if (accepted.status === 'compatible') {
       assert.deepStrictEqual(accepted.optional, {
-        pullDiagnostics: false,
         codeActionResolve: false,
-        executeCommand: false,
-        workspaceFolders: false,
         workDoneProgress: false
       });
     }
+  });
+
+  for (const mode of ['missing-diagnostics', 'missing-workspace-folders', 'missing-command'] as const) {
+    test(`rejects the active-client baseline omission ${mode}`, async () => {
+      const fake = fakeServer(mode);
+      const result = await probeStandardLspCompatibility(fake.command, fake.useShell, 1000);
+      assert.strictEqual(result.status, 'incompatible');
+      assert.deepStrictEqual(result.status === 'incompatible' ? result.kind : undefined, 'missing_required_capability');
+    });
+  }
+
+  for (const mode of ['missing-jsonrpc', 'wrong-jsonrpc', 'missing-response-payload'] as const) {
+    test(`rejects the invalid JSON-RPC envelope ${mode}`, async () => {
+      const fake = fakeServer(mode);
+      const result = await probeStandardLspCompatibility(fake.command, fake.useShell, 1000);
+      assert.strictEqual(result.status, 'incompatible');
+      assert.deepStrictEqual(result.status === 'incompatible' ? result.kind : undefined, 'protocol_failure');
+    });
+  }
+
+  test('POSIX version timeout terminates the spawned process group', async function () {
+    if (process.platform === 'win32') {
+      this.skip();
+      return;
+    }
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-version-tree-'));
+    temporaryRoots.push(root);
+    const pidPath = path.join(root, 'descendant.pid');
+    const script = path.join(root, 'ripr');
+    fs.writeFileSync(
+      script,
+      `#!/bin/sh\n(sleep 30) &\necho $! > "${pidPath}"\nwait\n`,
+      { mode: 0o755 }
+    );
+    const result = await probeServerVersion(script, 'fixture', false, 300);
+    assert.ok('message' in result && result.message.includes('did not respond'));
+    const descendantPid = Number(fs.readFileSync(pidPath, 'utf8').trim());
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.throws(() => process.kill(descendantPid, 0), (error: NodeJS.ErrnoException) => error.code === 'ESRCH');
   });
 
   test('rejects a server that selects a non-UTF-16 position encoding', async () => {
@@ -148,10 +190,16 @@ function consume() {
     const length = Number(match[1]); const start = end + 4; if (input.length < start + length) return;
     const message = JSON.parse(input.subarray(start, start + length).toString()); input = input.subarray(start + length);
     if (message.method === 'initialize') {
-      const capabilities = { textDocumentSync: 1, hoverProvider: true, codeActionProvider: true, positionEncoding: mode === 'utf8' ? 'utf-8' : 'utf-16' };
+      const commands = ['ripr.refresh','ripr.collectContext','ripr.collectEvidenceContext','ripr.collectWorkspaceStatus','ripr.collectRepairPacket','ripr.collectTopLimitation','ripr.collectReceiptStatus'];
+      const capabilities = { textDocumentSync: 1, hoverProvider: true, codeActionProvider: true, diagnosticProvider: {}, executeCommandProvider: { commands }, workspace: { workspaceFolders: { supported: true } }, positionEncoding: mode === 'utf8' ? 'utf-8' : 'utf-16' };
       if (mode === 'missing-hover') delete capabilities.hoverProvider;
-      if (mode === 'valid') Object.assign(capabilities, { diagnosticProvider: {}, executeCommandProvider: { commands: [] }, workspace: { workspaceFolders: { supported: true } }, workDoneProgress: true, codeActionProvider: { resolveProvider: true } });
-      send({ jsonrpc: '2.0', id: message.id, result: { capabilities, serverInfo: { name: mode === 'wrong-identity' ? 'other' : 'ripr', version: '9.9.9' } } });
+      if (mode === 'missing-diagnostics') delete capabilities.diagnosticProvider;
+      if (mode === 'missing-workspace-folders') delete capabilities.workspace;
+      if (mode === 'missing-command') capabilities.executeCommandProvider.commands.pop();
+      const envelope = { jsonrpc: mode === 'wrong-jsonrpc' ? '1.0' : '2.0', id: message.id, result: { capabilities, serverInfo: { name: mode === 'wrong-identity' ? 'other' : 'ripr', version: '9.9.9' } } };
+      if (mode === 'missing-jsonrpc') delete envelope.jsonrpc;
+      if (mode === 'missing-response-payload') delete envelope.result;
+      send(envelope);
     } else if (message.method === 'shutdown') {
       if (mode === 'shutdown-failure') send({ jsonrpc: '2.0', id: message.id, error: { code: -1, message: 'no' } });
       else send({ jsonrpc: '2.0', id: message.id, result: null });

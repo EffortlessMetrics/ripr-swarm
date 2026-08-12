@@ -197,7 +197,7 @@ function probeCandidate(
   useShell = false,
   installationState: ResolvedServer['installationState'] = 'unmanaged'
 ): Promise<ResolvedServer | ResolveFailure> {
-  return probeVersion(command, detail, useShell).then(async (versionResult) => {
+  return probeServerVersion(command, detail, useShell).then(async (versionResult) => {
     if ('message' in versionResult) {
       return versionResult;
     }
@@ -216,22 +216,28 @@ function probeCandidate(
   });
 }
 
-function probeVersion(
+export function probeServerVersion(
   command: string,
   detail: string,
-  useShell: boolean
+  useShell: boolean,
+  timeoutMs = START_TIMEOUT_MS
 ): Promise<{ readonly binaryVersion?: string } | ResolveFailure> {
   return new Promise((resolve) => {
-    const child = cp.spawn(command, ['--version'], { shell: useShell });
+    // On POSIX the child leads a fresh process group so timeout cleanup can
+    // terminate descendants as one bounded unit. Windows uses taskkill /T.
+    const child = cp.spawn(command, ['--version'], {
+      shell: useShell,
+      detached: process.platform !== 'win32'
+    });
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     const timer = setTimeout(() => {
       terminateProbeProcessTree(child);
       resolve({
         message: `${detail} did not respond.`,
-        detail: `Timed out after ${START_TIMEOUT_MS}ms while running ${command} --version.`
+        detail: `Timed out after ${timeoutMs}ms while running ${command} --version.`
       });
-    }, START_TIMEOUT_MS);
+    }, timeoutMs);
 
     child.stdout?.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
     child.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk));

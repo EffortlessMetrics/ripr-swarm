@@ -3,8 +3,25 @@ import * as cp from 'child_process';
 const DEFAULT_PROBE_TIMEOUT_MS = 5000;
 const MAX_MESSAGE_BYTES = 1024 * 1024;
 
-export type RequiredLspCapability = 'textDocumentSync' | 'hover' | 'codeAction' | 'positionEncoding';
-export type OptionalLspCapability = 'pullDiagnostics' | 'codeActionResolve' | 'executeCommand' | 'workspaceFolders' | 'workDoneProgress';
+export type RequiredLspCapability =
+  | 'textDocumentSync'
+  | 'hover'
+  | 'codeAction'
+  | 'pullDiagnostics'
+  | 'executeCommand'
+  | 'workspaceFolders'
+  | 'positionEncoding';
+export type OptionalLspCapability = 'codeActionResolve' | 'workDoneProgress';
+
+export const REQUIRED_SERVER_COMMANDS = [
+  'ripr.refresh',
+  'ripr.collectContext',
+  'ripr.collectEvidenceContext',
+  'ripr.collectWorkspaceStatus',
+  'ripr.collectRepairPacket',
+  'ripr.collectTopLimitation',
+  'ripr.collectReceiptStatus'
+] as const;
 
 export interface LspCompatibilityEvidence {
   readonly status: 'compatible';
@@ -19,6 +36,7 @@ export interface LspCompatibilityEvidence {
 export type LspProbeFailureKind =
   | 'spawn_failure'
   | 'framing_failure'
+  | 'protocol_failure'
   | 'initialize_error'
   | 'initialize_timeout'
   | 'server_identity_mismatch'
@@ -109,11 +127,19 @@ export async function probeStandardLspCompatibility(
     });
 
     const onMessage = (message: JsonRpcMessage): void => {
+      if (message.jsonrpc !== '2.0') {
+        fail('protocol_failure', 'LSP response omitted the required JSON-RPC 2.0 envelope.');
+        return;
+      }
       if (message.method && message.id !== undefined) {
         writeMessage(child, { jsonrpc: '2.0', id: message.id, result: null });
         return;
       }
       if (phase === 'initialize' && message.id === 1) {
+        if (!hasResponsePayload(message)) {
+          fail('protocol_failure', 'Initialize response omitted both result and error.');
+          return;
+        }
         if (message.error) {
           fail('initialize_error', message.error.message ?? `Initialize failed with code ${String(message.error.code)}.`);
           return;
@@ -130,6 +156,10 @@ export async function probeStandardLspCompatibility(
         return;
       }
       if (phase === 'shutdown' && message.id === 2) {
+        if (!hasResponsePayload(message)) {
+          fail('protocol_failure', 'Shutdown response omitted both result and error.');
+          return;
+        }
         if (message.error) {
           fail('shutdown_failure', message.error.message ?? 'The server rejected shutdown.');
           return;
@@ -209,9 +239,21 @@ function validateInitializeResult(result: unknown): Omit<LspCompatibilityEvidenc
   }
   const capabilities = result.capabilities;
   const missing: string[] = [];
-  if (!capabilities.textDocumentSync) missing.push('textDocumentSync');
+  if (!supportedTextDocumentSync(capabilities.textDocumentSync)) missing.push('textDocumentSync');
   if (!providerEnabled(capabilities.hoverProvider)) missing.push('hoverProvider');
   if (!providerEnabled(capabilities.codeActionProvider)) missing.push('codeActionProvider');
+  if (!providerEnabled(capabilities.diagnosticProvider)) missing.push('diagnosticProvider');
+  const executeCommand = isObject(capabilities.executeCommandProvider)
+    ? capabilities.executeCommandProvider
+    : undefined;
+  const commands = Array.isArray(executeCommand?.commands)
+    ? executeCommand.commands.filter((command): command is string => typeof command === 'string')
+    : [];
+  const missingCommands = REQUIRED_SERVER_COMMANDS.filter((command) => !commands.includes(command));
+  if (missingCommands.length > 0) missing.push(`executeCommandProvider.commands (${missingCommands.join(', ')})`);
+  const workspace = isObject(capabilities.workspace) ? capabilities.workspace : undefined;
+  const workspaceFolders = workspace && isObject(workspace.workspaceFolders) ? workspace.workspaceFolders : undefined;
+  if (workspaceFolders?.supported !== true) missing.push('workspace.workspaceFolders.supported');
   if (missing.length > 0) {
     return {
       status: 'incompatible',
@@ -236,24 +278,41 @@ function validateInitializeResult(result: unknown): Omit<LspCompatibilityEvidenc
     };
   }
   const codeAction = capabilities.codeActionProvider;
-  const workspace = isObject(capabilities.workspace) ? capabilities.workspace : undefined;
-  const workspaceFolders = workspace && isObject(workspace.workspaceFolders) ? workspace.workspaceFolders : undefined;
   return {
     status: 'compatible',
     serverName: serverInfo.name,
     serverVersion: serverInfo.version,
     positionEncoding: 'utf-16',
-    required: { textDocumentSync: true, hover: true, codeAction: true, positionEncoding: true },
+    required: {
+      textDocumentSync: true,
+      hover: true,
+      codeAction: true,
+      pullDiagnostics: true,
+      executeCommand: true,
+      workspaceFolders: true,
+      positionEncoding: true
+    },
     optional: {
-      pullDiagnostics: providerEnabled(capabilities.diagnosticProvider),
       codeActionResolve: isObject(codeAction) && codeAction.resolveProvider === true,
-      executeCommand: isObject(capabilities.executeCommandProvider),
-      workspaceFolders: workspaceFolders?.supported === true,
       workDoneProgress:
         (isObject(capabilities.hoverProvider) && capabilities.hoverProvider.workDoneProgress === true) ||
         (isObject(codeAction) && codeAction.workDoneProgress === true)
     }
   };
+}
+
+function supportedTextDocumentSync(value: unknown): boolean {
+  if (value === 1) {
+    return true;
+  }
+  if (!isObject(value) || value.change !== 1) {
+    return false;
+  }
+  return value.save === true || (isObject(value.save) && value.save.includeText !== false);
+}
+
+function hasResponsePayload(message: JsonRpcMessage): boolean {
+  return Object.prototype.hasOwnProperty.call(message, 'result') || Object.prototype.hasOwnProperty.call(message, 'error');
 }
 
 function providerEnabled(value: unknown): boolean {

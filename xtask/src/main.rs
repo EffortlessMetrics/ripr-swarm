@@ -245,9 +245,10 @@ use repo_readiness::{
 };
 #[cfg(test)]
 pub(crate) use reports::release_server::{
-    ReleaseServerAsset, create_zip_archive, normalize_release_version, release_server_archive,
-    release_server_assets, release_server_manifest, release_server_readme, required_release_arg,
+    ReleaseServerAsset, normalize_release_version, release_server_archive, release_server_assets,
+    release_server_manifest, release_server_readme, required_release_arg,
 };
+use reports::release_server::{create_zip_archive, sha256_file};
 #[cfg(test)]
 pub(crate) use reports::{
     BADGE_ENDPOINT_FILES, BadgeArtifactJob, BadgeBasisReport, BadgeBasisSignal,
@@ -983,6 +984,11 @@ fn vscode_test_e2e() -> Result<(), String> {
     if build_server {
         run("cargo", &["build", "-p", "ripr"])?;
     }
+    let packaged_server = if build_server {
+        Some(stage_vscode_test_server_archive(&server_path)?)
+    } else {
+        None
+    };
     vscode_compile()?;
     let workspace_path = vscode_test_workspace_path()?;
     let mut envs = vec![(
@@ -990,12 +996,101 @@ fn vscode_test_e2e() -> Result<(), String> {
         path_to_utf8(&workspace_path, "VS Code test workspace path")?,
     )];
     if provided_server.is_none() {
+        let packaged = packaged_server.as_ref().ok_or_else(|| {
+            "default VS Code test server was not staged through the release archive shape"
+                .to_string()
+        })?;
         envs.push((
             "RIPR_TEST_SERVER_PATH",
-            path_to_utf8(&server_path, "VS Code test server path")?,
+            path_to_utf8(&packaged.executable, "packaged VS Code test server path")?,
         ));
+        envs.push((
+            "RIPR_TEST_PACKAGED_SERVER_PATH",
+            path_to_utf8(&packaged.executable, "packaged VS Code identity path")?,
+        ));
+        envs.push(("RIPR_TEST_PACKAGED_SERVER_SHA256", packaged.sha256.as_str()));
     }
     run_cwd_command_with_envs(&vscode_test_e2e_command(), &envs)
+}
+
+struct PackagedVscodeTestServer {
+    executable: PathBuf,
+    sha256: String,
+}
+
+fn stage_vscode_test_server_archive(
+    server_path: &Path,
+) -> Result<PackagedVscodeTestServer, String> {
+    let root = std::env::current_dir()
+        .map_err(|err| {
+            format!("failed to resolve repository root for VS Code server proof: {err}")
+        })?
+        .join("target")
+        .join("ripr")
+        .join("vscode-server-archive");
+    let package = root.join("package");
+    let extracted = root.join("extracted");
+    let archive = root.join("ripr-server-test.zip");
+    if root.exists() {
+        fs::remove_dir_all(&root)
+            .map_err(|err| format!("failed to reset {}: {err}", root.display()))?;
+    }
+    fs::create_dir_all(&package)
+        .map_err(|err| format!("failed to create {}: {err}", package.display()))?;
+    let executable_name = server_path.file_name().ok_or_else(|| {
+        format!(
+            "VS Code test server path has no file name: {}",
+            server_path.display()
+        )
+    })?;
+    fs::copy(server_path, package.join(executable_name)).map_err(|err| {
+        format!(
+            "failed to stage {} for archive proof: {err}",
+            server_path.display()
+        )
+    })?;
+    create_zip_archive(&package, &archive)?;
+    fs::create_dir_all(&extracted)
+        .map_err(|err| format!("failed to create {}: {err}", extracted.display()))?;
+    let archive_file = fs::File::open(&archive)
+        .map_err(|err| format!("failed to open {}: {err}", archive.display()))?;
+    let mut zip = zip::ZipArchive::new(archive_file)
+        .map_err(|err| format!("failed to read {}: {err}", archive.display()))?;
+    if zip.len() != 1 {
+        return Err(format!(
+            "VS Code server proof archive contained {} entries, expected 1",
+            zip.len()
+        ));
+    }
+    let mut member = zip
+        .by_index(0)
+        .map_err(|err| format!("failed to read archive member: {err}"))?;
+    if Path::new(member.name()).file_name() != Some(executable_name) {
+        return Err(format!(
+            "VS Code server proof archive member `{}` did not match the built executable",
+            member.name()
+        ));
+    }
+    let executable = extracted.join(executable_name);
+    let mut output = fs::File::create(&executable)
+        .map_err(|err| format!("failed to create {}: {err}", executable.display()))?;
+    std::io::copy(&mut member, &mut output)
+        .map_err(|err| format!("failed to extract {}: {err}", executable.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755))
+            .map_err(|err| format!("failed to mark {} executable: {err}", executable.display()))?;
+    }
+    let built_sha = sha256_file(server_path)?;
+    let extracted_sha = sha256_file(&executable)?;
+    if built_sha != extracted_sha {
+        return Err("VS Code server archive extraction changed the executable digest".to_string());
+    }
+    Ok(PackagedVscodeTestServer {
+        executable,
+        sha256: extracted_sha,
+    })
 }
 
 fn select_vscode_test_server(
