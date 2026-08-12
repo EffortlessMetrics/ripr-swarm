@@ -37,7 +37,7 @@ crates/ripr/tests/perl_two_binary_harness.rs|use std::process::Command|1|perl-tw
 editors/vscode/src/client.ts|child_process|1|lsp/editor|VS Code client invokes ripr context through the resolved server command.
 editors/vscode/src/client.ts|cp.execFile|1|lsp/editor|VS Code client invokes ripr context without shell expansion.
 editors/vscode/src/downloader.ts|child_process|1|lsp/editor|Downloader extracts archives with platform tools.
-editors/vscode/src/downloader.ts|cp.execFile|1|lsp/editor|Downloader invokes tar or PowerShell archive extraction without shell expansion.
+editors/vscode/src/downloader.ts|cp.execFile|2|lsp/editor|Downloader invokes tar or PowerShell for archive extraction and probes the staged ripr executable before cache admission, without shell expansion.
 editors/vscode/src/serverResolver.ts|child_process|1|lsp/editor|Server resolver probes candidate ripr binaries.
 editors/vscode/src/serverResolver.ts|cp.spawn|1|lsp/editor|Server resolver runs ripr --version without shell expansion.
 editors/vscode/test/runTest.ts|child_process|1|vscode-packaged-integration|#2528: packaged Electron proof creates an isolated external Git fixture and launches the opt-in trust-boundary host through bounded child-process calls; no shell expansion.

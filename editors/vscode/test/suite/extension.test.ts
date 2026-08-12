@@ -4352,7 +4352,9 @@ function createControllerTestContext(options: ControllerTestOptions) {
       command: 'ripr',
       source: 'path',
       detail: 'test ripr on PATH',
-      version: options.serverVersion ?? 'ripr 0.8.0-test'
+      binaryVersion: options.serverVersion ?? 'ripr 0.8.0-test',
+      installationState: 'unmanaged',
+      compatibilityResult: 'not_established'
     }),
     createLanguageClient: (_serverOptions, options, experimental) => {
       clientOptions = options;
