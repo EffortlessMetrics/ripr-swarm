@@ -1,7 +1,10 @@
 import * as cp from 'child_process';
+import * as crypto from 'crypto';
 
 const DEFAULT_PROBE_TIMEOUT_MS = 5000;
 const MAX_MESSAGE_BYTES = 1024 * 1024;
+const PROBE_EXIT_CODE_MARKER = '__RIPR_PROBE_EXIT_CODE__';
+const probeExitCodes = new WeakMap<cp.ChildProcess, number>();
 
 export type RequiredLspCapability =
   | 'textDocumentSync'
@@ -58,8 +61,173 @@ interface JsonRpcMessage {
   readonly id?: number | string | null;
   readonly method?: string;
   readonly result?: unknown;
-  readonly error?: { readonly code?: number; readonly message?: string };
+  readonly error?: unknown;
 }
+
+interface JsonRpcError {
+  readonly code: number;
+  readonly message: string;
+}
+
+const WINDOWS_PROBE_JOB_WRAPPER = String.raw`
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Threading;
+
+public static class RiprProbeJob {
+    [StructLayout(LayoutKind.Sequential)]
+    private struct JOBOBJECT_BASIC_LIMIT_INFORMATION {
+        public long PerProcessUserTimeLimit;
+        public long PerJobUserTimeLimit;
+        public uint LimitFlags;
+        public UIntPtr MinimumWorkingSetSize;
+        public UIntPtr MaximumWorkingSetSize;
+        public uint ActiveProcessLimit;
+        public UIntPtr Affinity;
+        public uint PriorityClass;
+        public uint SchedulingClass;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct IO_COUNTERS {
+        public ulong ReadOperationCount;
+        public ulong WriteOperationCount;
+        public ulong OtherOperationCount;
+        public ulong ReadTransferCount;
+        public ulong WriteTransferCount;
+        public ulong OtherTransferCount;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
+        public JOBOBJECT_BASIC_LIMIT_INFORMATION BasicLimitInformation;
+        public IO_COUNTERS IoInfo;
+        public UIntPtr ProcessMemoryLimit;
+        public UIntPtr JobMemoryLimit;
+        public UIntPtr PeakProcessMemoryUsed;
+        public UIntPtr PeakJobMemoryUsed;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr CreateJobObject(IntPtr attributes, string name);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetInformationJobObject(
+        IntPtr job,
+        int informationClass,
+        ref JOBOBJECT_EXTENDED_LIMIT_INFORMATION information,
+        uint informationLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+
+    [DllImport("kernel32.dll")]
+    private static extern bool CloseHandle(IntPtr handle);
+
+    public static IntPtr CreateAndAssignCurrentProcess() {
+        IntPtr job = CreateJobObject(IntPtr.Zero, null);
+        if (job == IntPtr.Zero) {
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "CreateJobObject failed");
+        }
+        var information = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
+        information.BasicLimitInformation.LimitFlags = 0x00002000;
+        if (!SetInformationJobObject(job, 9, ref information, (uint)Marshal.SizeOf(information))) {
+            int error = Marshal.GetLastWin32Error();
+            CloseHandle(job);
+            throw new Win32Exception(error, "SetInformationJobObject failed");
+        }
+        if (!AssignProcessToJobObject(job, Process.GetCurrentProcess().Handle)) {
+            int error = Marshal.GetLastWin32Error();
+            CloseHandle(job);
+            throw new Win32Exception(error, "AssignProcessToJobObject failed");
+        }
+        return job;
+    }
+
+    public static void Close(IntPtr job) {
+        if (job != IntPtr.Zero) {
+            CloseHandle(job);
+        }
+    }
+
+    public static int Run(string command, string arguments, bool useShell) {
+        IntPtr job = CreateAndAssignCurrentProcess();
+        try {
+            var start = new ProcessStartInfo {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            if (useShell) {
+                start.FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe";
+                start.Arguments = "/d /s /c \"\"" + command.Replace("\"", "\"\"") + "\" " + arguments + "\"";
+            } else {
+                start.FileName = command;
+                start.Arguments = arguments;
+            }
+            string exitNonce = Environment.GetEnvironmentVariable("RIPR_PROBE_EXIT_NONCE") ?? "";
+            start.EnvironmentVariables.Remove("RIPR_PROBE_EXIT_NONCE");
+            using (var process = new Process { StartInfo = start }) {
+                if (!process.Start()) {
+                    throw new InvalidOperationException("Probe process did not start.");
+                }
+                var input = StartPump(Console.OpenStandardInput(), process.StandardInput.BaseStream, true);
+                var output = StartPump(process.StandardOutput.BaseStream, Console.OpenStandardOutput(), false);
+                var error = StartPump(process.StandardError.BaseStream, Console.OpenStandardError(), false);
+                process.WaitForExit();
+                int exitCode = process.ExitCode;
+                Console.Error.WriteLine("__RIPR_PROBE_EXIT_CODE__" + exitNonce + "=" + exitCode);
+                Console.Error.Flush();
+                Close(job);
+                job = IntPtr.Zero;
+                try { process.StandardInput.Close(); } catch {}
+                output.Join(1000);
+                error.Join(1000);
+                return exitCode;
+            }
+        } finally {
+            Close(job);
+        }
+    }
+
+    private static Thread StartPump(System.IO.Stream source, System.IO.Stream destination, bool closeDestination) {
+        var thread = new Thread(() => {
+            try {
+                var buffer = new byte[8192];
+                int count;
+                while ((count = source.Read(buffer, 0, buffer.Length)) > 0) {
+                    destination.Write(buffer, 0, count);
+                    destination.Flush();
+                }
+            } catch (IOException) {
+                // The owner closes pipes during bounded process-tree cleanup.
+            } catch (ObjectDisposedException) {
+                // The owner closes pipes during bounded process-tree cleanup.
+            } finally {
+                if (closeDestination) {
+                    try { destination.Close(); } catch {}
+                }
+            }
+        });
+        thread.IsBackground = true;
+        thread.Start();
+        return thread;
+    }
+}
+'@ | Out-Null
+
+[Environment]::Exit([RiprProbeJob]::Run(
+    $env:RIPR_PROBE_COMMAND,
+    $env:RIPR_PROBE_ARGUMENTS,
+    $env:RIPR_PROBE_USE_SHELL -eq '1'))
+`;
 
 export async function probeStandardLspCompatibility(
   command: string,
@@ -71,21 +239,15 @@ export async function probeStandardLspCompatibility(
     let phase: 'initialize' | 'shutdown' | 'exit' = 'initialize';
     let evidence: Omit<LspCompatibilityEvidence, 'processResult'> | undefined;
     let stdout: Buffer<ArrayBufferLike> = Buffer.alloc(0);
-    const child = cp.spawn(command, ['lsp', '--stdio'], {
-      shell: useShell,
-      detached: process.platform !== 'win32',
-      stdio: ['pipe', 'pipe', 'pipe']
-    });
+    const child = spawnProbeProcess(command, ['lsp', '--stdio'], useShell);
 
-    const finish = (result: LspCompatibilityResult, kill = true): void => {
+    const finish = (result: LspCompatibilityResult): void => {
       if (settled) {
         return;
       }
       settled = true;
       clearTimeout(timer);
-      if (kill && child.exitCode === null && child.signalCode === null) {
-        terminateProbeProcessTree(child);
-      }
+      terminateProbeProcessTree(child);
       resolve(result);
     };
 
@@ -100,12 +262,13 @@ export async function probeStandardLspCompatibility(
 
     child.once('error', (error) => fail('spawn_failure', error.message));
     child.stdin?.once('error', (error) => fail('process_failure', `LSP probe stdin failed: ${error.message}`));
-    child.once('exit', (code, signal) => {
+    child.once('exit', (wrapperCode, signal) => {
+      const code = probeProcessExitCode(child, wrapperCode);
       if (settled) {
         return;
       }
       if (phase === 'exit' && code === 0 && evidence) {
-        finish({ ...evidence, processResult: 'clean_exit' }, false);
+        finish({ ...evidence, processResult: 'clean_exit' });
         return;
       }
       fail(
@@ -135,16 +298,22 @@ export async function probeStandardLspCompatibility(
         writeMessage(child, { jsonrpc: '2.0', id: message.id, result: null });
         return;
       }
+      const expectedResponseId = phase === 'initialize' ? 1 : phase === 'shutdown' ? 2 : undefined;
+      if (hasResponseMember(message) && message.id !== expectedResponseId) {
+        fail('protocol_failure', `LSP response used unexpected id ${String(message.id)} during ${phase}.`);
+        return;
+      }
       if (phase === 'initialize' && message.id === 1) {
-        if (!hasResponsePayload(message)) {
-          fail('protocol_failure', 'Initialize response omitted both result and error.');
+        const response = validateJsonRpcResponse(message);
+        if (response.status === 'invalid') {
+          fail('protocol_failure', `Initialize response ${response.detail}`);
           return;
         }
-        if (message.error) {
-          fail('initialize_error', message.error.message ?? `Initialize failed with code ${String(message.error.code)}.`);
+        if (response.status === 'error') {
+          fail('initialize_error', response.error.message || `Initialize failed with code ${String(response.error.code)}.`);
           return;
         }
-        const checked = validateInitializeResult(message.result);
+        const checked = validateInitializeResult(response.result);
         if (checked.status === 'incompatible') {
           finish(checked);
           return;
@@ -156,12 +325,17 @@ export async function probeStandardLspCompatibility(
         return;
       }
       if (phase === 'shutdown' && message.id === 2) {
-        if (!hasResponsePayload(message)) {
-          fail('protocol_failure', 'Shutdown response omitted both result and error.');
+        const response = validateJsonRpcResponse(message);
+        if (response.status === 'invalid') {
+          fail('protocol_failure', `Shutdown response ${response.detail}`);
           return;
         }
-        if (message.error) {
-          fail('shutdown_failure', message.error.message ?? 'The server rejected shutdown.');
+        if (response.status === 'error') {
+          fail('shutdown_failure', response.error.message || 'The server rejected shutdown.');
+          return;
+        }
+        if (response.result !== null) {
+          fail('protocol_failure', 'Shutdown response result must be null.');
           return;
         }
         phase = 'exit';
@@ -311,8 +485,37 @@ function supportedTextDocumentSync(value: unknown): boolean {
   return value.save === true || (isObject(value.save) && value.save.includeText !== false);
 }
 
-function hasResponsePayload(message: JsonRpcMessage): boolean {
-  return Object.prototype.hasOwnProperty.call(message, 'result') || Object.prototype.hasOwnProperty.call(message, 'error');
+type CheckedJsonRpcResponse =
+  | { readonly status: 'result'; readonly result: unknown }
+  | { readonly status: 'error'; readonly error: JsonRpcError }
+  | { readonly status: 'invalid'; readonly detail: string };
+
+function validateJsonRpcResponse(message: JsonRpcMessage): CheckedJsonRpcResponse {
+  if (message.method !== undefined) {
+    return { status: 'invalid', detail: 'must not include a method member.' };
+  }
+  const hasResult = Object.prototype.hasOwnProperty.call(message, 'result');
+  const hasError = Object.prototype.hasOwnProperty.call(message, 'error');
+  if (hasResult === hasError) {
+    return { status: 'invalid', detail: 'must include exactly one of result or error.' };
+  }
+  if (hasResult) {
+    return { status: 'result', result: message.result };
+  }
+  if (!isObject(message.error) || !Number.isInteger(message.error.code) || typeof message.error.message !== 'string') {
+    return { status: 'invalid', detail: 'included a malformed error object.' };
+  }
+  return {
+    status: 'error',
+    error: { code: message.error.code as number, message: message.error.message }
+  };
+}
+
+function hasResponseMember(message: JsonRpcMessage): boolean {
+  return (
+    Object.prototype.hasOwnProperty.call(message, 'result') ||
+    Object.prototype.hasOwnProperty.call(message, 'error')
+  );
 }
 
 function providerEnabled(value: unknown): boolean {
@@ -328,10 +531,15 @@ function writeMessage(child: cp.ChildProcess, message: object): void {
 export function terminateProbeProcessTree(child: cp.ChildProcess): void {
   child.stdin?.destroy();
   if (child.pid && process.platform === 'win32') {
-    cp.spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
-      stdio: 'ignore',
-      windowsHide: true
-    });
+    // The wrapper's kill-on-close Job Object already owns descendants after
+    // wrapper exit. Address taskkill only to a still-current wrapper PID;
+    // using an exited PID would introduce a replacement-process deletion race.
+    if (child.exitCode === null && child.signalCode === null) {
+      cp.spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
+        stdio: 'ignore',
+        windowsHide: true
+      });
+    }
     return;
   }
   if (child.pid) {
@@ -343,6 +551,65 @@ export function terminateProbeProcessTree(child: cp.ChildProcess): void {
     }
   }
   child.kill('SIGKILL');
+}
+
+export function spawnProbeProcess(
+  command: string,
+  args: readonly string[],
+  useShell: boolean
+): cp.ChildProcessWithoutNullStreams {
+  if (process.platform === 'win32') {
+    const encodedWrapper = Buffer.from(WINDOWS_PROBE_JOB_WRAPPER, 'utf16le').toString('base64');
+    const exitNonce = crypto.randomBytes(16).toString('hex');
+    const child = cp.spawn(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-InputFormat',
+        'Text',
+        '-OutputFormat',
+        'Text',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-EncodedCommand',
+        encodedWrapper
+      ],
+      {
+        shell: false,
+        windowsHide: true,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: {
+          ...process.env,
+          RIPR_PROBE_COMMAND: command,
+          RIPR_PROBE_ARGUMENTS: args.join(' '),
+          RIPR_PROBE_EXIT_NONCE: exitNonce,
+          RIPR_PROBE_USE_SHELL: useShell ? '1' : '0'
+        }
+      }
+    );
+    let stderr = '';
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString('utf8');
+      const match = new RegExp(`${PROBE_EXIT_CODE_MARKER}${exitNonce}=(-?\\d+)`).exec(stderr);
+      if (match) {
+        probeExitCodes.set(child, Number(match[1]));
+      }
+      if (stderr.length > 4096) {
+        stderr = stderr.slice(-4096);
+      }
+    });
+    return child;
+  }
+  return cp.spawn(command, args, {
+    shell: useShell,
+    detached: true,
+    stdio: ['pipe', 'pipe', 'pipe']
+  });
+}
+
+export function probeProcessExitCode(child: cp.ChildProcess, wrapperCode: number | null): number | null {
+  return probeExitCodes.get(child) ?? wrapperCode;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

@@ -1,4 +1,3 @@
-import * as cp from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
@@ -13,11 +12,13 @@ import { currentRiprPlatform, RiprPlatform } from './platform';
 import {
   LspCompatibilityEvidence,
   LspCompatibilityFailure,
+  probeProcessExitCode,
   probeStandardLspCompatibility,
+  spawnProbeProcess,
   terminateProbeProcessTree
 } from './lspCompatibility';
 
-const START_TIMEOUT_MS = 5000;
+const START_TIMEOUT_MS = 10_000;
 
 export type ServerSource = 'configured' | 'bundled' | 'managed_cache' | 'managed_download' | 'path';
 
@@ -225,15 +226,21 @@ export function probeServerVersion(
   return new Promise((resolve) => {
     // On POSIX the child leads a fresh process group so timeout cleanup can
     // terminate descendants as one bounded unit. Windows uses taskkill /T.
-    const child = cp.spawn(command, ['--version'], {
-      shell: useShell,
-      detached: process.platform !== 'win32'
-    });
+    const child = spawnProbeProcess(command, ['--version'], useShell);
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
-    const timer = setTimeout(() => {
+    let settled = false;
+    const finish = (result: { readonly binaryVersion?: string } | ResolveFailure): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
       terminateProbeProcessTree(child);
-      resolve({
+      resolve(result);
+    };
+    const timer = setTimeout(() => {
+      finish({
         message: `${detail} did not respond.`,
         detail: `Timed out after ${timeoutMs}ms while running ${command} --version.`
       });
@@ -243,18 +250,17 @@ export function probeServerVersion(
     child.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
 
     child.once('error', (error) => {
-      clearTimeout(timer);
-      resolve({ message: `${detail} could not start.`, detail: error.message });
+      finish({ message: `${detail} could not start.`, detail: error.message });
     });
 
-    child.once('exit', (code) => {
-      clearTimeout(timer);
+    child.once('exit', (wrapperCode) => {
+      const code = probeProcessExitCode(child, wrapperCode);
       if (code === 0) {
-        resolve({
+        finish({
           binaryVersion: firstOutputLine(stdoutChunks, stderrChunks)
         });
       } else {
-        resolve({ message: `${detail} failed version check.`, detail: `${command} --version exited with code ${code}.` });
+        finish({ message: `${detail} failed version check.`, detail: `${command} --version exited with code ${code}.` });
       }
     });
   });
@@ -283,5 +289,10 @@ function firstOutputLine(stdoutChunks: Buffer[], stderrChunks: Buffer[]): string
   return output
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .find((line) => line.length > 0);
+    .find(
+      (line) =>
+        line.length > 0 &&
+        line !== '#< CLIXML' &&
+        !line.startsWith('__RIPR_PROBE_EXIT_CODE__')
+    );
 }
