@@ -26,7 +26,8 @@ The corpus intentionally covers:
 - baseline-resolved movement;
 - configured blocking gate;
 - missing proof or first-action input;
-- flat coverage with improved static grip.
+- flat coverage with improved static grip;
+- mixed assistant-health outcomes that keep repair-bearing proof visible.
 
 Case directories:
 
@@ -39,6 +40,7 @@ Case directories:
 - `blocked/`
 - `missing-proof/`
 - `coverage-flat-grip-improved/`
+- `mixed-health/`
 
 Each case pins status, top-issue state, policy state, placement, movement,
 coverage/grip state, summary counts, artifact groups, warnings, and advisory
