@@ -4,7 +4,11 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { RiprConfig } from './config';
 import { cachedServerInstallation, downloadServer } from './downloader';
-import { ManagedServerInstallation } from './managedServerInstall';
+import {
+  combineActiveManagedServerIdentity,
+  ManagedServerInstallation,
+  validateManagedServerVersion
+} from './managedServerInstall';
 import { currentRiprPlatform, RiprPlatform } from './platform';
 
 const START_TIMEOUT_MS = 5000;
@@ -45,7 +49,13 @@ export async function resolveServer(
   }
 
   const platform = currentRiprPlatform();
-  const version = requestedServerVersion(context, config);
+  let version: string;
+  try {
+    version = requestedServerVersion(context, config);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return { message: 'ripr.server.version is invalid.', detail };
+  }
   let downloadFailure: string | undefined;
 
   if (platform) {
@@ -125,10 +135,10 @@ export async function resolveServer(
 export function requestedServerVersion(context: vscode.ExtensionContext, config: RiprConfig): string {
   const configured = config.serverVersion.trim();
   if (configured.length > 0) {
-    return configured.replace(/^v/, '');
+    return validateManagedServerVersion(configured.replace(/^v/, ''));
   }
   const version = context.extension?.packageJSON?.version;
-  return typeof version === 'string' ? version.replace(/^v/, '') : '0.8.0';
+  return validateManagedServerVersion(typeof version === 'string' ? version.replace(/^v/, '') : '0.8.0');
 }
 
 function bundledServerPath(context: vscode.ExtensionContext, platform: RiprPlatform): string {
@@ -199,12 +209,7 @@ function withManagedIdentity(
   resolved: ResolvedServer,
   installation: ManagedServerInstallation
 ): ResolvedServer {
-  return {
-    ...resolved,
-    binaryVersion: installation.receipt.binaryVersion,
-    assetDigest: installation.receipt.archiveSha256,
-    installationState: 'complete'
-  };
+  return combineActiveManagedServerIdentity(resolved, installation);
 }
 
 function isResolved(result: ResolvedServer | ResolveFailure): result is ResolvedServer {

@@ -7,7 +7,8 @@ import {
   installManagedServer,
   ManagedServerInstallation,
   ManagedServerInstallRequest,
-  readManagedServerInstallation
+  readManagedServerInstallation,
+  validateManagedServerVersion
 } from './managedServerInstall';
 import { RiprPlatform } from './platform';
 
@@ -28,14 +29,15 @@ export async function downloadServer(
   version: string,
   output: vscode.OutputChannel
 ): Promise<ManagedServerInstallation> {
-  const origin = downloadOriginLabel(config, version);
+  const managedVersion = validateManagedServerVersion(version);
+  const origin = downloadOriginLabel(config, managedVersion);
   return vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
-      title: `ripr: downloading server ${version} for ${platform.target} from ${origin}`,
+      title: `ripr: downloading server ${managedVersion} for ${platform.target} from ${origin}`,
       cancellable: false
     },
-    (progress) => downloadServerWithProgress(context, config, platform, version, output, progress)
+    (progress) => downloadServerWithProgress(context, config, platform, managedVersion, output, progress)
   );
 }
 

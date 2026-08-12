@@ -5,8 +5,8 @@ import * as path from 'path';
 const RECEIPT_FILE = 'install-receipt.json';
 const LOCK_WAIT_MS = 120_000;
 const LOCK_POLL_MS = 50;
-const STALE_LOCK_MS = 10 * 60_000;
 const LOCK_HEARTBEAT_MS = 30_000;
+const MANAGED_VERSION_PATTERN = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 
 export interface InstallReceiptV1 {
   readonly schemaVersion: 1;
@@ -44,6 +44,33 @@ export interface ManagedServerInstallOperations {
   resolveArchive(): Promise<ResolvedArchive>;
   extractArchive(archivePath: string, destination: string): Promise<void>;
   probeExecutable(executablePath: string): Promise<string>;
+  lockWaitMs?: number;
+  lockPollMs?: number;
+}
+
+export interface ManagedServerReceiptIdentity {
+  readonly assetDigest: string;
+  readonly installationState: 'complete';
+}
+
+export function validateManagedServerVersion(version: string): string {
+  if (!MANAGED_VERSION_PATTERN.test(version)) {
+    throw new Error(
+      `Invalid ripr server version ${JSON.stringify(version)}. Expected a canonical semantic version such as 1.2.3 or 1.2.3-rc.1.`
+    );
+  }
+  return version;
+}
+
+export function combineActiveManagedServerIdentity<T extends { readonly binaryVersion?: string }>(
+  active: T,
+  installation: ManagedServerInstallation
+): T & ManagedServerReceiptIdentity {
+  return {
+    ...active,
+    assetDigest: installation.receipt.archiveSha256,
+    installationState: 'complete'
+  };
 }
 
 export async function installManagedServer(
@@ -52,8 +79,10 @@ export async function installManagedServer(
 ): Promise<ManagedServerInstallation> {
   const finalDir = installDir(request);
   await fs.promises.mkdir(path.dirname(finalDir), { recursive: true });
-  const deadline = Date.now() + LOCK_WAIT_MS;
+  const deadline = Date.now() + (operations.lockWaitMs ?? LOCK_WAIT_MS);
+  const lockPollMs = operations.lockPollMs ?? LOCK_POLL_MS;
   const lockPath = `${finalDir}.install.lock`;
+  assertDescendantPath(request.serversRoot, lockPath, 'install lock');
 
   for (;;) {
     const completed = await readManagedServerInstallation(request);
@@ -61,20 +90,23 @@ export async function installManagedServer(
       return completed;
     }
 
-    let lock: fs.promises.FileHandle | undefined;
     const lockToken = `${process.pid}:${crypto.randomUUID()}`;
     try {
-      lock = await fs.promises.open(lockPath, 'wx');
-      await lock.writeFile(`${lockToken}\n`);
+      await fs.promises.mkdir(lockPath);
+      try {
+        await fs.promises.writeFile(path.join(lockPath, 'owner'), `${lockToken}\n`, { flag: 'wx' });
+      } catch (error) {
+        await fs.promises.rm(lockPath, { recursive: true, force: true });
+        throw error;
+      }
     } catch (error) {
       if (!isAlreadyExists(error)) {
         throw error;
       }
-      await removeStaleLock(lockPath);
       if (Date.now() >= deadline) {
         throw new Error(`Timed out waiting for managed server install lock ${lockPath}.`);
       }
-      await delay(LOCK_POLL_MS);
+      await delay(lockPollMs);
       continue;
     }
 
@@ -90,8 +122,7 @@ export async function installManagedServer(
       return await stageAndPromote(request, operations, finalDir);
     } finally {
       clearInterval(heartbeat);
-      await lock.close();
-      await removeOwnedLock(lockPath, lockToken);
+      await fs.promises.rm(lockPath, { recursive: true, force: true });
     }
   }
 }
@@ -136,7 +167,11 @@ async function readInstallationAt(
 }
 
 function installDir(request: ManagedServerInstallRequest): string {
-  return path.join(request.serversRoot, request.version, request.platformTarget);
+  const version = validateManagedServerVersion(request.version);
+  const root = path.resolve(request.serversRoot);
+  const finalDir = path.resolve(root, version, request.platformTarget);
+  assertDescendantPath(root, finalDir, 'managed server installation');
+  return finalDir;
 }
 
 async function stageAndPromote(
@@ -147,6 +182,8 @@ async function stageAndPromote(
   const unique = `${process.pid}-${crypto.randomUUID()}`;
   const stagingDir = `${finalDir}.install-${unique}`;
   const displacedDir = `${finalDir}.replaced-${unique}`;
+  assertDescendantPath(request.serversRoot, stagingDir, 'managed server staging directory');
+  assertDescendantPath(request.serversRoot, displacedDir, 'managed server displaced directory');
   let displaced = false;
   await fs.promises.mkdir(stagingDir);
 
@@ -308,29 +345,12 @@ async function findExecutable(root: string, executableName: string): Promise<str
   return undefined;
 }
 
-async function removeStaleLock(lockPath: string): Promise<void> {
-  try {
-    const stat = await fs.promises.stat(lockPath);
-    if (Date.now() - stat.mtimeMs > STALE_LOCK_MS) {
-      await fs.promises.rm(lockPath, { force: true });
-    }
-  } catch (error) {
-    if (!isMissing(error)) {
-      throw error;
-    }
-  }
-}
-
-async function removeOwnedLock(lockPath: string, lockToken: string): Promise<void> {
-  try {
-    const current = (await fs.promises.readFile(lockPath, 'utf8')).trim();
-    if (current === lockToken) {
-      await fs.promises.rm(lockPath, { force: true });
-    }
-  } catch (error) {
-    if (!isMissing(error)) {
-      throw error;
-    }
+function assertDescendantPath(root: string, candidate: string, description: string): void {
+  const canonicalRoot = path.resolve(root);
+  const canonicalCandidate = path.resolve(candidate);
+  const relative = path.relative(canonicalRoot, canonicalCandidate);
+  if (relative.length === 0 || relative.startsWith(`..${path.sep}`) || relative === '..' || path.isAbsolute(relative)) {
+    throw new Error(`${description} escapes the managed server cache root.`);
   }
 }
 

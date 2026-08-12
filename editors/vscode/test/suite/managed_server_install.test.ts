@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import {
+  combineActiveManagedServerIdentity,
   installManagedServer,
   ManagedServerInstallOperations,
   ManagedServerInstallRequest,
@@ -77,6 +78,91 @@ suite('Managed Server Installation', () => {
     const versionEntries = await fs.promises.readdir(path.join(upgradeRequest.serversRoot, upgradeRequest.version));
     assert.deepStrictEqual(versionEntries, []);
   });
+
+  test('rejects traversal and rooted version forms before any filesystem mutation', async () => {
+    const invalidVersions = [
+      '../escaped',
+      '..\\..\\escaped',
+      '1.2.3/../../escaped',
+      '1.2.3\\..\\escaped',
+      '/tmp/escaped',
+      '\\server\\share',
+      '\\\\server\\share',
+      ['C:', '\\escaped'].join(''),
+      '01.2.3',
+      '.',
+      '..'
+    ];
+
+    for (const version of invalidVersions) {
+      const request = installRequest(root, version);
+      await assert.rejects(installManagedServer(request, operations('never', version)), /Invalid ripr server version/);
+    }
+
+    assert.strictEqual(fs.existsSync(path.join(root, 'servers')), false);
+    assert.strictEqual(fs.existsSync(path.join(root, 'escaped')), false);
+    const valid = await installManagedServer(
+      installRequest(root, '4.0.0-rc.1+build.7'),
+      operations('valid-prerelease', '4.0.0-rc.1+build.7')
+    );
+    assert.strictEqual(valid.receipt.requestedVersion, '4.0.0-rc.1+build.7');
+  });
+
+  test('never reclaims a stale or replaced lock owned by another installer', async () => {
+    const request = installRequest(root, '5.0.0');
+    const versionDir = path.join(request.serversRoot, request.version);
+    const finalDir = path.join(versionDir, request.platformTarget);
+    const lockPath = `${finalDir}.install.lock`;
+    await fs.promises.mkdir(versionDir, { recursive: true });
+    await fs.promises.mkdir(lockPath);
+    const ownerPath = path.join(lockPath, 'owner');
+    await fs.promises.writeFile(ownerPath, 'stale-owner\n');
+    const old = new Date(Date.now() - 60 * 60_000);
+    await fs.promises.utimes(lockPath, old, old);
+    let extractionCalls = 0;
+    const blocked = operations('must-not-install', '5.0.0');
+    blocked.lockWaitMs = 80;
+    blocked.lockPollMs = 10;
+    blocked.extractArchive = async () => {
+      extractionCalls += 1;
+    };
+
+    const attempt = installManagedServer(request, blocked);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await fs.promises.writeFile(ownerPath, 'fresh-replacement-owner\n');
+    await assert.rejects(attempt, /Timed out waiting for managed server install lock/);
+
+    assert.strictEqual(extractionCalls, 0);
+    assert.strictEqual(await fs.promises.readFile(ownerPath, 'utf8'), 'fresh-replacement-owner\n');
+    assert.strictEqual(await readManagedServerInstallation(request), undefined);
+  });
+
+  test('active probe version remains authoritative over receipt-time identity', async () => {
+    const installation = await installManagedServer(
+      installRequest(root, '6.0.0'),
+      operations('identity-binary', '6.0.0', undefined, 'ripr receipt-time')
+    );
+    const active = { binaryVersion: 'ripr active-probe' };
+
+    const combined = combineActiveManagedServerIdentity(active, installation);
+
+    assert.strictEqual(installation.receipt.binaryVersion, 'ripr receipt-time');
+    assert.strictEqual(combined.binaryVersion, 'ripr active-probe');
+    assert.strictEqual(combined.assetDigest, installation.receipt.archiveSha256);
+    assert.strictEqual(combined.installationState, 'complete');
+  });
+
+  test('authoritative provisioning guide matches the completed receipt contract', async () => {
+    const repoRoot = path.resolve(__dirname, '../../../../..');
+    const guide = await fs.promises.readFile(path.join(repoRoot, 'docs', 'SERVER_PROVISIONING.md'), 'utf8');
+    const normalizedGuide = guide.replace(/\s+/g, ' ');
+
+    assert.ok(guide.includes('install-receipt.json'));
+    assert.ok(guide.includes('`installationState: "complete"`'));
+    assert.ok(guide.includes('current executable SHA-256 matches'));
+    assert.ok(normalizedGuide.includes('not a producer provenance attestation'));
+    assert.strictEqual(guide.includes('sha256.txt'), false);
+  });
 });
 
 function installRequest(root: string, version: string): ManagedServerInstallRequest {
@@ -92,7 +178,8 @@ function installRequest(root: string, version: string): ManagedServerInstallRequ
 function operations(
   executableContents: string,
   version: string,
-  beforeExtract?: () => Promise<void>
+  beforeExtract?: (() => Promise<void>) | undefined,
+  reportedVersion = 'ripr 1.2.3'
 ): ManagedServerInstallOperations {
   const bytes = Buffer.from(`archive:${executableContents}`);
   return {
@@ -106,6 +193,6 @@ function operations(
       const executableName = process.platform === 'win32' ? 'ripr.exe' : 'ripr';
       await fs.promises.writeFile(path.join(destination, executableName), executableContents);
     },
-    probeExecutable: async () => 'ripr 1.2.3'
+    probeExecutable: async () => reportedVersion
   };
 }
