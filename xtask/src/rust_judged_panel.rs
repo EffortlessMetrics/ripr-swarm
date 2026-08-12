@@ -795,6 +795,9 @@ fn is_confined_relative_path(path: &Path) -> bool {
     !raw.contains(':')
         && !raw.contains('\\')
         && !raw.contains("//")
+        && !raw
+            .split('/')
+            .any(|segment| segment == "." || segment.is_empty())
         && !path.is_absolute()
         && !path.components().any(|component| {
             matches!(
@@ -1402,22 +1405,25 @@ mod tests {
     #[test]
     fn diff_path_rejects_curdir_doubled_separator_and_prefix_lookalike() -> Result<(), String> {
         let fixture = TempFixture::new("path-spelling")?;
-        let mut manifest = valid_alternate_manifest(&fixture)?;
-        manifest["items"][0]["diff_path"] =
-            json!("metrics/rust-judged-behavior-panel/diffs/./alternate-limit.diff");
-        manifest["items"][1]["diff_path"] =
-            json!("metrics/rust-judged-behavior-panel/diffs//alternate-gap.diff");
-        manifest["items"][2]["diff_path"] =
-            json!("metrics/rust-judged-behavior-panel/diffs-lookalike/quiet.diff");
-        expect_rejection(&fixture, &manifest, &["must be a relative file under"])
+        for value in [
+            "metrics/rust-judged-behavior-panel/diffs/./alternate-limit.diff",
+            "metrics/rust-judged-behavior-panel/diffs//alternate-limit.diff",
+            "metrics/rust-judged-behavior-panel/diffs-lookalike/alternate-limit.diff",
+        ] {
+            let mut manifest = valid_alternate_manifest(&fixture)?;
+            manifest["items"][0]["diff_path"] = json!(value);
+            expect_rejection(&fixture, &manifest, &["must be a relative file under"])?;
+        }
+        Ok(())
     }
 
     #[test]
     fn diff_path_rejects_absolute_drive_unc_and_backslash_forms() -> Result<(), String> {
         let fixture = TempFixture::new("path-platform-forms")?;
+        let drive_absolute = format!("{}:/outside.diff", 'C');
         for value in [
             "/absolute.diff",
-            "C:/outside.diff",
+            &drive_absolute,
             "//server/share/outside.diff",
             "metrics\\rust-judged-behavior-panel\\diffs\\outside.diff",
         ] {
@@ -1541,6 +1547,24 @@ mod tests {
                 "hunk ended before declared extents",
                 "rename and copy diffs are unsupported",
             ],
+        )
+    }
+
+    #[test]
+    fn diff_parser_rejects_copy_metadata_independently() -> Result<(), String> {
+        let fixture = TempFixture::new("copy-diff")?;
+        let mut manifest = valid_alternate_manifest(&fixture)?;
+        let relative = "metrics/rust-judged-behavior-panel/diffs/copy.diff";
+        fs::write(
+            fixture.root.join(relative),
+            "similarity index 90%\ncopy from old.rs\ncopy to src/limit.rs\n--- a/old.rs\n+++ b/src/limit.rs\n@@ -5 +5 @@\n-old()\n+limit_behavior()\n",
+        )
+        .map_err(|error| error.to_string())?;
+        manifest["items"][0]["diff_path"] = json!(relative);
+        expect_rejection(
+            &fixture,
+            &manifest,
+            &["rename and copy diffs are unsupported"],
         )
     }
 
