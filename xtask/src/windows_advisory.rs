@@ -1380,18 +1380,23 @@ mod tests {
             return Err("VSIX compile must run after Cargo isolation".to_string());
         }
         let command = lines[compile];
+        let cargo_invocation = command
+            .split(';')
+            .map(str::trim)
+            .find(|segment| segment.contains("xtask vscode-compile"))
+            .ok_or_else(|| "VSIX compile command must contain a Cargo invocation".to_string())?;
         for required in [
             "cargo --config $env:CARGO_TEMP_CONFIG",
             "--target-dir $env:CARGO_TARGET_DIR",
             "xtask vscode-compile",
         ] {
-            if !command.contains(required) {
+            if !cargo_invocation.contains(required) {
                 return Err(format!(
                     "VSIX compile must carry the external Cargo setting {required:?}"
                 ));
             }
         }
-        let unisolated = command.replace(
+        let unisolated = cargo_invocation.replace(
             "cargo --config $env:CARGO_TEMP_CONFIG --target-dir $env:CARGO_TARGET_DIR xtask vscode-compile",
             "npm run compile",
         );
