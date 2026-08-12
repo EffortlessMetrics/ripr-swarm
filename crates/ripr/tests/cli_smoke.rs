@@ -1918,9 +1918,9 @@ fn test_oracle_assistant_proof_cli_writes_unchanged_control()
         "--agent-packet",
         "fixtures/boundary_gap/expected/editor-agent-loop/agent-brief.json",
         "--before",
-        "fixtures/boundary_gap/calibration/before-targeted-test.repo-exposure.json",
+        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json",
         "--after",
-        "fixtures/boundary_gap/calibration/after-targeted-test.repo-exposure.json",
+        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json",
         "--receipt",
         "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-receipt.json",
         "--out",
@@ -2692,6 +2692,54 @@ fn first_useful_action_corpus_pins_routing_cases() -> Result<(), Box<dyn std::er
                 json_pointer_str(&proof, "/evidence_movement/after_class")?,
                 "weakly_gripped"
             );
+            let before_artifact = json_pointer_str(&proof, "/inputs/before")?;
+            let after_artifact = json_pointer_str(&proof, "/inputs/after")?;
+            assert_eq!(
+                before_artifact,
+                "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json"
+            );
+            assert_eq!(
+                after_artifact,
+                "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json"
+            );
+            let before: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+                workspace_root().join(before_artifact),
+            )?)?;
+            let after: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+                workspace_root().join(after_artifact),
+            )?)?;
+            let seam_class =
+                |snapshot: &serde_json::Value| -> Result<String, Box<dyn std::error::Error>> {
+                    snapshot
+                        .pointer("/seams")
+                        .and_then(serde_json::Value::as_array)
+                        .and_then(|seams| {
+                            seams.iter().find(|seam| {
+                                seam.pointer("/seam_id").and_then(serde_json::Value::as_str)
+                                    == Some("67fc764ba37d77bd")
+                            })
+                        })
+                        .and_then(|seam| seam.pointer("/grip_class"))
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string)
+                        .ok_or_else(|| "target seam must have a grip_class".into())
+                };
+            let before_class = seam_class(&before)?;
+            let after_class = seam_class(&after)?;
+            assert_eq!(before_class, "weakly_gripped");
+            assert_eq!(after_class, "weakly_gripped");
+            assert_eq!(
+                before_class, after_class,
+                "scenario snapshots must derive unchanged movement"
+            );
+            assert_eq!(
+                json_pointer_str(&proof, "/evidence_movement/before_class")?,
+                &before_class
+            );
+            assert_eq!(
+                json_pointer_str(&proof, "/evidence_movement/after_class")?,
+                &after_class
+            );
             assert!(
                 proof
                     .pointer("/inputs/ledger")
@@ -2704,6 +2752,8 @@ fn first_useful_action_corpus_pins_routing_cases() -> Result<(), Box<dyn std::er
             );
             assert_eq!(json_pointer_str(&receipt, "/seam/change")?, "unchanged");
             assert_eq!(json_pointer_str(&receipt, "/seam/after")?, "weakly_gripped");
+            assert_eq!(json_pointer_str(&receipt, "/seam/before")?, before_class);
+            assert_eq!(json_pointer_str(&receipt, "/seam/after")?, after_class);
             Some((proof_artifact, receipt_artifact))
         } else {
             None

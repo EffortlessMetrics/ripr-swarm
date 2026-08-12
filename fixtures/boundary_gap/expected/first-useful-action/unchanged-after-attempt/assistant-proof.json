@@ -7,8 +7,8 @@
   "inputs": {
     "pr_guidance": "fixtures/boundary_gap/expected/test-oracle-assistant-loop/canonical/pr-guidance.json",
     "agent_packet": "fixtures/boundary_gap/expected/editor-agent-loop/agent-brief.json",
-    "before": "fixtures/boundary_gap/calibration/before-targeted-test.repo-exposure.json",
-    "after": "fixtures/boundary_gap/calibration/after-targeted-test.repo-exposure.json",
+    "before": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json",
+    "after": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json",
     "receipt": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-receipt.json",
     "ledger": null,
     "coverage_frontier": null
@@ -53,9 +53,7 @@
     "gate_decision": null,
     "pass_fail_authority": "gate decision when explicitly configured"
   },
-  "warnings": [
-    "current replay fixture preserves actual analyzer output: the focused-test snapshot remains weakly_gripped; dogfood receipt work records live movement separately"
-  ],
+  "warnings": [],
   "limits": {
     "advisory": true,
     "source_edits": false,
