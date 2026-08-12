@@ -18952,8 +18952,10 @@ fn is_process_policy_candidate(path: &str) -> bool {
 fn is_network_policy_candidate(path: &str) -> bool {
     path.ends_with(".rs")
         || path.ends_with(".ts")
+        || path.ends_with(".tsx")
         || path.ends_with(".py")
         || path.ends_with(".js")
+        || path.ends_with(".jsx")
         || path.ends_with(".sh")
         || path.ends_with(".ps1")
         || path.ends_with(".yml")
