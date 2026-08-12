@@ -20,10 +20,10 @@ pub(crate) enum AttemptPathChangeKind {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "AttemptPathChangeWire")]
 pub(crate) struct AttemptPathChange {
-    pub(crate) path: PathBuf,
-    pub(crate) kind: AttemptPathChangeKind,
+    path: PathBuf,
+    kind: AttemptPathChangeKind,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) previous_path: Option<PathBuf>,
+    previous_path: Option<PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -171,6 +171,7 @@ pub(crate) enum EditCageVerdictStatus {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum EditCageViolationKind {
     InvalidOrEscapingPath,
+    InvalidDelta,
     InvalidPolicy,
     ForbiddenPath,
     OutsideAllowedSurface,
@@ -193,8 +194,10 @@ pub(crate) struct EditCageVerdict {
 }
 
 pub(crate) fn evaluate_edit_cage(policy: &EditCagePolicy, delta: &AttemptDelta) -> EditCageVerdict {
-    if !delta.comparable {
+    let delta_violations = validate_delta(delta);
+    if !delta.comparable || !delta_violations.is_empty() {
         let (changed_paths, mut violations) = normalized_audit_paths(delta);
+        violations.extend(delta_violations);
         violations.extend(validate_policy(policy));
         violations.sort();
         violations.dedup();
@@ -254,6 +257,37 @@ pub(crate) fn evaluate_edit_cage(policy: &EditCagePolicy, delta: &AttemptDelta) 
         changed_paths,
         violations,
     }
+}
+
+fn validate_delta(delta: &AttemptDelta) -> Vec<EditCageViolation> {
+    delta
+        .changes
+        .iter()
+        .filter_map(|change| {
+            let shape_is_valid = matches!(
+                (change.kind, change.previous_path.is_some()),
+                (AttemptPathChangeKind::Renamed, true)
+                    | (
+                        AttemptPathChangeKind::Added
+                            | AttemptPathChangeKind::Modified
+                            | AttemptPathChangeKind::Deleted,
+                        false
+                    )
+            );
+            (!shape_is_valid).then(|| EditCageViolation {
+                kind: EditCageViolationKind::InvalidDelta,
+                path: change.path.to_string_lossy().to_string(),
+                reason: if change.kind == AttemptPathChangeKind::Renamed {
+                    "a renamed path change requires previous_path".to_string()
+                } else {
+                    format!(
+                        "a {} path change must not carry previous_path",
+                        path_change_kind_name(change.kind)
+                    )
+                },
+            })
+        })
+        .collect()
 }
 
 fn evaluate_change(
@@ -721,6 +755,36 @@ mod tests {
         ] {
             require_invalid_json::<AttemptPathChange>(invalid)?;
         }
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_in_memory_change_shape_cannot_fabricate_target_movement() -> Result<(), String> {
+        let mut authored_tests_policy = policy()?;
+        authored_tests_policy.allowed_edit_surface = vec![CagePathRule::subtree("tests")?];
+        let malformed_change = AttemptPathChange {
+            path: PathBuf::from("tests/other.rs"),
+            kind: AttemptPathChangeKind::Modified,
+            previous_path: Some(PathBuf::from("tests/pricing.rs")),
+        };
+
+        let verdict = evaluate_edit_cage(
+            &authored_tests_policy,
+            &AttemptDelta {
+                comparable: true,
+                changes: vec![malformed_change],
+            },
+        );
+
+        assert_eq!(verdict.status, EditCageVerdictStatus::Incomparable);
+        assert_eq!(
+            verdict.changed_paths,
+            vec!["tests/other.rs".to_string(), "tests/pricing.rs".to_string()]
+        );
+        assert!(verdict.violations.iter().any(|violation| {
+            violation.kind == EditCageViolationKind::InvalidDelta
+                && violation.path == "tests/other.rs"
+        }));
         Ok(())
     }
 
