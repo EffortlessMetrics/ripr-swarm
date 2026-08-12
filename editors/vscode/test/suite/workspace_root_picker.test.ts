@@ -18,6 +18,7 @@ import {
   workspaceRootPickItems
 } from '../../src/client';
 import { RiprConfig } from '../../src/config';
+import { compatibleLspEvidence } from './testCompatibility';
 
 const enabledConfig: RiprConfig = {
   enabled: true,
@@ -93,7 +94,7 @@ function makeHarness(roots: string[], folders: vscode.WorkspaceFolder[]): FakeRu
         source: 'configured' as const,
         detail: 'sentinel multi-root server',
         installationState: 'unmanaged' as const,
-        compatibilityResult: 'not_established' as const
+        compatibilityResult: compatibleLspEvidence
       };
     },
     createLanguageClient: (serverOptions) => {

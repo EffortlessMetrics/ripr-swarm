@@ -10,6 +10,12 @@ import {
   validateManagedServerVersion
 } from './managedServerInstall';
 import { currentRiprPlatform, RiprPlatform } from './platform';
+import {
+  LspCompatibilityEvidence,
+  LspCompatibilityFailure,
+  probeStandardLspCompatibility,
+  terminateProbeProcessTree
+} from './lspCompatibility';
 
 const START_TIMEOUT_MS = 5000;
 
@@ -23,7 +29,7 @@ export interface ResolvedServer {
   readonly protocolVersion?: string;
   readonly assetDigest?: string;
   readonly installationState: 'unmanaged' | 'bundled' | 'complete';
-  readonly compatibilityResult: 'not_established';
+  readonly compatibilityResult: LspCompatibilityEvidence;
   /**
    * True when this server must be spawned through the shell (#2079): a
    * Windows `.cmd`/`.bat` PATH shim resolves via the shell probe, and the
@@ -38,14 +44,27 @@ export interface ResolveFailure {
   readonly detail: string;
 }
 
+export interface ServerResolverRuntime {
+  readonly probeCandidate: (
+    command: string,
+    source: ServerSource,
+    detail: string,
+    useShell?: boolean,
+    installationState?: ResolvedServer['installationState']
+  ) => Promise<ResolvedServer | ResolveFailure>;
+}
+
+const defaultResolverRuntime: ServerResolverRuntime = { probeCandidate };
+
 export async function resolveServer(
   context: vscode.ExtensionContext,
   config: RiprConfig,
-  output: vscode.OutputChannel
+  output: vscode.OutputChannel,
+  runtime: ServerResolverRuntime = defaultResolverRuntime
 ): Promise<ResolvedServer | ResolveFailure> {
   const configuredPath = config.serverPath.trim();
   if (configuredPath.length > 0) {
-    return probeCandidate(configuredPath, 'configured', `configured ripr.server.path ${configuredPath}`, false, 'unmanaged');
+    return runtime.probeCandidate(configuredPath, 'configured', `configured ripr.server.path ${configuredPath}`, false, 'unmanaged');
   }
 
   const platform = currentRiprPlatform();
@@ -60,14 +79,22 @@ export async function resolveServer(
 
   if (platform) {
     const bundled = bundledServerPath(context, platform);
-    const bundledResult = await probeExistingCandidate(bundled, 'bundled', `bundled server for ${platform.target}`);
+    const bundledResult = await probeExistingCandidate(
+      bundled,
+      'bundled',
+      `bundled server for ${platform.target}`,
+      runtime
+    );
     if (isResolved(bundledResult)) {
       return bundledResult;
+    }
+    if (fs.existsSync(bundled)) {
+      output.appendLine(`Skipping bundled server: ${bundledResult.detail}`);
     }
 
     const cached = await cachedServerInstallation(context, version, platform);
     if (cached) {
-      const cachedResult = await probeCandidate(
+      const cachedResult = await runtime.probeCandidate(
         cached.executablePath,
         'managed_cache',
         `completed cached server ${version} for ${platform.target}`,
@@ -77,12 +104,13 @@ export async function resolveServer(
       if (isResolved(cachedResult)) {
         return withManagedIdentity(cachedResult, cached);
       }
+      output.appendLine(`Skipping completed cached server: ${cachedResult.detail}`);
     }
 
     if (config.autoDownload) {
       try {
         const downloaded = await downloadServer(context, config, platform, version, output);
-        const downloadedResult = await probeCandidate(
+        const downloadedResult = await runtime.probeCandidate(
           downloaded.executablePath,
           'managed_download',
           `atomically installed server ${version} for ${platform.target}`,
@@ -93,6 +121,7 @@ export async function resolveServer(
           return withManagedIdentity(downloadedResult, downloaded);
         }
         downloadFailure = downloadedResult.detail;
+        output.appendLine(`Skipping downloaded server: ${downloadFailure}`);
       } catch (error) {
         downloadFailure = error instanceof Error ? error.message : String(error);
         output.appendLine(`ripr server download failed: ${downloadFailure}`);
@@ -107,7 +136,7 @@ export async function resolveServer(
   // even though `ripr` works in a terminal (#2079). The command is the
   // constant string 'ripr --version' — no user input reaches the shell.
   const probeWithShell = process.platform === 'win32';
-  const pathResult = await probeCandidate('ripr', 'path', 'ripr on PATH', probeWithShell, 'unmanaged');
+  const pathResult = await runtime.probeCandidate('ripr', 'path', 'ripr on PATH', probeWithShell, 'unmanaged');
   const resolvedPathResult: ResolvedServer | ResolveFailure =
     isResolved(pathResult) && probeWithShell ? { ...pathResult, needsShell: true } : pathResult;
   if (isResolved(resolvedPathResult)) {
@@ -152,12 +181,13 @@ function bundledServerPath(context: vscode.ExtensionContext, platform: RiprPlatf
 async function probeExistingCandidate(
   command: string,
   source: ServerSource,
-  detail: string
+  detail: string,
+  runtime: ServerResolverRuntime
 ): Promise<ResolvedServer | ResolveFailure> {
   if (!fs.existsSync(command)) {
     return { message: `${detail} was not found.`, detail: `${command} does not exist.` };
   }
-  return probeCandidate(command, source, detail, false, source === 'bundled' ? 'bundled' : 'unmanaged');
+  return runtime.probeCandidate(command, source, detail, false, source === 'bundled' ? 'bundled' : 'unmanaged');
 }
 
 function probeCandidate(
@@ -167,12 +197,36 @@ function probeCandidate(
   useShell = false,
   installationState: ResolvedServer['installationState'] = 'unmanaged'
 ): Promise<ResolvedServer | ResolveFailure> {
+  return probeVersion(command, detail, useShell).then(async (versionResult) => {
+    if ('message' in versionResult) {
+      return versionResult;
+    }
+    const compatibility = await probeStandardLspCompatibility(command, useShell, START_TIMEOUT_MS);
+    if (compatibility.status === 'incompatible') {
+      return compatibilityFailure(detail, compatibility);
+    }
+    return {
+      command,
+      source,
+      detail,
+      binaryVersion: versionResult.binaryVersion,
+      installationState,
+      compatibilityResult: compatibility
+    };
+  });
+}
+
+function probeVersion(
+  command: string,
+  detail: string,
+  useShell: boolean
+): Promise<{ readonly binaryVersion?: string } | ResolveFailure> {
   return new Promise((resolve) => {
     const child = cp.spawn(command, ['--version'], { shell: useShell });
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     const timer = setTimeout(() => {
-      child.kill();
+      terminateProbeProcessTree(child);
       resolve({
         message: `${detail} did not respond.`,
         detail: `Timed out after ${START_TIMEOUT_MS}ms while running ${command} --version.`
@@ -191,18 +245,20 @@ function probeCandidate(
       clearTimeout(timer);
       if (code === 0) {
         resolve({
-          command,
-          source,
-          detail,
-          binaryVersion: firstOutputLine(stdoutChunks, stderrChunks),
-          installationState,
-          compatibilityResult: 'not_established'
+          binaryVersion: firstOutputLine(stdoutChunks, stderrChunks)
         });
       } else {
         resolve({ message: `${detail} failed version check.`, detail: `${command} --version exited with code ${code}.` });
       }
     });
   });
+}
+
+function compatibilityFailure(detail: string, failure: LspCompatibilityFailure): ResolveFailure {
+  return {
+    message: `${detail} is not LSP compatible.`,
+    detail: `[${failure.kind}] ${failure.detail}`
+  };
 }
 
 function withManagedIdentity(

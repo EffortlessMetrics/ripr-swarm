@@ -7,6 +7,7 @@ import {
   RiprClientRuntime
 } from '../../src/client';
 import { RiprConfig } from '../../src/config';
+import { compatibleLspEvidence } from './testCompatibility';
 import {
   resetLifecycleCoordinatorForTests,
   startAfterWorkspaceTrust,
@@ -68,7 +69,7 @@ function trustedRuntime(
       source: 'configured',
       detail: 'sentinel server',
       installationState: 'unmanaged',
-      compatibilityResult: 'not_established'
+      compatibilityResult: compatibleLspEvidence
     }),
     createLanguageClient,
     createFileSystemWatcher: () => ({} as unknown as vscode.FileSystemWatcher),

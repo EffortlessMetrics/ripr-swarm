@@ -20,6 +20,23 @@ The VS Code/Open VSX extension resolves the server in this order:
 `ripr.server.path` is an override for pinned or enterprise-managed binaries. The
 PATH fallback remains useful for local development and offline installs.
 
+Before activation commits to any candidate, the extension first checks
+`ripr --version`, then runs a bounded standard-LSP compatibility session over
+`ripr lsp --stdio`: framed `initialize`, `initialized`, `shutdown`, and `exit`.
+The initialize result must identify a versioned `ripr` server, select UTF-16,
+and advertise the synchronization, hover, and code-action surface exercised by
+the extension. Pull diagnostics, code-action resolve, execute commands, workspace
+folders, and work-done progress are retained as typed optional evidence; their
+absence does not inflate or reject the standard baseline. A failed probe never
+becomes the active client, and resolver fallback continues only along the
+existing order above. Workspace Trust remains outside and above resolution, so
+an untrusted workspace spawns neither this probe nor the active server.
+
+This compatibility evidence is activation state, separate from the completed
+install receipt and its byte-integrity evidence. It does not attest producer
+provenance or use a private/experimental capability as the standard-LSP
+baseline.
+
 ## Downloaded Server Cache
 
 Downloaded servers are stored under the VS Code global storage directory:
