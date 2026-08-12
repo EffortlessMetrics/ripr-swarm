@@ -575,6 +575,44 @@ fn normalize_agent_receipt_fixture(text: &str) -> Result<String, Box<dyn std::er
     Ok(rendered)
 }
 
+fn normalize_unchanged_repo_exposure_producer_fixture(
+    mut value: serde_json::Value,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let fixture_root = workspace_root().join("fixtures/boundary_gap/input");
+    let canonical_root = fixture_root
+        .canonicalize()?
+        .to_string_lossy()
+        .replace('\\', "/");
+    let produced_root = json_pointer_str(&value, "/artifact/repository/root")?;
+    assert_ne!(
+        produced_root, ".",
+        "the production repo-exposure route must emit a canonical absolute root"
+    );
+    assert_eq!(produced_root, canonical_root);
+
+    let stable_head = "8a00693e680c8ad5172d5191bbb08484cbd5e300";
+    value["artifact"]["repository"]["root"] = serde_json::json!(".");
+    value["artifact"]["repository"]["head"] = serde_json::json!(stable_head);
+    value["artifact"]["analysis"]["worktree"] = serde_json::json!("dirty");
+    let input_identity = json_pointer_str(&value, "/artifact/analysis/input_identity")?;
+    value["artifact"]["snapshot_identity"] =
+        serde_json::json!(format!("snapshot:{input_identity};revision:{stable_head}"));
+    value["artifact"]["content_sha256"] = serde_json::json!(
+        "sha256:5b10707b74e31da83fcb706ae11e000b9ece8cc1c25b3b0ee3fcfa597d19c7a5"
+    );
+    if let Some(seams) = value
+        .pointer_mut("/seams")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for seam in seams {
+            if let Some(seam) = seam.as_object_mut() {
+                seam.remove("evidence_record");
+            }
+        }
+    }
+    Ok(value)
+}
+
 #[test]
 fn normalize_agent_receipt_fixture_rejects_non_object_json() -> Result<(), String> {
     for fixture in ["[]", "null"] {
@@ -2710,6 +2748,24 @@ fn first_useful_action_corpus_pins_routing_cases() -> Result<(), Box<dyn std::er
             )?)?;
             let before_bytes = std::fs::read(workspace_root().join(before_artifact))?;
             let after_bytes = std::fs::read(workspace_root().join(after_artifact))?;
+            let produced = run_ripr_in_workspace(&[
+                "check",
+                "--root",
+                "fixtures/boundary_gap/input",
+                "--format",
+                "repo-exposure-json",
+            ])?;
+            assert_success(&produced);
+            let produced: serde_json::Value = serde_json::from_slice(&produced.stdout)?;
+            let normalized_produced = normalize_unchanged_repo_exposure_producer_fixture(produced)?;
+            assert_eq!(
+                before, normalized_produced,
+                "before snapshot must be the portable normalization of production output"
+            );
+            assert_eq!(
+                after, normalized_produced,
+                "after snapshot must be the portable normalization of production output"
+            );
             let seam_class =
                 |snapshot: &serde_json::Value| -> Result<String, Box<dyn std::error::Error>> {
                     snapshot

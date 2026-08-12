@@ -17,10 +17,14 @@ Files:
   `unchanged-after-attempt/agent-verify.json`,
   `unchanged-after-attempt/assistant-proof.json`, and
   `unchanged-after-attempt/agent-receipt.json` are dedicated negative-control
-  inputs. The verify artifact and receipt bind the exact scenario snapshot
-  bytes and their empty evidence delta. They intentionally remain
-  weak/unchanged when the canonical boundary-gap journey advances to improved
-  evidence.
+  inputs. The repo-exposure files are portable normalized goldens of the real
+  `ripr check --root fixtures/boundary_gap/input --format repo-exposure-json`
+  output: the corpus test requires the producer to emit the canonical absolute
+  fixture root before normalizing root, revision, and worktree currentness for
+  checkout-independent storage. The verify artifact and receipt bind the exact
+  normalized snapshot bytes and their empty evidence delta. They intentionally
+  remain weak/unchanged when the canonical boundary-gap journey advances to
+  improved evidence.
 
 The corpus intentionally covers:
 
