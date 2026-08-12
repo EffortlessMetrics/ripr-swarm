@@ -9795,6 +9795,71 @@ fn workspace_diagnostics_exclude_changed_test_files_from_published_findings() ->
 }
 
 #[test]
+fn workspace_diagnostics_include_saved_tracked_edits_and_exclude_untracked_files()
+-> Result<(), String> {
+    let fixture = boundary_gap_git_fixture_root("saved-tracked-worktree")?;
+    let root = fixture.path();
+    let config = boundary_gap_lsp_config(crate::config::RiprConfig::default());
+    let lib_path = root.join("src/lib.rs");
+    let baseline = std::fs::read_to_string(&lib_path)
+        .map_err(|err| format!("read saved-worktree fixture failed: {err}"))?;
+    let edited = baseline.replace(">=", ">");
+    if edited == baseline {
+        return Err("saved-worktree fixture no longer carries the equality boundary".to_string());
+    }
+    std::fs::write(&lib_path, edited)
+        .map_err(|err| format!("write unstaged tracked edit failed: {err}"))?;
+    let untracked_path = root.join("src/untracked.rs");
+    std::fs::write(
+        &untracked_path,
+        "pub fn untracked_boundary(left: i32, right: i32) -> bool { left >= right }\n",
+    )
+    .map_err(|err| format!("write untracked fixture failed: {err}"))?;
+
+    let interactive = workspace_diagnostics_with_config(root, &config, true)?;
+    let tracked_count = lsp_test_scope_diagnostic_count(&interactive, root, "src/lib.rs")?;
+    if tracked_count == 0 {
+        return Err(
+            "unstaged tracked equality-boundary edit received no LSP diagnostics".to_string(),
+        );
+    }
+    assert!(
+        interactive.snapshot.seams_deferred,
+        "interactive saved-state analysis must keep seam inventory deferred"
+    );
+    let untracked_uri = file_uri_for_path(&untracked_path)?;
+    if interactive
+        .batches
+        .iter()
+        .any(|batch| batch.uri == untracked_uri)
+    {
+        return Err("untracked file entered the saved-worktree LSP authority".to_string());
+    }
+
+    run_lsp_scope_git(root, &["add", "src/lib.rs"])?;
+    let explicit = workspace_diagnostics_with_config(root, &config, false)?;
+    let staged_count = lsp_test_scope_diagnostic_count(&explicit, root, "src/lib.rs")?;
+    if staged_count == 0 {
+        return Err(
+            "staged tracked equality-boundary edit received no LSP diagnostics".to_string(),
+        );
+    }
+    assert!(
+        !explicit.snapshot.seams_deferred,
+        "explicit refresh must complete the full seam inventory"
+    );
+    if explicit
+        .snapshot
+        .findings
+        .iter()
+        .any(|finding| finding.probe.location.file.ends_with("src/untracked.rs"))
+    {
+        return Err("untracked file entered the explicit worktree diff authority".to_string());
+    }
+    Ok(())
+}
+
+#[test]
 fn boundary_gap_workspace_diagnostics_include_live_seam_diagnostic() -> Result<(), String> {
     let fixture = boundary_gap_git_fixture_root("workspace-diagnostics")?;
     let fixture_root = fixture.path();
@@ -15975,7 +16040,10 @@ fn framed_lsp_saved_workspace_session_serves_saved_state_across_dirty_save() -> 
         }
 
         // didChange: the buffer diverges from the analyzed saved content.
-        let dirty_text = format!("{saved_text}// unsaved buffer note\n");
+        let dirty_text = saved_text.replace(">=", ">");
+        if dirty_text == saved_text {
+            return Err("saved-workspace fixture no longer carries the equality boundary".to_string());
+        }
         write_lsp_message(
             &mut client_write,
             serde_json::json!({
@@ -16058,9 +16126,11 @@ fn framed_lsp_saved_workspace_session_serves_saved_state_across_dirty_save() -> 
             framed_pull_document_report(&mut client_read, &mut client_write, next_id, &text_uri)
                 .await?;
         next_id += 1;
-        let (kind, _) = report_kind_and_items(&re_served);
-        if kind != Some("full") {
-            return Err(format!("expected a full re-served report: {re_served}"));
+        let (kind, items) = report_kind_and_items(&re_served);
+        if kind != Some("full") || items == 0 {
+            return Err(format!(
+                "expected didSave to analyze the unstaged tracked equality-boundary edit: {re_served}"
+            ));
         }
         let re_served_id = re_served
             .get("resultId")
