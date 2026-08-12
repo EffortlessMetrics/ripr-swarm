@@ -66,7 +66,9 @@ function trustedRuntime(
     resolveServer: async () => ({
       command: '/sentinel/trusted/ripr',
       source: 'configured',
-      detail: 'sentinel server'
+      detail: 'sentinel server',
+      installationState: 'unmanaged',
+      compatibilityResult: 'not_established'
     }),
     createLanguageClient,
     createFileSystemWatcher: () => ({} as unknown as vscode.FileSystemWatcher),

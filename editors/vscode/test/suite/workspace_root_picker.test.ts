@@ -91,7 +91,9 @@ function makeHarness(roots: string[], folders: vscode.WorkspaceFolder[]): FakeRu
       return {
         command: '/sentinel/multiroot/ripr',
         source: 'configured' as const,
-        detail: 'sentinel multi-root server'
+        detail: 'sentinel multi-root server',
+        installationState: 'unmanaged' as const,
+        compatibilityResult: 'not_established' as const
       };
     },
     createLanguageClient: (serverOptions) => {
