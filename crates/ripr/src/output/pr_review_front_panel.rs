@@ -1088,7 +1088,7 @@ fn assistant_health_has_repair_work(parsed: &ParsedPanelSources) -> bool {
 }
 
 fn movement(input: &PrReviewFrontPanelInput, parsed: &ParsedPanelSources) -> PanelMovement {
-    if input.coverage_frontier_path.is_some()
+    if first_action_status(parsed.first_action.as_ref()) != Some("actionable")
         && let Some(health) = parsed.assistant_health.as_ref()
         && let Some(proof) = selected_assistant_health_proof(health)
         && let Some(state) = string_path(proof, &["movement_state"])
@@ -1689,10 +1689,11 @@ fn top_issue_from_assistant_health(
     let recommendation = proof.get("recommendation");
     let handoff = proof.get("handoff");
     let receipt = proof.get("receipt");
+    let seam_id = string_path(seam, &["seam_id"]);
     Some(PanelTopIssue {
         source: "assistant_health".to_string(),
         source_artifact: input.assistant_health_path.clone()?,
-        seam_id: string_path(seam, &["seam_id"]),
+        seam_id: seam_id.clone(),
         canonical_gap_id: string_path(seam, &["canonical_gap_id"]),
         path: string_path(seam, &["path"]),
         line: u64_path(seam, &["line"]),
@@ -1723,18 +1724,36 @@ fn top_issue_from_assistant_health(
         agent_command: handoff.and_then(|value| string_path(value, &["agent_command"])),
         receipt: PanelReceipt {
             artifact: receipt.and_then(|value| string_path(value, &["artifact"])),
-            status: parsed
-                .receipt
-                .as_ref()
-                .map(receipt_lifecycle_state_from_receipt_value)
-                .or_else(|| {
-                    receipt
-                        .and_then(|value| string_path(value, &["status"]))
-                        .map(|state| receipt_lifecycle_state(Some(&state)))
-                })
-                .unwrap_or_else(|| RECEIPT_MISSING.to_string()),
+            status: selected_proof_receipt_status(
+                receipt,
+                seam_id.as_deref(),
+                parsed.receipt.as_ref(),
+            ),
         },
     })
+}
+
+fn selected_proof_receipt_status(
+    selected_receipt: Option<&Value>,
+    selected_seam_id: Option<&str>,
+    parsed_receipt: Option<&Value>,
+) -> String {
+    if let (Some(selected_seam_id), Some(parsed_receipt)) = (selected_seam_id, parsed_receipt)
+        && receipt_seam_id(parsed_receipt).as_deref() == Some(selected_seam_id)
+    {
+        return receipt_lifecycle_state_from_receipt_value(parsed_receipt);
+    }
+    selected_receipt
+        .and_then(|value| string_path(value, &["status"]))
+        .map(|state| receipt_lifecycle_state(Some(&state)))
+        .unwrap_or_else(|| RECEIPT_MISSING.to_string())
+}
+
+fn receipt_seam_id(receipt: &Value) -> Option<String> {
+    string_from_sources(&[
+        (Some(receipt), &["provenance", "seam_id"]),
+        (Some(receipt), &["seam", "seam_id"]),
+    ])
 }
 
 fn selected_assistant_health_proof(health: &Value) -> Option<&Value> {
@@ -2430,6 +2449,47 @@ mod tests {
         assert!(json.contains("\"top_issue_state\": \"missing_required_input\""));
         assert!(json.contains("\"movement_state\": \"unknown\""));
         assert!(!json.contains("\"top_issue_state\": \"already_improved\""));
+        Ok(())
+    }
+
+    #[test]
+    fn assistant_health_movement_does_not_require_coverage_frontier() -> Result<(), String> {
+        let repo_root = repo_root()?;
+        let inputs = serde_json::json!({
+            "assistant_health": "fixtures/boundary_gap/expected/assistant-loop-health/unchanged/assistant-loop-health.json"
+        });
+        let expected_md_path = repo_root.join(
+            "fixtures/boundary_gap/expected/pr-review-front-panel/mixed-health/pr-review-front-panel.md",
+        );
+        let input = fixture_input(&repo_root, &inputs, &expected_md_path)?;
+
+        let json = render_pr_review_front_panel_json(&build_pr_review_front_panel_report(input))?;
+        assert!(json.contains("\"top_issue_state\": \"unchanged_after_attempt\""));
+        assert!(json.contains("\"movement_state\": \"unchanged\""));
+        Ok(())
+    }
+
+    #[test]
+    fn selected_proof_rejects_receipt_status_from_another_seam() -> Result<(), String> {
+        let repo_root = repo_root()?;
+        let inputs = serde_json::json!({
+            "assistant_health": "fixtures/boundary_gap/expected/assistant-loop-health/unchanged/assistant-loop-health.json",
+            "receipt": "mismatched-receipt.json"
+        });
+        let expected_md_path = repo_root.join(
+            "fixtures/boundary_gap/expected/pr-review-front-panel/mixed-health/pr-review-front-panel.md",
+        );
+        let mut input = fixture_input(&repo_root, &inputs, &expected_md_path)?;
+        input.receipt_json = Some(Ok(serde_json::json!({
+            "provenance": {"seam_id": "different-seam", "movement": "improved"},
+            "seam": {"seam_id": "different-seam", "change": "improved"},
+            "summary": {"receipt_state": "receipt_movement_improved"}
+        })
+        .to_string()));
+
+        let json = render_pr_review_front_panel_json(&build_pr_review_front_panel_report(input))?;
+        assert!(json.contains("\"status\": \"receipt_found\""));
+        assert!(!json.contains("\"status\": \"receipt_movement_improved\""));
         Ok(())
     }
 
