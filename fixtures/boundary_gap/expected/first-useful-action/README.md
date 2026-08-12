@@ -20,9 +20,11 @@ Files:
   inputs. The repo-exposure files are portable normalized goldens of the real
   `ripr check --root fixtures/boundary_gap/input --format repo-exposure-json`
   output: the corpus test requires the producer to emit the canonical absolute
-  fixture root before normalizing root, revision, and worktree currentness for
-  checkout-independent storage. The verify artifact and receipt bind the exact
-  normalized snapshot bytes and their empty evidence delta. They intentionally
+  fixture root before normalizing only root, revision, worktree currentness,
+  and the corresponding content commitment for checkout-independent storage.
+  The full semantic `evidence_record` is retained and protected by the
+  canonical placeholder-hash algorithm. The verify artifact and receipt bind
+  the exact normalized snapshot bytes and their empty evidence delta. They intentionally
   remain weak/unchanged when the canonical boundary-gap journey advances to
   improved evidence.
 

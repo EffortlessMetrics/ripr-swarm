@@ -597,20 +597,47 @@ fn normalize_unchanged_repo_exposure_producer_fixture(
     let input_identity = json_pointer_str(&value, "/artifact/analysis/input_identity")?;
     value["artifact"]["snapshot_identity"] =
         serde_json::json!(format!("snapshot:{input_identity};revision:{stable_head}"));
-    value["artifact"]["content_sha256"] = serde_json::json!(
-        "sha256:5b10707b74e31da83fcb706ae11e000b9ece8cc1c25b3b0ee3fcfa597d19c7a5"
+    let mut raw = serde_json::to_string_pretty(&value)?;
+    raw.push('\n');
+    serde_json::from_str(&recommit_repo_exposure_json(raw)).map_err(Into::into)
+}
+
+fn assert_repo_exposure_rejects_mutation(
+    snapshot: &serde_json::Value,
+    mutate: impl FnOnce(&mut serde_json::Value),
+    expected_error: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let name = unique_temp_workspace("unchanged-producer-mutation")
+        .file_name()
+        .ok_or("mutation fixture name should exist")?
+        .to_owned();
+    let root = workspace_root().join("target/ripr").join(name);
+    std::fs::create_dir_all(&root)?;
+    let before = root.join("before.repo-exposure.json");
+    let after = root.join("after.repo-exposure.json");
+    std::fs::write(&before, serde_json::to_string_pretty(snapshot)?)?;
+    let mut mutated = snapshot.clone();
+    mutate(&mut mutated);
+    std::fs::write(&after, serde_json::to_string_pretty(&mutated)?)?;
+    let output = run_ripr_in_workspace(&[
+        "agent",
+        "verify",
+        "--root",
+        ".",
+        "--before",
+        before.to_str().ok_or("before path should be utf-8")?,
+        "--after",
+        after.to_str().ok_or("after path should be utf-8")?,
+        "--json",
+    ])?;
+    assert_failure(&output);
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(
+        stderr.contains(expected_error),
+        "unexpected rejection: {stderr}"
     );
-    if let Some(seams) = value
-        .pointer_mut("/seams")
-        .and_then(serde_json::Value::as_array_mut)
-    {
-        for seam in seams {
-            if let Some(seam) = seam.as_object_mut() {
-                seam.remove("evidence_record");
-            }
-        }
-    }
-    Ok(value)
+    std::fs::remove_dir_all(root)?;
+    Ok(())
 }
 
 #[test]
@@ -2766,6 +2793,46 @@ fn first_useful_action_corpus_pins_routing_cases() -> Result<(), Box<dyn std::er
                 after, normalized_produced,
                 "after snapshot must be the portable normalization of production output"
             );
+            let evidence_record = before
+                .pointer("/seams/0/evidence_record")
+                .ok_or("portable producer fixture must retain evidence_record")?;
+            assert_eq!(
+                json_pointer_str(evidence_record, "/canonical_item/evidence_class")?,
+                "predicate_boundary"
+            );
+            assert_eq!(
+                json_pointer_str(evidence_record, "/canonical_item/gap_state")?,
+                "actionable"
+            );
+            assert_repo_exposure_rejects_mutation(
+                &before,
+                |snapshot| {
+                    if let Some(seam) = snapshot
+                        .pointer_mut("/seams/0")
+                        .and_then(serde_json::Value::as_object_mut)
+                    {
+                        seam.remove("evidence_record");
+                    }
+                },
+                "content commitment mismatch",
+            )?;
+            assert_repo_exposure_rejects_mutation(
+                &before,
+                |snapshot| {
+                    snapshot["seams"][0]["evidence_record"]["canonical_item"]["gap_state"] =
+                        serde_json::json!("suppressed");
+                },
+                "content commitment mismatch",
+            )?;
+            assert_repo_exposure_rejects_mutation(
+                &before,
+                |snapshot| {
+                    snapshot["artifact"]["content_sha256"] = serde_json::json!(
+                        "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                    );
+                },
+                "content commitment mismatch",
+            )?;
             let seam_class =
                 |snapshot: &serde_json::Value| -> Result<String, Box<dyn std::error::Error>> {
                     snapshot

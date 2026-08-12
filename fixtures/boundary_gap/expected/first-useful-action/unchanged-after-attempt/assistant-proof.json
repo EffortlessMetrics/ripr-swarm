@@ -15,14 +15,14 @@
   },
   "seam": {
     "seam_id": "67fc764ba37d77bd",
-    "canonical_gap_id": null,
+    "canonical_gap_id": "gap:4b5fdc1a2a157b0d",
     "owner": "src/lib.rs::discounted_total",
     "seam_kind": "predicate_boundary",
     "path": "src/lib.rs",
     "line": 2,
     "grip_class": "weakly_gripped",
     "missing_discriminator": "discount_threshold (equality boundary)",
-    "evidence_source": "legacy_fields",
+    "evidence_source": "evidence_record",
     "static_limitations": []
   },
   "recommendation": {

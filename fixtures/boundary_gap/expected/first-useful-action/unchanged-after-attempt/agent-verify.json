@@ -3,9 +3,9 @@
   "changed_seams": [],
   "inputs": {
     "after": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json",
-    "after_content_sha256": "sha256:5b10707b74e31da83fcb706ae11e000b9ece8cc1c25b3b0ee3fcfa597d19c7a5",
+    "after_content_sha256": "sha256:08de7297bad6134b789f1e7e027c252bd23b2103783172cedd7789cb87c86403",
     "before": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json",
-    "before_content_sha256": "sha256:5b10707b74e31da83fcb706ae11e000b9ece8cc1c25b3b0ee3fcfa597d19c7a5"
+    "before_content_sha256": "sha256:08de7297bad6134b789f1e7e027c252bd23b2103783172cedd7789cb87c86403"
   },
   "new_gaps": [],
   "resolved_gaps": [],
@@ -38,13 +38,13 @@
       "change": "unchanged",
       "discriminate_delta": null,
       "evidence_delta": [],
-      "evidence_source": "legacy_fields",
+      "evidence_source": "evidence_record",
       "file": "src/lib.rs",
       "gap_movement": "unchanged",
       "line": 2,
       "missing_discriminators_reopened": [],
       "missing_discriminators_resolved": [],
-      "no_movement_reason": "grip class and legacy_fields evidence were unchanged",
+      "no_movement_reason": "grip class and evidence_record evidence were unchanged",
       "observe_delta": null,
       "observed_values_added": [],
       "observed_values_removed": [],
