@@ -4596,6 +4596,7 @@ fn write_pr_review_front_panel_corpus(
         "blocked",
         "missing_proof",
         "coverage_flat_grip_improved",
+        "stale_same_path_receipt_fails_closed",
     ]
     .into_iter()
     .map(|id| {
@@ -5228,6 +5229,63 @@ fn pr_review_front_panel_fixture_corpus_guard_reports_contract_drift() -> Result
     assert!(report.contains("Markdown must use the PR review heading"));
     assert!(report.contains("Markdown must pin status blocked"));
     assert!(report.contains("blocked Markdown must name gate authority"));
+    Ok(())
+}
+
+#[test]
+fn pr_review_front_panel_fixture_corpus_guard_rejects_stale_case_removal() -> Result<(), String> {
+    let root = temp_dir("pr-review-front-panel-stale-case-removal");
+    let base = root.join("pr-review-front-panel");
+    let report = root.join("pr-review-front-panel.json");
+    let markdown = root.join("pr-review-front-panel.md");
+    write_pr_review_front_panel_corpus(&base, &report, &markdown, "advisory", 0);
+    write(
+        &report,
+        r#"{
+  "kind": "pr_review_front_panel",
+  "status": "advisory",
+  "summary": {
+    "top_issue_state": "actionable",
+    "policy_state": "new_policy_eligible",
+    "placement": "changed_line",
+    "movement_state": "unknown",
+    "coverage_grip_state": "not_available",
+    "new_policy_eligible": 1,
+    "baseline_resolved": 0,
+    "blocking_candidates": 0,
+    "warnings": 0
+  },
+  "artifacts": [{"group": "start_here"}],
+  "limits": ["Static RIPR evidence only."]
+}
+"#,
+    );
+    write(&markdown, "# RIPR PR Review\n\nStatus: advisory\n");
+
+    let corpus_path = base.join("corpus.json");
+    let corpus_text = fs::read_to_string(&corpus_path)
+        .map_err(|err| format!("read temporary front-panel corpus failed: {err}"))?;
+    let mut corpus: serde_json::Value = serde_json::from_str(&corpus_text)
+        .map_err(|err| format!("parse temporary front-panel corpus failed: {err}"))?;
+    corpus["cases"]
+        .as_array_mut()
+        .ok_or_else(|| "temporary front-panel corpus cases missing".to_string())?
+        .retain(|case| {
+            case.get("id").and_then(serde_json::Value::as_str)
+                != Some("stale_same_path_receipt_fails_closed")
+        });
+    write(
+        &corpus_path,
+        &serde_json::to_string_pretty(&corpus)
+            .map_err(|err| format!("render temporary front-panel corpus failed: {err}"))?,
+    );
+
+    let mut violations = Vec::new();
+    super::validate_pr_review_front_panel_fixture_corpus_at(&base, &mut violations)?;
+    assert_contains_error(
+        &violations,
+        "corpus is missing required case stale_same_path_receipt_fails_closed",
+    );
     Ok(())
 }
 

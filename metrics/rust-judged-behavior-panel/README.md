@@ -45,6 +45,13 @@ A subsequent execution PR must materialize exact repositories, source/test
 artifacts, RIPR binary/config identities, and current output before any label is
 populated.
 
+`cargo xtask rust-judged-panel check` is the retained semantic guard for this
+seed. It validates the typed manifest contract, selected directions, explicit
+null-as-unjudged state, and exact Rust-token anchors on added diff lines. The
+same checker is reached by required precommit policy. Passing it establishes
+only that the selected seed is internally coherent; it does not establish an
+analyzer result, replay identity, judgment, rate, or support claim.
+
 ## Item contract
 
 Each `items[]` row carries:
