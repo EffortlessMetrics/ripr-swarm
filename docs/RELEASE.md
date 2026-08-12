@@ -190,9 +190,10 @@ before/after receipt paths are proved when a valid route exists. The governed
 real-repository corpus currently has zero eligible attempts, so release copy
 must not imply measured route yield or ordinary-user success. Run `cargo xtask
 rust-repair-trust-report` and `cargo xtask check-support-tiers`; the latter
-rejects an unqualified `usable` claim until the canonical report has its full
-eligible-attempt denominator and at least one real `improved` or `closed`
-attempt.
+requires the unique canonical row and hard-caps it at `usable alpha` until one
+promotion decision covers both the full governed corpus and the installed
+CLI/packaged VS Code pilot (#3076 and #1702). A complete report with real
+movement cannot promote the release claim by itself.
 
 ### Crate tarball contents
 

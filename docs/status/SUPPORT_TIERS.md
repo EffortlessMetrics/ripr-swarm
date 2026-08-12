@@ -122,11 +122,13 @@ must show all of the following:
   broad Rust gap-repair loop. Broad `usable` support must not exceed the full
   governed corpus without an explicit narrower boundary.
 
-`cargo xtask check-support-tiers` mechanically rejects an unqualified `usable`
-row while the canonical report is incomplete, below its required eligible
-attempt count, or contains no real `improved` or `closed` attempt. Passing that
-guard establishes only the minimum evidence precondition; it does not make the
-promotion decision automatically.
+`cargo xtask check-support-tiers` requires exactly one row with the canonical
+`Rust gap repair loop` identity and hard-caps it at `usable alpha`. Missing,
+renamed, duplicate, `usable`, and `stable building block` rows fail closed. The
+cap remains until one canonical promotion decision covers both the full
+governed corpus (#3076) and the installed CLI/packaged VS Code pilot (#1702).
+Even a complete trust report with real `improved` or `closed` movement is
+necessary evidence, not sufficient promotion authority by itself.
 
 ## Trust Boundaries
 

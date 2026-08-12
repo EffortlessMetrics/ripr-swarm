@@ -11997,6 +11997,7 @@ const DOC_ARTIFACT_LEDGER: &str = "policy/doc-artifacts.toml";
 const DOC_ARTIFACT_SCHEMA_VERSION: &str = "1.0";
 const SUPPORT_TIERS_PATH: &str = "docs/status/SUPPORT_TIERS.md";
 const RUST_REPAIR_TRUST_CORPUS_PATH: &str = "metrics/rust-repair-trust/corpus.json";
+const RUST_GAP_REPAIR_CAPABILITY: &str = "Rust gap repair loop";
 const DOC_ARTIFACT_KINDS: &[&str] = &[
     "adr",
     "closeout",
@@ -12603,37 +12604,60 @@ fn validate_rust_gap_repair_support_tier(
     rows: &[SupportTierRow],
     violations: &mut Vec<String>,
 ) {
-    let Some(row) = rows
+    let matching_rows = rows
         .iter()
-        .find(|row| row.capability.trim() == "Rust gap repair loop")
-    else {
-        return;
-    };
-    if normalized_support_tier(&row.tier) != "usable" {
-        return;
-    }
-
-    let corpus_path = root.join(RUST_REPAIR_TRUST_CORPUS_PATH);
-    let report = match rust_repair_trust_report_value_at(&corpus_path) {
-        Ok(report) => report,
-        Err(error) => {
+        .filter(|row| row.capability.trim() == RUST_GAP_REPAIR_CAPABILITY)
+        .collect::<Vec<_>>();
+    let row = match matching_rows.as_slice() {
+        [] => {
             violations.push(format!(
-                "{display}:{} support-tier row `Rust gap repair loop` cannot claim `usable`: governed evidence at `{RUST_REPAIR_TRUST_CORPUS_PATH}` is unavailable ({error})",
-                row.line
+                "{display} must contain exactly one canonical support-tier row named `{RUST_GAP_REPAIR_CAPABILITY}`; the row is missing or renamed"
+            ));
+            return;
+        }
+        [row] => *row,
+        duplicates => {
+            let lines = duplicates
+                .iter()
+                .map(|row| row.line.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            violations.push(format!(
+                "{display} must contain exactly one canonical support-tier row named `{RUST_GAP_REPAIR_CAPABILITY}`; found {} rows on lines {lines}",
+                duplicates.len()
             ));
             return;
         }
     };
 
-    if let Some(reason) = rust_gap_repair_usable_evidence_violation(&report) {
+    let tier = normalized_support_tier(&row.tier);
+    let corpus_path = root.join(RUST_REPAIR_TRUST_CORPUS_PATH);
+    let report = rust_repair_trust_report_value_at(&corpus_path).ok();
+    if let Some(reason) = rust_gap_repair_interim_cap_violation(&tier, report.as_ref()) {
         violations.push(format!(
-            "{display}:{} support-tier row `Rust gap repair loop` cannot claim `usable`: {reason}; keep `usable alpha` until the governed real-repository promotion evidence is complete",
+            "{display}:{} support-tier row `{RUST_GAP_REPAIR_CAPABILITY}` cannot claim `{tier}`: {reason}",
             row.line
         ));
     }
 }
 
-fn rust_gap_repair_usable_evidence_violation(report: &serde_json::Value) -> Option<String> {
+fn rust_gap_repair_interim_cap_violation(
+    tier: &str,
+    report: Option<&serde_json::Value>,
+) -> Option<String> {
+    if !matches!(tier, "usable" | "stable building block") {
+        return None;
+    }
+    let report_context = rust_gap_repair_report_context(report);
+    Some(format!(
+        "`{tier}` exceeds the interim `usable alpha` cap; {report_context}, but the trust report alone is not promotion authority; keep `usable alpha` until one canonical promotion decision covers the full governed corpus (#3076) and the installed CLI/packaged VS Code pilot (#1702)"
+    ))
+}
+
+fn rust_gap_repair_report_context(report: Option<&serde_json::Value>) -> String {
+    let Some(report) = report else {
+        return format!("governed evidence at `{RUST_REPAIR_TRUST_CORPUS_PATH}` is unavailable");
+    };
     let status = report
         .get("status")
         .and_then(serde_json::Value::as_str)
@@ -12642,10 +12666,6 @@ fn rust_gap_repair_usable_evidence_violation(report: &serde_json::Value) -> Opti
         .get("eligible_attempt_count")
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(0);
-    let minimum_attempts = report
-        .pointer("/requirements/minimum_attempts")
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or(20);
     let improved = report
         .pointer("/movement_counts/improved")
         .and_then(serde_json::Value::as_u64)
@@ -12654,19 +12674,9 @@ fn rust_gap_repair_usable_evidence_violation(report: &serde_json::Value) -> Opti
         .pointer("/movement_counts/closed")
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(0);
-
-    if status != "complete" || eligible_attempts < minimum_attempts {
-        return Some(format!(
-            "the canonical Rust repair trust report is `{status}` with {eligible_attempts} eligible attempt(s), below the required {minimum_attempts}"
-        ));
-    }
-    if improved + closed == 0 {
-        return Some(
-            "the canonical Rust repair trust report contains no real `improved` or `closed` attempt"
-                .to_string(),
-        );
-    }
-    None
+    format!(
+        "the canonical Rust repair trust report is `{status}` with {eligible_attempts} eligible, {improved} improved, and {closed} closed attempt(s)"
+    )
 }
 
 fn support_tier_rows(text: &str, display: &str) -> Result<Vec<SupportTierRow>, String> {

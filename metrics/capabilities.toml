@@ -52,7 +52,7 @@ evidence = [
   "installed package and VS Code journeys prove the transaction surfaces when a valid route exists",
   "metrics/rust-repair-trust/corpus.json is the governed real-repository authority and currently contains zero eligible attempts",
   "cargo xtask rust-repair-trust-report preserves the zero denominator and reports limited_incomplete_input instead of inventing route-yield or success rates",
-  "cargo xtask check-support-tiers rejects an unqualified usable claim until the governed trust report is complete and includes at least one real improved or closed attempt",
+  "cargo xtask check-support-tiers requires one canonical Rust gap repair row and hard-caps it at usable alpha until one promotion decision covers the full governed corpus and installed CLI/packaged VS Code pilot; a complete trust report with real movement cannot promote by itself",
   "docs/status/SUPPORT_TIERS.md keeps static movement, focused verification, receipts, runtime mutation, and broad real-repository usefulness as separate claims"
 ]
 fixtures = [

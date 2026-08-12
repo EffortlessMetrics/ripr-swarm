@@ -151,9 +151,11 @@ are scoped or reviewed.
   packet, and before/after receipt proof remains intact, but the governed
   real-repository corpus currently contains zero eligible attempts, so route
   yield and ordinary-user success are not established. `cargo xtask
-  check-support-tiers` now rejects restoring `usable` until the canonical trust
-  report has its full eligible-attempt denominator and at least one real
-  `improved` or `closed` attempt (#3077).
+  check-support-tiers` now hard-caps the uniquely named canonical row at
+  `usable alpha` until one promotion decision covers both the full governed
+  corpus and the installed CLI/packaged VS Code pilot. A complete trust report
+  with real movement is necessary evidence, but cannot promote the claim by
+  itself (#3077).
 
 - The default diagnostic severity for `exposed` findings has been raised from
   `info` to `warning`. Previously, the strongest classification (`exposed`)
