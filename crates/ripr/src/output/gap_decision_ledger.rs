@@ -1589,7 +1589,7 @@ fn attach_check_output_preview_receipt_routes(records: &mut [GapRecord], root: &
         if !matches!(record.language.as_str(), "python" | "typescript")
             || record.language_status != "preview"
             || record.repairability != "repairable"
-            || !projection_eligible(record, "agent_packet")
+            || (record.language == "python" && !projection_eligible(record, "agent_packet"))
         {
             continue;
         }
