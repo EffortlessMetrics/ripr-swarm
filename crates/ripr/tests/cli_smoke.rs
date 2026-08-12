@@ -575,6 +575,71 @@ fn normalize_agent_receipt_fixture(text: &str) -> Result<String, Box<dyn std::er
     Ok(rendered)
 }
 
+fn normalize_unchanged_repo_exposure_producer_fixture(
+    mut value: serde_json::Value,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let fixture_root = workspace_root().join("fixtures/boundary_gap/input");
+    let canonical_root = fixture_root
+        .canonicalize()?
+        .to_string_lossy()
+        .replace('\\', "/");
+    let produced_root = json_pointer_str(&value, "/artifact/repository/root")?;
+    assert_ne!(
+        produced_root, ".",
+        "the production repo-exposure route must emit a canonical absolute root"
+    );
+    assert_eq!(produced_root, canonical_root);
+
+    let stable_head = "8a00693e680c8ad5172d5191bbb08484cbd5e300";
+    value["artifact"]["repository"]["root"] = serde_json::json!(".");
+    value["artifact"]["repository"]["head"] = serde_json::json!(stable_head);
+    value["artifact"]["analysis"]["worktree"] = serde_json::json!("dirty");
+    let input_identity = json_pointer_str(&value, "/artifact/analysis/input_identity")?;
+    value["artifact"]["snapshot_identity"] =
+        serde_json::json!(format!("snapshot:{input_identity};revision:{stable_head}"));
+    let mut raw = serde_json::to_string_pretty(&value)?;
+    raw.push('\n');
+    serde_json::from_str(&recommit_repo_exposure_json(raw)).map_err(Into::into)
+}
+
+fn assert_repo_exposure_rejects_mutation(
+    snapshot: &serde_json::Value,
+    mutate: impl FnOnce(&mut serde_json::Value),
+    expected_error: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let name = unique_temp_workspace("unchanged-producer-mutation")
+        .file_name()
+        .ok_or("mutation fixture name should exist")?
+        .to_owned();
+    let root = workspace_root().join("target/ripr").join(name);
+    std::fs::create_dir_all(&root)?;
+    let before = root.join("before.repo-exposure.json");
+    let after = root.join("after.repo-exposure.json");
+    std::fs::write(&before, serde_json::to_string_pretty(snapshot)?)?;
+    let mut mutated = snapshot.clone();
+    mutate(&mut mutated);
+    std::fs::write(&after, serde_json::to_string_pretty(&mutated)?)?;
+    let output = run_ripr_in_workspace(&[
+        "agent",
+        "verify",
+        "--root",
+        ".",
+        "--before",
+        before.to_str().ok_or("before path should be utf-8")?,
+        "--after",
+        after.to_str().ok_or("after path should be utf-8")?,
+        "--json",
+    ])?;
+    assert_failure(&output);
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(
+        stderr.contains(expected_error),
+        "unexpected rejection: {stderr}"
+    );
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
 #[test]
 fn normalize_agent_receipt_fixture_rejects_non_object_json() -> Result<(), String> {
     for fixture in ["[]", "null"] {
@@ -1902,6 +1967,51 @@ fn test_oracle_assistant_proof_cli_writes_canonical_report()
 }
 
 #[test]
+fn test_oracle_assistant_proof_cli_writes_unchanged_control()
+-> Result<(), Box<dyn std::error::Error>> {
+    let workspace = unique_temp_workspace("assistant-loop-proof-unchanged");
+    std::fs::create_dir_all(&workspace)?;
+    let out = workspace.join("assistant-proof.json");
+    let out_md = workspace.join("assistant-proof.md");
+    let output = run_ripr_in_workspace(&[
+        "assistant-loop",
+        "proof",
+        "--root",
+        ".",
+        "--pr-guidance",
+        "fixtures/boundary_gap/expected/test-oracle-assistant-loop/canonical/pr-guidance.json",
+        "--agent-packet",
+        "fixtures/boundary_gap/expected/editor-agent-loop/agent-brief.json",
+        "--before",
+        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json",
+        "--after",
+        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json",
+        "--receipt",
+        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-receipt.json",
+        "--out",
+        &out.display().to_string(),
+        "--out-md",
+        &out_md.display().to_string(),
+    ])?;
+    assert_success(&output);
+
+    let expected = workspace_root().join(
+        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/assistant-proof.json",
+    );
+    assert_eq!(
+        normalize_newlines(std::fs::read_to_string(out)?.trim_end()),
+        normalize_newlines(std::fs::read_to_string(expected)?.trim_end()),
+        "unchanged assistant-proof fixture drifted"
+    );
+    let markdown = std::fs::read_to_string(out_md)?;
+    assert!(markdown.contains("After: weakly_gripped"));
+    assert!(markdown.contains("State: unchanged"));
+    assert!(markdown.contains("PR ledger: not available"));
+    std::fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
 fn assistant_loop_health_cli_writes_multi_proof_report() -> Result<(), Box<dyn std::error::Error>> {
     let workspace = unique_temp_workspace("assistant-loop-health");
     std::fs::create_dir_all(&workspace)?;
@@ -2000,6 +2110,50 @@ fn first_action_cli_writes_actionable_report() -> Result<(), Box<dyn std::error:
     assert!(markdown.contains("Status: actionable"));
     assert!(markdown.contains("Action: write_focused_test"));
     assert!(markdown.contains("Does not run mutation testing."));
+    std::fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
+fn first_action_cli_preserves_unchanged_control_identity() -> Result<(), Box<dyn std::error::Error>>
+{
+    let workspace = unique_temp_workspace("first-action-unchanged");
+    std::fs::create_dir_all(&workspace)?;
+    let out = workspace.join("first-useful-action.json");
+    let out_md = workspace.join("first-useful-action.md");
+    let output = run_ripr_in_workspace(&[
+        "first-action",
+        "--root",
+        "fixtures/boundary_gap/input",
+        "--pr-guidance",
+        "fixtures/boundary_gap/expected/test-oracle-assistant-loop/canonical/pr-guidance.json",
+        "--assistant-proof",
+        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/assistant-proof.json",
+        "--receipt",
+        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-receipt.json",
+        "--out",
+        &out.display().to_string(),
+        "--out-md",
+        &out_md.display().to_string(),
+    ])?;
+    assert_success(&output);
+
+    let fixture = workspace_root()
+        .join("fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt");
+    assert_eq!(
+        normalize_generated_at(normalize_newlines(std::fs::read_to_string(out)?.trim_end(),)),
+        normalize_newlines(
+            std::fs::read_to_string(fixture.join("first-useful-action.json"))?.trim_end(),
+        ),
+        "unchanged first-action JSON fixture drifted"
+    );
+    assert_eq!(
+        normalize_newlines(&std::fs::read_to_string(out_md)?),
+        normalize_newlines(&std::fs::read_to_string(
+            fixture.join("first-useful-action.md"),
+        )?),
+        "unchanged first-action Markdown fixture drifted"
+    );
     std::fs::remove_dir_all(workspace)?;
     Ok(())
 }
@@ -2577,6 +2731,223 @@ fn first_useful_action_corpus_pins_routing_cases() -> Result<(), Box<dyn std::er
             action_kind
         );
 
+        let unchanged_control = if case_id == "unchanged_after_attempt" {
+            let proof_artifact = json_pointer_str(case, "/inputs/assistant_proof/artifact")?;
+            let receipt_artifact = json_pointer_str(case, "/inputs/receipt/artifact")?;
+            assert_eq!(
+                proof_artifact,
+                "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/assistant-proof.json"
+            );
+            assert_eq!(
+                receipt_artifact,
+                "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-receipt.json"
+            );
+
+            let proof: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+                workspace_root().join(proof_artifact),
+            )?)?;
+            let receipt: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+                workspace_root().join(receipt_artifact),
+            )?)?;
+            assert_eq!(
+                json_pointer_str(&proof, "/evidence_movement/state")?,
+                "unchanged"
+            );
+            assert_eq!(
+                json_pointer_str(&proof, "/evidence_movement/after_class")?,
+                "weakly_gripped"
+            );
+            let before_artifact = json_pointer_str(&proof, "/inputs/before")?;
+            let after_artifact = json_pointer_str(&proof, "/inputs/after")?;
+            assert_eq!(
+                before_artifact,
+                "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json"
+            );
+            assert_eq!(
+                after_artifact,
+                "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json"
+            );
+            let before: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+                workspace_root().join(before_artifact),
+            )?)?;
+            let after: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+                workspace_root().join(after_artifact),
+            )?)?;
+            let before_bytes = std::fs::read(workspace_root().join(before_artifact))?;
+            let after_bytes = std::fs::read(workspace_root().join(after_artifact))?;
+            let produced = run_ripr_in_workspace(&[
+                "check",
+                "--root",
+                "fixtures/boundary_gap/input",
+                "--format",
+                "repo-exposure-json",
+            ])?;
+            assert_success(&produced);
+            let produced: serde_json::Value = serde_json::from_slice(&produced.stdout)?;
+            let normalized_produced = normalize_unchanged_repo_exposure_producer_fixture(produced)?;
+            assert_eq!(
+                before, normalized_produced,
+                "before snapshot must be the portable normalization of production output"
+            );
+            assert_eq!(
+                after, normalized_produced,
+                "after snapshot must be the portable normalization of production output"
+            );
+            let evidence_record = before
+                .pointer("/seams/0/evidence_record")
+                .ok_or("portable producer fixture must retain evidence_record")?;
+            assert_eq!(
+                json_pointer_str(evidence_record, "/canonical_item/evidence_class")?,
+                "predicate_boundary"
+            );
+            assert_eq!(
+                json_pointer_str(evidence_record, "/canonical_item/gap_state")?,
+                "actionable"
+            );
+            assert_repo_exposure_rejects_mutation(
+                &before,
+                |snapshot| {
+                    if let Some(seam) = snapshot
+                        .pointer_mut("/seams/0")
+                        .and_then(serde_json::Value::as_object_mut)
+                    {
+                        seam.remove("evidence_record");
+                    }
+                },
+                "content commitment mismatch",
+            )?;
+            assert_repo_exposure_rejects_mutation(
+                &before,
+                |snapshot| {
+                    snapshot["seams"][0]["evidence_record"]["canonical_item"]["gap_state"] =
+                        serde_json::json!("suppressed");
+                },
+                "content commitment mismatch",
+            )?;
+            assert_repo_exposure_rejects_mutation(
+                &before,
+                |snapshot| {
+                    snapshot["artifact"]["content_sha256"] = serde_json::json!(
+                        "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                    );
+                },
+                "content commitment mismatch",
+            )?;
+            let seam_class =
+                |snapshot: &serde_json::Value| -> Result<String, Box<dyn std::error::Error>> {
+                    snapshot
+                        .pointer("/seams")
+                        .and_then(serde_json::Value::as_array)
+                        .and_then(|seams| {
+                            seams.iter().find(|seam| {
+                                seam.pointer("/seam_id").and_then(serde_json::Value::as_str)
+                                    == Some("67fc764ba37d77bd")
+                            })
+                        })
+                        .and_then(|seam| seam.pointer("/grip_class"))
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string)
+                        .ok_or_else(|| "target seam must have a grip_class".into())
+                };
+            let before_class = seam_class(&before)?;
+            let after_class = seam_class(&after)?;
+            assert_eq!(before_class, "weakly_gripped");
+            assert_eq!(after_class, "weakly_gripped");
+            assert_eq!(
+                before_class, after_class,
+                "scenario snapshots must derive unchanged movement"
+            );
+            assert_eq!(
+                json_pointer_str(&proof, "/evidence_movement/before_class")?,
+                &before_class
+            );
+            assert_eq!(
+                json_pointer_str(&proof, "/evidence_movement/after_class")?,
+                &after_class
+            );
+            assert!(
+                proof
+                    .pointer("/inputs/ledger")
+                    .is_some_and(serde_json::Value::is_null)
+            );
+            assert!(
+                proof
+                    .pointer("/ci_projection/ledger")
+                    .is_some_and(serde_json::Value::is_null)
+            );
+            assert_eq!(json_pointer_str(&receipt, "/seam/change")?, "unchanged");
+            assert_eq!(json_pointer_str(&receipt, "/seam/after")?, "weakly_gripped");
+            assert_eq!(json_pointer_str(&receipt, "/seam/before")?, before_class);
+            assert_eq!(json_pointer_str(&receipt, "/seam/after")?, after_class);
+            assert_eq!(
+                json_pointer_str(&receipt, "/provenance/before_artifact/path")?,
+                before_artifact
+            );
+            assert_eq!(
+                json_pointer_str(&receipt, "/provenance/after_artifact/path")?,
+                after_artifact
+            );
+            assert_eq!(
+                json_pointer_str(&receipt, "/provenance/before_artifact/sha256")?,
+                sha256_hex_bytes(&before_bytes)
+            );
+            assert_eq!(
+                json_pointer_str(&receipt, "/provenance/after_artifact/sha256")?,
+                sha256_hex_bytes(&after_bytes)
+            );
+            let verify_artifact = json_pointer_str(&receipt, "/inputs/agent_verify_json")?;
+            let verify_bytes = std::fs::read(workspace_root().join(verify_artifact))?;
+            let verify: serde_json::Value = serde_json::from_slice(&verify_bytes)?;
+            assert_eq!(
+                json_pointer_str(&receipt, "/provenance/verify_artifact/path")?,
+                verify_artifact
+            );
+            assert_eq!(
+                json_pointer_str(&receipt, "/provenance/verify_artifact/sha256")?,
+                sha256_hex_bytes(&verify_bytes)
+            );
+            assert_eq!(
+                json_pointer_str(&verify, "/inputs/before")?,
+                before_artifact
+            );
+            assert_eq!(json_pointer_str(&verify, "/inputs/after")?, after_artifact);
+            assert_eq!(
+                json_pointer_str(&verify, "/inputs/before_content_sha256")?,
+                json_pointer_str(&before, "/artifact/content_sha256")?
+            );
+            assert_eq!(
+                json_pointer_str(&verify, "/inputs/after_content_sha256")?,
+                json_pointer_str(&after, "/artifact/content_sha256")?
+            );
+            assert_eq!(
+                json_pointer_str(&verify, "/unchanged_seams/0/change")?,
+                "unchanged"
+            );
+            assert_eq!(
+                json_pointer_str(&verify, "/unchanged_seams/0/gap_movement")?,
+                "unchanged"
+            );
+            assert_eq!(
+                verify.pointer("/unchanged_seams/0/observed_values_added"),
+                Some(&serde_json::json!([]))
+            );
+            assert_eq!(
+                verify.pointer("/unchanged_seams/0/observed_values_removed"),
+                Some(&serde_json::json!([]))
+            );
+            assert_eq!(
+                verify.pointer("/unchanged_seams/0/related_test_delta"),
+                Some(&serde_json::json!(0))
+            );
+            assert_eq!(
+                receipt.pointer("/seam/evidence_delta"),
+                verify.pointer("/unchanged_seams/0/evidence_delta")
+            );
+            Some((proof_artifact, receipt_artifact))
+        } else {
+            None
+        };
+
         let report_path = fixture_dir.join(case_dir).join("first-useful-action.json");
         let markdown_path = fixture_dir.join(case_dir).join("first-useful-action.md");
         let report: serde_json::Value =
@@ -2586,6 +2957,39 @@ fn first_useful_action_corpus_pins_routing_cases() -> Result<(), Box<dyn std::er
         assert_eq!(json_pointer_str(&report, "/kind")?, "first_useful_action");
         assert_eq!(json_pointer_str(&report, "/status")?, status);
         assert_eq!(json_pointer_str(&report, "/action_kind")?, action_kind);
+
+        if let Some((proof_artifact, receipt_artifact)) = unchanged_control {
+            assert_eq!(
+                json_pointer_str(&report, "/inputs/assistant_proof")?,
+                proof_artifact
+            );
+            assert_eq!(
+                json_pointer_str(&report, "/inputs/receipt")?,
+                receipt_artifact
+            );
+            assert!(
+                report
+                    .pointer("/inputs/ledger")
+                    .is_some_and(serde_json::Value::is_null)
+            );
+            assert_eq!(
+                json_pointer_str(&report, "/evidence/assistant_proof")?,
+                proof_artifact
+            );
+            assert_eq!(
+                json_pointer_str(&report, "/evidence/receipt")?,
+                receipt_artifact
+            );
+            assert!(
+                report
+                    .pointer("/evidence/ledger")
+                    .is_some_and(serde_json::Value::is_null)
+            );
+            assert_eq!(
+                json_pointer_str(&report, "/evidence/static_movement")?,
+                "unchanged"
+            );
+        }
         assert_eq!(
             json_pointer_str(&report, "/generated_at")?,
             "2026-05-09T12:00:00Z"

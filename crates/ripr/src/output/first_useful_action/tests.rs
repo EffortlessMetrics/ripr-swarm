@@ -7,8 +7,9 @@ use std::path::Path;
 fn first_useful_action_matches_actionable_fixture() -> Result<(), String> {
     let repo_root = repo_root()?;
     let base = repo_root.join("fixtures/boundary_gap/expected/first-useful-action/actionable");
-    let proof = repo_root
-            .join("fixtures/boundary_gap/expected/test-oracle-assistant-loop/canonical/test-oracle-assistant-proof.json");
+    let proof = repo_root.join(
+        "fixtures/boundary_gap/expected/test-oracle-assistant-loop/canonical/test-oracle-assistant-proof.json",
+    );
     let pr_guidance = repo_root.join(
         "fixtures/boundary_gap/expected/test-oracle-assistant-loop/canonical/pr-guidance.json",
     );
@@ -53,13 +54,10 @@ fn first_useful_action_matches_unchanged_after_attempt_fixture() -> Result<(), S
     let repo_root = repo_root()?;
     let base = repo_root
         .join("fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt");
-    let proof = repo_root
-            .join("fixtures/boundary_gap/expected/test-oracle-assistant-loop/canonical/test-oracle-assistant-proof.json");
+    let proof = base.join("assistant-proof.json");
     let pr_guidance = repo_root.join(
         "fixtures/boundary_gap/expected/test-oracle-assistant-loop/canonical/pr-guidance.json",
     );
-    let ledger =
-            repo_root.join("fixtures/boundary_gap/expected/test-oracle-assistant-loop/canonical/pr-evidence-ledger.json");
     let receipt = base.join("agent-receipt.json");
     let report = build_first_useful_action_report(FirstUsefulActionInput {
         root: "fixtures/boundary_gap/input".to_string(),
@@ -67,7 +65,7 @@ fn first_useful_action_matches_unchanged_after_attempt_fixture() -> Result<(), S
         pr_guidance_path: Some(fixture_path(&repo_root, &pr_guidance)),
         assistant_proof_path: Some(fixture_path(&repo_root, &proof)),
         gap_ledger_path: None,
-        ledger_path: Some(fixture_path(&repo_root, &ledger)),
+        ledger_path: None,
         baseline_delta_path: None,
         receipt_path: Some(fixture_path(&repo_root, &receipt)),
         gate_decision_path: None,
@@ -76,7 +74,7 @@ fn first_useful_action_matches_unchanged_after_attempt_fixture() -> Result<(), S
         pr_guidance_json: Some(Ok(read_file(&pr_guidance)?)),
         assistant_proof_json: Some(Ok(read_file(&proof)?)),
         gap_ledger_json: None,
-        ledger_json: Some(Ok(read_file(&ledger)?)),
+        ledger_json: None,
         baseline_delta_json: None,
         receipt_json: Some(Ok(read_file(&receipt)?)),
         gate_decision_json: None,
