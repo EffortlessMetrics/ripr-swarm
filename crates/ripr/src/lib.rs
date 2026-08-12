@@ -55,6 +55,16 @@
 // deliberately carry the contract.
 mod analysis_outcome;
 mod atomic_file;
+// Staged RepairAttempt edit-cage contract. #3163 connects the repository
+// baseline/delta producer before any public receipt projection consumes it.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "staged internal contract; #3163 connects the RepairAttempt delta producer before receipt projection"
+    )
+)]
+mod edit_cage;
 // Shared internal repair-guidance availability vocabulary for the agent packet
 // children under #2830. The public Rust API remains unchanged until those
 // consumers adopt and deliberately expose the contract.

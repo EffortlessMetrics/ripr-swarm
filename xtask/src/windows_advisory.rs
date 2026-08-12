@@ -1012,6 +1012,161 @@ mod tests {
     }
 
     #[test]
+    fn packaged_qualification_cli_helper_preserves_arguments() -> Result<(), String> {
+        let workflow = include_str!("../../.github/workflows/windows-packaged-qualification.yml");
+        let helper = workflow
+            .lines()
+            .find(|line| line.trim_start().starts_with("function Invoke-CLI"))
+            .ok_or_else(|| "workflow must define the packaged CLI helper".to_string())?;
+        if !helper.contains("[string[]]$cliArgs") {
+            return Err("packaged CLI helper must use a named argument parameter".to_string());
+        }
+        if helper.contains("$args") {
+            return Err(
+                "packaged CLI helper must not shadow PowerShell's automatic $args".to_string(),
+            );
+        }
+        for required in [
+            "if ($null -eq $cliArgs -or $cliArgs.Count -eq 0)",
+            "throw \"packaged CLI $name requires arguments\"",
+            "& $env:RIPR_PACKAGED @cliArgs",
+        ] {
+            if !helper.contains(required) {
+                return Err(format!("Invoke-CLI must contain {required:?}"));
+            }
+        }
+        let guard = helper
+            .find("if ($null -eq $cliArgs -or $cliArgs.Count -eq 0)")
+            .ok_or_else(|| "Invoke-CLI must guard empty arguments".to_string())?;
+        let invocation = helper
+            .find("& $env:RIPR_PACKAGED @cliArgs")
+            .ok_or_else(|| "Invoke-CLI must forward arguments".to_string())?;
+        if guard > invocation {
+            return Err("Invoke-CLI must validate arguments before invocation".to_string());
+        }
+        for required in [
+            "Invoke-CLI 'version' @('--version')",
+            "packaged --version did not report the package version",
+        ] {
+            if !workflow.contains(required) {
+                return Err(format!(
+                    "packaged CLI qualification must contain {required:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn packaged_qualification_journey_matches_cli_contract() -> Result<(), String> {
+        let workflow = include_str!("../../.github/workflows/windows-packaged-qualification.yml");
+        let explain = workflow
+            .lines()
+            .find(|line| line.contains("Invoke-CLI 'explain'"))
+            .ok_or_else(|| "workflow must run the packaged explain journey".to_string())?;
+        let context = workflow
+            .lines()
+            .find(|line| line.contains("Invoke-CLI 'context'"))
+            .ok_or_else(|| "workflow must run the packaged context journey".to_string())?;
+        let pilot = workflow
+            .lines()
+            .find(|line| line.contains("Invoke-CLI 'pilot'"))
+            .ok_or_else(|| "workflow must run the packaged pilot journey".to_string())?;
+        let outcome = workflow
+            .lines()
+            .find(|line| line.contains("Invoke-CLI 'outcome'"))
+            .ok_or_else(|| "workflow must run the packaged outcome journey".to_string())?;
+
+        // `explain` has a positional selector and intentionally has no JSON
+        // switch. A prior workflow passed --finding and --json, so the
+        // packaged binary stopped before the remaining journeys ran.
+        if !explain.contains("'--from', $artifact, $finding.id") {
+            return Err(
+                "explain must pass the artifact followed by the positional finding selector"
+                    .to_string(),
+            );
+        }
+        if explain.contains("'--finding'") || explain.contains("'--json'") {
+            return Err("explain must not use context-only selector/output flags".to_string());
+        }
+        if !context.contains("'--from', $artifact, '--at', $finding.id, '--json'") {
+            return Err("context must use --at and --json with the check artifact".to_string());
+        }
+        if explain.contains("Invoke-CLI 'context'") || !context.contains("Invoke-CLI 'context'") {
+            return Err(
+                "explain and context journeys must remain separate command lines".to_string(),
+            );
+        }
+        if context.contains("Invoke-CLI 'explain'") || !explain.contains("Invoke-CLI 'explain'") {
+            return Err("explain and context journeys must not be coalesced".to_string());
+        }
+
+        let cli_commands = include_str!("../../crates/ripr/src/cli/commands.rs");
+        let cli_context = include_str!("../../crates/ripr/src/cli/commands/context.rs");
+        let cli_pilot = include_str!("../../crates/ripr/src/cli/commands/pilot.rs");
+        let cli_help = include_str!("../../crates/ripr/src/cli/help/core.rs");
+        for source in [cli_commands, cli_context, cli_pilot] {
+            if !source.contains("--root") {
+                return Err("packaged journey contract sources must retain --root".to_string());
+            }
+        }
+        for flag in ["--from", "--base"] {
+            if !cli_commands.contains(&format!("\"{flag}\"")) {
+                return Err(format!("explain/context parser must support {flag}"));
+            }
+        }
+        for flag in ["--at", "--json"] {
+            if !cli_context.contains(&format!("\"{flag}\"")) {
+                return Err(format!("context parser must support {flag}"));
+            }
+        }
+        for flag in ["--out", "--max-seams", "--timeout-ms"] {
+            if !cli_pilot.contains(&format!("\"{flag}\"")) {
+                return Err(format!("pilot parser must support {flag}"));
+            }
+        }
+        for flag in ["--before", "--after", "--format"] {
+            if !cli_commands.contains(&format!("\"{flag}\"")) {
+                return Err(format!("outcome parser must support {flag}"));
+            }
+        }
+        for usage in [
+            "Usage: ripr explain",
+            "<finding-id|file:line>",
+            "Usage: ripr context",
+            "--at <finding-id|file:line>",
+            "Usage: ripr pilot",
+            "Usage: ripr outcome",
+        ] {
+            if !cli_help.contains(usage) {
+                return Err(format!("CLI help must document {usage:?}"));
+            }
+        }
+
+        // Keep the remaining commands visible in the same journey line so a
+        // future edit cannot silently stop after repairing explain/context.
+        for command in ["'pilot'", "'outcome'"] {
+            if !workflow.contains(&format!("Invoke-CLI {command}")) {
+                return Err(format!("workflow must retain the {command} journey"));
+            }
+        }
+        if !pilot.contains("'--root', $fixture")
+            || !pilot.contains("'--out'")
+            || !pilot.contains("'--max-seams'")
+            || !pilot.contains("'--timeout-ms'")
+        {
+            return Err("pilot journey flags drifted from its public contract".to_string());
+        }
+        if !outcome.contains("'--before', $before")
+            || !outcome.contains("'--after', $after")
+            || !outcome.contains("'--format', 'json'")
+        {
+            return Err("outcome journey flags drifted from its public contract".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn packaged_qualification_receipts_survive_checkout_cleanup() -> Result<(), String> {
         let workflow = include_str!("../../.github/workflows/windows-packaged-qualification.yml");
         let lines = workflow.lines().map(str::trim).collect::<Vec<_>>();
@@ -1205,6 +1360,54 @@ mod tests {
             if !lines.iter().any(|line| line.contains(required)) {
                 return Err(format!("workflow must contain {required:?}"));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn packaged_qualification_vsix_compile_uses_external_cargo_config() -> Result<(), String> {
+        let workflow = include_str!("../../.github/workflows/windows-packaged-qualification.yml");
+        let lines = workflow.lines().map(str::trim).collect::<Vec<_>>();
+        let isolate = lines
+            .iter()
+            .position(|line| line.starts_with("- name: Isolate package installation"))
+            .ok_or_else(|| "workflow must isolate package installation".to_string())?;
+        let compile = lines
+            .iter()
+            .position(|line| line.contains("xtask vscode-compile"))
+            .ok_or_else(|| "workflow must compile the VSIX through xtask".to_string())?;
+        if compile <= isolate {
+            return Err("VSIX compile must run after Cargo isolation".to_string());
+        }
+        let command = lines[compile];
+        let cargo_invocation = command
+            .split(';')
+            .map(str::trim)
+            .find(|segment| segment.contains("xtask vscode-compile"))
+            .ok_or_else(|| "VSIX compile command must contain a Cargo invocation".to_string())?;
+        for required in [
+            "cargo --config $env:CARGO_TEMP_CONFIG",
+            "xtask vscode-compile",
+        ] {
+            if !cargo_invocation.contains(required) {
+                return Err(format!(
+                    "VSIX compile must carry the external Cargo setting {required:?}"
+                ));
+            }
+        }
+        let unisolated = cargo_invocation.replace(
+            "cargo --config $env:CARGO_TEMP_CONFIG xtask vscode-compile",
+            "npm run compile",
+        );
+        if unisolated != "npm run compile" {
+            return Err(
+                "test fixture did not model the unisolated npm compile command".to_string(),
+            );
+        }
+        if unisolated.contains("CARGO_TEMP_CONFIG") || unisolated.contains("CARGO_TARGET_DIR") {
+            return Err(
+                "unisolated compile mutation unexpectedly retained Cargo isolation".to_string(),
+            );
         }
         Ok(())
     }
