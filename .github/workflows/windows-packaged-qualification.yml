@@ -181,13 +181,19 @@ jobs:
           '@ | Set-Content -Encoding utf8 (Join-Path $fixture 'tests\boundary.rs')
           Push-Location $fixture
           try { git init --initial-branch main | Out-Null; git config user.name 'ripr packaged qualification'; git config user.email 'ripr-packaged-qualification@example.invalid'; git add .; git commit -m 'fixture: baseline' | Out-Null; $base = (git rev-parse HEAD).Trim(); (Get-Content (Join-Path $fixture 'src\lib.rs') -Raw).Replace('value >= 100', 'value > 100') | Set-Content -Encoding utf8 (Join-Path $fixture 'src\lib.rs'); git add .; git commit -m 'fixture: changed boundary' | Out-Null; $head = (git rev-parse HEAD).Trim() } finally { Pop-Location }
-          function Invoke-CLI([string]$name, [string[]]$args) { $log = Join-Path $root "cli-$name.log"; Push-Location $fixture; try { & $env:RIPR_PACKAGED @args 2>&1 | Tee-Object $log; $code = $LASTEXITCODE } finally { Pop-Location }; if ($code -ne 0) { throw "packaged CLI $name failed with exit $code" } }
+          function Invoke-CLI([string]$name, [string[]]$cliArgs) { if ($null -eq $cliArgs -or $cliArgs.Count -eq 0) { throw "packaged CLI $name requires arguments" }; $log = Join-Path $root "cli-$name.log"; Push-Location $fixture; try { & $env:RIPR_PACKAGED @cliArgs 2>&1 | Tee-Object $log; $code = $LASTEXITCODE } finally { Pop-Location }; if ($code -ne 0) { throw "packaged CLI $name failed with exit $code" } }
           Invoke-CLI 'version' @('--version'); if ((Get-Content (Join-Path $root 'cli-version.log') -Raw) -notmatch [regex]::Escape($env:RIPR_PACKAGED_VERSION)) { throw 'packaged --version did not report the package version' }; Invoke-CLI 'help' @('--help'); Invoke-CLI 'doctor' @('doctor', '--root', $fixture, '--json'); if ($null -eq (Get-Content (Join-Path $root 'cli-doctor.log') -Raw | ConvertFrom-Json)) { throw 'doctor did not emit JSON' }
           $artifact = Join-Path $root 'cli-check-artifact.json'; $checkLog = Join-Path $root 'cli-check.json'
           Push-Location $fixture; try { & $env:RIPR_PACKAGED check --root $fixture --base $base --json --write-artifact $artifact 2>&1 | Tee-Object $checkLog; if ($LASTEXITCODE -ne 0) { throw "check failed with exit $LASTEXITCODE" } } finally { Pop-Location }
           $check = Get-Content $checkLog -Raw | ConvertFrom-Json; $finding = $check.findings | Select-Object -First 1
           if ($null -eq $finding -or [string]::IsNullOrWhiteSpace($finding.id)) { throw 'check emitted no finding selector for explain/context' }
-          Invoke-CLI 'explain' @('explain', '--root', $fixture, '--base', $base, '--from', $artifact, '--finding', $finding.id, '--json'); Invoke-CLI 'context' @('context', '--root', $fixture, '--base', $base, '--from', $artifact, '--finding', $finding.id, '--json')
+          # `explain` takes its finding selector positionally and emits its
+          # human-readable explanation; `context` uses the explicit `--at`
+          # selector and supports JSON. Keep these invocations aligned with
+          # the public CLI help rather than treating the two selectors as
+          # interchangeable flags.
+          Invoke-CLI 'explain' @('explain', '--root', $fixture, '--base', $base, '--from', $artifact, $finding.id)
+          Invoke-CLI 'context' @('context', '--root', $fixture, '--base', $base, '--from', $artifact, '--at', $finding.id, '--json')
           Invoke-CLI 'pilot' @('pilot', '--root', $fixture, '--out', (Join-Path $root 'pilot'), '--max-seams', '5', '--timeout-ms', '240000')
           $before = Join-Path $root 'outcome-before.json'; $after = Join-Path $root 'outcome-after.json'; '{"schema_version":"0.2","scope":"repo","seams":[]}' | Set-Content -Encoding utf8 $before; '{"schema_version":"0.2","scope":"repo","seams":[]}' | Set-Content -Encoding utf8 $after; Invoke-CLI 'outcome' @('outcome', '--before', $before, '--after', $after, '--format', 'json')
           [ordered]@{ fixture = $fixture; base = $base; head = $head; finding = $finding.id; binary = $env:RIPR_PACKAGED; binary_sha256 = (Get-FileHash $env:RIPR_PACKAGED -Algorithm SHA256).Hash.ToLowerInvariant() } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $root 'cli-journey.json')
@@ -197,7 +203,7 @@ jobs:
         working-directory: editors/vscode
         run: |
           $ErrorActionPreference = 'Stop'
-          npm ci; if ($LASTEXITCODE -ne 0) { throw 'npm ci failed' }; npm run compile; if ($LASTEXITCODE -ne 0) { throw 'VSIX compile failed' }; npm run package; if ($LASTEXITCODE -ne 0) { throw 'VSIX package failed' }
+          npm ci; if ($LASTEXITCODE -ne 0) { throw 'npm ci failed' }; cargo --config $env:CARGO_TEMP_CONFIG xtask vscode-compile; if ($LASTEXITCODE -ne 0) { throw 'VSIX compile failed' }; npm run package; if ($LASTEXITCODE -ne 0) { throw 'VSIX package failed' }
           $vsix = Get-ChildItem dist\*.vsix | Select-Object -First 1; if ($null -eq $vsix) { throw 'VSIX package was not produced' }
           $hash = (Get-FileHash $vsix.FullName -Algorithm SHA256).Hash.ToLowerInvariant(); tar -tf $vsix.FullName | Set-Content -Encoding utf8 (Join-Path $env:QUAL_ROOT 'vsix-files.txt')
           [ordered]@{ vsix = $vsix.Name; sha256 = $hash; bytes = $vsix.Length; candidate_sha = $env:CANDIDATE_SHA } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $env:QUAL_ROOT 'vsix-identity.json'); "RIPR_VSIX=$($vsix.FullName)" >> $env:GITHUB_ENV
