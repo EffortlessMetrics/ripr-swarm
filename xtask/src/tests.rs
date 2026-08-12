@@ -20635,7 +20635,7 @@ linked_spec = "RIPR-SPEC-0001"
     );
     write_support_tier_fixture(
         root,
-        "| Source-of-truth artifact graph | `stable building block` | docs | `cargo xtask check-doc-artifacts` | Registered graph only. |\n| Source-of-truth workflow | `stable building block` | CI | `cargo xtask check-doc-artifacts` | Workflow contract only. |\n",
+        "| Rust gap repair loop | `usable alpha` | CLI and editor | `cargo xtask rust-repair-trust-report` | Governed promotion authority is incomplete. |\n| Source-of-truth artifact graph | `stable building block` | docs | `cargo xtask check-doc-artifacts` | Registered graph only. |\n| Source-of-truth workflow | `stable building block` | CI | `cargo xtask check-doc-artifacts` | Workflow contract only. |\n",
     );
 
     if include_active_goal {
@@ -21961,7 +21961,7 @@ fn support_tiers_accept_valid_fixture() -> Result<(), String> {
     with_temp_cwd("support-tiers-valid", |root| {
         write_support_tier_fixture(
             root,
-            "| Source-of-truth artifact graph | `stable building block` | docs | `cargo xtask check-doc-artifacts` | Registered graph only. |\n",
+            "| Rust gap repair loop | `usable alpha` | CLI and editor | `cargo xtask rust-repair-trust-report` | Governed promotion authority is incomplete. |\n| Source-of-truth artifact graph | `stable building block` | docs | `cargo xtask check-doc-artifacts` | Registered graph only. |\n",
         );
 
         let violations = super::support_tier_violations(root, &root.join(SUPPORT_TIERS_PATH))?;
@@ -21975,7 +21975,7 @@ fn support_tiers_command_accepts_valid_fixture() -> Result<(), String> {
     with_temp_cwd("support-tiers-command-valid", |root| {
         write_support_tier_fixture(
             root,
-            "| Source-of-truth artifact graph | `stable building block` | docs | `cargo xtask check-doc-artifacts` | Registered graph only. |\n",
+            "| Rust gap repair loop | `usable alpha` | CLI and editor | `cargo xtask rust-repair-trust-report` | Governed promotion authority is incomplete. |\n| Source-of-truth artifact graph | `stable building block` | docs | `cargo xtask check-doc-artifacts` | Registered graph only. |\n",
         );
 
         check_support_tiers()
@@ -22027,6 +22027,104 @@ fn support_tiers_reject_stable_claim_with_only_markdown_links() -> Result<(), St
 }
 
 #[test]
+fn support_tiers_reject_usable_rust_repair_claim_without_promotion_authority() -> Result<(), String>
+{
+    with_temp_cwd("support-tiers-rust-repair-no-promotion-authority", |root| {
+        write_support_tier_fixture(
+            root,
+            "| Rust gap repair loop | `usable` | CLI and editor | `cargo xtask rust-repair-trust-report` | Governed evidence required. |\n",
+        );
+
+        let violations = super::support_tier_violations(root, &root.join(SUPPORT_TIERS_PATH))?;
+        assert!(
+            violations.iter().any(|violation| {
+                violation.contains("Rust gap repair loop")
+                    && violation.contains("cannot claim `usable`")
+                    && violation.contains("trust report alone is not promotion authority")
+            }),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn rust_repair_complete_report_with_real_movement_does_not_bypass_interim_cap() {
+    let report = serde_json::json!({
+        "status": "complete",
+        "eligible_attempt_count": 20,
+        "requirements": {"minimum_attempts": 20},
+        "movement_counts": {"closed": 1, "improved": 4}
+    });
+    let violation = super::rust_gap_repair_interim_cap_violation("usable", Some(&report));
+    assert!(
+        violation.as_deref().is_some_and(|violation| {
+            violation.contains("exceeds the interim `usable alpha` cap")
+                && violation.contains("`complete` with 20 eligible, 4 improved, and 1 closed")
+                && violation.contains("trust report alone is not promotion authority")
+                && violation.contains("#1702")
+        }),
+        "{violation:#?}"
+    );
+}
+
+#[test]
+fn support_tiers_reject_stronger_rust_repair_tier_bypass() -> Result<(), String> {
+    with_temp_cwd("support-tiers-rust-repair-stable-bypass", |root| {
+        write_support_tier_fixture(
+            root,
+            "| Rust gap repair loop | `stable building block` | CLI and editor | `cargo xtask rust-repair-trust-report` | Interim cap applies. |\n",
+        );
+        let violations = super::support_tier_violations(root, &root.join(SUPPORT_TIERS_PATH))?;
+        assert!(
+            violations.iter().any(|violation| violation
+                .contains("`stable building block` exceeds the interim `usable alpha` cap")),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn support_tiers_require_unique_canonical_rust_repair_row() -> Result<(), String> {
+    for (name, rows, expected) in [
+        (
+            "missing",
+            "| Source-of-truth artifact graph | `stable building block` | docs | `cargo xtask check-doc-artifacts` | Registered graph only. |\n",
+            "row is missing or renamed",
+        ),
+        (
+            "renamed",
+            "| Rust repair loop | `usable alpha` | CLI | `cargo xtask rust-repair-trust-report` | Renamed identity. |\n",
+            "row is missing or renamed",
+        ),
+        (
+            "duplicate",
+            "| Rust gap repair loop | `usable alpha` | CLI | `cargo xtask rust-repair-trust-report` | First. |\n| Rust gap repair loop | `usable alpha` | editor | `cargo xtask rust-repair-trust-report` | Second. |\n",
+            "found 2 rows",
+        ),
+    ] {
+        with_temp_cwd(
+            &format!("support-tiers-rust-repair-{name}"),
+            |root| -> Result<(), String> {
+                write_support_tier_fixture(root, rows);
+                let violations =
+                    super::support_tier_violations(root, &root.join(SUPPORT_TIERS_PATH))?;
+                assert!(
+                    violations.iter().any(|violation| {
+                        violation.contains("exactly one canonical support-tier row")
+                            && violation.contains(expected)
+                    }),
+                    "{name}: {violations:#?}"
+                );
+                Ok(())
+            },
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
 fn support_tiers_reject_unknown_xtask_proof_command() -> Result<(), String> {
     with_temp_cwd("support-tiers-unknown-command", |root| {
         write_support_tier_fixture(
@@ -22051,7 +22149,7 @@ fn support_tiers_resolve_workflow_proof_relative_to_root() -> Result<(), String>
         let nested = root.join("nested-repo");
         write_support_tier_fixture(
             &nested,
-            "| Source-of-truth workflow | `stable building block` | CI | `.github/workflows/source-of-truth.yml` | Workflow file exists in repo. |\n",
+            "| Rust gap repair loop | `usable alpha` | CLI and editor | `cargo xtask rust-repair-trust-report` | Governed promotion authority is incomplete. |\n| Source-of-truth workflow | `stable building block` | CI | `.github/workflows/source-of-truth.yml` | Workflow file exists in repo. |\n",
         );
         write(
             &nested.join(".github/workflows/source-of-truth.yml"),
@@ -22069,7 +22167,7 @@ fn support_tiers_require_specs_with_impact_to_link_status_doc() -> Result<(), St
     with_temp_cwd("support-tiers-spec-link", |root| {
         write_support_tier_fixture(
             root,
-            "| Source-of-truth artifact graph | `stable building block` | docs | `cargo xtask check-doc-artifacts` | Registered graph only. |\n",
+            "| Rust gap repair loop | `usable alpha` | CLI and editor | `cargo xtask rust-repair-trust-report` | Governed promotion authority is incomplete. |\n| Source-of-truth artifact graph | `stable building block` | docs | `cargo xtask check-doc-artifacts` | Registered graph only. |\n",
         );
         write(
             &root.join("docs/specs/RIPR-SPEC-0001-alpha.md"),
@@ -22097,7 +22195,7 @@ fn support_tiers_allow_specs_with_no_support_tier_impact() -> Result<(), String>
     with_temp_cwd("support-tiers-spec-none", |root| {
         write_support_tier_fixture(
             root,
-            "| Source-of-truth artifact graph | `stable building block` | docs | `cargo xtask check-doc-artifacts` | Registered graph only. |\n",
+            "| Rust gap repair loop | `usable alpha` | CLI and editor | `cargo xtask rust-repair-trust-report` | Governed promotion authority is incomplete. |\n| Source-of-truth artifact graph | `stable building block` | docs | `cargo xtask check-doc-artifacts` | Registered graph only. |\n",
         );
         write(
             &root.join("docs/specs/RIPR-SPEC-0001-alpha.md"),
@@ -22155,6 +22253,20 @@ fn repo_contract_report_command_writes_indexable_report_files() -> Result<(), St
         assert_eq!(value["schema_version"], "0.1");
         assert_eq!(value["report_id"], "source_of_truth_graph");
         assert_eq!(value["status"], "pass");
+        let rust_repair_rows = value["support_tiers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|row| row["capability"] == "Rust gap repair loop")
+            .collect::<Vec<_>>();
+        assert_eq!(rust_repair_rows.len(), 1, "{value:#}");
+        assert_eq!(
+            rust_repair_rows
+                .first()
+                .and_then(|row| row.get("tier"))
+                .and_then(Value::as_str),
+            Some("`usable alpha`")
+        );
         Ok(())
     })
 }

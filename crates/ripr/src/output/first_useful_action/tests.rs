@@ -60,8 +60,7 @@ fn first_useful_action_matches_unchanged_after_attempt_fixture() -> Result<(), S
     );
     let ledger =
             repo_root.join("fixtures/boundary_gap/expected/test-oracle-assistant-loop/canonical/pr-evidence-ledger.json");
-    let receipt =
-        repo_root.join("fixtures/boundary_gap/expected/editor-agent-loop/agent-receipt.json");
+    let receipt = base.join("agent-receipt.json");
     let report = build_first_useful_action_report(FirstUsefulActionInput {
         root: "fixtures/boundary_gap/input".to_string(),
         generated_at: "2026-05-09T12:00:00Z".to_string(),

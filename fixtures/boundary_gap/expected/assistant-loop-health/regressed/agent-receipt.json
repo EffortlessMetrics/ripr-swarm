@@ -9,7 +9,7 @@
       "path": "target/ripr/test-agent-verify/after.repo-exposure.json",
       "sha256": "<sha256>"
     },
-    "after_class": "strongly_gripped",
+    "after_class": "reachable_unrevealed",
     "before_artifact": {
       "path": "target/ripr/test-agent-verify/before.repo-exposure.json",
       "sha256": "<sha256>"
@@ -23,7 +23,7 @@
       "runtime_mutation_execution": false,
       "static_artifact_relationship": true
     },
-    "movement": "improved",
+    "movement": "regressed",
     "repo_root": ".",
     "ripr_version": "<ripr_version>",
     "seam_id": "67fc764ba37d77bd",
@@ -35,14 +35,11 @@
   },
   "schema_version": "0.5",
   "seam": {
-    "after": "strongly_gripped",
+    "after": "reachable_unrevealed",
     "before": "weakly_gripped",
-    "change": "improved",
+    "change": "regressed",
     "evidence_delta": [
-      "grip class moved from weakly_gripped to strongly_gripped",
-      "missing discriminator no longer reported: discount_threshold (equality boundary) (observed values do not include the equality-boundary case for this predicate)",
-      "new observed value: 100",
-      "related test count increased by 1"
+      "direct-owner test evidence no longer reaches the seam"
     ],
     "file": "src/lib.rs",
     "grip_class": null,
@@ -55,14 +52,14 @@
   "analysis_outcome_error": "<analysis_outcome_error>",
   "analysis_outcome": null,
   "summary": {
-    "receipt_state": "receipt_movement_improved",
+    "receipt_state": "receipt_movement_regressed",
     "next_action": {
-      "kind": "improved",
-      "recommended_action": "Keep the focused test and include this receipt in review.",
-      "summary": "Static grip improved."
+      "kind": "regressed",
+      "recommended_action": "Inspect the focused change and restore the lost static evidence.",
+      "summary": "Static grip regressed."
     },
-    "next_recommendation": "Keep the focused test and attach this receipt with the agent verify JSON.",
-    "remaining_gap": "No remaining static gap is named by this receipt; inspect the current seam packet if review needs final assertion detail."
+    "next_recommendation": "Inspect the focused change and restore the lost static evidence, then rerun agent verify.",
+    "remaining_gap": "Static grip class regressed."
   },
   "test_changed": null,
   "tool": "ripr",
