@@ -3,8 +3,8 @@ use serde_json::Value;
 
 use super::first_pr::STATIC_EVIDENCE_BOUNDARY;
 use super::receipt_lifecycle::{
-    RECEIPT_MISSING, RECEIPT_MOVEMENT_IMPROVED, RECEIPT_MOVEMENT_UNCHANGED, RECEIPT_NOT_APPLICABLE,
-    receipt_lifecycle_state, receipt_lifecycle_state_from_receipt_value,
+    RECEIPT_MISSING, RECEIPT_NOT_APPLICABLE, receipt_lifecycle_state,
+    receipt_lifecycle_state_from_movement, receipt_lifecycle_state_from_receipt_value,
 };
 
 const SCHEMA_VERSION: &str = "0.1";
@@ -1779,7 +1779,9 @@ fn parsed_receipt_matches_selected_proof(
         return false;
     }
 
-    let Some(selected_movement) = string_path(selected_proof, &["movement_state"]) else {
+    let Some(selected_movement) = string_path(selected_proof, &["movement", "source_state"])
+        .or_else(|| string_path(selected_proof, &["movement_state"]))
+    else {
         return false;
     };
     let parsed_movements = [
@@ -1792,9 +1794,8 @@ fn parsed_receipt_matches_selected_proof(
         return false;
     }
     let lifecycle = receipt_lifecycle_state_from_receipt_value(parsed_receipt);
-    if (lifecycle == RECEIPT_MOVEMENT_IMPROVED && selected_movement != "improved")
-        || (lifecycle == RECEIPT_MOVEMENT_UNCHANGED && selected_movement != "unchanged")
-    {
+    let selected_lifecycle = receipt_lifecycle_state_from_movement(Some(&selected_movement));
+    if lifecycle != selected_lifecycle {
         return false;
     }
 
@@ -2648,6 +2649,59 @@ mod tests {
         let json = render_pr_review_front_panel_json(&build_pr_review_front_panel_report(input))?;
         assert!(json.contains("\"status\": \"receipt_missing\""));
         assert!(!json.contains("\"status\": \"receipt_movement_improved\""));
+        Ok(())
+    }
+
+    #[test]
+    fn selected_proof_accepts_matching_changed_source_receipt_fallback() -> Result<(), String> {
+        let repo_root = repo_root()?;
+        let inputs = serde_json::json!({
+            "assistant_health": "fixtures/boundary_gap/expected/assistant-loop-health/unchanged/assistant-loop-health.json",
+            "receipt": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-receipt.json"
+        });
+        let expected_md_path = repo_root.join(
+            "fixtures/boundary_gap/expected/pr-review-front-panel/mixed-health/pr-review-front-panel.md",
+        );
+        let mut input = fixture_input(&repo_root, &inputs, &expected_md_path)?;
+        let mut health: Value = serde_json::from_str(
+            input
+                .assistant_health_json
+                .as_ref()
+                .and_then(|result| result.as_ref().ok())
+                .ok_or_else(|| "assistant health fixture missing".to_string())?,
+        )
+        .map_err(|err| format!("parse assistant health fixture failed: {err}"))?;
+        let selected = &mut health["proofs"][0];
+        selected["movement_state"] = Value::String("unknown".to_string());
+        selected["movement"]["source_state"] = Value::String("changed".to_string());
+        selected["receipt"]
+            .as_object_mut()
+            .ok_or_else(|| "selected proof receipt missing".to_string())?
+            .remove("status");
+        input.assistant_health_json = Some(Ok(health.to_string()));
+        input.receipt_json = Some(Ok(serde_json::json!({
+            "provenance": {
+                "seam_id": "67fc764ba37d77bd",
+                "movement": "changed",
+                "before_class": "weakly_gripped",
+                "after_class": "weakly_gripped"
+            },
+            "seam": {
+                "seam_id": "67fc764ba37d77bd",
+                "change": "changed",
+                "before": "weakly_gripped",
+                "after": "weakly_gripped"
+            },
+            "summary": {
+                "receipt_state": "receipt_found",
+                "next_action": {"kind": "changed"}
+            }
+        })
+        .to_string()));
+
+        let json = render_pr_review_front_panel_json(&build_pr_review_front_panel_report(input))?;
+        assert!(json.contains("\"status\": \"receipt_found\""));
+        assert!(!json.contains("\"status\": \"receipt_missing\""));
         Ok(())
     }
 
