@@ -2392,7 +2392,7 @@ fn test_oracle_assistant_canonical_review_loop_fixture_pins_expected_surfaces()
     );
     assert_eq!(
         json_pointer_str(&proof, "/evidence_movement/state")?,
-        "unchanged"
+        "improved"
     );
     assert!(json_pointer_bool(&proof, "/limits/advisory")?);
     for pointer in [
@@ -2482,8 +2482,8 @@ fn test_oracle_assistant_canonical_review_loop_fixture_pins_expected_surfaces()
     let proof_md = std::fs::read_to_string(proof_md_path)?;
     assert!(proof_md.contains("Status: advisory"));
     assert!(proof_md.contains("Missing discriminator: discount_threshold (equality boundary)"));
-    assert!(proof_md.contains("After: weakly_gripped"));
-    assert!(proof_md.contains("State: unchanged"));
+    assert!(proof_md.contains("After: strongly_gripped"));
+    assert!(proof_md.contains("State: improved"));
     assert!(proof_md.contains("Gate: not configured"));
     Ok(())
 }

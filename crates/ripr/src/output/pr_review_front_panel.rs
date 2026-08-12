@@ -815,7 +815,8 @@ fn select_candidate(
     }
     if coverage_grip.state == "flat_coverage_grip_improved" {
         return Candidate {
-            top_issue: top_issue_from_assistant_health(input, parsed),
+            top_issue: top_issue_from_assistant_health(input, parsed)
+                .map(|issue| already_improved_top_issue(issue, movement)),
             top_issue_state: "already_improved".to_string(),
             headline: "Static grip improved while coverage stayed flat.".to_string(),
             placement: "changed_line".to_string(),
@@ -862,6 +863,23 @@ fn select_candidate(
         headline: "No actionable PR-local RIPR guidance.".to_string(),
         placement: "not_available".to_string(),
     }
+}
+
+fn already_improved_top_issue(mut issue: PanelTopIssue, movement: &PanelMovement) -> PanelTopIssue {
+    if let Some(after_class) = &movement.after_class {
+        issue.classification = Some(after_class.clone());
+        issue.current_evidence_strength = Some(after_class.clone());
+    }
+    issue.missing_discriminator = None;
+    issue.no_action_reason = Some(
+        "The receipt reports that static grip already improved; no further repair is recommended."
+            .to_string(),
+    );
+    issue.focused_proof_intent = None;
+    issue.related_test = None;
+    issue.suggested_test = None;
+    issue.agent_command = None;
+    issue
 }
 
 fn is_missing_required(parsed: &ParsedPanelSources) -> bool {
