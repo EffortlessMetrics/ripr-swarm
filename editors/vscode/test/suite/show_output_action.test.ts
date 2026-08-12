@@ -34,7 +34,9 @@ suite('Show Output Warning Action', () => {
       resolveServer: async () => ({
         command: '/sentinel/trusted/ripr',
         source: 'configured',
-        detail: 'sentinel server'
+        detail: 'sentinel server',
+        installationState: 'unmanaged',
+        compatibilityResult: 'not_established'
       }),
       createLanguageClient: () => ({
         onNotification: () => ({ dispose: () => undefined }),
