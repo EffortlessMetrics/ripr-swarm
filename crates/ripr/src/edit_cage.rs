@@ -117,8 +117,8 @@ struct RepositoryPathState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum WorktreeIdentity {
     Missing,
-    File(String),
-    Symlink(String),
+    File { digest: String, executable: bool },
+    Symlink(PathBuf),
     Other,
 }
 
@@ -370,9 +370,7 @@ fn worktree_identity(root: &Path, relative: &str) -> Result<WorktreeIdentity, St
     if metadata.file_type().is_symlink() {
         let target = fs::read_link(&path)
             .map_err(|err| format!("read symlink {}: {err}", path.display()))?;
-        return Ok(WorktreeIdentity::Symlink(
-            target.to_string_lossy().to_string(),
-        ));
+        return Ok(WorktreeIdentity::Symlink(target));
     }
     if metadata.is_file() {
         if metadata.len() > MAX_CAPTURE_FILE_BYTES {
@@ -405,12 +403,23 @@ fn worktree_identity(root: &Path, relative: &str) -> Result<WorktreeIdentity, St
         if !rechecked.is_file() || !same_file_object(&opened_metadata, &rechecked) {
             return Ok(WorktreeIdentity::Other);
         }
-        return Ok(WorktreeIdentity::File(format!(
-            "{:x}",
-            Sha256::digest(bytes)
-        )));
+        return Ok(WorktreeIdentity::File {
+            digest: format!("{:x}", Sha256::digest(bytes)),
+            executable: is_executable(&opened_metadata),
+        });
     }
     Ok(WorktreeIdentity::Other)
+}
+
+#[cfg(unix)]
+fn is_executable(metadata: &fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt as _;
+    metadata.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn is_executable(_metadata: &fs::Metadata) -> bool {
+    false
 }
 
 fn open_regular_file_no_follow(path: &Path) -> Result<fs::File, std::io::Error> {
@@ -1288,6 +1297,60 @@ mod tests {
         if verdict.status != EditCageVerdictStatus::Incomparable {
             return Err(format!(
                 "retargeted tracked symlink plus an allowed edit must fail closed, got {:?}",
+                verdict.status
+            ));
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn forbidden_chmod_cannot_hide_beside_allowed_edit() -> Result<(), String> {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let fixture = git_fixture("forbidden-chmod")?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
+        let production = fixture.root.join("src/pricing.rs");
+        let mut permissions = fs::metadata(&production)
+            .map_err(|err| format!("inspect production permissions: {err}"))?
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&production, permissions)
+            .map_err(|err| format!("chmod production fixture: {err}"))?;
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
+            .map_err(|err| format!("write simultaneous selected edit: {err}"))?;
+        let verdict = evaluate_repository_edit_cage(&baseline)?;
+        if verdict.status != EditCageVerdictStatus::Violated {
+            return Err(format!(
+                "forbidden chmod plus allowed edit must violate, got {:?}",
+                verdict.status
+            ));
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn distinct_non_utf8_symlink_targets_remain_distinct() -> Result<(), String> {
+        use std::os::unix::ffi::OsStringExt as _;
+        use std::os::unix::fs::symlink;
+
+        let fixture = git_fixture("non-utf8-symlink")?;
+        let link = fixture.root.join("tests/tracked-link");
+        symlink(std::ffi::OsString::from_vec(vec![b'a', 0x80]), &link)
+            .map_err(|err| format!("create first non-UTF8 symlink: {err}"))?;
+        git_ok(&fixture.root, &["add", "tests/tracked-link"])?;
+        git_ok(&fixture.root, &["commit", "-qm", "track non-UTF8 symlink"])?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
+        fs::remove_file(&link).map_err(|err| format!("remove first symlink: {err}"))?;
+        symlink(std::ffi::OsString::from_vec(vec![b'a', 0x81]), &link)
+            .map_err(|err| format!("create second non-UTF8 symlink: {err}"))?;
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
+            .map_err(|err| format!("write simultaneous selected edit: {err}"))?;
+        let verdict = evaluate_repository_edit_cage(&baseline)?;
+        if verdict.status != EditCageVerdictStatus::Incomparable {
+            return Err(format!(
+                "distinct non-UTF8 symlink target must fail closed, got {:?}",
                 verdict.status
             ));
         }
