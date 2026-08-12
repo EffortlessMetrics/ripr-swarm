@@ -4966,12 +4966,12 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && 'code' in error;
 }
 
-function shouldSkipTrustedTestHost(workspaceTrustMode = process.env.RIPR_TEST_WORKSPACE_TRUST): boolean {
+function shouldSkipTrustedTestHost(workspaceTrustMode: string | undefined): boolean {
   return workspaceTrustMode === 'untrusted';
 }
 
 function skipUnlessTrustedTestHost(testContext: Mocha.Context): void {
-  if (shouldSkipTrustedTestHost()) {
+  if (shouldSkipTrustedTestHost(process.env.RIPR_TEST_WORKSPACE_TRUST)) {
     testContext.skip();
   }
 }
