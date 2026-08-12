@@ -9,8 +9,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::Read as _;
 use std::path::{Component, Path, PathBuf};
-use std::process::Command;
+use std::time::Duration;
 
 const MAX_CAPTURE_PATHS: usize = 10_000;
 const MAX_CAPTURE_FILE_BYTES: u64 = 16 * 1024 * 1024;
@@ -159,16 +160,16 @@ fn capture_repository_state(
     let mut paths = BTreeMap::new();
     let mut case_keys = BTreeSet::new();
     let mut ambiguous = false;
-    for (index, raw_path) in nul_paths(&tracked)?
-        .into_iter()
-        .chain(nul_paths(&untracked)?)
-        .chain(nul_paths(&ignored)?)
+    for (index, raw_path) in nul_records(&tracked)
+        .chain(nul_records(&untracked))
+        .chain(nul_records(&ignored))
         .enumerate()
     {
         if index >= MAX_CAPTURE_PATHS {
             ambiguous = true;
             break;
         }
+        let raw_path = raw_path?;
         let path = normalize_repo_relative_path(Path::new(&raw_path))?;
         if !case_keys.insert(path.to_lowercase()) {
             ambiguous = true;
@@ -183,7 +184,12 @@ fn capture_repository_state(
             },
         );
     }
-    for record in nul_records(&index)? {
+    for (record_index, record) in nul_records(&index).enumerate() {
+        if record_index >= MAX_CAPTURE_PATHS {
+            ambiguous = true;
+            break;
+        }
+        let record = record?;
         let Some((metadata, raw_path)) = record.split_once('\t') else {
             return Err(format!(
                 "git ls-files emitted malformed index record `{record}`"
@@ -194,10 +200,12 @@ fn capture_repository_state(
             index_entry: None,
             worktree_identity: WorktreeIdentity::Missing,
         });
-        entry.index_entry = Some(metadata.to_string());
-        if metadata.starts_with("120000 ") {
-            entry.worktree_identity = WorktreeIdentity::Symlink(metadata.to_string());
+        if metadata.starts_with("120000 ")
+            && !matches!(&entry.worktree_identity, WorktreeIdentity::Symlink(_))
+        {
+            ambiguous = true;
         }
+        entry.index_entry = Some(metadata.to_string());
     }
 
     // A capture is usable only when its repository identity stayed stable
@@ -302,11 +310,12 @@ fn git_text(root: &Path, args: &[&str]) -> Result<String, String> {
 }
 
 fn git_bytes(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(root)
-        .output()
-        .map_err(|err| format!("run git {args:?} in {}: {err}", root.display()))?;
+    let output = crate::git::run_git_output_with_deadline_and_limit(
+        root,
+        args,
+        Duration::from_secs(10),
+        4 * 1024 * 1024,
+    )?;
     if output.status.success() {
         return Ok(output.stdout);
     }
@@ -317,19 +326,14 @@ fn git_bytes(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     ))
 }
 
-fn nul_paths(bytes: &[u8]) -> Result<Vec<String>, String> {
-    nul_records(bytes)
-}
-
-fn nul_records(bytes: &[u8]) -> Result<Vec<String>, String> {
+fn nul_records(bytes: &[u8]) -> impl Iterator<Item = Result<&str, String>> {
     bytes
         .split(|byte| *byte == 0)
         .filter(|record| !record.is_empty())
         .map(|record| {
-            String::from_utf8(record.to_vec())
+            std::str::from_utf8(record)
                 .map_err(|err| format!("Git path record is not UTF-8: {err}"))
         })
-        .collect()
 }
 
 fn worktree_identity(root: &Path, relative: &str) -> Result<WorktreeIdentity, String> {
@@ -352,7 +356,15 @@ fn worktree_identity(root: &Path, relative: &str) -> Result<WorktreeIdentity, St
         if metadata.len() > MAX_CAPTURE_FILE_BYTES {
             return Ok(WorktreeIdentity::Other);
         }
-        let bytes = fs::read(&path).map_err(|err| format!("read {}: {err}", path.display()))?;
+        let file =
+            fs::File::open(&path).map_err(|err| format!("open {}: {err}", path.display()))?;
+        let mut bytes = Vec::new();
+        file.take(MAX_CAPTURE_FILE_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|err| format!("read bounded content from {}: {err}", path.display()))?;
+        if bytes.len() as u64 > MAX_CAPTURE_FILE_BYTES {
+            return Ok(WorktreeIdentity::Other);
+        }
         return Ok(WorktreeIdentity::File(format!(
             "{:x}",
             Sha256::digest(bytes)
@@ -1037,6 +1049,51 @@ mod tests {
             evaluate_repository_edit_cage(&symlink_baseline)?.status,
             EditCageVerdictStatus::Incomparable
         );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unstaged_tracked_symlink_target_change_cannot_hide_beside_allowed_edit() -> Result<(), String>
+    {
+        use std::os::unix::fs::symlink;
+
+        let fixture = git_fixture("symlink-target-change")?;
+        let link = fixture.root.join("tests/tracked-link");
+        symlink("pricing.rs", &link)
+            .map_err(|err| format!("create tracked symlink fixture: {err}"))?;
+        git_ok(&fixture.root, &["add", "tests/tracked-link"])?;
+        git_ok(&fixture.root, &["commit", "-qm", "track symlink"])?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
+
+        fs::remove_file(&link).map_err(|err| format!("remove baseline symlink: {err}"))?;
+        symlink("../Cargo.toml", &link)
+            .map_err(|err| format!("retarget tracked symlink: {err}"))?;
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
+            .map_err(|err| format!("write simultaneous selected edit: {err}"))?;
+
+        let after = capture_attempt_baseline(&fixture.root, &policy()?)?;
+        let before_link = baseline
+            .paths
+            .get("tests/tracked-link")
+            .ok_or_else(|| "baseline omitted tracked symlink".to_string())?;
+        let after_link = after
+            .paths
+            .get("tests/tracked-link")
+            .ok_or_else(|| "after-state omitted tracked symlink".to_string())?;
+        if before_link.worktree_identity == after_link.worktree_identity {
+            return Err("distinct worktree symlink targets collapsed to one identity".to_string());
+        }
+        let verdict = evaluate_edit_cage(
+            &baseline.policy,
+            &delta_from_repository_states(&baseline, &after),
+        );
+        if verdict.status != EditCageVerdictStatus::Incomparable {
+            return Err(format!(
+                "retargeted tracked symlink plus an allowed edit must fail closed, got {:?}",
+                verdict.status
+            ));
+        }
         Ok(())
     }
 
