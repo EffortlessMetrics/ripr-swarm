@@ -12,6 +12,9 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
+const MAX_CAPTURE_PATHS: usize = 10_000;
+const MAX_CAPTURE_FILE_BYTES: u64 = 16 * 1024 * 1024;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum AttemptPathChangeKind {
@@ -156,16 +159,22 @@ fn capture_repository_state(
     let mut paths = BTreeMap::new();
     let mut case_keys = BTreeSet::new();
     let mut ambiguous = false;
-    for raw_path in nul_paths(&tracked)?
+    for (index, raw_path) in nul_paths(&tracked)?
         .into_iter()
         .chain(nul_paths(&untracked)?)
         .chain(nul_paths(&ignored)?)
+        .enumerate()
     {
+        if index >= MAX_CAPTURE_PATHS {
+            ambiguous = true;
+            break;
+        }
         let path = normalize_repo_relative_path(Path::new(&raw_path))?;
         if !case_keys.insert(path.to_lowercase()) {
             ambiguous = true;
         }
         let worktree_identity = worktree_identity(&root, &path)?;
+        ambiguous |= worktree_identity == WorktreeIdentity::Other;
         paths.insert(
             path,
             RepositoryPathState {
@@ -340,6 +349,9 @@ fn worktree_identity(root: &Path, relative: &str) -> Result<WorktreeIdentity, St
         ));
     }
     if metadata.is_file() {
+        if metadata.len() > MAX_CAPTURE_FILE_BYTES {
+            return Ok(WorktreeIdentity::Other);
+        }
         let bytes = fs::read(&path).map_err(|err| format!("read {}: {err}", path.display()))?;
         return Ok(WorktreeIdentity::File(format!(
             "{:x}",
@@ -899,6 +911,25 @@ mod tests {
                 "target/ripr/reports/agent-receipt.json".to_string(),
                 "tests/pricing.rs".to_string()
             ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unbounded_repository_content_cannot_earn_compliance() -> Result<(), String> {
+        let fixture = git_fixture("unbounded-content")?;
+        let oversized = fixture.root.join("oversized.bin");
+        let file = fs::File::create(&oversized)
+            .map_err(|err| format!("create oversized fixture: {err}"))?;
+        file.set_len(MAX_CAPTURE_FILE_BYTES + 1)
+            .map_err(|err| format!("size oversized fixture: {err}"))?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
+            .map_err(|err| format!("write selected test: {err}"))?;
+
+        assert_eq!(
+            evaluate_repository_edit_cage(&baseline)?.status,
+            EditCageVerdictStatus::Incomparable
         );
         Ok(())
     }
