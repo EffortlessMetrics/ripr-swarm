@@ -196,8 +196,8 @@ that untracked source was analyzed.
 - `cargo test -p ripr --test cli_smoke doctor_recommends_worktree_check_on_dirty_worktree`
 - `cargo test -p ripr --lib check_rejects_diff_file_plus_worktree_mode`
 - `cargo test -p ripr --lib tracked_change_detector`
-- `cargo test -p ripr lsp_saved_worktree_refresh_analyzes_uncommitted_tracked_edit -- --exact`
-- `cargo test -p ripr framed_code_lens_refresh_follows_semantic_lens_view_changes -- --exact`
+- `cargo test -p ripr --lib lsp::tests::lsp_saved_worktree_refresh_analyzes_uncommitted_tracked_edit -- --exact`
+- `cargo test -p ripr --lib lsp::tests::framed_code_lens_refresh_follows_semantic_lens_view_changes -- --exact`
 - `cargo test -p ripr`
 - `cargo fmt --check`
 - `cargo check --workspace --all-targets`
