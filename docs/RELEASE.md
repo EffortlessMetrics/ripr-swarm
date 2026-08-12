@@ -184,6 +184,16 @@ cargo package -p ripr --list
 cargo publish -p ripr --dry-run
 ```
 
+For `0.11.0`, the Rust gap-repair support claim remains `usable alpha`.
+Fixture, installed-package, packaged-editor, bounded test-only transaction, and
+before/after receipt paths are proved when a valid route exists. The governed
+real-repository corpus currently has zero eligible attempts, so release copy
+must not imply measured route yield or ordinary-user success. Run `cargo xtask
+rust-repair-trust-report` and `cargo xtask check-support-tiers`; the latter
+rejects an unqualified `usable` claim until the canonical report has its full
+eligible-attempt denominator and at least one real `improved` or `closed`
+attempt.
+
 ### Crate tarball contents
 
 `crates/ripr/Cargo.toml` intentionally includes `tests/**` and the tracked

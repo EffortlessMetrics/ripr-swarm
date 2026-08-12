@@ -180,10 +180,14 @@ and gaps; it does not claim runtime mutation outcomes.
 
 ## Status
 
-The mature loop is Rust/Cargo. Python repair-routing is `usable alpha` for
-selected pytest/unittest workflows (repair cards, verify commands, bounded
-agent packets, before/after receipts); TypeScript is an opt-in `preview`. `ripr`
-is advisory static analysis — not a merge gate and not a mutation runner. This
+The Rust/Cargo gap-repair transaction is `usable alpha`: its fixture, package,
+editor, bounded test-only packet, and before/after receipt paths are proved when
+a valid route exists, while governed real-repository route yield and
+ordinary-user success remain unestablished. Python repair-routing is `usable
+alpha` for selected pytest/unittest workflows (repair cards, verify commands,
+bounded agent packets, before/after receipts); TypeScript is an opt-in
+`preview`. `ripr` is advisory static analysis — not a merge gate and not a
+mutation runner. This
 Perl repair routing is still `planned`/advisory; its next checkpoint is
 `dogfood/perl-real-repo-evals-v1` before any usable-alpha claim. This README is
 a front door, not the metric source of truth: see

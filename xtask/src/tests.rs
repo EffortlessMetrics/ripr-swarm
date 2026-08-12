@@ -61,11 +61,11 @@ use super::{
     PrTriagePullRequest, REAL_REPAIR_ATTEMPTS_CORPUS, REAL_REPAIR_ATTEMPTS_REQUIRED_CASES,
     REPO_BADGE_ARTIFACT_DEFAULT_TIMEOUT_MS, REPO_BADGE_ARTIFACT_TIMEOUT_ENV,
     REPO_EXPOSURE_SUMMARY_REPORT_DEFAULT_TIMEOUT_MS, REPO_EXPOSURE_SUMMARY_REPORT_TIMEOUT_ENV,
-    ReceiptRecord, RepoBadgeArtifactOptions, RepoExposureLatencyReport, RepoExposureLatencyRun,
-    RepoExposureLatencyTrace, ReportIndexEntry, ReportIndexRepoOpsArtifact,
-    RiprSwarmReadinessNextActionSources, SUPPORT_TIERS_PATH, SarifPolicyMode, SarifPolicyResult,
-    SarifPolicyThreshold, StaticLanguageAllowEntry, StaticLanguageMatcher,
-    TYPESCRIPT_BUN_UB_CALIBRATION_REQUIRED_CASES,
+    RUST_REPAIR_TRUST_CORPUS_PATH, ReceiptRecord, RepoBadgeArtifactOptions,
+    RepoExposureLatencyReport, RepoExposureLatencyRun, RepoExposureLatencyTrace, ReportIndexEntry,
+    ReportIndexRepoOpsArtifact, RiprSwarmReadinessNextActionSources, SUPPORT_TIERS_PATH,
+    SarifPolicyMode, SarifPolicyResult, SarifPolicyThreshold, StaticLanguageAllowEntry,
+    StaticLanguageMatcher, TYPESCRIPT_BUN_UB_CALIBRATION_REQUIRED_CASES,
     TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_REQUIRED_CASES,
     TYPESCRIPT_PREVIEW_REPAIR_LOOP_REQUIRED_CASES, TestOracleClass,
     USER_SURFACE_PROJECTION_REQUIRED_RUN_STATUSES, USER_SURFACE_PROJECTION_REQUIRED_SURFACES,
@@ -22024,6 +22024,65 @@ fn support_tiers_reject_stable_claim_with_only_markdown_links() -> Result<(), St
         );
         Ok(())
     })
+}
+
+#[test]
+fn support_tiers_reject_usable_rust_repair_claim_without_governed_attempts() -> Result<(), String> {
+    with_temp_cwd("support-tiers-rust-repair-empty-corpus", |root| {
+        write_support_tier_fixture(
+            root,
+            "| Rust gap repair loop | `usable` | CLI and editor | `cargo xtask rust-repair-trust-report` | Governed evidence required. |\n",
+        );
+        write(
+            &root.join(RUST_REPAIR_TRUST_CORPUS_PATH),
+            r#"{
+  "schema_version": "0.1",
+  "kind": "rust_repair_trust_corpus",
+  "authorization": {"status": "missing", "repositories": []},
+  "cases": []
+}
+"#,
+        );
+
+        let violations = super::support_tier_violations(root, &root.join(SUPPORT_TIERS_PATH))?;
+        assert!(
+            violations.iter().any(|violation| {
+                violation.contains("Rust gap repair loop")
+                    && violation.contains("cannot claim `usable`")
+                    && violation.contains("0 eligible attempt(s)")
+            }),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn rust_repair_usable_claim_requires_a_real_improved_or_closed_attempt() {
+    let report = serde_json::json!({
+        "status": "complete",
+        "eligible_attempt_count": 20,
+        "requirements": {"minimum_attempts": 20},
+        "movement_counts": {"closed": 0, "improved": 0}
+    });
+    let violation = super::rust_gap_repair_usable_evidence_violation(&report);
+    assert_eq!(
+        violation.as_deref(),
+        Some(
+            "the canonical Rust repair trust report contains no real `improved` or `closed` attempt"
+        )
+    );
+
+    let report = serde_json::json!({
+        "status": "complete",
+        "eligible_attempt_count": 20,
+        "requirements": {"minimum_attempts": 20},
+        "movement_counts": {"closed": 1, "improved": 0}
+    });
+    assert_eq!(
+        super::rust_gap_repair_usable_evidence_violation(&report),
+        None
+    );
 }
 
 #[test]

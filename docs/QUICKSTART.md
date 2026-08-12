@@ -32,6 +32,13 @@ The [public command hierarchy](COMMAND_HIERARCHY.md) keeps the first-hour roles
 distinct: `check` is ordinary first value, `pilot` is guided repo adoption,
 `agent repair` is the repair transaction, and `first-pr` composes PR evidence.
 
+The Rust gap-repair loop is `usable alpha`. Its package, editor, bounded packet,
+and before/after transaction paths are proved when RIPR emits a complete route;
+the governed real-repository corpus does not yet establish how often ordinary
+changes yield such a route or complete successfully. Treat a no-action or
+limited result as evidence, not as a failed product promise or a clean bill of
+health.
+
 ## Choose Your Path
 
 Most adopters should choose one of these first-hour paths:

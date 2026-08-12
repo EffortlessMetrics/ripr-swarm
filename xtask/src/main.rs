@@ -296,7 +296,7 @@ pub(crate) use reports::{
 };
 use reports::{
     check_badge_diff_policy, dogfood, fixtures, metrics_report, pr_summary, receipts_write,
-    reports_index, test_oracle_report,
+    reports_index, rust_repair_trust_report_value_at, test_oracle_report,
 };
 #[cfg(test)]
 use reports::{lsp_cockpit_report, targeted_test_outcome};
@@ -11996,6 +11996,7 @@ fn check_doc_index() -> Result<(), String> {
 const DOC_ARTIFACT_LEDGER: &str = "policy/doc-artifacts.toml";
 const DOC_ARTIFACT_SCHEMA_VERSION: &str = "1.0";
 const SUPPORT_TIERS_PATH: &str = "docs/status/SUPPORT_TIERS.md";
+const RUST_REPAIR_TRUST_CORPUS_PATH: &str = "metrics/rust-repair-trust/corpus.json";
 const DOC_ARTIFACT_KINDS: &[&str] = &[
     "adr",
     "closeout",
@@ -12589,9 +12590,83 @@ fn support_tier_violations(root: &Path, support_tiers_path: &Path) -> Result<Vec
         validate_support_tier_row(root, &display, row, &mut violations);
     }
 
+    validate_rust_gap_repair_support_tier(root, &display, &rows, &mut violations);
+
     validate_support_tier_spec_links(root, &mut violations)?;
     validate_readme_support_tier_pointer(root, &mut violations)?;
     Ok(violations)
+}
+
+fn validate_rust_gap_repair_support_tier(
+    root: &Path,
+    display: &str,
+    rows: &[SupportTierRow],
+    violations: &mut Vec<String>,
+) {
+    let Some(row) = rows
+        .iter()
+        .find(|row| row.capability.trim() == "Rust gap repair loop")
+    else {
+        return;
+    };
+    if normalized_support_tier(&row.tier) != "usable" {
+        return;
+    }
+
+    let corpus_path = root.join(RUST_REPAIR_TRUST_CORPUS_PATH);
+    let report = match rust_repair_trust_report_value_at(&corpus_path) {
+        Ok(report) => report,
+        Err(error) => {
+            violations.push(format!(
+                "{display}:{} support-tier row `Rust gap repair loop` cannot claim `usable`: governed evidence at `{RUST_REPAIR_TRUST_CORPUS_PATH}` is unavailable ({error})",
+                row.line
+            ));
+            return;
+        }
+    };
+
+    if let Some(reason) = rust_gap_repair_usable_evidence_violation(&report) {
+        violations.push(format!(
+            "{display}:{} support-tier row `Rust gap repair loop` cannot claim `usable`: {reason}; keep `usable alpha` until the governed real-repository promotion evidence is complete",
+            row.line
+        ));
+    }
+}
+
+fn rust_gap_repair_usable_evidence_violation(report: &serde_json::Value) -> Option<String> {
+    let status = report
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("missing");
+    let eligible_attempts = report
+        .get("eligible_attempt_count")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let minimum_attempts = report
+        .pointer("/requirements/minimum_attempts")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(20);
+    let improved = report
+        .pointer("/movement_counts/improved")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let closed = report
+        .pointer("/movement_counts/closed")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+
+    if status != "complete" || eligible_attempts < minimum_attempts {
+        return Some(format!(
+            "the canonical Rust repair trust report is `{status}` with {eligible_attempts} eligible attempt(s), below the required {minimum_attempts}"
+        ));
+    }
+    if improved + closed == 0 {
+        return Some(
+            "the canonical Rust repair trust report contains no real `improved` or `closed` attempt"
+                .to_string(),
+        );
+    }
+    None
 }
 
 fn support_tier_rows(text: &str, display: &str) -> Result<Vec<SupportTierRow>, String> {

@@ -146,6 +146,15 @@ are scoped or reviewed.
 
 ### Changed
 
+- The 0.11.0 support claim now describes the Rust gap-repair loop as `usable
+  alpha`, not unqualified `usable`. Fixture, package, editor, bounded test-only
+  packet, and before/after receipt proof remains intact, but the governed
+  real-repository corpus currently contains zero eligible attempts, so route
+  yield and ordinary-user success are not established. `cargo xtask
+  check-support-tiers` now rejects restoring `usable` until the canonical trust
+  report has its full eligible-attempt denominator and at least one real
+  `improved` or `closed` attempt (#3077).
+
 - The default diagnostic severity for `exposed` findings has been raised from
   `info` to `warning`. Previously, the strongest classification (`exposed`)
   rendered as a quieter blue info squiggle while weaker classes
