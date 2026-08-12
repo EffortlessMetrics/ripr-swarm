@@ -29,11 +29,34 @@ servers/
   <version>/
     <rust-target>/
       ripr(.exe)
-      sha256.txt
+      install-receipt.json
 ```
 
 The default server version is the extension version. Users can pin a different
-server with `ripr.server.version`.
+server with `ripr.server.version`. The configured value must be a canonical
+semantic version such as `1.2.3` or `1.2.3-rc.1`; path separators, rooted paths,
+drive/UNC forms, and `.` / `..` aliases are rejected before URL or filesystem
+use.
+
+Each version/target install uses a unique temporary sibling directory and a
+per-version/target lock. The extension verifies the manifest version and
+archive digest, extracts and probes the staged executable, records its digest
+and reported binary version, writes a completed `install-receipt.json`, and
+then atomically renames the validated directory into the final cache path.
+Concurrent extension hosts converge on that one completed installation.
+
+A cached executable is eligible only when the receipt has
+`installationState: "complete"`, its requested/manifest version, target, and
+executable name match the request, and its current executable SHA-256 matches
+the receipt. Binary-only, partial, malformed, or tampered directories are not
+probed as cache candidates. A failed install for a new version leaves an
+already completed prior version unchanged. Contenders never reclaim an
+existing lock based only on age; they fail closed after a bounded wait rather
+than risk deleting a replacement owner's lock.
+
+The install receipt establishes local completion and byte integrity. It is not
+a producer provenance attestation; release provenance verification remains a
+separate downstream trust boundary.
 
 ## Manifest
 
@@ -59,8 +82,8 @@ The manifest shape is:
 ```
 
 The checksum is for the downloaded archive. The extension verifies the archive
-before extraction and only starts the extracted binary after `ripr --version`
-passes.
+before extraction and admits the result only after the staged binary's
+`ripr --version` probe and completed-receipt validation pass.
 
 ## Previous Public Release Proof
 

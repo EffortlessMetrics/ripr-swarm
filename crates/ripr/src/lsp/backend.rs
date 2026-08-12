@@ -66,6 +66,8 @@ use std::time::{Duration, Instant};
 /// analysis run instead of canceling and re-queuing on every keystroke.
 /// Explicit refresh and config reload bypass the debounce (#1908).
 const INTERACTIVE_REFRESH_DEBOUNCE: Duration = Duration::from_millis(200);
+
+const SAVED_WORKTREE_LIMITS_NOTE: &str = "Static evidence only; staged and unstaged tracked files are analyzed; untracked files remain out of scope until staged or supplied through an explicit diff.";
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 use tower_lsp_server::jsonrpc::{Error as LspError, Result as LspResult};
 use tower_lsp_server::ls_types::notification::LogTrace;
@@ -4408,7 +4410,7 @@ impl Backend {
                     "open_documents": open_documents,
                     "report_paths": workspace_status_report_paths(),
                     "refresh_command": REFRESH_COMMAND,
-                    "limits_note": "Static evidence only; advisory, not a gate decision.",
+                    "limits_note": SAVED_WORKTREE_LIMITS_NOTE,
                 }));
             }
         };
@@ -4443,7 +4445,7 @@ impl Backend {
             "open_documents": open_documents,
             "report_paths": workspace_status_report_paths(),
             "refresh_command": REFRESH_COMMAND,
-            "limits_note": "Static evidence only; advisory, not a gate decision.",
+            "limits_note": SAVED_WORKTREE_LIMITS_NOTE,
         }))
     }
 }

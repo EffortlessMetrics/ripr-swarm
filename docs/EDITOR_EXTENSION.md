@@ -60,6 +60,18 @@ downloaded, or PATH server and writes the selected source to the `ripr` output
 channel. `cargo install ripr` remains the manual fallback for offline, pinned,
 or controlled environments.
 
+Managed downloads are admitted to the cache only after a unique sibling
+staging directory has passed manifest-version, archive-digest, executable
+probe, executable-digest, and completed-receipt validation. Promotion to the
+version/target cache path is an atomic rename guarded by a per-version/target
+install lock, so concurrent extension hosts converge on one completed install
+and interrupted installs are not launch candidates. A failed install of a new
+version does not disturb an already completed prior version.
+
+The receipt records local installation integrity; it is not a release
+provenance attestation. Producer-owned provenance verification remains a
+separate supply-chain boundary.
+
 ## First Use
 
 The editor path should not require report-format knowledge:
