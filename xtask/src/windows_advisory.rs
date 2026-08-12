@@ -1387,7 +1387,6 @@ mod tests {
             .ok_or_else(|| "VSIX compile command must contain a Cargo invocation".to_string())?;
         for required in [
             "cargo --config $env:CARGO_TEMP_CONFIG",
-            "--target-dir $env:CARGO_TARGET_DIR",
             "xtask vscode-compile",
         ] {
             if !cargo_invocation.contains(required) {
@@ -1397,7 +1396,7 @@ mod tests {
             }
         }
         let unisolated = cargo_invocation.replace(
-            "cargo --config $env:CARGO_TEMP_CONFIG --target-dir $env:CARGO_TARGET_DIR xtask vscode-compile",
+            "cargo --config $env:CARGO_TEMP_CONFIG xtask vscode-compile",
             "npm run compile",
         );
         if unisolated != "npm run compile" {
