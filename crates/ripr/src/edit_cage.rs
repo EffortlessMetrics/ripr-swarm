@@ -6,7 +6,16 @@
 //! separate #2927/#3163 slices.
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::io::Read as _;
 use std::path::{Component, Path, PathBuf};
+use std::time::Duration;
+
+const MAX_CAPTURE_PATHS: usize = 10_000;
+const MAX_CAPTURE_FILE_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_CAPTURE_TOTAL_FILE_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -89,6 +98,414 @@ pub(crate) struct AttemptDelta {
     /// False when HEAD/worktree/baseline movement makes attribution unsafe.
     pub(crate) comparable: bool,
     pub(crate) changes: Vec<AttemptPathChange>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AttemptBaseline {
+    root: PathBuf,
+    head: String,
+    policy: EditCagePolicy,
+    paths: BTreeMap<String, RepositoryPathState>,
+    ambiguous: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RepositoryPathState {
+    index_entry: Option<String>,
+    worktree_identity: WorktreeIdentity,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum WorktreeIdentity {
+    Missing,
+    File { digest: String, executable: bool },
+    Symlink(PathBuf),
+    Other,
+}
+
+pub(crate) fn capture_attempt_baseline(
+    root: &Path,
+    policy: &EditCagePolicy,
+) -> Result<AttemptBaseline, String> {
+    let root = canonical_repository_root(root)?;
+    capture_repository_state(root, policy.clone())
+}
+
+pub(crate) fn evaluate_repository_edit_cage(
+    baseline: &AttemptBaseline,
+) -> Result<EditCageVerdict, String> {
+    let after = capture_repository_state(baseline.root.clone(), baseline.policy.clone())?;
+    let delta = delta_from_repository_states(baseline, &after);
+    Ok(evaluate_edit_cage(&baseline.policy, &delta))
+}
+
+fn capture_repository_state(
+    root: PathBuf,
+    policy: EditCagePolicy,
+) -> Result<AttemptBaseline, String> {
+    let head = git_text(&root, &["rev-parse", "--verify", "HEAD"])?;
+    let index = git_bytes(&root, &["ls-files", "--stage", "-z"])?;
+    let tracked = git_bytes(&root, &["ls-files", "-z"])?;
+    let untracked = git_bytes(&root, &["ls-files", "--others", "--exclude-standard", "-z"])?;
+    let ignored = git_bytes(
+        &root,
+        &[
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "-z",
+        ],
+    )?;
+
+    let mut paths = BTreeMap::new();
+    let mut case_keys = BTreeSet::new();
+    let mut ambiguous = false;
+    let mut remaining_file_bytes = MAX_CAPTURE_TOTAL_FILE_BYTES;
+    for (path_index, raw_path) in nul_records(&tracked)
+        .chain(nul_records(&untracked))
+        .chain(nul_records(&ignored))
+        .enumerate()
+    {
+        if path_index >= MAX_CAPTURE_PATHS {
+            ambiguous = true;
+            break;
+        }
+        let raw_path = raw_path?;
+        let path = normalize_repo_relative_path(Path::new(&raw_path))?;
+        if !case_keys.insert(path.to_lowercase()) {
+            ambiguous = true;
+        }
+        let worktree_identity = worktree_identity(&root, &path, &mut remaining_file_bytes)?;
+        ambiguous |= worktree_identity == WorktreeIdentity::Other;
+        paths.insert(
+            path,
+            RepositoryPathState {
+                index_entry: None,
+                worktree_identity,
+            },
+        );
+    }
+    apply_index_records(&mut paths, &mut ambiguous, &index)?;
+
+    // A capture is usable only when its repository identity stayed stable
+    // while paths and content identities were read.
+    let stable_head = git_text(&root, &["rev-parse", "--verify", "HEAD"])?;
+    let stable_index = git_bytes(&root, &["ls-files", "--stage", "-z"])?;
+    let stable_tracked = git_bytes(&root, &["ls-files", "-z"])?;
+    let stable_untracked = git_bytes(&root, &["ls-files", "--others", "--exclude-standard", "-z"])?;
+    let stable_ignored = git_bytes(
+        &root,
+        &[
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "-z",
+        ],
+    )?;
+    let mut stable_worktree = true;
+    for (path, state) in &paths {
+        let identity = worktree_identity(&root, path, &mut remaining_file_bytes);
+        if !matches!(identity, Ok(identity) if identity == state.worktree_identity) {
+            stable_worktree = false;
+            break;
+        }
+    }
+    if stable_head != head
+        || stable_index != index
+        || stable_tracked != tracked
+        || stable_untracked != untracked
+        || stable_ignored != ignored
+        || !stable_worktree
+    {
+        ambiguous = true;
+    }
+
+    Ok(AttemptBaseline {
+        root,
+        head,
+        policy,
+        paths,
+        ambiguous,
+    })
+}
+
+fn apply_index_records(
+    paths: &mut BTreeMap<String, RepositoryPathState>,
+    ambiguous: &mut bool,
+    index: &[u8],
+) -> Result<(), String> {
+    let mut seen = BTreeSet::new();
+    for (record_index, record) in nul_records(index).enumerate() {
+        if record_index >= MAX_CAPTURE_PATHS {
+            *ambiguous = true;
+            break;
+        }
+        let record = record?;
+        let Some((metadata, raw_path)) = record.split_once('\t') else {
+            return Err(format!(
+                "git ls-files emitted malformed index record `{record}`"
+            ));
+        };
+        let path = normalize_repo_relative_path(Path::new(raw_path))?;
+        let mut fields = metadata.split_ascii_whitespace();
+        let mode = fields.next();
+        let object = fields.next();
+        let stage = fields.next();
+        if mode.is_none() || object.is_none() || stage.is_none() || fields.next().is_some() {
+            return Err(format!(
+                "git ls-files emitted malformed stage metadata `{metadata}`"
+            ));
+        }
+        if stage != Some("0") || !seen.insert(path.clone()) {
+            *ambiguous = true;
+        }
+        let entry = paths.entry(path).or_insert(RepositoryPathState {
+            index_entry: None,
+            worktree_identity: WorktreeIdentity::Missing,
+        });
+        if mode == Some("120000")
+            && !matches!(&entry.worktree_identity, WorktreeIdentity::Symlink(_))
+        {
+            *ambiguous = true;
+        }
+        entry.index_entry = Some(metadata.to_string());
+    }
+    Ok(())
+}
+
+fn delta_from_repository_states(before: &AttemptBaseline, after: &AttemptBaseline) -> AttemptDelta {
+    let mut changes = Vec::new();
+    let paths = before
+        .paths
+        .keys()
+        .chain(after.paths.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let mut changed_symlink = false;
+    for path in paths {
+        let old = before.paths.get(&path);
+        let new = after.paths.get(&path);
+        if old == new {
+            continue;
+        }
+        changed_symlink |= old
+            .map(|state| matches!(state.worktree_identity, WorktreeIdentity::Symlink(_)))
+            .unwrap_or(false)
+            || new
+                .map(|state| matches!(state.worktree_identity, WorktreeIdentity::Symlink(_)))
+                .unwrap_or(false);
+        changes.push(match (old, new) {
+            (None, Some(_)) => AttemptPathChange::added(path),
+            (Some(_), None) => AttemptPathChange::deleted(path),
+            (Some(_), Some(_)) => AttemptPathChange::modified(path),
+            (None, None) => continue,
+        });
+    }
+    AttemptDelta {
+        comparable: before.root == after.root
+            && before.head == after.head
+            && !before.ambiguous
+            && !after.ambiguous
+            && !changed_symlink,
+        changes,
+    }
+}
+
+fn canonical_repository_root(root: &Path) -> Result<PathBuf, String> {
+    let requested = fs::canonicalize(root)
+        .map_err(|err| format!("canonicalize repository root {}: {err}", root.display()))?;
+    let top = git_text(&requested, &["rev-parse", "--show-toplevel"])?;
+    let top =
+        fs::canonicalize(&top).map_err(|err| format!("canonicalize Git top-level {top}: {err}"))?;
+    if requested != top {
+        return Err(format!(
+            "attempt root {} is not the exact Git top-level {}",
+            requested.display(),
+            top.display()
+        ));
+    }
+    Ok(requested)
+}
+
+fn git_text(root: &Path, args: &[&str]) -> Result<String, String> {
+    let bytes = git_bytes(root, args)?;
+    String::from_utf8(bytes)
+        .map(|value| value.trim().to_string())
+        .map_err(|err| format!("git {args:?} emitted non-UTF-8 output: {err}"))
+}
+
+fn git_bytes(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    let output = crate::git::run_git_output_with_deadline_and_limit(
+        root,
+        args,
+        Duration::from_secs(10),
+        4 * 1024 * 1024,
+    )?;
+    if output.status.success() {
+        return Ok(output.stdout);
+    }
+    Err(format!(
+        "git {args:?} failed in {}: {}",
+        root.display(),
+        String::from_utf8_lossy(&output.stderr).trim()
+    ))
+}
+
+fn nul_records(bytes: &[u8]) -> impl Iterator<Item = Result<&str, String>> {
+    bytes
+        .split(|byte| *byte == 0)
+        .filter(|record| !record.is_empty())
+        .map(|record| {
+            std::str::from_utf8(record)
+                .map_err(|err| format!("Git path record is not UTF-8: {err}"))
+        })
+}
+
+fn worktree_identity(
+    root: &Path,
+    relative: &str,
+    remaining_file_bytes: &mut u64,
+) -> Result<WorktreeIdentity, String> {
+    let path = root.join(relative);
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(WorktreeIdentity::Missing);
+        }
+        Err(err) => return Err(format!("inspect {}: {err}", path.display())),
+    };
+    if metadata.file_type().is_symlink() {
+        let target = fs::read_link(&path)
+            .map_err(|err| format!("read symlink {}: {err}", path.display()))?;
+        return Ok(WorktreeIdentity::Symlink(target));
+    }
+    if metadata.is_file() {
+        if metadata.len() > MAX_CAPTURE_FILE_BYTES || metadata.len() > *remaining_file_bytes {
+            return Ok(WorktreeIdentity::Other);
+        }
+        let file = match open_regular_file_no_follow(&path) {
+            Ok(file) => file,
+            Err(_) => return Ok(WorktreeIdentity::Other),
+        };
+        let opened_metadata = file
+            .metadata()
+            .map_err(|err| format!("inspect opened file {}: {err}", path.display()))?;
+        if !opened_metadata.is_file()
+            || opened_metadata.len() > MAX_CAPTURE_FILE_BYTES
+            || !same_file_object(&metadata, &opened_metadata)
+        {
+            return Ok(WorktreeIdentity::Other);
+        }
+        let mut bytes = Vec::new();
+        file.take(MAX_CAPTURE_FILE_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|err| format!("read bounded content from {}: {err}", path.display()))?;
+        if bytes.len() as u64 > MAX_CAPTURE_FILE_BYTES {
+            return Ok(WorktreeIdentity::Other);
+        }
+        *remaining_file_bytes = remaining_file_bytes.saturating_sub(bytes.len() as u64);
+        let rechecked = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(_) => return Ok(WorktreeIdentity::Other),
+        };
+        if !rechecked.is_file() || !same_file_object(&opened_metadata, &rechecked) {
+            return Ok(WorktreeIdentity::Other);
+        }
+        return Ok(WorktreeIdentity::File {
+            digest: format!("{:x}", Sha256::digest(bytes)),
+            executable: is_executable(&opened_metadata),
+        });
+    }
+    Ok(WorktreeIdentity::Other)
+}
+
+#[cfg(unix)]
+fn is_executable(metadata: &fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt as _;
+    metadata.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn is_executable(_metadata: &fs::Metadata) -> bool {
+    false
+}
+
+fn open_regular_file_no_follow(path: &Path) -> Result<fs::File, std::io::Error> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        // Linux O_NOFOLLOW | O_NONBLOCK. The nonblocking bit prevents FIFO or
+        // device replacement from stalling capture before handle validation.
+        options.custom_flags(0x0002_0000 | 0x0000_0800);
+    }
+    #[cfg(all(
+        target_os = "macos",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        // Darwin O_NOFOLLOW | O_NONBLOCK.
+        options.custom_flags(0x0000_0100 | 0x0000_0004);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        // FILE_FLAG_OPEN_REPARSE_POINT keeps a replacement symlink from being
+        // followed; opened-handle metadata below then rejects the reparse point.
+        // Sharing read/write but not delete prevents rename/replacement while
+        // the capture handle is alive.
+        options
+            .custom_flags(0x0020_0000)
+            .share_mode(0x0000_0001 | 0x0000_0002);
+    }
+    #[cfg(not(any(
+        windows,
+        all(
+            target_os = "linux",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        ),
+        all(
+            target_os = "macos",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    )))]
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "safe no-follow capture is unsupported on this target",
+        ));
+    }
+    options.open(path)
+}
+
+#[cfg(unix)]
+fn same_file_object(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+    left.dev() == right.dev() && left.ino() == right.ino()
+}
+
+#[cfg(windows)]
+fn same_file_object(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt as _;
+    // Stable Rust does not expose Windows file IDs. OPEN_REPARSE_POINT keeps
+    // link replacement from being followed; compare the strongest stable
+    // handle/path snapshot fields before and after the bounded read.
+    left.file_attributes() == right.file_attributes()
+        && left.creation_time() == right.creation_time()
+        && left.last_write_time() == right.last_write_time()
+        && left.file_size() == right.file_size()
+}
+
+#[cfg(not(any(unix, windows)))]
+fn same_file_object(_left: &fs::Metadata, _right: &fs::Metadata) -> bool {
+    false
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -516,6 +933,65 @@ fn normalize_repo_relative_path(path: &Path) -> Result<String, String> {
 mod tests {
     use super::*;
     use serde::de::DeserializeOwned;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct GitFixture {
+        root: PathBuf,
+    }
+
+    impl Drop for GitFixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn git_fixture(name: &str) -> Result<GitFixture, String> {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|err| format!("clock before UNIX_EPOCH: {err}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-edit-cage-{name}-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("tests"))
+            .map_err(|err| format!("create fixture tests: {err}"))?;
+        fs::create_dir_all(root.join("src")).map_err(|err| format!("create fixture src: {err}"))?;
+        fs::write(root.join("tests/pricing.rs"), "fn boundary() {}\n")
+            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(root.join("src/pricing.rs"), "pub fn price() {}\n")
+            .map_err(|err| format!("write production file: {err}"))?;
+        fs::write(root.join("Cargo.toml"), "[workspace]\n")
+            .map_err(|err| format!("write config: {err}"))?;
+        git_ok(&root, &["-c", "init.templateDir=", "init", "-q"])?;
+        git_ok(&root, &["config", "user.email", "ripr@example.invalid"])?;
+        git_ok(&root, &["config", "user.name", "RIPR Test"])?;
+        git_ok(&root, &["config", "commit.gpgSign", "false"])?;
+        git_ok(&root, &["config", "core.fileMode", "true"])?;
+        git_ok(&root, &["config", "core.autocrlf", "false"])?;
+        git_ok(&root, &["config", "core.symlinks", "true"])?;
+        git_ok(&root, &["config", "core.hooksPath", ".no-hooks"])?;
+        git_ok(&root, &["add", "."])?;
+        git_ok(&root, &["commit", "-qm", "baseline"])?;
+        Ok(GitFixture { root })
+    }
+
+    fn git_ok(root: &Path, args: &[&str]) -> Result<(), String> {
+        let output = crate::git::run_git_output_with_deadline_and_limit_isolated(
+            root,
+            args,
+            Duration::from_secs(10),
+            4 * 1024 * 1024,
+        )?;
+        if output.status.success() {
+            return Ok(());
+        }
+        Err(format!(
+            "isolated fixture git {args:?} failed in {}: {}",
+            root.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
 
     fn policy() -> Result<EditCagePolicy, String> {
         Ok(EditCagePolicy {
@@ -534,6 +1010,417 @@ mod tests {
             Ok(_) => Err(format!("expected invalid JSON input to be rejected: {raw}")),
             Err(_) => Ok(()),
         }
+    }
+
+    #[test]
+    fn repository_delta_attributes_only_movement_after_the_exact_baseline() -> Result<(), String> {
+        for staged in [false, true] {
+            let fixture = git_fixture(if staged { "staged" } else { "unstaged" })?;
+            fs::write(
+                fixture.root.join("src/pricing.rs"),
+                "pub fn price() { /* pre-existing user edit */ }\n",
+            )
+            .map_err(|err| format!("write pre-existing dirty source: {err}"))?;
+            fs::write(
+                fixture.root.join("tests/pricing.rs"),
+                "fn boundary() { /* pre-existing selected-test edit */ }\n",
+            )
+            .map_err(|err| format!("write pre-existing dirty selected test: {err}"))?;
+            let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
+            fs::write(
+                fixture.root.join("tests/pricing.rs"),
+                "fn boundary() { assert_eq!(2 + 2, 4); }\n",
+            )
+            .map_err(|err| format!("write selected test edit: {err}"))?;
+            if staged {
+                git_ok(&fixture.root, &["add", "tests/pricing.rs"])?;
+            }
+
+            let verdict = evaluate_repository_edit_cage(&baseline)?;
+            assert_eq!(verdict.status, EditCageVerdictStatus::Compliant);
+            assert_eq!(verdict.changed_paths, vec!["tests/pricing.rs".to_string()]);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn repository_delta_allows_expected_ignored_output_but_not_as_target_movement()
+    -> Result<(), String> {
+        let fixture = git_fixture("ignored-output")?;
+        fs::write(fixture.root.join(".gitignore"), "target/\n")
+            .map_err(|err| format!("write gitignore: {err}"))?;
+        git_ok(&fixture.root, &["add", ".gitignore"])?;
+        git_ok(&fixture.root, &["commit", "-qm", "ignore target"])?;
+        fs::create_dir_all(fixture.root.join("target/ripr/reports"))
+            .map_err(|err| format!("create ignored reports: {err}"))?;
+        fs::write(
+            fixture.root.join("target/ripr/reports/agent-receipt.json"),
+            "before\n",
+        )
+        .map_err(|err| format!("write baseline ignored output: {err}"))?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
+            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(
+            fixture.root.join("target/ripr/reports/agent-receipt.json"),
+            "after\n",
+        )
+        .map_err(|err| format!("write changed ignored output: {err}"))?;
+
+        let verdict = evaluate_repository_edit_cage(&baseline)?;
+        assert_eq!(verdict.status, EditCageVerdictStatus::Compliant);
+        assert_eq!(
+            verdict.changed_paths,
+            vec![
+                "target/ripr/reports/agent-receipt.json".to_string(),
+                "tests/pricing.rs".to_string()
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unbounded_repository_content_cannot_earn_compliance() -> Result<(), String> {
+        let fixture = git_fixture("unbounded-content")?;
+        let oversized = fixture.root.join("oversized.bin");
+        let file = fs::File::create(&oversized)
+            .map_err(|err| format!("create oversized fixture: {err}"))?;
+        file.set_len(MAX_CAPTURE_FILE_BYTES + 1)
+            .map_err(|err| format!("size oversized fixture: {err}"))?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
+            .map_err(|err| format!("write selected test: {err}"))?;
+
+        assert_eq!(
+            evaluate_repository_edit_cage(&baseline)?.status,
+            EditCageVerdictStatus::Incomparable
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn aggregate_file_budget_fails_closed_before_reading() -> Result<(), String> {
+        let fixture = git_fixture("aggregate-budget")?;
+        let mut remaining = 1;
+        let identity = worktree_identity(&fixture.root, "tests/pricing.rs", &mut remaining)?;
+        if identity != WorktreeIdentity::Other {
+            return Err(format!(
+                "file larger than remaining aggregate budget was accepted: {identity:?}"
+            ));
+        }
+        if remaining != 1 {
+            return Err("rejected file consumed aggregate budget".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn repository_delta_retains_every_forbidden_attempt_edit() -> Result<(), String> {
+        let fixture = git_fixture("forbidden")?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
+            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(fixture.root.join("src/pricing.rs"), "pub fn changed() {}\n")
+            .map_err(|err| format!("write production edit: {err}"))?;
+        fs::write(fixture.root.join("Cargo.toml"), "[workspace]\nmembers=[]\n")
+            .map_err(|err| format!("write config edit: {err}"))?;
+
+        let verdict = evaluate_repository_edit_cage(&baseline)?;
+        assert_eq!(verdict.status, EditCageVerdictStatus::Violated);
+        assert_eq!(
+            verdict.changed_paths,
+            vec![
+                "Cargo.toml".to_string(),
+                "src/pricing.rs".to_string(),
+                "tests/pricing.rs".to_string()
+            ]
+        );
+        assert_eq!(
+            verdict
+                .violations
+                .iter()
+                .filter(|violation| violation.kind == EditCageViolationKind::ForbiddenPath)
+                .count(),
+            2
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn repository_delta_fails_closed_for_head_rename_case_and_symlink_ambiguity()
+    -> Result<(), String> {
+        let head = git_fixture("head-movement")?;
+        let head_baseline = capture_attempt_baseline(&head.root, &policy()?)?;
+        fs::write(head.root.join("tests/pricing.rs"), "fn concurrent() {}\n")
+            .map_err(|err| format!("write concurrent commit: {err}"))?;
+        git_ok(&head.root, &["add", "tests/pricing.rs"])?;
+        git_ok(&head.root, &["commit", "-qm", "concurrent head movement"])?;
+        assert_eq!(
+            evaluate_repository_edit_cage(&head_baseline)?.status,
+            EditCageVerdictStatus::Incomparable
+        );
+
+        let renamed = git_fixture("rename")?;
+        let rename_baseline = capture_attempt_baseline(&renamed.root, &policy()?)?;
+        git_ok(
+            &renamed.root,
+            &["mv", "tests/pricing.rs", "tests/pricing_new.rs"],
+        )?;
+        assert_ne!(
+            evaluate_repository_edit_cage(&rename_baseline)?.status,
+            EditCageVerdictStatus::Compliant
+        );
+
+        let case = git_fixture("case-collision")?;
+        let oid = git_text(&case.root, &["rev-parse", "HEAD:tests/pricing.rs"])?;
+        git_ok(
+            &case.root,
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                &format!("100644,{oid},tests/Case.rs"),
+            ],
+        )?;
+        git_ok(
+            &case.root,
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                &format!("100644,{oid},tests/case.rs"),
+            ],
+        )?;
+        let case_baseline = capture_attempt_baseline(&case.root, &policy()?)?;
+        fs::write(case.root.join("tests/pricing.rs"), "fn changed() {}\n")
+            .map_err(|err| format!("write case fixture selected test: {err}"))?;
+        assert_eq!(
+            evaluate_repository_edit_cage(&case_baseline)?.status,
+            EditCageVerdictStatus::Incomparable
+        );
+
+        let symlink = git_fixture("symlink")?;
+        let symlink_baseline = capture_attempt_baseline(&symlink.root, &policy()?)?;
+        fs::write(symlink.root.join("link-target.txt"), "../outside.rs\n")
+            .map_err(|err| format!("write symlink blob source: {err}"))?;
+        let link_oid = git_text(&symlink.root, &["hash-object", "-w", "link-target.txt"])?;
+        git_ok(
+            &symlink.root,
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                &format!("120000,{link_oid},tests/pricing.rs"),
+            ],
+        )?;
+        assert_eq!(
+            evaluate_repository_edit_cage(&symlink_baseline)?.status,
+            EditCageVerdictStatus::Incomparable
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn nonzero_or_duplicate_index_stages_are_explicitly_ambiguous() -> Result<(), String> {
+        let oid = "0".repeat(40);
+        let nonzero = format!("100644 {oid} 2\ttests/pricing.rs\0");
+        let mut paths = BTreeMap::new();
+        let mut ambiguous = false;
+        apply_index_records(&mut paths, &mut ambiguous, nonzero.as_bytes())?;
+        if !ambiguous {
+            return Err("nonzero index stage was accepted as comparable".to_string());
+        }
+
+        let duplicate =
+            format!("100644 {oid} 0\ttests/pricing.rs\0100644 {oid} 0\ttests/pricing.rs\0");
+        paths.clear();
+        ambiguous = false;
+        apply_index_records(&mut paths, &mut ambiguous, duplicate.as_bytes())?;
+        if !ambiguous {
+            return Err("duplicate index path was accepted as comparable".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn real_merge_conflict_index_cannot_earn_compliance() -> Result<(), String> {
+        let fixture = git_fixture("index-conflict")?;
+        git_ok(&fixture.root, &["checkout", "-qb", "other"])?;
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn other() {}\n")
+            .map_err(|err| format!("write other branch: {err}"))?;
+        git_ok(&fixture.root, &["commit", "-qam", "other branch"])?;
+        git_ok(&fixture.root, &["checkout", "-q", "-"])?;
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn primary() {}\n")
+            .map_err(|err| format!("write primary branch: {err}"))?;
+        git_ok(&fixture.root, &["commit", "-qam", "primary branch"])?;
+        let merge_result = git_bytes(&fixture.root, &["merge", "other"]);
+        if merge_result.is_ok() {
+            return Err("fixture merge unexpectedly avoided a conflict".to_string());
+        }
+        let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
+        if !baseline.ambiguous {
+            return Err("real unmerged index was accepted as comparable".to_string());
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn no_follow_open_rejects_replacement_symlink_before_reading() -> Result<(), String> {
+        use std::os::unix::fs::symlink;
+
+        let fixture = git_fixture("no-follow-symlink")?;
+        let path = fixture.root.join("replacement");
+        symlink("tests/pricing.rs", &path)
+            .map_err(|err| format!("create replacement symlink: {err}"))?;
+        if open_regular_file_no_follow(&path).is_ok() {
+            return Err("no-follow adapter opened a replacement symlink".to_string());
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nonblocking_open_rejects_fifo_without_waiting_for_a_writer() -> Result<(), String> {
+        let fixture = git_fixture("nonblocking-fifo")?;
+        git_ok(
+            &fixture.root,
+            &[
+                "-c",
+                "alias.make-fifo=!mkfifo",
+                "make-fifo",
+                "replacement-fifo",
+            ],
+        )?;
+        let started = std::time::Instant::now();
+        let file = open_regular_file_no_follow(&fixture.root.join("replacement-fifo"))
+            .map_err(|err| format!("nonblocking FIFO open failed unexpectedly: {err}"))?;
+        let metadata = file
+            .metadata()
+            .map_err(|err| format!("inspect opened FIFO: {err}"))?;
+        if metadata.is_file() {
+            return Err("opened FIFO was misclassified as a regular file".to_string());
+        }
+        if started.elapsed() >= Duration::from_secs(2) {
+            return Err("FIFO adapter open blocked waiting for a writer".to_string());
+        }
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn capture_handle_denies_windows_rename_until_closed() -> Result<(), String> {
+        let fixture = git_fixture("deny-replacement-share")?;
+        let source = fixture.root.join("tests/pricing.rs");
+        let destination = fixture.root.join("tests/renamed.rs");
+        let handle = open_regular_file_no_follow(&source)
+            .map_err(|err| format!("open capture handle: {err}"))?;
+        if fs::rename(&source, &destination).is_ok() {
+            return Err("Windows capture handle allowed pathname replacement".to_string());
+        }
+        drop(handle);
+        fs::rename(&source, &destination)
+            .map_err(|err| format!("rename should succeed after capture closes: {err}"))?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unstaged_tracked_symlink_target_change_cannot_hide_beside_allowed_edit() -> Result<(), String>
+    {
+        use std::os::unix::fs::symlink;
+
+        let fixture = git_fixture("symlink-target-change")?;
+        let link = fixture.root.join("tests/tracked-link");
+        symlink("pricing.rs", &link)
+            .map_err(|err| format!("create tracked symlink fixture: {err}"))?;
+        git_ok(&fixture.root, &["add", "tests/tracked-link"])?;
+        git_ok(&fixture.root, &["commit", "-qm", "track symlink"])?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
+
+        fs::remove_file(&link).map_err(|err| format!("remove baseline symlink: {err}"))?;
+        symlink("../Cargo.toml", &link)
+            .map_err(|err| format!("retarget tracked symlink: {err}"))?;
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
+            .map_err(|err| format!("write simultaneous selected edit: {err}"))?;
+
+        let after = capture_attempt_baseline(&fixture.root, &policy()?)?;
+        let before_link = baseline
+            .paths
+            .get("tests/tracked-link")
+            .ok_or_else(|| "baseline omitted tracked symlink".to_string())?;
+        let after_link = after
+            .paths
+            .get("tests/tracked-link")
+            .ok_or_else(|| "after-state omitted tracked symlink".to_string())?;
+        if before_link.worktree_identity == after_link.worktree_identity {
+            return Err("distinct worktree symlink targets collapsed to one identity".to_string());
+        }
+        let verdict = evaluate_edit_cage(
+            &baseline.policy,
+            &delta_from_repository_states(&baseline, &after),
+        );
+        if verdict.status != EditCageVerdictStatus::Incomparable {
+            return Err(format!(
+                "retargeted tracked symlink plus an allowed edit must fail closed, got {:?}",
+                verdict.status
+            ));
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn forbidden_chmod_cannot_hide_beside_allowed_edit() -> Result<(), String> {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let fixture = git_fixture("forbidden-chmod")?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
+        let production = fixture.root.join("src/pricing.rs");
+        let mut permissions = fs::metadata(&production)
+            .map_err(|err| format!("inspect production permissions: {err}"))?
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&production, permissions)
+            .map_err(|err| format!("chmod production fixture: {err}"))?;
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
+            .map_err(|err| format!("write simultaneous selected edit: {err}"))?;
+        let verdict = evaluate_repository_edit_cage(&baseline)?;
+        if verdict.status != EditCageVerdictStatus::Violated {
+            return Err(format!(
+                "forbidden chmod plus allowed edit must violate, got {:?}",
+                verdict.status
+            ));
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn distinct_non_utf8_symlink_targets_remain_distinct() -> Result<(), String> {
+        use std::os::unix::ffi::OsStringExt as _;
+        use std::os::unix::fs::symlink;
+
+        let fixture = git_fixture("non-utf8-symlink")?;
+        let link = fixture.root.join("tests/tracked-link");
+        symlink(std::ffi::OsString::from_vec(vec![b'a', 0x80]), &link)
+            .map_err(|err| format!("create first non-UTF8 symlink: {err}"))?;
+        git_ok(&fixture.root, &["add", "tests/tracked-link"])?;
+        git_ok(&fixture.root, &["commit", "-qm", "track non-UTF8 symlink"])?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
+        fs::remove_file(&link).map_err(|err| format!("remove first symlink: {err}"))?;
+        symlink(std::ffi::OsString::from_vec(vec![b'a', 0x81]), &link)
+            .map_err(|err| format!("create second non-UTF8 symlink: {err}"))?;
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
+            .map_err(|err| format!("write simultaneous selected edit: {err}"))?;
+        let verdict = evaluate_repository_edit_cage(&baseline)?;
+        if verdict.status != EditCageVerdictStatus::Incomparable {
+            return Err(format!(
+                "distinct non-UTF8 symlink target must fail closed, got {:?}",
+                verdict.status
+            ));
+        }
+        Ok(())
     }
 
     #[test]
