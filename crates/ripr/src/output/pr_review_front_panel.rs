@@ -1726,8 +1726,8 @@ fn top_issue_from_assistant_health(
             artifact: receipt.and_then(|value| string_path(value, &["artifact"])),
             status: selected_proof_receipt_status(
                 receipt,
-                seam_id.as_deref(),
                 parsed.receipt.as_ref(),
+                input.receipt_path.as_deref(),
             ),
         },
     })
@@ -1735,25 +1735,21 @@ fn top_issue_from_assistant_health(
 
 fn selected_proof_receipt_status(
     selected_receipt: Option<&Value>,
-    selected_seam_id: Option<&str>,
     parsed_receipt: Option<&Value>,
+    parsed_receipt_artifact: Option<&str>,
 ) -> String {
-    if let (Some(selected_seam_id), Some(parsed_receipt)) = (selected_seam_id, parsed_receipt)
-        && receipt_seam_id(parsed_receipt).as_deref() == Some(selected_seam_id)
+    if let (Some(selected_artifact), Some(parsed_artifact), Some(parsed_receipt)) = (
+        selected_receipt.and_then(|value| string_path(value, &["artifact"])),
+        parsed_receipt_artifact,
+        parsed_receipt,
+    ) && selected_artifact == parsed_artifact
     {
         return receipt_lifecycle_state_from_receipt_value(parsed_receipt);
     }
     selected_receipt
         .and_then(|value| string_path(value, &["status"]))
-        .map(|state| receipt_lifecycle_state(Some(&state)))
+        .map(|status| receipt_lifecycle_state(Some(&status)))
         .unwrap_or_else(|| RECEIPT_MISSING.to_string())
-}
-
-fn receipt_seam_id(receipt: &Value) -> Option<String> {
-    string_from_sources(&[
-        (Some(receipt), &["provenance", "seam_id"]),
-        (Some(receipt), &["seam", "seam_id"]),
-    ])
 }
 
 fn selected_assistant_health_proof(health: &Value) -> Option<&Value> {
@@ -2470,19 +2466,19 @@ mod tests {
     }
 
     #[test]
-    fn selected_proof_rejects_receipt_status_from_another_seam() -> Result<(), String> {
+    fn selected_proof_rejects_improved_receipt_from_same_seam() -> Result<(), String> {
         let repo_root = repo_root()?;
         let inputs = serde_json::json!({
             "assistant_health": "fixtures/boundary_gap/expected/assistant-loop-health/unchanged/assistant-loop-health.json",
-            "receipt": "mismatched-receipt.json"
+            "receipt": "same-seam-improved-receipt.json"
         });
         let expected_md_path = repo_root.join(
             "fixtures/boundary_gap/expected/pr-review-front-panel/mixed-health/pr-review-front-panel.md",
         );
         let mut input = fixture_input(&repo_root, &inputs, &expected_md_path)?;
         input.receipt_json = Some(Ok(serde_json::json!({
-            "provenance": {"seam_id": "different-seam", "movement": "improved"},
-            "seam": {"seam_id": "different-seam", "change": "improved"},
+            "provenance": {"seam_id": "67fc764ba37d77bd", "movement": "improved"},
+            "seam": {"seam_id": "67fc764ba37d77bd", "change": "improved"},
             "summary": {"receipt_state": "receipt_movement_improved"}
         })
         .to_string()));
