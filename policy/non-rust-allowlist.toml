@@ -373,7 +373,7 @@ owner = "ripr/evidence-quality"
 surface = "repo"
 classification = "metadata"
 reason = "Selected, unjudged Rust behavior-panel denominator; null labels remain non-results."
-covered_by = ["cargo xtask check-file-policy"]
+covered_by = ["cargo xtask check-file-policy", "cargo xtask rust-judged-panel check"]
 
 [[allow]]
 glob = "metrics/rust-repair-trust/*.json"
