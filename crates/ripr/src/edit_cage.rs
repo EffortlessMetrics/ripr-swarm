@@ -434,7 +434,11 @@ fn open_regular_file_no_follow(path: &Path) -> Result<fs::File, std::io::Error> 
         use std::os::windows::fs::OpenOptionsExt as _;
         // FILE_FLAG_OPEN_REPARSE_POINT keeps a replacement symlink from being
         // followed; opened-handle metadata below then rejects the reparse point.
-        options.custom_flags(0x0020_0000);
+        // Sharing read/write but not delete prevents rename/replacement while
+        // the capture handle is alive.
+        options
+            .custom_flags(0x0020_0000)
+            .share_mode(0x0000_0001 | 0x0000_0002);
     }
     options.open(path)
 }
@@ -1213,10 +1217,35 @@ mod tests {
                 "replacement-fifo",
             ],
         )?;
-        let identity = worktree_identity(&fixture.root, "replacement-fifo")?;
-        if identity != WorktreeIdentity::Other {
-            return Err(format!("FIFO was not rejected, got {identity:?}"));
+        let started = std::time::Instant::now();
+        let file = open_regular_file_no_follow(&fixture.root.join("replacement-fifo"))
+            .map_err(|err| format!("nonblocking FIFO open failed unexpectedly: {err}"))?;
+        let metadata = file
+            .metadata()
+            .map_err(|err| format!("inspect opened FIFO: {err}"))?;
+        if metadata.is_file() {
+            return Err("opened FIFO was misclassified as a regular file".to_string());
         }
+        if started.elapsed() >= Duration::from_secs(2) {
+            return Err("FIFO adapter open blocked waiting for a writer".to_string());
+        }
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn capture_handle_denies_windows_rename_until_closed() -> Result<(), String> {
+        let fixture = git_fixture("deny-replacement-share")?;
+        let source = fixture.root.join("tests/pricing.rs");
+        let destination = fixture.root.join("tests/renamed.rs");
+        let handle = open_regular_file_no_follow(&source)
+            .map_err(|err| format!("open capture handle: {err}"))?;
+        if fs::rename(&source, &destination).is_ok() {
+            return Err("Windows capture handle allowed pathname replacement".to_string());
+        }
+        drop(handle);
+        fs::rename(&source, &destination)
+            .map_err(|err| format!("rename should succeed after capture closes: {err}"))?;
         Ok(())
     }
 
