@@ -1902,6 +1902,51 @@ fn test_oracle_assistant_proof_cli_writes_canonical_report()
 }
 
 #[test]
+fn test_oracle_assistant_proof_cli_writes_unchanged_control()
+-> Result<(), Box<dyn std::error::Error>> {
+    let workspace = unique_temp_workspace("assistant-loop-proof-unchanged");
+    std::fs::create_dir_all(&workspace)?;
+    let out = workspace.join("assistant-proof.json");
+    let out_md = workspace.join("assistant-proof.md");
+    let output = run_ripr_in_workspace(&[
+        "assistant-loop",
+        "proof",
+        "--root",
+        ".",
+        "--pr-guidance",
+        "fixtures/boundary_gap/expected/test-oracle-assistant-loop/canonical/pr-guidance.json",
+        "--agent-packet",
+        "fixtures/boundary_gap/expected/editor-agent-loop/agent-brief.json",
+        "--before",
+        "fixtures/boundary_gap/calibration/before-targeted-test.repo-exposure.json",
+        "--after",
+        "fixtures/boundary_gap/calibration/after-targeted-test.repo-exposure.json",
+        "--receipt",
+        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-receipt.json",
+        "--out",
+        &out.display().to_string(),
+        "--out-md",
+        &out_md.display().to_string(),
+    ])?;
+    assert_success(&output);
+
+    let expected = workspace_root().join(
+        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/assistant-proof.json",
+    );
+    assert_eq!(
+        normalize_newlines(std::fs::read_to_string(out)?.trim_end()),
+        normalize_newlines(std::fs::read_to_string(expected)?.trim_end()),
+        "unchanged assistant-proof fixture drifted"
+    );
+    let markdown = std::fs::read_to_string(out_md)?;
+    assert!(markdown.contains("After: weakly_gripped"));
+    assert!(markdown.contains("State: unchanged"));
+    assert!(markdown.contains("PR ledger: not available"));
+    std::fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
 fn assistant_loop_health_cli_writes_multi_proof_report() -> Result<(), Box<dyn std::error::Error>> {
     let workspace = unique_temp_workspace("assistant-loop-health");
     std::fs::create_dir_all(&workspace)?;
@@ -2000,6 +2045,50 @@ fn first_action_cli_writes_actionable_report() -> Result<(), Box<dyn std::error:
     assert!(markdown.contains("Status: actionable"));
     assert!(markdown.contains("Action: write_focused_test"));
     assert!(markdown.contains("Does not run mutation testing."));
+    std::fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
+fn first_action_cli_preserves_unchanged_control_identity() -> Result<(), Box<dyn std::error::Error>>
+{
+    let workspace = unique_temp_workspace("first-action-unchanged");
+    std::fs::create_dir_all(&workspace)?;
+    let out = workspace.join("first-useful-action.json");
+    let out_md = workspace.join("first-useful-action.md");
+    let output = run_ripr_in_workspace(&[
+        "first-action",
+        "--root",
+        "fixtures/boundary_gap/input",
+        "--pr-guidance",
+        "fixtures/boundary_gap/expected/test-oracle-assistant-loop/canonical/pr-guidance.json",
+        "--assistant-proof",
+        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/assistant-proof.json",
+        "--receipt",
+        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-receipt.json",
+        "--out",
+        &out.display().to_string(),
+        "--out-md",
+        &out_md.display().to_string(),
+    ])?;
+    assert_success(&output);
+
+    let fixture = workspace_root()
+        .join("fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt");
+    assert_eq!(
+        normalize_generated_at(normalize_newlines(std::fs::read_to_string(out)?.trim_end(),)),
+        normalize_newlines(
+            std::fs::read_to_string(fixture.join("first-useful-action.json"))?.trim_end(),
+        ),
+        "unchanged first-action JSON fixture drifted"
+    );
+    assert_eq!(
+        normalize_newlines(&std::fs::read_to_string(out_md)?),
+        normalize_newlines(&std::fs::read_to_string(
+            fixture.join("first-useful-action.md"),
+        )?),
+        "unchanged first-action Markdown fixture drifted"
+    );
     std::fs::remove_dir_all(workspace)?;
     Ok(())
 }
@@ -2577,6 +2666,49 @@ fn first_useful_action_corpus_pins_routing_cases() -> Result<(), Box<dyn std::er
             action_kind
         );
 
+        let unchanged_control = if case_id == "unchanged_after_attempt" {
+            let proof_artifact = json_pointer_str(case, "/inputs/assistant_proof/artifact")?;
+            let receipt_artifact = json_pointer_str(case, "/inputs/receipt/artifact")?;
+            assert_eq!(
+                proof_artifact,
+                "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/assistant-proof.json"
+            );
+            assert_eq!(
+                receipt_artifact,
+                "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-receipt.json"
+            );
+
+            let proof: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+                workspace_root().join(proof_artifact),
+            )?)?;
+            let receipt: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+                workspace_root().join(receipt_artifact),
+            )?)?;
+            assert_eq!(
+                json_pointer_str(&proof, "/evidence_movement/state")?,
+                "unchanged"
+            );
+            assert_eq!(
+                json_pointer_str(&proof, "/evidence_movement/after_class")?,
+                "weakly_gripped"
+            );
+            assert!(
+                proof
+                    .pointer("/inputs/ledger")
+                    .is_some_and(serde_json::Value::is_null)
+            );
+            assert!(
+                proof
+                    .pointer("/ci_projection/ledger")
+                    .is_some_and(serde_json::Value::is_null)
+            );
+            assert_eq!(json_pointer_str(&receipt, "/seam/change")?, "unchanged");
+            assert_eq!(json_pointer_str(&receipt, "/seam/after")?, "weakly_gripped");
+            Some((proof_artifact, receipt_artifact))
+        } else {
+            None
+        };
+
         let report_path = fixture_dir.join(case_dir).join("first-useful-action.json");
         let markdown_path = fixture_dir.join(case_dir).join("first-useful-action.md");
         let report: serde_json::Value =
@@ -2586,6 +2718,39 @@ fn first_useful_action_corpus_pins_routing_cases() -> Result<(), Box<dyn std::er
         assert_eq!(json_pointer_str(&report, "/kind")?, "first_useful_action");
         assert_eq!(json_pointer_str(&report, "/status")?, status);
         assert_eq!(json_pointer_str(&report, "/action_kind")?, action_kind);
+
+        if let Some((proof_artifact, receipt_artifact)) = unchanged_control {
+            assert_eq!(
+                json_pointer_str(&report, "/inputs/assistant_proof")?,
+                proof_artifact
+            );
+            assert_eq!(
+                json_pointer_str(&report, "/inputs/receipt")?,
+                receipt_artifact
+            );
+            assert!(
+                report
+                    .pointer("/inputs/ledger")
+                    .is_some_and(serde_json::Value::is_null)
+            );
+            assert_eq!(
+                json_pointer_str(&report, "/evidence/assistant_proof")?,
+                proof_artifact
+            );
+            assert_eq!(
+                json_pointer_str(&report, "/evidence/receipt")?,
+                receipt_artifact
+            );
+            assert!(
+                report
+                    .pointer("/evidence/ledger")
+                    .is_some_and(serde_json::Value::is_null)
+            );
+            assert_eq!(
+                json_pointer_str(&report, "/evidence/static_movement")?,
+                "unchanged"
+            );
+        }
         assert_eq!(
             json_pointer_str(&report, "/generated_at")?,
             "2026-05-09T12:00:00Z"

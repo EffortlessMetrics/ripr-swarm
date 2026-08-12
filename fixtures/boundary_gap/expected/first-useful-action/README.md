@@ -13,6 +13,10 @@ Files:
   routing results for the bounded statuses in RIPR-SPEC-0020.
 - `<case>/first-useful-action.json` and `<case>/first-useful-action.md` pin the
   expected report output for each route.
+- `unchanged-after-attempt/assistant-proof.json` and
+  `unchanged-after-attempt/agent-receipt.json` are dedicated negative-control
+  inputs. They intentionally remain unchanged when the canonical boundary-gap
+  journey advances to improved evidence.
 
 The corpus intentionally covers:
 
