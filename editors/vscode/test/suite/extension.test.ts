@@ -10,6 +10,7 @@ import {
   readActionableGapQueueStatus,
   readFirstPrPacketStatus
 } from '../../src/client';
+import { compatibleLspEvidence } from './testCompatibility';
 
 suite('Extension Smoke', () => {
   suiteSetup(async () => {
@@ -4354,7 +4355,7 @@ function createControllerTestContext(options: ControllerTestOptions) {
       detail: 'test ripr on PATH',
       binaryVersion: options.serverVersion ?? 'ripr 0.8.0-test',
       installationState: 'unmanaged',
-      compatibilityResult: 'not_established'
+      compatibilityResult: compatibleLspEvidence
     }),
     createLanguageClient: (_serverOptions, options, experimental) => {
       clientOptions = options;

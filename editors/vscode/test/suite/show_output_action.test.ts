@@ -2,6 +2,7 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 import { RiprClientController, RiprClientRuntime } from '../../src/client';
 import { RiprConfig } from '../../src/config';
+import { compatibleLspEvidence } from './testCompatibility';
 
 const enabledConfig: RiprConfig = {
   enabled: true,
@@ -36,7 +37,7 @@ suite('Show Output Warning Action', () => {
         source: 'configured',
         detail: 'sentinel server',
         installationState: 'unmanaged',
-        compatibilityResult: 'not_established'
+        compatibilityResult: compatibleLspEvidence
       }),
       createLanguageClient: () => ({
         onNotification: () => ({ dispose: () => undefined }),
