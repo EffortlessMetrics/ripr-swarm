@@ -1093,7 +1093,9 @@ mod tests {
             return Err("context must use --at and --json with the check artifact".to_string());
         }
         if explain.contains("Invoke-CLI 'context'") || !context.contains("Invoke-CLI 'context'") {
-            return Err("explain and context journeys must remain separate command lines".to_string());
+            return Err(
+                "explain and context journeys must remain separate command lines".to_string(),
+            );
         }
         if context.contains("Invoke-CLI 'explain'") || !explain.contains("Invoke-CLI 'explain'") {
             return Err("explain and context journeys must not be coalesced".to_string());
