@@ -9823,6 +9823,14 @@ fn workspace_diagnostics_include_saved_tracked_edits_and_exclude_untracked_files
             "unstaged tracked equality-boundary edit received no LSP diagnostics".to_string(),
         );
     }
+    if !interactive
+        .snapshot
+        .findings
+        .iter()
+        .any(|finding| finding.probe.location.file.ends_with("src/lib.rs"))
+    {
+        return Err("unstaged tracked edit produced no diff-scoped finding".to_string());
+    }
     assert!(
         interactive.snapshot.seams_deferred,
         "interactive saved-state analysis must keep seam inventory deferred"
@@ -9837,24 +9845,56 @@ fn workspace_diagnostics_include_saved_tracked_edits_and_exclude_untracked_files
     }
 
     run_lsp_scope_git(root, &["add", "src/lib.rs"])?;
-    let explicit = workspace_diagnostics_with_config(root, &config, false)?;
-    let staged_count = lsp_test_scope_diagnostic_count(&explicit, root, "src/lib.rs")?;
+    let staged = workspace_diagnostics_with_config(root, &config, true)?;
+    let staged_count = lsp_test_scope_diagnostic_count(&staged, root, "src/lib.rs")?;
     if staged_count == 0 {
         return Err(
             "staged tracked equality-boundary edit received no LSP diagnostics".to_string(),
         );
     }
     assert!(
-        !explicit.snapshot.seams_deferred,
-        "explicit refresh must complete the full seam inventory"
+        staged.snapshot.seams_deferred,
+        "staged proof must not pass through full seam-inventory fallback"
     );
-    if explicit
+    if !staged
+        .snapshot
+        .findings
+        .iter()
+        .any(|finding| finding.probe.location.file.ends_with("src/lib.rs"))
+    {
+        return Err("staged tracked edit produced no diff-scoped finding".to_string());
+    }
+    if staged
         .snapshot
         .findings
         .iter()
         .any(|finding| finding.probe.location.file.ends_with("src/untracked.rs"))
     {
-        return Err("untracked file entered the explicit worktree diff authority".to_string());
+        return Err("untracked file entered the staged worktree diff authority".to_string());
+    }
+
+    let untracked_only = boundary_gap_git_fixture_root("untracked-only-worktree")?;
+    let untracked_only_root = untracked_only.path();
+    let untracked_only_path = untracked_only_root.join("src/untracked.rs");
+    std::fs::write(
+        &untracked_only_path,
+        "pub fn untracked_boundary(left: i32, right: i32) -> bool { left >= right }\n",
+    )
+    .map_err(|err| format!("write untracked-only fixture failed: {err}"))?;
+    let negative = workspace_diagnostics_with_config(untracked_only_root, &config, true)?;
+    if !negative.snapshot.findings.is_empty() {
+        return Err(format!(
+            "untracked-only workspace produced diff-scoped findings: {:?}",
+            negative.snapshot.findings
+        ));
+    }
+    let untracked_only_uri = file_uri_for_path(&untracked_only_path)?;
+    if negative
+        .batches
+        .iter()
+        .any(|batch| batch.uri == untracked_only_uri)
+    {
+        return Err("untracked-only source entered LSP diagnostics".to_string());
     }
     Ok(())
 }
@@ -16130,6 +16170,18 @@ fn framed_lsp_saved_workspace_session_serves_saved_state_across_dirty_save() -> 
         if kind != Some("full") || items == 0 {
             return Err(format!(
                 "expected didSave to analyze the unstaged tracked equality-boundary edit: {re_served}"
+            ));
+        }
+        let saved_items = re_served
+            .get("items")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| format!("didSave report carried no items array: {re_served}"))?;
+        if !saved_items.iter().any(|item| {
+            item.get("source").and_then(serde_json::Value::as_str) == Some("ripr")
+                && item["range"]["start"]["line"].as_u64() == Some(1)
+        }) {
+            return Err(format!(
+                "didSave must publish the RIPR diagnostic on the changed src/lib.rs line: {re_served}"
             ));
         }
         let re_served_id = re_served
