@@ -12,14 +12,14 @@
     "assistant_proof": "fixtures/boundary_gap/expected/test-oracle-assistant-loop/canonical/test-oracle-assistant-proof.json",
     "ledger": "fixtures/boundary_gap/expected/test-oracle-assistant-loop/canonical/pr-evidence-ledger.json",
     "baseline_delta": null,
-    "receipt": "fixtures/boundary_gap/expected/editor-agent-loop/agent-receipt.json",
+    "receipt": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-receipt.json",
     "gate_decision": null,
     "coverage_frontier": null,
     "editor_context": null
   },
   "selected": {
     "source": "receipt",
-    "source_artifact": "fixtures/boundary_gap/expected/editor-agent-loop/agent-receipt.json",
+    "source_artifact": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-receipt.json",
     "seam_id": "67fc764ba37d77bd",
     "seam_kind": "predicate_boundary",
     "path": "src/lib.rs",
@@ -129,7 +129,7 @@
   "evidence": {
     "pr_guidance": "fixtures/boundary_gap/expected/test-oracle-assistant-loop/canonical/pr-guidance.json",
     "assistant_proof": "fixtures/boundary_gap/expected/test-oracle-assistant-loop/canonical/test-oracle-assistant-proof.json",
-    "receipt": "fixtures/boundary_gap/expected/editor-agent-loop/agent-receipt.json",
+    "receipt": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-receipt.json",
     "ledger": "fixtures/boundary_gap/expected/test-oracle-assistant-loop/canonical/pr-evidence-ledger.json",
     "static_movement": "unchanged"
   },
