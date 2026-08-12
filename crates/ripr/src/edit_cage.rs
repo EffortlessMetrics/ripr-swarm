@@ -18,11 +18,40 @@ pub(crate) enum AttemptPathChangeKind {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "AttemptPathChangeWire")]
 pub(crate) struct AttemptPathChange {
     pub(crate) path: PathBuf,
     pub(crate) kind: AttemptPathChangeKind,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) previous_path: Option<PathBuf>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AttemptPathChangeWire {
+    path: PathBuf,
+    kind: AttemptPathChangeKind,
+    previous_path: Option<PathBuf>,
+}
+
+impl TryFrom<AttemptPathChangeWire> for AttemptPathChange {
+    type Error = String;
+
+    fn try_from(wire: AttemptPathChangeWire) -> Result<Self, Self::Error> {
+        match (wire.kind, wire.previous_path) {
+            (AttemptPathChangeKind::Renamed, Some(previous_path)) => {
+                Ok(Self::renamed(previous_path, wire.path))
+            }
+            (AttemptPathChangeKind::Renamed, None) => {
+                Err("a renamed path change requires previous_path".to_string())
+            }
+            (kind, Some(_)) => Err(format!(
+                "a {} path change must not carry previous_path",
+                path_change_kind_name(kind)
+            )),
+            (kind, None) => Ok(Self::new(wire.path, kind)),
+        }
+    }
 }
 
 impl AttemptPathChange {
@@ -70,9 +99,25 @@ pub(crate) enum CagePathScope {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "CagePathRuleWire")]
 pub(crate) struct CagePathRule {
     path: String,
     scope: CagePathScope,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CagePathRuleWire {
+    path: String,
+    scope: CagePathScope,
+}
+
+impl TryFrom<CagePathRuleWire> for CagePathRule {
+    type Error = String;
+
+    fn try_from(wire: CagePathRuleWire) -> Result<Self, Self::Error> {
+        Self::new(Path::new(&wire.path), wire.scope)
+    }
 }
 
 impl CagePathRule {
@@ -120,13 +165,13 @@ pub(crate) enum EditCageVerdictStatus {
     Compliant,
     Violated,
     Incomparable,
-    NotEvaluated,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum EditCageViolationKind {
     InvalidOrEscapingPath,
+    InvalidPolicy,
     ForbiddenPath,
     OutsideAllowedSurface,
     SelectedTargetNotChanged,
@@ -149,10 +194,27 @@ pub(crate) struct EditCageVerdict {
 
 pub(crate) fn evaluate_edit_cage(policy: &EditCagePolicy, delta: &AttemptDelta) -> EditCageVerdict {
     if !delta.comparable {
+        let (changed_paths, mut violations) = normalized_audit_paths(delta);
+        violations.extend(validate_policy(policy));
+        violations.sort();
+        violations.dedup();
         return EditCageVerdict {
             status: EditCageVerdictStatus::Incomparable,
-            changed_paths: Vec::new(),
-            violations: Vec::new(),
+            changed_paths,
+            violations,
+        };
+    }
+
+    let policy_violations = validate_policy(policy);
+    if !policy_violations.is_empty() {
+        let (changed_paths, mut violations) = normalized_audit_paths(delta);
+        violations.extend(policy_violations);
+        violations.sort();
+        violations.dedup();
+        return EditCageVerdict {
+            status: EditCageVerdictStatus::Incomparable,
+            changed_paths,
+            violations,
         };
     }
 
@@ -204,9 +266,19 @@ fn evaluate_change(
     let paths = change
         .previous_path
         .iter()
-        .map(PathBuf::as_path)
-        .chain(std::iter::once(change.path.as_path()));
-    for raw_path in paths {
+        .map(|path| {
+            (
+                path.as_path(),
+                change.kind == AttemptPathChangeKind::Renamed,
+                change.kind == AttemptPathChangeKind::Renamed,
+            )
+        })
+        .chain(std::iter::once((
+            change.path.as_path(),
+            change.kind == AttemptPathChangeKind::Deleted,
+            change.kind != AttemptPathChangeKind::Renamed,
+        )));
+    for (raw_path, is_removed_side, is_target_movement) in paths {
         let path = match normalize_repo_relative_path(raw_path) {
             Ok(path) => path,
             Err(reason) => {
@@ -221,8 +293,9 @@ fn evaluate_change(
         changed_paths.push(path.clone());
         evaluate_normalized_path(
             policy,
-            change.kind,
             path,
+            is_removed_side,
+            is_target_movement,
             selected_target_changed,
             violations,
         );
@@ -231,17 +304,15 @@ fn evaluate_change(
 
 fn evaluate_normalized_path(
     policy: &EditCagePolicy,
-    change_kind: AttemptPathChangeKind,
     path: String,
+    is_removed_side: bool,
+    is_target_movement: bool,
     selected_target_changed: &mut bool,
     violations: &mut Vec<EditCageViolation>,
 ) {
     if policy.selected_target.matches(&path) {
-        *selected_target_changed = true;
-        if matches!(
-            change_kind,
-            AttemptPathChangeKind::Deleted | AttemptPathChangeKind::Renamed
-        ) {
+        *selected_target_changed |= is_target_movement;
+        if is_removed_side {
             violations.push(EditCageViolation {
                 kind: EditCageViolationKind::UnexpectedDeletionOrRename,
                 path: path.clone(),
@@ -278,6 +349,91 @@ fn evaluate_normalized_path(
             reason: "the changed path is outside the allowed edit surface and expected operational writes"
                 .to_string(),
         });
+    }
+}
+
+fn validate_policy(policy: &EditCagePolicy) -> Vec<EditCageViolation> {
+    let mut violations = Vec::new();
+    let selected_path = policy.selected_target.path.clone();
+    if policy.selected_target.scope != CagePathScope::Exact {
+        violations.push(invalid_policy_violation(
+            &selected_path,
+            "the selected target must be one exact repository-relative path",
+        ));
+    }
+    if !policy
+        .allowed_edit_surface
+        .iter()
+        .any(|rule| rule.matches(&selected_path))
+    {
+        violations.push(invalid_policy_violation(
+            &selected_path,
+            "the selected target is outside the authored edit surface",
+        ));
+    }
+    if policy
+        .expected_operational_writes
+        .iter()
+        .any(|rule| rule.matches(&selected_path))
+    {
+        violations.push(invalid_policy_violation(
+            &selected_path,
+            "the selected target overlaps an expected operational write",
+        ));
+    }
+    if policy
+        .forbidden_paths
+        .iter()
+        .any(|rule| rule.matches(&selected_path))
+    {
+        violations.push(invalid_policy_violation(
+            &selected_path,
+            "the selected target overlaps an explicit forbidden path",
+        ));
+    }
+    violations
+}
+
+fn invalid_policy_violation(path: &str, reason: &str) -> EditCageViolation {
+    EditCageViolation {
+        kind: EditCageViolationKind::InvalidPolicy,
+        path: path.to_string(),
+        reason: reason.to_string(),
+    }
+}
+
+fn normalized_audit_paths(delta: &AttemptDelta) -> (Vec<String>, Vec<EditCageViolation>) {
+    let mut changed_paths = Vec::new();
+    let mut violations = Vec::new();
+    for raw_path in delta.changes.iter().flat_map(|change| {
+        change
+            .previous_path
+            .iter()
+            .map(PathBuf::as_path)
+            .chain(std::iter::once(change.path.as_path()))
+    }) {
+        match normalize_repo_relative_path(raw_path) {
+            Ok(path) => changed_paths.push(path),
+            Err(reason) => violations.push(EditCageViolation {
+                kind: EditCageViolationKind::InvalidOrEscapingPath,
+                path: raw_path.to_string_lossy().to_string(),
+                reason,
+            }),
+        }
+    }
+    changed_paths.sort();
+    changed_paths.dedup();
+    violations.sort();
+    violations.dedup();
+    (changed_paths, violations)
+}
+
+fn path_change_kind_name(kind: AttemptPathChangeKind) -> &'static str {
+    match kind {
+        AttemptPathChangeKind::Added => "added",
+        AttemptPathChangeKind::Modified => "modified",
+        AttemptPathChangeKind::Deleted => "deleted",
+        AttemptPathChangeKind::Renamed => "renamed",
     }
 }
 
@@ -325,6 +481,7 @@ fn normalize_repo_relative_path(path: &Path) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::de::DeserializeOwned;
 
     fn policy() -> Result<EditCagePolicy, String> {
         Ok(EditCagePolicy {
@@ -336,6 +493,13 @@ mod tests {
             ],
             expected_operational_writes: vec![CagePathRule::subtree("target/ripr")?],
         })
+    }
+
+    fn require_invalid_json<T: DeserializeOwned>(raw: &str) -> Result<(), String> {
+        match serde_json::from_str::<T>(raw) {
+            Ok(_) => Err(format!("expected invalid JSON input to be rejected: {raw}")),
+            Err(_) => Ok(()),
+        }
     }
 
     #[test]
@@ -422,6 +586,145 @@ mod tests {
     }
 
     #[test]
+    fn rename_into_selected_target_cannot_substitute_without_baseline_authority()
+    -> Result<(), String> {
+        let mut rename_policy = policy()?;
+        rename_policy.allowed_edit_surface = vec![CagePathRule::subtree("tests")?];
+        let verdict = evaluate_edit_cage(
+            &rename_policy,
+            &AttemptDelta {
+                comparable: true,
+                changes: vec![AttemptPathChange::renamed(
+                    "tests/other.rs",
+                    "tests/pricing.rs",
+                )],
+            },
+        );
+
+        assert_eq!(verdict.status, EditCageVerdictStatus::Violated);
+        assert_eq!(
+            verdict.changed_paths,
+            vec!["tests/other.rs".to_string(), "tests/pricing.rs".to_string()]
+        );
+        assert!(verdict.violations.iter().any(|violation| {
+            violation.kind == EditCageViolationKind::SelectedTargetNotChanged
+        }));
+        assert!(!verdict.violations.iter().any(|violation| {
+            violation.kind == EditCageViolationKind::UnexpectedDeletionOrRename
+                && violation.path == "tests/pricing.rs"
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn subtree_selected_target_is_rejected_as_an_inexact_policy() -> Result<(), String> {
+        let subtree_policy = EditCagePolicy {
+            selected_target: CagePathRule::subtree("tests/pricing")?,
+            allowed_edit_surface: vec![CagePathRule::subtree("tests/pricing")?],
+            forbidden_paths: Vec::new(),
+            expected_operational_writes: Vec::new(),
+        };
+        let verdict = evaluate_edit_cage(
+            &subtree_policy,
+            &AttemptDelta {
+                comparable: true,
+                changes: vec![AttemptPathChange::modified("tests/pricing/boundary.rs")],
+            },
+        );
+
+        assert_eq!(verdict.status, EditCageVerdictStatus::Incomparable);
+        assert_eq!(
+            verdict.changed_paths,
+            vec!["tests/pricing/boundary.rs".to_string()]
+        );
+        assert!(verdict.violations.iter().any(|violation| {
+            violation.kind == EditCageViolationKind::InvalidPolicy
+                && violation.reason.contains("one exact")
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn selected_target_must_be_authored_and_disjoint_from_other_roles() -> Result<(), String> {
+        let mut outside_authored_surface = policy()?;
+        outside_authored_surface.allowed_edit_surface =
+            vec![CagePathRule::exact("tests/other.rs")?];
+
+        let mut operational_target = policy()?;
+        operational_target.expected_operational_writes =
+            vec![CagePathRule::exact("tests/pricing.rs")?];
+
+        let mut forbidden_target = policy()?;
+        forbidden_target
+            .forbidden_paths
+            .push(CagePathRule::exact("tests/pricing.rs")?);
+
+        for invalid_policy in [
+            outside_authored_surface,
+            operational_target,
+            forbidden_target,
+        ] {
+            let verdict = evaluate_edit_cage(
+                &invalid_policy,
+                &AttemptDelta {
+                    comparable: true,
+                    changes: vec![AttemptPathChange::modified("tests/pricing.rs")],
+                },
+            );
+            assert_eq!(verdict.status, EditCageVerdictStatus::Incomparable);
+            assert_eq!(verdict.changed_paths, vec!["tests/pricing.rs".to_string()]);
+            assert!(
+                verdict
+                    .violations
+                    .iter()
+                    .any(|violation| violation.kind == EditCageViolationKind::InvalidPolicy)
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn deserialized_path_rules_reuse_the_repository_path_validator() -> Result<(), String> {
+        let normalized =
+            serde_json::from_str::<CagePathRule>(r#"{"path":"tests\\pricing.rs","scope":"exact"}"#)
+                .map_err(|error| error.to_string())?;
+        assert_eq!(normalized.path, "tests/pricing.rs");
+        assert_eq!(normalized.scope, CagePathScope::Exact);
+
+        for invalid in [
+            r#"{"path":"../tests/pricing.rs","scope":"exact"}"#,
+            r#"{"path":"/tests/pricing.rs","scope":"exact"}"#,
+        ] {
+            require_invalid_json::<CagePathRule>(invalid)?;
+        }
+        let drive_path = format!("{}:\\tests\\pricing.rs", 'C');
+        let drive_rule = serde_json::json!({"path": drive_path, "scope": "exact"});
+        let drive_rule = serde_json::to_string(&drive_rule).map_err(|error| error.to_string())?;
+        require_invalid_json::<CagePathRule>(&drive_rule)?;
+        Ok(())
+    }
+
+    #[test]
+    fn deserialized_path_changes_reject_incoherent_rename_shapes() -> Result<(), String> {
+        let renamed = serde_json::from_str::<AttemptPathChange>(
+            r#"{"path":"tests/new.rs","kind":"renamed","previous_path":"tests/old.rs"}"#,
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            renamed,
+            AttemptPathChange::renamed("tests/old.rs", "tests/new.rs")
+        );
+
+        for invalid in [
+            r#"{"path":"tests/new.rs","kind":"renamed"}"#,
+            r#"{"path":"tests/new.rs","kind":"modified","previous_path":"tests/old.rs"}"#,
+        ] {
+            require_invalid_json::<AttemptPathChange>(invalid)?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn parent_drive_and_unc_paths_fail_closed() -> Result<(), String> {
         let drive_path = format!("{}:\\tests\\pricing.rs", 'C');
         let unc_path = ["", "", "server", "share", "test.rs"].join("\\");
@@ -451,7 +754,7 @@ mod tests {
             },
         );
         assert_eq!(verdict.status, EditCageVerdictStatus::Incomparable);
-        assert!(verdict.changed_paths.is_empty());
+        assert_eq!(verdict.changed_paths, vec!["tests/pricing.rs".to_string()]);
         assert!(verdict.violations.is_empty());
         Ok(())
     }
