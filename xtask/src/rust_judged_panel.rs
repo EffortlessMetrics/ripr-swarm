@@ -40,12 +40,12 @@ struct RustJudgedPanelItem {
     expected_direction: String,
     behavior_family: String,
     anchor: RustJudgedPanelAnchor,
-    test_evidence: serde_json::Value,
+    test_evidence: RustJudgedPanelTestEvidence,
     expected_classification: String,
     #[serde(default)]
     expected_static_limit_kind: Nullable<String>,
     expected_actionability: String,
-    selection_dimensions: serde_json::Value,
+    selection_dimensions: RustJudgedPanelSelectionDimensions,
     labels: RustJudgedPanelLabels,
     runtime_calibration: RustJudgedPanelRuntimeCalibration,
     #[serde(default)]
@@ -66,6 +66,28 @@ struct RustJudgedPanelAnchor {
     owner: String,
     changed_behavior: String,
     required_discriminator: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RustJudgedPanelTestEvidence {
+    relation_basis: String,
+    oracle_kind: String,
+    oracle_strength: String,
+    observed_inputs: Vec<String>,
+    #[serde(default)]
+    aligned_observer: Nullable<String>,
+    #[serde(default)]
+    missing: Nullable<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RustJudgedPanelSelectionDimensions {
+    relation_basis: String,
+    oracle_family: String,
+    propagation_witness: String,
+    target_kind: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -406,16 +428,154 @@ fn validate_item(
             "{subject}.identity: seed phase requires null base, head, and tree_identity"
         ));
     }
-    if !item.test_evidence.is_object() {
-        violations.push(format!("{subject}.test_evidence: must be an object"));
-    }
-    if !item.selection_dimensions.is_object() {
-        violations.push(format!("{subject}.selection_dimensions: must be an object"));
-    }
+    validate_evidence_contract(item, subject, violations);
     validate_direction_contract(item, subject, violations);
     validate_seed_judgment(item, subject, violations);
     validate_runtime(item, subject, violations);
     validate_anchor(root, item, subject, violations);
+}
+
+fn validate_evidence_contract(
+    item: &RustJudgedPanelItem,
+    subject: &str,
+    violations: &mut Vec<String>,
+) {
+    let evidence = &item.test_evidence;
+    let dimensions = &item.selection_dimensions;
+    for (field, value) in [
+        ("test_evidence.relation_basis", &evidence.relation_basis),
+        ("test_evidence.oracle_kind", &evidence.oracle_kind),
+        ("test_evidence.oracle_strength", &evidence.oracle_strength),
+        (
+            "selection_dimensions.relation_basis",
+            &dimensions.relation_basis,
+        ),
+        (
+            "selection_dimensions.oracle_family",
+            &dimensions.oracle_family,
+        ),
+        (
+            "selection_dimensions.propagation_witness",
+            &dimensions.propagation_witness,
+        ),
+        ("selection_dimensions.target_kind", &dimensions.target_kind),
+    ] {
+        require_non_empty(violations, &format!("{subject}.{field}"), value);
+    }
+    if evidence
+        .observed_inputs
+        .iter()
+        .any(|input| input.trim().is_empty())
+    {
+        violations.push(format!(
+            "{subject}.test_evidence.observed_inputs: entries must not be blank"
+        ));
+    }
+    if evidence.oracle_kind != "exact_value" || evidence.oracle_strength != "strong" {
+        violations.push(format!(
+            "{subject}.test_evidence: seed requires exact_value/strong oracle vocabulary"
+        ));
+    }
+    let expected = match item.expected_direction.as_str() {
+        "should_gap" => Some((
+            "direct_owner_call",
+            "exact_value",
+            "direct_return",
+            "existing_test",
+            true,
+            true,
+        )),
+        "should_stay_quiet" => Some((
+            "direct_owner_call",
+            "exact_value",
+            "direct_return",
+            "existing_test",
+            false,
+            true,
+        )),
+        "should_limit" => Some((
+            "macro_witness",
+            "exact_value_candidate",
+            "unresolved",
+            "none",
+            true,
+            false,
+        )),
+        _ => None,
+    };
+    let Some((relation, oracle, propagation, target, missing, observer)) = expected else {
+        return;
+    };
+    for (field, actual, required) in [
+        (
+            "selection_dimensions.relation_basis",
+            dimensions.relation_basis.as_str(),
+            relation,
+        ),
+        (
+            "selection_dimensions.oracle_family",
+            dimensions.oracle_family.as_str(),
+            oracle,
+        ),
+        (
+            "selection_dimensions.propagation_witness",
+            dimensions.propagation_witness.as_str(),
+            propagation,
+        ),
+        (
+            "selection_dimensions.target_kind",
+            dimensions.target_kind.as_str(),
+            target,
+        ),
+    ] {
+        require_equal(violations, &format!("{subject}.{field}"), actual, required);
+    }
+    let expected_test_relation = if item.expected_direction == "should_limit" {
+        "macro_wrapped_test_call_candidate"
+    } else {
+        "direct_owner_call"
+    };
+    require_equal(
+        violations,
+        &format!("{subject}.test_evidence.relation_basis"),
+        &evidence.relation_basis,
+        expected_test_relation,
+    );
+    validate_nullable_text(
+        &evidence.missing,
+        missing,
+        &format!("{subject}.test_evidence.missing"),
+        violations,
+    );
+    validate_nullable_text(
+        &evidence.aligned_observer,
+        observer,
+        &format!("{subject}.test_evidence.aligned_observer"),
+        violations,
+    );
+    if item.expected_direction == "should_limit" && !evidence.observed_inputs.is_empty() {
+        violations.push(format!(
+            "{subject}.test_evidence.observed_inputs: unresolved limit requires an empty list"
+        ));
+    } else if item.expected_direction != "should_limit" && evidence.observed_inputs.is_empty() {
+        violations.push(format!(
+            "{subject}.test_evidence.observed_inputs: direct owner evidence requires at least one input"
+        ));
+    }
+}
+
+fn validate_nullable_text(
+    value: &Nullable<String>,
+    required: bool,
+    field: &str,
+    violations: &mut Vec<String>,
+) {
+    match (required, value) {
+        (true, Nullable::Value(text)) if !text.trim().is_empty() => {}
+        (true, _) => violations.push(format!("{field}: requires a non-empty value")),
+        (false, Nullable::Null) => {}
+        (false, _) => violations.push(format!("{field}: requires explicit null")),
+    }
 }
 
 fn validate_direction_contract(
@@ -549,6 +709,15 @@ fn validate_anchor(
         ));
         return;
     }
+    let canonical_root = match fs::canonicalize(root) {
+        Ok(path) => path,
+        Err(error) => {
+            violations.push(format!(
+                "{subject}.diff_path: failed to resolve repository root: {error}"
+            ));
+            return;
+        }
+    };
     let full_path = root.join(diff_path);
     if !full_path.is_file() {
         violations.push(format!(
@@ -566,6 +735,12 @@ fn validate_anchor(
             return;
         }
     };
+    if !confined_root.starts_with(&canonical_root) {
+        violations.push(format!(
+            "{subject}.diff_path: governed diff root resolves outside the repository root"
+        ));
+        return;
+    }
     let resolved = match fs::canonicalize(&full_path) {
         Ok(path) => path,
         Err(error) => {
@@ -619,10 +794,14 @@ fn is_confined_relative_path(path: &Path) -> bool {
     let raw = normalize_path(path);
     !raw.contains(':')
         && !raw.contains('\\')
+        && !raw.contains("//")
         && !path.is_absolute()
-        && !path
-            .components()
-            .any(|component| matches!(component, Component::ParentDir | Component::RootDir))
+        && !path.components().any(|component| {
+            matches!(
+                component,
+                Component::CurDir | Component::ParentDir | Component::RootDir
+            )
+        })
 }
 
 fn added_line_at<'a>(
@@ -634,7 +813,7 @@ fn added_line_at<'a>(
     let mut target_matches = false;
     let mut target_headers = 0_usize;
     let mut matched_line = None;
-    let mut new_line = None;
+    let mut hunk = None;
     let mut source_header_seen = false;
     let mut section_bound = false;
     for line in diff.lines() {
@@ -649,15 +828,22 @@ fn added_line_at<'a>(
             source_header_seen = false;
             section_bound = false;
             target_matches = false;
-            new_line = None;
+            finish_hunk(&mut hunk)?;
             continue;
         }
         if line.starts_with("--- ") {
             source_header_seen = true;
             section_bound = false;
             target_matches = false;
-            new_line = None;
+            finish_hunk(&mut hunk)?;
             continue;
+        }
+        if line.starts_with("rename from ")
+            || line.starts_with("rename to ")
+            || line.starts_with("copy from ")
+            || line.starts_with("copy to ")
+        {
+            return Err("rename and copy diffs are unsupported".to_string());
         }
         if let Some(target) = line.strip_prefix("+++ ") {
             if !source_header_seen {
@@ -672,38 +858,46 @@ fn added_line_at<'a>(
             }
             source_header_seen = false;
             section_bound = true;
-            new_line = None;
+            finish_hunk(&mut hunk)?;
             continue;
         }
         if line.starts_with("@@ ") {
             if !section_bound {
                 return Err("hunk is not bound to a `---`/`+++` file section".to_string());
             }
-            new_line = parse_new_hunk_start(line);
-            if new_line.is_none() {
-                return Err(format!("malformed unified hunk header `{line}`"));
-            }
+            finish_hunk(&mut hunk)?;
+            hunk = Some(parse_hunk_header(line)?);
             continue;
         }
-        let Some(current) = new_line else {
+        let Some(state) = hunk.as_mut() else {
             continue;
         };
         if line.starts_with('\\') {
             continue;
         }
         if let Some(added) = line.strip_prefix('+') {
-            if target_matches && current == anchor_line && matched_line.replace(added).is_some() {
+            if state.new_remaining == 0 {
+                return Err("hunk contains more new lines than declared".to_string());
+            }
+            if target_matches
+                && state.new_line == anchor_line
+                && matched_line.replace(added).is_some()
+            {
                 return Err(format!(
                     "anchor target `{anchor_file}` line {anchor_line} is ambiguous across hunks"
                 ));
             }
-            new_line = current.checked_add(1);
+            state.consume_new()?;
         } else if line.starts_with('-') {
-            continue;
+            state.consume_old()?;
+        } else if line.starts_with(' ') {
+            state.consume_old()?;
+            state.consume_new()?;
         } else {
-            new_line = current.checked_add(1);
+            return Err(format!("unsupported line inside unified hunk `{line}`"));
         }
     }
+    finish_hunk(&mut hunk)?;
     if target_headers > 1 {
         return Err(format!(
             "target `b/{anchor_file}` occurs in {target_headers} file sections"
@@ -748,14 +942,91 @@ fn rust_code_tokens(source: &str) -> Vec<String> {
         .to_vec()
 }
 
-fn parse_new_hunk_start(line: &str) -> Option<u64> {
-    line.split_whitespace()
-        .find(|part| part.starts_with('+'))?
-        .trim_start_matches('+')
-        .split(',')
-        .next()?
-        .parse()
-        .ok()
+#[derive(Debug)]
+struct HunkState {
+    old_remaining: u64,
+    new_remaining: u64,
+    new_line: u64,
+}
+
+impl HunkState {
+    fn consume_old(&mut self) -> Result<(), String> {
+        self.old_remaining = self
+            .old_remaining
+            .checked_sub(1)
+            .ok_or_else(|| "hunk contains more old lines than declared".to_string())?;
+        Ok(())
+    }
+
+    fn consume_new(&mut self) -> Result<(), String> {
+        self.new_remaining = self
+            .new_remaining
+            .checked_sub(1)
+            .ok_or_else(|| "hunk contains more new lines than declared".to_string())?;
+        self.new_line = self
+            .new_line
+            .checked_add(1)
+            .ok_or_else(|| "hunk new-line counter overflowed".to_string())?;
+        Ok(())
+    }
+}
+
+fn finish_hunk(hunk: &mut Option<HunkState>) -> Result<(), String> {
+    if let Some(state) = hunk.take()
+        && (state.old_remaining != 0 || state.new_remaining != 0)
+    {
+        return Err(format!(
+            "hunk ended before declared extents were consumed (old remaining {}, new remaining {})",
+            state.old_remaining, state.new_remaining
+        ));
+    }
+    Ok(())
+}
+
+fn parse_hunk_header(line: &str) -> Result<HunkState, String> {
+    let mut parts = line.split_whitespace();
+    if parts.next() != Some("@@") {
+        return Err(format!("malformed unified hunk header `{line}`"));
+    }
+    let old = parts
+        .next()
+        .filter(|part| part.starts_with('-'))
+        .ok_or_else(|| format!("malformed unified hunk header `{line}`"))?;
+    let new = parts
+        .next()
+        .filter(|part| part.starts_with('+'))
+        .ok_or_else(|| format!("malformed unified hunk header `{line}`"))?;
+    if parts.next() != Some("@@") {
+        return Err(format!("malformed unified hunk header `{line}`"));
+    }
+    let (_, old_count) = parse_hunk_range(old, '-')?;
+    let (new_line, new_count) = parse_hunk_range(new, '+')?;
+    Ok(HunkState {
+        old_remaining: old_count,
+        new_remaining: new_count,
+        new_line,
+    })
+}
+
+fn parse_hunk_range(value: &str, prefix: char) -> Result<(u64, u64), String> {
+    let value = value
+        .strip_prefix(prefix)
+        .ok_or_else(|| format!("invalid hunk range `{value}`"))?;
+    let mut pieces = value.split(',');
+    let start = pieces
+        .next()
+        .and_then(|part| part.parse().ok())
+        .ok_or_else(|| format!("invalid hunk range `{value}`"))?;
+    let count = pieces
+        .next()
+        .map(str::parse)
+        .transpose()
+        .map_err(|error| format!("invalid hunk range `{value}`: {error}"))?
+        .unwrap_or(1);
+    if pieces.next().is_some() {
+        return Err(format!("invalid hunk range `{value}`"));
+    }
+    Ok((start, count))
 }
 
 fn require_equal(violations: &mut Vec<String>, field: &str, actual: &str, expected: &str) {
@@ -826,7 +1097,7 @@ mod tests {
         ) -> Result<String, String> {
             let relative = format!("metrics/rust-judged-behavior-panel/diffs/{name}.diff");
             let body = format!(
-                "--- a/{target}\n+++ b/{target}\n@@ -40,2 +40,3 @@\n context\n+{added_behavior}\n+second_added_line()\n"
+                "--- a/{target}\n+++ b/{target}\n@@ -1,1 +1,1 @@\n-before()\n+after()\n@@ -40,1 +40,3 @@\n context\n+{added_behavior}\n+second_added_line()\n"
             );
             fs::write(self.root.join(&relative), body)
                 .map_err(|error| format!("write test diff: {error}"))?;
@@ -850,6 +1121,38 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    fn symlink_file(source: &Path, target: &Path) -> Result<bool, String> {
+        std::os::unix::fs::symlink(source, target)
+            .map(|_| true)
+            .map_err(|error| error.to_string())
+    }
+
+    #[cfg(windows)]
+    fn symlink_file(source: &Path, target: &Path) -> Result<bool, String> {
+        match std::os::windows::fs::symlink_file(source, target) {
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(false),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    #[cfg(unix)]
+    fn symlink_dir(source: &Path, target: &Path) -> Result<bool, String> {
+        std::os::unix::fs::symlink(source, target)
+            .map(|_| true)
+            .map_err(|error| error.to_string())
+    }
+
+    #[cfg(windows)]
+    fn symlink_dir(source: &Path, target: &Path) -> Result<bool, String> {
+        match std::os::windows::fs::symlink_dir(source, target) {
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(false),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
     fn valid_item(
         id: &str,
         direction: &str,
@@ -864,6 +1167,47 @@ mod tests {
                 "no_static_path",
                 Value::String("macro_path_unresolved".to_string()),
                 "inspect_static_limitation",
+            ),
+        };
+        let (
+            test_relation,
+            observed_inputs,
+            observer,
+            missing,
+            selection_relation,
+            oracle_family,
+            propagation,
+            target_kind,
+        ) = match direction {
+            "should_gap" => (
+                "direct_owner_call",
+                json!(["alternate_owner(1)"]),
+                json!("alternate exact observer"),
+                json!("alternate missing discriminator"),
+                "direct_owner_call",
+                "exact_value",
+                "direct_return",
+                "existing_test",
+            ),
+            "should_stay_quiet" => (
+                "direct_owner_call",
+                json!(["alternate_owner(2)"]),
+                json!("alternate exact observer"),
+                Value::Null,
+                "direct_owner_call",
+                "exact_value",
+                "direct_return",
+                "existing_test",
+            ),
+            _ => (
+                "macro_wrapped_test_call_candidate",
+                json!([]),
+                Value::Null,
+                json!("alternate unresolved owner-observer path"),
+                "macro_witness",
+                "exact_value_candidate",
+                "unresolved",
+                "none",
             ),
         };
         json!({
@@ -882,11 +1226,23 @@ mod tests {
                 "changed_behavior": changed_behavior,
                 "required_discriminator": "alternate discriminator"
             },
-            "test_evidence": {"relation_basis": "alternate_relation"},
+            "test_evidence": {
+                "relation_basis": test_relation,
+                "oracle_kind": "exact_value",
+                "oracle_strength": "strong",
+                "observed_inputs": observed_inputs,
+                "aligned_observer": observer,
+                "missing": missing
+            },
             "expected_classification": class,
             "expected_static_limit_kind": limit,
             "expected_actionability": actionability,
-            "selection_dimensions": {"target_kind": "alternate_target"},
+            "selection_dimensions": {
+                "relation_basis": selection_relation,
+                "oracle_family": oracle_family,
+                "propagation_witness": propagation,
+                "target_kind": target_kind
+            },
             "labels": {
                 "structural_judgment": null,
                 "false_actionable": null,
@@ -1044,6 +1400,80 @@ mod tests {
     }
 
     #[test]
+    fn diff_path_rejects_curdir_doubled_separator_and_prefix_lookalike() -> Result<(), String> {
+        let fixture = TempFixture::new("path-spelling")?;
+        let mut manifest = valid_alternate_manifest(&fixture)?;
+        manifest["items"][0]["diff_path"] =
+            json!("metrics/rust-judged-behavior-panel/diffs/./alternate-limit.diff");
+        manifest["items"][1]["diff_path"] =
+            json!("metrics/rust-judged-behavior-panel/diffs//alternate-gap.diff");
+        manifest["items"][2]["diff_path"] =
+            json!("metrics/rust-judged-behavior-panel/diffs-lookalike/quiet.diff");
+        expect_rejection(&fixture, &manifest, &["must be a relative file under"])
+    }
+
+    #[test]
+    fn diff_path_rejects_absolute_drive_unc_and_backslash_forms() -> Result<(), String> {
+        let fixture = TempFixture::new("path-platform-forms")?;
+        for value in [
+            "/absolute.diff",
+            "C:/outside.diff",
+            "//server/share/outside.diff",
+            "metrics\\rust-judged-behavior-panel\\diffs\\outside.diff",
+        ] {
+            let mut manifest = valid_alternate_manifest(&fixture)?;
+            manifest["items"][0]["diff_path"] = json!(value);
+            expect_rejection(&fixture, &manifest, &["must be a relative file under"])?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn diff_path_rejects_interior_symlink_escape_when_supported() -> Result<(), String> {
+        let fixture = TempFixture::new("interior-symlink")?;
+        let outside = TempFixture::new("interior-symlink-outside")?;
+        let external = outside.root.join("external.diff");
+        fs::write(
+            &external,
+            "--- a/src/limit.rs\n+++ b/src/limit.rs\n@@ -5,1 +5,1 @@\n-old()\n+limit_behavior()\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let relative = "metrics/rust-judged-behavior-panel/diffs/symlink.diff";
+        if !symlink_file(&external, &fixture.root.join(relative))? {
+            return Ok(());
+        }
+        let mut manifest = valid_alternate_manifest(&fixture)?;
+        manifest["items"][0]["diff_path"] = json!(relative);
+        expect_rejection(&fixture, &manifest, &["resolves outside"])
+    }
+
+    #[test]
+    fn diff_path_rejects_governed_root_symlink_escape_when_supported() -> Result<(), String> {
+        let fixture = TempFixture::new("root-symlink")?;
+        let outside = TempFixture::new("root-symlink-outside")?;
+        let governed = fixture
+            .root
+            .join("metrics/rust-judged-behavior-panel/diffs");
+        fs::remove_dir_all(&governed).map_err(|error| error.to_string())?;
+        if !symlink_dir(&outside.root, &governed)? {
+            return Ok(());
+        }
+        let relative = "metrics/rust-judged-behavior-panel/diffs/escape.diff";
+        fs::write(
+            outside.root.join("escape.diff"),
+            "--- a/src/limit.rs\n+++ b/src/limit.rs\n@@ -5,1 +5,1 @@\n-old()\n+limit_behavior()\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let mut manifest = valid_alternate_manifest(&fixture)?;
+        manifest["items"][0]["diff_path"] = json!(relative);
+        expect_rejection(
+            &fixture,
+            &manifest,
+            &["governed diff root resolves outside the repository root"],
+        )
+    }
+
+    #[test]
     fn diff_parser_rejects_combined_binary_and_quoted_forms() -> Result<(), String> {
         let fixture = TempFixture::new("unsupported-diffs")?;
         let mut manifest = valid_alternate_manifest(&fixture)?;
@@ -1074,6 +1504,111 @@ mod tests {
             &[
                 "combined or binary diffs are unsupported",
                 "quoted or metadata-bearing",
+            ],
+        )
+    }
+
+    #[test]
+    fn diff_parser_rejects_false_hunk_extents_truncation_and_rename() -> Result<(), String> {
+        let fixture = TempFixture::new("hunk-extents")?;
+        let mut manifest = valid_alternate_manifest(&fixture)?;
+        for (index, (name, body)) in [
+            (
+                "overflow.diff",
+                "--- a/src/limit.rs\n+++ b/src/limit.rs\n@@ -1,1 +1,1 @@\n context\n-old()\n+limit_behavior()\n context\n",
+            ),
+            (
+                "truncated.diff",
+                "--- a/src/gap.rs\n+++ b/src/gap.rs\n@@ -5,3 +5,3 @@\n context\n-old()\n+gap_behavior()\n",
+            ),
+            (
+                "rename.diff",
+                "similarity index 90%\nrename from old.rs\nrename to src/quiet.rs\n--- a/old.rs\n+++ b/src/quiet.rs\n@@ -5 +5 @@\n-old()\n+quiet_behavior()\n",
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let relative = format!("metrics/rust-judged-behavior-panel/diffs/{name}");
+            fs::write(fixture.root.join(&relative), body).map_err(|error| error.to_string())?;
+            manifest["items"][index]["diff_path"] = json!(relative);
+        }
+        expect_rejection(
+            &fixture,
+            &manifest,
+            &[
+                "more old lines than declared",
+                "hunk ended before declared extents",
+                "rename and copy diffs are unsupported",
+            ],
+        )
+    }
+
+    #[test]
+    fn canonical_body_rejects_mutated_one_line_hunk_declaration() -> Result<(), String> {
+        let canonical = include_str!(
+            "../../metrics/rust-judged-behavior-panel/diffs/boundary_missing_equality.diff"
+        );
+        let mutated = canonical.replace("@@ -1,7 +1,7 @@", "@@ -1,1 +1,1 @@");
+        let error = super::added_line_at(&mutated, "src/lib.rs", 2)
+            .err()
+            .ok_or_else(|| "canonical false hunk extent was accepted".to_string())?;
+        if !error.contains("more old lines than declared")
+            && !error.contains("more new lines than declared")
+        {
+            return Err(format!("unexpected false-extent error: {error}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn evidence_contract_rejects_empty_typo_missing_and_direction_drift() -> Result<(), String> {
+        let fixture = TempFixture::new("evidence-contract")?;
+        for (name, mutate, fragment) in [
+            ("empty", 0_usize, "missing field `relation_basis`"),
+            ("typo", 1_usize, "unknown field `oracle_family_typo`"),
+            ("missing", 2_usize, "missing field `oracle_strength`"),
+        ] {
+            let mut manifest = valid_alternate_manifest(&fixture)?;
+            match mutate {
+                0 => manifest["items"][0]["test_evidence"] = json!({}),
+                1 => {
+                    manifest["items"][1]["selection_dimensions"] = json!({
+                        "relation_basis": "direct_owner_call",
+                        "oracle_family_typo": "exact_value",
+                        "propagation_witness": "direct_return",
+                        "target_kind": "existing_test"
+                    });
+                }
+                _ => {
+                    manifest["items"][2]["test_evidence"]
+                        .as_object_mut()
+                        .ok_or_else(|| "test evidence fixture must be an object".to_string())?
+                        .remove("oracle_strength");
+                }
+            }
+            fixture.write_manifest(&manifest)?;
+            let error = load_and_validate_at(&fixture.root, Path::new(MANIFEST_PATH))
+                .err()
+                .ok_or_else(|| format!("invalid typed evidence `{name}` was accepted"))?;
+            if !error.contains(fragment) {
+                return Err(format!(
+                    "typed evidence rejection omitted `{fragment}`: {error}"
+                ));
+            }
+        }
+
+        let mut coherent = valid_alternate_manifest(&fixture)?;
+        coherent["items"][1]["test_evidence"]["missing"] = Value::Null;
+        coherent["items"][2]["test_evidence"]["aligned_observer"] = Value::Null;
+        coherent["items"][0]["selection_dimensions"]["target_kind"] = json!("existing_test");
+        expect_rejection(
+            &fixture,
+            &coherent,
+            &[
+                "test_evidence.missing: requires a non-empty value",
+                "test_evidence.aligned_observer: requires a non-empty value",
+                "selection_dimensions.target_kind: expected `none`",
             ],
         )
     }
