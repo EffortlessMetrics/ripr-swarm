@@ -176,6 +176,15 @@ that untracked source was analyzed.
 - `crates/ripr/src/lsp/tests.rs::framed_code_lens_refresh_follows_semantic_lens_view_changes`
   - proves the framed explicit-refresh consumer retains a worktree-derived
     semantic lens view across a repeated full refresh.
+- `crates/ripr/src/lsp/tests.rs::workspace_diagnostics_include_saved_tracked_edits_and_exclude_untracked_files`
+  - proves deferred LSP analysis emits diff-scoped findings for both unstaged
+    and staged tracked edits without passing through full seam inventory, and
+    proves a separate untracked-only workspace emits no findings or diagnostic
+    batch for that source.
+- `crates/ripr/src/lsp/tests.rs::framed_lsp_saved_workspace_session_serves_saved_state_across_dirty_save`
+  - proves the real framed `didSave` path publishes the RIPR diagnostic on the
+    changed saved source line before the later explicit full refresh, while the
+    dirty pre-save document remains quarantined.
 
 ## Implementation Mapping
 
@@ -198,6 +207,10 @@ that untracked source was analyzed.
 - `cargo test -p ripr --lib tracked_change_detector`
 - `cargo test -p ripr --lib lsp::tests::lsp_saved_worktree_refresh_analyzes_uncommitted_tracked_edit -- --exact`
 - `cargo test -p ripr --lib lsp::tests::framed_code_lens_refresh_follows_semantic_lens_view_changes -- --exact`
+- `cargo test -p ripr --lib lsp::tests::workspace_diagnostics_include_saved_tracked_edits_and_exclude_untracked_files -- --exact --nocapture --test-threads=1`
+- `cargo test -p ripr --lib lsp::tests::framed_lsp_saved_workspace_session_serves_saved_state_across_dirty_save -- --exact --nocapture --test-threads=1`
+- Each fully qualified exact LSP selector above must report `running 1 test`;
+  a zero-test success is not acceptance evidence.
 - `cargo test -p ripr`
 - `cargo fmt --check`
 - `cargo check --workspace --all-targets`
