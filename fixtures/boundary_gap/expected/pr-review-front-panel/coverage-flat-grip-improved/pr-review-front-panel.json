@@ -54,7 +54,7 @@
     "agent_command": null,
     "receipt": {
       "artifact": "fixtures/boundary_gap/expected/editor-agent-loop/agent-receipt.json",
-      "status": "receipt_movement_improved"
+      "status": "receipt_found"
     }
   },
   "movement": {

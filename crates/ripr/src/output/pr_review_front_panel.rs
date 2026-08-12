@@ -1738,6 +1738,9 @@ fn selected_proof_receipt_status(
     parsed_receipt: Option<&Value>,
     parsed_receipt_artifact: Option<&str>,
 ) -> String {
+    if let Some(status) = selected_receipt.and_then(|value| string_path(value, &["status"])) {
+        return receipt_lifecycle_state(Some(&status));
+    }
     if let (Some(selected_artifact), Some(parsed_artifact), Some(parsed_receipt)) = (
         selected_receipt.and_then(|value| string_path(value, &["artifact"])),
         parsed_receipt_artifact,
@@ -1746,10 +1749,7 @@ fn selected_proof_receipt_status(
     {
         return receipt_lifecycle_state_from_receipt_value(parsed_receipt);
     }
-    selected_receipt
-        .and_then(|value| string_path(value, &["status"]))
-        .map(|status| receipt_lifecycle_state(Some(&status)))
-        .unwrap_or_else(|| RECEIPT_MISSING.to_string())
+    RECEIPT_MISSING.to_string()
 }
 
 fn selected_assistant_health_proof(health: &Value) -> Option<&Value> {
@@ -2466,11 +2466,11 @@ mod tests {
     }
 
     #[test]
-    fn selected_proof_rejects_improved_receipt_from_same_seam() -> Result<(), String> {
+    fn selected_proof_status_rejects_stale_same_path_receipt() -> Result<(), String> {
         let repo_root = repo_root()?;
         let inputs = serde_json::json!({
             "assistant_health": "fixtures/boundary_gap/expected/assistant-loop-health/unchanged/assistant-loop-health.json",
-            "receipt": "same-seam-improved-receipt.json"
+            "receipt": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-receipt.json"
         });
         let expected_md_path = repo_root.join(
             "fixtures/boundary_gap/expected/pr-review-front-panel/mixed-health/pr-review-front-panel.md",
