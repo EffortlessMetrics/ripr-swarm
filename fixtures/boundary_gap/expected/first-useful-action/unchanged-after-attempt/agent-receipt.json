@@ -1,18 +1,21 @@
 {
+  "analysis_outcome": null,
+  "analysis_outcome_error": "<analysis_outcome_error>",
+  "analysis_outcome_status": "missing",
   "inputs": {
-    "after": "target/ripr/test-agent-verify/after.repo-exposure.json",
-    "agent_verify_json": "target/ripr/test-agent-verify/agent-verify.json",
-    "before": "target/ripr/test-agent-verify/before.repo-exposure.json"
+    "after": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json",
+    "agent_verify_json": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-verify.json",
+    "before": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json"
   },
   "provenance": {
     "after_artifact": {
-      "path": "target/ripr/test-agent-verify/after.repo-exposure.json",
-      "sha256": "sha256:d77145b60cad4fc56217fceec32ec5283ff1dd3e7eef2b1046a4b1baf5488c1c"
+      "path": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json",
+      "sha256": "sha256:e4c5949e4e4e6237f1c0b951df215cbc1516628d8ecd47cfa70fcb07810e8d9e"
     },
     "after_class": "weakly_gripped",
     "before_artifact": {
-      "path": "target/ripr/test-agent-verify/before.repo-exposure.json",
-      "sha256": "sha256:3535d5554f60e2e442bd2b9e44a7daa1dbfae5d0effd67e3d797c7cfa7fca7c2"
+      "path": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json",
+      "sha256": "sha256:e4c5949e4e4e6237f1c0b951df215cbc1516628d8ecd47cfa70fcb07810e8d9e"
     },
     "before_class": "weakly_gripped",
     "command_template_version": "0.1",
@@ -28,8 +31,8 @@
     "ripr_version": "<ripr_version>",
     "seam_id": "67fc764ba37d77bd",
     "verify_artifact": {
-      "path": "target/ripr/test-agent-verify/agent-verify.json",
-      "sha256": "sha256:2358acd39a58ccb7acc5b64b8cf0ea8ce835677a48f7e7d035c05f51d56dea87"
+      "path": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-verify.json",
+      "sha256": "sha256:8e5ca6ceb85b92d9184210148f15d9d342d857b5887a08f6603b6adda4f669a9"
     },
     "workflow_artifact": null
   },
@@ -38,10 +41,7 @@
     "after": "weakly_gripped",
     "before": "weakly_gripped",
     "change": "unchanged",
-    "evidence_delta": [
-      "new observed value: 100",
-      "related test count increased by 1"
-    ],
+    "evidence_delta": [],
     "file": "src/lib.rs",
     "grip_class": null,
     "line": 2,
@@ -49,17 +49,14 @@
     "seam_kind": "predicate_boundary"
   },
   "status": "incomplete",
-  "analysis_outcome_status": "missing",
-  "analysis_outcome_error": "<analysis_outcome_error>",
-  "analysis_outcome": null,
   "summary": {
-    "receipt_state": "receipt_movement_unchanged",
     "next_action": {
       "kind": "unchanged",
       "recommended_action": "Add the missing discriminator or stronger assertion named by the packet.",
       "summary": "Static grip did not improve."
     },
     "next_recommendation": "Add or strengthen the missing discriminator named by the seam packet, then rerun agent verify.",
+    "receipt_state": "receipt_movement_unchanged",
     "remaining_gap": "Static grip class did not move."
   },
   "test_changed": null,

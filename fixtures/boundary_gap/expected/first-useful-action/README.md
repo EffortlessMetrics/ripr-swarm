@@ -14,10 +14,13 @@ Files:
 - `<case>/first-useful-action.json` and `<case>/first-useful-action.md` pin the
   expected report output for each route.
 - `unchanged-after-attempt/{before,after}.repo-exposure.json`,
+  `unchanged-after-attempt/agent-verify.json`,
   `unchanged-after-attempt/assistant-proof.json`, and
   `unchanged-after-attempt/agent-receipt.json` are dedicated negative-control
-  inputs. They intentionally remain weak/unchanged when the canonical
-  boundary-gap journey advances to improved evidence.
+  inputs. The verify artifact and receipt bind the exact scenario snapshot
+  bytes and their empty evidence delta. They intentionally remain
+  weak/unchanged when the canonical boundary-gap journey advances to improved
+  evidence.
 
 The corpus intentionally covers:
 

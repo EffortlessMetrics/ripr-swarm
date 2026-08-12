@@ -2708,6 +2708,8 @@ fn first_useful_action_corpus_pins_routing_cases() -> Result<(), Box<dyn std::er
             let after: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
                 workspace_root().join(after_artifact),
             )?)?;
+            let before_bytes = std::fs::read(workspace_root().join(before_artifact))?;
+            let after_bytes = std::fs::read(workspace_root().join(after_artifact))?;
             let seam_class =
                 |snapshot: &serde_json::Value| -> Result<String, Box<dyn std::error::Error>> {
                     snapshot
@@ -2754,6 +2756,63 @@ fn first_useful_action_corpus_pins_routing_cases() -> Result<(), Box<dyn std::er
             assert_eq!(json_pointer_str(&receipt, "/seam/after")?, "weakly_gripped");
             assert_eq!(json_pointer_str(&receipt, "/seam/before")?, before_class);
             assert_eq!(json_pointer_str(&receipt, "/seam/after")?, after_class);
+            assert_eq!(
+                json_pointer_str(&receipt, "/provenance/before_artifact/path")?,
+                before_artifact
+            );
+            assert_eq!(
+                json_pointer_str(&receipt, "/provenance/after_artifact/path")?,
+                after_artifact
+            );
+            assert_eq!(
+                json_pointer_str(&receipt, "/provenance/before_artifact/sha256")?,
+                sha256_hex_bytes(&before_bytes)
+            );
+            assert_eq!(
+                json_pointer_str(&receipt, "/provenance/after_artifact/sha256")?,
+                sha256_hex_bytes(&after_bytes)
+            );
+            let verify_artifact = json_pointer_str(&receipt, "/inputs/agent_verify_json")?;
+            let verify: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+                workspace_root().join(verify_artifact),
+            )?)?;
+            assert_eq!(
+                json_pointer_str(&verify, "/inputs/before")?,
+                before_artifact
+            );
+            assert_eq!(json_pointer_str(&verify, "/inputs/after")?, after_artifact);
+            assert_eq!(
+                json_pointer_str(&verify, "/inputs/before_content_sha256")?,
+                json_pointer_str(&before, "/artifact/content_sha256")?
+            );
+            assert_eq!(
+                json_pointer_str(&verify, "/inputs/after_content_sha256")?,
+                json_pointer_str(&after, "/artifact/content_sha256")?
+            );
+            assert_eq!(
+                json_pointer_str(&verify, "/unchanged_seams/0/change")?,
+                "unchanged"
+            );
+            assert_eq!(
+                json_pointer_str(&verify, "/unchanged_seams/0/gap_movement")?,
+                "unchanged"
+            );
+            assert_eq!(
+                verify.pointer("/unchanged_seams/0/observed_values_added"),
+                Some(&serde_json::json!([]))
+            );
+            assert_eq!(
+                verify.pointer("/unchanged_seams/0/observed_values_removed"),
+                Some(&serde_json::json!([]))
+            );
+            assert_eq!(
+                verify.pointer("/unchanged_seams/0/related_test_delta"),
+                Some(&serde_json::json!(0))
+            );
+            assert_eq!(
+                receipt.pointer("/seam/evidence_delta"),
+                verify.pointer("/unchanged_seams/0/evidence_delta")
+            );
             Some((proof_artifact, receipt_artifact))
         } else {
             None
