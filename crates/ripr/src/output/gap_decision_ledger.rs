@@ -3562,6 +3562,13 @@ mod tests {
             }
             let text = fs::read_to_string(&check).map_err(|error| error.to_string())?;
             let value: Value = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+            let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+                root: name.clone(),
+                generated_at: "test".to_string(),
+                source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+                records_path: check.display().to_string(),
+                records_json: Ok(text),
+            });
             for finding in value
                 .get("findings")
                 .and_then(Value::as_array)
@@ -3575,13 +3582,6 @@ mod tests {
                     string_at(finding, &["oracle_alignment"]),
                     string_at(finding, &["alignment_reason"]),
                 );
-                let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
-                    root: name.clone(),
-                    generated_at: "test".to_string(),
-                    source_kind: GapDecisionLedgerSourceKind::CheckOutput,
-                    records_path: check.display().to_string(),
-                    records_json: Ok(text.clone()),
-                });
                 let canonical_gap_id =
                     string_at(finding, &["python_repair_card", "canonical_gap_id"])
                         .or_else(|| string_at(finding, &["canonical_gap_id"]))
