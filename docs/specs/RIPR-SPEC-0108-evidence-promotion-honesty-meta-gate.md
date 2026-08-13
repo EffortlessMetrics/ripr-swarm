@@ -137,6 +137,10 @@ says it was re-blessed to."
     - `expected_limitation_route` with `route`
     - `must_not_claim_no_tests_found`
     - `must_see_changed_file` with `path`
+   Every `must_not_promote` charter must also declare
+   `must_not_report_clean`. Classification ceilings alone are vacuous when a
+   re-blessed artifact has no findings; the independent non-clean assertion
+   keeps disappearance of the governed subject fail-closed.
 3. `must_remain_non_promoted` cases: asserts NO finding's `classification` is
    `exposed`. Also checks that no finding exceeds `expected_max_class` on the
    severity ordering `exposed > weakly_exposed > reachable_unrevealed/no_static_path > *_unknown`.
@@ -413,8 +417,8 @@ gate-specific artifacts.
 | ts_t_unknown_method_unknown_oracle | typescript | typescript_t_unknown_method_no_oracle | execution_context_unknown_method_not_credited (also `expected_oracle=unknown/unknown`, `expected_class=weakly_exposed`, `must_not_report_clean`, `must_disclose_scope`, and no repair packet or receipt command) |
 | ts_negated_t_oracle | typescript | typescript_negated_t_oracle | negated_equality_not_exact_value (also `expected_oracle=relational_check/weak`, `expected_class=weakly_exposed`, `must_not_report_clean`, `must_disclose_scope`, and no repair packet or receipt command) |
 | ts_complete_repair_packet_contract | typescript | ts_repair_packet_complete | complete TypeScript repair packet stays weakly_exposed, packet-ready, command-bearing, detail-complete, exact-targeted, and free of blocked packet messaging rather than promoted to exposed |
-| rust_weak_error_oracle | rust | weak_error_oracle | non_variant_observing_error_oracle |
-| rust_error_path_sibling_oracle | rust | error_path_sibling_oracle_fake_clean | sibling_oracle_does_not_confirm_error_path |
+| rust_weak_error_oracle | rust | weak_error_oracle | non_variant_observing_error_oracle (also `expected_class=weakly_exposed` and `must_not_report_clean`) |
+| rust_error_path_sibling_oracle | rust | error_path_sibling_oracle_fake_clean | sibling_oracle_does_not_confirm_error_path (also `expected_class=weakly_exposed` and `must_not_report_clean`) |
 | rust_integration_public_api_path_named_limitation | rust | rust_transitive_reach_positive | integration_public_api_path_named_not_silently_clean (also `must_not_report_clean` + `must_disclose_scope` + `must_emit_limitation: rust_integration_public_api_path_unresolved` + `must_not_emit_repair_packet` + no verify/receipt commands + `must_disclose_witness` + `must_disclose_limitation_detail` + `expected_limitation_detail` + `expected_limitation_route: analysis/rust-public-api-transitive-reach` + `must_not_claim_no_tests_found`) |
 | rust_integration_public_api_test_helper_chain_named_limitation | rust | rust_transitive_reach_test_helper_chain | test_helper_public_api_path_named_not_silently_clean (also `must_not_report_clean` + `must_disclose_scope` + `must_emit_limitation: rust_integration_public_api_path_unresolved` + `must_not_emit_repair_packet` + no verify/receipt commands + `must_disclose_witness` + `must_disclose_limitation_detail` + `expected_limitation_detail` + `expected_limitation_route: analysis/rust-public-api-transitive-reach` + `must_not_claim_no_tests_found`) |
 | rust_macro_reach_named_limitation | rust | rust_macro_reach_limitation | macro_reach_named_not_silently_clean (also `must_not_report_clean` + `must_disclose_scope` + `must_emit_limitation: rust_macro_reach_unresolved` + `must_not_emit_repair_packet` + no verify/receipt commands + `must_disclose_witness` + `must_disclose_limitation_detail` + `expected_limitation_detail` + `expected_limitation_route: analysis/rust-macro-aware-reach` + `must_not_claim_no_tests_found`) |

@@ -246,6 +246,83 @@ fn write_evidence_promotion_check_json(fixture: &Path, check_json: Value) -> Res
 }
 
 #[test]
+fn evidence_promotion_honesty_rejects_vacuous_non_promotion_charter() -> Result<(), String> {
+    let root = temp_dir("evidence-promotion-honesty-non-vacuity");
+    let corpus = root.join("corpus.json");
+    let py_fixture = root.join("fixtures/py-empty");
+    let ts_fixture = root.join("fixtures/ts");
+    let rust_fixture = root.join("fixtures/rust");
+    let rust_control_fixture = root.join("fixtures/rust-control");
+    let ts_control_fixture = root.join("fixtures/ts-control");
+
+    write_evidence_promotion_check_json(
+        &py_fixture,
+        serde_json::json!({
+            "summary": {"findings": 0},
+            "findings": []
+        }),
+    )?;
+    for fixture in [&ts_fixture, &rust_fixture] {
+        write_evidence_promotion_check(fixture, "weakly_exposed")?;
+    }
+    for fixture in [&rust_control_fixture, &ts_control_fixture] {
+        write_evidence_promotion_check(fixture, "exposed")?;
+    }
+
+    let guarded_non_promotion = |id: &str, language: &str, source_fixture: &Path| {
+        serde_json::json!({
+            "id": id,
+            "language": language,
+            "tier": "pure",
+            "source_fixture": source_fixture,
+            "assertions": [
+                {"type": "must_not_report_clean"},
+                {"type": "must_not_promote"}
+            ]
+        })
+    };
+    let promoted_control = |id: &str, language: &str, source_fixture: &Path| {
+        serde_json::json!({
+            "id": id,
+            "language": language,
+            "tier": "pure",
+            "source_fixture": source_fixture,
+            "assertions": [{"type": "must_promote"}]
+        })
+    };
+    let corpus_json = serde_json::json!({
+        "cases": [
+            {
+                "id": "py_vacuous_non_promotion",
+                "language": "python",
+                "tier": "pure",
+                "source_fixture": py_fixture,
+                "assertions": [{"type": "must_not_promote"}]
+            },
+            guarded_non_promotion("ts_guarded", "typescript", &ts_fixture),
+            guarded_non_promotion("rust_guarded", "rust", &rust_fixture),
+            promoted_control("rust_control", "rust", &rust_control_fixture),
+            promoted_control("ts_control", "typescript", &ts_control_fixture)
+        ]
+    });
+    write(
+        &corpus,
+        &serde_json::to_string_pretty(&corpus_json).map_err(|err| err.to_string())?,
+    );
+
+    let mut violations = Vec::new();
+    super::validate_evidence_promotion_honesty_corpus_at(&corpus, &mut violations)?;
+    let report = violations.join("\n");
+    assert!(
+        report.contains("py_vacuous_non_promotion")
+            && report.contains("`must_not_promote` requires `must_not_report_clean`")
+            && report.contains("cannot pass vacuously"),
+        "expected the manifest-level non-vacuity violation, got {violations:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn evidence_promotion_honesty_rejects_missing_unknown_and_impure_tiers() -> Result<(), String> {
     let root = temp_dir("evidence-promotion-honesty-tier-contract");
     let corpus = root.join("corpus.json");
@@ -615,6 +692,7 @@ fn evidence_promotion_honesty_accepts_typed_assertion_vocabulary() -> Result<(),
                 "tier": "pure",
                 "source_fixture": py_fixture,
                 "assertions": [
+                    {"type": "must_not_report_clean"},
                     {"type": "must_not_promote"},
                     {"type": "maximum_class", "class": "weakly_exposed"}
                 ]
@@ -625,6 +703,7 @@ fn evidence_promotion_honesty_accepts_typed_assertion_vocabulary() -> Result<(),
                 "tier": "pure",
                 "source_fixture": ts_fixture,
                 "assertions": [
+                    {"type": "must_not_report_clean"},
                     {"type": "must_not_promote"},
                     {"type": "maximum_class", "class": "weakly_exposed"}
                 ]
@@ -3555,6 +3634,7 @@ fn evidence_promotion_honesty_catches_dishonest_perl_advisory_rebless() -> Resul
                 "tier": "pure",
                 "source_report": perl_report,
                 "assertions": [
+                    {"type": "must_not_report_clean"},
                     {"type": "must_not_promote"},
                     {"type": "expected_class", "class": "weakly_exposed"}
                 ]

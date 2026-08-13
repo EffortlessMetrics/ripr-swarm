@@ -373,7 +373,9 @@
       "source_fixture": "fixtures/weak_error_oracle",
       "vector": "non_variant_observing_error_oracle",
       "assertions": [
+        { "type": "must_not_report_clean" },
         { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
         { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
@@ -384,7 +386,9 @@
       "source_fixture": "fixtures/error_path_sibling_oracle_fake_clean",
       "vector": "sibling_oracle_does_not_confirm_error_path",
       "assertions": [
+        { "type": "must_not_report_clean" },
         { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
         { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
