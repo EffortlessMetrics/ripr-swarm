@@ -8,8 +8,8 @@ Start here:
 - Identity: 67fc764ba37d77bd
 - File: src/lib.rs:2
 - Repair route: no_repair_packet
-- Class: strongly_gripped
-- Current evidence strength: strongly_gripped
+- Class: exposed
+- Current evidence strength: exposed
 - Why not actionable: The receipt reports that static grip already improved; no further repair is recommended.
 - Verify command: `ripr agent verify --root fixtures/boundary_gap/input --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json`
 - Receipt: receipt_found (fixtures/boundary_gap/expected/editor-agent-loop/agent-receipt.json)

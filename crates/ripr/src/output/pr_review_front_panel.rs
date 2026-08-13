@@ -897,8 +897,9 @@ fn select_candidate(
 
 fn already_improved_top_issue(mut issue: PanelTopIssue, movement: &PanelMovement) -> PanelTopIssue {
     if let Some(after_class) = &movement.after_class {
-        issue.classification = Some(after_class.clone());
-        issue.current_evidence_strength = Some(after_class.clone());
+        let public_class = normalize_class(after_class.clone());
+        issue.classification = Some(public_class.clone());
+        issue.current_evidence_strength = Some(public_class);
     }
     issue.missing_discriminator = None;
     issue.no_action_reason = Some(
@@ -2341,6 +2342,28 @@ mod tests {
             );
             let input = fixture_input(&repo_root, inputs, &expected_md_path)?;
             let report = build_pr_review_front_panel_report(input);
+
+            if case_id == "coverage_flat_grip_improved" {
+                let top_issue = report
+                    .top_issue
+                    .as_ref()
+                    .ok_or_else(|| format!("{case_id} top issue missing"))?;
+                assert_eq!(
+                    top_issue.classification.as_deref(),
+                    Some("exposed"),
+                    "public classification must use exposure vocabulary"
+                );
+                assert_eq!(
+                    top_issue.current_evidence_strength.as_deref(),
+                    Some("exposed"),
+                    "public evidence strength must use exposure vocabulary"
+                );
+                assert_eq!(
+                    report.movement.after_class.as_deref(),
+                    Some("strongly_gripped"),
+                    "movement must retain assistant-health grip vocabulary"
+                );
+            }
 
             assert_eq!(
                 render_pr_review_front_panel_json(&report)?,
