@@ -933,12 +933,14 @@ fn already_improved_top_issue(mut issue: PanelTopIssue, movement: &PanelMovement
 }
 
 fn movement_has_concrete_improvement(movement: &PanelMovement) -> bool {
+    let Some(after_class) = movement.after_class.as_deref() else {
+        return false;
+    };
     movement.state == "improved"
-        && movement
-            .after_class
-            .as_deref()
-            .and_then(normalized_receipt_class)
-            .is_some_and(is_concrete_exposure_class)
+        // `ungripped` is a recognized receipt class, but it does not carry
+        // enough exposure evidence to clear the repair packet.
+        && after_class != "ungripped"
+        && normalized_receipt_class(after_class).is_some_and(is_concrete_exposure_class)
 }
 
 fn is_concrete_exposure_class(class: &str) -> bool {
@@ -2197,7 +2199,7 @@ fn normalized_receipt_class(value: &str) -> Option<&'static str> {
         "weakly_gripped" | "weakly_exposed" => Some("weakly_exposed"),
         "strongly_gripped" | "exposed" => Some("exposed"),
         "reachable_unrevealed" => Some("reachable_unrevealed"),
-        "no_static_path" => Some("no_static_path"),
+        "ungripped" | "no_static_path" => Some("no_static_path"),
         "infection_unknown" => Some("infection_unknown"),
         "propagation_unknown" => Some("propagation_unknown"),
         "static_unknown" => Some("static_unknown"),
@@ -3009,6 +3011,47 @@ mod tests {
             selected_proof_receipt_status(&selected, Some(&parsed), Some("receipt.json")),
             "receipt_movement_improved"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn ungripped_receipt_alias_matches_without_promoting_improvement() -> Result<(), String> {
+        let selected = serde_json::json!({
+            "receipt": {"artifact": "receipt.json"},
+            "seam": {"seam_id": "seam-1"},
+            "movement": {
+                "source_state": "changed",
+                "before_class": "ungripped",
+                "after_class": "weakly_gripped"
+            }
+        });
+        let parsed = serde_json::json!({
+            "provenance": {
+                "seam_id": "seam-1",
+                "movement": "changed",
+                "before_class": "no_static_path",
+                "after_class": "weakly_exposed"
+            },
+            "seam": {
+                "seam_id": "seam-1",
+                "change": "changed",
+                "before": "no_static_path",
+                "after": "weakly_exposed"
+            },
+            "summary": {"next_action": {"kind": "changed"}}
+        });
+        assert_eq!(
+            selected_proof_receipt_status(&selected, Some(&parsed), Some("receipt.json")),
+            "receipt_found"
+        );
+
+        let improvement = PanelMovement {
+            state: "improved".to_string(),
+            before_class: Some("ungripped".to_string()),
+            after_class: Some("ungripped".to_string()),
+            source_artifact: None,
+        };
+        assert!(!movement_has_concrete_improvement(&improvement));
         Ok(())
     }
 
