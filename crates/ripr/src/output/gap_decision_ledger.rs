@@ -2492,6 +2492,25 @@ mod tests {
         include_str!("../../../../fixtures/python_boundary_gap/expected/check.json").to_string()
     }
 
+    fn require_one_record_per_python_repair_card(
+        records: &[GapRecord],
+        source_ids: &BTreeSet<String>,
+        fixture: &str,
+    ) -> Result<(), String> {
+        for canonical_gap_id in source_ids {
+            let produced = records
+                .iter()
+                .filter(|record| record.canonical_gap_id == *canonical_gap_id)
+                .count();
+            if produced != 1 {
+                return Err(format!(
+                    "repair card must produce exactly one ledger record: {fixture}/{canonical_gap_id} produced={produced}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     fn typescript_preview_gap_before_check_output() -> String {
         include_str!(
             "../../../../fixtures/first_successful_pr/typescript-preview-gap/inputs/reports/before-check.json"
@@ -3569,15 +3588,27 @@ mod tests {
                 records_path: check.display().to_string(),
                 records_json: Ok(text),
             });
-            for finding in value
+            let repair_card_findings: Vec<&Value> = value
                 .get("findings")
                 .and_then(Value::as_array)
                 .into_iter()
                 .flatten()
-            {
-                if finding.get("python_repair_card").is_none() {
-                    continue;
+                .filter(|finding| finding.get("python_repair_card").is_some())
+                .collect();
+            let mut source_ids = BTreeSet::new();
+            for finding in &repair_card_findings {
+                let canonical_gap_id =
+                    string_at(finding, &["python_repair_card", "canonical_gap_id"])
+                        .or_else(|| string_at(finding, &["canonical_gap_id"]))
+                        .ok_or_else(|| format!("repair card has no canonical gap id: {name}"))?;
+                if !source_ids.insert(canonical_gap_id.to_string()) {
+                    return Err(format!(
+                        "duplicate source repair-card canonical gap id: {name}/{canonical_gap_id}"
+                    ));
                 }
+            }
+            require_one_record_per_python_repair_card(&report.records, &source_ids, &name)?;
+            for finding in repair_card_findings {
                 let pair = (
                     string_at(finding, &["oracle_alignment"]),
                     string_at(finding, &["alignment_reason"]),
@@ -3625,6 +3656,36 @@ mod tests {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}"
             ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn python_repair_card_corpus_rejects_duplicate_produced_record() -> Result<(), String> {
+        let mut report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: "fixtures/python_boundary_gap/input".to_string(),
+            generated_at: "test".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "fixtures/python_boundary_gap/expected/check.json".to_string(),
+            records_json: Ok(python_boundary_gap_check_output()),
+        });
+        let record = report
+            .records
+            .first()
+            .cloned()
+            .ok_or_else(|| "boundary fixture must produce a record".to_string())?;
+        let source_ids = BTreeSet::from([record.canonical_gap_id.clone()]);
+        report.records.push(record);
+
+        let error = require_one_record_per_python_repair_card(
+            &report.records,
+            &source_ids,
+            "python_boundary_gap",
+        )
+        .err()
+        .ok_or_else(|| "duplicate produced record passed corpus oracle".to_string())?;
+        if !error.contains("produced=2") {
+            return Err(format!("unexpected duplicate-record error: {error}"));
         }
         Ok(())
     }
