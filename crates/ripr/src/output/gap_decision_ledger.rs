@@ -939,13 +939,21 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
         None
     };
     let verification_commands = verify_command.into_iter().collect::<Vec<_>>();
-    let projection_eligibility = projection_eligibility_from_pr_evidence(
+    let mut projection_eligibility = projection_eligibility_from_pr_evidence(
         repairability,
         repair_route.is_some(),
         !verification_commands.is_empty(),
         anchor.file.is_some() && anchor.line.is_some(),
         "actionable",
     );
+    if string_at(finding, &["oracle_alignment"]) != Some("direct") {
+        insert_projection(
+            &mut projection_eligibility,
+            "agent_packet",
+            false,
+            "python_oracle_alignment_not_direct",
+        );
+    }
     let receipt_command = string_at(card, &["receipt", "command"]).map(ToString::to_string);
     let mut evidence_ids = Vec::new();
     if let Some(id) = string_at(finding, &["id"]) {
@@ -1581,6 +1589,7 @@ fn attach_check_output_preview_receipt_routes(records: &mut [GapRecord], root: &
         if !matches!(record.language.as_str(), "python" | "typescript")
             || record.language_status != "preview"
             || record.repairability != "repairable"
+            || (record.language == "python" && !projection_eligible(record, "agent_packet"))
         {
             continue;
         }
@@ -2426,6 +2435,13 @@ mod tests {
             .to_string()
     }
 
+    fn python_wrong_owner_check_output() -> String {
+        include_str!(
+            "../../../../fixtures/python_adversarial_same_method_other_class/expected/check.json"
+        )
+        .to_string()
+    }
+
     fn typescript_preview_gap_before_check_output() -> String {
         include_str!(
             "../../../../fixtures/first_successful_pr/typescript-preview-gap/inputs/reports/before-check.json"
@@ -3236,6 +3252,7 @@ mod tests {
                     "line": 2,
                     "family": "predicate"
                 },
+                "oracle_alignment": "direct",
                 "related_tests": [{
                     "name": "test_calculate_discount_smoke",
                     "file": "tests/test_pricing.py",
@@ -3341,6 +3358,37 @@ mod tests {
             packet.contains("\"receipt_status\": \"available\""),
             "expected packet receipt availability in {packet}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn check_output_python_orthogonal_card_stays_advisory() -> Result<(), String> {
+        let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: "fixtures/python_adversarial_same_method_other_class/input".to_string(),
+            generated_at: "test".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "fixtures/python_adversarial_same_method_other_class/expected/check.json"
+                .to_string(),
+            records_json: Ok(python_wrong_owner_check_output()),
+        });
+        assert!(
+            report.warnings.is_empty(),
+            "unexpected warnings: {:?}",
+            report.warnings
+        );
+        assert_eq!(report.records.len(), 1, "fixture must yield one gap record");
+        let record = &report.records[0];
+        assert_eq!(record.language, "python");
+        assert_eq!(record.language_status, "preview");
+        assert!(
+            !projection_eligible(record, "agent_packet"),
+            "orthogonal wrong-owner evidence must remain advisory"
+        );
+        assert_eq!(
+            record.receipt_command, None,
+            "an ineligible advisory record must not receive a receipt command"
+        );
+        assert_eq!(report.summary.projection_agent_packet_eligible, 0);
         Ok(())
     }
 

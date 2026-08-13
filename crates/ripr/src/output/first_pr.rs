@@ -2977,6 +2977,7 @@ mod tests {
                 {
                     "id": "probe:app_pricing.py:2:python_preview",
                     "classification": "weakly_exposed",
+                    "oracle_alignment": "direct",
                     "probe": {
                         "file": "app/pricing.py",
                         "line": 2,
