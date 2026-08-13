@@ -938,7 +938,14 @@ fn movement_has_concrete_improvement(movement: &PanelMovement) -> bool {
             .after_class
             .as_deref()
             .and_then(normalized_receipt_class)
-            .is_some()
+            .is_some_and(is_concrete_exposure_class)
+}
+
+fn is_concrete_exposure_class(class: &str) -> bool {
+    matches!(
+        class,
+        "weakly_exposed" | "exposed" | "reachable_unrevealed" | "no_static_path"
+    )
 }
 
 fn is_missing_required(parsed: &ParsedPanelSources) -> bool {
@@ -2818,7 +2825,14 @@ mod tests {
         let expected_md_path = repo_root.join(
             "fixtures/boundary_gap/expected/pr-review-front-panel/coverage-flat-grip-improved/pr-review-front-panel.md",
         );
-        for invalid_after in [Value::Null, Value::String("unknown".to_string())] {
+        for invalid_after in [
+            Value::Null,
+            Value::String("unknown".to_string()),
+            Value::String("ungripped".to_string()),
+            Value::String("infection_unknown".to_string()),
+            Value::String("propagation_unknown".to_string()),
+            Value::String("static_unknown".to_string()),
+        ] {
             let mut input = fixture_input(&repo_root, &inputs, &expected_md_path)?;
             let mut health: Value = serde_json::from_str(
                 input
@@ -2837,6 +2851,7 @@ mod tests {
                 .as_ref()
                 .ok_or_else(|| "invalid improved proof lost its top issue".to_string())?;
             assert_eq!(report.summary.top_issue_state, "actionable");
+            assert_ne!(report.summary.top_issue_state, "already_improved");
             assert_eq!(report.summary.policy_state, "new_policy_eligible");
             assert_eq!(report.movement.state, "improved");
             assert_eq!(issue.classification.as_deref(), Some("weakly_exposed"));
