@@ -2063,3 +2063,12 @@ warnings to notices. Keep the mapping fail-closed for unknown values, but pin
 the exact warning and quiet paths. The same discipline applies to submodule and
 gate disclosures: preserve the non-claim and first actionable reason at the
 terminal boundary instead of requiring artifact archaeology.
+
+## 2026-08-13: Empty evidence is not identity evidence
+
+Equality over an empty set does not establish receipt identity. A receipt
+fallback must require a selected before/after class and at least one parsed
+value for each dimension; every parsed value must be recognized and normalize
+to the selected value. Negative oracles should keep movement-coherent tokens
+identical while removing only the intended discriminator, and static findings
+must retain conservative repair language when that discriminator is absent.
