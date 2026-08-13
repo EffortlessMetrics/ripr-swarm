@@ -102,7 +102,6 @@ pub(crate) struct AttemptDelta {
     pub(crate) changes: Vec<AttemptPathChange>,
 }
 
-#[derive(Debug)]
 pub(crate) struct AttemptBaseline {
     root: PathBuf,
     head: String,
@@ -111,6 +110,8 @@ pub(crate) struct AttemptBaseline {
     ambiguous: bool,
     #[cfg(windows)]
     _unknown_ignored_write_guards: Vec<fs::File>,
+    #[cfg(windows)]
+    _expected_write_authorities: Vec<winsafe::guard::CloseHandleGuard<winsafe::HFILE>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -192,12 +193,40 @@ fn capture_repository_state(
     let mut remaining_work_bytes = MAX_CAPTURE_TOTAL_WORK_BYTES;
     #[cfg(windows)]
     let mut unknown_ignored_write_guards = Vec::new();
+    #[cfg(windows)]
+    let mut expected_write_authorities = Vec::new();
     for (path, ignored_path) in inventory {
-        #[cfg(windows)]
         let expected_write = policy
             .expected_operational_writes
             .iter()
             .any(|rule| rule.matches(&path));
+        let writable_surface = expected_write
+            || policy
+                .allowed_edit_surface
+                .iter()
+                .any(|rule| rule.matches(&path));
+        if writable_surface && !writable_path_components_are_safe(&root, &path)? {
+            ambiguous = true;
+        }
+        #[cfg(windows)]
+        let expected_write_authority = if expected_write {
+            match writable_regular_file_authority(&root.join(&path)) {
+                Ok(authority) => authority,
+                Err(_) => {
+                    ambiguous = true;
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        #[cfg(windows)]
+        if writable_surface
+            && !expected_write
+            && writable_regular_file_authority(&root.join(&path)).is_err()
+        {
+            ambiguous = true;
+        }
         #[cfg(windows)]
         let unknown_ignored_write_guard = if ignored_path && !expected_write {
             // Windows metadata and sparse samples are only a bounded probe, not
@@ -220,11 +249,16 @@ fn capture_repository_state(
             &mut remaining_file_bytes,
             &mut remaining_work_bytes,
             ignored_path,
+            ignored_path && expected_write,
         )?;
         ambiguous |= worktree_identity == WorktreeIdentity::Other;
         #[cfg(windows)]
         if let Some(guard) = unknown_ignored_write_guard {
             unknown_ignored_write_guards.push(guard);
+        }
+        #[cfg(windows)]
+        if let Some(authority) = expected_write_authority {
+            expected_write_authorities.push(authority);
         }
         paths.insert(
             path,
@@ -262,6 +296,11 @@ fn capture_repository_state(
             &mut stable_file_bytes,
             &mut remaining_work_bytes,
             ignored_paths.contains(path.as_str()),
+            ignored_paths.contains(path.as_str())
+                && policy
+                    .expected_operational_writes
+                    .iter()
+                    .any(|rule| rule.matches(path)),
         );
         if !matches!(identity, Ok(identity) if identity == state.worktree_identity) {
             stable_worktree = false;
@@ -286,6 +325,8 @@ fn capture_repository_state(
         ambiguous,
         #[cfg(windows)]
         _unknown_ignored_write_guards: unknown_ignored_write_guards,
+        #[cfg(windows)]
+        _expected_write_authorities: expected_write_authorities,
     })
 }
 
@@ -418,6 +459,93 @@ fn canonical_repository_root(root: &Path) -> Result<PathBuf, String> {
     Ok(requested)
 }
 
+fn writable_path_components_are_safe(root: &Path, relative: &str) -> Result<bool, String> {
+    let mut current = root.to_path_buf();
+    for component in relative.split('/') {
+        current.push(component);
+        let metadata = match fs::symlink_metadata(&current) {
+            Ok(metadata) => metadata,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+            Err(err) => {
+                return Err(format!(
+                    "inspect writable path {}: {err}",
+                    current.display()
+                ));
+            }
+        };
+        if metadata.file_type().is_symlink() || is_windows_reparse_point(&metadata) {
+            return Ok(false);
+        }
+        #[cfg(unix)]
+        if metadata.is_file() {
+            use std::os::unix::fs::MetadataExt as _;
+            if metadata.nlink() != 1 {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
+}
+
+#[cfg(windows)]
+fn is_windows_reparse_point(metadata: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt as _;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn is_windows_reparse_point(_metadata: &fs::Metadata) -> bool {
+    false
+}
+
+#[cfg(windows)]
+fn writable_regular_file_authority(
+    path: &Path,
+) -> Result<Option<winsafe::guard::CloseHandleGuard<winsafe::HFILE>>, String> {
+    use winsafe::{HFILE, co};
+
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(format!("inspect writable path {}: {err}", path.display())),
+    };
+    if !metadata.is_file()
+        || metadata.file_type().is_symlink()
+        || is_windows_reparse_point(&metadata)
+    {
+        return Err(format!(
+            "writable path {} is not a regular non-reparse file",
+            path.display()
+        ));
+    }
+    let path = path
+        .to_str()
+        .ok_or_else(|| "writable Windows path is not valid UTF-8".to_string())?;
+    let (handle, _) = HFILE::CreateFile(
+        path,
+        co::GENERIC::READ,
+        Some(co::FILE_SHARE::READ | co::FILE_SHARE::WRITE),
+        None,
+        co::DISPOSITION::OPEN_EXISTING,
+        co::FILE_ATTRIBUTE::NORMAL,
+        Some(co::FILE_FLAG::OPEN_REPARSE_POINT),
+        None,
+        None,
+    )
+    .map_err(|err| format!("open writable file authority {path}: {err}"))?;
+    let information = handle
+        .GetFileInformationByHandle()
+        .map_err(|err| format!("inspect writable file authority {path}: {err}"))?;
+    if information.nNumberOfLinks != 1 {
+        return Err(format!(
+            "writable path {path} has {} hard links",
+            information.nNumberOfLinks
+        ));
+    }
+    Ok(Some(handle))
+}
+
 fn git_text(root: &Path, args: &[&str]) -> Result<String, String> {
     let bytes = git_bytes(root, args)?;
     String::from_utf8(bytes)
@@ -458,6 +586,7 @@ fn worktree_identity(
     remaining_file_bytes: &mut u64,
     remaining_work_bytes: &mut u64,
     ignored_path: bool,
+    exact_ignored_path: bool,
 ) -> Result<WorktreeIdentity, String> {
     let path = root.join(relative);
     let metadata = match fs::symlink_metadata(&path) {
@@ -473,7 +602,7 @@ fn worktree_identity(
         return Ok(WorktreeIdentity::Symlink(target));
     }
     if metadata.is_file() {
-        if ignored_path {
+        if ignored_path && !exact_ignored_path {
             return bounded_ignored_file_identity(&path, &metadata, remaining_work_bytes);
         }
         if metadata.len() > MAX_CAPTURE_FILE_BYTES
@@ -1171,7 +1300,17 @@ mod tests {
         root: PathBuf,
     }
 
+    struct ExternalFixture {
+        root: PathBuf,
+    }
+
     impl Drop for GitFixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    impl Drop for ExternalFixture {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.root);
         }
@@ -1206,6 +1345,20 @@ mod tests {
         git_ok(&root, &["add", "."])?;
         git_ok(&root, &["commit", "-qm", "baseline"])?;
         Ok(GitFixture { root })
+    }
+
+    fn external_fixture(name: &str) -> Result<ExternalFixture, String> {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|err| format!("clock before UNIX_EPOCH: {err}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-edit-cage-external-{name}-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root)
+            .map_err(|err| format!("create external fixture {}: {err}", root.display()))?;
+        Ok(ExternalFixture { root })
     }
 
     fn git_ok(root: &Path, args: &[&str]) -> Result<(), String> {
@@ -1531,15 +1684,35 @@ mod tests {
     }
 
     #[test]
-    fn changed_oversized_expected_output_remains_visible_and_compliant() -> Result<(), String> {
-        let fixture = git_fixture("ignored-oversized-expected-change")?;
+    fn changed_expected_output_uses_exact_identity_and_remains_compliant() -> Result<(), String> {
+        let fixture = git_fixture("ignored-exact-expected-change")?;
         commit_target_ignore(&fixture)?;
-        create_oversized_ignored_file(&fixture, "target/ripr/cache.bin")?;
+        let path = fixture.root.join("target/ripr/cache.bin");
+        fs::create_dir_all(
+            path.parent()
+                .ok_or_else(|| "missing cache parent".to_string())?,
+        )
+        .map_err(|err| format!("create expected cache parent: {err}"))?;
+        let file =
+            fs::File::create(&path).map_err(|err| format!("create expected cache: {err}"))?;
+        // The 1 MiB mutation below sits between the five legacy sparse probe
+        // offsets for this exact 16 MiB file.
+        file.set_len(MAX_CAPTURE_FILE_BYTES)
+            .map_err(|err| format!("size expected cache: {err}"))?;
+        let original_modified = fs::metadata(&path)
+            .and_then(|metadata| metadata.modified())
+            .map_err(|err| format!("read expected cache timestamp: {err}"))?;
 
         let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
         fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
             .map_err(|err| format!("write selected test: {err}"))?;
         mutate_oversized_file(&fixture, "target/ripr/cache.bin")?;
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .map_err(|err| format!("reopen expected cache: {err}"))?;
+        file.set_times(fs::FileTimes::new().set_modified(original_modified))
+            .map_err(|err| format!("restore expected cache timestamp: {err}"))?;
 
         let verdict = evaluate_repository_edit_cage(&baseline)?;
         assert_eq!(verdict.status, EditCageVerdictStatus::Compliant);
@@ -1549,6 +1722,92 @@ mod tests {
                 "target/ripr/cache.bin".to_string(),
                 "tests/pricing.rs".to_string()
             ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn oversized_expected_output_is_incomparable_without_exact_identity() -> Result<(), String> {
+        let fixture = git_fixture("ignored-oversized-expected-incomparable")?;
+        commit_target_ignore(&fixture)?;
+        create_oversized_ignored_file(&fixture, "target/ripr/cache.bin")?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
+            .map_err(|err| format!("write selected test: {err}"))?;
+        assert_eq!(
+            evaluate_repository_edit_cage(&baseline)?.status,
+            EditCageVerdictStatus::Incomparable
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn expected_write_hardlink_escape_is_incomparable() -> Result<(), String> {
+        let fixture = git_fixture("expected-hardlink-escape")?;
+        let external = external_fixture("expected-hardlink-escape")?;
+        commit_target_ignore(&fixture)?;
+        let external_file = external.root.join("outside.bin");
+        fs::write(&external_file, "outside-before\n")
+            .map_err(|err| format!("write external hardlink target: {err}"))?;
+        let link = fixture.root.join("target/ripr/cache.bin");
+        fs::create_dir_all(
+            link.parent()
+                .ok_or_else(|| "missing cache parent".to_string())?,
+        )
+        .map_err(|err| format!("create expected cache parent: {err}"))?;
+        fs::hard_link(&external_file, &link)
+            .map_err(|err| format!("create escaping hardlink: {err}"))?;
+
+        let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
+            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(&link, "outside-after\n")
+            .map_err(|err| format!("write through escaping hardlink: {err}"))?;
+        assert_eq!(
+            evaluate_repository_edit_cage(&baseline)?.status,
+            EditCageVerdictStatus::Incomparable
+        );
+        assert_eq!(
+            fs::read_to_string(&external_file)
+                .map_err(|err| format!("read external hardlink target: {err}"))?,
+            "outside-after\n"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unchanged_expected_write_symlink_escape_is_incomparable() -> Result<(), String> {
+        use std::os::unix::fs::symlink;
+
+        let fixture = git_fixture("expected-symlink-escape")?;
+        let external = external_fixture("expected-symlink-escape")?;
+        commit_target_ignore(&fixture)?;
+        let external_file = external.root.join("outside.bin");
+        fs::write(&external_file, "outside-before\n")
+            .map_err(|err| format!("write external symlink target: {err}"))?;
+        let link = fixture.root.join("target/ripr/escape");
+        fs::create_dir_all(
+            link.parent()
+                .ok_or_else(|| "missing link parent".to_string())?,
+        )
+        .map_err(|err| format!("create expected link parent: {err}"))?;
+        symlink(&external.root, &link)
+            .map_err(|err| format!("create escaping expected symlink: {err}"))?;
+
+        let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
+            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(link.join("outside.bin"), "outside-after\n")
+            .map_err(|err| format!("write through escaping symlink: {err}"))?;
+        assert_eq!(
+            evaluate_repository_edit_cage(&baseline)?.status,
+            EditCageVerdictStatus::Incomparable
+        );
+        assert_eq!(
+            fs::read_to_string(&external_file)
+                .map_err(|err| format!("read external symlink target: {err}"))?,
+            "outside-after\n"
         );
         Ok(())
     }
@@ -1582,6 +1841,7 @@ mod tests {
             "tests/pricing.rs",
             &mut remaining,
             &mut remaining_work,
+            false,
             false,
         )?;
         if identity != WorktreeIdentity::Other {
