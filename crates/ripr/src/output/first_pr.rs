@@ -309,12 +309,7 @@ fn render_start_here_packet_with_selection(
             "agent_packet",
             "Agent repair packet",
             &options.agent_packet,
-            selection.agent_packet_command().or_else(|| {
-                Some(format!(
-                    "ripr agent packet --root {} --gap-ledger {} --gap-id <gap-id> --json > {}",
-                    options.root, options.gap_ledger, options.agent_packet
-                ))
-            }),
+            selection.agent_packet_command(),
         ),
         artifact_status(
             root,
@@ -2713,6 +2708,18 @@ mod tests {
             packet["selected"]["agent_packet_command"],
             "ripr agent packet --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --gap-id gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold --json > target/ripr/workflow/agent-packet.json"
         );
+        let packet_artifact = packet["artifacts"]
+            .as_array()
+            .and_then(|artifacts| {
+                artifacts
+                    .iter()
+                    .find(|artifact| artifact["id"] == "agent_packet")
+            })
+            .ok_or_else(|| "agent-packet artifact missing".to_string())?;
+        assert_eq!(
+            packet_artifact["regeneration_command"],
+            packet["selected"]["agent_packet_command"]
+        );
         assert!(repo.join(DEFAULT_GAP_LEDGER).is_file());
         assert!(
             repo.join(with_extension(DEFAULT_GAP_LEDGER, "md"))
@@ -2757,6 +2764,22 @@ mod tests {
         assert!(packet["selected"]["gap_id"].is_null());
         assert!(packet["selected"]["receipt_command"].is_null());
         assert!(packet["selected"]["agent_packet_command"].is_null());
+        let packet_artifact = packet["artifacts"]
+            .as_array()
+            .and_then(|artifacts| {
+                artifacts
+                    .iter()
+                    .find(|artifact| artifact["id"] == "agent_packet")
+            })
+            .ok_or_else(|| "agent-packet artifact missing".to_string())?;
+        assert!(packet_artifact["regeneration_command"].is_null());
+        assert!(packet["commands"]["agent_packet"].is_null());
+        assert!(packet["commands"]["verify"].is_null());
+        assert!(packet["commands"]["receipt"].is_null());
+        let markdown = fs::read_to_string(repo.join(DEFAULT_OUT_DIR).join(START_HERE_MD))
+            .map_err(|error| format!("read wrong-owner start-here Markdown: {error}"))?;
+        assert!(!markdown.contains("ripr agent packet"));
+        assert!(!markdown.contains("ripr receipt write"));
         cleanup(&repo)
     }
 
