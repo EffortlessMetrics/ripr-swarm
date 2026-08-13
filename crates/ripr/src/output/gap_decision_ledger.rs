@@ -2298,6 +2298,12 @@ pub(crate) fn projection_eligible(record: &GapRecord, projection: &str) -> bool 
         .is_some_and(|projection| projection.eligible)
 }
 
+pub(crate) fn projection_eligible_from_value(record: &Value, projection: &str) -> bool {
+    serde_json::from_value::<GapRecord>(record.clone())
+        .ok()
+        .is_some_and(|record| projection_eligible(&record, projection))
+}
+
 fn render_record_markdown(record: &GapRecord, out: &mut String) {
     out.push_str(&format!(
         "### `{}`\n\n",

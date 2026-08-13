@@ -1,5 +1,6 @@
 use crate::agent::loop_commands::{check_repo_exposure_command, display_path, shell_arg};
 use crate::config::detect_python_project;
+use crate::output::gap_decision_ledger::projection_eligible_from_value;
 use crate::output::receipt_lifecycle::receipt_lifecycle_state;
 use crate::output::receipt_write::receipt_write_command;
 use crate::output::start_here_state::{
@@ -1077,6 +1078,13 @@ fn is_first_run_repairable_gap(record: &&Value) -> bool {
             .is_some_and(|value| value == "new" || value == "reintroduced")
         && record.get("repair_route").is_some()
         && first_string_array_item(record, &["verification_commands"]).is_some()
+        && (!matches!(
+            (
+                string_path(record, &["language"]).as_deref(),
+                string_path(record, &["language_status"]).as_deref(),
+            ),
+            (Some("python"), Some("preview"))
+        ) || projection_eligible_from_value(record, "agent_packet"))
 }
 
 fn first_pr_language_is_supported(record: &Value) -> bool {
@@ -2668,6 +2676,10 @@ mod tests {
         let ledger = read_packet(&repo.join(DEFAULT_GAP_LEDGER))?;
         assert_eq!(ledger["inputs"]["source_kind"], "check_output");
         assert_eq!(ledger["inputs"]["records"], DEFAULT_CHECK_OUTPUT);
+        assert_eq!(
+            ledger["records"][0]["projection_eligibility"]["agent_packet"]["eligible"],
+            true
+        );
         let ledger_receipt_cmd = ledger["records"][0]["receipt_command"]
             .as_str()
             .unwrap_or("");
@@ -2708,6 +2720,65 @@ mod tests {
         );
         check_first_pr(&repo, &options)?;
         cleanup(&repo)
+    }
+
+    #[test]
+    fn python_wrong_owner_check_output_is_not_selected_for_start_here() -> Result<(), String> {
+        let repo = temp_python_repo("first-pr-python-wrong-owner")?;
+        write_json(
+            &repo.join(DEFAULT_CHECK_OUTPUT),
+            serde_json::from_str(include_str!(
+                "../../../../fixtures/python_adversarial_same_method_other_class/expected/check.json"
+            ))
+            .map_err(|error| format!("parse wrong-owner Python fixture: {error}"))?,
+        )?;
+
+        let options = FirstPrOptions {
+            check_output: Some(DEFAULT_CHECK_OUTPUT.to_string()),
+            ..FirstPrOptions::default()
+        };
+        write_first_pr(&repo, &options)?;
+
+        let ledger = read_packet(&repo.join(DEFAULT_GAP_LEDGER))?;
+        assert_eq!(ledger["records"].as_array().map(Vec::len), Some(1));
+        assert_eq!(ledger["records"][0]["language"], "python");
+        assert_eq!(ledger["records"][0]["language_status"], "preview");
+        assert_eq!(
+            ledger["records"][0]["projection_eligibility"]["agent_packet"]["eligible"],
+            false
+        );
+        assert!(ledger["records"][0]["receipt_command"].is_null());
+        assert_eq!(ledger["summary"]["projection_agent_packet_eligible"], 0);
+
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        assert_eq!(packet["status"], "no_action");
+        assert_eq!(packet["selected"]["state"], "no_action");
+        assert_eq!(packet["selected"]["output_state"], "no_actionable_gap");
+        assert!(packet["selected"]["gap_id"].is_null());
+        assert!(packet["selected"]["receipt_command"].is_null());
+        assert!(packet["selected"]["agent_packet_command"].is_null());
+        cleanup(&repo)
+    }
+
+    #[test]
+    fn python_preview_projection_eligibility_fails_closed() {
+        let mut record = ledger_with_python_repairable_gap()["records"][0].clone();
+        let record_ref = &record;
+        assert!(is_first_run_repairable_gap(&record_ref));
+
+        record["projection_eligibility"]["agent_packet"]["eligible"] = json!(false);
+        let record_ref = &record;
+        assert!(!is_first_run_repairable_gap(&record_ref));
+
+        if let Some(object) = record.as_object_mut() {
+            object.remove("projection_eligibility");
+        }
+        let record_ref = &record;
+        assert!(!is_first_run_repairable_gap(&record_ref));
+
+        record["projection_eligibility"] = json!("malformed");
+        let record_ref = &record;
+        assert!(!is_first_run_repairable_gap(&record_ref));
     }
 
     #[test]
@@ -2941,6 +3012,12 @@ mod tests {
                     "repairability": "repairable",
                     "static_limit_kind": "python_preview",
                     "static_limit_detail": "Python repair cards are preview advisory evidence.",
+                    "projection_eligibility": {
+                        "agent_packet": {
+                            "eligible": true,
+                            "reason": "direct Python oracle alignment is eligible for preview packet projection"
+                        }
+                    },
                     "anchor": {
                         "file": "app/pricing.py",
                         "line": 2,
