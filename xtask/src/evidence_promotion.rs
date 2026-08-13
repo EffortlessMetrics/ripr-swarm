@@ -3888,6 +3888,24 @@ pub(crate) fn validate_evidence_promotion_honesty_corpus_at(
                 Vec::new()
             }
         };
+        let must_not_promote = assertions.iter().any(|assertion| {
+            matches!(
+                assertion,
+                EvidencePromotionSemanticAssertion::MustNotPromote
+            )
+        });
+        let must_not_report_clean = assertions.iter().any(|assertion| {
+            matches!(
+                assertion,
+                EvidencePromotionSemanticAssertion::MustNotReportClean
+            )
+        });
+        if case.get("assertions").is_some() && must_not_promote && !must_not_report_clean {
+            violations.push(format!(
+                "evidence promotion honesty case `{id}`: `must_not_promote` requires \
+                 `must_not_report_clean` so an empty findings re-bless cannot pass vacuously"
+            ));
+        }
 
         match tier {
             "pure" => {
