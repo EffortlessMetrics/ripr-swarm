@@ -1035,6 +1035,9 @@ fn python_agent_packet_eligibility(
         (Some("direct"), Some("strong_oracle_observes_owner_name")) => {
             (true, "python_direct_owner_oracle")
         }
+        (Some("direct"), Some("strong_oracle_observes_owner_method_on_bound_receiver")) => {
+            (true, "python_direct_bound_receiver_oracle")
+        }
         (Some("unknown"), Some("no_strong_oracle")) => {
             (true, "python_no_strong_oracle_with_bounded_repair_route")
         }
@@ -2497,6 +2500,19 @@ mod tests {
         source_ids: &BTreeSet<String>,
         fixture: &str,
     ) -> Result<(), String> {
+        for record in records.iter().filter(|record| {
+            record.language == "python"
+                && record.gap_state == "actionable"
+                && record.static_limit_kind.as_deref() == Some("python_preview")
+                && record.repair_route.is_some()
+        }) {
+            if !source_ids.contains(&record.canonical_gap_id) {
+                return Err(format!(
+                    "unexpected produced Python repair-card record: {fixture}/{}",
+                    record.canonical_gap_id
+                ));
+            }
+        }
         for canonical_gap_id in source_ids {
             let produced = records
                 .iter()
@@ -2507,6 +2523,19 @@ mod tests {
                     "repair card must produce exactly one ledger record: {fixture}/{canonical_gap_id} produced={produced}"
                 ));
             }
+        }
+        Ok(())
+    }
+
+    fn insert_unique_python_repair_card_source_id(
+        source_ids: &mut BTreeSet<String>,
+        canonical_gap_id: &str,
+        fixture: &str,
+    ) -> Result<(), String> {
+        if !source_ids.insert(canonical_gap_id.to_string()) {
+            return Err(format!(
+                "duplicate source repair-card canonical gap id: {fixture}/{canonical_gap_id}"
+            ));
         }
         Ok(())
     }
@@ -3491,6 +3520,10 @@ mod tests {
     fn python_agent_packet_alignment_pairs_fail_closed() -> Result<(), String> {
         let accepted = [
             ("direct", "strong_oracle_observes_owner_name"),
+            (
+                "direct",
+                "strong_oracle_observes_owner_method_on_bound_receiver",
+            ),
             ("unknown", "no_strong_oracle"),
         ];
         for (alignment, reason) in accepted {
@@ -3601,11 +3634,11 @@ mod tests {
                     string_at(finding, &["python_repair_card", "canonical_gap_id"])
                         .or_else(|| string_at(finding, &["canonical_gap_id"]))
                         .ok_or_else(|| format!("repair card has no canonical gap id: {name}"))?;
-                if !source_ids.insert(canonical_gap_id.to_string()) {
-                    return Err(format!(
-                        "duplicate source repair-card canonical gap id: {name}/{canonical_gap_id}"
-                    ));
-                }
+                insert_unique_python_repair_card_source_id(
+                    &mut source_ids,
+                    canonical_gap_id,
+                    &name,
+                )?;
             }
             require_one_record_per_python_repair_card(&report.records, &source_ids, &name)?;
             for finding in repair_card_findings {
@@ -3661,6 +3694,36 @@ mod tests {
     }
 
     #[test]
+    fn check_output_python_bound_receiver_direct_card_is_agent_packet_eligible()
+    -> Result<(), String> {
+        let mut value: Value = serde_json::from_str(&python_boundary_gap_check_output())
+            .map_err(|error| format!("parse boundary fixture: {error}"))?;
+        let finding = value
+            .get_mut("findings")
+            .and_then(Value::as_array_mut)
+            .and_then(|findings| findings.first_mut())
+            .ok_or_else(|| "boundary fixture finding missing".to_string())?;
+        finding["oracle_alignment"] = Value::String("direct".to_string());
+        finding["alignment_reason"] =
+            Value::String("strong_oracle_observes_owner_method_on_bound_receiver".to_string());
+        let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: "fixtures/python_boundary_gap/input".to_string(),
+            generated_at: "test".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "producer-shaped-bound-receiver.json".to_string(),
+            records_json: Ok(value.to_string()),
+        });
+        let record = report
+            .records
+            .first()
+            .ok_or_else(|| "bound-receiver direct card did not produce a record".to_string())?;
+        if !projection_eligible(record, "agent_packet") {
+            return Err("producer-valid bound-receiver direct card was denied".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn python_repair_card_corpus_rejects_duplicate_produced_record() -> Result<(), String> {
         let mut report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
             root: "fixtures/python_boundary_gap/input".to_string(),
@@ -3686,6 +3749,70 @@ mod tests {
         .ok_or_else(|| "duplicate produced record passed corpus oracle".to_string())?;
         if !error.contains("produced=2") {
             return Err(format!("unexpected duplicate-record error: {error}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn python_repair_card_corpus_cardinality_mutations_fail_closed() -> Result<(), String> {
+        let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: "fixtures/python_boundary_gap/input".to_string(),
+            generated_at: "test".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "fixtures/python_boundary_gap/expected/check.json".to_string(),
+            records_json: Ok(python_boundary_gap_check_output()),
+        });
+        let record = report
+            .records
+            .first()
+            .cloned()
+            .ok_or_else(|| "boundary fixture must produce a record".to_string())?;
+        let source_ids = BTreeSet::from([record.canonical_gap_id.clone()]);
+
+        let missing_error =
+            require_one_record_per_python_repair_card(&[], &source_ids, "python_boundary_gap")
+                .err()
+                .ok_or_else(|| "missing produced record passed corpus oracle".to_string())?;
+        if !missing_error.contains("produced=0") {
+            return Err(format!("unexpected missing-record error: {missing_error}"));
+        }
+
+        let mut extra_record = record;
+        extra_record.canonical_gap_id = "gap:python:synthetic:extra-repair-card".to_string();
+        extra_record.gap_id = format!("gap:pr:{}", extra_record.canonical_gap_id);
+        let mut extra_records = report.records.clone();
+        extra_records.push(extra_record);
+        let extra_error = require_one_record_per_python_repair_card(
+            &extra_records,
+            &source_ids,
+            "python_boundary_gap",
+        )
+        .err()
+        .ok_or_else(|| "extra produced repair-card record passed corpus oracle".to_string())?;
+        if !extra_error.contains("unexpected produced Python repair-card record") {
+            return Err(format!("unexpected extra-record error: {extra_error}"));
+        }
+
+        let mut duplicate_source_ids = BTreeSet::new();
+        let source_id = source_ids
+            .first()
+            .ok_or_else(|| "source repair-card id missing".to_string())?;
+        insert_unique_python_repair_card_source_id(
+            &mut duplicate_source_ids,
+            source_id,
+            "python_boundary_gap",
+        )?;
+        let duplicate_source_error = insert_unique_python_repair_card_source_id(
+            &mut duplicate_source_ids,
+            source_id,
+            "python_boundary_gap",
+        )
+        .err()
+        .ok_or_else(|| "duplicate source repair-card id passed corpus oracle".to_string())?;
+        if !duplicate_source_error.contains("duplicate source repair-card canonical gap id") {
+            return Err(format!(
+                "unexpected duplicate-source error: {duplicate_source_error}"
+            ));
         }
         Ok(())
     }
