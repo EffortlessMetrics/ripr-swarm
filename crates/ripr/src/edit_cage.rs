@@ -16,6 +16,7 @@ use std::time::Duration;
 const MAX_CAPTURE_PATHS: usize = 10_000;
 const MAX_CAPTURE_FILE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_CAPTURE_TOTAL_FILE_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_CAPTURE_TOTAL_WORK_BYTES: u64 = 384 * 1024 * 1024;
 const IGNORED_FILE_SAMPLE_BYTES: u64 = 4 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -101,13 +102,15 @@ pub(crate) struct AttemptDelta {
     pub(crate) changes: Vec<AttemptPathChange>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub(crate) struct AttemptBaseline {
     root: PathBuf,
     head: String,
     policy: EditCagePolicy,
     paths: BTreeMap<String, RepositoryPathState>,
     ambiguous: bool,
+    #[cfg(windows)]
+    _unknown_ignored_write_guards: Vec<fs::File>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -123,7 +126,7 @@ enum WorktreeIdentity {
         digest: String,
         executable: bool,
     },
-    IgnoredFile {
+    IgnoredFileProbe {
         sample_digest: String,
         snapshot: BoundedFileSnapshot,
     },
@@ -181,38 +184,48 @@ fn capture_repository_state(
         ],
     )?;
 
-    let mut inventory = BTreeMap::new();
-    let mut case_keys = BTreeSet::new();
-    let mut ambiguous = false;
-    let mut authored_path_count = 0_usize;
-    for (raw_path, ignored_path) in nul_records(&tracked)
-        .map(|path| (path, false))
-        .chain(nul_records(&untracked).map(|path| (path, false)))
-        .chain(nul_records(&ignored).map(|path| (path, true)))
-    {
-        if !ignored_path {
-            if authored_path_count >= MAX_CAPTURE_PATHS {
-                ambiguous = true;
-                continue;
-            }
-            authored_path_count += 1;
-        }
-        let raw_path = raw_path?;
-        let path = normalize_repo_relative_path(Path::new(&raw_path))?;
-        if !case_keys.insert(path.to_lowercase()) {
-            ambiguous = true;
-        }
-        if inventory.insert(path, ignored_path).is_some() {
-            ambiguous = true;
-        }
-    }
+    let (inventory, mut ambiguous) =
+        inventory_paths(&tracked, &untracked, &ignored, MAX_CAPTURE_PATHS)?;
 
     let mut paths = BTreeMap::new();
     let mut remaining_file_bytes = MAX_CAPTURE_TOTAL_FILE_BYTES;
+    let mut remaining_work_bytes = MAX_CAPTURE_TOTAL_WORK_BYTES;
+    #[cfg(windows)]
+    let mut unknown_ignored_write_guards = Vec::new();
     for (path, ignored_path) in inventory {
-        let worktree_identity =
-            worktree_identity(&root, &path, &mut remaining_file_bytes, ignored_path)?;
+        #[cfg(windows)]
+        let expected_write = policy
+            .expected_operational_writes
+            .iter()
+            .any(|rule| rule.matches(&path));
+        #[cfg(windows)]
+        let unknown_ignored_write_guard = if ignored_path && !expected_write {
+            // Windows metadata and sparse samples are only a bounded probe, not
+            // content identity. Acquire the no-write/no-delete authority before
+            // the first read and retain it for the whole attempt so an ignored
+            // file cannot move through an unsampled, metadata-restored edit.
+            match open_regular_file_no_follow_with_write_sharing(&root.join(&path), false) {
+                Ok(guard) => Some(guard),
+                Err(_) => {
+                    ambiguous = true;
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let worktree_identity = worktree_identity(
+            &root,
+            &path,
+            &mut remaining_file_bytes,
+            &mut remaining_work_bytes,
+            ignored_path,
+        )?;
         ambiguous |= worktree_identity == WorktreeIdentity::Other;
+        #[cfg(windows)]
+        if let Some(guard) = unknown_ignored_write_guard {
+            unknown_ignored_write_guards.push(guard);
+        }
         paths.insert(
             path,
             RepositoryPathState {
@@ -247,6 +260,7 @@ fn capture_repository_state(
             &root,
             path,
             &mut stable_file_bytes,
+            &mut remaining_work_bytes,
             ignored_paths.contains(path.as_str()),
         );
         if !matches!(identity, Ok(identity) if identity == state.worktree_identity) {
@@ -270,7 +284,40 @@ fn capture_repository_state(
         policy,
         paths,
         ambiguous,
+        #[cfg(windows)]
+        _unknown_ignored_write_guards: unknown_ignored_write_guards,
     })
+}
+
+fn inventory_paths(
+    tracked: &[u8],
+    untracked: &[u8],
+    ignored: &[u8],
+    max_paths: usize,
+) -> Result<(BTreeMap<String, bool>, bool), String> {
+    let mut inventory = BTreeMap::new();
+    let mut case_keys = BTreeSet::new();
+    let mut ambiguous = false;
+    for (path_index, (raw_path, ignored_path)) in nul_records(tracked)
+        .map(|path| (path, false))
+        .chain(nul_records(untracked).map(|path| (path, false)))
+        .chain(nul_records(ignored).map(|path| (path, true)))
+        .enumerate()
+    {
+        if path_index >= max_paths {
+            ambiguous = true;
+            break;
+        }
+        let raw_path = raw_path?;
+        let path = normalize_repo_relative_path(Path::new(&raw_path))?;
+        if !case_keys.insert(path.to_lowercase()) {
+            ambiguous = true;
+        }
+        if inventory.insert(path, ignored_path).is_some() {
+            ambiguous = true;
+        }
+    }
+    Ok((inventory, ambiguous))
 }
 
 fn apply_index_records(
@@ -409,6 +456,7 @@ fn worktree_identity(
     root: &Path,
     relative: &str,
     remaining_file_bytes: &mut u64,
+    remaining_work_bytes: &mut u64,
     ignored_path: bool,
 ) -> Result<WorktreeIdentity, String> {
     let path = root.join(relative);
@@ -426,9 +474,12 @@ fn worktree_identity(
     }
     if metadata.is_file() {
         if ignored_path {
-            return bounded_ignored_file_identity(&path, &metadata);
+            return bounded_ignored_file_identity(&path, &metadata, remaining_work_bytes);
         }
-        if metadata.len() > MAX_CAPTURE_FILE_BYTES || metadata.len() > *remaining_file_bytes {
+        if metadata.len() > MAX_CAPTURE_FILE_BYTES
+            || metadata.len() > *remaining_file_bytes
+            || metadata.len() > *remaining_work_bytes
+        {
             return Ok(WorktreeIdentity::Other);
         }
         let file = match open_regular_file_no_follow(&path) {
@@ -452,6 +503,7 @@ fn worktree_identity(
             return Ok(WorktreeIdentity::Other);
         }
         *remaining_file_bytes = remaining_file_bytes.saturating_sub(bytes.len() as u64);
+        *remaining_work_bytes = remaining_work_bytes.saturating_sub(bytes.len() as u64);
         let rechecked = match fs::symlink_metadata(&path) {
             Ok(metadata) => metadata,
             Err(_) => return Ok(WorktreeIdentity::Other),
@@ -470,6 +522,7 @@ fn worktree_identity(
 fn bounded_ignored_file_identity(
     path: &Path,
     initial_metadata: &fs::Metadata,
+    remaining_work_bytes: &mut u64,
 ) -> Result<WorktreeIdentity, String> {
     let mut file = match open_regular_file_no_follow(path) {
         Ok(file) => file,
@@ -500,6 +553,13 @@ fn bounded_ignored_file_identity(
     sample_offsets.insert(len / 2);
     sample_offsets.insert(len.saturating_mul(3) / 4);
     sample_offsets.insert(len.saturating_sub(IGNORED_FILE_SAMPLE_BYTES));
+    let sample_work = sample_offsets
+        .iter()
+        .map(|offset| IGNORED_FILE_SAMPLE_BYTES.min(len.saturating_sub(*offset)))
+        .sum::<u64>();
+    if sample_work > *remaining_work_bytes {
+        return Ok(WorktreeIdentity::Other);
+    }
     let mut hasher = Sha256::new();
     hasher.update(len.to_le_bytes());
     for offset in sample_offsets {
@@ -516,6 +576,7 @@ fn bounded_ignored_file_identity(
             .map_err(|err| format!("read bounded ignored file {}: {err}", path.display()))?;
         hasher.update(sample);
     }
+    *remaining_work_bytes = remaining_work_bytes.saturating_sub(sample_work);
 
     let final_handle_metadata = file
         .metadata()
@@ -541,7 +602,7 @@ fn bounded_ignored_file_identity(
         return Ok(WorktreeIdentity::Other);
     }
 
-    Ok(WorktreeIdentity::IgnoredFile {
+    Ok(WorktreeIdentity::IgnoredFileProbe {
         sample_digest: format!("{:x}", hasher.finalize()),
         snapshot: opened_snapshot,
     })
@@ -592,6 +653,15 @@ fn is_executable(_metadata: &fs::Metadata) -> bool {
 }
 
 fn open_regular_file_no_follow(path: &Path) -> Result<fs::File, std::io::Error> {
+    open_regular_file_no_follow_with_write_sharing(path, true)
+}
+
+fn open_regular_file_no_follow_with_write_sharing(
+    path: &Path,
+    share_write: bool,
+) -> Result<fs::File, std::io::Error> {
+    #[cfg(not(windows))]
+    let _ = share_write;
     let mut options = fs::OpenOptions::new();
     options.read(true);
     #[cfg(all(
@@ -620,9 +690,12 @@ fn open_regular_file_no_follow(path: &Path) -> Result<fs::File, std::io::Error> 
         // followed; opened-handle metadata below then rejects the reparse point.
         // Sharing read/write but not delete prevents rename/replacement while
         // the capture handle is alive.
-        options
-            .custom_flags(0x0020_0000)
-            .share_mode(0x0000_0001 | 0x0000_0002);
+        let share_mode = if share_write {
+            0x0000_0001 | 0x0000_0002
+        } else {
+            0x0000_0001
+        };
+        options.custom_flags(0x0020_0000).share_mode(share_mode);
     }
     #[cfg(not(any(
         windows,
@@ -1192,7 +1265,9 @@ mod tests {
             .write(true)
             .open(&path)
             .map_err(|err| format!("open ignored fixture {}: {err}", path.display()))?;
-        file.seek(SeekFrom::Start(MAX_CAPTURE_FILE_BYTES / 2))
+        // Stay between the bounded probe offsets so this helper can challenge
+        // any accidental claim that sparse samples establish content identity.
+        file.seek(SeekFrom::Start(1024 * 1024))
             .map_err(|err| format!("seek ignored fixture {}: {err}", path.display()))?;
         file.write_all(b"attempt-created movement")
             .map_err(|err| format!("mutate ignored fixture {}: {err}", path.display()))
@@ -1333,21 +1408,125 @@ mod tests {
         let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
         fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
             .map_err(|err| format!("write selected test: {err}"))?;
-        mutate_oversized_file(&fixture, "target/cache/unknown.bin")?;
 
-        let verdict = evaluate_repository_edit_cage(&baseline)?;
-        assert_eq!(verdict.status, EditCageVerdictStatus::Violated);
+        #[cfg(windows)]
+        {
+            let path = fixture.root.join("target/cache/unknown.bin");
+            let before_metadata = fs::metadata(&path)
+                .map_err(|err| format!("read ignored fixture timestamp: {err}"))?;
+            let before_modified = before_metadata
+                .modified()
+                .map_err(|err| format!("read ignored fixture timestamp: {err}"))?;
+            let mut before_work = MAX_CAPTURE_TOTAL_WORK_BYTES;
+            let before_probe =
+                bounded_ignored_file_identity(&path, &before_metadata, &mut before_work)?;
+            let before_full = Sha256::digest(
+                fs::read(&path).map_err(|err| format!("read ignored fixture before: {err}"))?,
+            );
+            let write = fs::OpenOptions::new().write(true).open(&path);
+            let error = write.err().ok_or_else(|| {
+                "unknown ignored file remained writable during attempt".to_string()
+            })?;
+            if error.kind() != std::io::ErrorKind::PermissionDenied
+                && error.raw_os_error() != Some(32)
+            {
+                return Err(format!(
+                    "unknown ignored write failed with unexpected error: {error}"
+                ));
+            }
+
+            drop(baseline);
+            mutate_oversized_file(&fixture, "target/cache/unknown.bin")?;
+            let file = fs::OpenOptions::new()
+                .write(true)
+                .open(&path)
+                .map_err(|err| format!("reopen ignored fixture after guard drop: {err}"))?;
+            file.set_times(fs::FileTimes::new().set_modified(before_modified))
+                .map_err(|err| format!("restore ignored fixture timestamp: {err}"))?;
+            let after_metadata =
+                fs::metadata(&path).map_err(|err| format!("reinspect ignored fixture: {err}"))?;
+            let mut after_work = MAX_CAPTURE_TOTAL_WORK_BYTES;
+            let after_probe =
+                bounded_ignored_file_identity(&path, &after_metadata, &mut after_work)?;
+            let after_full = Sha256::digest(
+                fs::read(&path).map_err(|err| format!("read ignored fixture after: {err}"))?,
+            );
+            assert_eq!(before_probe, after_probe);
+            assert_ne!(before_full, after_full);
+            Ok(())
+        }
+
+        #[cfg(not(windows))]
+        {
+            mutate_oversized_file(&fixture, "target/cache/unknown.bin")?;
+            let verdict = evaluate_repository_edit_cage(&baseline)?;
+            assert_eq!(verdict.status, EditCageVerdictStatus::Violated);
+            assert_eq!(
+                verdict.changed_paths,
+                vec![
+                    "target/cache/unknown.bin".to_string(),
+                    "tests/pricing.rs".to_string()
+                ]
+            );
+            assert!(verdict.violations.iter().any(|violation| {
+                violation.kind == EditCageViolationKind::OutsideAllowedSurface
+                    && violation.path == "target/cache/unknown.bin"
+            }));
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn ignored_inventory_path_limit_fails_closed_for_ignored_entries() -> Result<(), String> {
+        let ignored = b"target/a\0target/b\0target/c\0";
+        let (inventory, ambiguous) = inventory_paths(&[], &[], ignored, 2)?;
+        assert!(ambiguous);
+        assert_eq!(inventory.len(), 2);
+        assert!(inventory.values().all(|ignored_path| *ignored_path));
+        Ok(())
+    }
+
+    #[test]
+    fn ignored_sample_work_limit_fails_closed_before_sampling() -> Result<(), String> {
+        let fixture = git_fixture("ignored-sample-work-budget")?;
+        commit_target_ignore(&fixture)?;
+        create_oversized_ignored_file(&fixture, "target/cache/preexisting.bin")?;
+        let path = fixture.root.join("target/cache/preexisting.bin");
+        let metadata =
+            fs::symlink_metadata(&path).map_err(|err| format!("inspect ignored fixture: {err}"))?;
+        let mut remaining_work = 1;
+        let identity = bounded_ignored_file_identity(&path, &metadata, &mut remaining_work)?;
+        assert_eq!(identity, WorktreeIdentity::Other);
+        assert_eq!(remaining_work, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn ignored_sample_work_budget_is_cumulative_across_stability_passes() -> Result<(), String> {
+        let fixture = git_fixture("ignored-cumulative-sample-work-budget")?;
+        commit_target_ignore(&fixture)?;
+        create_oversized_ignored_file(&fixture, "target/cache/preexisting.bin")?;
+        let path = fixture.root.join("target/cache/preexisting.bin");
+        let metadata =
+            fs::symlink_metadata(&path).map_err(|err| format!("inspect ignored fixture: {err}"))?;
+
+        let mut measuring_budget = u64::MAX;
+        let expected = bounded_ignored_file_identity(&path, &metadata, &mut measuring_budget)?;
+        assert_ne!(expected, WorktreeIdentity::Other);
+        let one_pass_work = u64::MAX - measuring_budget;
+        assert!(one_pass_work > 0);
+
+        let mut cumulative_budget = one_pass_work * 2 - 1;
         assert_eq!(
-            verdict.changed_paths,
-            vec![
-                "target/cache/unknown.bin".to_string(),
-                "tests/pricing.rs".to_string()
-            ]
+            bounded_ignored_file_identity(&path, &metadata, &mut cumulative_budget)?,
+            expected
         );
-        assert!(verdict.violations.iter().any(|violation| {
-            violation.kind == EditCageViolationKind::OutsideAllowedSurface
-                && violation.path == "target/cache/unknown.bin"
-        }));
+        assert_eq!(cumulative_budget, one_pass_work - 1);
+        assert_eq!(
+            bounded_ignored_file_identity(&path, &metadata, &mut cumulative_budget)?,
+            WorktreeIdentity::Other
+        );
+        assert_eq!(cumulative_budget, one_pass_work - 1);
         Ok(())
     }
 
@@ -1397,7 +1576,14 @@ mod tests {
     fn aggregate_file_budget_fails_closed_before_reading() -> Result<(), String> {
         let fixture = git_fixture("aggregate-budget")?;
         let mut remaining = 1;
-        let identity = worktree_identity(&fixture.root, "tests/pricing.rs", &mut remaining, false)?;
+        let mut remaining_work = MAX_CAPTURE_TOTAL_WORK_BYTES;
+        let identity = worktree_identity(
+            &fixture.root,
+            "tests/pricing.rs",
+            &mut remaining,
+            &mut remaining_work,
+            false,
+        )?;
         if identity != WorktreeIdentity::Other {
             return Err(format!(
                 "file larger than remaining aggregate budget was accepted: {identity:?}"
