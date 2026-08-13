@@ -946,14 +946,21 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
         anchor.file.is_some() && anchor.line.is_some(),
         "actionable",
     );
-    if string_at(finding, &["oracle_alignment"]) != Some("direct") {
-        insert_projection(
-            &mut projection_eligibility,
-            "agent_packet",
-            false,
-            "python_oracle_alignment_not_direct",
-        );
-    }
+    let (agent_packet_eligible, agent_packet_reason) = python_agent_packet_eligibility(
+        repairability,
+        repair_route.is_some(),
+        !verification_commands.is_empty(),
+        anchor.file.is_some() && anchor.line.is_some(),
+        "actionable",
+        string_at(finding, &["oracle_alignment"]),
+        string_at(finding, &["alignment_reason"]),
+    );
+    insert_projection(
+        &mut projection_eligibility,
+        "agent_packet",
+        agent_packet_eligible,
+        agent_packet_reason,
+    );
     let receipt_command = string_at(card, &["receipt", "command"]).map(ToString::to_string);
     let mut evidence_ids = Vec::new();
     if let Some(id) = string_at(finding, &["id"]) {
@@ -1002,6 +1009,37 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
             .unwrap_or("preview_advisory_only")
             .to_string(),
     })
+}
+
+fn python_agent_packet_eligibility(
+    repairability: &str,
+    has_repair_route: bool,
+    has_verify_command: bool,
+    has_local_anchor: bool,
+    gap_state: &str,
+    oracle_alignment: Option<&str>,
+    alignment_reason: Option<&str>,
+) -> (bool, &'static str) {
+    let ordinary_requirements = repairability == "repairable"
+        && has_repair_route
+        && has_verify_command
+        && has_local_anchor
+        && gap_state == "actionable";
+    if !ordinary_requirements {
+        return (
+            false,
+            "python_not_repairable_or_missing_route_verify_anchor",
+        );
+    }
+    match (oracle_alignment, alignment_reason) {
+        (Some("direct"), Some("strong_oracle_observes_owner_name")) => {
+            (true, "python_direct_owner_oracle")
+        }
+        (Some("unknown"), Some("no_strong_oracle")) => {
+            (true, "python_no_strong_oracle_with_bounded_repair_route")
+        }
+        _ => (false, "python_oracle_alignment_pair_not_delegatable"),
+    }
 }
 
 /// ADR-0019 §83-86 bespoke builder (Campaign 31 item 6 formal scope-down).
@@ -2426,6 +2464,8 @@ fn md_inline(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::path::Path;
 
     fn corpus() -> String {
         include_str!("../../../../fixtures/gap-decision-ledger/corpus.json").to_string()
@@ -2446,6 +2486,10 @@ mod tests {
             "../../../../fixtures/python_adversarial_same_method_other_class/expected/check.json"
         )
         .to_string()
+    }
+
+    fn python_boundary_gap_check_output() -> String {
+        include_str!("../../../../fixtures/python_boundary_gap/expected/check.json").to_string()
     }
 
     fn typescript_preview_gap_before_check_output() -> String {
@@ -3259,6 +3303,7 @@ mod tests {
                     "family": "predicate"
                 },
                 "oracle_alignment": "direct",
+                "alignment_reason": "strong_oracle_observes_owner_name",
                 "related_tests": [{
                     "name": "test_calculate_discount_smoke",
                     "file": "tests/test_pricing.py",
@@ -3395,6 +3440,192 @@ mod tests {
             "an ineligible advisory record must not receive a receipt command"
         );
         assert_eq!(report.summary.projection_agent_packet_eligible, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn check_output_python_no_strong_oracle_card_is_agent_packet_eligible() -> Result<(), String> {
+        let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: "fixtures/python_boundary_gap/input".to_string(),
+            generated_at: "test".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "fixtures/python_boundary_gap/expected/check.json".to_string(),
+            records_json: Ok(python_boundary_gap_check_output()),
+        });
+        if report.records.len() != 1 {
+            return Err(format!(
+                "boundary fixture must yield one record: {:?}",
+                report.warnings
+            ));
+        }
+        let record = &report.records[0];
+        if !projection_eligible(record, "agent_packet")
+            || record.receipt_command.as_deref().is_none_or(str::is_empty)
+            || report.summary.projection_agent_packet_eligible != 1
+        {
+            return Err("bounded unknown/no_strong_oracle record was not delegatable".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn python_agent_packet_alignment_pairs_fail_closed() -> Result<(), String> {
+        let accepted = [
+            ("direct", "strong_oracle_observes_owner_name"),
+            ("unknown", "no_strong_oracle"),
+        ];
+        for (alignment, reason) in accepted {
+            if !python_agent_packet_eligibility(
+                "repairable",
+                true,
+                true,
+                true,
+                "actionable",
+                Some(alignment),
+                Some(reason),
+            )
+            .0
+            {
+                return Err(format!("expected accepted pair {alignment}/{reason}"));
+            }
+        }
+        let denied = [
+            (
+                Some("orthogonal"),
+                Some("strong_oracle_observes_different_sink"),
+            ),
+            (Some("unknown"), Some("strong_oracle_observes_owner_name")),
+            (Some("direct"), Some("no_strong_oracle")),
+            (Some("mystery"), Some("no_strong_oracle")),
+            (Some("unknown"), Some("mystery")),
+            (Some("unknown"), None),
+            (None, Some("no_strong_oracle")),
+            (None, None),
+        ];
+        for (alignment, reason) in denied {
+            if python_agent_packet_eligibility(
+                "repairable",
+                true,
+                true,
+                true,
+                "actionable",
+                alignment,
+                reason,
+            )
+            .0
+            {
+                return Err(format!("unexpected accepted pair {alignment:?}/{reason:?}"));
+            }
+        }
+        for requirements in [
+            ("unknown", true, true, true, "actionable"),
+            ("repairable", false, true, true, "actionable"),
+            ("repairable", true, false, true, "actionable"),
+            ("repairable", true, true, false, "actionable"),
+            ("repairable", true, true, true, "report_only"),
+        ] {
+            if python_agent_packet_eligibility(
+                requirements.0,
+                requirements.1,
+                requirements.2,
+                requirements.3,
+                requirements.4,
+                Some("unknown"),
+                Some("no_strong_oracle"),
+            )
+            .0
+            {
+                return Err(format!(
+                    "ordinary requirements failed closed: {requirements:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn python_repair_card_corpus_pins_alignment_inventory() -> Result<(), String> {
+        let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .ok_or_else(|| "workspace root missing".to_string())?
+            .join("fixtures");
+        let mut direct = 0usize;
+        let mut no_strong = 0usize;
+        let mut orthogonal = 0usize;
+        for entry in fs::read_dir(&fixture_root).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            let check = entry.path().join("expected/check.json");
+            if !name.starts_with("python") || !check.is_file() {
+                continue;
+            }
+            let text = fs::read_to_string(&check).map_err(|error| error.to_string())?;
+            let value: Value = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+            for finding in value
+                .get("findings")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                if finding.get("python_repair_card").is_none() {
+                    continue;
+                }
+                let pair = (
+                    string_at(finding, &["oracle_alignment"]),
+                    string_at(finding, &["alignment_reason"]),
+                );
+                let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+                    root: name.clone(),
+                    generated_at: "test".to_string(),
+                    source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+                    records_path: check.display().to_string(),
+                    records_json: Ok(text.clone()),
+                });
+                let canonical_gap_id =
+                    string_at(finding, &["python_repair_card", "canonical_gap_id"])
+                        .or_else(|| string_at(finding, &["canonical_gap_id"]))
+                        .ok_or_else(|| format!("repair card has no canonical gap id: {name}"))?;
+                let record = report
+                    .records
+                    .iter()
+                    .find(|record| record.canonical_gap_id == canonical_gap_id)
+                    .ok_or_else(|| {
+                        format!("repair card record missing from ledger: {name}/{canonical_gap_id}")
+                    })?;
+                let eligible = projection_eligible(record, "agent_packet");
+                match pair {
+                    (Some("direct"), Some("strong_oracle_observes_owner_name")) => {
+                        direct += 1;
+                        if !eligible {
+                            return Err(format!("direct fixture denied: {name}"));
+                        }
+                    }
+                    (Some("unknown"), Some("no_strong_oracle")) => {
+                        no_strong += 1;
+                        if !eligible {
+                            return Err(format!("no-strong fixture denied: {name}"));
+                        }
+                    }
+                    (Some("orthogonal"), Some("strong_oracle_observes_different_sink")) => {
+                        orthogonal += 1;
+                        if eligible {
+                            return Err(format!("orthogonal fixture eligible: {name}"));
+                        }
+                    }
+                    other => {
+                        return Err(format!(
+                            "unexpected repair-card alignment in {name}: {other:?}"
+                        ));
+                    }
+                }
+            }
+        }
+        if (direct, no_strong, orthogonal) != (2, 28, 10) {
+            return Err(format!(
+                "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}"
+            ));
+        }
         Ok(())
     }
 
