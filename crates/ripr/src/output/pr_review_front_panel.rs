@@ -259,7 +259,7 @@ pub(crate) fn build_pr_review_front_panel_report(
 
     let candidate = select_candidate(&input, &parsed, &policy, &movement, &coverage_grip);
     let mut status = status(&policy, &candidate);
-    let mut policy_state = policy_state(&policy, &candidate);
+    let mut policy_state = policy_state(&policy, &candidate, &parsed, &movement);
     let mut movement_state = movement.state.clone();
     let mut coverage_state = coverage_grip.state.clone();
     let mut headline = candidate.headline.clone();
@@ -843,13 +843,29 @@ fn select_candidate(
             placement: placement_from_assistant_health(parsed.assistant_health.as_ref()),
         };
     }
-    if coverage_grip.state == "flat_coverage_grip_improved" && movement.state == "improved" {
+    if coverage_grip.state == "flat_coverage_grip_improved"
+        && movement_has_concrete_improvement(movement)
+    {
         return Candidate {
             top_issue: top_issue_from_assistant_health(input, parsed)
                 .map(|issue| already_improved_top_issue(issue, movement)),
             top_issue_state: "already_improved".to_string(),
             headline: "Static grip improved while coverage stayed flat.".to_string(),
             placement: "changed_line".to_string(),
+        };
+    }
+    if movement.state == "improved" && !movement_has_concrete_improvement(movement) {
+        let top_issue = top_issue_from_assistant_health(input, parsed);
+        return Candidate {
+            top_issue_state: if top_issue.is_some() {
+                "actionable".to_string()
+            } else {
+                "missing_required_input".to_string()
+            },
+            top_issue,
+            headline: "Refresh incomplete assistant proof before treating grip as improved."
+                .to_string(),
+            placement: placement_from_assistant_health(parsed.assistant_health.as_ref()),
         };
     }
     if first_action_status(parsed.first_action.as_ref()) == Some("actionable") {
@@ -896,9 +912,13 @@ fn select_candidate(
 }
 
 fn already_improved_top_issue(mut issue: PanelTopIssue, movement: &PanelMovement) -> PanelTopIssue {
+    if !movement_has_concrete_improvement(movement) {
+        return issue;
+    }
     if let Some(after_class) = &movement.after_class {
-        issue.classification = Some(after_class.clone());
-        issue.current_evidence_strength = Some(after_class.clone());
+        let public_class = normalize_class(after_class.clone());
+        issue.classification = Some(public_class.clone());
+        issue.current_evidence_strength = Some(public_class);
     }
     issue.missing_discriminator = None;
     issue.no_action_reason = Some(
@@ -910,6 +930,24 @@ fn already_improved_top_issue(mut issue: PanelTopIssue, movement: &PanelMovement
     issue.suggested_test = None;
     issue.agent_command = None;
     issue
+}
+
+fn movement_has_concrete_improvement(movement: &PanelMovement) -> bool {
+    let Some(after_class) = movement.after_class.as_deref() else {
+        return false;
+    };
+    movement.state == "improved"
+        // `ungripped` is a recognized receipt class, but it does not carry
+        // enough exposure evidence to clear the repair packet.
+        && after_class != "ungripped"
+        && normalized_receipt_class(after_class).is_some_and(is_concrete_exposure_class)
+}
+
+fn is_concrete_exposure_class(class: &str) -> bool {
+    matches!(
+        class,
+        "weakly_exposed" | "exposed" | "reachable_unrevealed" | "no_static_path"
+    )
 }
 
 fn is_missing_required(parsed: &ParsedPanelSources) -> bool {
@@ -1047,11 +1085,26 @@ fn policy(input: &PrReviewFrontPanelInput, parsed: &ParsedPanelSources) -> Panel
     }
 }
 
-fn policy_state(policy: &PanelPolicy, candidate: &Candidate) -> String {
+fn policy_state(
+    policy: &PanelPolicy,
+    candidate: &Candidate,
+    parsed: &ParsedPanelSources,
+    movement: &PanelMovement,
+) -> String {
     match policy.decision.as_str() {
         "blocked" => "blocking".to_string(),
         "config_error" => "config_error".to_string(),
         "acknowledged" => "waived".to_string(),
+        _ if movement.state == "regressed"
+            && candidate.top_issue_state == "actionable"
+            && candidate
+                .top_issue
+                .as_ref()
+                .is_some_and(|issue| issue.source == "assistant_health")
+            && !has_real_policy_authority(parsed) =>
+        {
+            "none".to_string()
+        }
         _ if candidate.top_issue_state == "summary_only"
             || candidate.top_issue_state == "actionable" =>
         {
@@ -1064,6 +1117,13 @@ fn policy_state(policy: &PanelPolicy, candidate: &Candidate) -> String {
         _ if candidate.headline.contains("Suppressed") => "suppressed".to_string(),
         _ => "none".to_string(),
     }
+}
+
+fn has_real_policy_authority(parsed: &ParsedPanelSources) -> bool {
+    parsed.gate_decision.is_some()
+        || parsed.ledger.is_some()
+        || parsed.baseline_delta.is_some()
+        || first_action_status(parsed.first_action.as_ref()) == Some("actionable")
 }
 
 fn status(policy: &PanelPolicy, candidate: &Candidate) -> String {
@@ -1826,13 +1886,25 @@ fn selected_class_matches_receipt(
     parsed_paths: &[&[&str]],
 ) -> bool {
     let Some(selected) = string_path(selected_proof, &["movement", selected_field]) else {
-        return true;
+        return false;
+    };
+    let Some(selected) = normalized_receipt_class(&selected) else {
+        return false;
     };
     let parsed = parsed_paths
         .iter()
         .map(|path| string_path(parsed_receipt, path))
         .collect::<Vec<_>>();
-    parsed.iter().flatten().all(|value| value == &selected)
+    let mut present = parsed.iter().flatten();
+    present.next().is_some_and(|first| {
+        normalized_receipt_class(first.as_str()).is_some_and(|value| {
+            value == selected
+                && present.all(|value| {
+                    normalized_receipt_class(value.as_str())
+                        .is_some_and(|parsed| parsed == selected)
+                })
+        })
+    })
 }
 
 fn selected_assistant_health_proof(health: &Value) -> Option<&Value> {
@@ -1853,6 +1925,11 @@ fn selected_assistant_health_proof(health: &Value) -> Option<&Value> {
                     .is_some_and(|state| state == "missing_required_input")
                     || string_path(proof, &["movement_state"])
                         .is_some_and(|state| state == "unknown")
+            })
+        })
+        .or_else(|| {
+            proofs.iter().find(|proof| {
+                string_path(proof, &["movement_state"]).is_some_and(|state| state == "improved")
             })
         })
         .or_else(|| proofs.first())
@@ -2117,6 +2194,19 @@ fn normalize_class(value: String) -> String {
     }
 }
 
+fn normalized_receipt_class(value: &str) -> Option<&'static str> {
+    match value {
+        "weakly_gripped" | "weakly_exposed" => Some("weakly_exposed"),
+        "strongly_gripped" | "exposed" => Some("exposed"),
+        "reachable_unrevealed" => Some("reachable_unrevealed"),
+        "ungripped" | "no_static_path" => Some("no_static_path"),
+        "infection_unknown" => Some("infection_unknown"),
+        "propagation_unknown" => Some("propagation_unknown"),
+        "static_unknown" => Some("static_unknown"),
+        _ => None,
+    }
+}
+
 fn string_from_sources(sources: &[(Option<&Value>, &[&str])]) -> Option<String> {
     sources
         .iter()
@@ -2341,6 +2431,28 @@ mod tests {
             );
             let input = fixture_input(&repo_root, inputs, &expected_md_path)?;
             let report = build_pr_review_front_panel_report(input);
+
+            if case_id == "coverage_flat_grip_improved" {
+                let top_issue = report
+                    .top_issue
+                    .as_ref()
+                    .ok_or_else(|| format!("{case_id} top issue missing"))?;
+                assert_eq!(
+                    top_issue.classification.as_deref(),
+                    Some("exposed"),
+                    "public classification must use exposure vocabulary"
+                );
+                assert_eq!(
+                    top_issue.current_evidence_strength.as_deref(),
+                    Some("exposed"),
+                    "public evidence strength must use exposure vocabulary"
+                );
+                assert_eq!(
+                    report.movement.after_class.as_deref(),
+                    Some("strongly_gripped"),
+                    "movement must retain assistant-health grip vocabulary"
+                );
+            }
 
             assert_eq!(
                 render_pr_review_front_panel_json(&report)?,
@@ -2702,6 +2814,244 @@ mod tests {
         let json = render_pr_review_front_panel_json(&build_pr_review_front_panel_report(input))?;
         assert!(json.contains("\"status\": \"receipt_found\""));
         assert!(!json.contains("\"status\": \"receipt_missing\""));
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_improved_after_class_preserves_repair_packet() -> Result<(), String> {
+        let repo_root = repo_root()?;
+        let inputs = serde_json::json!({
+            "assistant_health": "fixtures/boundary_gap/expected/assistant-loop-health/complete-improved/assistant-loop-health.json",
+            "coverage_frontier": "fixtures/boundary_gap/expected/pr-review-front-panel/coverage-flat-grip-improved/coverage-grip-frontier.json"
+        });
+        let expected_md_path = repo_root.join(
+            "fixtures/boundary_gap/expected/pr-review-front-panel/coverage-flat-grip-improved/pr-review-front-panel.md",
+        );
+        for invalid_after in [
+            Value::Null,
+            Value::String("unknown".to_string()),
+            Value::String("ungripped".to_string()),
+            Value::String("infection_unknown".to_string()),
+            Value::String("propagation_unknown".to_string()),
+            Value::String("static_unknown".to_string()),
+        ] {
+            let mut input = fixture_input(&repo_root, &inputs, &expected_md_path)?;
+            let mut health: Value = serde_json::from_str(
+                input
+                    .assistant_health_json
+                    .as_ref()
+                    .and_then(|result| result.as_ref().ok())
+                    .ok_or_else(|| "assistant health fixture missing".to_string())?,
+            )
+            .map_err(|err| format!("parse assistant health fixture failed: {err}"))?;
+            health["proofs"][0]["movement"]["after_class"] = invalid_after;
+            input.assistant_health_json = Some(Ok(health.to_string()));
+
+            let report = build_pr_review_front_panel_report(input);
+            let issue = report
+                .top_issue
+                .as_ref()
+                .ok_or_else(|| "invalid improved proof lost its top issue".to_string())?;
+            assert_eq!(report.summary.top_issue_state, "actionable");
+            assert_ne!(report.summary.top_issue_state, "already_improved");
+            assert_eq!(report.summary.policy_state, "new_policy_eligible");
+            assert_eq!(report.movement.state, "improved");
+            assert_eq!(issue.classification.as_deref(), Some("weakly_exposed"));
+            assert!(issue.missing_discriminator.is_some());
+            assert!(issue.focused_proof_intent.is_some());
+            assert!(issue.related_test.is_some());
+            assert!(issue.suggested_test.is_some());
+            assert!(issue.agent_command.is_some());
+            assert!(issue.no_action_reason.is_none());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn mixed_health_regression_keeps_repair_visible_over_improvement() -> Result<(), String> {
+        let repo_root = repo_root()?;
+        let inputs = serde_json::json!({
+            "assistant_health": "fixtures/boundary_gap/expected/assistant-loop-health/multi-proof/assistant-loop-health.json",
+            "coverage_frontier": "fixtures/boundary_gap/expected/pr-review-front-panel/coverage-flat-grip-improved/coverage-grip-frontier.json"
+        });
+        let expected_md_path = repo_root.join(
+            "fixtures/boundary_gap/expected/pr-review-front-panel/mixed-health/pr-review-front-panel.md",
+        );
+        let mut input = fixture_input(&repo_root, &inputs, &expected_md_path)?;
+        let mut health: Value = serde_json::from_str(
+            input
+                .assistant_health_json
+                .as_ref()
+                .and_then(|result| result.as_ref().ok())
+                .ok_or_else(|| "assistant health fixture missing".to_string())?,
+        )
+        .map_err(|err| format!("parse assistant health fixture failed: {err}"))?;
+        health["proofs"][1]["movement_state"] = Value::String("regressed".to_string());
+        health["proofs"][1]["movement"]["after_class"] =
+            Value::String("reachable_unrevealed".to_string());
+        input.assistant_health_json = Some(Ok(health.to_string()));
+
+        let report = build_pr_review_front_panel_report(input);
+        assert_eq!(report.summary.top_issue_state, "actionable");
+        assert_eq!(report.summary.policy_state, "none");
+        assert_eq!(report.movement.state, "regressed");
+        assert!(report.top_issue.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn health_only_regression_does_not_create_policy_authority() -> Result<(), String> {
+        let repo_root = repo_root()?;
+        let inputs = serde_json::json!({
+            "assistant_health": "fixtures/boundary_gap/expected/assistant-loop-health/regressed/assistant-loop-health.json"
+        });
+        let expected_md_path = repo_root.join(
+            "fixtures/boundary_gap/expected/pr-review-front-panel/mixed-health/pr-review-front-panel.md",
+        );
+        let input = fixture_input(&repo_root, &inputs, &expected_md_path)?;
+        let report = build_pr_review_front_panel_report(input);
+        assert_eq!(report.summary.top_issue_state, "actionable");
+        assert_eq!(report.summary.policy_state, "none");
+        assert_eq!(report.movement.state, "regressed");
+        assert!(report.top_issue.is_some());
+
+        let mut authorized = fixture_input(&repo_root, &inputs, &expected_md_path)?;
+        authorized.gate_decision_path = Some("gate.json".to_string());
+        authorized.gate_decision_json = Some(Ok(
+            serde_json::json!({"status": "not_configured"}).to_string()
+        ));
+        let report = build_pr_review_front_panel_report(authorized);
+        assert_eq!(report.summary.top_issue_state, "actionable");
+        assert_eq!(report.summary.policy_state, "new_policy_eligible");
+        Ok(())
+    }
+
+    #[test]
+    fn receipt_class_identity_rejects_vacuous_or_unknown_evidence() -> Result<(), String> {
+        let mut selected = serde_json::json!({
+            "receipt": {"artifact": "receipt.json"},
+            "seam": {"seam_id": "seam-1"},
+            "movement": {
+                "source_state": "improved",
+                "before_class": "weakly_gripped",
+                "after_class": "strongly_gripped"
+            }
+        });
+        let parsed = serde_json::json!({
+            "provenance": {
+                "seam_id": "seam-1",
+                "movement": "improved",
+                "before_class": "weakly_gripped",
+                "after_class": "strongly_gripped"
+            },
+            "seam": {
+                "seam_id": "seam-1",
+                "change": "improved",
+                "before": "weakly_gripped",
+                "after": "strongly_gripped"
+            },
+            "summary": {"next_action": {"kind": "improved"}}
+        });
+        for (label, value) in [
+            ("missing", Value::Object(serde_json::Map::new())),
+            ("null", Value::Null),
+            ("unknown", Value::String("unknown".to_string())),
+        ] {
+            selected["movement"]["after_class"] = value;
+            assert_eq!(
+                selected_proof_receipt_status(&selected, Some(&parsed), Some("receipt.json")),
+                RECEIPT_MISSING,
+                "{label} selected after class must not authenticate a receipt"
+            );
+        }
+        selected["movement"]["after_class"] = Value::String("strongly_gripped".to_string());
+        let mut absent = parsed.clone();
+        if let Some(object) = absent["provenance"].as_object_mut() {
+            object.remove("before_class");
+            object.remove("after_class");
+        }
+        if let Some(object) = absent["seam"].as_object_mut() {
+            object.remove("before");
+            object.remove("after");
+        }
+        assert_eq!(
+            selected_proof_receipt_status(&selected, Some(&absent), Some("receipt.json")),
+            RECEIPT_MISSING
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn receipt_class_identity_normalizes_grip_aliases() -> Result<(), String> {
+        let selected = serde_json::json!({
+            "receipt": {"artifact": "receipt.json"},
+            "seam": {"seam_id": "seam-1"},
+            "movement": {
+                "source_state": "improved",
+                "before_class": "weakly_gripped",
+                "after_class": "strongly_gripped"
+            }
+        });
+        let parsed = serde_json::json!({
+            "provenance": {
+                "seam_id": "seam-1",
+                "movement": "improved",
+                "before_class": "weakly_exposed",
+                "after_class": "exposed"
+            },
+            "seam": {
+                "seam_id": "seam-1",
+                "change": "improved",
+                "before": "weakly_exposed",
+                "after": "exposed"
+            },
+            "summary": {"next_action": {"kind": "improved"}}
+        });
+        assert_eq!(
+            selected_proof_receipt_status(&selected, Some(&parsed), Some("receipt.json")),
+            "receipt_movement_improved"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ungripped_receipt_alias_matches_without_promoting_improvement() -> Result<(), String> {
+        let selected = serde_json::json!({
+            "receipt": {"artifact": "receipt.json"},
+            "seam": {"seam_id": "seam-1"},
+            "movement": {
+                "source_state": "changed",
+                "before_class": "ungripped",
+                "after_class": "weakly_gripped"
+            }
+        });
+        let parsed = serde_json::json!({
+            "provenance": {
+                "seam_id": "seam-1",
+                "movement": "changed",
+                "before_class": "no_static_path",
+                "after_class": "weakly_exposed"
+            },
+            "seam": {
+                "seam_id": "seam-1",
+                "change": "changed",
+                "before": "no_static_path",
+                "after": "weakly_exposed"
+            },
+            "summary": {"next_action": {"kind": "changed"}}
+        });
+        assert_eq!(
+            selected_proof_receipt_status(&selected, Some(&parsed), Some("receipt.json")),
+            "receipt_found"
+        );
+
+        let improvement = PanelMovement {
+            state: "improved".to_string(),
+            before_class: Some("ungripped".to_string()),
+            after_class: Some("ungripped".to_string()),
+            source_artifact: None,
+        };
+        assert!(!movement_has_concrete_improvement(&improvement));
         Ok(())
     }
 
