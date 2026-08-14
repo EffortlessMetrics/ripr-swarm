@@ -946,14 +946,21 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
         anchor.file.is_some() && anchor.line.is_some(),
         "actionable",
     );
-    if string_at(finding, &["oracle_alignment"]) != Some("direct") {
-        insert_projection(
-            &mut projection_eligibility,
-            "agent_packet",
-            false,
-            "python_oracle_alignment_not_direct",
-        );
-    }
+    let (agent_packet_eligible, agent_packet_reason) = python_agent_packet_eligibility(
+        repairability,
+        repair_route.is_some(),
+        !verification_commands.is_empty(),
+        anchor.file.is_some() && anchor.line.is_some(),
+        "actionable",
+        string_at(finding, &["oracle_alignment"]),
+        string_at(finding, &["alignment_reason"]),
+    );
+    insert_projection(
+        &mut projection_eligibility,
+        "agent_packet",
+        agent_packet_eligible,
+        agent_packet_reason,
+    );
     let receipt_command = string_at(card, &["receipt", "command"]).map(ToString::to_string);
     let mut evidence_ids = Vec::new();
     if let Some(id) = string_at(finding, &["id"]) {
@@ -1002,6 +1009,40 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
             .unwrap_or("preview_advisory_only")
             .to_string(),
     })
+}
+
+fn python_agent_packet_eligibility(
+    repairability: &str,
+    has_repair_route: bool,
+    has_verify_command: bool,
+    has_local_anchor: bool,
+    gap_state: &str,
+    oracle_alignment: Option<&str>,
+    alignment_reason: Option<&str>,
+) -> (bool, &'static str) {
+    let ordinary_requirements = repairability == "repairable"
+        && has_repair_route
+        && has_verify_command
+        && has_local_anchor
+        && gap_state == "actionable";
+    if !ordinary_requirements {
+        return (
+            false,
+            "python_not_repairable_or_missing_route_verify_anchor",
+        );
+    }
+    match (oracle_alignment, alignment_reason) {
+        (Some("direct"), Some("strong_oracle_observes_owner_name")) => {
+            (true, "python_direct_owner_oracle")
+        }
+        (Some("direct"), Some("strong_oracle_observes_owner_method_on_bound_receiver")) => {
+            (true, "python_direct_bound_receiver_oracle")
+        }
+        (Some("unknown"), Some("no_strong_oracle")) => {
+            (true, "python_no_strong_oracle_with_bounded_repair_route")
+        }
+        _ => (false, "python_oracle_alignment_pair_not_delegatable"),
+    }
 }
 
 /// ADR-0019 §83-86 bespoke builder (Campaign 31 item 6 formal scope-down).
@@ -2426,6 +2467,8 @@ fn md_inline(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::path::Path;
 
     fn corpus() -> String {
         include_str!("../../../../fixtures/gap-decision-ledger/corpus.json").to_string()
@@ -2446,6 +2489,55 @@ mod tests {
             "../../../../fixtures/python_adversarial_same_method_other_class/expected/check.json"
         )
         .to_string()
+    }
+
+    fn python_boundary_gap_check_output() -> String {
+        include_str!("../../../../fixtures/python_boundary_gap/expected/check.json").to_string()
+    }
+
+    fn require_one_record_per_python_repair_card(
+        records: &[GapRecord],
+        source_ids: &BTreeSet<String>,
+        fixture: &str,
+    ) -> Result<(), String> {
+        for record in records.iter().filter(|record| {
+            record.language == "python"
+                && record.gap_state == "actionable"
+                && record.static_limit_kind.as_deref() == Some("python_preview")
+                && record.repair_route.is_some()
+        }) {
+            if !source_ids.contains(&record.canonical_gap_id) {
+                return Err(format!(
+                    "unexpected produced Python repair-card record: {fixture}/{}",
+                    record.canonical_gap_id
+                ));
+            }
+        }
+        for canonical_gap_id in source_ids {
+            let produced = records
+                .iter()
+                .filter(|record| record.canonical_gap_id == *canonical_gap_id)
+                .count();
+            if produced != 1 {
+                return Err(format!(
+                    "repair card must produce exactly one ledger record: {fixture}/{canonical_gap_id} produced={produced}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn insert_unique_python_repair_card_source_id(
+        source_ids: &mut BTreeSet<String>,
+        canonical_gap_id: &str,
+        fixture: &str,
+    ) -> Result<(), String> {
+        if !source_ids.insert(canonical_gap_id.to_string()) {
+            return Err(format!(
+                "duplicate source repair-card canonical gap id: {fixture}/{canonical_gap_id}"
+            ));
+        }
+        Ok(())
     }
 
     fn typescript_preview_gap_before_check_output() -> String {
@@ -3259,6 +3351,7 @@ mod tests {
                     "family": "predicate"
                 },
                 "oracle_alignment": "direct",
+                "alignment_reason": "strong_oracle_observes_owner_name",
                 "related_tests": [{
                     "name": "test_calculate_discount_smoke",
                     "file": "tests/test_pricing.py",
@@ -3395,6 +3488,302 @@ mod tests {
             "an ineligible advisory record must not receive a receipt command"
         );
         assert_eq!(report.summary.projection_agent_packet_eligible, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn check_output_python_no_strong_oracle_card_is_agent_packet_eligible() -> Result<(), String> {
+        let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: "fixtures/python_boundary_gap/input".to_string(),
+            generated_at: "test".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "fixtures/python_boundary_gap/expected/check.json".to_string(),
+            records_json: Ok(python_boundary_gap_check_output()),
+        });
+        if report.records.len() != 1 {
+            return Err(format!(
+                "boundary fixture must yield one record: {:?}",
+                report.warnings
+            ));
+        }
+        let record = &report.records[0];
+        if !projection_eligible(record, "agent_packet")
+            || record.receipt_command.as_deref().is_none_or(str::is_empty)
+            || report.summary.projection_agent_packet_eligible != 1
+        {
+            return Err("bounded unknown/no_strong_oracle record was not delegatable".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn python_agent_packet_alignment_pairs_fail_closed() -> Result<(), String> {
+        let accepted = [
+            ("direct", "strong_oracle_observes_owner_name"),
+            (
+                "direct",
+                "strong_oracle_observes_owner_method_on_bound_receiver",
+            ),
+            ("unknown", "no_strong_oracle"),
+        ];
+        for (alignment, reason) in accepted {
+            if !python_agent_packet_eligibility(
+                "repairable",
+                true,
+                true,
+                true,
+                "actionable",
+                Some(alignment),
+                Some(reason),
+            )
+            .0
+            {
+                return Err(format!("expected accepted pair {alignment}/{reason}"));
+            }
+        }
+        let denied = [
+            (
+                Some("orthogonal"),
+                Some("strong_oracle_observes_different_sink"),
+            ),
+            (Some("unknown"), Some("strong_oracle_observes_owner_name")),
+            (Some("direct"), Some("no_strong_oracle")),
+            (Some("mystery"), Some("no_strong_oracle")),
+            (Some("unknown"), Some("mystery")),
+            (Some("unknown"), None),
+            (None, Some("no_strong_oracle")),
+            (None, None),
+        ];
+        for (alignment, reason) in denied {
+            if python_agent_packet_eligibility(
+                "repairable",
+                true,
+                true,
+                true,
+                "actionable",
+                alignment,
+                reason,
+            )
+            .0
+            {
+                return Err(format!("unexpected accepted pair {alignment:?}/{reason:?}"));
+            }
+        }
+        for requirements in [
+            ("unknown", true, true, true, "actionable"),
+            ("repairable", false, true, true, "actionable"),
+            ("repairable", true, false, true, "actionable"),
+            ("repairable", true, true, false, "actionable"),
+            ("repairable", true, true, true, "report_only"),
+        ] {
+            if python_agent_packet_eligibility(
+                requirements.0,
+                requirements.1,
+                requirements.2,
+                requirements.3,
+                requirements.4,
+                Some("unknown"),
+                Some("no_strong_oracle"),
+            )
+            .0
+            {
+                return Err(format!(
+                    "ordinary requirements failed closed: {requirements:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn python_repair_card_corpus_pins_alignment_inventory() -> Result<(), String> {
+        let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .ok_or_else(|| "workspace root missing".to_string())?
+            .join("fixtures");
+        let mut direct = 0usize;
+        let mut no_strong = 0usize;
+        let mut orthogonal = 0usize;
+        for entry in fs::read_dir(&fixture_root).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            let check = entry.path().join("expected/check.json");
+            if !name.starts_with("python") || !check.is_file() {
+                continue;
+            }
+            let text = fs::read_to_string(&check).map_err(|error| error.to_string())?;
+            let value: Value = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+            let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+                root: name.clone(),
+                generated_at: "test".to_string(),
+                source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+                records_path: check.display().to_string(),
+                records_json: Ok(text),
+            });
+            let repair_card_findings: Vec<&Value> = value
+                .get("findings")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter(|finding| finding.get("python_repair_card").is_some())
+                .collect();
+            let mut source_ids = BTreeSet::new();
+            for finding in &repair_card_findings {
+                let canonical_gap_id =
+                    string_at(finding, &["python_repair_card", "canonical_gap_id"])
+                        .or_else(|| string_at(finding, &["canonical_gap_id"]))
+                        .ok_or_else(|| format!("repair card has no canonical gap id: {name}"))?;
+                insert_unique_python_repair_card_source_id(
+                    &mut source_ids,
+                    canonical_gap_id,
+                    &name,
+                )?;
+            }
+            require_one_record_per_python_repair_card(&report.records, &source_ids, &name)?;
+            for finding in repair_card_findings {
+                let pair = (
+                    string_at(finding, &["oracle_alignment"]),
+                    string_at(finding, &["alignment_reason"]),
+                );
+                let canonical_gap_id =
+                    string_at(finding, &["python_repair_card", "canonical_gap_id"])
+                        .or_else(|| string_at(finding, &["canonical_gap_id"]))
+                        .ok_or_else(|| format!("repair card has no canonical gap id: {name}"))?;
+                let record = report
+                    .records
+                    .iter()
+                    .find(|record| record.canonical_gap_id == canonical_gap_id)
+                    .ok_or_else(|| {
+                        format!("repair card record missing from ledger: {name}/{canonical_gap_id}")
+                    })?;
+                let eligible = projection_eligible(record, "agent_packet");
+                match pair {
+                    (Some("direct"), Some("strong_oracle_observes_owner_name")) => {
+                        direct += 1;
+                        if !eligible {
+                            return Err(format!("direct fixture denied: {name}"));
+                        }
+                    }
+                    (Some("unknown"), Some("no_strong_oracle")) => {
+                        no_strong += 1;
+                        if !eligible {
+                            return Err(format!("no-strong fixture denied: {name}"));
+                        }
+                    }
+                    (Some("orthogonal"), Some("strong_oracle_observes_different_sink")) => {
+                        orthogonal += 1;
+                        if eligible {
+                            return Err(format!("orthogonal fixture eligible: {name}"));
+                        }
+                    }
+                    other => {
+                        return Err(format!(
+                            "unexpected repair-card alignment in {name}: {other:?}"
+                        ));
+                    }
+                }
+            }
+        }
+        if (direct, no_strong, orthogonal) != (2, 28, 10) {
+            return Err(format!(
+                "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn python_repair_card_corpus_rejects_duplicate_produced_record() -> Result<(), String> {
+        let mut report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: "fixtures/python_boundary_gap/input".to_string(),
+            generated_at: "test".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "fixtures/python_boundary_gap/expected/check.json".to_string(),
+            records_json: Ok(python_boundary_gap_check_output()),
+        });
+        let record = report
+            .records
+            .first()
+            .cloned()
+            .ok_or_else(|| "boundary fixture must produce a record".to_string())?;
+        let source_ids = BTreeSet::from([record.canonical_gap_id.clone()]);
+        report.records.push(record);
+
+        let error = require_one_record_per_python_repair_card(
+            &report.records,
+            &source_ids,
+            "python_boundary_gap",
+        )
+        .err()
+        .ok_or_else(|| "duplicate produced record passed corpus oracle".to_string())?;
+        if !error.contains("produced=2") {
+            return Err(format!("unexpected duplicate-record error: {error}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn python_repair_card_corpus_cardinality_mutations_fail_closed() -> Result<(), String> {
+        let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: "fixtures/python_boundary_gap/input".to_string(),
+            generated_at: "test".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "fixtures/python_boundary_gap/expected/check.json".to_string(),
+            records_json: Ok(python_boundary_gap_check_output()),
+        });
+        let record = report
+            .records
+            .first()
+            .cloned()
+            .ok_or_else(|| "boundary fixture must produce a record".to_string())?;
+        let source_ids = BTreeSet::from([record.canonical_gap_id.clone()]);
+
+        let missing_error =
+            require_one_record_per_python_repair_card(&[], &source_ids, "python_boundary_gap")
+                .err()
+                .ok_or_else(|| "missing produced record passed corpus oracle".to_string())?;
+        if !missing_error.contains("produced=0") {
+            return Err(format!("unexpected missing-record error: {missing_error}"));
+        }
+
+        let mut extra_record = record;
+        extra_record.canonical_gap_id = "gap:python:synthetic:extra-repair-card".to_string();
+        extra_record.gap_id = format!("gap:pr:{}", extra_record.canonical_gap_id);
+        let mut extra_records = report.records.clone();
+        extra_records.push(extra_record);
+        let extra_error = require_one_record_per_python_repair_card(
+            &extra_records,
+            &source_ids,
+            "python_boundary_gap",
+        )
+        .err()
+        .ok_or_else(|| "extra produced repair-card record passed corpus oracle".to_string())?;
+        if !extra_error.contains("unexpected produced Python repair-card record") {
+            return Err(format!("unexpected extra-record error: {extra_error}"));
+        }
+
+        let mut duplicate_source_ids = BTreeSet::new();
+        let source_id = source_ids
+            .first()
+            .ok_or_else(|| "source repair-card id missing".to_string())?;
+        insert_unique_python_repair_card_source_id(
+            &mut duplicate_source_ids,
+            source_id,
+            "python_boundary_gap",
+        )?;
+        let duplicate_source_error = insert_unique_python_repair_card_source_id(
+            &mut duplicate_source_ids,
+            source_id,
+            "python_boundary_gap",
+        )
+        .err()
+        .ok_or_else(|| "duplicate source repair-card id passed corpus oracle".to_string())?;
+        if !duplicate_source_error.contains("duplicate source repair-card canonical gap id") {
+            return Err(format!(
+                "unexpected duplicate-source error: {duplicate_source_error}"
+            ));
+        }
         Ok(())
     }
 
