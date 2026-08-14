@@ -8,7 +8,11 @@ eval-sweep` command (`xtask/src/command.rs` dispatch plus
 contract was completed by #3259, which threads the captured exit status
 into `classify` — a nonzero exit after parseable JSON reads `crash`, as
 step 3 requires, pinned by classifier and `run_check` boundary tests on
-both hosts. Tier B judgment semantics live in RIPR-SPEC-0092, which
+both hosts. The Required Evidence golden exists as
+`rendered_report_matches_golden_from_fixed_run_vector`: byte-exact JSON
+and Markdown from a fixed two-run vector (stable `ok`, unstable
+`parse_failure`), so every rendering change must re-bless it
+deliberately. Tier B judgment semantics live in RIPR-SPEC-0092, which
 remains proposed.
 
 Owner: language-adapter / swarm
