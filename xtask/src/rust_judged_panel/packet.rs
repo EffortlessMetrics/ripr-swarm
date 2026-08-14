@@ -1365,6 +1365,7 @@ fn publish_staged(
         authority.subjects_sha256,
     )?;
     let final_generation = root.join(&relative_generation);
+    validate_publication_destination(root, &final_generation)?;
     if final_generation.exists() {
         let retained = fs::read(final_generation.join("packet-index.json"))
             .map_err(|error| format!("read retained packet index: {error}"))?;
@@ -1394,6 +1395,41 @@ fn publish_staged(
         index_sha256: sha256_bytes(&index_bytes),
     };
     atomic_write(&root.join(CURRENT_PATH), &pretty_json(&current)?)
+}
+
+fn validate_publication_destination(root: &Path, final_generation: &Path) -> Result<(), String> {
+    let portable_root = root.join(PORTABLE_ROOT);
+    let canonical_root = fs::canonicalize(&portable_root).map_err(|error| {
+        format!(
+            "canonicalize portable root `{}` for publication: {error}",
+            portable_root.display()
+        )
+    })?;
+    let parent = final_generation
+        .parent()
+        .ok_or_else(|| "portable generation has no parent".to_string())?;
+    if !parent.exists() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "create portable generation parent `{}`: {error}",
+                parent.display()
+            )
+        })?;
+    }
+    let canonical_parent = fs::canonicalize(parent).map_err(|error| {
+        format!(
+            "canonicalize portable generation parent `{}`: {error}",
+            parent.display()
+        )
+    })?;
+    if !canonical_parent.starts_with(&canonical_root) {
+        return Err(format!(
+            "portable publication destination `{}` escapes canonical root `{}`",
+            parent.display(),
+            canonical_root.display()
+        ));
+    }
+    Ok(())
 }
 
 fn validate_staged_generation(
