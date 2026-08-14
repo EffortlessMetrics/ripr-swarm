@@ -199,9 +199,16 @@ impl Outcome {
 
 /// Classify the result of one `ripr check` invocation. `parsed` is `None` when
 /// stdout was not well-formed JSON (treated as a crash).
-fn classify(timed_out: bool, parsed: Option<&Value>) -> Outcome {
+fn classify(timed_out: bool, failed_exit: bool, parsed: Option<&Value>) -> Outcome {
     if timed_out {
         return Outcome::TimedOut;
+    }
+    // SPEC-0086 §Run algorithm step 3: classification uses exit code AND
+    // JSON. A failure exit is a crash even when stdout carries parseable
+    // JSON — without this leg the crash rate under-counts exactly the
+    // failure family the Tier A sweep exists to measure (#3258).
+    if failed_exit {
+        return Outcome::Crash;
     }
     match parsed {
         Some(value) if findings_have_parse_failure(value) => Outcome::ParseFailure,
@@ -517,8 +524,12 @@ fn run_check(binary: &Path, checkout: &Path, diff: &str, args: &SweepArgs) -> Ch
                     alignment_counts: AlignmentCounts::default(),
                 };
             }
+            // #3258: the exit-code leg of the SPEC-0086 run algorithm. A
+            // missing status without a timeout is treated as a failure exit —
+            // the conservative direction for a crash-rate metric.
+            let failed_exit = out.status.is_none_or(|status| !status.success());
             let parsed = serde_json::from_str::<Value>(&out.stdout).ok();
-            let outcome = classify(false, parsed.as_ref());
+            let outcome = classify(false, failed_exit, parsed.as_ref());
             let gaps = parsed.as_ref().map(gap_ids).unwrap_or_default();
             let (classification_counts, alignment_counts) =
                 parsed.as_ref().map(count_distributions).unwrap_or_default();
@@ -959,19 +970,91 @@ mod tests {
 
     #[test]
     fn classifier_maps_outcomes() {
-        assert!(classify(true, None) == Outcome::TimedOut);
-        assert!(classify(false, None) == Outcome::Crash);
+        assert!(classify(true, false, None) == Outcome::TimedOut);
+        assert!(classify(false, false, None) == Outcome::Crash);
         let ok = json!({ "findings": [{ "canonical_gap": { "id": "gap:python:a" } }] });
-        assert!(classify(false, Some(&ok)) == Outcome::Ok);
+        assert!(classify(false, false, Some(&ok)) == Outcome::Ok);
         // Real output emits `classification`; this is the key the parser must read.
         let pf = json!({ "findings": [{ "classification": "static_unknown" }] });
-        assert!(classify(false, Some(&pf)) == Outcome::ParseFailure);
+        assert!(classify(false, false, Some(&pf)) == Outcome::ParseFailure);
         let pf2 = json!({ "findings": [{ "static_limit_kind": "unsupported_syntax" }] });
-        assert!(classify(false, Some(&pf2)) == Outcome::ParseFailure);
+        assert!(classify(false, false, Some(&pf2)) == Outcome::ParseFailure);
         // The legacy `class` key must NOT be read — a finding carrying only the
         // old key is not a parse failure under the real schema.
         let legacy = json!({ "findings": [{ "class": "static_unknown" }] });
-        assert!(classify(false, Some(&legacy)) == Outcome::Ok);
+        assert!(classify(false, false, Some(&legacy)) == Outcome::Ok);
+    }
+
+    /// #3258: SPEC-0086's run algorithm classifies from exit code AND JSON.
+    /// A nonzero exit after parseable, well-formed JSON is a crash — the
+    /// JSON leg must not mask the process-failure leg.
+    #[test]
+    fn classifier_treats_failure_exit_as_crash_even_with_valid_json() {
+        let ok = json!({ "findings": [{ "canonical_gap": { "id": "gap:python:a" } }] });
+        assert!(classify(false, true, Some(&ok)) == Outcome::Crash);
+        assert!(classify(false, true, None) == Outcome::Crash);
+        // Timeout stays the first leg regardless of exit status.
+        assert!(classify(true, true, Some(&ok)) == Outcome::TimedOut);
+    }
+
+    /// #3258 boundary regression: `run_check` must forward the captured
+    /// process exit status into classification — a wiring regression that
+    /// hardcodes the failed-exit leg again would undercount `crash_rate`
+    /// while every pure `classify` test stays green. The probe binary is a
+    /// tiny host script that prints one well-formed JSON object and exits 1,
+    /// driven through the real capture path.
+    #[test]
+    fn run_check_classifies_failure_exit_with_valid_json_as_crash() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-evalsweep-exit-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create dir: {err}"))?;
+
+        #[cfg(unix)]
+        let (script, script_text) = (
+            dir.join("fake-ripr"),
+            "#!/bin/sh\nprintf '{\"findings\":[]}'\nexit 1\n".to_string(),
+        );
+        #[cfg(windows)]
+        let (script, script_text) = (
+            dir.join("fake-ripr.cmd"),
+            "@echo {\"findings\":[]}\r\nexit /b 1\r\n".to_string(),
+        );
+        std::fs::write(&script, script_text).map_err(|err| format!("write script: {err}"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+                .map_err(|err| format!("chmod script: {err}"))?;
+        }
+
+        let mut args = SweepArgs::defaults();
+        args.timeout = Duration::from_secs(30);
+        let run = run_check(&script, &dir, "unused.patch", &args);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        if run.outcome != Outcome::Crash {
+            return Err(format!(
+                "nonzero exit with parseable JSON must classify as crash, got {} (outcome), stderr: {}",
+                outcome_name(run.outcome),
+                run.stderr
+            ));
+        }
+        Ok(())
+    }
+
+    fn outcome_name(outcome: Outcome) -> &'static str {
+        match outcome {
+            Outcome::Ok => "ok",
+            Outcome::ParseFailure => "parse_failure",
+            Outcome::TimedOut => "timed_out",
+            Outcome::Crash => "crash",
+            Outcome::CloneFailed => "clone_failed",
+            Outcome::SkippedMissingCheckout => "skipped_missing_checkout",
+        }
     }
 
     #[test]
