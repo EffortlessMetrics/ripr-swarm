@@ -1367,13 +1367,23 @@ fn publish_staged(
     let generations_root = canonical_publication_generations(root)?;
     let final_generation = generations_root.join(&generation_id);
     if final_generation.exists() {
-        let retained = fs::read(final_generation.join("packet-index.json"))
+        let retained_path = final_generation.join("packet-index.json");
+        let retained = fs::read(&retained_path)
             .map_err(|error| format!("read retained packet index: {error}"))?;
         if retained != index_bytes {
             return Err(format!(
                 "content-addressed generation `{generation_id}` conflicts"
             ));
         }
+        let retained_index: PortableIndex =
+            read_strict_json(&retained_path, "retained portable index")?;
+        validate_staged_generation(
+            &final_generation,
+            &retained_index,
+            authority.subjects,
+            authority.manifest_sha256,
+            authority.subjects_sha256,
+        )?;
     } else {
         fs::rename(&staged_generation, &final_generation)
             .map_err(|error| format!("publish generation `{generation_id}`: {error}"))?;
@@ -1390,18 +1400,7 @@ fn publish_staged(
 
 fn canonical_publication_generations(root: &Path) -> Result<PathBuf, String> {
     let portable = root.join(PORTABLE_ROOT);
-    let canonical_portable = fs::canonicalize(&portable).map_err(|error| {
-        format!(
-            "canonicalize portable publication root `{}`: {error}",
-            portable.display()
-        )
-    })?;
-    if !canonical_portable.is_dir() {
-        return Err(format!(
-            "portable publication root `{}` is not a directory",
-            portable.display()
-        ));
-    }
+    let canonical_portable = canonical_portable_root(root, "publication")?;
     let generations = portable.join("generations");
     match fs::symlink_metadata(&generations) {
         Ok(_) => {}
@@ -1578,13 +1577,7 @@ fn safe_relative_path(value: &str) -> Result<(), String> {
 fn confined_existing_file(base: &Path, relative: &Path, label: &str) -> Result<PathBuf, String> {
     let relative_text = super::normalize_path(relative);
     safe_relative_path(&relative_text)?;
-    let portable_base = base.join(PORTABLE_ROOT);
-    let canonical_base = fs::canonicalize(&portable_base).map_err(|error| {
-        format!(
-            "canonicalize portable root `{}` for {label}: {error}",
-            portable_base.display()
-        )
-    })?;
+    let canonical_base = canonical_portable_root(base, label)?;
     let candidate = base.join(relative);
     let canonical_candidate = fs::canonicalize(&candidate)
         .map_err(|error| format!("resolve {label} `{}`: {error}", candidate.display()))?;
@@ -1595,6 +1588,61 @@ fn confined_existing_file(base: &Path, relative: &Path, label: &str) -> Result<P
         ));
     }
     Ok(canonical_candidate)
+}
+
+fn canonical_portable_root(root: &Path, label: &str) -> Result<PathBuf, String> {
+    let portable = root.join(PORTABLE_ROOT);
+    let metadata = fs::symlink_metadata(&portable).map_err(|error| {
+        format!(
+            "inspect portable root `{}` for {label}: {error}",
+            portable.display()
+        )
+    })?;
+    if metadata_is_link_or_reparse(&metadata) || !metadata.is_dir() {
+        return Err(format!(
+            "portable root `{}` for {label} is a link, reparse point, or not a directory",
+            portable.display()
+        ));
+    }
+    let parent = portable
+        .parent()
+        .ok_or_else(|| "portable root has no parent".to_string())?;
+    let name = portable
+        .file_name()
+        .ok_or_else(|| "portable root has no final component".to_string())?;
+    let canonical_parent = fs::canonicalize(parent).map_err(|error| {
+        format!(
+            "canonicalize portable parent `{}` for {label}: {error}",
+            parent.display()
+        )
+    })?;
+    let canonical_portable = fs::canonicalize(&portable).map_err(|error| {
+        format!(
+            "canonicalize portable root `{}` for {label}: {error}",
+            portable.display()
+        )
+    })?;
+    if canonical_portable != canonical_parent.join(name) || !canonical_portable.is_dir() {
+        return Err(format!(
+            "portable root `{}` for {label} does not preserve its parent/entry identity",
+            portable.display()
+        ));
+    }
+    Ok(canonical_portable)
+}
+
+#[cfg(not(windows))]
+fn metadata_is_link_or_reparse(metadata: &fs::Metadata) -> bool {
+    metadata.file_type().is_symlink()
+}
+
+#[cfg(windows)]
+fn metadata_is_link_or_reparse(metadata: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    metadata.file_type().is_symlink()
+        || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
 }
 
 fn text_at<'a>(value: &'a Value, pointer: &str) -> Result<&'a str, String> {

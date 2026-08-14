@@ -643,6 +643,101 @@ fn rust_judged_panel_packet_publication_rejects_in_repo_sibling_symlink() -> Res
 }
 
 #[test]
+fn rust_judged_panel_packet_rejects_portable_root_link_for_read_and_write() -> Result<(), String> {
+    let root = test_root("portable-root-link")?;
+    let panel = root.0.join("metrics/rust-judged-behavior-panel");
+    fs::create_dir_all(&panel).map_err(|error| format!("create panel root: {error}"))?;
+    let sibling = root.0.join("metrics/unrelated-portable-root");
+    fs::create_dir_all(&sibling).map_err(|error| format!("create sibling: {error}"))?;
+    fs::write(sibling.join("current.json"), b"old-current\n")
+        .map_err(|error| format!("seed sibling current: {error}"))?;
+    let portable_link = panel.join("portable");
+    if !create_directory_symlink_or_skip(&sibling, &portable_link)? {
+        return Ok(());
+    }
+
+    let read_rejected =
+        confined_existing_file(&root.0, Path::new(CURRENT_PATH), "portable current").is_err();
+    let fixtures = [
+        fixture("should_gap")?,
+        fixture("should_stay_quiet")?,
+        fixture("should_limit")?,
+    ];
+    let subjects = fixtures
+        .iter()
+        .map(|fixture| fixture.subject.clone())
+        .collect::<Vec<_>>();
+    let mut packets = fixtures
+        .iter()
+        .map(|fixture| project_one(&fixture.subject, &fixture.case, &fixture.host, "m", "s"))
+        .collect::<Result<Vec<_>, _>>()?;
+    packets.sort_by(|left, right| left.case_id.cmp(&right.case_id));
+    let attestations = attestations_from_live_projection(&packets);
+    let write_rejected =
+        publish_all(&root.0, "m", "s", &subjects, &attestations, &packets, None).is_err();
+    remove_directory_symlink(&portable_link)
+        .map_err(|error| format!("remove portable-root link: {error}"))?;
+
+    let retained = fs::read(sibling.join("current.json"))
+        .map_err(|error| format!("read sibling current: {error}"))?;
+    let sibling_entries = fs::read_dir(&sibling)
+        .map_err(|error| format!("read sibling: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("read sibling entry: {error}"))?;
+    if read_rejected && write_rejected && retained == b"old-current\n" && sibling_entries.len() == 1
+    {
+        Ok(())
+    } else {
+        Err("portable-root link was accepted for read/write or mutated sibling state".to_string())
+    }
+}
+
+#[test]
+fn rust_judged_panel_packet_revalidates_retained_generation_before_current() -> Result<(), String> {
+    let root = test_root("retained-generation")?;
+    fs::create_dir_all(root.0.join(PORTABLE_ROOT))
+        .map_err(|error| format!("create portable root: {error}"))?;
+    let fixtures = [
+        fixture("should_gap")?,
+        fixture("should_stay_quiet")?,
+        fixture("should_limit")?,
+    ];
+    let subjects = fixtures
+        .iter()
+        .map(|fixture| fixture.subject.clone())
+        .collect::<Vec<_>>();
+    let mut packets = fixtures
+        .iter()
+        .map(|fixture| project_one(&fixture.subject, &fixture.case, &fixture.host, "m", "s"))
+        .collect::<Result<Vec<_>, _>>()?;
+    packets.sort_by(|left, right| left.case_id.cmp(&right.case_id));
+    let attestations = attestations_from_live_projection(&packets);
+    publish_all(&root.0, "m", "s", &subjects, &attestations, &packets, None)?;
+
+    let current_path = root.0.join(CURRENT_PATH);
+    let current: PortableCurrent = read_strict_json(&current_path, "test portable current")?;
+    let index_path = root.0.join(&current.index_path);
+    let index: PortableIndex = read_strict_json(&index_path, "test portable index")?;
+    let entry = index
+        .packets
+        .first()
+        .ok_or_else(|| "retained index lacks packet".to_string())?;
+    fs::write(root.0.join(&entry.packet_path), b"{}\n")
+        .map_err(|error| format!("tamper retained packet: {error}"))?;
+    fs::write(&current_path, b"old-current\n")
+        .map_err(|error| format!("reset current: {error}"))?;
+
+    let rejected =
+        publish_all(&root.0, "m", "s", &subjects, &attestations, &packets, None).is_err();
+    let retained = fs::read(&current_path).map_err(|error| format!("read current: {error}"))?;
+    if rejected && retained == b"old-current\n" {
+        Ok(())
+    } else {
+        Err("tampered retained generation was reused or advanced current".to_string())
+    }
+}
+
+#[test]
 fn rust_judged_panel_packet_partial_and_concurrent_publication_fail_closed() -> Result<(), String> {
     let root = test_root("publication")?;
     let current = root.0.join(CURRENT_PATH);
