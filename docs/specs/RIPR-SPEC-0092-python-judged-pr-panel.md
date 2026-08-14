@@ -4,9 +4,10 @@ Status: proposed
 
 Status note (2026-08-14): populated historical judged artifacts exist —
 `fixtures/python-judged-pr-panel/starter-judged.json` and
-`scaled-judged.json` carry past hand-judged labels. The spec remains
-**proposed**: the executable semantic validator for those artifacts and a
-current promotion-grade rerun are not established, and the seed
+`scaled-judged.json` carry past hand-judged labels for three and four items,
+respectively (bounded historical combined `n=7`). The spec remains
+**proposed**: no executable semantic validator, current promotion-grade rerun,
+accepted threshold, or scaled promotion corpus is established, and the seed
 (`manifest.json`) still ships unjudged (`null`) labels by design. Judged
 artifacts are historical evidence, not a measured current
 false-actionable/false-`exposed` rate.
@@ -155,7 +156,8 @@ corpus.
 - `fixtures/python-judged-pr-panel/{SPEC.md, manifest.json, diffs/*.diff}`, with
   at least one item per `expected_direction`.
 - The manifest-only fixture exemption arm for `python-judged-pr-panel` in
-  `xtask/src/main.rs` (`is_manifest_only_fixture_dir`).
+  `xtask/src/reports/fixtures.rs` (`is_manifest_only_fixture_dir`). This helper
+  is structural routing only; it is not a semantic judged-panel validator.
 
 ## Non-Goals
 
@@ -194,8 +196,10 @@ ripr fails closed to static_unknown with no card -> limitation_quality = "precis
 
 ## Test Mapping
 
-This PR is schema + seed; it adds no executable judging surface. The seed is
-validated structurally by the manifest-only fixture contract and the doc gates.
+This spec has no executable judging surface or semantic validator. The
+manifest-only fixture helper only exempts this schema fixture from an unrelated
+generic requirement; doc gates validate registration and traceability, not the
+meaning of the manual judgments.
 
 Planned (a later judging PR):
 
@@ -209,8 +213,9 @@ Planned (a later judging PR):
 | Concern | Artifact |
 | --- | --- |
 | Panel schema + seed | `fixtures/python-judged-pr-panel/{manifest.json, SPEC.md}` |
+| Historical manual panels | `fixtures/python-judged-pr-panel/{starter-judged.json, scaled-judged.json}` |
 | Seed diffs | `fixtures/python-judged-pr-panel/diffs/*.diff` |
-| Manifest-only fixture exemption | `xtask/src/main.rs` (`is_manifest_only_fixture_dir`) |
+| Manifest-only fixture exemption | `xtask/src/reports/fixtures.rs` (`is_manifest_only_fixture_dir`) |
 | Spec registration | `policy/doc-artifacts.toml`, `docs/specs/README.md` |
 | Traceability | `.ripr/traceability.toml` |
 

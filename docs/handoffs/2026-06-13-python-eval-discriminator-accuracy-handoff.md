@@ -77,7 +77,8 @@ stable gaps, honest no-gaps, and fail-closed on unsupported shapes. **No error
   `check-readme-state` now enforces the front-door contract; `check-campaign`
   needs the exact work-item schema and the "not the active Codex Goals manifest"
   phrase on one line; `fixtures/python-eval-sweep` needs the manifest-only
-  exemption in `xtask/src/main.rs`.
+  structural exemption in `xtask/src/reports/fixtures.rs`
+  (`is_manifest_only_fixture_dir`), not a semantic fixture validator.
 - **Policy gates are advisory at merge time.** Branch protection on `main`
   requires only `Ripr Rust Small Result`; the whole `source-of-truth` job
   (`check-support-tiers`, `check-static-language`, `check-doc-index`,
