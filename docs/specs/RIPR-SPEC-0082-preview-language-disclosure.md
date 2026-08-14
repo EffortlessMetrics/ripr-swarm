@@ -219,9 +219,9 @@ enabled adapter with a matching non-success `language_runs` entry carries
    supplied facts packet fails ingestion → `language_runs` records `invalid`,
    human output says the adapter did not complete, and both JSON surfaces emit
    `preview_languages[0].enabled == true`, `analyzed == false`.
-3. Diff contains only `.rs` files → NO `Note:` line, NO `preview_languages`
+4. Diff contains only `.rs` files → NO `Note:` line, NO `preview_languages`
    field in JSON output (both enabled and default config).
-4. Diff contains only non-analyzable files (`.md`, `.yaml`) → NO
+5. Diff contains only non-analyzable files (`.md`, `.yaml`) → NO
    preview-language `Note:` line and NO `preview_languages` JSON field. The
    separate docs-only stderr disclosure (#2304, example 6) applies instead.
 5. Count in `Note:` matches `file_count` in advisory, matches files routed by

@@ -320,7 +320,7 @@ standalone_reason = "Umbrella contract for turning the existing oxc-AST TypeScri
 id = "RIPR-SPEC-0086"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0086-python-eval-sweep.md"
-status = "proposed"
+status = "accepted"
 owner = "language-adapter-swarm"
 standalone_reason = "Standalone evidence-tooling contract for the Tier A external-repo eval sweep (cargo xtask eval-sweep); adds no product library behavior or public API; anchors the eval-sweep-driven Python reliability campaign; references ADR 0009; no separate proposal artifact."
 
@@ -370,7 +370,7 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0092-python-judged-pr-panel.md"
 status = "proposed"
 owner = "language-adapter-swarm"
-standalone_reason = "Standalone evidence-schema contract for the Tier B judged-diff panel that extends the RIPR-SPEC-0086 Tier A sweep with judgment (false-actionable + false-exposed); ships schema plus a hand-vetted seed manifest only, no judging engine and no analyzer change; references ADR 0009; no separate proposal artifact."
+standalone_reason = "Standalone proposed evidence-schema contract for the Tier B judged-diff panel that extends the accepted RIPR-SPEC-0086 Tier A sweep with judgment (false-actionable + false-exposed); schema, seed, and historical hand-judged receipts exist, but the executable semantic validator and current promotion-grade rerun remain unestablished; no analyzer change; references ADR 0009; no separate proposal artifact."
 
 [[artifact]]
 id = "RIPR-SPEC-0093"

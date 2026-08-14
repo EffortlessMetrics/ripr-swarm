@@ -5018,9 +5018,17 @@ Non-claims:
 
 Campaign ID: `python-repair-routing-reliability`
 
-Status: active
+Status: partial; scoped repair routing is `usable alpha`, while `usable`
+promotion remains open
 
-Tracker: `.ripr/goals/python-repair-routing.toml` · issue #1160
+Current tracker: [issue #1160](https://github.com/EffortlessMetrics/ripr-swarm/issues/1160)
+
+Current source truth: [Python repair-routing plan](../plans/python-repair-routing/implementation-plan.md),
+[current-state inventory](../plans/python-repair-routing/current-state-inventory.md),
+[RIPR-SPEC-0086](specs/RIPR-SPEC-0086-python-eval-sweep.md), and
+[RIPR-SPEC-0092](specs/RIPR-SPEC-0092-python-judged-pr-panel.md). The former
+`.ripr/goals/python-repair-routing.toml` tracker was deleted with the retired
+goals scheduler in #2056 and is historical evidence only.
 
 Objective:
 
@@ -5045,6 +5053,16 @@ Landed:
 
 - PR #1161 — Tier A `cargo xtask eval-sweep` harness + RIPR-SPEC-0086
 - PR #1163 — empty/no-clone sweeps report `not_run`, never a vacuous `pass`
+- PR #1197 — Tier B judged-panel schema + seed (RIPR-SPEC-0092)
+- PR #1213 — second hand-judged panel, yielding the historical combined n=7
+  result. This is a bounded receipt, not a current promotion threshold or an
+  executable semantic validator.
+
+Remaining promotion proof is governed by issue #1160: a current judged-panel
+rerun after landed repairs, an explicit acceptable false-actionable threshold,
+promotion-grade robustness and external repair/rollback evidence, and a
+separate support-tier decision. SPEC-0092 remains proposed until its semantic
+validator is executable.
 
 Non-goals:
 

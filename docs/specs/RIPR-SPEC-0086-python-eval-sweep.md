@@ -1,6 +1,6 @@
 # RIPR-SPEC-0086: Python Tier A External-Repo Eval Sweep
 
-Status: proposed
+Status: accepted
 
 Owner: language-adapter / swarm
 
@@ -8,7 +8,8 @@ Linked proposal:
 
 - None. This is a standalone evidence-tooling contract; it adds no product
   library behavior and no public API. It anchors the eval-sweep-driven Python
-  reliability campaign tracked in `.ripr/goals/python-repair-routing.toml`.
+  reliability campaign tracked by [issue #1160](https://github.com/EffortlessMetrics/ripr-swarm/issues/1160)
+  and the [Python repair-routing plan](../../plans/python-repair-routing/implementation-plan.md).
 
 Linked ADRs:
 
@@ -25,7 +26,8 @@ Linked issues:
 
 Linked PRs:
 
-- (this PR)
+- [#1161](https://github.com/EffortlessMetrics/ripr-swarm/pull/1161) — accepted
+  command implementation, fixtures, and tests.
 
 ## Problem
 
@@ -207,4 +209,3 @@ repos_total = 3, repos_run = 0 (all skipped_missing_checkout)
 | `classification_counts` | per-repo + aggregate 7-way exposure-class distribution (descriptive; never gates) |
 | `alignment_counts` | per-repo + aggregate `oracle_alignment` distribution (`direct`/`alias`/`changed_sink_token`/`orthogonal`/`unknown`/`absent`, Python-only) plus repair-packet presence counts (`repair_placement`/`verify_command`/`python_repair_card`) |
 | `gate_status` | `not_run` if `repos_run == 0`; else `pass` iff `crash_rate == 0` and `gap_id_stability_rate == 1.0`; else `review` (distributions never affect this) |
-

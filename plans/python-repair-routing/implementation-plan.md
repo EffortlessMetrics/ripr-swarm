@@ -1,6 +1,7 @@
 # Python Repair Routing Implementation Plan
 
-Status: proposed
+Status: partially delivered; retained as the historical work-item ledger for
+the open promotion track
 
 Owner: language-adapter / swarm
 
@@ -19,6 +20,8 @@ Linked specs:
 - [RIPR-SPEC-0057: RIPR Swarm Repair Loop](../../docs/specs/RIPR-SPEC-0057-ripr-swarm-repair-loop.md)
 - [RIPR-SPEC-0058: RIPR Swarm External Agent Handoff](../../docs/specs/RIPR-SPEC-0058-ripr-swarm-external-agent-handoff.md)
 - [RIPR-SPEC-0061: Lane 1 Canonical Actionability Contract](../../docs/specs/RIPR-SPEC-0061-lane1-canonical-actionability-contract.md)
+- [RIPR-SPEC-0086: Python Tier A External-Repo Eval Sweep](../../docs/specs/RIPR-SPEC-0086-python-eval-sweep.md)
+- [RIPR-SPEC-0092: Python Tier B Judged-Diff Panel Schema](../../docs/specs/RIPR-SPEC-0092-python-judged-pr-panel.md)
 
 Linked ADRs:
 
@@ -32,8 +35,10 @@ Active goal:
 
 Support-tier impact:
 
-- None for this plan. Python remains `preview` until a dedicated support-tier
-  PR promotes a scoped claim.
+- No new support-tier change from this plan reconciliation. The selected
+  pytest/unittest repair-routing loop is already `usable alpha`; broader Python
+  static facts and limitations remain `preview`/advisory. Issue #1160 governs
+  any later `usable` promotion.
 
 Policy impact:
 
@@ -64,9 +69,10 @@ Non-goals:
 
 Claim boundary:
 
-- This plan makes the Python repair-routing lane reviewable and restartable.
-  It does not claim Python is usable alpha, gate eligible, Rust parity, or
-  runtime-confirmed.
+- This plan records the delivered Python repair-routing slices and keeps the
+  remaining promotion work reviewable. It does not claim broader Python facts
+  are usable, gate eligible, Rust parity, runtime-confirmed, or approved for a
+  `usable` tier.
 
 Rollback:
 
@@ -75,10 +81,13 @@ Rollback:
 
 ## Current state
 
-Python preview evidence already exists under the language adapter preview
-contract. The current claim is syntax-first and advisory: Python can provide
-owner, test, assertion/oracle, probe, related-test, and static-limit facts when
-enabled, but support remains `preview`.
+Python preview evidence exists under the language adapter preview contract.
+The default build includes Python, and absent-config project detection can
+select it for Python-shaped repositories; explicit `[languages]` configuration
+remains authoritative. Broader owner, test, assertion/oracle, probe,
+related-test, and static-limit facts remain syntax-first and advisory. The
+bounded repair-routing loop for selected pytest/unittest shapes is separately
+classified as `usable alpha`.
 
 The lane target is higher than parser support. Python should become the first
 non-Rust proof that RIPR can turn changed behavior into a bounded repair task:

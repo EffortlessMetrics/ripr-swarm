@@ -30,12 +30,16 @@ baseline and is kept current as the repair-routing lane lands scoped slices.
 
 This document does not promote Python support, change analyzer behavior,
 define new output schema, add fixtures, run Python, or make Python findings
-gate eligible. Python remains opt-in `preview` evidence.
+gate eligible. Broader Python static facts remain `preview`/advisory; only the
+selected pytest/unittest repair-routing loop has the separately governed
+`usable alpha` tier.
 
 ## Summary
 
 The repository already has a syntax-first Python preview adapter behind the
-language adapter contract. It can parse `.py` files with
+language adapter contract. The default build includes the adapter, and an
+absent `ripr.toml` can enable it when Python project markers are detected;
+explicit configuration remains authoritative. It can parse `.py` files with
 `rustpython-parser`, extract selected owners, tests, assertion/oracle facts,
 probe shapes, related-test links, and static limits, then emit ordinary RIPR
 findings with `language = "python"` and `language_status = "preview"` when
@@ -54,7 +58,7 @@ surfaces aligned without promoting broader Python static facts beyond preview.
 | Area | Current files | Current behavior |
 | --- | --- | --- |
 | Build feature | [`crates/ripr/Cargo.toml`](../../crates/ripr/Cargo.toml) | Default build enables `lang-python`; the feature pulls in optional `rustpython-parser`. |
-| Config opt-in | [`crates/ripr/src/config.rs`](../../crates/ripr/src/config.rs) | Default `[languages]` is `["rust"]`; Python runs only when `python` is listed. |
+| Configuration/project detection | [`crates/ripr/src/config.rs`](../../crates/ripr/src/config.rs) | With no `ripr.toml`, Python project markers select the default Python preview adapter; explicit `[languages]` remains authoritative, so `["rust"]` disables Python and a list containing `python` enables it. |
 | Router | [`crates/ripr/src/analysis/language/router.rs`](../../crates/ripr/src/analysis/language/router.rs) | `.py` paths route to `LanguageId::Python`; pipeline dispatch still depends on config. |
 | Pipeline | [`crates/ripr/src/analysis/pipeline.rs`](../../crates/ripr/src/analysis/pipeline.rs) | Diff and repo pipelines can dispatch to `PythonAdapter` when the feature and config allow it. |
 | Adapter | [`crates/ripr/src/analysis/language/python.rs`](../../crates/ripr/src/analysis/language/python.rs) | Extracts source-fact snapshots, preview owners, tests, oracles, related tests, probe shape, static limits, and `Finding` values. |

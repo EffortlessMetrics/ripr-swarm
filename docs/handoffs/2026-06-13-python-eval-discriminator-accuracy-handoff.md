@@ -1,13 +1,15 @@
 # Python eval + discriminator-accuracy session handoff
 
 **Date:** 2026-06-13
-**Active tracker:** [#1160](https://github.com/EffortlessMetrics/ripr-swarm/issues/1160) (Python usable-tier readiness) and `.ripr/goals/python-repair-routing.toml` (Campaign 30)
+**Current tracker:** [#1160](https://github.com/EffortlessMetrics/ripr-swarm/issues/1160) (Python usable-tier readiness, open/partial). The former `.ripr/goals/python-repair-routing.toml` Campaign 30 tracker was deleted in #2056 and is historical evidence only.
 **Watchpoint:** EffortlessMetrics/ripr#1430 (Ruff parser substrate — not a release gate)
 **Source:** continuation context for resuming the Python release-readiness campaign after the external eval-sweep and the discriminator over-credit fix.
 
-This packet is the connective tissue a future thread needs to resume. The durable
-records hold the rest: `#1160`, the goals tracker, `docs/LEARNINGS.md`, and the
-specs. Do not restate them — start here.
+This packet is a historical 2026-06-13 checkpoint, not current execution
+authority. The durable current records are issue `#1160`,
+`plans/python-repair-routing/{current-state-inventory,implementation-plan}.md`,
+`docs/LEARNINGS.md`, and the specs. The three PRs named below subsequently
+landed; use them as provenance rather than as a live queue.
 
 ---
 
@@ -28,9 +30,9 @@ invariant is fixed. Landed this session:
 stable gaps, honest no-gaps, and fail-closed on unsupported shapes. **No error
 *rate* is measured yet** — that is the next phase.
 
-## Start here (next three PRs, in order)
+## Historical next-three-PR sequence (now delivered)
 
-1. **Output the alignment** (the next work item). Surface `changed_sink`,
+1. **Output the alignment.** Surface `changed_sink`,
    `observed_sink`, `oracle_alignment`, and `alignment_reason` on findings so a
    user can see why `ripr` was not fooled by a strong-but-orthogonal oracle. The
    classifier already computes the alignment (`strong_oracle_observes_owner` in
@@ -39,10 +41,12 @@ stable gaps, honest no-gaps, and fail-closed on unsupported shapes. **No error
    record the exposed / weakly_exposed / no_static_path / limitation + confidence
    distribution, not just gap-ID stability. This turns the sweep into a `ripr+`
    measurement instead of a robustness floor.
-3. **Tier B judged-diff panel.** The release gate: measured **false-actionable**
+3. **Tier B judged-diff panel.** The release evidence: measured **false-actionable**
    and **false-`exposed`** rates, on a corpus that includes should-stay-quiet
    cases (direct-boundary tests that must read `exposed`), not only should-gap
-   boundary flips.
+   boundary flips. The schema and historical hand-judged panels landed, but an
+   executable semantic validator and a current promotion-grade rerun remain
+   open under #1160; RIPR-SPEC-0092 therefore remains proposed.
 
 ## Open threads
 

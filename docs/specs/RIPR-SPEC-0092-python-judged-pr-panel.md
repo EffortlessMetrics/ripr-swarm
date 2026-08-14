@@ -8,7 +8,8 @@ Linked proposal:
 
 - None. This is a standalone evidence-schema contract building on the
   RIPR-SPEC-0086 Tier A sweep. It adds no product library behavior and no public
-  API; it defines a fixture schema and ships a hand-vetted seed.
+  API; it defines a fixture schema. Historical hand-judged panels populate the
+  schema, but the executable semantic validator remains unimplemented.
 
 Linked ADRs:
 
@@ -26,7 +27,11 @@ Linked issues:
 
 Linked PRs:
 
-- (this PR)
+- [#1197](https://github.com/EffortlessMetrics/ripr-swarm/pull/1197) — schema
+  and hand-vetted seed.
+- [#1202](https://github.com/EffortlessMetrics/ripr-swarm/pull/1202) and
+  [#1213](https://github.com/EffortlessMetrics/ripr-swarm/pull/1213) — historical
+  populated judged panels.
 
 ## Problem
 
@@ -38,8 +43,10 @@ usable-tier question — *what are `ripr`'s measured false-actionable AND
 false-`exposed` rates on Python diffs?* — has no schema to even record an answer.
 
 This spec defines the **schema** for a Tier B judged-diff panel and ships a
-small hand-vetted **seed** manifest. It does **not** produce the rates; it
-defines the panel that a later judging PR will populate and measure.
+small hand-vetted **seed** manifest. Later PRs populated historical judged
+panels and calculated bounded rates, but they did not add the executable
+semantic validator described below. The contract therefore remains proposed;
+those hand-judged receipts do not establish a current promotion threshold.
 
 ## Behavior
 
@@ -185,10 +192,11 @@ ripr fails closed to static_unknown with no card -> limitation_quality = "precis
 
 ## Test Mapping
 
-This PR is schema + seed; it adds no executable judging surface. The seed is
-validated structurally by the manifest-only fixture contract and the doc gates.
+The schema, seed, and historical populated panels exist. The manifest-only
+fixture contract and doc gates validate file structure, not the semantic
+lattice or recomputed summaries.
 
-Planned (a later judging PR):
+Still required before acceptance:
 
 - `python_judged_pr_panel::manifest_load_validates` — envelope + per-item field
   validation (unique ids, valid `expected_direction`, lattice consistency).
@@ -201,6 +209,8 @@ Planned (a later judging PR):
 | --- | --- |
 | Panel schema + seed | `fixtures/python-judged-pr-panel/{manifest.json, SPEC.md}` |
 | Seed diffs | `fixtures/python-judged-pr-panel/diffs/*.diff` |
+| Historical hand-judged receipts | `fixtures/python-judged-pr-panel/{starter-judged.json,scaled-judged.json}` |
+| Executable semantic validator | Not established; required before this spec can become accepted |
 | Manifest-only fixture exemption | `xtask/src/main.rs` (`is_manifest_only_fixture_dir`) |
 | Spec registration | `policy/doc-artifacts.toml`, `docs/specs/README.md` |
 | Traceability | `.ripr/traceability.toml` |

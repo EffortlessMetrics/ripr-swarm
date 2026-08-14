@@ -7,8 +7,9 @@ revisit, and the likely v2 direction. Entries graduate to closed status
 when the v2 work lands or when the underlying motivation is no longer
 load-bearing.
 
-This is not a feature backlog — that lives in `docs/IMPLEMENTATION_CAMPAIGNS.md`
-and `.ripr/goals/active.toml`. This is the place where the v1 simplifications
+This is not a feature backlog — current work lives in GitHub issues and PRs,
+with durable campaign/plan context in `docs/IMPLEMENTATION_CAMPAIGNS.md` and
+`plans/`. This is the place where the v1 simplifications
 that paid for themselves are written down so a future session does not
 mistake them for permanent design choices.
 
@@ -521,6 +522,8 @@ Related PRs / friction:
 
 - `docs/BADGE_POLICY.md` — locked vocabulary and what each badge does and does not prove.
 - `docs/IMPLEMENTATION_CAMPAIGNS.md` — active campaign work items.
-- `.ripr/goals/active.toml` — machine-readable manifest.
+- GitHub issues and PRs — live ownership and delivery state.
+- `plans/` and `docs/IMPLEMENTATION_CAMPAIGNS.md` — durable sequencing and
+  historical campaign context.
 - `docs/FRICTION_LOG.md` — raw same-day observations; entries graduate either to a fix, to this register, or to LEARNINGS.
 - `docs/LEARNINGS.md` — settled principles.
