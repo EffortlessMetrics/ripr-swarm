@@ -4,6 +4,7 @@
   "cases": [
     {
       "case_id": "rust-boundary-missing-equality-should-gap",
+      "subject_id": "boundary-missing-equality",
       "repository": "synthetic-rust-pricing",
       "subject_root": "metrics/rust-judged-behavior-panel/subjects/boundary-missing-equality/",
       "expected_direction": "should_gap",
@@ -31,6 +32,7 @@
     },
     {
       "case_id": "rust-boundary-exact-equality-should-stay-quiet",
+      "subject_id": "boundary-exact-equality",
       "repository": "synthetic-rust-pricing",
       "subject_root": "metrics/rust-judged-behavior-panel/subjects/boundary-exact-equality/",
       "expected_direction": "should_stay_quiet",
@@ -58,6 +60,7 @@
     },
     {
       "case_id": "rust-macro-wrapped-reach-should-limit",
+      "subject_id": "macro-wrapped-reach",
       "repository": "synthetic-rust-macro-tests",
       "subject_root": "metrics/rust-judged-behavior-panel/subjects/macro-wrapped-reach/",
       "expected_direction": "should_limit",

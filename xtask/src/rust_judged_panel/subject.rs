@@ -7,10 +7,32 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use super::{RustJudgedPanelItem, RustJudgedPanelManifest};
-use crate::run::capture_process_output;
+use crate::run::capture_process_output_isolated;
 
 const SUBJECTS_PATH: &str = "metrics/rust-judged-behavior-panel/subjects.json";
 const FIXED_GIT_DATE: &str = "2001-01-01T00:00:00Z";
+const GIT_ENV_TO_REMOVE: [&str; 20] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_INDEX_VERSION",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_NAMESPACE",
+    "GIT_SHALLOW_FILE",
+    "GIT_QUARANTINE_PATH",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_GRAFT_FILE",
+    "GIT_TEMPLATE_DIR",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_CEILING_DIRECTORIES",
+    "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+    "GIT_EXEC_PATH",
+];
 static SCRATCH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Deserialize)]
@@ -25,6 +47,7 @@ struct SubjectAuthority {
 #[serde(deny_unknown_fields)]
 struct SubjectCase {
     case_id: String,
+    subject_id: String,
     repository: String,
     subject_root: String,
     expected_direction: String,
@@ -128,6 +151,7 @@ fn validate_authority(
                 case.case_id
             )),
         }
+        validate_case_binding(case, &mut violations);
         for file in subject_files(case) {
             if let Err(error) = validate_subject_file(root, case, file) {
                 violations.push(error);
@@ -160,6 +184,27 @@ fn validate_authority(
             violations.join("\n- ")
         ))
     }
+}
+
+fn validate_case_binding(case: &SubjectCase, violations: &mut Vec<String>) {
+    let direction = case.expected_direction.replace('_', "-");
+    let expected_case_id = format!("rust-{}-{direction}", case.subject_id);
+    check_equal(
+        violations,
+        &format!("subjects `{}` derived case identity", case.case_id),
+        &case.case_id,
+        &expected_case_id,
+    );
+    let expected_root = format!(
+        "metrics/rust-judged-behavior-panel/subjects/{}/",
+        case.subject_id
+    );
+    check_equal(
+        violations,
+        &format!("subjects `{}` derived subject root", case.case_id),
+        &case.subject_root,
+        &expected_root,
+    );
 }
 
 fn validate_manifest_join(
@@ -435,8 +480,7 @@ fn git(repo: &Path, args: &[&str], inherited_env: &[(&str, &str)]) -> Result<Str
     let mut owned = vec!["-C".to_string(), repo.display().to_string()];
     owned.extend(args.iter().map(|arg| (*arg).to_string()));
     let null_config = if cfg!(windows) { "NUL" } else { "/dev/null" };
-    let mut envs = inherited_env.to_vec();
-    envs.extend([
+    let envs = [
         ("GIT_CONFIG_NOSYSTEM", "1"),
         ("GIT_CONFIG_SYSTEM", null_config),
         ("GIT_CONFIG_GLOBAL", null_config),
@@ -449,8 +493,10 @@ fn git(repo: &Path, args: &[&str], inherited_env: &[(&str, &str)]) -> Result<Str
         ("GIT_COMMITTER_NAME", "RIPR Judged Panel"),
         ("GIT_COMMITTER_EMAIL", "panel@example.invalid"),
         ("GIT_COMMITTER_DATE", FIXED_GIT_DATE),
-    ]);
-    let bytes = capture_process_output("git", &owned, &envs).map_err(|error| error.message)?;
+    ];
+    let bytes =
+        capture_process_output_isolated("git", &owned, inherited_env, &GIT_ENV_TO_REMOVE, &envs)
+            .map_err(|error| error.message)?;
     Ok(String::from_utf8_lossy(&bytes).trim().to_string())
 }
 
@@ -572,7 +618,7 @@ mod tests {
     }
 
     #[test]
-    fn hostile_git_configuration_cannot_change_subject_identity() -> Result<(), String> {
+    fn hostile_git_environment_cannot_change_subject_identity() -> Result<(), String> {
         let root = repository_root()?;
         let authority = load_at(&root)?;
         let scratch = scratch(&root, "hostile-git")?;
@@ -583,7 +629,16 @@ mod tests {
         )
         .map_err(|error| error.to_string())?;
         let hostile_text = hostile.display().to_string();
+        let external = scratch.0.join("external").display().to_string();
         let env = [
+            ("GIT_DIR", external.as_str()),
+            ("GIT_WORK_TREE", external.as_str()),
+            ("GIT_INDEX_FILE", external.as_str()),
+            ("GIT_OBJECT_DIRECTORY", external.as_str()),
+            ("GIT_ALTERNATE_OBJECT_DIRECTORIES", external.as_str()),
+            ("GIT_COMMON_DIR", external.as_str()),
+            ("GIT_TEMPLATE_DIR", external.as_str()),
+            ("GIT_CONFIG_PARAMETERS", "malformed"),
             ("GIT_CONFIG_GLOBAL", hostile_text.as_str()),
             ("GIT_CONFIG_COUNT", "1"),
             ("GIT_CONFIG_KEY_0", "init.defaultObjectFormat"),
@@ -658,7 +713,7 @@ mod tests {
     }
 
     #[test]
-    fn swapped_identical_diff_subjects_fail_independent_authority() -> Result<(), String> {
+    fn complete_wrong_subject_substitution_fails_independent_binding() -> Result<(), String> {
         let canonical = repository_root()?;
         let scratch = scratch(&canonical, "swapped-subject")?;
         let root = scratch.0.join("repo");
@@ -674,16 +729,34 @@ mod tests {
             .get_mut("cases")
             .and_then(Value::as_array_mut)
             .ok_or_else(|| "subjects cases missing".to_string())?;
-        let quiet_tests = cases
+        let quiet = cases
             .get(1)
-            .and_then(|case| case.get("tests"))
+            .and_then(Value::as_object)
             .cloned()
-            .ok_or_else(|| "quiet tests missing".to_string())?;
-        cases
+            .ok_or_else(|| "quiet subject missing".to_string())?;
+        let gap = cases
             .get_mut(0)
             .and_then(Value::as_object_mut)
-            .ok_or_else(|| "gap case missing".to_string())?
-            .insert("tests".to_string(), quiet_tests);
+            .ok_or_else(|| "gap case missing".to_string())?;
+        for field in [
+            "subject_id",
+            "subject_root",
+            "cargo_toml",
+            "cargo_lock",
+            "config",
+            "source_before",
+            "source_after",
+            "tests",
+            "expected_base",
+            "expected_head",
+            "expected_tree",
+        ] {
+            let replacement = quiet
+                .get(field)
+                .cloned()
+                .ok_or_else(|| format!("quiet subject missing `{field}`"))?;
+            gap.insert(field.to_string(), replacement);
+        }
         fs::write(
             &path,
             serde_json::to_vec_pretty(&value).map_err(|error| error.to_string())?,
@@ -693,11 +766,11 @@ mod tests {
             super::super::load_and_validate_at(&root, Path::new(super::super::MANIFEST_PATH))?;
         let error = validate_at(&root, &manifest)
             .err()
-            .ok_or_else(|| "swapped identical-diff subject was accepted".to_string())?;
-        if error.contains("escapes subject root") {
+            .ok_or_else(|| "complete wrong-subject substitution was accepted".to_string())?;
+        if error.contains("derived case identity") {
             Ok(())
         } else {
-            Err(format!("unexpected swapped-subject error: {error}"))
+            Err(format!("unexpected wrong-subject error: {error}"))
         }
     }
 
