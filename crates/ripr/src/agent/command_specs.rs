@@ -211,6 +211,13 @@ fn shell_words(command: &str) -> Option<Vec<String>> {
             continue;
         }
         match (quote, character) {
+            // #3231: inside single quotes a backslash is literal — the
+            // renderer (`loop_commands::shell_arg`) documents bash
+            // single-quote semantics, and the recovery parser must agree or
+            // a single-quoted Windows-like token cannot round-trip. Outside
+            // single quotes the backslash keeps its escape meaning (unquoted
+            // and double-quoted behavior).
+            (Some('\''), '\\') => current.push(character),
             (_, '\\') => escaped = true,
             (Some(active), value) if value == active => quote = None,
             (Some(_), ';' | '&' | '|' | '<' | '>' | '`' | '$') => {
@@ -282,6 +289,104 @@ mod tests {
             return Err(format!("receipt argv omitted --out: {:?}", receipt.args));
         }
         receipt.validate().map_err(|err| err.to_string())
+    }
+
+    /// #3231: inside single quotes a backslash is literal, so a
+    /// single-quoted Windows-like token round-trips byte-for-byte through
+    /// the bounded recovery parser — the renderer (`shell_arg`) and the
+    /// parser must agree on bash single-quote semantics. The token is built
+    /// at runtime so no literal drive-letter path sits in the source tree.
+    #[test]
+    fn single_quoted_backslash_tokens_round_trip_through_recovery() -> Result<(), String> {
+        let windows_root = format!("C:{}ws{}repo", '\\', '\\');
+        let display = format!(
+            "ripr agent verify --root '{windows_root}' --before before.json --after after.json --json"
+        );
+        let spec =
+            agent_command_spec_from_display(&display).ok_or("quoted route was not recoverable")?;
+        if !spec
+            .args
+            .windows(2)
+            .any(|pair| pair == ["--root", windows_root.as_str()])
+        {
+            return Err(format!(
+                "single-quoted Windows-like token lost its backslashes: {:?}",
+                spec.args
+            ));
+        }
+        // Renderer agreement: the same token rendered by `shell_arg` (inside
+        // `agent_verify_command`) recovers to the identical argv entry.
+        let rendered = crate::agent::loop_commands::agent_verify_command(
+            &windows_root,
+            "before.json",
+            "after.json",
+            None,
+        );
+        if !rendered.contains(&format!("'{windows_root}'")) {
+            return Err(format!("renderer left the token unquoted: {rendered}"));
+        }
+        let round_tripped = agent_command_spec_from_display(&rendered)
+            .ok_or("rendered route was not recoverable")?;
+        if !round_tripped
+            .args
+            .windows(2)
+            .any(|pair| pair == ["--root", windows_root.as_str()])
+        {
+            return Err(format!(
+                "rendered token did not round-trip byte-for-byte: {:?}",
+                round_tripped.args
+            ));
+        }
+        Ok(())
+    }
+
+    /// #3231: outside single quotes the backslash keeps its escape meaning —
+    /// unquoted and double-quoted tokens consume it as an escape, matching
+    /// the pre-fix behavior the canonical display tokens rely on.
+    #[test]
+    fn backslash_outside_single_quotes_keeps_escape_semantics() -> Result<(), String> {
+        if shell_words(r"a\b c") != Some(vec!["ab".to_string(), "c".to_string()]) {
+            return Err("unquoted backslash must escape the next character".to_string());
+        }
+        if shell_words(r#""a\b" c"#) != Some(vec!["ab".to_string(), "c".to_string()]) {
+            return Err("double-quoted backslash must escape the next character".to_string());
+        }
+        if shell_words(r"'a\b' c") != Some(vec!["a\\b".to_string(), "c".to_string()]) {
+            return Err("single-quoted backslash must stay literal".to_string());
+        }
+        Ok(())
+    }
+
+    /// #3231 drift test: producer-owned typed routes carry the semantic
+    /// Windows-like token directly in `args[]`, built from semantic inputs —
+    /// they never parse their own display text through `shell_words`. A drift
+    /// here would re-establish display text as argv authority (#1906).
+    #[test]
+    fn producer_owned_routes_preserve_windows_argv_without_display_parsing() -> Result<(), String> {
+        let windows_root = format!("C:{}ws{}repo", '\\', '\\');
+        let verify = agent_verify_command_spec(&windows_root, "before.json", "after.json", None);
+        if !verify
+            .args
+            .windows(2)
+            .any(|pair| pair == ["--root", windows_root.as_str()])
+        {
+            return Err(format!(
+                "verify spec lost the semantic Windows token in args: {:?}",
+                verify.args
+            ));
+        }
+        let receipt = agent_receipt_command_spec(&windows_root, "verify.json", "seam-a", None);
+        if !receipt
+            .args
+            .windows(2)
+            .any(|pair| pair == ["--root", windows_root.as_str()])
+        {
+            return Err(format!(
+                "receipt spec lost the semantic Windows token in args: {:?}",
+                receipt.args
+            ));
+        }
+        Ok(())
     }
 
     #[test]
