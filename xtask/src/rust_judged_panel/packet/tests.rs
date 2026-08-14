@@ -593,6 +593,56 @@ fn rust_judged_panel_packet_rejects_in_repo_sibling_symlink_escape() -> Result<(
 }
 
 #[test]
+fn rust_judged_panel_packet_publication_rejects_in_repo_sibling_symlink() -> Result<(), String> {
+    let root = test_root("portable-publish-link")?;
+    let portable = root.0.join(PORTABLE_ROOT);
+    fs::create_dir_all(&portable).map_err(|error| format!("create portable root: {error}"))?;
+    let current = root.0.join(CURRENT_PATH);
+    fs::write(&current, b"old-current\n").map_err(|error| format!("seed current: {error}"))?;
+    let sibling = root.0.join("metrics/unrelated-publication");
+    fs::create_dir_all(&sibling).map_err(|error| format!("create sibling: {error}"))?;
+    fs::write(sibling.join("sentinel"), b"retained\n")
+        .map_err(|error| format!("write sibling sentinel: {error}"))?;
+    let link = portable.join("generations");
+    if !create_directory_symlink_or_skip(&sibling, &link)? {
+        return Ok(());
+    }
+
+    let fixtures = [
+        fixture("should_gap")?,
+        fixture("should_stay_quiet")?,
+        fixture("should_limit")?,
+    ];
+    let subjects = fixtures
+        .iter()
+        .map(|fixture| fixture.subject.clone())
+        .collect::<Vec<_>>();
+    let mut packets = fixtures
+        .iter()
+        .map(|fixture| project_one(&fixture.subject, &fixture.case, &fixture.host, "m", "s"))
+        .collect::<Result<Vec<_>, _>>()?;
+    packets.sort_by(|left, right| left.case_id.cmp(&right.case_id));
+    let attestations = attestations_from_live_projection(&packets);
+    let rejected =
+        publish_all(&root.0, "m", "s", &subjects, &attestations, &packets, None).is_err();
+    remove_directory_symlink(&link).map_err(|error| format!("remove publication link: {error}"))?;
+
+    let retained = fs::read(&current).map_err(|error| format!("read retained current: {error}"))?;
+    let sibling_entries = fs::read_dir(&sibling)
+        .map_err(|error| format!("read sibling: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("read sibling entry: {error}"))?;
+    if rejected && retained == b"old-current\n" && sibling_entries.len() == 1 {
+        Ok(())
+    } else {
+        Err(
+            "publication followed a sibling link, advanced current, or wrote outside portable root"
+                .to_string(),
+        )
+    }
+}
+
+#[test]
 fn rust_judged_panel_packet_partial_and_concurrent_publication_fail_closed() -> Result<(), String> {
     let root = test_root("publication")?;
     let current = root.0.join(CURRENT_PATH);

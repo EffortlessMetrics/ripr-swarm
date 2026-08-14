@@ -1364,7 +1364,8 @@ fn publish_staged(
         authority.manifest_sha256,
         authority.subjects_sha256,
     )?;
-    let final_generation = root.join(&relative_generation);
+    let generations_root = canonical_publication_generations(root)?;
+    let final_generation = generations_root.join(&generation_id);
     if final_generation.exists() {
         let retained = fs::read(final_generation.join("packet-index.json"))
             .map_err(|error| format!("read retained packet index: {error}"))?;
@@ -1374,15 +1375,6 @@ fn publish_staged(
             ));
         }
     } else {
-        let parent = final_generation
-            .parent()
-            .ok_or_else(|| "portable generation has no parent".to_string())?;
-        fs::create_dir_all(parent).map_err(|error| {
-            format!(
-                "create portable generations `{}`: {error}",
-                parent.display()
-            )
-        })?;
         fs::rename(&staged_generation, &final_generation)
             .map_err(|error| format!("publish generation `{generation_id}`: {error}"))?;
     }
@@ -1394,6 +1386,53 @@ fn publish_staged(
         index_sha256: sha256_bytes(&index_bytes),
     };
     atomic_write(&root.join(CURRENT_PATH), &pretty_json(&current)?)
+}
+
+fn canonical_publication_generations(root: &Path) -> Result<PathBuf, String> {
+    let portable = root.join(PORTABLE_ROOT);
+    let canonical_portable = fs::canonicalize(&portable).map_err(|error| {
+        format!(
+            "canonicalize portable publication root `{}`: {error}",
+            portable.display()
+        )
+    })?;
+    if !canonical_portable.is_dir() {
+        return Err(format!(
+            "portable publication root `{}` is not a directory",
+            portable.display()
+        ));
+    }
+    let generations = portable.join("generations");
+    match fs::symlink_metadata(&generations) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            fs::create_dir(canonical_portable.join("generations")).map_err(|create_error| {
+                format!(
+                    "create portable generations `{}`: {create_error}",
+                    generations.display()
+                )
+            })?;
+        }
+        Err(error) => {
+            return Err(format!(
+                "inspect portable generations `{}`: {error}",
+                generations.display()
+            ));
+        }
+    }
+    let canonical_generations = fs::canonicalize(&generations).map_err(|error| {
+        format!(
+            "canonicalize portable generations `{}`: {error}",
+            generations.display()
+        )
+    })?;
+    if !canonical_generations.starts_with(&canonical_portable) || !canonical_generations.is_dir() {
+        return Err(format!(
+            "portable generations `{}` escapes its canonical root or is not a directory",
+            generations.display()
+        ));
+    }
+    Ok(canonical_generations)
 }
 
 fn validate_staged_generation(
