@@ -322,7 +322,7 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0086-python-eval-sweep.md"
 status = "accepted"
 owner = "language-adapter-swarm"
-standalone_reason = "Standalone evidence-tooling contract for the Tier A external-repo eval sweep (cargo xtask eval-sweep); accepted because #1161 landed the command and #3259 completed the run algorithm's classification contract (exit code and JSON both enforced, boundary-tested on both hosts); adds no product library behavior or public API; anchors the eval-sweep-driven Python reliability campaign; references ADR 0009; no separate proposal artifact."
+standalone_reason = "Standalone evidence-tooling contract for the Tier A external-repo eval sweep (cargo xtask eval-sweep); accepted because #1161 landed the command, #3259 completed the exit-code-plus-JSON classification contract with boundary tests, and #3261 added the fixed-run byte-exact JSON/Markdown golden test; adds no product library behavior or public API; anchors the eval-sweep-driven Python reliability campaign; references ADR 0009; no separate proposal artifact."
 
 [[artifact]]
 id = "RIPR-SPEC-0087"

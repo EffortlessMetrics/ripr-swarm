@@ -5566,7 +5566,9 @@ id = "RIPR-SPEC-0086"
 name = "python tier a eval sweep"
 spec = "docs/specs/RIPR-SPEC-0086-python-eval-sweep.md"
 tests = [
-  "xtask/src/reports/eval_sweep.rs"
+  "xtask/src/reports/eval_sweep.rs",
+  "xtask/src/reports/eval_sweep.rs::tests::run_check_classifies_failure_exit_with_valid_json_as_crash",
+  "xtask/src/reports/eval_sweep.rs::tests::rendered_report_matches_golden_from_fixed_run_vector"
 ]
 fixtures = [
   "fixtures/python-eval-sweep"
@@ -5792,19 +5794,18 @@ metrics = [
 id = "RIPR-SPEC-0092"
 name = "python tier b judged-diff panel schema"
 spec = "docs/specs/RIPR-SPEC-0092-python-judged-pr-panel.md"
-tests = [
-  "xtask/src/main.rs"
-]
+tests = []
 fixtures = [
   "fixtures/python-judged-pr-panel"
 ]
 code = [
-  "xtask/src/main.rs"
+  "xtask/src/reports/fixtures.rs::is_manifest_only_fixture_dir"
 ]
 outputs = [
-  "docs/specs/RIPR-SPEC-0092-python-judged-pr-panel.md",
   "fixtures/python-judged-pr-panel/manifest.json",
-  "fixtures/python-judged-pr-panel/SPEC.md"
+  "fixtures/python-judged-pr-panel/SPEC.md",
+  "fixtures/python-judged-pr-panel/starter-judged.json",
+  "fixtures/python-judged-pr-panel/scaled-judged.json"
 ]
 metrics = [
   "false_actionable_rate",
