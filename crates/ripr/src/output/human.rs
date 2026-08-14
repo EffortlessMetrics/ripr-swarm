@@ -437,10 +437,12 @@ pub(super) fn wrap_human_prose(
 /// Called unconditionally; emits nothing when `preview_language_advisories`
 /// is empty (pure-Rust scope). See RIPR-SPEC-0082.
 ///
-/// Two wordings per the `enabled` flag:
+/// Three wordings per the producer-owned completion state:
 ///
-/// - `enabled` — the preview adapter ran; the empty/partial result is advisory
-///   and may be incomplete, not Rust-grade clean.
+/// - enabled and completed — the preview adapter ran; the empty/partial result
+///   is advisory and may be incomplete, not Rust-grade clean.
+/// - enabled but failed — the files were routed but not analyzed to adapter
+///   completion; the typed `language_runs` status is disclosed.
 /// - not enabled — the files were detected but not analyzed because the
 ///   preview adapter is not enabled in `ripr.toml`; the empty result must not
 ///   be read as clean. A copy-paste-ready TOML block is appended so enabling
@@ -453,16 +455,25 @@ fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
         } else {
             format!("{language}(s)")
         };
-        if advisory.enabled {
+        if advisory.analyzed(&output.language_runs) {
             out.push_str(&format!(
                 "\nNote: {} {} analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.\n",
                 advisory.file_count, file_label,
             ));
-        } else {
+        } else if !advisory.enabled {
             let language_lowercase = advisory.language.to_lowercase();
             out.push_str(&format!(
                 "\nNote: this diff contains {} {}. The {} adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.\n\nTo enable, add to ripr.toml:\n\n[languages]\nenabled = [\"rust\", \"{language_lowercase}\"]\n",
                 advisory.file_count, file_label, language,
+            ));
+        } else if let Some(run) = advisory.non_success_run(&output.language_runs) {
+            out.push_str(&format!(
+                "\nNote: the {language} preview adapter did not complete successfully ({}), so {} {} were not analyzed — this is NOT a clean Rust-grade result.\n",
+                run.status.as_str(), advisory.file_count, file_label,
+            ));
+        } else {
+            out.push_str(&format!(
+                "\nNote: the {language} preview adapter was enabled but no {file_label} were routed, so nothing was analyzed — this is NOT a clean Rust-grade result.\n"
             ));
         }
     }

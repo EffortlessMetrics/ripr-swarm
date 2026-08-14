@@ -11,6 +11,7 @@ use std::path::PathBuf;
 
 mod badge_rendering;
 mod mode_and_selector;
+mod preview_analyzed_outcome;
 mod python_packet_eligibility;
 mod rendering_contracts;
 
