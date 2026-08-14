@@ -94,7 +94,27 @@ fn print_help() {
 }
 
 fn write_pr_evidence(repo: &Path, options: &PrEvidenceOptions) -> Result<(), String> {
-    write_pr_evidence_with_runner(repo, options, run_ripr_check)
+    write_pr_evidence_with_runner(repo, options, run_ripr_check)?;
+    reject_error_packet(repo)
+}
+
+fn reject_error_packet(repo: &Path) -> Result<(), String> {
+    let packet_path = repo.join(PR_EVIDENCE_JSON);
+    let packet_text = fs::read_to_string(&packet_path)
+        .map_err(|err| format!("read generated {PR_EVIDENCE_JSON}: {err}"))?;
+    let packet: Value = serde_json::from_str(&packet_text)
+        .map_err(|err| format!("generated {PR_EVIDENCE_JSON} is not valid JSON: {err}"))?;
+    if packet.get("status").and_then(Value::as_str) == Some("error") {
+        return Err(format!(
+            "PR evidence producer failed; review-comments must not run: {}",
+            packet["warnings"]
+                .as_array()
+                .and_then(|warnings| warnings.first())
+                .and_then(|warning| warning["message"].as_str())
+                .unwrap_or("unknown producer error")
+        ));
+    }
+    Ok(())
 }
 
 fn write_pr_evidence_with_runner(
@@ -242,6 +262,16 @@ fn check_pr_evidence(repo: &Path, options: &PrEvidenceOptions) -> Result<(), Str
         .map_err(|err| format!("missing or unreadable {PR_EVIDENCE_JSON}: {err}"))?;
     let packet: Value = serde_json::from_str(&text)
         .map_err(|err| format!("{PR_EVIDENCE_JSON} is not valid JSON: {err}"))?;
+    if packet.get("status").and_then(Value::as_str) == Some("error") {
+        return Err(format!(
+            "PR evidence producer failed; review-comments must not run: {}",
+            packet["warnings"]
+                .as_array()
+                .and_then(|warnings| warnings.first())
+                .and_then(|warning| warning["message"].as_str())
+                .unwrap_or("unknown producer error")
+        ));
+    }
     let violations = validate_packet_value(
         &packet,
         options,
@@ -1036,7 +1066,10 @@ mod tests {
         write_pr_evidence_with_runner(&repo, &options, |_repo, _options| {
             Err("ripr check for PR evidence timed out after 120 seconds; retry command: cargo xtask ripr-pr --base HEAD~1 --head HEAD --root .".to_string())
         })?;
-        check_pr_evidence(&repo, &options)?;
+        let check_error = check_pr_evidence(&repo, &options)
+            .err()
+            .ok_or_else(|| "error packet unexpectedly passed PR evidence check".to_string())?;
+        assert!(check_error.contains("review-comments must not run"));
 
         let packet_text = fs::read_to_string(repo.join(PR_EVIDENCE_JSON))
             .map_err(|err| format!("read packet: {err}"))?;
@@ -1047,6 +1080,10 @@ mod tests {
         assert!(repo.join(PR_DIFF).exists());
         assert!(repo.join(PR_EVIDENCE_MD).exists());
         assert!(!repo.join(PR_CHECK_JSON).exists());
+        let producer_error = reject_error_packet(&repo)
+            .err()
+            .ok_or_else(|| "producer error packet must stop the command".to_string())?;
+        assert!(producer_error.contains("review-comments must not run"));
 
         fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
         Ok(())
