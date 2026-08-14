@@ -21,6 +21,7 @@ jobs:
       SOURCE_PARENT: a072b7efe80f1a32d7b5ba7342559a114edeb12e
       SWARM_PARENT: 83217e97ec6847db41d757f57279a8b1ca433fe6
       SWARM_REF: refs/tags/ripr-release-0.11.0-83217e97ec6847db41d757f57279a8b1ca433fe6
+      RESOLVED_TREE: c53a89dcace27f54fdb78df4d16037959dfa2e2a
       VERSION: 0.11.0
 
     steps:
@@ -68,12 +69,13 @@ jobs:
             printf 'swarm_main=%s\n' "$(git -C swarm rev-parse origin/main)"
             printf 'swarm_ref=%s\n' "$SWARM_REF"
             printf 'swarm_ref_sha=%s\n' "$(printf '%s\n' "$live_ref" | awk '{print $1}')"
+            printf 'reviewed_resolved_tree=%s\n' "$RESOLVED_TREE"
             git --version
             rustc -Vv
             cargo -V
           } | tee preflight/environment.txt
 
-      - name: Generate exact-pair read-only preflight
+      - name: Generate exact-pair reviewed-tree preflight
         shell: bash
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/ripr-w7-preflight-target
@@ -94,9 +96,10 @@ jobs:
             --source-main origin/main \
             --swarm-main origin/main \
             --version "$VERSION" \
+            --resolved-tree "$RESOLVED_TREE" \
             --out "$GITHUB_WORKSPACE/preflight"
 
-      - name: Validate exact identities and unresolved-tree boundary
+      - name: Validate exact identities and reviewed tree
         shell: bash
         run: |
           set -euo pipefail
@@ -105,7 +108,8 @@ jobs:
           jq -e \
             --arg source "$SOURCE_PARENT" \
             --arg swarm "$SWARM_PARENT" \
-            --arg swarm_ref "$SWARM_REF" '
+            --arg swarm_ref "$SWARM_REF" \
+            --arg resolved_tree "$RESOLVED_TREE" '
               .schema == "ripr.source_promotion_preflight.v1" and
               .mode == "two_parent_join" and
               .source_parent == $source and
@@ -113,18 +117,18 @@ jobs:
               .swarm_parent == $swarm and
               .swarm_ref == $swarm_ref and
               .swarm_ref_sha == $swarm and
-              .dry_merge.reviewed_resolved_tree == null and
-              .dry_merge.reviewed_resolved_tree_verified == false
+              .dry_merge.reviewed_resolved_tree == $resolved_tree and
+              .dry_merge.reviewed_resolved_tree_verified == true
             ' "$receipt" >/dev/null
           test -z "$(git -C source status --porcelain)"
           test -z "$(git -C swarm status --porcelain)"
           sha256sum preflight/* | sort > preflight/SHA256SUMS
 
-      - name: Upload exact preflight packet
+      - name: Upload exact reviewed preflight packet
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: ripr-0.11.0-w7-source-promotion-preflight-a072b7efe80f
+          name: ripr-0.11.0-w7-source-promotion-reviewed-preflight-c53a89dc
           path: preflight/
           if-no-files-found: error
           retention-days: 90
