@@ -858,7 +858,11 @@ fn validate_direction_witness(
                 "Missing discriminator value: {}",
                 subject.required_discriminator
             );
-            if missing != [expected] || recommendation.is_empty() || static_limit_kind.is_some() {
+            if missing != [expected]
+                || missing != subject.expected_missing.as_slice()
+                || recommendation != subject.expected_recommendation.as_str()
+                || static_limit_kind.is_some()
+            {
                 return Err(format!(
                     "host `{}` lacks the exact should-gap witness",
                     subject.case_id
@@ -866,7 +870,12 @@ fn validate_direction_witness(
             }
         }
         "should_stay_quiet" => {
-            if !missing.is_empty() || !recommendation.is_empty() || static_limit_kind.is_some() {
+            if missing != subject.expected_missing.as_slice()
+                || recommendation != subject.expected_recommendation.as_str()
+                || !missing.is_empty()
+                || !recommendation.is_empty()
+                || static_limit_kind.is_some()
+            {
                 return Err(format!(
                     "host `{}` lacks the exact should-stay-quiet witness",
                     subject.case_id
@@ -874,8 +883,8 @@ fn validate_direction_witness(
             }
         }
         "should_limit" => {
-            if missing.is_empty()
-                || recommendation.is_empty()
+            if missing != subject.expected_missing.as_slice()
+                || recommendation != subject.expected_recommendation.as_str()
                 || static_limit_kind != subject.expected_static_limit_kind.as_deref()
             {
                 return Err(format!(
@@ -1530,8 +1539,13 @@ fn safe_relative_path(value: &str) -> Result<(), String> {
 fn confined_existing_file(base: &Path, relative: &Path, label: &str) -> Result<PathBuf, String> {
     let relative_text = super::normalize_path(relative);
     safe_relative_path(&relative_text)?;
-    let canonical_base = fs::canonicalize(base)
-        .map_err(|error| format!("canonicalize {label} base `{}`: {error}", base.display()))?;
+    let portable_base = base.join(PORTABLE_ROOT);
+    let canonical_base = fs::canonicalize(&portable_base).map_err(|error| {
+        format!(
+            "canonicalize portable root `{}` for {label}: {error}",
+            portable_base.display()
+        )
+    })?;
     let candidate = base.join(relative);
     let canonical_candidate = fs::canonicalize(&candidate)
         .map_err(|error| format!("resolve {label} `{}`: {error}", candidate.display()))?;

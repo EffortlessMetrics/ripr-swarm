@@ -163,6 +163,8 @@ fn fixture(direction: &str) -> Result<ProjectionFixture, String> {
         expected_classification: class.to_string(),
         expected_actionability: action.to_string(),
         expected_static_limit_kind: limit.map(ToString::to_string),
+        expected_missing: missing.iter().map(|value| (*value).to_string()).collect(),
+        expected_recommendation: recommendation.to_string(),
         cargo_toml,
         cargo_lock,
         config,
@@ -456,8 +458,10 @@ fn rust_judged_panel_packet_rejects_self_digest_and_direction_tamper() -> Result
     }
     let mut stale = project_one(&fixture.subject, &fixture.case, &fixture.host, "m", "s")?;
     stale.semantic.producer_source_head = "9".repeat(40);
+    stale.semantic.producer_source_tree = "7".repeat(40);
     stale.semantic.profile = "release".to_string();
     stale.semantic.argv[4] = "stale-base".to_string();
+    stale.semantic.observed.recommendation = "Read unrelated documentation.".to_string();
     stale.host_evidence.binary_sha256 = format!("sha256:{}", "8".repeat(64));
     stale.host_evidence.receipt_ref = format!(
         "target/ripr/rust-judged-panel/runs/run-a/cases/{}/wrong.json",
@@ -470,17 +474,51 @@ fn rust_judged_panel_packet_rejects_self_digest_and_direction_tamper() -> Result
         packet_sha256: sha256_bytes(&pretty_json(&stale)?),
         semantic_sha256: stale.semantic_sha256.clone(),
     };
+    let stale_attestation = HostAttestation {
+        case_id: stale.case_id.clone(),
+        semantic: stale.semantic.clone(),
+        host_evidence: stale.host_evidence.clone(),
+    };
     if validate_retained_packet(
         &stale,
         &stale_entry,
         &fixture.subject,
-        &attestation,
+        &stale_attestation,
         "m",
         "s",
     )
     .is_ok()
     {
         return Err("coordinated stale producer/invocation/host re-seal was accepted".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn rust_judged_panel_packet_rejects_coordinated_direction_witness_reseal() -> Result<(), String> {
+    for direction in ["should_gap", "should_limit"] {
+        let fixture = fixture(direction)?;
+        let mut packet = project_one(&fixture.subject, &fixture.case, &fixture.host, "m", "s")?;
+        packet.semantic.observed.recommendation = "Read unrelated documentation.".to_string();
+        packet.semantic_sha256 = sha256_serialized(&packet.semantic)?;
+        let attestation = HostAttestation {
+            case_id: packet.case_id.clone(),
+            semantic: packet.semantic.clone(),
+            host_evidence: packet.host_evidence.clone(),
+        };
+        let entry = PortableIndexEntry {
+            case_id: packet.case_id.clone(),
+            packet_path: format!("{PORTABLE_ROOT}/generation/packet.json"),
+            packet_sha256: sha256_bytes(&pretty_json(&packet)?),
+            semantic_sha256: packet.semantic_sha256.clone(),
+        };
+        if validate_retained_packet(&packet, &entry, &fixture.subject, &attestation, "m", "s")
+            .is_ok()
+        {
+            return Err(format!(
+                "coordinated `{direction}` direction-witness re-seal was accepted"
+            ));
+        }
     }
     Ok(())
 }
@@ -528,15 +566,16 @@ fn rust_judged_panel_packet_invalid_complete_set_preserves_current() -> Result<(
 }
 
 #[test]
-fn rust_judged_panel_packet_rejects_nested_symlink_escape() -> Result<(), String> {
+fn rust_judged_panel_packet_rejects_in_repo_sibling_symlink_escape() -> Result<(), String> {
     let root = test_root("portable-link")?;
-    let outside = test_root("portable-link-outside")?;
-    fs::write(outside.0.join("packet.json"), b"{}\n")
-        .map_err(|error| format!("write outside packet: {error}"))?;
+    let sibling = root.0.join("metrics/unrelated-evidence");
+    fs::create_dir_all(&sibling).map_err(|error| format!("create sibling: {error}"))?;
+    fs::write(sibling.join("packet.json"), b"{}\n")
+        .map_err(|error| format!("write sibling packet: {error}"))?;
     let portable = root.0.join("metrics/rust-judged-behavior-panel/portable");
     fs::create_dir_all(&portable).map_err(|error| format!("create portable root: {error}"))?;
     let link = portable.join("generations");
-    if !create_directory_symlink_or_skip(&outside.0, &link)? {
+    if !create_directory_symlink_or_skip(&sibling, &link)? {
         return Ok(());
     }
     let escaped = confined_existing_file(
@@ -549,7 +588,7 @@ fn rust_judged_panel_packet_rejects_nested_symlink_escape() -> Result<(), String
     if escaped {
         Ok(())
     } else {
-        Err("portable nested symlink escape was accepted".to_string())
+        Err("portable in-repo sibling symlink escape was accepted".to_string())
     }
 }
 
