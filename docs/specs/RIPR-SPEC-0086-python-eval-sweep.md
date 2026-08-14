@@ -4,11 +4,10 @@ Status: proposed
 
 Status note (2026-08-14): #1161 landed the Tier A `cargo xtask eval-sweep`
 command (`xtask/src/command.rs` dispatch plus `xtask/src/reports/eval_sweep.rs`),
-but the spec stays **proposed**: the run algorithm's classification contract
-(step 3) requires both exit code and JSON, and the current `run_check`
-classifies solely from parseable stdout — a nonzero exit after valid JSON
-reads as `ok`. The exit-code leg is unenforced, so the implementation is
-weaker than the spec and acceptance would be a false-confidence flip.
+and #3259 completed the run algorithm's exit-status classification leg. The
+spec stays **proposed** because Required Evidence still calls for a golden of
+the rendered JSON/Markdown report from a fixed in-memory run vector; no such
+golden is committed, and its traceability entry therefore keeps `outputs = []`.
 
 Owner: language-adapter / swarm
 
@@ -28,7 +27,7 @@ Linked ADRs:
 
 Linked plan:
 
-- None.
+- [RIPR-PLAN-0017: Python Repair Routing Implementation Plan](../../plans/python-repair-routing/implementation-plan.md)
 
 Linked issues:
 
@@ -36,7 +35,10 @@ Linked issues:
 
 Linked PRs:
 
-- (this PR)
+- [#1161](https://github.com/EffortlessMetrics/ripr-swarm/pull/1161) — Tier A
+  command and report implementation.
+- [#3259](https://github.com/EffortlessMetrics/ripr-swarm/pull/3259) — captured
+  exit-status classification and boundary regressions.
 
 ## Problem
 
@@ -218,4 +220,3 @@ repos_total = 3, repos_run = 0 (all skipped_missing_checkout)
 | `classification_counts` | per-repo + aggregate 7-way exposure-class distribution (descriptive; never gates) |
 | `alignment_counts` | per-repo + aggregate `oracle_alignment` distribution (`direct`/`alias`/`changed_sink_token`/`orthogonal`/`unknown`/`absent`, Python-only) plus repair-packet presence counts (`repair_placement`/`verify_command`/`python_repair_card`) |
 | `gate_status` | `not_run` if `repos_run == 0`; else `pass` iff `crash_rate == 0` and `gap_id_stability_rate == 1.0`; else `review` (distributions never affect this) |
-
