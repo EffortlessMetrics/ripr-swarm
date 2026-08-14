@@ -376,6 +376,15 @@ reason = "Selected, unjudged Rust behavior-panel denominator; null labels remain
 covered_by = ["cargo xtask check-file-policy", "cargo xtask rust-judged-panel check"]
 
 [[allow]]
+glob = "metrics/rust-judged-behavior-panel/subjects/**"
+kind = "judged_panel_subject"
+owner = "ripr/evidence-quality"
+surface = "fixtures"
+classification = "fixture"
+reason = "Checked deterministic source, test, config, and Git materialization inputs for the three-case Rust judged panel."
+covered_by = ["cargo xtask rust-judged-panel check", "cargo test -p xtask rust_judged_panel::subject"]
+
+[[allow]]
 glob = "metrics/rust-repair-trust/*.json"
 kind = "trust_corpus_metadata"
 owner = "ripr/repair-trust"

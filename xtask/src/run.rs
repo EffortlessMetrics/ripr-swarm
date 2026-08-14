@@ -46,8 +46,24 @@ pub(crate) fn capture_process_output(
     args: &[String],
     envs: &[(&str, &str)],
 ) -> Result<Vec<u8>, ProcessError> {
+    capture_process_output_isolated(program, args, &[], &[], envs)
+}
+
+pub(crate) fn capture_process_output_isolated(
+    program: &str,
+    args: &[String],
+    inherited_envs: &[(&str, &str)],
+    removed_envs: &[&str],
+    envs: &[(&str, &str)],
+) -> Result<Vec<u8>, ProcessError> {
     let mut command = Command::new(program);
     command.args(args);
+    for (name, value) in inherited_envs {
+        command.env(name, value);
+    }
+    for name in removed_envs {
+        command.env_remove(name);
+    }
     for (name, value) in envs {
         command.env(name, value);
     }
