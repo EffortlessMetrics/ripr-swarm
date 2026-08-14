@@ -427,8 +427,10 @@ pub struct AnalysisOptions {
 /// The `enabled` flag distinguishes the two honesty cases per
 /// RIPR-SPEC-0082:
 ///
-/// - `enabled == true` — the adapter ran; an empty result is advisory and may
-///   be incomplete, not a Rust-grade clean result.
+/// - `enabled == true` — the adapter was configured and available. Whether it
+///   completed successfully is derived from the matching `language_runs`
+///   failure record; an empty result is advisory and may be incomplete, not a
+///   Rust-grade clean result.
 /// - `enabled == false` — the adapter is preview and NOT enabled, so these
 ///   files were not analyzed at all; the empty result must not be read as
 ///   clean.
@@ -440,11 +442,33 @@ pub struct PreviewLanguageAdvisory {
     pub file_count: usize,
     /// Up to three sample file paths (normalized, forward-slash).
     pub sample_paths: Vec<String>,
-    /// Whether this preview adapter was enabled (ran) for this analysis.
+    /// Whether this preview adapter was configured and available for this
+    /// analysis.
     ///
     /// `false` means the preview-language files were detected in scope but not
     /// analyzed because the adapter is not enabled in `ripr.toml`.
     pub enabled: bool,
+}
+
+impl PreviewLanguageAdvisory {
+    /// Returns the producer-owned non-success record for this advisory, when
+    /// the adapter did not complete successfully.
+    pub(crate) fn non_success_run<'a>(
+        &self,
+        language_runs: &'a [LanguageRun],
+    ) -> Option<&'a LanguageRun> {
+        language_runs
+            .iter()
+            .find(|run| run.language == self.language && run.status != LanguageRunStatus::Ok)
+    }
+
+    /// Whether the routed files were actually analyzed to adapter completion.
+    ///
+    /// Successful preview runs are omitted from `language_runs`; any matching
+    /// non-success entry therefore closes this readiness claim fail-closed.
+    pub(crate) fn analyzed(&self, language_runs: &[LanguageRun]) -> bool {
+        self.enabled && self.file_count > 0 && self.non_success_run(language_runs).is_none()
+    }
 }
 
 /// Per-language run status for one language adapter invocation.
