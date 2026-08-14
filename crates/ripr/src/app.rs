@@ -13,7 +13,7 @@ mod context;
 mod explain;
 pub(crate) mod impacted_evidence;
 mod navigation;
-pub(crate) mod pr_evidence;
+pub mod pr_evidence;
 /// Shared PR-evidence summary projection used by the `ripr` binary and the
 /// compatibility `xtask` route.
 pub mod pr_summary;
