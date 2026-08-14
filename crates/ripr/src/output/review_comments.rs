@@ -1,3 +1,4 @@
+use crate::agent::command_specs::command_displays_are_complete;
 use crate::agent::loop_commands::{
     WORKFLOW_AFTER_SNAPSHOT_ARTIFACT, WORKFLOW_AGENT_BRIEF_ARTIFACT,
     WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, agent_brief_command, agent_verify_command, display_path,
@@ -599,11 +600,11 @@ fn gap_record_comment_json(
             "PR comments require a repair route.",
         ));
     };
-    if record.verification_commands.is_empty() {
+    if !command_displays_are_complete(&record.verification_commands) {
         return Err(gap_record_suppressed_json(
             record,
             "missing_verification_command",
-            "PR comments require a verification command.",
+            "PR comments require only nonblank verification commands.",
         ));
     }
 
@@ -2522,6 +2523,39 @@ mod tests {
         assert_eq!(value["summary"]["comments"], 0);
         assert_eq!(value["summary"]["suppressed"], 1);
         assert_eq!(value["suppressed"][0]["reason"], "missing_seam_identity");
+        Ok(())
+    }
+
+    #[test]
+    fn review_comments_gap_ledger_rejects_blank_and_mixed_verification_commands()
+    -> Result<(), String> {
+        for (gap_id, commands) in [
+            ("gap:blank-verify", serde_json::json!([" \t "])),
+            ("gap:mixed-verify", serde_json::json!(["cargo test", "  "])),
+        ] {
+            let mut record = eligible_gap_record_json(gap_id, &format!("dedupe:{gap_id}"));
+            record["verification_commands"] = commands;
+            let records_json = serde_json::json!({ "records": [record] }).to_string();
+            let records =
+                crate::output::gap_decision_ledger::parse_gap_records_json(&records_json)?;
+            let rendered = render_gap_record_review_comments_json(
+                Path::new("."),
+                "main",
+                "HEAD",
+                &Mode::Draft,
+                "target/ripr/reports/gap-decision-ledger.json",
+                &records,
+            )?;
+            let value: Value = serde_json::from_str(&rendered)
+                .map_err(|error| format!("parse suppressed review comment: {error}"))?;
+            assert_eq!(value["summary"]["comments"], 0);
+            assert_eq!(value["summary"]["suppressed"], 1);
+            assert_eq!(
+                value["suppressed"][0]["reason"],
+                "missing_verification_command"
+            );
+            assert!(value["comments"].as_array().is_some_and(Vec::is_empty));
+        }
         Ok(())
     }
 

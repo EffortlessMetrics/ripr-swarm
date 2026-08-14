@@ -1,3 +1,4 @@
+use crate::agent::command_specs::{command_display_is_nonblank, command_displays_are_complete};
 use crate::agent::loop_commands::shell_arg;
 use crate::domain::{CommandRole, CommandSpec};
 use crate::output::receipt_write::receipt_write_command;
@@ -698,7 +699,8 @@ fn gap_record_from_repo_exposure_seam(seam: &Value) -> Option<GapRecord> {
     let repair_route =
         repair_route_from_evidence(evidence, canonical_item, seam_kind, repairability);
     let verify_command = string_at(canonical_item, &["verify_command"])
-        .or_else(|| string_at(evidence, &["recommendation", "verify_command"]));
+        .or_else(|| string_at(evidence, &["recommendation", "verify_command"]))
+        .filter(|command| command_display_is_nonblank(command));
     let verification_commands = verify_command
         .map(|command| vec![command.to_string()])
         .unwrap_or_default();
@@ -725,6 +727,7 @@ fn gap_record_from_repo_exposure_seam(seam: &Value) -> Option<GapRecord> {
         .map(ToString::to_string);
     let receipt_command = string_at(canonical_item, &["receipt_command"])
         .or_else(|| string_at(evidence, &["receipt_command"]))
+        .filter(|command| command_display_is_nonblank(command))
         .map(ToString::to_string);
     let command_specs = match command_specs_from_value(Some(canonical_item)) {
         Ok((verify, receipt)) if !verify.is_empty() || !receipt.is_empty() => {
@@ -755,7 +758,7 @@ fn gap_record_from_repo_exposure_seam(seam: &Value) -> Option<GapRecord> {
     let projection_eligibility = projection_eligibility_from_repo_evidence(
         repairability,
         repair_route.is_some(),
-        !verification_commands.is_empty(),
+        command_displays_are_complete(&verification_commands),
         anchor.file.is_some() && anchor.line.is_some(),
         gap_state,
     );
@@ -907,7 +910,9 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
     let suggested_test_name =
         string_at(card, &["suggested_location", "test_name"]).map(ToString::to_string);
     let related_test_line = first_related_test_line(finding);
-    let verify_command = string_at(card, &["verify", "command"]).map(ToString::to_string);
+    let verify_command = string_at(card, &["verify", "command"])
+        .filter(|command| command_display_is_nonblank(command))
+        .map(ToString::to_string);
     let repair_action = string_at(card, &["repair_action"]).unwrap_or("add_or_strengthen_test");
     let repairability = if suggested_test_file.is_some() && verify_command.is_some() {
         "repairable"
@@ -942,14 +947,14 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
     let mut projection_eligibility = projection_eligibility_from_pr_evidence(
         repairability,
         repair_route.is_some(),
-        !verification_commands.is_empty(),
+        command_displays_are_complete(&verification_commands),
         anchor.file.is_some() && anchor.line.is_some(),
         "actionable",
     );
     let (agent_packet_eligible, agent_packet_reason) = python_agent_packet_eligibility(
         repairability,
         repair_route.is_some(),
-        !verification_commands.is_empty(),
+        command_displays_are_complete(&verification_commands),
         anchor.file.is_some() && anchor.line.is_some(),
         "actionable",
         string_at(finding, &["oracle_alignment"]),
@@ -961,7 +966,11 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
         agent_packet_eligible,
         agent_packet_reason,
     );
-    let receipt_command = string_at(card, &["receipt", "command"]).map(ToString::to_string);
+    let receipt_command = (repairability == "repairable")
+        .then(|| string_at(card, &["receipt", "command"]))
+        .flatten()
+        .filter(|command| command_display_is_nonblank(command))
+        .map(ToString::to_string);
     let mut evidence_ids = Vec::new();
     if let Some(id) = string_at(finding, &["id"]) {
         evidence_ids.push(id.to_string());
@@ -1103,7 +1112,9 @@ fn gap_record_from_typescript_repair_finding(finding: &Value, index: usize) -> O
         });
     let target_test = string_at(packet, &["target_test"]).map(ToString::to_string);
     let target_line = first_related_test_line(finding);
-    let verify_command = string_at(packet, &["verify_command"]).map(ToString::to_string);
+    let verify_command = string_at(packet, &["verify_command"])
+        .filter(|command| command_display_is_nonblank(command))
+        .map(ToString::to_string);
     let repairability = if target_file.is_some() && verify_command.is_some() {
         "repairable"
     } else {
@@ -1142,7 +1153,7 @@ fn gap_record_from_typescript_repair_finding(finding: &Value, index: usize) -> O
     let projection_eligibility = projection_eligibility_from_pr_evidence(
         repairability,
         repair_route.is_some(),
-        !verification_commands.is_empty(),
+        command_displays_are_complete(&verification_commands),
         anchor.file.is_some() && anchor.line.is_some(),
         "actionable",
     );
@@ -1192,7 +1203,11 @@ fn gap_record_from_typescript_repair_finding(finding: &Value, index: usize) -> O
         projection_eligibility,
         verification_commands,
         command_specs: None,
-        receipt_command: string_at(packet, &["receipt_command"]).map(ToString::to_string),
+        receipt_command: (repairability == "repairable")
+            .then(|| string_at(packet, &["receipt_command"]))
+            .flatten()
+            .filter(|command| command_display_is_nonblank(command))
+            .map(ToString::to_string),
         regeneration_commands: Vec::new(),
         receipt: None,
         safe_gate_predicate: None,
@@ -1361,7 +1376,7 @@ fn gap_record_from_perl_preview_finding(finding: &Value, index: usize) -> Option
     })
     .filter(|record| {
         record.repair_route.is_some()
-            && !record.verification_commands.is_empty()
+            && command_displays_are_complete(&record.verification_commands)
             && has_local_anchor
     })
 }
@@ -1821,7 +1836,7 @@ fn gap_record_from_finding_alignment_item(item: &Value, index: usize) -> Option<
     let projection_eligibility = projection_eligibility_from_pr_evidence(
         repairability,
         repair_route.is_some(),
-        !verification_commands.is_empty(),
+        command_displays_are_complete(&verification_commands),
         anchor.file.is_some() && anchor.line.is_some(),
         gap_state,
     );
@@ -2192,6 +2207,7 @@ fn summarize_records(records: &[GapRecord]) -> GapDecisionLedgerSummary {
         ..GapDecisionLedgerSummary::default()
     };
     for record in records {
+        let commands_complete = command_displays_are_complete(&record.verification_commands);
         if record.repairability == "repairable" {
             summary.repairable_total += 1;
         }
@@ -2209,25 +2225,25 @@ fn summarize_records(records: &[GapRecord]) -> GapDecisionLedgerSummary {
         if record.scope == "artifact_missing" {
             summary.missing_artifact_total += 1;
         }
-        if projection_eligible(record, "pr_comment") {
+        if commands_complete && projection_eligible(record, "pr_comment") {
             summary.projection_pr_comment_eligible += 1;
         }
-        if projection_eligible(record, "gate_candidate") {
+        if commands_complete && projection_eligible(record, "gate_candidate") {
             summary.projection_gate_candidate += 1;
         }
-        if projection_eligible(record, "agent_packet") {
+        if commands_complete && projection_eligible(record, "agent_packet") {
             summary.projection_agent_packet_eligible += 1;
         }
-        if projection_eligible(record, "ripr_zero_count") {
+        if commands_complete && projection_eligible(record, "ripr_zero_count") {
             summary.ripr_zero_target_count += 1;
         }
-        if projection_eligible(record, "ripr_plus_count") {
+        if commands_complete && projection_eligible(record, "ripr_plus_count") {
             summary.ripr_plus_target_count += 1;
         }
         if record.language_status == "preview"
-            && !projection_eligible(record, "gate_candidate")
-            && !projection_eligible(record, "ripr_zero_count")
-            && !projection_eligible(record, "ripr_plus_count")
+            && !(commands_complete && projection_eligible(record, "gate_candidate"))
+            && !(commands_complete && projection_eligible(record, "ripr_zero_count"))
+            && !(commands_complete && projection_eligible(record, "ripr_plus_count"))
         {
             summary.preview_ineligible_total += 1;
         }
@@ -2270,7 +2286,9 @@ fn validate_record(record: &GapRecord, warnings: &mut Vec<String>) {
             fallback_gap_id(record)
         ));
     }
-    if record.repairability == "repairable" && record.verification_commands.is_empty() {
+    if record.repairability == "repairable"
+        && !command_displays_are_complete(&record.verification_commands)
+    {
         warnings.push(format!(
             "gap record {} is repairable but missing verification_commands",
             fallback_gap_id(record)
@@ -2322,7 +2340,7 @@ pub(crate) fn safe_gate_predicate_satisfied(record: &GapRecord) -> bool {
         && matches!(record.policy_state.as_str(), "new" | "blocked")
         && record.repairability == "repairable"
         && record.repair_route.is_some()
-        && !record.verification_commands.is_empty()
+        && command_displays_are_complete(&record.verification_commands)
         && predicate.policy_target_enabled
         && !predicate.suppressed
         && !predicate.waived
@@ -2409,11 +2427,13 @@ fn render_record_markdown(record: &GapRecord, out: &mut String) {
             eligible.join("`, `")
         ));
     }
-    if !record.verification_commands.is_empty() {
+    if command_displays_are_complete(&record.verification_commands) {
         out.push_str("- Verify:\n");
         for command in &record.verification_commands {
             out.push_str(&format!("  - `{}`\n", md_inline(command)));
         }
+    } else if !record.verification_commands.is_empty() {
+        out.push_str("- Verify: `unavailable_incomplete_command_list`\n");
     }
     if !record.regeneration_commands.is_empty() {
         out.push_str("- Regenerate:\n");
@@ -2421,7 +2441,11 @@ fn render_record_markdown(record: &GapRecord, out: &mut String) {
             out.push_str(&format!("  - `{}`\n", md_inline(command)));
         }
     }
-    if let Some(command) = &record.receipt_command {
+    if let Some(command) = record
+        .receipt_command
+        .as_deref()
+        .filter(|command| command_display_is_nonblank(command))
+    {
         out.push_str("- Receipt:\n");
         out.push_str(&format!("  - `{}`\n", md_inline(command)));
     }
@@ -3100,6 +3124,26 @@ mod tests {
     }
 
     #[test]
+    fn repo_exposure_whitespace_verify_cannot_authorize_rust_projections() -> Result<(), String> {
+        let mut seam =
+            make_repo_exposure_seam("actionable", "add_focused_test", "predicate_boundary");
+        seam["evidence_record"]["canonical_item"]["verify_command"] =
+            Value::String(" \t ".to_string());
+        seam["evidence_record"]["recommendation"]["verify_command"] =
+            Value::String("  ".to_string());
+        let payload = serde_json::json!({"seams": [seam]});
+        let records = gap_records_from_repo_exposure_json(&payload.to_string())?;
+        let record = records
+            .first()
+            .ok_or_else(|| "whitespace Rust seam did not produce a record".to_string())?;
+        assert!(record.verification_commands.is_empty());
+        assert!(!projection_eligible(record, "pr_comment"));
+        assert!(!projection_eligible(record, "agent_packet"));
+        assert!(!projection_eligible(record, "gate_candidate"));
+        Ok(())
+    }
+
+    #[test]
     fn repo_exposure_null_typed_command_slots_remain_legacy_readable() -> Result<(), String> {
         let mut seam =
             make_repo_exposure_seam("actionable", "add_focused_test", "predicate_boundary");
@@ -3517,6 +3561,53 @@ mod tests {
     }
 
     #[test]
+    fn check_output_python_whitespace_verify_is_not_repairable_or_receipt_backed()
+    -> Result<(), String> {
+        let mut check_output: Value = serde_json::from_str(&python_boundary_gap_check_output())
+            .map_err(|error| format!("parse Python boundary fixture: {error}"))?;
+        let command = check_output
+            .get_mut("findings")
+            .and_then(Value::as_array_mut)
+            .and_then(|findings| findings.first_mut())
+            .and_then(|finding| finding.get_mut("python_repair_card"))
+            .and_then(|card| card.get_mut("verify"))
+            .and_then(|verify| verify.get_mut("command"))
+            .ok_or_else(|| "Python boundary fixture verify command missing".to_string())?;
+        *command = Value::String(" \t ".to_string());
+
+        let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: "fixtures/python_boundary_gap/input".to_string(),
+            generated_at: "test".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "mutated-python-boundary-check.json".to_string(),
+            records_json: Ok(check_output.to_string()),
+        });
+        let record = report
+            .records
+            .first()
+            .ok_or_else(|| "whitespace mutation did not produce an advisory record".to_string())?;
+        if record.repairability != "unknown"
+            || record.repair_route.is_some()
+            || !record.verification_commands.is_empty()
+            || record.receipt_command.is_some()
+            || projection_eligible(record, "agent_packet")
+            || projection_eligible(record, "pr_comment")
+            || report.summary.projection_agent_packet_eligible != 0
+        {
+            return Err(format!(
+                "whitespace verify retained repair authority: {record:?}"
+            ));
+        }
+        let markdown = render_gap_decision_ledger_markdown(&report);
+        if markdown.contains("- Verify:") || markdown.contains("- Receipt:") {
+            return Err(format!(
+                "whitespace verify or derived receipt leaked into Markdown: {markdown}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn python_agent_packet_alignment_pairs_fail_closed() -> Result<(), String> {
         let accepted = [
             ("direct", "strong_oracle_observes_owner_name"),
@@ -3907,6 +3998,39 @@ mod tests {
             packet.contains("\"receipt_status\": \"available\""),
             "expected packet receipt availability in {packet}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn check_output_typescript_whitespace_verify_stays_non_actionable() -> Result<(), String> {
+        let mut payload: Value =
+            serde_json::from_str(&typescript_preview_gap_before_check_output())
+                .map_err(|error| format!("parse TypeScript fixture: {error}"))?;
+        let command = payload
+            .get_mut("findings")
+            .and_then(Value::as_array_mut)
+            .and_then(|findings| findings.first_mut())
+            .and_then(|finding| finding.get_mut("typescript_repair_packet"))
+            .and_then(|packet| packet.get_mut("verify_command"))
+            .ok_or_else(|| "TypeScript fixture verify command missing".to_string())?;
+        *command = Value::String(" \t ".to_string());
+        let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: ".".to_string(),
+            generated_at: "test".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "mutated-typescript-check.json".to_string(),
+            records_json: Ok(payload.to_string()),
+        });
+        let record = report
+            .records
+            .first()
+            .ok_or_else(|| "whitespace TypeScript packet did not produce a record".to_string())?;
+        assert_eq!(record.repairability, "unknown");
+        assert!(record.repair_route.is_none());
+        assert!(record.verification_commands.is_empty());
+        assert!(record.receipt_command.is_none());
+        assert!(!projection_eligible(record, "agent_packet"));
+        assert_eq!(report.summary.projection_agent_packet_eligible, 0);
         Ok(())
     }
 
@@ -4505,6 +4629,17 @@ mod tests {
         };
         assert!(safe_gate_predicate_satisfied(&good_record));
 
+        for invalid_commands in [
+            vec!["  ".to_string()],
+            vec!["cargo test".to_string(), " \t".to_string()],
+        ] {
+            let invalid = GapRecord {
+                verification_commands: invalid_commands,
+                ..good_record.clone()
+            };
+            assert!(!safe_gate_predicate_satisfied(&invalid));
+        }
+
         // Missing predicate → false
         let no_predicate = GapRecord {
             safe_gate_predicate: None,
@@ -4750,6 +4885,7 @@ mod tests {
                 gap_id: "gap:r6".to_string(),
                 kind: "MissingOutputContract".to_string(),
                 projection_eligibility: projections_gate.clone(),
+                verification_commands: vec!["cargo test".to_string()],
                 repairability: "no_action".to_string(),
                 ..GapRecord::default()
             },
@@ -4799,6 +4935,38 @@ mod tests {
         assert_eq!(summary.preview_ineligible_total, 1);
     }
 
+    #[test]
+    fn summarize_records_rejects_blank_and_mixed_projection_commands() {
+        let mut projections = BTreeMap::new();
+        for projection in [
+            "pr_comment",
+            "gate_candidate",
+            "agent_packet",
+            "ripr_zero_count",
+            "ripr_plus_count",
+        ] {
+            insert_projection(&mut projections, projection, true, "caller-declared");
+        }
+        for commands in [
+            vec![" \t ".to_string()],
+            vec!["cargo test".to_string(), "  ".to_string()],
+        ] {
+            let summary = summarize_records(&[GapRecord {
+                gap_id: "gap:invalid-commands".to_string(),
+                language_status: "preview".to_string(),
+                projection_eligibility: projections.clone(),
+                verification_commands: commands,
+                ..GapRecord::default()
+            }]);
+            assert_eq!(summary.projection_pr_comment_eligible, 0);
+            assert_eq!(summary.projection_gate_candidate, 0);
+            assert_eq!(summary.projection_agent_packet_eligible, 0);
+            assert_eq!(summary.ripr_zero_target_count, 0);
+            assert_eq!(summary.ripr_plus_target_count, 0);
+            assert_eq!(summary.preview_ineligible_total, 1);
+        }
+    }
+
     // ── render_record_markdown covers no-anchor, no-repair, no-projections ──
 
     #[test]
@@ -4831,6 +4999,25 @@ mod tests {
         assert!(!out.contains("Verify:"));
         assert!(!out.contains("Regenerate:"));
         assert!(!out.contains("Receipt movement:"));
+    }
+
+    #[test]
+    fn render_record_markdown_fails_closed_for_blank_or_mixed_verification_commands() {
+        for commands in [
+            vec![" \t ".to_string()],
+            vec!["cargo test".to_string(), "  ".to_string()],
+        ] {
+            let record = GapRecord {
+                gap_id: "gap:incomplete-verify".to_string(),
+                verification_commands: commands,
+                ..GapRecord::default()
+            };
+            let mut out = String::new();
+            render_record_markdown(&record, &mut out);
+            assert!(out.contains("Verify: `unavailable_incomplete_command_list`"));
+            assert!(!out.contains("  - `cargo test`"));
+            assert!(!out.contains("  - `  `"));
+        }
     }
 
     #[test]

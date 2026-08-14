@@ -6,6 +6,7 @@ use super::gap_artifacts::{
 };
 use super::state::{AnalysisSnapshot, RefreshMetadata};
 use super::uri::{absolute_join, display_path, file_uri_for_path, path_from_file_uri};
+use crate::agent::command_specs::{command_display_is_nonblank, command_displays_are_complete};
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::cancellation::AnalysisCancellationToken;
 use crate::analysis::inventory_classified_seams_at_with_config;
@@ -1713,13 +1714,17 @@ fn finding_is_advisory(finding: &Finding) -> bool {
     finding.static_limit_kind.is_some() || finding.language_status == Some(LanguageStatus::Preview)
 }
 
-/// A gap record has a complete repair packet when it is repairable, carries
-/// at least one verification command, and has a receipt command.
+/// A gap record has a complete repair packet when it is repairable, carries a
+/// non-empty verification list whose every display is non-whitespace after
+/// trimming, and has a receipt command that is non-whitespace after trimming.
 /// WARNING is only appropriate when the packet is complete and actionable.
 fn gap_record_has_complete_packet(record: &GapRecord) -> bool {
     record.repairability == "repairable"
-        && !record.verification_commands.is_empty()
-        && record.receipt_command.is_some()
+        && command_displays_are_complete(&record.verification_commands)
+        && record
+            .receipt_command
+            .as_deref()
+            .is_some_and(command_display_is_nonblank)
 }
 
 /// A gap record is advisory when it is from a preview language or carries a
@@ -1733,8 +1738,8 @@ fn gap_record_is_advisory(record: &GapRecord) -> bool {
 /// packet AND is not advisory. All other cases → INFORMATION.
 ///
 /// This enforces the hard rule: no WARNING without a complete repair packet.
-/// A complete packet requires `repairability == "repairable"`,
-/// non-empty `verification_commands`, and `receipt_command.is_some()`.
+/// A complete packet requires `repairability == "repairable"`, an all-nonblank
+/// `verification_commands` list, and a trim-nonblank `receipt_command`.
 /// Advisory records (preview language or static_limit_kind present) are
 /// clamped to INFORMATION even when the packet looks complete.
 fn gap_record_diagnostic_severity(record: &GapRecord) -> DiagnosticSeverity {
@@ -3429,6 +3434,20 @@ mod diagnostic_policy_tests {
             ));
         }
 
+        for invalid_commands in [
+            vec![" \t ".to_string()],
+            vec!["cargo test".to_string(), "  ".to_string()],
+        ] {
+            let mut blank_verify = complete.clone();
+            blank_verify.verification_commands = invalid_commands;
+            let severity = gap_record_diagnostic_severity(&blank_verify);
+            if severity != DiagnosticSeverity::INFORMATION {
+                return Err(format!(
+                    "expected INFORMATION for blank verification display, got {severity:?}"
+                ));
+            }
+        }
+
         // Missing receipt_command → INFORMATION.
         let mut no_receipt = complete.clone();
         no_receipt.receipt_command = None;
@@ -3436,6 +3455,15 @@ mod diagnostic_policy_tests {
         if severity != DiagnosticSeverity::INFORMATION {
             return Err(format!(
                 "expected INFORMATION when receipt_command missing, got {severity:?}"
+            ));
+        }
+
+        let mut blank_receipt = complete.clone();
+        blank_receipt.receipt_command = Some(" \t ".to_string());
+        let severity = gap_record_diagnostic_severity(&blank_receipt);
+        if severity != DiagnosticSeverity::INFORMATION {
+            return Err(format!(
+                "expected INFORMATION for blank receipt display, got {severity:?}"
             ));
         }
 

@@ -7,6 +7,25 @@ use crate::domain::{
     NetworkPolicy, StdinPolicy,
 };
 
+/// Compatibility command displays are usable only when they carry content.
+///
+/// Typed [`CommandSpec`] validation remains the execution authority. This
+/// predicate owns the narrower legacy-display readiness contract shared by
+/// producers and consumers that still carry compatibility strings.
+pub(crate) fn command_display_is_nonblank(display: &str) -> bool {
+    !display.trim().is_empty()
+}
+
+/// A legacy command-display list is complete only when every entry is usable.
+/// Rejecting mixed blank/nonblank lists avoids letting a valid first entry
+/// hide a content-free route later in the same producer-owned collection.
+pub(crate) fn command_displays_are_complete(displays: &[String]) -> bool {
+    !displays.is_empty()
+        && displays
+            .iter()
+            .all(|display| command_display_is_nonblank(display))
+}
+
 pub(crate) fn agent_verify_command_spec(
     root: &str,
     before_path: &str,
@@ -255,6 +274,28 @@ mod tests {
         WORKFLOW_AFTER_SNAPSHOT_ARTIFACT, WORKFLOW_AGENT_RECEIPT_ARTIFACT,
         WORKFLOW_AGENT_VERIFY_ARTIFACT, WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
     };
+
+    #[test]
+    fn legacy_command_display_readiness_rejects_empty_whitespace_and_mixed_lists()
+    -> Result<(), String> {
+        let valid = vec!["cargo test -p ripr".to_string(), "pytest tests".to_string()];
+        if !command_displays_are_complete(&valid) {
+            return Err("nonblank compatibility displays were rejected".to_string());
+        }
+        for invalid in [
+            Vec::<String>::new(),
+            vec!["".to_string()],
+            vec![" \t ".to_string()],
+            vec!["cargo test -p ripr".to_string(), "  ".to_string()],
+        ] {
+            if command_displays_are_complete(&invalid) {
+                return Err(format!(
+                    "content-free command list was accepted: {invalid:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
 
     #[test]
     fn typed_agent_routes_preserve_argv_and_disclose_shell_redirection() -> Result<(), String> {

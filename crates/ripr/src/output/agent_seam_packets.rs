@@ -17,6 +17,7 @@
 //! repo-exposure report's 0.1, because the packet is a separate
 //! contract aimed at coding agents rather than reviewers.
 
+use crate::agent::command_specs::{command_display_is_nonblank, command_displays_are_complete};
 use crate::agent::loop_commands::{
     WORKFLOW_AFTER_SNAPSHOT_ARTIFACT, WORKFLOW_AGENT_RECEIPT_ARTIFACT,
     WORKFLOW_AGENT_VERIFY_ARTIFACT, WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, agent_receipt_command,
@@ -1207,8 +1208,8 @@ pub(crate) fn validate_agent_gap_record_packet(record: &GapRecord) -> Result<(),
     let Some(route) = record.repair_route.as_ref() else {
         return Err("requires a repair_route".to_string());
     };
-    if record.verification_commands.is_empty() {
-        return Err("requires verification_commands".to_string());
+    if !command_displays_are_complete(&record.verification_commands) {
+        return Err("requires nonblank verification_commands".to_string());
     }
     if record.repairability != "repairable" && route.route_kind != "InspectStaticLimit" {
         return Err("requires a repairable gap or bounded inspection route".to_string());
@@ -1219,10 +1220,9 @@ pub(crate) fn validate_agent_gap_record_packet(record: &GapRecord) -> Result<(),
     if record
         .receipt_command
         .as_deref()
-        .and_then(non_empty)
-        .is_none()
+        .is_none_or(|command| !command_display_is_nonblank(command))
     {
-        return Err("requires receipt_command".to_string());
+        return Err("requires nonblank receipt_command".to_string());
     }
     Ok(())
 }
@@ -4961,8 +4961,55 @@ mod tests {
             .ok_or_else(|| "expected parsed gap record".to_string())?;
         assert_eq!(
             render_agent_gap_record_packet_json("gap-ledger.json", record),
-            Err("requires receipt_command".to_string())
+            Err("requires nonblank receipt_command".to_string())
         );
+        Ok(())
+    }
+
+    #[test]
+    fn gap_record_packet_and_queue_reject_blank_or_mixed_legacy_commands() -> Result<(), String> {
+        let valid = typed_gap_record()?;
+        for invalid_commands in [
+            vec![" \t ".to_string()],
+            vec!["cargo test -p ripr".to_string(), "  ".to_string()],
+        ] {
+            let record = GapRecord {
+                verification_commands: invalid_commands,
+                ..valid.clone()
+            };
+            let error = render_agent_gap_record_packet_json("gap-ledger.json", &record)
+                .err()
+                .ok_or_else(|| "blank verification route produced an agent packet".to_string())?;
+            if error != "requires nonblank verification_commands" {
+                return Err(format!("unexpected blank-route rejection: {error}"));
+            }
+            let queue = render_agent_gap_record_queue_json(
+                ".",
+                "gap-ledger.json",
+                std::slice::from_ref(&record),
+                "rust",
+                10,
+            )?;
+            let queue: Value = serde_json::from_str(&queue)
+                .map_err(|error| format!("parse blank-route queue: {error}"))?;
+            if queue
+                .get("packets")
+                .and_then(Value::as_array)
+                .is_none_or(|packets| !packets.is_empty())
+            {
+                return Err(format!("blank verification route entered queue: {queue}"));
+            }
+        }
+
+        let blank_receipt = GapRecord {
+            receipt_command: Some(" \t ".to_string()),
+            ..valid
+        };
+        if render_agent_gap_record_packet_json("gap-ledger.json", &blank_receipt)
+            != Err("requires nonblank receipt_command".to_string())
+        {
+            return Err("blank receipt route produced an agent packet".to_string());
+        }
         Ok(())
     }
 
