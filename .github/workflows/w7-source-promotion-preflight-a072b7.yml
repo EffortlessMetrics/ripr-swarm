@@ -22,6 +22,7 @@ jobs:
       SWARM_PARENT: 83217e97ec6847db41d757f57279a8b1ca433fe6
       SWARM_REF: refs/tags/ripr-release-0.11.0-83217e97ec6847db41d757f57279a8b1ca433fe6
       RESOLVED_TREE: c53a89dcace27f54fdb78df4d16037959dfa2e2a
+      JOIN_HEAD: 87cc06cfb7f686248a35f93871d8794bdbe30ba1
       VERSION: 0.11.0
 
     steps:
@@ -49,7 +50,7 @@ jobs:
         with:
           toolchain: 1.95.0
 
-      - name: Bind exact repositories and protected candidate tag
+      - name: Bind exact repositories, candidate tag, and reviewed tree object
         shell: bash
         run: |
           set -euo pipefail
@@ -61,6 +62,17 @@ jobs:
           live_ref=$(git ls-remote --refs https://github.com/EffortlessMetrics/ripr-swarm.git "$SWARM_REF")
           test "$(printf '%s\n' "$live_ref" | wc -l)" -eq 1
           test "$(printf '%s\n' "$live_ref" | awk '{print $1}')" = "$SWARM_PARENT"
+
+          # The reviewed tree is intentionally not in either parent. Fetch the exact
+          # unmerged J object solely so its tree is present in the disposable source
+          # object store; source HEAD and origin/main remain pinned to SOURCE_PARENT.
+          git -C source fetch --no-tags https://github.com/EffortlessMetrics/ripr.git "$JOIN_HEAD"
+          test "$(git -C source cat-file -t "$JOIN_HEAD")" = commit
+          test "$(git -C source rev-parse "$JOIN_HEAD^{tree}")" = "$RESOLVED_TREE"
+          test "$(git -C source cat-file -t "$RESOLVED_TREE")" = tree
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE_PARENT"
+          test "$(git -C source rev-parse origin/main)" = "$SOURCE_PARENT"
+
           mkdir -p preflight
           {
             printf 'source_parent=%s\n' "$SOURCE_PARENT"
@@ -70,6 +82,7 @@ jobs:
             printf 'swarm_ref=%s\n' "$SWARM_REF"
             printf 'swarm_ref_sha=%s\n' "$(printf '%s\n' "$live_ref" | awk '{print $1}')"
             printf 'reviewed_resolved_tree=%s\n' "$RESOLVED_TREE"
+            printf 'join_head=%s\n' "$JOIN_HEAD"
             git --version
             rustc -Vv
             cargo -V
