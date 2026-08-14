@@ -196,6 +196,28 @@ mod tests {
     }
 
     #[test]
+    fn whitespace_padded_wildcard_discards_are_infection_unknown() {
+        // #3233: the infection stage consumes the shared predicate directly,
+        // so non-canonical whitespace shapes must classify as discards here
+        // too — a regression to the old exact-prefix match in this stage
+        // alone would fail this test even if the flow stage stayed correct.
+        for expression in [
+            "let _ : u32 = helper(x);",
+            "let _=helper(x);",
+            "let   _   =   helper(x);",
+        ] {
+            let probe = probe(ProbeFamily::ReturnValue, expression);
+            let test = test_with_literals(&["1"]);
+            let evidence = infection_evidence(&probe, &[&test], &ActivationEvidence::default());
+            assert_eq!(
+                evidence.state,
+                StageState::Unknown,
+                "`{expression}` must be a discard in the infection stage"
+            );
+        }
+    }
+
+    #[test]
     fn named_binding_is_not_a_discard_stays_yes() {
         // `let _name = ...` is a named binding that could be used — must stay Yes
         let probe = probe(ProbeFamily::ReturnValue, "let _result = helper(a)");
