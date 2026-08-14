@@ -997,6 +997,66 @@ mod tests {
         assert!(classify(true, true, Some(&ok)) == Outcome::TimedOut);
     }
 
+    /// #3258 boundary regression: `run_check` must forward the captured
+    /// process exit status into classification — a wiring regression that
+    /// hardcodes the failed-exit leg again would undercount `crash_rate`
+    /// while every pure `classify` test stays green. The probe binary is a
+    /// tiny host script that prints one well-formed JSON object and exits 1,
+    /// driven through the real capture path.
+    #[test]
+    fn run_check_classifies_failure_exit_with_valid_json_as_crash() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-evalsweep-exit-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create dir: {err}"))?;
+
+        #[cfg(unix)]
+        let (script, script_text) = (
+            dir.join("fake-ripr"),
+            "#!/bin/sh\nprintf '{\"findings\":[]}'\nexit 1\n".to_string(),
+        );
+        #[cfg(windows)]
+        let (script, script_text) = (
+            dir.join("fake-ripr.cmd"),
+            "@echo {\"findings\":[]}\r\nexit /b 1\r\n".to_string(),
+        );
+        std::fs::write(&script, script_text).map_err(|err| format!("write script: {err}"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+                .map_err(|err| format!("chmod script: {err}"))?;
+        }
+
+        let mut args = SweepArgs::defaults();
+        args.timeout = Duration::from_secs(30);
+        let run = run_check(&script, &dir, "unused.patch", &args);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        if run.outcome != Outcome::Crash {
+            return Err(format!(
+                "nonzero exit with parseable JSON must classify as crash, got {} (outcome), stderr: {}",
+                outcome_name(run.outcome),
+                run.stderr
+            ));
+        }
+        Ok(())
+    }
+
+    fn outcome_name(outcome: Outcome) -> &'static str {
+        match outcome {
+            Outcome::Ok => "ok",
+            Outcome::ParseFailure => "parse_failure",
+            Outcome::TimedOut => "timed_out",
+            Outcome::Crash => "crash",
+            Outcome::CloneFailed => "clone_failed",
+            Outcome::SkippedMissingCheckout => "skipped_missing_checkout",
+        }
+    }
+
     #[test]
     fn gap_ids_collects_both_shapes() {
         let value = json!({
