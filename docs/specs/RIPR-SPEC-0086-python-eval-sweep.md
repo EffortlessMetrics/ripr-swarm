@@ -8,8 +8,7 @@ Linked proposal:
 
 - None. This is a standalone evidence-tooling contract; it adds no product
   library behavior and no public API. It anchors the eval-sweep-driven Python
-  reliability campaign tracked by [issue #1160](https://github.com/EffortlessMetrics/ripr-swarm/issues/1160)
-  and the [Python repair-routing plan](../../plans/python-repair-routing/implementation-plan.md).
+  reliability campaign tracked by [issue #1160](https://github.com/EffortlessMetrics/ripr-swarm/issues/1160).
 
 Linked ADRs:
 
@@ -18,7 +17,7 @@ Linked ADRs:
 
 Linked plan:
 
-- None.
+- [Python Repair Routing Implementation Plan](../../plans/python-repair-routing/implementation-plan.md)
 
 Linked issues:
 

@@ -89,6 +89,21 @@ related-test, and static-limit facts remain syntax-first and advisory. The
 bounded repair-routing loop for selected pytest/unittest shapes is separately
 classified as `usable alpha`.
 
+## Status interpretation
+
+The per-item `Status`, `Blocked by`, `Progress`, and `Delivered` fields under
+**Work items** are a preserved execution-time snapshot. They were not
+retroactively normalized when the usable-alpha closeout landed, so they are not
+a current dependency queue: a historical `in progress` entry does not establish
+active ownership or an unfinished prerequisite for an item marked `done`.
+
+Current remaining promotion work is governed by issue #1160, not by those
+snapshot statuses. It includes current robustness and judged-panel reruns,
+explicit acceptable thresholds, external repair and rollback evidence, and a
+separate support-tier decision. RIPR-SPEC-0086 and RIPR-SPEC-0092 remain
+proposed; this reconciliation does not complete either contract or add a
+semantic validator.
+
 The lane target is higher than parser support. Python should become the first
 non-Rust proof that RIPR can turn changed behavior into a bounded repair task:
 
