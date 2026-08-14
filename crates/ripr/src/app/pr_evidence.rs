@@ -1248,14 +1248,22 @@ mod tests {
             head: "HEAD".to_string(),
             ..options()
         };
-        let generation_error = write_pr_evidence_with_runner(&repo, &options, |_repo, _options| {
-            Err("ripr check for PR evidence failed; retry command: ripr pr-evidence --base HEAD~1 --head HEAD --root .".to_string())
-        })
-        .expect_err("producer failure must fail closed");
+        let generation_error = match write_pr_evidence_with_runner(
+            &repo,
+            &options,
+            |_repo, _options| {
+                Err("ripr check for PR evidence failed; retry command: ripr pr-evidence --base HEAD~1 --head HEAD --root .".to_string())
+            },
+        ) {
+            Ok(()) => return Err("producer failure did not fail closed".to_string()),
+            Err(error) => error,
+        };
         assert!(generation_error.contains("producer failed"));
 
-        let check_error = check_pr_evidence(&repo, &options)
-            .expect_err("standalone check must reject preserved error packet");
+        let check_error = match check_pr_evidence(&repo, &options) {
+            Ok(()) => return Err("standalone check accepted preserved error packet".to_string()),
+            Err(error) => error,
+        };
         assert!(check_error.contains("producer failed"));
 
         let packet_text = fs::read_to_string(repo.join(PR_EVIDENCE_JSON))
