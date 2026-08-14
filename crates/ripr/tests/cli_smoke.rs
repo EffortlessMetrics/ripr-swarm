@@ -3691,6 +3691,113 @@ fn agent_verify_and_receipt_disclose_historical_before_current_after_pair()
 }
 
 #[test]
+fn agent_verify_accepts_current_before_historical_after_descendant_pair()
+-> Result<(), Box<dyn std::error::Error>> {
+    // Reachability record for #3229: with the checked-out HEAD at the before
+    // artifact's revision and the after artifact bound to a descendant
+    // revision, the lineage gate passes (the before head is an ancestor of the
+    // after head) and the movement gate passes (distinct revisions), so
+    // `current_before_historical_after` is an accepted advisory verify outcome
+    // — the descendant shape is reachable, not always lineage-rejected.
+    let root = unique_temp_workspace("agent-verify-current-before-historical");
+    std::fs::create_dir_all(&root)?;
+    init_git_fixture_repo(&root)?;
+    let before_head = concrete_fixture_repository_head(&root)?;
+    let before = root.join("before.repo-exposure.json");
+    let after = root.join("after.repo-exposure.json");
+    write_bound_repo_exposure_fixture(
+        &root,
+        &before,
+        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#,
+    )?;
+    advance_fixture_head(&root, "descendant movement")?;
+    write_bound_repo_exposure_fixture(
+        &root,
+        &after,
+        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#,
+    )?;
+    // Detach back at the before revision on a clean worktree: the before
+    // artifact becomes current again while the after artifact stays bound to
+    // the descendant head.
+    run_git(&root, &["checkout", "--detach", &before_head])?;
+
+    let output = run_ripr(&[
+        "agent",
+        "verify",
+        "--root",
+        &root.display().to_string(),
+        "--before",
+        &before.display().to_string(),
+        "--after",
+        &after.display().to_string(),
+        "--json",
+    ]);
+    assert_success(&output);
+    let verify: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(
+        json_pointer_str(&verify, "/artifact_currentness")?,
+        "current_before_historical_after"
+    );
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
+fn agent_verify_historical_before_token_ignores_declared_dirty_production()
+-> Result<(), Box<dyn std::error::Error>> {
+    // Non-certification record for #3229: a before artifact that declares a
+    // dirty worktree in its envelope is classified by head mismatch alone once
+    // the repository moves past it, so the pair token stays
+    // `historical_before_current_after` rather than `dirty_before`. The pair
+    // token is a movement/currentness shape, not a cleanliness certificate
+    // for the historical side.
+    let root = unique_temp_workspace("agent-verify-historical-declared-dirty");
+    std::fs::create_dir_all(&root)?;
+    init_git_fixture_repo(&root)?;
+    let before = root.join("before.repo-exposure.json");
+    let after = root.join("after.repo-exposure.json");
+    write_bound_repo_exposure_fixture(
+        &root,
+        &before,
+        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#,
+    )?;
+    let before_content = std::fs::read_to_string(&before)?;
+    let declared_dirty =
+        before_content.replace("\"worktree\": \"clean\"", "\"worktree\": \"dirty\"");
+    assert_ne!(
+        declared_dirty, before_content,
+        "fixture must declare a clean worktree before the flip"
+    );
+    std::fs::write(&before, recommit_repo_exposure_json(declared_dirty))?;
+    advance_fixture_head(&root, "after movement")?;
+    write_bound_repo_exposure_fixture(
+        &root,
+        &after,
+        r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"strongly_gripped"}"#,
+    )?;
+
+    let output = run_ripr(&[
+        "agent",
+        "verify",
+        "--root",
+        &root.display().to_string(),
+        "--before",
+        &before.display().to_string(),
+        "--after",
+        &after.display().to_string(),
+        "--json",
+    ]);
+    assert_success(&output);
+    let verify: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(
+        json_pointer_str(&verify, "/artifact_currentness")?,
+        "historical_before_current_after"
+    );
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
 fn agent_verify_discloses_dirty_before_and_dirty_after_pairs()
 -> Result<(), Box<dyn std::error::Error>> {
     // A declared dirty worktree on exactly one side names that side (#3027).

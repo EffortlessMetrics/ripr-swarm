@@ -6307,7 +6307,7 @@ JSON shape:
     "before_content_sha256": "sha256:<64-hex-digest>",
     "after_content_sha256": "sha256:<64-hex-digest>"
   },
-  "artifact_currentness": "current",
+  "artifact_currentness": "historical_before_current_after",
   "summary": {
     "improved": 1,
     "changed": 0,
@@ -6392,8 +6392,20 @@ Field contract:
   `current`, `historical_noncurrent`, `historical_before_current_after`,
   `current_before_historical_after`, `dirty_before`, `dirty_after`, or
   `dirty_both`. A dirty side names the side (`dirty_before`, `dirty_after`,
-  or `dirty_both`); the clean expected transaction is
-  `historical_before_current_after`. It does not claim
+  or `dirty_both`). `historical_before_current_after` is the expected
+  before/after transaction shape — the repository moved past the before
+  artifact while the after artifact is bound to the current HEAD — and is a
+  revision-movement disclosure, not a cleanliness certificate: a historical
+  side is classified by head mismatch alone, and the worktree state
+  remembered at production time does not participate in that
+  classification, so a historical artifact produced on a dirty worktree
+  still renders a `historical_*` pair token (#3229).
+  `current_before_historical_after` is a reachable accepted outcome when the
+  checked-out HEAD is the before artifact's revision and the after artifact
+  is bound to a descendant revision. A fully current pair (both artifacts
+  current at the same clean revision) fails the movement gate before any
+  output is rendered, so `current` closes the vocabulary without being a
+  reachable successful verify outcome. The field does not claim
   that tests ran or that the static gap is correct.
 - `summary.improved` - matched seams whose after `SeamGripClass` ranks higher
   than before.
