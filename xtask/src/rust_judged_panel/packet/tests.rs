@@ -145,7 +145,7 @@ fn fixture(direction: &str) -> Result<ProjectionFixture, String> {
         "classification": class,
         "probe": {
             "family": producer_family,
-            "file": materialized_root.join("src/lib.rs").display().to_string(),
+            "file": format!("target/ripr/rust-judged-panel/.staging-run-a/subjects/{case_id}/src/lib.rs"),
             "line": 2,
             "expression": expression
         },
@@ -157,7 +157,8 @@ fn fixture(direction: &str) -> Result<ProjectionFixture, String> {
         finding["static_limitation"] = serde_json::json!({"kind": kind});
     }
     let report = serde_json::json!({
-        "analysis_outcome": {
+            "root": format!("target/ripr/rust-judged-panel/.staging-run-a/subjects/{case_id}"),
+            "analysis_outcome": {
             "analysis_complete": true,
             "outcome": {"kind": "complete_with_findings", "limitations": []}
         },
@@ -368,7 +369,16 @@ fn rust_judged_panel_packet_semantic_identity_excludes_host_provenance() -> Resu
     relocated.host_target = "different-target".to_string();
     relocated.binary_sha256 = "sha256:different-binary".to_string();
     relocated.current_ref = "target/ripr/elsewhere/current.json".to_string();
-    let second = project_one(&fixture.subject, &fixture.case, &relocated, "m", "s")?;
+    let mut relocated_case = fixture.case.clone();
+    let mut report = report_value(&relocated_case)?;
+    let relocated_root = format!(
+        "target/ripr/elsewhere/.staging-run-b/subjects/{}",
+        fixture.subject.case_id
+    );
+    report["root"] = Value::String(relocated_root.clone());
+    report["findings"][0]["probe"]["file"] = Value::String(format!("{relocated_root}/src/lib.rs"));
+    store_report(&mut relocated_case, &report)?;
+    let second = project_one(&fixture.subject, &relocated_case, &relocated, "m", "s")?;
     require_eq(
         &first.semantic_sha256,
         &second.semantic_sha256,

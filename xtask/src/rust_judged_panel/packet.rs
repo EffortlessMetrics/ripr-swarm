@@ -312,7 +312,7 @@ fn project_one(
         .map_err(|error| format!("host stdout for `{}` is not UTF-8: {error}", case.case_id))?;
     let report = super::parse_json_without_duplicate_keys(report_text)
         .map_err(|error| format!("parse host stdout for `{}`: {error}", case.case_id))?;
-    let observed = project_observed(subject, case, &report)?;
+    let observed = project_observed(subject, case, host, &report)?;
     let semantic = PortableSemantic {
         manifest_sha256: manifest_sha256.to_string(),
         subjects_sha256: subjects_sha256.to_string(),
@@ -550,6 +550,7 @@ fn semantic_input(role: &str, file: &ReplaySubjectFile) -> SemanticInputDigest {
 fn project_observed(
     subject: &PacketSubject,
     case: &ValidatedHostCase,
+    host: &ValidatedHostRun,
     report: &Value,
 ) -> Result<ObservedFinding, String> {
     if report
@@ -589,7 +590,7 @@ fn project_observed(
     let finding = findings
         .first()
         .ok_or_else(|| format!("host `{}` lacks its finding", subject.case_id))?;
-    validate_probe(subject, case, finding)?;
+    validate_probe(subject, case, host, report, finding)?;
     let classification = text_at(finding, "/classification")?;
     require_eq(
         classification,
@@ -649,18 +650,42 @@ fn project_observed(
 fn validate_probe(
     subject: &PacketSubject,
     case: &ValidatedHostCase,
+    host: &ValidatedHostRun,
+    report: &Value,
     finding: &Value,
 ) -> Result<(), String> {
-    let probe_file = PathBuf::from(text_at(finding, "/probe/file")?);
-    let expected_file = case.materialized_root.join(&subject.anchor_file);
-    if probe_file != expected_file {
+    let raw_file = text_at(finding, "/probe/file")?;
+    let raw_root = text_at(report, "/root")?;
+    let normalize = |value: &str| {
+        value
+            .replace('\\', "/")
+            .trim_start_matches("./")
+            .to_string()
+    };
+    let output_root = Path::new(&host.current_ref)
+        .parent()
+        .ok_or_else(|| "host current lacks an output root".to_string())?;
+    let expected_execution_root = super::normalize_path(
+        &output_root
+            .join(format!(".staging-{}", host.run_id))
+            .join("subjects")
+            .join(&subject.case_id),
+    );
+    if normalize(raw_root) != expected_execution_root
+        || normalize(raw_file) != format!("{expected_execution_root}/{}", subject.anchor_file)
+    {
         return Err(format!(
-            "host `{}` probe file `{}` is not exact materialized path `{}`",
-            subject.case_id,
-            probe_file.display(),
-            expected_file.display()
+            "host `{}` probe file `{raw_file}` is not exact execution root `{expected_execution_root}`",
+            subject.case_id
         ));
     }
+    let expected_file = case.materialized_root.join(&subject.anchor_file);
+    fs::canonicalize(&expected_file).map_err(|error| {
+        format!(
+            "resolve retained probe source `{}`: {error}",
+            expected_file.display()
+        )
+    })?;
     let expected_family = match subject.behavior_family.as_str() {
         "predicate_boundary" => "predicate",
         "return_value" => "return_value",
@@ -1158,7 +1183,11 @@ fn generation_id(
             )
         })
         .collect::<Vec<_>>();
-    sha256_serialized(&(manifest_sha256, subjects_sha256, identity))
+    let digest = sha256_serialized(&(manifest_sha256, subjects_sha256, identity))?;
+    digest
+        .strip_prefix("sha256:")
+        .map(ToString::to_string)
+        .ok_or_else(|| "portable generation digest lacks sha256 prefix".to_string())
 }
 
 fn expected_non_claims() -> Vec<String> {
