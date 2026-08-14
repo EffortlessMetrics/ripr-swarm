@@ -6,6 +6,7 @@ use ra_ap_syntax::{Edition, SourceFile, SyntaxKind};
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 
+mod host_run;
 mod subject;
 
 pub(crate) const MANIFEST_PATH: &str = "metrics/rust-judged-behavior-panel/manifest.json";
@@ -250,8 +251,16 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             );
             Ok(())
         }
+        [subcommand] if subcommand == "replay" => {
+            let manifest = check_at(Path::new("."))?;
+            host_run::run(Path::new("."), &manifest, None)
+        }
+        [subcommand, flag, output] if subcommand == "replay" && flag == "--out" => {
+            let manifest = check_at(Path::new("."))?;
+            host_run::run(Path::new("."), &manifest, Some(output))
+        }
         [] => Err(format!(
-            "rust-judged-panel requires the `check` subcommand\nrerun: {RERUN_COMMAND}"
+            "rust-judged-panel requires `check` or `replay [--out target/ripr/<path>]`\nrerun: {RERUN_COMMAND}"
         )),
         _ => Err(format!(
             "unknown rust-judged-panel arguments `{}`\nrerun: {RERUN_COMMAND}",

@@ -74,7 +74,7 @@ struct SubjectCase {
     expected_tree: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SubjectFile {
     source_path: String,
@@ -87,6 +87,37 @@ struct MaterializedIdentity {
     base: String,
     head: String,
     tree: String,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct ReplaySubjectFile {
+    pub(super) source_path: String,
+    pub(super) repository_path: String,
+    pub(super) sha256: String,
+}
+
+#[derive(Debug)]
+pub(super) struct ReplaySubject {
+    pub(super) case_id: String,
+    pub(super) subject_id: String,
+    pub(super) expected_direction: String,
+    pub(super) root: PathBuf,
+    pub(super) base: String,
+    pub(super) head: String,
+    pub(super) tree: String,
+    pub(super) cargo_toml: ReplaySubjectFile,
+    pub(super) cargo_lock: ReplaySubjectFile,
+    pub(super) config: ReplaySubjectFile,
+    pub(super) source_before: ReplaySubjectFile,
+    pub(super) source_after: ReplaySubjectFile,
+    pub(super) tests: Vec<ReplaySubjectFile>,
+    pub(super) diff: ReplaySubjectFile,
+}
+
+pub(super) struct RepositoryState {
+    pub(super) head: String,
+    pub(super) tree: String,
+    pub(super) dirty: bool,
 }
 
 struct Scratch(PathBuf);
@@ -105,6 +136,61 @@ pub(super) fn validate_at(root: &Path, manifest: &RustJudgedPanelManifest) -> Re
         materialize_subject(root, &scratch.0, case, &[])?;
     }
     Ok(())
+}
+
+pub(super) fn materialize_for_replay(
+    root: &Path,
+    scratch_root: &Path,
+    manifest: &RustJudgedPanelManifest,
+) -> Result<Vec<ReplaySubject>, String> {
+    let authority = load_at(root)?;
+    validate_authority(root, manifest, &authority)?;
+    authority
+        .cases
+        .iter()
+        .map(|case| {
+            let identity = materialize_subject(root, scratch_root, case, &[])?;
+            Ok(ReplaySubject {
+                case_id: case.case_id.clone(),
+                subject_id: case.subject_id.clone(),
+                expected_direction: case.expected_direction.clone(),
+                root: scratch_root.join(&case.case_id),
+                base: identity.base,
+                head: identity.head,
+                tree: identity.tree,
+                cargo_toml: replay_file(&case.cargo_toml),
+                cargo_lock: replay_file(&case.cargo_lock),
+                config: replay_file(&case.config),
+                source_before: replay_file(&case.source_before),
+                source_after: replay_file(&case.source_after),
+                tests: case.tests.iter().map(replay_file).collect(),
+                diff: replay_file(&case.diff),
+            })
+        })
+        .collect()
+}
+
+pub(super) fn repository_state(root: &Path) -> Result<RepositoryState, String> {
+    let head = git(root, &["rev-parse", "HEAD"], &[])?;
+    let tree = git(root, &["rev-parse", "HEAD^{tree}"], &[])?;
+    let status = git(
+        root,
+        &["status", "--porcelain=v1", "--untracked-files=all"],
+        &[],
+    )?;
+    Ok(RepositoryState {
+        head,
+        tree,
+        dirty: !status.is_empty(),
+    })
+}
+
+fn replay_file(file: &SubjectFile) -> ReplaySubjectFile {
+    ReplaySubjectFile {
+        source_path: file.source_path.clone(),
+        repository_path: file.repository_path.clone(),
+        sha256: file.sha256.clone(),
+    }
 }
 
 fn load_at(root: &Path) -> Result<SubjectAuthority, String> {

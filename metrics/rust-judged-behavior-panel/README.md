@@ -58,6 +58,26 @@ that the selected seed and independent subject inputs are internally coherent;
 it does not establish analyzer execution, a replay result, judgment, rate, or
 support claim.
 
+## Host-bound replay receipts
+
+`cargo xtask rust-judged-panel replay --out target/ripr/rust-judged-panel`
+owns a fresh `cargo build -p ripr --locked --offline` in a run-local target,
+then invokes those exact hashed bytes against all three materialized subjects.
+It retains byte-exact stdout/stderr plus typed source, build, binary, host,
+argv, config, diff, process, timeout, and analyzer-input identities below the
+ignored `target/` tree.
+
+Each attempt is staged under an exclusive lock. Only a validated three-case
+generation receives `run-index.json`, is moved into the immutable `runs/`
+namespace, and advances `current.json` last. A failed, partial, or concurrent
+attempt cannot become current. The build has no network fallback: an offline
+cache miss is a failed attempt.
+
+These files are host-bound run receipts, not portable semantic evidence. They
+do not select or bless findings, interpret quiet output, populate judgments,
+or support a mutation, rate, gate, badge, or support-tier claim. A later PR
+owns portable packets and exact semantic projection.
+
 ## Item contract
 
 Each `items[]` row carries:
