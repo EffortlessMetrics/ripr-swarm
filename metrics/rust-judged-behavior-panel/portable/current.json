@@ -1,7 +1,7 @@
 {
   "schema_version": "0.1",
   "kind": "rust_judged_panel_portable_current",
-  "generation_id": "12d4cb705ada2a1514b27d76d91ee9b325501424e3e00c1e2147de78b07845c3",
-  "index_path": "metrics/rust-judged-behavior-panel/portable/generations/12d4cb705ada2a1514b27d76d91ee9b325501424e3e00c1e2147de78b07845c3/packet-index.json",
-  "index_sha256": "sha256:b13f674b3e45606088eb1787db2be543a2f5faf5627317d544292ce27a684bfa"
+  "generation_id": "9cc082b4c9978d04c286b1bc2599b0241350a36a6d4c88a3ec87bda4204a090b",
+  "index_path": "metrics/rust-judged-behavior-panel/portable/generations/9cc082b4c9978d04c286b1bc2599b0241350a36a6d4c88a3ec87bda4204a090b/packet-index.json",
+  "index_sha256": "sha256:83ba473a8782e9548219d586191a9c5b8374ea6a9f98636ae3a73256b6450945"
 }
