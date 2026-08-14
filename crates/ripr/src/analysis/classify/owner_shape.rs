@@ -80,9 +80,13 @@ fn body_is_assertion_dominated(body: &str) -> bool {
     let mut assert_statements = 0usize;
     let mut other_statements = 0usize;
     let mut statement = String::new();
+    // Block-comment nesting carries across lines (#3234): the stripper runs
+    // per line, so a `/*` opened on an earlier line must still suppress the
+    // assertion-shaped text it spans.
+    let mut block_comment_depth = 0usize;
 
     for raw_line in body.lines() {
-        let line = strip_comments_and_strings(raw_line);
+        let line = strip_comments_and_strings(raw_line, &mut block_comment_depth);
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
@@ -234,12 +238,36 @@ fn contains_word_call(text: &str, needle: &str) -> bool {
 /// Blank out `//` comments and string-literal contents so an assertion
 /// mentioned in prose (a comment, or a failure message naming another macro)
 /// does not count as a statement.
-fn strip_comments_and_strings(line: &str) -> String {
+/// Strip line comments, block comments, and string literals from one line of
+/// a function body, replacing suppressed text with spaces so the line's
+/// statement-completion shape survives.
+///
+/// `block_comment_depth` is threaded by the caller across lines (#3234):
+/// a `/*` opened on an earlier line suppresses every line it spans, Rust's
+/// nested block comments are tracked by depth, and an unterminated comment
+/// or string stays suppressed — the conservative direction, so malformed
+/// text cannot invent assertion evidence.
+fn strip_comments_and_strings(line: &str, block_comment_depth: &mut usize) -> String {
     let mut out = String::with_capacity(line.len());
     let mut chars = line.chars().peekable();
     let mut in_string = false;
     let mut escaped = false;
     while let Some(ch) = chars.next() {
+        if *block_comment_depth > 0 {
+            match (ch, chars.peek().copied()) {
+                ('*', Some('/')) => {
+                    let _ = chars.next();
+                    *block_comment_depth -= 1;
+                }
+                ('/', Some('*')) => {
+                    let _ = chars.next();
+                    *block_comment_depth += 1;
+                }
+                _ => {}
+            }
+            out.push(' ');
+            continue;
+        }
         if in_string {
             if escaped {
                 escaped = false;
@@ -253,6 +281,13 @@ fn strip_comments_and_strings(line: &str) -> String {
         }
         if ch == '/' && chars.peek().is_some_and(|next| *next == '/') {
             break;
+        }
+        if ch == '/' && chars.peek().is_some_and(|next| *next == '*') {
+            let _ = chars.next();
+            *block_comment_depth += 1;
+            out.push(' ');
+            out.push(' ');
+            continue;
         }
         if ch == '"' {
             in_string = true;
@@ -417,6 +452,130 @@ mod tests {
         assert!(
             !is_assertion_shaped_owner(&owner, &index),
             "comment/string mentions of assert macros must not count"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn inline_block_comment_assertions_do_not_count() -> Result<(), String> {
+        // #3234: assertion-shaped text inside a `/* ... */` block comment
+        // must not contribute assertion evidence. Before the fix this body
+        // classified as assertion-shaped: the only non-declaration statement
+        // the scanner saw was the commented-out assert.
+        let owner = function(
+            "src/lib.rs",
+            "helper",
+            "fn helper(value: i32) {\n    let doubled = value * 2;\n    let _ = doubled;\n    /* assert!(value >= 0); */\n}\n",
+            false,
+            Vec::new(),
+        );
+        let index = RustIndex {
+            functions: vec![owner.clone()],
+            ..RustIndex::default()
+        };
+
+        assert!(
+            !is_assertion_shaped_owner(&owner, &index),
+            "a block-commented assert must not make the owner assertion-shaped"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn multi_line_block_comment_assertions_do_not_count() -> Result<(), String> {
+        // #3234: the comment opens and closes on lines of its own; every
+        // line it spans is suppressed across the per-line boundary.
+        let owner = function(
+            "src/lib.rs",
+            "helper",
+            "fn helper(value: i32) {\n    let doubled = value * 2;\n    let _ = doubled;\n    /*\n        assert!(value >= 0);\n        assert_eq!(doubled, 4);\n    */\n}\n",
+            false,
+            Vec::new(),
+        );
+        let index = RustIndex {
+            functions: vec![owner.clone()],
+            ..RustIndex::default()
+        };
+
+        assert!(
+            !is_assertion_shaped_owner(&owner, &index),
+            "asserts inside a multi-line block comment must not count"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn nested_block_comment_assertions_do_not_count() -> Result<(), String> {
+        // #3234: Rust block comments nest; the inner close does not end the
+        // outer comment.
+        let owner = function(
+            "src/lib.rs",
+            "helper",
+            "fn helper(value: i32) {\n    let doubled = value * 2;\n    let _ = doubled;\n    /* outer /* assert!(value >= 0); */ still a comment */\n}\n",
+            false,
+            Vec::new(),
+        );
+        let index = RustIndex {
+            functions: vec![owner.clone()],
+            ..RustIndex::default()
+        };
+
+        assert!(
+            !is_assertion_shaped_owner(&owner, &index),
+            "asserts inside a nested block comment must not count"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unterminated_block_comment_fails_closed() -> Result<(), String> {
+        // #3234: an unterminated block comment suppresses the rest of the
+        // body rather than exposing commented text as evidence.
+        let owner = function(
+            "src/lib.rs",
+            "helper",
+            "fn helper(value: i32) {\n    let _ = value;\n    /* assert!(value >= 0);\n}\n",
+            false,
+            Vec::new(),
+        );
+        let index = RustIndex {
+            functions: vec![owner.clone()],
+            ..RustIndex::default()
+        };
+
+        assert!(
+            !is_assertion_shaped_owner(&owner, &index),
+            "an unterminated block comment must not invent assertion evidence"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn real_assertion_adjacent_to_block_comment_still_detectable() -> Result<(), String> {
+        // #3234 control: suppressing block comments must not swallow real
+        // assertions on the same line.
+        let owner = function(
+            "src/lib.rs",
+            "assert_positive",
+            "fn assert_positive(value: i32) {\n    /* contract: value is a count */ assert!(value >= 0);\n}\n",
+            false,
+            Vec::new(),
+        );
+        let caller_test = function(
+            "tests/helper.rs",
+            "positive_stays_detected",
+            "fn positive_stays_detected() { assert_positive(1); }",
+            true,
+            vec!["assert_positive"],
+        );
+        let index = RustIndex {
+            functions: vec![owner.clone(), caller_test],
+            ..RustIndex::default()
+        };
+
+        assert!(
+            is_assertion_shaped_owner(&owner, &index),
+            "a real assert next to a block comment must still count"
         );
         Ok(())
     }
