@@ -1714,8 +1714,9 @@ fn finding_is_advisory(finding: &Finding) -> bool {
     finding.static_limit_kind.is_some() || finding.language_status == Some(LanguageStatus::Preview)
 }
 
-/// A gap record has a complete repair packet when it is repairable, carries
-/// at least one verification command, and has a receipt command.
+/// A gap record has a complete repair packet when it is repairable, carries a
+/// non-empty verification list whose every display is non-whitespace after
+/// trimming, and has a receipt command that is non-whitespace after trimming.
 /// WARNING is only appropriate when the packet is complete and actionable.
 fn gap_record_has_complete_packet(record: &GapRecord) -> bool {
     record.repairability == "repairable"
@@ -1737,8 +1738,8 @@ fn gap_record_is_advisory(record: &GapRecord) -> bool {
 /// packet AND is not advisory. All other cases → INFORMATION.
 ///
 /// This enforces the hard rule: no WARNING without a complete repair packet.
-/// A complete packet requires `repairability == "repairable"`,
-/// non-empty `verification_commands`, and `receipt_command.is_some()`.
+/// A complete packet requires `repairability == "repairable"`, an all-nonblank
+/// `verification_commands` list, and a trim-nonblank `receipt_command`.
 /// Advisory records (preview language or static_limit_kind present) are
 /// clamped to INFORMATION even when the packet looks complete.
 fn gap_record_diagnostic_severity(record: &GapRecord) -> DiagnosticSeverity {
