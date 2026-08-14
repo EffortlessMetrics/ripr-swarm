@@ -710,10 +710,9 @@ mod tests {
             "rustc-root-probe",
             "#!/bin/sh\ncase \"$PWD\" in\n  *selected-root) printf 'rustc 1.94.0 (target-root)\\n' ;;\n  *) printf 'rustc 1.96.0 (caller-root)\\n' ;;\nesac\n",
         )?;
-        let shim_text = shim
+        let shim_str: &str = shim
             .to_str()
-            .ok_or_else(|| "shim path is not UTF-8".to_string())?
-            .to_string();
+            .ok_or_else(|| "shim path is not UTF-8".to_string())?;
 
         // #3073: publishing a shim and immediately execing it is exposed to
         // the #2242/#2378 exec-contention family under full-suite parallelism
@@ -727,7 +726,7 @@ mod tests {
         // production constant.
         let result = probe_published_tool_with_command(
             "rustc",
-            || doctor_tool_command(&shim_text),
+            || doctor_tool_command(shim_str),
             SHIM_PROBE_TEST_CEILING,
             Some(&selected_root),
         );
