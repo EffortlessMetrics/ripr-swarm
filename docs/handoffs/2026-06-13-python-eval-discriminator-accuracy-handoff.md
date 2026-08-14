@@ -1,13 +1,19 @@
 # Python eval + discriminator-accuracy session handoff
 
 **Date:** 2026-06-13
-**Active tracker:** [#1160](https://github.com/EffortlessMetrics/ripr-swarm/issues/1160) (Python usable-tier readiness) and `.ripr/goals/python-repair-routing.toml` (Campaign 30)
+**Active tracker (current):** [#1160](https://github.com/EffortlessMetrics/ripr-swarm/issues/1160) (Python usable-tier readiness) plus `plans/python-repair-routing/` and RIPR-SPEC-0086 / RIPR-SPEC-0092. The `.ripr/goals/python-repair-routing.toml` tracker named at handoff time was deleted with the goals scheduler (#2056) and is historical.
 **Watchpoint:** EffortlessMetrics/ripr#1430 (Ruff parser substrate — not a release gate)
 **Source:** continuation context for resuming the Python release-readiness campaign after the external eval-sweep and the discriminator over-credit fix.
 
 This packet is the connective tissue a future thread needs to resume. The durable
-records hold the rest: `#1160`, the goals tracker, `docs/LEARNINGS.md`, and the
+records hold the rest: `#1160`, the campaign and plan authorities, `docs/LEARNINGS.md`, and the
 specs. Do not restate them — start here.
+
+> **Current-state note (2026-08-14):** the "Start here (next three PRs)"
+> sequence below is the historical June proposal, not the current queue —
+> the alignment output, sweep classification distribution, and judged-panel
+> work have each moved since; #1160 and the plan authorities carry the
+> current sequence. "Where we are" is likewise a June snapshot.
 
 ---
 
