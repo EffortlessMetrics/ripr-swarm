@@ -18,6 +18,31 @@ struct ProjectionFixture {
     host: ValidatedHostRun,
 }
 
+#[cfg(unix)]
+fn directory_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+#[cfg(windows)]
+fn directory_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::windows::fs::symlink_dir(target, link)
+}
+
+fn create_directory_symlink_or_skip(target: &Path, link: &Path) -> Result<bool, String> {
+    match directory_symlink(target, link) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            eprintln!("skipping portable symlink discriminator: {error}");
+            Ok(false)
+        }
+        Err(error) => Err(format!(
+            "create directory symlink `{}` -> `{}`: {error}",
+            link.display(),
+            target.display()
+        )),
+    }
+}
+
 fn test_root(name: &str) -> Result<TestRoot, String> {
     let sequence = TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!(
@@ -33,7 +58,7 @@ fn subject_file(role: &str, repository_path: &str) -> ReplaySubjectFile {
     ReplaySubjectFile {
         source_path: format!("metrics/subjects/{role}"),
         repository_path: repository_path.to_string(),
-        sha256: format!("sha256:{role}"),
+        sha256: format!("sha256:{}", "a".repeat(64)),
     }
 }
 
@@ -187,7 +212,7 @@ fn fixture(direction: &str) -> Result<ProjectionFixture, String> {
         config_sha256: subject.config.sha256.clone(),
         diff_path: subject.diff.source_path.clone(),
         diff_sha256: subject.diff.sha256.clone(),
-        executed_diff_identity: "sha256:executed".to_string(),
+        executed_diff_identity: format!("sha256:{}", "b".repeat(64)),
         subject_inputs: expected
             .iter()
             .map(|input| ValidatedInputDigest {
@@ -198,31 +223,33 @@ fn fixture(direction: &str) -> Result<ProjectionFixture, String> {
             })
             .collect(),
         disposition: "complete".to_string(),
-        analyzer_input_identity: "sha256:executed".to_string(),
-        receipt_ref: format!("target/ripr/run/cases/{case_id}/receipt.json"),
-        receipt_sha256: "sha256:receipt".to_string(),
-        stdout_ref: format!("target/ripr/run/cases/{case_id}/stdout.bin"),
-        stdout_sha256: "sha256:stdout".to_string(),
-        stderr_ref: format!("target/ripr/run/cases/{case_id}/stderr.bin"),
-        stderr_sha256: "sha256:stderr".to_string(),
+        analyzer_input_identity: format!("sha256:{}", "b".repeat(64)),
+        receipt_ref: format!(
+            "target/ripr/rust-judged-panel/runs/run-a/cases/{case_id}/receipt.json"
+        ),
+        receipt_sha256: format!("sha256:{}", "c".repeat(64)),
+        stdout_ref: format!("target/ripr/rust-judged-panel/runs/run-a/cases/{case_id}/stdout.bin"),
+        stdout_sha256: format!("sha256:{}", "d".repeat(64)),
+        stderr_ref: format!("target/ripr/rust-judged-panel/runs/run-a/cases/{case_id}/stderr.bin"),
+        stderr_sha256: format!("sha256:{}", "e".repeat(64)),
         stdout: serde_json::to_vec(&report)
             .map_err(|error| format!("serialize fixture report: {error}"))?,
         materialized_root,
     };
     let host = ValidatedHostRun {
         current_ref: "target/ripr/rust-judged-panel/current.json".to_string(),
-        current_sha256: "sha256:current".to_string(),
-        index_ref: "target/ripr/rust-judged-panel/runs/run/index.json".to_string(),
-        index_sha256: "sha256:index".to_string(),
+        current_sha256: format!("sha256:{}", "1".repeat(64)),
+        index_ref: "target/ripr/rust-judged-panel/runs/run-a/run-index.json".to_string(),
+        index_sha256: format!("sha256:{}", "2".repeat(64)),
         run_id: "run-a".to_string(),
-        source_head: "producer-head".to_string(),
-        source_tree: "producer-tree".to_string(),
-        cargo_lock_sha256: "sha256:producer-lock".to_string(),
-        cargo_toml_sha256: "sha256:producer-manifest".to_string(),
+        source_head: "3".repeat(40),
+        source_tree: "4".repeat(40),
+        cargo_lock_sha256: format!("sha256:{}", "5".repeat(64)),
+        cargo_toml_sha256: format!("sha256:{}", "6".repeat(64)),
         profile: "dev".to_string(),
         features: vec!["default".to_string()],
         host_target: "test-target".to_string(),
-        binary_sha256: "sha256:binary".to_string(),
+        binary_sha256: format!("sha256:{}", "7".repeat(64)),
         binary_version: "ripr 0.12.0".to_string(),
         cases: vec![case.clone()],
     };
@@ -396,6 +423,11 @@ fn rust_judged_panel_packet_semantic_identity_excludes_host_provenance() -> Resu
 fn rust_judged_panel_packet_rejects_self_digest_and_direction_tamper() -> Result<(), String> {
     let fixture = fixture("should_gap")?;
     let mut packet = project_one(&fixture.subject, &fixture.case, &fixture.host, "m", "s")?;
+    let attestation = HostAttestation {
+        case_id: packet.case_id.clone(),
+        semantic: packet.semantic.clone(),
+        host_evidence: packet.host_evidence.clone(),
+    };
     let entry = PortableIndexEntry {
         case_id: packet.case_id.clone(),
         packet_path: format!("{PORTABLE_ROOT}/generation/packet.json"),
@@ -403,16 +435,112 @@ fn rust_judged_panel_packet_rejects_self_digest_and_direction_tamper() -> Result
         semantic_sha256: packet.semantic_sha256.clone(),
     };
     packet.semantic.observed.recommendation.clear();
-    if validate_retained_packet(&packet, &entry, &fixture.subject, "m", "s").is_ok() {
+    if validate_retained_packet(&packet, &entry, &fixture.subject, &attestation, "m", "s").is_ok() {
         return Err("semantic self-digest tamper was accepted".to_string());
     }
     packet.semantic_sha256 = sha256_serialized(&packet.semantic)?;
     let mut entry = entry;
     entry.semantic_sha256 = packet.semantic_sha256.clone();
-    if validate_retained_packet(&packet, &entry, &fixture.subject, "m", "s").is_ok() {
+    if validate_retained_packet(&packet, &entry, &fixture.subject, &attestation, "m", "s").is_ok() {
         return Err("re-sealed direction-witness tamper was accepted".to_string());
     }
+    let mut stale = project_one(&fixture.subject, &fixture.case, &fixture.host, "m", "s")?;
+    stale.semantic.producer_source_head = "9".repeat(40);
+    stale.semantic.profile = "release".to_string();
+    stale.semantic.argv[4] = "stale-base".to_string();
+    stale.host_evidence.binary_sha256 = format!("sha256:{}", "8".repeat(64));
+    stale.host_evidence.receipt_ref = format!(
+        "target/ripr/rust-judged-panel/runs/run-a/cases/{}/wrong.json",
+        stale.case_id
+    );
+    stale.semantic_sha256 = sha256_serialized(&stale.semantic)?;
+    let stale_entry = PortableIndexEntry {
+        case_id: stale.case_id.clone(),
+        packet_path: entry.packet_path.clone(),
+        packet_sha256: sha256_bytes(&pretty_json(&stale)?),
+        semantic_sha256: stale.semantic_sha256.clone(),
+    };
+    if validate_retained_packet(
+        &stale,
+        &stale_entry,
+        &fixture.subject,
+        &attestation,
+        "m",
+        "s",
+    )
+    .is_ok()
+    {
+        return Err("coordinated stale producer/invocation/host re-seal was accepted".to_string());
+    }
     Ok(())
+}
+
+#[test]
+fn rust_judged_panel_packet_invalid_complete_set_preserves_current() -> Result<(), String> {
+    let root = test_root("invalid-complete")?;
+    let current = root.0.join(CURRENT_PATH);
+    fs::create_dir_all(
+        current
+            .parent()
+            .ok_or_else(|| "current parent missing".to_string())?,
+    )
+    .map_err(|error| format!("create current parent: {error}"))?;
+    fs::write(&current, b"old-current\n").map_err(|error| format!("seed current: {error}"))?;
+    let fixtures = [
+        fixture("should_gap")?,
+        fixture("should_stay_quiet")?,
+        fixture("should_limit")?,
+    ];
+    let subjects = fixtures
+        .iter()
+        .map(|fixture| fixture.subject.clone())
+        .collect::<Vec<_>>();
+    let mut packets = fixtures
+        .iter()
+        .map(|fixture| project_one(&fixture.subject, &fixture.case, &fixture.host, "m", "s"))
+        .collect::<Result<Vec<_>, _>>()?;
+    packets.sort_by(|left, right| left.case_id.cmp(&right.case_id));
+    let attestations = attestations_from_live_projection(&packets);
+    let stale = packets
+        .first_mut()
+        .ok_or_else(|| "packet fixture missing".to_string())?;
+    stale.semantic.profile = "release".to_string();
+    stale.semantic.observed.recommendation = "Unrelated advice.".to_string();
+    stale.semantic_sha256 = sha256_serialized(&stale.semantic)?;
+    if publish_all(&root.0, "m", "s", &subjects, &attestations, &packets, None).is_ok() {
+        return Err("invalid complete packet set was published".to_string());
+    }
+    let retained = fs::read(&current).map_err(|error| format!("read retained current: {error}"))?;
+    if retained != b"old-current\n" {
+        return Err("invalid complete set advanced authoritative current".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn rust_judged_panel_packet_rejects_nested_symlink_escape() -> Result<(), String> {
+    let root = test_root("portable-link")?;
+    let outside = test_root("portable-link-outside")?;
+    fs::write(outside.0.join("packet.json"), b"{}\n")
+        .map_err(|error| format!("write outside packet: {error}"))?;
+    let portable = root.0.join("metrics/rust-judged-behavior-panel/portable");
+    fs::create_dir_all(&portable).map_err(|error| format!("create portable root: {error}"))?;
+    let link = portable.join("generations");
+    if !create_directory_symlink_or_skip(&outside.0, &link)? {
+        return Ok(());
+    }
+    let escaped = confined_existing_file(
+        &root.0,
+        Path::new("metrics/rust-judged-behavior-panel/portable/generations/packet.json"),
+        "portable packet",
+    )
+    .is_err();
+    fs::remove_dir(&link).map_err(|error| format!("remove portable link: {error}"))?;
+    if escaped {
+        Ok(())
+    } else {
+        Err("portable nested symlink escape was accepted".to_string())
+    }
 }
 
 #[test]
@@ -429,12 +557,27 @@ fn rust_judged_panel_packet_partial_and_concurrent_publication_fail_closed() -> 
     let fixture = fixture("should_gap")?;
     let base = project_one(&fixture.subject, &fixture.case, &fixture.host, "m", "s")?;
     let mut packets = Vec::new();
+    let mut subjects = Vec::new();
     for suffix in ["a", "b", "c"] {
         let mut packet = base.clone();
         packet.case_id = format!("case-{suffix}");
+        let mut subject = fixture.subject.clone();
+        subject.case_id = packet.case_id.clone();
+        subjects.push(subject);
         packets.push(packet);
     }
-    if publish_all(&root.0, "m", "s", &packets, Some(2)).is_ok() {
+    let attestations = attestations_from_live_projection(&packets);
+    if publish_all(
+        &root.0,
+        "m",
+        "s",
+        &subjects,
+        &attestations,
+        &packets,
+        Some(2),
+    )
+    .is_ok()
+    {
         return Err("injected partial publication succeeded".to_string());
     }
     let retained = fs::read(&current).map_err(|error| format!("read retained current: {error}"))?;
@@ -445,7 +588,7 @@ fn rust_judged_panel_packet_partial_and_concurrent_publication_fail_closed() -> 
     fs::create_dir_all(&staging).map_err(|error| format!("create staging: {error}"))?;
     fs::write(staging.join("packet.lock"), b"held\n")
         .map_err(|error| format!("hold packet lock: {error}"))?;
-    if publish_all(&root.0, "m", "s", &packets, None).is_ok() {
+    if publish_all(&root.0, "m", "s", &subjects, &attestations, &packets, None).is_ok() {
         return Err("concurrent packet publisher was accepted".to_string());
     }
     Ok(())

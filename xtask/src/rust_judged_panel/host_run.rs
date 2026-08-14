@@ -771,7 +771,12 @@ fn validate_case_receipt(
         ),
     ] {
         safe_relative(path)?;
-        let path = run_root.join(path);
+        let path = canonical_existing_file_under(
+            &run_root.join(path),
+            &run_root.join("cases"),
+            run_root,
+            &format!("host receipt raw {label}"),
+        )?;
         let actual = sha256_file(&path)?;
         let actual_bytes = fs::metadata(&path)
             .map_err(|error| format!("read raw {label} metadata: {error}"))?
@@ -823,7 +828,13 @@ fn validate_case_receipt(
 }
 
 fn validate_generation(run_root: &Path) -> Result<(), String> {
-    let index: HostRunIndex = read_strict_json(&run_root.join("run-index.json"), "host run index")?;
+    let index_path = canonical_existing_file_under(
+        &run_root.join("run-index.json"),
+        run_root,
+        run_root,
+        "host run index",
+    )?;
+    let index: HostRunIndex = read_strict_json(&index_path, "host run index")?;
     if index.publication_state != "complete" || index.cases.len() != 3 {
         return Err("host run index is not a complete three-case generation".to_string());
     }
@@ -836,7 +847,13 @@ fn validate_generation(run_root: &Path) -> Result<(), String> {
         if !seen.insert(entry.case_id.as_str()) {
             return Err(format!("host run index duplicates `{}`", entry.case_id));
         }
-        let receipt_path = run_root.join(&entry.receipt_path);
+        safe_relative(&entry.receipt_path)?;
+        let receipt_path = canonical_existing_file_under(
+            &run_root.join(&entry.receipt_path),
+            &run_root.join("cases"),
+            run_root,
+            "case receipt",
+        )?;
         if sha256_file(&receipt_path)? != entry.receipt_sha256 {
             return Err(format!(
                 "host run index receipt digest mismatch for `{}`",
@@ -884,7 +901,12 @@ fn validate_build_identity(run_root: &Path, build: &BuildIdentity) -> Result<(),
         );
     }
     safe_relative(&build.retained_binary_path)?;
-    let binary = run_root.join(&build.retained_binary_path);
+    let binary = canonical_existing_file_under(
+        &run_root.join(&build.retained_binary_path),
+        &run_root.join("build-target"),
+        run_root,
+        "retained RIPR binary",
+    )?;
     let actual_bytes = fs::metadata(&binary)
         .map_err(|error| format!("read retained RIPR binary metadata: {error}"))?
         .len();
@@ -895,7 +917,13 @@ fn validate_build_identity(run_root: &Path, build: &BuildIdentity) -> Result<(),
         ("build/stdout.bin", build.build_stdout_sha256.as_str()),
         ("build/stderr.bin", build.build_stderr_sha256.as_str()),
     ] {
-        if sha256_file(&run_root.join(path))? != expected {
+        let raw = canonical_existing_file_under(
+            &run_root.join(path),
+            &run_root.join("build"),
+            run_root,
+            "host build raw output",
+        )?;
+        if sha256_file(&raw)? != expected {
             return Err(format!("host run build raw digest mismatch for `{path}`"));
         }
     }
@@ -904,7 +932,12 @@ fn validate_build_identity(run_root: &Path, build: &BuildIdentity) -> Result<(),
 
 fn validate_current(output_root: &Path, current: &CurrentRun) -> Result<(), String> {
     safe_relative(&current.index_path)?;
-    let path = output_root.join(&current.index_path);
+    let path = canonical_existing_file_under(
+        &output_root.join(&current.index_path),
+        &output_root.join("runs"),
+        output_root,
+        "current host-run index",
+    )?;
     if sha256_file(&path)? != current.index_sha256 {
         return Err("current host-run index digest mismatch".to_string());
     }
@@ -935,21 +968,32 @@ pub(super) fn load_validated_current(
     let current_path = root.join(relative);
     let root_canonical =
         fs::canonicalize(root).map_err(|error| format!("canonicalize repository root: {error}"))?;
-    let current_canonical = fs::canonicalize(&current_path)
-        .map_err(|error| format!("resolve host current `{host_current}`: {error}"))?;
-    if !current_canonical.starts_with(&root_canonical) {
-        return Err("host current escapes the repository through a link".to_string());
-    }
     let output_root = current_path
         .parent()
         .ok_or_else(|| "host current has no output root".to_string())?;
-    let current: CurrentRun = read_strict_json(&current_path, "current host run")?;
+    let output_canonical = fs::canonicalize(output_root)
+        .map_err(|error| format!("canonicalize host-run output root: {error}"))?;
+    if !output_canonical.starts_with(&root_canonical) {
+        return Err("host-run output root escapes the repository through a link".to_string());
+    }
+    let current_canonical = canonical_existing_file_under(
+        &current_path,
+        &output_canonical,
+        &root_canonical,
+        "current host run",
+    )?;
+    let current: CurrentRun = read_strict_json(&current_canonical, "current host run")?;
     if current.schema_version != "0.1" || current.kind != "rust_judged_panel_current_host_run" {
         return Err("host current has an unsupported schema or kind".to_string());
     }
     validate_current(output_root, &current)?;
 
-    let index_path = output_root.join(&current.index_path);
+    let index_path = canonical_existing_file_under(
+        &output_root.join(&current.index_path),
+        &output_root.join("runs"),
+        &output_canonical,
+        "host run index",
+    )?;
     let index: HostRunIndex = read_strict_json(&index_path, "host run index")?;
     if index.schema_version != "0.1"
         || index.kind != "rust_judged_panel_host_run_index"
@@ -969,7 +1013,13 @@ pub(super) fn load_validated_current(
         .ok_or_else(|| "host run index has no relative generation root".to_string())?;
     let mut cases = Vec::new();
     for entry in &index.cases {
-        let receipt_path = run_root.join(&entry.receipt_path);
+        safe_relative(&entry.receipt_path)?;
+        let receipt_path = canonical_existing_file_under(
+            &run_root.join(&entry.receipt_path),
+            &run_root.join("cases"),
+            run_root,
+            "case receipt",
+        )?;
         let receipt: CaseReceipt = read_strict_json(&receipt_path, "case receipt")?;
         if receipt.schema_version != "0.1"
             || receipt.kind != "rust_judged_panel_host_run_receipt"
@@ -999,7 +1049,20 @@ pub(super) fn load_validated_current(
                 receipt.case_id
             )
         })?;
-        let stdout_path = run_root.join(&receipt.raw.stdout_path);
+        safe_relative(&receipt.raw.stdout_path)?;
+        safe_relative(&receipt.raw.stderr_path)?;
+        let stdout_path = canonical_existing_file_under(
+            &run_root.join(&receipt.raw.stdout_path),
+            &run_root.join("cases"),
+            run_root,
+            "host stdout",
+        )?;
+        let _stderr_path = canonical_existing_file_under(
+            &run_root.join(&receipt.raw.stderr_path),
+            &run_root.join("cases"),
+            run_root,
+            "host stderr",
+        )?;
         let stdout = fs::read(&stdout_path).map_err(|error| {
             format!(
                 "read host stdout for `{}` at `{}`: {error}",
@@ -1063,7 +1126,7 @@ pub(super) fn load_validated_current(
     cases.sort_by(|left, right| left.case_id.cmp(&right.case_id));
     Ok(ValidatedHostRun {
         current_ref: host_current.to_string(),
-        current_sha256: sha256_file(&current_path)?,
+        current_sha256: sha256_file(&current_canonical)?,
         index_ref: super::normalize_path(&output_relative.join(&current.index_path)),
         index_sha256: current.index_sha256,
         run_id: index.run_id,
@@ -1121,6 +1184,48 @@ fn acquire_lock(output_root: &Path) -> Result<RunLock, String> {
         return Err(format!("write replay lock `{}`: {error}", path.display()));
     }
     Ok(RunLock(path))
+}
+
+fn canonical_existing_file_under(
+    path: &Path,
+    allowed_root: &Path,
+    confinement_root: &Path,
+    label: &str,
+) -> Result<PathBuf, String> {
+    let confinement_canonical = fs::canonicalize(confinement_root).map_err(|error| {
+        format!(
+            "canonicalize {label} confinement root `{}`: {error}",
+            confinement_root.display()
+        )
+    })?;
+    let allowed_canonical = fs::canonicalize(allowed_root).map_err(|error| {
+        format!(
+            "canonicalize {label} root `{}`: {error}",
+            allowed_root.display()
+        )
+    })?;
+    if !allowed_canonical.starts_with(&confinement_canonical) {
+        return Err(format!(
+            "{label} root `{}` escapes `{}` through a link",
+            allowed_root.display(),
+            confinement_root.display()
+        ));
+    }
+    let path_canonical = fs::canonicalize(path)
+        .map_err(|error| format!("resolve {label} `{}`: {error}", path.display()))?;
+    if !path_canonical.starts_with(&allowed_canonical) {
+        return Err(format!(
+            "{label} `{}` escapes `{}` through a link",
+            path.display(),
+            allowed_root.display()
+        ));
+    }
+    let metadata = fs::metadata(&path_canonical)
+        .map_err(|error| format!("read {label} metadata `{}`: {error}", path.display()))?;
+    if !metadata.is_file() {
+        return Err(format!("{label} `{}` is not a file", path.display()));
+    }
+    Ok(path_canonical)
 }
 
 fn confined_output(root: &Path, value: &str) -> Result<PathBuf, String> {
@@ -1250,9 +1355,37 @@ mod tests {
 
     use super::{
         BuildIdentity, CaseReceipt, ExecutionPlan, InputDigest, RawEvidence, SourceIdentity,
-        acquire_lock, classify_successful_stdout, confined_output, publish_complete_generation,
-        sha256_bytes, subject, validate_binary_unchanged, validate_case_receipt, validate_case_set,
+        acquire_lock, canonical_existing_file_under, classify_successful_stdout, confined_output,
+        load_validated_current, publish_complete_generation, sha256_bytes, subject,
+        validate_binary_unchanged, validate_case_receipt, validate_case_set,
     };
+
+    #[cfg(unix)]
+    fn directory_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
+        std::os::unix::fs::symlink(target, link)
+    }
+
+    #[cfg(windows)]
+    fn directory_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
+        std::os::windows::fs::symlink_dir(target, link)
+    }
+
+    fn create_directory_symlink_or_skip(target: &Path, link: &Path) -> Result<bool, String> {
+        match directory_symlink(target, link) {
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                eprintln!(
+                    "skipping symlink discriminator because directory-link permission was denied: {error}"
+                );
+                Ok(false)
+            }
+            Err(error) => Err(format!(
+                "create directory symlink `{}` -> `{}`: {error}",
+                link.display(),
+                target.display()
+            )),
+        }
+    }
 
     fn repository_root() -> Result<PathBuf, String> {
         Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1391,6 +1524,62 @@ mod tests {
             }
         }
         confined_output(&root, "target/ripr/rust-judged-panel").map(|_| ())
+    }
+
+    #[test]
+    fn load_validated_current_rejects_linked_output_escape() -> Result<(), String> {
+        let root = scratch("linked-current-root")?;
+        let outside = scratch("linked-current-outside")?;
+        fs::create_dir_all(root.join("target/ripr")).map_err(|error| error.to_string())?;
+        fs::write(outside.join("current.json"), b"{}\n").map_err(|error| error.to_string())?;
+        let link = root.join("target/ripr/panel");
+        if !create_directory_symlink_or_skip(&outside, &link)? {
+            fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+            fs::remove_dir_all(&outside).map_err(|error| error.to_string())?;
+            return Ok(());
+        }
+        let rejected = load_validated_current(&root, "target/ripr/panel/current.json").is_err();
+        fs::remove_dir(&link).map_err(|error| error.to_string())?;
+        fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        fs::remove_dir_all(&outside).map_err(|error| error.to_string())?;
+        if rejected {
+            Ok(())
+        } else {
+            Err("linked host-current output escape was accepted".to_string())
+        }
+    }
+
+    #[test]
+    fn nested_host_artifact_rejects_link_escape_and_non_file() -> Result<(), String> {
+        let root = scratch("linked-nested-root")?;
+        let allowed = root.join("run");
+        let outside = root.join("outside");
+        fs::create_dir_all(&allowed).map_err(|error| error.to_string())?;
+        fs::create_dir_all(&outside).map_err(|error| error.to_string())?;
+        fs::write(outside.join("receipt.json"), b"{}\n").map_err(|error| error.to_string())?;
+        let link = allowed.join("cases");
+        if !create_directory_symlink_or_skip(&outside, &link)? {
+            fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+            return Ok(());
+        }
+        let linked_rejected = canonical_existing_file_under(
+            &link.join("receipt.json"),
+            &link,
+            &allowed,
+            "case receipt",
+        )
+        .is_err();
+        let directory_rejected =
+            canonical_existing_file_under(&allowed, &allowed, &allowed, "case receipt").is_err();
+        fs::remove_dir(&link).map_err(|error| error.to_string())?;
+        fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        if linked_rejected && directory_rejected {
+            Ok(())
+        } else {
+            Err(format!(
+                "nested confinement rejection failed: linked={linked_rejected} non_file={directory_rejected}"
+            ))
+        }
     }
 
     #[test]

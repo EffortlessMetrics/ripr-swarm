@@ -96,9 +96,15 @@ Each packet separates its portable semantic self-identity from host provenance.
 Absolute checkout roots, run IDs, host targets, binary and raw-output digests
 are excluded from the semantic digest, while the packet retains relative
 host-receipt/raw references and their digests for provenance on the producing
-host. The ignored raw files are intentionally unavailable in a clean checkout;
-the retained checker revalidates the packet against the manifest and subject
-authority without pretending to re-run or re-open that host evidence.
+host. Generation also records a separate attestation block, derived only after
+the live PR-B current/index/receipt/raw chain validates. Retained packets must
+match that block exactly, so a packet/index re-seal cannot silently rewrite its
+producer, invocation, witness, binary, or raw-reference claims. The attestation
+is a durable generation receipt, not a cryptographic signature or an independent
+replacement for the ignored raw evidence. Those raw files are intentionally
+unavailable in a clean checkout; the retained checker validates attestation,
+packet, manifest, subject, and owned-plan consistency without claiming to
+re-authenticate absent host bytes or execute RIPR.
 
 Publication stages and validates all three packets, publishes one immutable
 content-addressed generation, then advances `portable/current.json` last under
