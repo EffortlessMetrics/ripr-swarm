@@ -80,13 +80,15 @@ fn body_is_assertion_dominated(body: &str) -> bool {
     let mut assert_statements = 0usize;
     let mut other_statements = 0usize;
     let mut statement = String::new();
-    // Block-comment nesting carries across lines (#3234): the stripper runs
-    // per line, so a `/*` opened on an earlier line must still suppress the
-    // assertion-shaped text it spans.
+    // Block-comment nesting and raw strings carry across lines (#3234): the
+    // stripper runs per line, so a `/*` or `r#"…` opened on an earlier line
+    // must still suppress the assertion-shaped text it spans.
     let mut block_comment_depth = 0usize;
+    let mut raw_string_hashes: Option<usize> = None;
 
     for raw_line in body.lines() {
-        let line = strip_comments_and_strings(raw_line, &mut block_comment_depth);
+        let line =
+            strip_comments_and_strings(raw_line, &mut block_comment_depth, &mut raw_string_hashes);
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
@@ -247,12 +249,38 @@ fn contains_word_call(text: &str, needle: &str) -> bool {
 /// nested block comments are tracked by depth, and an unterminated comment
 /// or string stays suppressed — the conservative direction, so malformed
 /// text cannot invent assertion evidence.
-fn strip_comments_and_strings(line: &str, block_comment_depth: &mut usize) -> String {
+///
+/// `raw_string_hashes` threads open raw strings (#3245 review): inside
+/// `r#"..."#` the embedded `"` does not close the string and `/*` is
+/// content, not a comment opener, so quote/comment scanning resumes only
+/// after the matching `"###…` close.
+fn strip_comments_and_strings(
+    line: &str,
+    block_comment_depth: &mut usize,
+    raw_string_hashes: &mut Option<usize>,
+) -> String {
     let mut out = String::with_capacity(line.len());
     let mut chars = line.chars().peekable();
     let mut in_string = false;
     let mut escaped = false;
     while let Some(ch) = chars.next() {
+        if let Some(hashes) = *raw_string_hashes {
+            // Raw-string content: only `"` followed by exactly `hashes`
+            // '#'s closes it; anything else — quotes, `/*`, newlines — is
+            // content.
+            if ch == '"' {
+                let mut seen = 0usize;
+                while seen < hashes && chars.peek().is_some_and(|next| *next == '#') {
+                    let _ = chars.next();
+                    seen += 1;
+                }
+                if seen == hashes {
+                    *raw_string_hashes = None;
+                }
+            }
+            out.push(' ');
+            continue;
+        }
         if *block_comment_depth > 0 {
             match (ch, chars.peek().copied()) {
                 ('*', Some('/')) => {
@@ -287,6 +315,27 @@ fn strip_comments_and_strings(line: &str, block_comment_depth: &mut usize) -> St
             *block_comment_depth += 1;
             out.push(' ');
             out.push(' ');
+            continue;
+        }
+        if ch == 'r' {
+            // Raw-string opener candidate: `r`, zero or more `#`, then `"`.
+            // A raw identifier (`r#match`) has an identifier char after the
+            // hashes, not a quote, and falls through as plain code.
+            let mut hashes = 0usize;
+            while chars.peek().is_some_and(|next| *next == '#') {
+                let _ = chars.next();
+                hashes += 1;
+            }
+            if chars.peek().is_some_and(|next| *next == '"') {
+                let _ = chars.next();
+                *raw_string_hashes = Some(hashes);
+                out.push(' ');
+                continue;
+            }
+            out.push(ch);
+            for _ in 0..hashes {
+                out.push('#');
+            }
             continue;
         }
         if ch == '"' {
@@ -546,6 +595,38 @@ mod tests {
         assert!(
             !is_assertion_shaped_owner(&owner, &index),
             "an unterminated block comment must not invent assertion evidence"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn raw_string_with_quoted_comment_opener_does_not_open_a_comment() -> Result<(), String> {
+        // #3245 review: inside `r#"quote "/*"#` the embedded `"` does not
+        // close a string and the `/*` is raw content, not a comment opener.
+        // Without raw-string tracking the depth counter stayed open and
+        // suppressed the helper's real assertions.
+        let owner = function(
+            "src/lib.rs",
+            "assert_pattern",
+            "fn assert_pattern(value: &str) {\n    let pattern = r#\"quote \"/*\"#;\n    let _ = pattern;\n    assert!(value.len() > 0);\n}\n",
+            false,
+            Vec::new(),
+        );
+        let caller_test = function(
+            "tests/pattern.rs",
+            "pattern_stays_detected",
+            "fn pattern_stays_detected() { assert_pattern(\"x\"); }",
+            true,
+            vec!["assert_pattern"],
+        );
+        let index = RustIndex {
+            functions: vec![owner.clone(), caller_test],
+            ..RustIndex::default()
+        };
+
+        assert!(
+            is_assertion_shaped_owner(&owner, &index),
+            "a raw string containing \"/*\" must not suppress real assertions"
         );
         Ok(())
     }
