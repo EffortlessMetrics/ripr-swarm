@@ -1,13 +1,19 @@
 # RIPR-SPEC-0086: Python Tier A External-Repo Eval Sweep
 
-Status: proposed
+Status: accepted
 
-Status note (2026-08-14): #1161 landed the Tier A `cargo xtask eval-sweep`
-command (`xtask/src/command.rs` dispatch plus `xtask/src/reports/eval_sweep.rs`),
-and #3259 completed the run algorithm's exit-status classification leg. The
-spec stays **proposed** because Required Evidence still calls for a golden of
-the rendered JSON/Markdown report from a fixed in-memory run vector; no such
-golden is committed, and its traceability entry therefore keeps `outputs = []`.
+Acceptance note (2026-08-14): #1161 landed the Tier A `cargo xtask
+eval-sweep` command (`xtask/src/command.rs` dispatch plus
+`xtask/src/reports/eval_sweep.rs`). The run algorithm's classification
+contract was completed by #3259, which threads the captured exit status
+into `classify` — a nonzero exit after parseable JSON reads `crash`, as
+step 3 requires, pinned by classifier and `run_check` boundary tests on
+both hosts. The Required Evidence golden exists as
+`rendered_report_matches_golden_from_fixed_run_vector`: byte-exact JSON
+and Markdown from a fixed two-run vector (stable `ok`, unstable
+`parse_failure`), so every rendering change must re-bless it
+deliberately. Tier B judgment semantics live in RIPR-SPEC-0092, which
+remains proposed.
 
 Owner: language-adapter / swarm
 
@@ -39,6 +45,8 @@ Linked PRs:
   command and report implementation.
 - [#3259](https://github.com/EffortlessMetrics/ripr-swarm/pull/3259) — captured
   exit-status classification and boundary regressions.
+- [#3261](https://github.com/EffortlessMetrics/ripr-swarm/pull/3261) — fixed-run
+  JSON/Markdown golden test and accepted lifecycle reconciliation.
 
 ## Problem
 
@@ -196,6 +204,10 @@ repos_total = 3, repos_run = 0 (all skipped_missing_checkout)
 - `eval_sweep::count_distributions_counts_packet_completeness_presence` -> packet-presence counts.
 - `eval_sweep::report_includes_distribution_and_gate_is_unaffected` -> distributions render and never change the gate.
 - `eval_sweep::distribution_does_not_rescue_not_run_gate` -> `not_run` preserved.
+- `eval_sweep::run_check_classifies_failure_exit_with_valid_json_as_crash` ->
+  captured failure-exit boundary through the real run path.
+- `eval_sweep::rendered_report_matches_golden_from_fixed_run_vector` ->
+  byte-exact JSON/Markdown rendering from the fixed two-run vector.
 
 ## Implementation Mapping
 

@@ -1159,6 +1159,177 @@ mod tests {
         assert!(md.contains("Gate: **pass**"));
     }
 
+    /// SPEC-0086 Required Evidence: a golden of the rendered report from a
+    /// fixed in-memory run vector (#3261 review). Byte-exact, not
+    /// substring-pinned — any rendering change is a report-contract change
+    /// and must re-bless this golden deliberately. The vector mixes one
+    /// stable `ok` run with one unstable `parse_failure` run so the golden
+    /// pins both outcome rows and the review-gate summary arithmetic.
+    const EXPECTED_REPORT_JSON: &str = r#"{
+  "kind": "python_eval_sweep_report",
+  "repos": [
+    {
+      "alignment_counts": {
+        "absent": 0,
+        "alias": 0,
+        "changed_sink_token": 0,
+        "direct": 0,
+        "orthogonal": 0,
+        "python_repair_card_present": 0,
+        "repair_placement_present": 0,
+        "unknown": 0,
+        "verify_command_present": 0
+      },
+      "classification_counts": {
+        "exposed": 0,
+        "infection_unknown": 0,
+        "no_static_path": 0,
+        "propagation_unknown": 0,
+        "reachable_unrevealed": 0,
+        "static_unknown": 0,
+        "weakly_exposed": 0
+      },
+      "gap_ids": [],
+      "gap_ids_stable": true,
+      "id": "r",
+      "outcome": "ok",
+      "runtime_ms": 96,
+      "sha": "s",
+      "shape": "pytest_library",
+      "stderr_excerpt": "",
+      "unstable_gap_ids": []
+    },
+    {
+      "alignment_counts": {
+        "absent": 0,
+        "alias": 0,
+        "changed_sink_token": 0,
+        "direct": 0,
+        "orthogonal": 0,
+        "python_repair_card_present": 0,
+        "repair_placement_present": 0,
+        "unknown": 0,
+        "verify_command_present": 0
+      },
+      "classification_counts": {
+        "exposed": 0,
+        "infection_unknown": 0,
+        "no_static_path": 0,
+        "propagation_unknown": 0,
+        "reachable_unrevealed": 0,
+        "static_unknown": 0,
+        "weakly_exposed": 0
+      },
+      "gap_ids": [],
+      "gap_ids_stable": false,
+      "id": "r",
+      "outcome": "parse_failure",
+      "runtime_ms": 250,
+      "sha": "s",
+      "shape": "pytest_library",
+      "stderr_excerpt": "",
+      "unstable_gap_ids": []
+    }
+  ],
+  "schema_version": "0.2",
+  "spec": "RIPR-SPEC-0086",
+  "summary": {
+    "alignment_counts": {
+      "absent": 0,
+      "alias": 0,
+      "changed_sink_token": 0,
+      "direct": 0,
+      "orthogonal": 0,
+      "python_repair_card_present": 0,
+      "repair_placement_present": 0,
+      "unknown": 0,
+      "verify_command_present": 0
+    },
+    "classification_counts": {
+      "exposed": 0,
+      "infection_unknown": 0,
+      "no_static_path": 0,
+      "propagation_unknown": 0,
+      "reachable_unrevealed": 0,
+      "static_unknown": 0,
+      "weakly_exposed": 0
+    },
+    "crash_count": 0,
+    "crash_rate": 0.0,
+    "gap_id_stability_rate": 0.5,
+    "gap_id_stable_count": 1,
+    "gap_id_unstable_count": 1,
+    "gate_reason": "0 crash(es) and 1 unstable gap-ID set(s) over 2 repo(s); investigate before promotion",
+    "gate_status": "review",
+    "parse_failure_count": 1,
+    "parse_failure_rate": 0.5,
+    "repos_clone_failed": 0,
+    "repos_run": 2,
+    "repos_skipped": 0,
+    "repos_total": 2,
+    "runtime_ms_max": 250,
+    "runtime_ms_median": 250,
+    "runtime_ms_min": 96,
+    "runtime_ms_total": 346,
+    "timed_out_count": 0
+  },
+  "tier": "A"
+}"#;
+
+    const EXPECTED_REPORT_MARKDOWN: &str = r#"# RIPR Python Tier A Eval Sweep
+
+Gate: **review**
+
+> 0 crash(es) and 1 unstable gap-ID set(s) over 2 repo(s); investigate before promotion
+
+## Summary
+
+- repos: 2 total, 2 run, 0 skipped, 0 clone-failed
+- crash rate: 0.000 (0 crash)
+- parse-failure rate: 0.500 (1 repos)
+- timed out: 0
+- gap-ID stability: 0.500 (1/2 stable)
+- runtime ms (min/median/max): 96/250/250
+
+## Distribution
+
+Descriptive only — these counts never affect the gate.
+
+- classification: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown
+- oracle alignment: 0 direct, 0 alias, 0 changed_sink_token, 0 orthogonal, 0 unknown, 0 absent
+- packet completeness: 0 repair_placement, 0 verify_command, 0 python_repair_card
+
+## Repos
+
+| id | shape | outcome | runtime_ms | gap_ids | stable |
+| --- | --- | --- | ---: | ---: | --- |
+| r | pytest_library | ok | 96 | 0 | yes |
+| r | pytest_library | parse_failure | 250 | 0 | NO |
+
+"#;
+
+    #[test]
+    fn rendered_report_matches_golden_from_fixed_run_vector() -> Result<(), String> {
+        let runs = vec![
+            run_with(Outcome::Ok, 96, true),
+            run_with(Outcome::ParseFailure, 250, false),
+        ];
+        let metrics = compute_metrics(&runs);
+        let json = render_json(&metrics, &runs)?;
+        if json != EXPECTED_REPORT_JSON {
+            return Err(format!(
+                "rendered JSON drifted from the SPEC-0086 golden:\n{json}"
+            ));
+        }
+        let markdown = render_markdown(&metrics, &runs);
+        if markdown != EXPECTED_REPORT_MARKDOWN {
+            return Err(format!(
+                "rendered Markdown drifted from the SPEC-0086 golden:\n{markdown}"
+            ));
+        }
+        Ok(())
+    }
+
     #[test]
     fn count_distributions_tallies_classification() {
         let value = json!({ "findings": [
