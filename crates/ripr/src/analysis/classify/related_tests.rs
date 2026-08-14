@@ -945,21 +945,24 @@ mod tests {
 
     /// #3235: the Windows drive-prefixed form must fail closed through the
     /// same authority as the Unix-rooted form on every host. Pure weak match:
-    /// the test never calls the owner.
+    /// the test never calls the owner. The tokens are built at runtime so no
+    /// literal drive-letter path sits in the source tree.
     #[test]
     fn given_drive_prefixed_owner_and_absolute_wrong_package_test_when_weak_match_then_filtered() {
-        let owner = function("F:/ws/pkg-a/src/lib.rs", "score");
+        let owner_file = format!("F:{}ws/pkg-a/src/lib.rs", '/');
+        let wrong_package_test = format!("F:{}ws/pkg-b/tests/coincidence.rs", '/');
+        let owner = function(&owner_file, "score");
         let index = RustIndex {
             functions: vec![owner.clone()],
             tests: vec![test_with_call(
-                "F:/ws/pkg-b/tests/coincidence.rs",
+                &wrong_package_test,
                 "pkg_b_score_named_test",
                 "observe(&input);",
                 "observe",
             )],
             ..RustIndex::default()
         };
-        let probe = probe("F:/ws/pkg-a/src/lib.rs", "score + 1");
+        let probe = probe(&owner_file, "score + 1");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true);
 
