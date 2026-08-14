@@ -1,7 +1,10 @@
 # Python Repair Routing Implementation Plan
 
-Status: partially delivered; retained as the historical work-item ledger for
-the open promotion track
+Status: proposed
+
+Delivery state: partially delivered; selected repair-routing slices reached the
+scoped `usable alpha` closeout, while this proposed plan remains the historical
+work-item ledger for the open promotion track.
 
 Owner: language-adapter / swarm
 
