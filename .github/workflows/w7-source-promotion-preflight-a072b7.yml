@@ -79,6 +79,11 @@ jobs:
           CARGO_TARGET_DIR: ${{ runner.temp }}/ripr-w7-preflight-target
         run: |
           set -euo pipefail
+          # W7 deliberately forces TEMP/TMP/TMPDIR to checkout-relative `target`.
+          # Because build output is isolated outside the checkout here, create the
+          # ignored temp parent explicitly so the read-only producer can create
+          # and remove its disposable merge repository beneath it.
+          mkdir -p swarm/target
           cd swarm
           cargo xtask source-promotion preflight \
             --source-parent "$SOURCE_PARENT" \
