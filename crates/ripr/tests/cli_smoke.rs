@@ -3761,11 +3761,11 @@ fn agent_verify_historical_before_token_ignores_declared_dirty_production()
         &before,
         r#"{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/pricing.rs","line":42,"grip_class":"weakly_gripped"}"#,
     )?;
-    let declared_dirty = std::fs::read_to_string(&before)?
-        .replace("\"worktree\": \"clean\"", "\"worktree\": \"dirty\"");
+    let before_content = std::fs::read_to_string(&before)?;
+    let declared_dirty =
+        before_content.replace("\"worktree\": \"clean\"", "\"worktree\": \"dirty\"");
     assert_ne!(
-        declared_dirty,
-        std::fs::read_to_string(&before)?,
+        declared_dirty, before_content,
         "fixture must declare a clean worktree before the flip"
     );
     std::fs::write(&before, recommit_repo_exposure_json(declared_dirty))?;
