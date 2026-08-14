@@ -43,7 +43,9 @@ explicit configuration remains authoritative. It can parse `.py` files with
 `rustpython-parser`, extract selected owners, tests, assertion/oracle facts,
 probe shapes, related-test links, and static limits, then emit ordinary RIPR
 findings with `language = "python"` and `language_status = "preview"` when
-the repo enables Python in `ripr.toml`.
+Python is enabled in the resolved language configuration: either through
+no-config Python project detection or an explicit `ripr.toml`. An explicit
+configuration that omits Python keeps the adapter disabled.
 
 The current implementation has the core static/advisory repair-routing loop for
 selected Python pytest and unittest workflows: canonical Python gap IDs, direct
