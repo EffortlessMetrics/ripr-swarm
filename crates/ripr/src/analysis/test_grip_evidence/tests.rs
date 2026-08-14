@@ -558,6 +558,101 @@ fn duplicate_allow_id_reports_exact_error_payload() {
 }
 
 #[test]
+fn given_tuple_variant_seam_when_test_asserts_same_payload_then_discriminate_evidence_is_yes()
+-> Result<(), String> {
+    // #3244 review: end-to-end positive for the tuple-variant payload guard.
+    // The seam constructs `LedgerError::InsufficientFunds("account 42")`;
+    // the oracle must observe the same variant with the same payload.
+    let prod = PathBuf::from("src/ledger.rs");
+    let prod_src = r#"
+#[derive(Debug, PartialEq, Eq)]
+pub enum LedgerError { InsufficientFunds(String), Unknown }
+
+pub fn withdraw(balance: i32) -> Result<i32, LedgerError> {
+    if balance < 0 {
+        return Err(LedgerError::InsufficientFunds("account 42".to_string()));
+    }
+    Ok(balance)
+}
+"#;
+    let tests = PathBuf::from("tests/ledger_tests.rs");
+    let tests_src = r#"
+use ledger::{LedgerError, withdraw};
+
+#[test]
+fn negative_balance_reports_the_frozen_account() {
+    let err = withdraw(-1).expect_err("negative balance must fail");
+    assert_eq!(err, LedgerError::InsufficientFunds("account 42".to_string()));
+}
+"#;
+    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/ledger.rs")], &index);
+    let error_seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ErrorVariant && seam.expression().contains("InsufficientFunds")
+        })
+        .ok_or_else(|| "expected InsufficientFunds error_variant seam".to_string())?;
+
+    let evidence = evidence_for_seam(error_seam, &index);
+    if evidence.discriminate.state != StageState::Yes {
+        return Err(format!(
+            "expected discriminate=Yes for exact tuple-variant payload assertion, got {} ({})",
+            evidence.discriminate.state.as_str(),
+            evidence.discriminate.summary
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn given_tuple_variant_seam_when_test_asserts_wrong_payload_then_credit_is_withheld()
+-> Result<(), String> {
+    // #3244 review: the negative codex demanded. Same variant identity, wrong
+    // payload literal — identity coincidence must not receive discriminating
+    // credit through the variant-identity route.
+    let prod = PathBuf::from("src/ledger.rs");
+    let prod_src = r#"
+#[derive(Debug, PartialEq, Eq)]
+pub enum LedgerError { InsufficientFunds(String), Unknown }
+
+pub fn withdraw(balance: i32) -> Result<i32, LedgerError> {
+    if balance < 0 {
+        return Err(LedgerError::InsufficientFunds("account 42".to_string()));
+    }
+    Ok(balance)
+}
+"#;
+    let tests = PathBuf::from("tests/ledger_tests.rs");
+    let tests_src = r#"
+use ledger::{LedgerError, withdraw};
+
+#[test]
+fn negative_balance_reports_some_frozen_account() {
+    let err = withdraw(-1).expect_err("negative balance must fail");
+    assert_eq!(err, LedgerError::InsufficientFunds("account 99".to_string()));
+}
+"#;
+    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/ledger.rs")], &index);
+    let error_seam = seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::ErrorVariant && seam.expression().contains("InsufficientFunds")
+        })
+        .ok_or_else(|| "expected InsufficientFunds error_variant seam".to_string())?;
+
+    let evidence = evidence_for_seam(error_seam, &index);
+    if evidence.discriminate.state == StageState::Yes {
+        return Err(format!(
+            "wrong-payload tuple-variant assertion must not be discriminating credit, summary: {}",
+            evidence.discriminate.summary
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn error_constructor_payload_match_requires_same_constructor_and_literal() -> Result<(), String> {
     let seam = r#"return Err(CargoAllowError::new(format!("duplicate allow id `{}`", id)));"#;
     let matching_oracle =

@@ -266,10 +266,7 @@ fn is_error_constructor_path(path: &str) -> bool {
     // structurally, and brace-initialised struct variants
     // (`MyError::InvalidState { .. }`) are outside this extractor's syntax
     // boundary by the same call-paren prerequisite.
-    let method_is_constructor = method
-        .chars()
-        .next()
-        .is_some_and(|ch| ch.is_ascii_alphabetic());
+    let method_is_constructor = method.starts_with(|ch: char| ch.is_ascii_alphabetic());
     owner_is_type && method_is_constructor
 }
 
