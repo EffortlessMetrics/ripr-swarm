@@ -2,6 +2,15 @@
 
 Status: proposed
 
+Status note (2026-08-14): populated historical judged artifacts exist —
+`fixtures/python-judged-pr-panel/starter-judged.json` and
+`scaled-judged.json` carry past hand-judged labels. The spec remains
+**proposed**: the executable semantic validator for those artifacts and a
+current promotion-grade rerun are not established, and the seed
+(`manifest.json`) still ships unjudged (`null`) labels by design. Judged
+artifacts are historical evidence, not a measured current
+false-actionable/false-`exposed` rate.
+
 Owner: language-adapter / swarm
 
 Linked proposal:
