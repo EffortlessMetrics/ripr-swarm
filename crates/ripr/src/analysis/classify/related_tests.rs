@@ -59,6 +59,22 @@ pub(in crate::analysis) fn find_related_tests<'a>(
         None
     };
 
+    // #3235: an absolute owner/probe path without a `crates/` segment carries
+    // no derivable package scope, and the old behavior treated that as "no
+    // scoping needed", silently disabling the package guard. When the
+    // candidate test's path is *also* absolute, a weak match cannot be scoped
+    // at all, so fail closed: only the strong uniquely-owned call path (#2971)
+    // may admit. A *relative* test file keeps current behavior — the
+    // mixed-form companion flow (absolute probe, relative test files) is
+    // production-pinned. A future producer that supplies absolute test paths
+    // must carry an explicit relativization authority instead of relying on
+    // ambient prefix stripping.
+    let owner_scope_unscopable = owner_fn
+        .is_some_and(|owner| owner_package_prefix.is_none() && path_is_absolute_form(&owner.file));
+    let struct_scope_unscopable = owner_fn.is_none()
+        && struct_package_prefix.is_none()
+        && path_is_absolute_form(&probe.location.file);
+
     // Probe tokens that are long enough to assert ownership via assertion text.
     let long_probe_tokens: Vec<&str> = probe_tokens
         .iter()
@@ -88,6 +104,17 @@ pub(in crate::analysis) fn find_related_tests<'a>(
         if let Some(prefix) = &struct_package_prefix
             && !normalize_path(&test.file).starts_with(prefix)
         {
+            continue;
+        }
+        // #3235: unscopable-absolute owner against an absolute test file —
+        // no package comparison is possible, so weak matches fail closed.
+        if owner_scope_unscopable
+            && path_is_absolute_form(&test.file)
+            && !(calls_owner && owner_name_is_unique)
+        {
+            continue;
+        }
+        if struct_scope_unscopable && path_is_absolute_form(&test.file) {
             continue;
         }
 
@@ -154,6 +181,18 @@ fn normalize_path(path: &Path) -> String {
         .to_string()
 }
 
+/// #3235: one authority for recognizing an absolute path form on any host —
+/// Unix-rooted, Windows drive-prefixed, or host-absolute. Shared by
+/// `package_prefix` (which cannot derive a package scope from such a path
+/// without a `crates/` segment) and the package guards in
+/// `find_related_tests`, which fail closed when both sides of a candidate
+/// relation are unscopable absolute paths.
+fn path_is_absolute_form(path: &Path) -> bool {
+    let normalized = normalize_path(path);
+    let has_drive_prefix = normalized.as_bytes().get(1).copied() == Some(b':');
+    path.is_absolute() || normalized.starts_with('/') || has_drive_prefix
+}
+
 fn package_prefix(path: &Path) -> Option<String> {
     let normalized = normalize_path(path);
     let crate_relative = normalized
@@ -165,8 +204,7 @@ fn package_prefix(path: &Path) -> Option<String> {
     {
         return Some(format!("crates/{crate_name}/"));
     }
-    let has_drive_prefix = normalized.as_bytes().get(1).copied() == Some(b':');
-    if path.is_absolute() || normalized.starts_with('/') || has_drive_prefix {
+    if path_is_absolute_form(path) {
         return None;
     }
     for marker in ["/src/", "/tests/"] {
@@ -844,6 +882,116 @@ mod tests {
         let related = find_related_tests(&probe, None, &index, true);
         if !related.is_empty() {
             return Err(format!("cross-crate test must stay unrelated: {related:?}"));
+        }
+        Ok(())
+    }
+
+    /// #3235: two non-`crates/` packages addressed by absolute paths carry no
+    /// derivable package scope. Before the fail-closed guard the prefix came
+    /// back `None` and the package scoping was silently disabled, admitting
+    /// wrong-package name/token coincidences. The fixture is a pure weak
+    /// match — the test never calls the owner, only its name contains it.
+    #[test]
+    fn given_absolute_owner_and_absolute_wrong_package_test_when_weak_match_then_filtered() {
+        let owner = function("/ws/pkg-a/src/lib.rs", "score");
+        let index = RustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "/ws/pkg-b/tests/coincidence.rs",
+                "pkg_b_score_named_test",
+                "observe(&input);",
+                "observe",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = probe("/ws/pkg-a/src/lib.rs", "score + 1");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true);
+
+        assert!(
+            related.is_empty(),
+            "wrong-package weak match across unscopable absolute paths must be filtered: {related:?}"
+        );
+    }
+
+    /// #3235 positive control: the #2971 strong path still admits a
+    /// cross-package test that calls a uniquely-named owner even when both
+    /// paths are absolute — failing closed must not break the deliberate
+    /// unique-owner bypass.
+    #[test]
+    fn given_absolute_paths_when_unique_owner_is_called_cross_package_then_retained() {
+        let owner = function("/ws/pkg-a/src/lib.rs", "compute_hash");
+        let index = RustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "/ws/pkg-b/tests/integration.rs",
+                "hash_integration_test",
+                "let result = compute_hash(b\"input\");",
+                "compute_hash",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = probe("/ws/pkg-a/src/lib.rs", "compute_hash(input)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true);
+
+        assert_eq!(
+            related.len(),
+            1,
+            "uniquely-owned call must stay admitted across absolute paths"
+        );
+        assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    /// #3235: the Windows drive-prefixed form must fail closed through the
+    /// same authority as the Unix-rooted form on every host. Pure weak match:
+    /// the test never calls the owner. The tokens are built at runtime so no
+    /// literal drive-letter path sits in the source tree.
+    #[test]
+    fn given_drive_prefixed_owner_and_absolute_wrong_package_test_when_weak_match_then_filtered() {
+        let owner_file = format!("F:{}ws/pkg-a/src/lib.rs", '/');
+        let wrong_package_test = format!("F:{}ws/pkg-b/tests/coincidence.rs", '/');
+        let owner = function(&owner_file, "score");
+        let index = RustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                &wrong_package_test,
+                "pkg_b_score_named_test",
+                "observe(&input);",
+                "observe",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = probe(&owner_file, "score + 1");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true);
+
+        assert!(
+            related.is_empty(),
+            "drive-prefixed wrong-package weak match must be filtered: {related:?}"
+        );
+    }
+
+    /// #3235 struct-probe symmetry: an unscopable-absolute module-level probe
+    /// against an absolute wrong-package test fails closed too.
+    #[test]
+    fn given_absolute_struct_probe_and_absolute_wrong_package_test_when_weak_match_then_filtered()
+    -> Result<(), String> {
+        let index = RustIndex {
+            tests: vec![test(
+                "/ws/pkg-b/tests/gate_watchdog_tests.rs",
+                "gate_watchdog_is_exact",
+                "observe(&input);",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = struct_field_probe("/ws/pkg-a/src/gate_watchdog.rs", "pub(crate) state: State");
+
+        let related = find_related_tests(&probe, None, &index, true);
+        if !related.is_empty() {
+            return Err(format!(
+                "struct-probe wrong-package weak match must be filtered: {related:?}"
+            ));
         }
         Ok(())
     }
