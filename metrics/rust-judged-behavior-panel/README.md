@@ -50,13 +50,16 @@ execution PR must still build and invoke RIPR and retain host run receipts befor
 any replay result exists or any label is populated.
 
 `cargo xtask rust-judged-panel check` is the retained semantic guard for this
-seed and its subject authority. It validates the typed manifest contract,
+seed, its subject authority, and the complete portable packet set. It validates the typed manifest contract,
 selected directions, explicit null-as-unjudged state, exact Rust-token anchors,
-subject digests, manifest joins, and deterministic Git materialization. The same
+subject digests, manifest joins, deterministic Git materialization, exact
+direction-specific packet joins, packet self-digests, and the complete
+packet-index/current chain. The same
 checker is reached by required precommit policy. Passing it establishes only
-that the selected seed and independent subject inputs are internally coherent;
-it does not establish analyzer execution, a replay result, judgment, rate, or
-support claim.
+that the selected seed, independent subject inputs, and retained bounded static
+projection are internally coherent. It does not build or run RIPR, consult the
+ignored host receipts, or establish analyzer correctness, judgment, mutation,
+rate, badge, gate, or support.
 
 ## Host-bound replay receipts
 
@@ -73,10 +76,34 @@ namespace, and advances `current.json` last. A failed, partial, or concurrent
 attempt cannot become current. The build has no network fallback: an offline
 cache miss is a failed attempt.
 
-These files are host-bound run receipts, not portable semantic evidence. They
-do not select or bless findings, interpret quiet output, populate judgments,
-or support a mutation, rate, gate, badge, or support-tier claim. A later PR
-owns portable packets and exact semantic projection.
+These files are host-bound run receipts. They do not by themselves select or
+bless findings, interpret quiet output, populate judgments, or support a
+mutation, rate, gate, badge, or support-tier claim.
+
+## Portable bounded projection
+
+`cargo xtask rust-judged-panel packet --host-current
+target/ripr/rust-judged-panel/current.json` first validates the complete
+host-current/index/receipt/raw chain, then projects all three cases into the
+checked `portable/` generation. Packets bind the governed subject, exact run
+plan and input identity, exact probe path/line/family/expression and enclosing
+Rust owner, observed class, and direction-specific witness. `should_stay_quiet`
+is exactly one `exposed` finding with no action evidence; the macro case is a
+complete `no_static_path` finding with its named static limitation, not a
+timeout or incomplete run.
+
+Each packet separates its portable semantic self-identity from host provenance.
+Absolute checkout roots, run IDs, host targets, binary and raw-output digests
+are excluded from the semantic digest, while the packet retains relative
+host-receipt/raw references and their digests for provenance on the producing
+host. The ignored raw files are intentionally unavailable in a clean checkout;
+the retained checker revalidates the packet against the manifest and subject
+authority without pretending to re-run or re-open that host evidence.
+
+Publication stages and validates all three packets, publishes one immutable
+content-addressed generation, then advances `portable/current.json` last under
+an exclusive writer lock. A partial or concurrent attempt is non-authoritative.
+Judgment remains explicitly null and runtime calibration remains `not_run`.
 
 ## Item contract
 

@@ -167,6 +167,62 @@ struct CurrentRun {
     index_sha256: String,
 }
 
+#[derive(Clone, Debug)]
+pub(super) struct ValidatedHostRun {
+    pub(super) current_ref: String,
+    pub(super) current_sha256: String,
+    pub(super) index_ref: String,
+    pub(super) index_sha256: String,
+    pub(super) run_id: String,
+    pub(super) source_head: String,
+    pub(super) source_tree: String,
+    pub(super) cargo_lock_sha256: String,
+    pub(super) cargo_toml_sha256: String,
+    pub(super) profile: String,
+    pub(super) features: Vec<String>,
+    pub(super) host_target: String,
+    pub(super) binary_sha256: String,
+    pub(super) binary_version: String,
+    pub(super) cases: Vec<ValidatedHostCase>,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct ValidatedHostCase {
+    pub(super) case_id: String,
+    pub(super) subject_id: String,
+    pub(super) expected_direction: String,
+    pub(super) repository_base: String,
+    pub(super) repository_head: String,
+    pub(super) repository_tree: String,
+    pub(super) argv: Vec<String>,
+    pub(super) mode: String,
+    pub(super) format: String,
+    pub(super) config_path: String,
+    pub(super) config_sha256: String,
+    pub(super) diff_path: String,
+    pub(super) diff_sha256: String,
+    pub(super) executed_diff_identity: String,
+    pub(super) subject_inputs: Vec<ValidatedInputDigest>,
+    pub(super) disposition: String,
+    pub(super) analyzer_input_identity: String,
+    pub(super) receipt_ref: String,
+    pub(super) receipt_sha256: String,
+    pub(super) stdout_ref: String,
+    pub(super) stdout_sha256: String,
+    pub(super) stderr_ref: String,
+    pub(super) stderr_sha256: String,
+    pub(super) stdout: Vec<u8>,
+    pub(super) materialized_root: PathBuf,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(super) struct ValidatedInputDigest {
+    pub(super) role: String,
+    pub(super) source_path: String,
+    pub(super) repository_path: String,
+    pub(super) sha256: String,
+}
+
 struct RunLock(PathBuf);
 
 impl Drop for RunLock {
@@ -856,6 +912,172 @@ fn validate_current(output_root: &Path, current: &CurrentRun) -> Result<(), Stri
         .parent()
         .ok_or_else(|| "current host-run index has no run parent".to_string())?;
     validate_generation(run_root)
+}
+
+pub(super) fn load_validated_current(
+    root: &Path,
+    host_current: &str,
+) -> Result<ValidatedHostRun, String> {
+    let relative = Path::new(host_current);
+    safe_relative(host_current)?;
+    if super::normalize_path(relative) != host_current
+        || relative.components().take(2).collect::<Vec<_>>()
+            != [
+                Component::Normal(OsStr::new("target")),
+                Component::Normal(OsStr::new("ripr")),
+            ]
+    {
+        return Err(
+            "host current must be a normalized repository-relative path under `target/ripr/`"
+                .to_string(),
+        );
+    }
+    let current_path = root.join(relative);
+    let root_canonical =
+        fs::canonicalize(root).map_err(|error| format!("canonicalize repository root: {error}"))?;
+    let current_canonical = fs::canonicalize(&current_path)
+        .map_err(|error| format!("resolve host current `{host_current}`: {error}"))?;
+    if !current_canonical.starts_with(&root_canonical) {
+        return Err("host current escapes the repository through a link".to_string());
+    }
+    let output_root = current_path
+        .parent()
+        .ok_or_else(|| "host current has no output root".to_string())?;
+    let current: CurrentRun = read_strict_json(&current_path, "current host run")?;
+    if current.schema_version != "0.1" || current.kind != "rust_judged_panel_current_host_run" {
+        return Err("host current has an unsupported schema or kind".to_string());
+    }
+    validate_current(output_root, &current)?;
+
+    let index_path = output_root.join(&current.index_path);
+    let index: HostRunIndex = read_strict_json(&index_path, "host run index")?;
+    if index.schema_version != "0.1"
+        || index.kind != "rust_judged_panel_host_run_index"
+        || index.publication_state != "complete"
+        || index.run_id != current.run_id
+    {
+        return Err("host current and run index authority do not agree".to_string());
+    }
+    let run_root = index_path
+        .parent()
+        .ok_or_else(|| "host run index has no generation root".to_string())?;
+    let output_relative = relative
+        .parent()
+        .ok_or_else(|| "host current has no relative output root".to_string())?;
+    let run_relative = Path::new(&current.index_path)
+        .parent()
+        .ok_or_else(|| "host run index has no relative generation root".to_string())?;
+    let mut cases = Vec::new();
+    for entry in &index.cases {
+        let receipt_path = run_root.join(&entry.receipt_path);
+        let receipt: CaseReceipt = read_strict_json(&receipt_path, "case receipt")?;
+        if receipt.schema_version != "0.1"
+            || receipt.kind != "rust_judged_panel_host_run_receipt"
+            || receipt.case_id != entry.case_id
+            || receipt.expected_direction != entry.expected_direction
+            || receipt.raw.stdout_sha256 != entry.stdout_sha256
+            || receipt.raw.stderr_sha256 != entry.stderr_sha256
+        {
+            return Err(format!(
+                "host run index and receipt authority do not agree for `{}`",
+                entry.case_id
+            ));
+        }
+        if !matches!(receipt.disposition.as_str(), "complete" | "typed_limited")
+            || receipt.timed_out
+            || receipt.exit_code != Some(0)
+            || receipt.error.is_some()
+        {
+            return Err(format!(
+                "host receipt `{}` is not a publishable completed analysis",
+                receipt.case_id
+            ));
+        }
+        let analyzer_input_identity = receipt.analyzer_input_identity.clone().ok_or_else(|| {
+            format!(
+                "host receipt `{}` lacks analyzer input identity",
+                receipt.case_id
+            )
+        })?;
+        let stdout_path = run_root.join(&receipt.raw.stdout_path);
+        let stdout = fs::read(&stdout_path).map_err(|error| {
+            format!(
+                "read host stdout for `{}` at `{}`: {error}",
+                receipt.case_id,
+                stdout_path.display()
+            )
+        })?;
+        let receipt_ref =
+            super::normalize_path(&output_relative.join(run_relative).join(&entry.receipt_path));
+        let stdout_ref = super::normalize_path(
+            &output_relative
+                .join(run_relative)
+                .join(&receipt.raw.stdout_path),
+        );
+        let stderr_ref = super::normalize_path(
+            &output_relative
+                .join(run_relative)
+                .join(&receipt.raw.stderr_path),
+        );
+        for value in [&receipt_ref, &stdout_ref, &stderr_ref] {
+            safe_relative(value)?;
+        }
+        cases.push(ValidatedHostCase {
+            case_id: receipt.case_id.clone(),
+            subject_id: receipt.subject_id.clone(),
+            expected_direction: receipt.expected_direction.clone(),
+            repository_base: receipt.repository_base.clone(),
+            repository_head: receipt.repository_head.clone(),
+            repository_tree: receipt.repository_tree.clone(),
+            argv: receipt.plan.argv.clone(),
+            mode: receipt.plan.mode.clone(),
+            format: receipt.plan.format.clone(),
+            config_path: receipt.plan.config_path.clone(),
+            config_sha256: receipt.plan.config_sha256.clone(),
+            diff_path: receipt.plan.diff_path.clone(),
+            diff_sha256: receipt.plan.diff_sha256.clone(),
+            executed_diff_identity: receipt.plan.executed_diff_identity.clone(),
+            subject_inputs: receipt
+                .plan
+                .subject_inputs
+                .iter()
+                .map(|input| ValidatedInputDigest {
+                    role: input.role.clone(),
+                    source_path: input.source_path.clone(),
+                    repository_path: input.repository_path.clone(),
+                    sha256: input.sha256.clone(),
+                })
+                .collect(),
+            disposition: receipt.disposition.clone(),
+            analyzer_input_identity,
+            receipt_ref,
+            receipt_sha256: entry.receipt_sha256.clone(),
+            stdout_ref,
+            stdout_sha256: receipt.raw.stdout_sha256.clone(),
+            stderr_ref,
+            stderr_sha256: receipt.raw.stderr_sha256.clone(),
+            stdout,
+            materialized_root: run_root.join("subjects").join(&receipt.case_id),
+        });
+    }
+    cases.sort_by(|left, right| left.case_id.cmp(&right.case_id));
+    Ok(ValidatedHostRun {
+        current_ref: host_current.to_string(),
+        current_sha256: sha256_file(&current_path)?,
+        index_ref: super::normalize_path(&output_relative.join(&current.index_path)),
+        index_sha256: current.index_sha256,
+        run_id: index.run_id,
+        source_head: index.source.head,
+        source_tree: index.source.tree,
+        cargo_lock_sha256: index.source.cargo_lock_sha256,
+        cargo_toml_sha256: index.source.cargo_toml_sha256,
+        profile: index.build.profile,
+        features: index.build.features,
+        host_target: index.build.host_target,
+        binary_sha256: index.build.binary_sha256,
+        binary_version: index.build.binary_version,
+        cases,
+    })
 }
 
 fn validate_binary_unchanged(path: &Path, expected: &str) -> Result<(), String> {
