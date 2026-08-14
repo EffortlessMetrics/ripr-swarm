@@ -1,12 +1,14 @@
 # RIPR-SPEC-0086: Python Tier A External-Repo Eval Sweep
 
-Status: accepted
+Status: proposed
 
-Acceptance note (2026-08-14): #1161 landed the Tier A `cargo xtask
-eval-sweep` command (`xtask/src/command.rs` dispatch plus
-`xtask/src/reports/eval_sweep.rs`) and current code/tests implement the
-specified sweep. Tier B judgment semantics live in RIPR-SPEC-0092, which
-remains proposed.
+Status note (2026-08-14): #1161 landed the Tier A `cargo xtask eval-sweep`
+command (`xtask/src/command.rs` dispatch plus `xtask/src/reports/eval_sweep.rs`),
+but the spec stays **proposed**: the run algorithm's classification contract
+(step 3) requires both exit code and JSON, and the current `run_check`
+classifies solely from parseable stdout — a nonzero exit after valid JSON
+reads as `ok`. The exit-code leg is unenforced, so the implementation is
+weaker than the spec and acceptance would be a false-confidence flip.
 
 Owner: language-adapter / swarm
 
