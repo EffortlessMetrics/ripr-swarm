@@ -224,9 +224,9 @@ enabled adapter with a matching non-success `language_runs` entry carries
 5. Diff contains only non-analyzable files (`.md`, `.yaml`) → NO
    preview-language `Note:` line and NO `preview_languages` JSON field. The
    separate docs-only stderr disclosure (#2304, example 6) applies instead.
-5. Count in `Note:` matches `file_count` in advisory, matches files routed by
+6. Count in `Note:` matches `file_count` in advisory, matches files routed by
    `analysis::language::route` to that adapter.
-6. Diff contains only non-source files (`.md`, `.toml`, extensionless), zero
+7. Diff contains only non-source files (`.md`, `.toml`, extensionless), zero
    probes (#2304) → a one-line stderr disclosure names the changed-file count
    and observed extensions and states that the empty result is correct
    because ripr cannot analyze non-source files. It is not a Finding, not a

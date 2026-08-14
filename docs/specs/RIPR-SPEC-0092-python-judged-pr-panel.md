@@ -196,12 +196,17 @@ The schema, seed, and historical populated panels exist. The manifest-only
 fixture contract and doc gates validate file structure, not the semantic
 lattice or recomputed summaries.
 
-Still required before acceptance:
+Still required before acceptance is an executable semantic validator that, at
+minimum:
 
-- `python_judged_pr_panel::manifest_load_validates` — envelope + per-item field
-  validation (unique ids, valid `expected_direction`, lattice consistency).
-- `python_judged_pr_panel::lattice_rejects_double_error` — at most one error
-  label `true` per item.
+- validates the envelope and every item (unique IDs, valid enums, direction,
+  classification/static-limit consistency, path containment, and complete
+  judged fields);
+- rejects double-error labels, packet-readiness overclaims, malformed or
+  contradictory judgments, and stale/recomputed-summary mismatches.
+
+These are required behaviors, not current test symbols. No semantic validator
+or validator test authority is present on `main` yet.
 
 ## Implementation Mapping
 
@@ -211,7 +216,7 @@ Still required before acceptance:
 | Seed diffs | `fixtures/python-judged-pr-panel/diffs/*.diff` |
 | Historical hand-judged receipts | `fixtures/python-judged-pr-panel/{starter-judged.json,scaled-judged.json}` |
 | Executable semantic validator | Not established; required before this spec can become accepted |
-| Manifest-only fixture exemption | `xtask/src/main.rs` (`is_manifest_only_fixture_dir`) |
+| Manifest-only fixture exemption | `xtask/src/reports/fixtures.rs::is_manifest_only_fixture_dir` |
 | Spec registration | `policy/doc-artifacts.toml`, `docs/specs/README.md` |
 | Traceability | `.ripr/traceability.toml` |
 
@@ -219,6 +224,6 @@ Still required before acceptance:
 
 | Metric | Meaning |
 | --- | --- |
-| `false_actionable_rate` | fraction of judged items where `ripr` routed a repair for discriminated behavior (defined here; measured by a later judging PR) |
-| `false_exposed_rate` | fraction of judged items where `ripr` stayed quiet / over-credited where no oracle discriminates (the silent error; measured later) |
-| `directional_coverage` | presence of `should_gap` AND `should_stay_quiet` AND `should_limit` items in the panel |
+| `false_actionable_rate` | fraction of judged items where `ripr` routed a repair for discriminated behavior; #1202/#1213 recorded a bounded historical hand-judged measurement, while a validator-backed current promotion rerun remains outstanding |
+| `false_exposed_rate` | fraction of judged items where `ripr` stayed quiet / over-credited where no oracle discriminates; historical panels measured this manually, not through an executable validator |
+| `directional_coverage` | presence of `should_gap` AND `should_stay_quiet` AND `should_limit` items; historical coverage is a receipt, not current promotion authority |
