@@ -103,15 +103,8 @@ fn reject_error_packet(repo: &Path) -> Result<(), String> {
         .map_err(|err| format!("read generated {PR_EVIDENCE_JSON}: {err}"))?;
     let packet: Value = serde_json::from_str(&packet_text)
         .map_err(|err| format!("generated {PR_EVIDENCE_JSON} is not valid JSON: {err}"))?;
-    if packet.get("status").and_then(Value::as_str) == Some("error") {
-        return Err(format!(
-            "PR evidence producer failed; review-comments must not run: {}",
-            packet["warnings"]
-                .as_array()
-                .and_then(|warnings| warnings.first())
-                .and_then(|warning| warning["message"].as_str())
-                .unwrap_or("unknown producer error")
-        ));
+    if let Some(error) = ripr::reject_pr_evidence_error_packet(&packet) {
+        return Err(error);
     }
     Ok(())
 }
@@ -263,15 +256,8 @@ fn check_pr_evidence(repo: &Path, options: &PrEvidenceOptions) -> Result<(), Str
         .map_err(|err| format!("missing or unreadable {PR_EVIDENCE_JSON}: {err}"))?;
     let packet: Value = serde_json::from_str(&text)
         .map_err(|err| format!("{PR_EVIDENCE_JSON} is not valid JSON: {err}"))?;
-    if packet.get("status").and_then(Value::as_str) == Some("error") {
-        return Err(format!(
-            "PR evidence producer failed; review-comments must not run: {}",
-            packet["warnings"]
-                .as_array()
-                .and_then(|warnings| warnings.first())
-                .and_then(|warning| warning["message"].as_str())
-                .unwrap_or("unknown producer error")
-        ));
+    if let Some(error) = ripr::reject_pr_evidence_error_packet(&packet) {
+        return Err(error);
     }
     let violations = validate_packet_value(
         &packet,

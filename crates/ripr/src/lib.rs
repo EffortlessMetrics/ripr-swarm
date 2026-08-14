@@ -116,7 +116,7 @@ pub use analysis::PreviewLanguageAdvisory;
 /// Analyze a workspace diff using the default RIPR static pipeline.
 pub use app::{
     CheckInput, CheckOutput, check_workspace, collect_context, explain_finding,
-    explain_finding_with_input, render_check,
+    explain_finding_with_input, render_check, reject_pr_evidence_error_packet,
 };
 /// Field types of the public entrypoint types (#2112): every public field
 /// on `CheckInput` / `CheckOutput` is nameable from the crate root, so a
