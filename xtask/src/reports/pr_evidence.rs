@@ -94,8 +94,7 @@ fn print_help() {
 }
 
 fn write_pr_evidence(repo: &Path, options: &PrEvidenceOptions) -> Result<(), String> {
-    write_pr_evidence_with_runner(repo, options, run_ripr_check)?;
-    reject_error_packet(repo)
+    write_pr_evidence_with_runner(repo, options, run_ripr_check)
 }
 
 fn reject_error_packet(repo: &Path) -> Result<(), String> {
@@ -134,7 +133,7 @@ fn write_pr_evidence_with_runner(
         &changed_files,
         &options.root,
     )?;
-    match run_check(repo, options) {
+    let result = match run_check(repo, options) {
         Ok(check_json) => {
             match write_pr_evidence_packet(repo, options, &changed_files, &check_json) {
                 Ok(()) => Ok(()),
@@ -147,7 +146,9 @@ fn write_pr_evidence_with_runner(
             }
         }
         Err(err) => write_pr_evidence_error_packet(repo, options, &changed_files, &err),
-    }
+    };
+    result?;
+    reject_error_packet(repo)
 }
 
 #[cfg(test)]
@@ -1063,13 +1064,13 @@ mod tests {
             PR_CHECK_JSON,
             "{\"stale\":true}\n",
         )?;
-        write_pr_evidence_with_runner(&repo, &options, |_repo, _options| {
+        let producer_result = write_pr_evidence_with_runner(&repo, &options, |_repo, _options| {
             Err("ripr check for PR evidence timed out after 120 seconds; retry command: cargo xtask ripr-pr --base HEAD~1 --head HEAD --root .".to_string())
-        })?;
-        let check_error = check_pr_evidence(&repo, &options)
+        });
+        let producer_error = producer_result
             .err()
-            .ok_or_else(|| "error packet unexpectedly passed PR evidence check".to_string())?;
-        assert!(check_error.contains("review-comments must not run"));
+            .ok_or_else(|| "producer error packet unexpectedly passed generation".to_string())?;
+        assert!(producer_error.contains("review-comments must not run"));
 
         let packet_text = fs::read_to_string(repo.join(PR_EVIDENCE_JSON))
             .map_err(|err| format!("read packet: {err}"))?;
@@ -1080,11 +1081,6 @@ mod tests {
         assert!(repo.join(PR_DIFF).exists());
         assert!(repo.join(PR_EVIDENCE_MD).exists());
         assert!(!repo.join(PR_CHECK_JSON).exists());
-        let producer_error = reject_error_packet(&repo)
-            .err()
-            .ok_or_else(|| "producer error packet must stop the command".to_string())?;
-        assert!(producer_error.contains("review-comments must not run"));
-
         fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
         Ok(())
     }
