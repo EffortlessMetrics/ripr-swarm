@@ -5058,6 +5058,11 @@ Landed:
   result. This is a bounded receipt, not a current promotion threshold or an
   executable semantic validator.
 
+RIPR-SPEC-0086 remains proposed: the landed runner does not yet classify a
+nonzero `ripr check` exit with valid JSON as a crash, and the required
+fixed-vector report golden is absent. The landed harness is usable campaign
+machinery, not completed acceptance evidence.
+
 Remaining promotion proof is governed by issue #1160: a current judged-panel
 rerun after landed repairs, an explicit acceptable false-actionable threshold,
 promotion-grade robustness and external repair/rollback evidence, and a

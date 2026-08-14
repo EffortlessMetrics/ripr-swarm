@@ -1,6 +1,6 @@
 # RIPR-SPEC-0086: Python Tier A External-Repo Eval Sweep
 
-Status: accepted
+Status: proposed
 
 Owner: language-adapter / swarm
 
@@ -26,7 +26,7 @@ Linked issues:
 
 Linked PRs:
 
-- [#1161](https://github.com/EffortlessMetrics/ripr-swarm/pull/1161) — accepted
+- [#1161](https://github.com/EffortlessMetrics/ripr-swarm/pull/1161) — landed
   command implementation, fixtures, and tests.
 
 ## Problem
@@ -123,6 +123,12 @@ to `0.0` crash / `1.0` stability).
   comparison flags an injected instability; metrics arithmetic with empty-set
   guards; deterministic JSON/markdown report rendering.
 - A golden of the rendered report from a fixed in-memory run vector.
+
+Acceptance remains open because the current runner can parse valid JSON from a
+nonzero `ripr check` exit without classifying that run as a crash, and the
+required fixed-vector report golden has not been checked in. The landed command,
+fixtures, and unit tests are implementation evidence, not acceptance of these
+unmet requirements.
 
 ## Non-Goals
 
