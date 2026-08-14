@@ -1,6 +1,12 @@
 # RIPR-SPEC-0086: Python Tier A External-Repo Eval Sweep
 
-Status: proposed
+Status: accepted
+
+Acceptance note (2026-08-14): #1161 landed the Tier A `cargo xtask
+eval-sweep` command (`xtask/src/command.rs` dispatch plus
+`xtask/src/reports/eval_sweep.rs`) and current code/tests implement the
+specified sweep. Tier B judgment semantics live in RIPR-SPEC-0092, which
+remains proposed.
 
 Owner: language-adapter / swarm
 
@@ -8,7 +14,10 @@ Linked proposal:
 
 - None. This is a standalone evidence-tooling contract; it adds no product
   library behavior and no public API. It anchors the eval-sweep-driven Python
-  reliability campaign tracked in `.ripr/goals/python-repair-routing.toml`.
+  reliability campaign tracked by
+  [#1160](https://github.com/EffortlessMetrics/ripr-swarm/issues/1160) and
+  `plans/python-repair-routing/` (the former `.ripr/goals/` tracker was
+  deleted with the goals scheduler, #2056).
 
 Linked ADRs:
 

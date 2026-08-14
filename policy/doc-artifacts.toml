@@ -320,9 +320,9 @@ standalone_reason = "Umbrella contract for turning the existing oxc-AST TypeScri
 id = "RIPR-SPEC-0086"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0086-python-eval-sweep.md"
-status = "proposed"
+status = "accepted"
 owner = "language-adapter-swarm"
-standalone_reason = "Standalone evidence-tooling contract for the Tier A external-repo eval sweep (cargo xtask eval-sweep); adds no product library behavior or public API; anchors the eval-sweep-driven Python reliability campaign; references ADR 0009; no separate proposal artifact."
+standalone_reason = "Standalone evidence-tooling contract for the Tier A external-repo eval sweep (cargo xtask eval-sweep); accepted because #1161 landed the command (xtask dispatch plus reports/eval_sweep.rs) and current code/tests implement the specified sweep; adds no product library behavior or public API; anchors the eval-sweep-driven Python reliability campaign; references ADR 0009; no separate proposal artifact."
 
 [[artifact]]
 id = "RIPR-SPEC-0087"
@@ -370,7 +370,7 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0092-python-judged-pr-panel.md"
 status = "proposed"
 owner = "language-adapter-swarm"
-standalone_reason = "Standalone evidence-schema contract for the Tier B judged-diff panel that extends the RIPR-SPEC-0086 Tier A sweep with judgment (false-actionable + false-exposed); ships schema plus a hand-vetted seed manifest only, no judging engine and no analyzer change; references ADR 0009; no separate proposal artifact."
+standalone_reason = "Standalone evidence-schema contract for the Tier B judged-diff panel that extends the RIPR-SPEC-0086 Tier A sweep with judgment (false-actionable + false-exposed); ships schema plus a hand-vetted seed manifest; populated historical judged artifacts (starter-judged.json, scaled-judged.json) exist but the executable semantic validator and a current promotion-grade rerun are not established, so the spec stays proposed; no judging engine and no analyzer change; references ADR 0009; no separate proposal artifact."
 
 [[artifact]]
 id = "RIPR-SPEC-0093"

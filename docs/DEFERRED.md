@@ -8,7 +8,8 @@ when the v2 work lands or when the underlying motivation is no longer
 load-bearing.
 
 This is not a feature backlog — that lives in `docs/IMPLEMENTATION_CAMPAIGNS.md`
-and `.ripr/goals/active.toml`. This is the place where the v1 simplifications
+and the GitHub issue/plan trackers it points at (the former `.ripr/goals/`
+scheduler was deleted by #2056). This is the place where the v1 simplifications
 that paid for themselves are written down so a future session does not
 mistake them for permanent design choices.
 
@@ -520,7 +521,6 @@ Related PRs / friction:
 ## Cross-references
 
 - `docs/BADGE_POLICY.md` — locked vocabulary and what each badge does and does not prove.
-- `docs/IMPLEMENTATION_CAMPAIGNS.md` — active campaign work items.
-- `.ripr/goals/active.toml` — machine-readable manifest.
+- `docs/IMPLEMENTATION_CAMPAIGNS.md` — active campaign work items, each pointing at its live GitHub issue/plan tracker.
 - `docs/FRICTION_LOG.md` — raw same-day observations; entries graduate either to a fix, to this register, or to LEARNINGS.
 - `docs/LEARNINGS.md` — settled principles.

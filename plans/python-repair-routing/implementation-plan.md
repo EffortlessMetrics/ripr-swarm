@@ -1,6 +1,15 @@
 # Python Repair Routing Implementation Plan
 
-Status: proposed
+Status: partially delivered — historical plan text
+
+Delivery status (2026-08-14): the plan's early slices landed. The scoped
+Python repair-routing loop is governed `usable alpha` (#741), Python project
+detection can enable the adapter by default when config is absent, and the
+receipt/packet/first-pr bridges below are fixture-backed. Later sections are
+historical planning text, not the current queue:
+[`current-state-inventory.md`](current-state-inventory.md) and
+[#1160](https://github.com/EffortlessMetrics/ripr-swarm/issues/1160) carry
+the current state and the open promotion work.
 
 Owner: language-adapter / swarm
 
@@ -32,8 +41,9 @@ Active goal:
 
 Support-tier impact:
 
-- None for this plan. Python remains `preview` until a dedicated support-tier
-  PR promotes a scoped claim.
+- Delivered for the scoped loop only: the scoped support-tier review (#741)
+  promotes Python repair routing to `usable alpha`. Broader Python static
+  facts remain preview/advisory; this plan text does not widen that claim.
 
 Policy impact:
 

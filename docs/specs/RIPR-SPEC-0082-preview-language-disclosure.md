@@ -219,14 +219,14 @@ enabled adapter with a matching non-success `language_runs` entry carries
    supplied facts packet fails ingestion → `language_runs` records `invalid`,
    human output says the adapter did not complete, and both JSON surfaces emit
    `preview_languages[0].enabled == true`, `analyzed == false`.
-3. Diff contains only `.rs` files → NO `Note:` line, NO `preview_languages`
+4. Diff contains only `.rs` files → NO `Note:` line, NO `preview_languages`
    field in JSON output (both enabled and default config).
-4. Diff contains only non-analyzable files (`.md`, `.yaml`) → NO
+5. Diff contains only non-analyzable files (`.md`, `.yaml`) → NO
    preview-language `Note:` line and NO `preview_languages` JSON field. The
-   separate docs-only stderr disclosure (#2304, example 6) applies instead.
-5. Count in `Note:` matches `file_count` in advisory, matches files routed by
+   separate docs-only stderr disclosure (#2304, example 7) applies instead.
+6. Count in `Note:` matches `file_count` in advisory, matches files routed by
    `analysis::language::route` to that adapter.
-6. Diff contains only non-source files (`.md`, `.toml`, extensionless), zero
+7. Diff contains only non-source files (`.md`, `.toml`, extensionless), zero
    probes (#2304) → a one-line stderr disclosure names the changed-file count
    and observed extensions and states that the empty result is correct
    because ripr cannot analyze non-source files. It is not a Finding, not a

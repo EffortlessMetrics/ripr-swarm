@@ -96,7 +96,7 @@ observable behavior.
 | [RIPR-SPEC-0083](RIPR-SPEC-0083-check-no-scope-disclosure.md) | proposed | Check no-scope disclosure |
 | [RIPR-SPEC-0084](RIPR-SPEC-0084-default-base-resolution.md) | proposed | Default base resolution |
 | [RIPR-SPEC-0085](RIPR-SPEC-0085-typescript-evidence-adapter-contract.md) | proposed | TypeScript evidence adapter contract |
-| [RIPR-SPEC-0086](RIPR-SPEC-0086-python-eval-sweep.md) | proposed | Python Tier A eval sweep |
+| [RIPR-SPEC-0086](RIPR-SPEC-0086-python-eval-sweep.md) | accepted | Python Tier A eval sweep |
 | [RIPR-SPEC-0087](RIPR-SPEC-0087-typescript-preview-actionable-repair-packet.md) | proposed | TypeScript preview→actionable repair-packet contract (0085 §PR7) |
 | [RIPR-SPEC-0088](RIPR-SPEC-0088-typescript-repair-packet-projection.md) | proposed | TypeScript repair-packet surface projection (0085 §PR8) |
 | [RIPR-SPEC-0089](RIPR-SPEC-0089-ts-full-repo-guidance.md) | proposed | TypeScript full-repo scan guidance disclosure |
