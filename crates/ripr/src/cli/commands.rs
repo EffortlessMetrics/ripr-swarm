@@ -3988,6 +3988,67 @@ mod tests {
     }
 
     #[test]
+    fn reports_gap_ledger_fails_closed_for_blank_and_mixed_verification_routes()
+    -> Result<(), String> {
+        for (case, commands) in [
+            ("blank", serde_json::json!([" \t "])),
+            ("mixed", serde_json::json!(["cargo test", "  "])),
+        ] {
+            let dir = unique_command_test_dir(&format!("gap-ledger-{case}-verify"));
+            std::fs::create_dir_all(&dir)
+                .map_err(|error| format!("create {case} gap-ledger dir: {error}"))?;
+            let corpus_text = std::fs::read_to_string(
+                repo_root().join("fixtures/gap-decision-ledger/corpus.json"),
+            )
+            .map_err(|error| format!("read gap-ledger corpus: {error}"))?;
+            let corpus: serde_json::Value = serde_json::from_str(&corpus_text)
+                .map_err(|error| format!("parse gap-ledger corpus: {error}"))?;
+            let mut record = corpus
+                .get("cases")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|cases| cases.first())
+                .and_then(|case| case.get("expected_gap_record"))
+                .cloned()
+                .ok_or_else(|| "gap-ledger corpus first expected record missing".to_string())?;
+            record["verification_commands"] = commands;
+            let records = dir.join("records.json");
+            std::fs::write(
+                &records,
+                serde_json::json!({"records": [record]}).to_string(),
+            )
+            .map_err(|error| format!("write {case} gap-ledger records: {error}"))?;
+            let out = dir.join("gap-decision-ledger.json");
+            let out_md = dir.join("gap-decision-ledger.md");
+
+            reports(&args(&[
+                "gap-ledger",
+                "--records",
+                &records.display().to_string(),
+                "--out",
+                &out.display().to_string(),
+                "--out-md",
+                &out_md.display().to_string(),
+            ]))?;
+
+            let json_text = std::fs::read_to_string(&out)
+                .map_err(|error| format!("read {case} gap-ledger JSON: {error}"))?;
+            let value: serde_json::Value = serde_json::from_str(&json_text)
+                .map_err(|error| format!("parse {case} gap-ledger JSON: {error}"))?;
+            assert_eq!(value["summary"]["projection_pr_comment_eligible"], 0);
+            assert_eq!(value["summary"]["projection_gate_candidate"], 0);
+            assert_eq!(value["summary"]["projection_agent_packet_eligible"], 0);
+            let markdown = std::fs::read_to_string(&out_md)
+                .map_err(|error| format!("read {case} gap-ledger Markdown: {error}"))?;
+            assert!(markdown.contains("Verify: `unavailable_incomplete_command_list`"));
+            assert!(!markdown.contains("  - `cargo test`"));
+
+            std::fs::remove_dir_all(&dir)
+                .map_err(|error| format!("remove {case} gap-ledger dir: {error}"))?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn reports_gap_ledger_derives_output_contract_gap_from_check_output() -> Result<(), String> {
         let dir = unique_command_test_dir("gap-ledger-check-output");
         std::fs::create_dir_all(&dir)

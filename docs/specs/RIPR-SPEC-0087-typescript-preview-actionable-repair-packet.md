@@ -176,11 +176,12 @@ The shared validator enforces (verbatim, `agent_seam_packets.rs:839–871`):
 1. `record.projection_eligibility["agent_packet"]` present **and**
    `projection_eligible(record, "agent_packet") == true`.
 2. `record.repair_route` is `Some(_)`.
-3. `record.verification_commands` is non-empty.
+3. `record.verification_commands` is non-empty and every legacy display is
+   non-whitespace after trimming.
 4. `record.repairability == "repairable"` **OR**
    `route.route_kind == "InspectStaticLimit"`.
 5. `allowed_edit_surface_for_gap_route(route)` returns a non-empty `Vec`.
-6. `record.receipt_command` is `Some(non-empty)`.
+6. `record.receipt_command` is `Some(non-whitespace-after-trimming)`.
 
 ### 1.2 TypeScript-specific preconditions BEFORE the validator (fail-closed)
 
