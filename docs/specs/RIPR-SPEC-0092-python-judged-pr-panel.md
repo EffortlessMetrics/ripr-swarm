@@ -153,7 +153,7 @@ corpus.
 - `fixtures/python-judged-pr-panel/{SPEC.md, manifest.json, diffs/*.diff}`, with
   at least one item per `expected_direction`.
 - The manifest-only fixture exemption arm for `python-judged-pr-panel` in
-  `xtask/src/main.rs` (`is_manifest_only_fixture_dir`).
+  `xtask/src/reports/fixtures.rs::is_manifest_only_fixture_dir`.
 
 ## Non-Goals
 
