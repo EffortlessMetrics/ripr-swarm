@@ -39,18 +39,24 @@ A gap-only panel cannot measure either side correctly.
 - `manifest.json` — selected, unjudged cases. Every judgment label is `null`.
 - `diffs/*.diff` — the exact changed production behavior for each synthetic
   seed case.
+- `subjects.json` and `subjects/*` — independent checked source, test, config,
+  diff, semantic-selection, and deterministic Git identity authority for later
+  replay materialization.
 
 The seed records the test/oracle evidence required for later reconstruction.
-A subsequent execution PR must materialize exact repositories, source/test
-artifacts, RIPR binary/config identities, and current output before any label is
-populated.
+The subject authority proves that the three selected repositories materialize
+at exact base/head/tree identities from independently hashed inputs. A later
+execution PR must still build and invoke RIPR and retain host run receipts before
+any replay result exists or any label is populated.
 
 `cargo xtask rust-judged-panel check` is the retained semantic guard for this
-seed. It validates the typed manifest contract, selected directions, explicit
-null-as-unjudged state, and exact Rust-token anchors on added diff lines. The
-same checker is reached by required precommit policy. Passing it establishes
-only that the selected seed is internally coherent; it does not establish an
-analyzer result, replay identity, judgment, rate, or support claim.
+seed and its subject authority. It validates the typed manifest contract,
+selected directions, explicit null-as-unjudged state, exact Rust-token anchors,
+subject digests, manifest joins, and deterministic Git materialization. The same
+checker is reached by required precommit policy. Passing it establishes only
+that the selected seed and independent subject inputs are internally coherent;
+it does not establish analyzer execution, a replay result, judgment, rate, or
+support claim.
 
 ## Item contract
 

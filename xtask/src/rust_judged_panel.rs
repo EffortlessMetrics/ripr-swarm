@@ -6,6 +6,8 @@ use ra_ap_syntax::{Edition, SourceFile, SyntaxKind};
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 
+mod subject;
+
 pub(crate) const MANIFEST_PATH: &str = "metrics/rust-judged-behavior-panel/manifest.json";
 const DIFF_ROOT: &str = "metrics/rust-judged-behavior-panel/diffs";
 const RERUN_COMMAND: &str = "cargo xtask rust-judged-panel check";
@@ -240,9 +242,9 @@ fn parse_json_without_duplicate_keys(body: &str) -> Result<serde_json::Value, se
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
     match args {
         [subcommand] if subcommand == "check" => {
-            let manifest = load_and_validate_at(Path::new("."), Path::new(MANIFEST_PATH))?;
+            let manifest = check_at(Path::new("."))?;
             println!(
-                "Rust judged panel seed valid: manifest={MANIFEST_PATH} items={} directions={}",
+                "Rust judged panel seed and subjects valid: manifest={MANIFEST_PATH} items={} directions={}",
                 manifest.items.len(),
                 manifest.required_directions.join(",")
             );
@@ -259,7 +261,13 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
 }
 
 pub(crate) fn check_canonical() -> Result<(), String> {
-    load_and_validate_at(Path::new("."), Path::new(MANIFEST_PATH)).map(|_| ())
+    check_at(Path::new(".")).map(|_| ())
+}
+
+fn check_at(root: &Path) -> Result<RustJudgedPanelManifest, String> {
+    let manifest = load_and_validate_at(root, Path::new(MANIFEST_PATH))?;
+    subject::validate_at(root, &manifest)?;
+    Ok(manifest)
 }
 
 pub(crate) fn load_and_validate_at(

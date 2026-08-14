@@ -1,0 +1,723 @@
+use std::collections::BTreeSet;
+use std::fs;
+use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use serde::Deserialize;
+use sha2::{Digest, Sha256};
+
+use super::{RustJudgedPanelItem, RustJudgedPanelManifest};
+use crate::run::capture_process_output;
+
+const SUBJECTS_PATH: &str = "metrics/rust-judged-behavior-panel/subjects.json";
+const FIXED_GIT_DATE: &str = "2001-01-01T00:00:00Z";
+static SCRATCH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SubjectAuthority {
+    schema_version: String,
+    kind: String,
+    cases: Vec<SubjectCase>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SubjectCase {
+    case_id: String,
+    repository: String,
+    subject_root: String,
+    expected_direction: String,
+    anchor_file: String,
+    anchor_line: u64,
+    owner: String,
+    behavior_family: String,
+    changed_behavior: String,
+    expected_classification: String,
+    expected_actionability: String,
+    expected_static_limit_kind: Option<String>,
+    relation_basis: String,
+    oracle_family: String,
+    propagation_witness: String,
+    cargo_toml: SubjectFile,
+    cargo_lock: SubjectFile,
+    config: SubjectFile,
+    source_before: SubjectFile,
+    source_after: SubjectFile,
+    tests: Vec<SubjectFile>,
+    diff: SubjectFile,
+    expected_base: String,
+    expected_head: String,
+    expected_tree: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SubjectFile {
+    source_path: String,
+    repository_path: String,
+    sha256: String,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct MaterializedIdentity {
+    base: String,
+    head: String,
+    tree: String,
+}
+
+struct Scratch(PathBuf);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _result = fs::remove_dir_all(&self.0);
+    }
+}
+
+pub(super) fn validate_at(root: &Path, manifest: &RustJudgedPanelManifest) -> Result<(), String> {
+    let authority = load_at(root)?;
+    validate_authority(root, manifest, &authority)?;
+    let scratch = scratch(root, "canonical")?;
+    for case in &authority.cases {
+        materialize_subject(root, &scratch.0, case, &[])?;
+    }
+    Ok(())
+}
+
+fn load_at(root: &Path) -> Result<SubjectAuthority, String> {
+    let path = root.join(SUBJECTS_PATH);
+    let body = fs::read_to_string(&path)
+        .map_err(|error| format!("read subject authority `{}`: {error}", path.display()))?;
+    let value = super::parse_json_without_duplicate_keys(&body)
+        .map_err(|error| format!("parse subject authority `{}`: {error}", path.display()))?;
+    serde_json::from_value(value)
+        .map_err(|error| format!("parse subject authority `{}`: {error}", path.display()))
+}
+
+fn validate_authority(
+    root: &Path,
+    manifest: &RustJudgedPanelManifest,
+    authority: &SubjectAuthority,
+) -> Result<(), String> {
+    let mut violations = Vec::new();
+    require(
+        &mut violations,
+        authority.schema_version == "0.1",
+        "subjects.schema_version must be `0.1`",
+    );
+    require(
+        &mut violations,
+        authority.kind == "rust_judged_panel_subject_authority",
+        "subjects.kind is invalid",
+    );
+    require(
+        &mut violations,
+        authority.cases.len() == manifest.items.len(),
+        "subjects must own every selected case exactly once",
+    );
+
+    let mut seen = BTreeSet::new();
+    for case in &authority.cases {
+        if !seen.insert(case.case_id.as_str()) {
+            violations.push(format!("subjects duplicate case `{}`", case.case_id));
+        }
+        match manifest.items.iter().find(|item| item.id == case.case_id) {
+            Some(item) => validate_manifest_join(case, item, &mut violations),
+            None => violations.push(format!(
+                "subjects case `{}` is not selected by the manifest",
+                case.case_id
+            )),
+        }
+        for file in subject_files(case) {
+            if let Err(error) = validate_subject_file(root, case, file) {
+                violations.push(error);
+            }
+        }
+        for (label, value) in [
+            ("expected_base", &case.expected_base),
+            ("expected_head", &case.expected_head),
+            ("expected_tree", &case.expected_tree),
+        ] {
+            require(
+                &mut violations,
+                is_git_oid(value),
+                &format!(
+                    "subjects `{}` {label} must be a 40-hex Git object id",
+                    case.case_id
+                ),
+            );
+        }
+    }
+
+    violations.sort();
+    violations.dedup();
+    if violations.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Rust judged panel subjects have {} violation(s):\n- {}",
+            violations.len(),
+            violations.join("\n- ")
+        ))
+    }
+}
+
+fn validate_manifest_join(
+    case: &SubjectCase,
+    item: &RustJudgedPanelItem,
+    violations: &mut Vec<String>,
+) {
+    let label = format!("subjects `{}`", case.case_id);
+    for (field, actual, expected) in [
+        (
+            "repository",
+            case.repository.as_str(),
+            item.repository.as_str(),
+        ),
+        (
+            "diff path",
+            case.diff.source_path.as_str(),
+            item.diff_path.as_str(),
+        ),
+        (
+            "expected direction",
+            case.expected_direction.as_str(),
+            item.expected_direction.as_str(),
+        ),
+        (
+            "anchor file",
+            case.anchor_file.as_str(),
+            item.anchor.file.as_str(),
+        ),
+        ("owner", case.owner.as_str(), item.anchor.owner.as_str()),
+        (
+            "behavior family",
+            case.behavior_family.as_str(),
+            item.behavior_family.as_str(),
+        ),
+        (
+            "changed behavior",
+            case.changed_behavior.as_str(),
+            item.anchor.changed_behavior.as_str(),
+        ),
+        (
+            "expected classification",
+            case.expected_classification.as_str(),
+            item.expected_classification.as_str(),
+        ),
+        (
+            "expected actionability",
+            case.expected_actionability.as_str(),
+            item.expected_actionability.as_str(),
+        ),
+        (
+            "relation basis",
+            case.relation_basis.as_str(),
+            item.selection_dimensions.relation_basis.as_str(),
+        ),
+        (
+            "oracle family",
+            case.oracle_family.as_str(),
+            item.selection_dimensions.oracle_family.as_str(),
+        ),
+        (
+            "propagation witness",
+            case.propagation_witness.as_str(),
+            item.selection_dimensions.propagation_witness.as_str(),
+        ),
+    ] {
+        check_equal(violations, &format!("{label} {field}"), actual, expected);
+    }
+    require(
+        violations,
+        case.anchor_line == item.anchor.line,
+        &format!("{label} anchor line does not match the manifest"),
+    );
+    require(
+        violations,
+        case.expected_static_limit_kind.as_ref() == item.expected_static_limit_kind.value(),
+        &format!("{label} expected static limit does not match the manifest"),
+    );
+}
+
+fn subject_files(case: &SubjectCase) -> Vec<&SubjectFile> {
+    let mut files = vec![
+        &case.cargo_toml,
+        &case.cargo_lock,
+        &case.config,
+        &case.source_before,
+        &case.source_after,
+        &case.diff,
+    ];
+    files.extend(case.tests.iter());
+    files
+}
+
+fn validate_subject_file(
+    root: &Path,
+    case: &SubjectCase,
+    file: &SubjectFile,
+) -> Result<(), String> {
+    safe_relative(&file.source_path)?;
+    safe_relative(&file.repository_path)?;
+    if !file.source_path.starts_with(&case.subject_root)
+        && file.source_path != case.diff.source_path
+    {
+        return Err(format!(
+            "subjects `{}` file `{}` escapes subject root `{}`",
+            case.case_id, file.source_path, case.subject_root
+        ));
+    }
+    let canonical_root = fs::canonicalize(root)
+        .map_err(|error| format!("canonicalize repository root `{}`: {error}", root.display()))?;
+    let source_path = root.join(&file.source_path);
+    let canonical_source = fs::canonicalize(&source_path).map_err(|error| {
+        format!(
+            "canonicalize subject source `{}`: {error}",
+            source_path.display()
+        )
+    })?;
+    if !canonical_source.starts_with(&canonical_root) {
+        return Err(format!(
+            "subjects `{}` file `{}` escapes the canonical repository root",
+            case.case_id, file.source_path
+        ));
+    }
+    if file.source_path != case.diff.source_path {
+        let canonical_subject_root =
+            fs::canonicalize(root.join(&case.subject_root)).map_err(|error| {
+                format!("canonicalize subject root `{}`: {error}", case.subject_root)
+            })?;
+        if !canonical_source.starts_with(&canonical_subject_root) {
+            return Err(format!(
+                "subjects `{}` file `{}` escapes the canonical subject root `{}`",
+                case.case_id, file.source_path, case.subject_root
+            ));
+        }
+    }
+    check_digest(&canonical_source, &file.sha256, &case.case_id)
+}
+
+fn materialize_subject(
+    root: &Path,
+    scratch_root: &Path,
+    case: &SubjectCase,
+    inherited_git_env: &[(&str, &str)],
+) -> Result<MaterializedIdentity, String> {
+    let repo = scratch_root.join(&case.case_id);
+    fs::create_dir_all(&repo)
+        .map_err(|error| format!("create subject repository `{}`: {error}", repo.display()))?;
+    for file in [&case.cargo_toml, &case.cargo_lock, &case.config]
+        .into_iter()
+        .chain(case.tests.iter())
+        .chain(std::iter::once(&case.source_before))
+    {
+        copy_subject_file(root, &repo, file)?;
+    }
+
+    git(
+        &repo,
+        &["init", "--quiet", "--object-format=sha1"],
+        inherited_git_env,
+    )?;
+    git(
+        &repo,
+        &["symbolic-ref", "HEAD", "refs/heads/main"],
+        inherited_git_env,
+    )?;
+    for file in [&case.cargo_toml, &case.cargo_lock, &case.config]
+        .into_iter()
+        .chain(case.tests.iter())
+        .chain(std::iter::once(&case.source_before))
+    {
+        index_file(&repo, file, inherited_git_env)?;
+    }
+    let base_tree = git(&repo, &["write-tree"], inherited_git_env)?;
+    let base = git(
+        &repo,
+        &["commit-tree", &base_tree, "-m", "rust judged panel base"],
+        inherited_git_env,
+    )?;
+
+    copy_subject_file(root, &repo, &case.diff)?;
+    git(
+        &repo,
+        &[
+            "apply",
+            "--whitespace=nowarn",
+            "--",
+            &case.diff.repository_path,
+        ],
+        inherited_git_env,
+    )?;
+    fs::remove_file(repo.join(&case.diff.repository_path)).map_err(|error| {
+        format!(
+            "remove staged diff `{}`: {error}",
+            case.diff.repository_path
+        )
+    })?;
+    check_digest(
+        &repo.join(&case.source_after.repository_path),
+        &case.source_after.sha256,
+        &case.case_id,
+    )?;
+    index_file(&repo, &case.source_after, inherited_git_env)?;
+    let tree = git(&repo, &["write-tree"], inherited_git_env)?;
+    let head = git(
+        &repo,
+        &[
+            "commit-tree",
+            &tree,
+            "-p",
+            &base,
+            "-m",
+            "rust judged panel head",
+        ],
+        inherited_git_env,
+    )?;
+    git(
+        &repo,
+        &["update-ref", "refs/heads/main", &head],
+        inherited_git_env,
+    )?;
+
+    let identity = MaterializedIdentity { base, head, tree };
+    let expected = MaterializedIdentity {
+        base: case.expected_base.clone(),
+        head: case.expected_head.clone(),
+        tree: case.expected_tree.clone(),
+    };
+    if identity != expected {
+        return Err(format!(
+            "subject `{}` deterministic identity mismatch: expected {expected:?}; actual {identity:?}",
+            case.case_id
+        ));
+    }
+    Ok(identity)
+}
+
+fn copy_subject_file(root: &Path, repo: &Path, file: &SubjectFile) -> Result<(), String> {
+    let destination = repo.join(&file.repository_path);
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("create `{}`: {error}", parent.display()))?;
+    }
+    fs::copy(root.join(&file.source_path), &destination).map_err(|error| {
+        format!(
+            "copy `{}` to `{}`: {error}",
+            file.source_path,
+            destination.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn index_file(
+    repo: &Path,
+    file: &SubjectFile,
+    inherited_git_env: &[(&str, &str)],
+) -> Result<(), String> {
+    let blob = git(
+        repo,
+        &["hash-object", "-w", "--", &file.repository_path],
+        inherited_git_env,
+    )?;
+    let cache = format!("100644,{blob},{}", file.repository_path);
+    git(
+        repo,
+        &["update-index", "--add", "--cacheinfo", &cache],
+        inherited_git_env,
+    )
+    .map(|_| ())
+}
+
+fn git(repo: &Path, args: &[&str], inherited_env: &[(&str, &str)]) -> Result<String, String> {
+    let mut owned = vec!["-C".to_string(), repo.display().to_string()];
+    owned.extend(args.iter().map(|arg| (*arg).to_string()));
+    let null_config = if cfg!(windows) { "NUL" } else { "/dev/null" };
+    let mut envs = inherited_env.to_vec();
+    envs.extend([
+        ("GIT_CONFIG_NOSYSTEM", "1"),
+        ("GIT_CONFIG_SYSTEM", null_config),
+        ("GIT_CONFIG_GLOBAL", null_config),
+        ("GIT_CONFIG_COUNT", "0"),
+        ("GIT_ATTR_NOSYSTEM", "1"),
+        ("GIT_DEFAULT_HASH", "sha1"),
+        ("GIT_AUTHOR_NAME", "RIPR Judged Panel"),
+        ("GIT_AUTHOR_EMAIL", "panel@example.invalid"),
+        ("GIT_AUTHOR_DATE", FIXED_GIT_DATE),
+        ("GIT_COMMITTER_NAME", "RIPR Judged Panel"),
+        ("GIT_COMMITTER_EMAIL", "panel@example.invalid"),
+        ("GIT_COMMITTER_DATE", FIXED_GIT_DATE),
+    ]);
+    let bytes = capture_process_output("git", &owned, &envs).map_err(|error| error.message)?;
+    Ok(String::from_utf8_lossy(&bytes).trim().to_string())
+}
+
+fn check_digest(path: &Path, expected: &str, case_id: &str) -> Result<(), String> {
+    let bytes = fs::read(path)
+        .map_err(|error| format!("read digest input `{}`: {error}", path.display()))?;
+    let actual = format!("sha256:{:x}", Sha256::digest(&bytes));
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(format!(
+            "subjects `{case_id}` digest mismatch for `{}`: expected {expected}, got {actual}",
+            path.display()
+        ))
+    }
+}
+
+fn scratch(root: &Path, label: &str) -> Result<Scratch, String> {
+    let sequence = SCRATCH_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let path = root
+        .join("target/ripr/rust-judged-panel-subjects")
+        .join(format!("{label}-{}-{sequence}", std::process::id()));
+    if path.exists() {
+        return Err(format!(
+            "subject scratch already exists: `{}`",
+            path.display()
+        ));
+    }
+    fs::create_dir_all(&path)
+        .map_err(|error| format!("create subject scratch `{}`: {error}", path.display()))?;
+    Ok(Scratch(path))
+}
+
+fn safe_relative(value: &str) -> Result<(), String> {
+    let path = Path::new(value);
+    if value.is_empty()
+        || value.contains('\\')
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(format!(
+            "path `{value}` must be normalized repository-relative text"
+        ));
+    }
+    Ok(())
+}
+
+fn require(violations: &mut Vec<String>, condition: bool, message: &str) {
+    if !condition {
+        violations.push(message.to_string());
+    }
+}
+
+fn check_equal(violations: &mut Vec<String>, label: &str, actual: &str, expected: &str) {
+    if actual != expected {
+        violations.push(format!("{label}: expected `{expected}`, got `{actual}`"));
+    }
+}
+
+fn is_git_oid(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    use serde_json::Value;
+    use sha2::Digest;
+
+    use super::{load_at, materialize_subject, scratch, validate_at};
+
+    fn repository_root() -> Result<PathBuf, String> {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| "xtask manifest must have a repository parent".to_string())
+    }
+
+    fn copy_tree(source: &Path, destination: &Path) -> Result<(), String> {
+        fs::create_dir_all(destination).map_err(|error| error.to_string())?;
+        for entry in fs::read_dir(source).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            let target = destination.join(entry.file_name());
+            if entry
+                .file_type()
+                .map_err(|error| error.to_string())?
+                .is_dir()
+            {
+                copy_tree(&entry.path(), &target)?;
+            } else {
+                fs::copy(entry.path(), target).map_err(|error| error.to_string())?;
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn canonical_subjects_materialize_with_stable_identities_after_relocation() -> Result<(), String>
+    {
+        let root = repository_root()?;
+        let authority = load_at(&root)?;
+        let first = scratch(&root, "relocation-a")?;
+        let second = scratch(&root, "relocation-b")?;
+        for case in &authority.cases {
+            let left = materialize_subject(&root, &first.0, case, &[])?;
+            let right = materialize_subject(&root, &second.0, case, &[])?;
+            if left != right {
+                return Err(format!(
+                    "subject `{}` changed after relocation",
+                    case.case_id
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn hostile_git_configuration_cannot_change_subject_identity() -> Result<(), String> {
+        let root = repository_root()?;
+        let authority = load_at(&root)?;
+        let scratch = scratch(&root, "hostile-git")?;
+        let hostile = scratch.0.join("hostile.gitconfig");
+        fs::write(
+            &hostile,
+            "[init]\n\tdefaultObjectFormat = sha256\n[core]\n\tautocrlf = true\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let hostile_text = hostile.display().to_string();
+        let env = [
+            ("GIT_CONFIG_GLOBAL", hostile_text.as_str()),
+            ("GIT_CONFIG_COUNT", "1"),
+            ("GIT_CONFIG_KEY_0", "init.defaultObjectFormat"),
+            ("GIT_CONFIG_VALUE_0", "sha256"),
+        ];
+        for case in &authority.cases {
+            materialize_subject(&root, &scratch.0, case, &env)?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_governed_byte_is_rejected_before_materialization() -> Result<(), String> {
+        let canonical = repository_root()?;
+        let scratch = scratch(&canonical, "changed-byte")?;
+        let root = scratch.0.join("repo");
+        copy_tree(
+            &canonical.join("metrics/rust-judged-behavior-panel"),
+            &root.join("metrics/rust-judged-behavior-panel"),
+        )?;
+        let changed = root.join(
+            "metrics/rust-judged-behavior-panel/subjects/boundary-missing-equality/source.before.rs",
+        );
+        fs::write(&changed, "pub fn changed() {}\n").map_err(|error| error.to_string())?;
+        let manifest =
+            super::super::load_and_validate_at(&root, Path::new(super::super::MANIFEST_PATH))?;
+        let error = validate_at(&root, &manifest)
+            .err()
+            .ok_or_else(|| "changed governed byte was accepted".to_string())?;
+        if error.contains("digest mismatch") {
+            Ok(())
+        } else {
+            Err(format!("unexpected changed-byte error: {error}"))
+        }
+    }
+
+    #[test]
+    fn resealed_changed_byte_is_rejected_by_git_identity() -> Result<(), String> {
+        let canonical = repository_root()?;
+        let scratch = scratch(&canonical, "resealed-byte")?;
+        let root = scratch.0.join("repo");
+        copy_tree(
+            &canonical.join("metrics/rust-judged-behavior-panel"),
+            &root.join("metrics/rust-judged-behavior-panel"),
+        )?;
+        let changed = root.join(
+            "metrics/rust-judged-behavior-panel/subjects/boundary-missing-equality/source.before.rs",
+        );
+        let changed_bytes = b"pub fn discounted_total(_: i32, _: i32) -> i32 { 0 }\n";
+        fs::write(&changed, changed_bytes).map_err(|error| error.to_string())?;
+        let path = root.join("metrics/rust-judged-behavior-panel/subjects.json");
+        let mut value: Value =
+            serde_json::from_str(&fs::read_to_string(&path).map_err(|error| error.to_string())?)
+                .map_err(|error| error.to_string())?;
+        value["cases"][0]["source_before"]["sha256"] =
+            serde_json::json!(format!("sha256:{:x}", sha2::Sha256::digest(changed_bytes)));
+        fs::write(
+            &path,
+            serde_json::to_vec_pretty(&value).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let manifest =
+            super::super::load_and_validate_at(&root, Path::new(super::super::MANIFEST_PATH))?;
+        let error = validate_at(&root, &manifest)
+            .err()
+            .ok_or_else(|| "resealed governed byte was accepted".to_string())?;
+        if error.contains("failed") || error.contains("identity mismatch") {
+            Ok(())
+        } else {
+            Err(format!("unexpected resealed-byte error: {error}"))
+        }
+    }
+
+    #[test]
+    fn swapped_identical_diff_subjects_fail_independent_authority() -> Result<(), String> {
+        let canonical = repository_root()?;
+        let scratch = scratch(&canonical, "swapped-subject")?;
+        let root = scratch.0.join("repo");
+        copy_tree(
+            &canonical.join("metrics/rust-judged-behavior-panel"),
+            &root.join("metrics/rust-judged-behavior-panel"),
+        )?;
+        let path = root.join("metrics/rust-judged-behavior-panel/subjects.json");
+        let mut value: Value =
+            serde_json::from_str(&fs::read_to_string(&path).map_err(|error| error.to_string())?)
+                .map_err(|error| error.to_string())?;
+        let cases = value
+            .get_mut("cases")
+            .and_then(Value::as_array_mut)
+            .ok_or_else(|| "subjects cases missing".to_string())?;
+        let quiet_tests = cases
+            .get(1)
+            .and_then(|case| case.get("tests"))
+            .cloned()
+            .ok_or_else(|| "quiet tests missing".to_string())?;
+        cases
+            .get_mut(0)
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "gap case missing".to_string())?
+            .insert("tests".to_string(), quiet_tests);
+        fs::write(
+            &path,
+            serde_json::to_vec_pretty(&value).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let manifest =
+            super::super::load_and_validate_at(&root, Path::new(super::super::MANIFEST_PATH))?;
+        let error = validate_at(&root, &manifest)
+            .err()
+            .ok_or_else(|| "swapped identical-diff subject was accepted".to_string())?;
+        if error.contains("escapes subject root") {
+            Ok(())
+        } else {
+            Err(format!("unexpected swapped-subject error: {error}"))
+        }
+    }
+
+    #[test]
+    fn canonical_check_reaches_subject_authority() -> Result<(), String> {
+        let canonical = repository_root()?;
+        let scratch = scratch(&canonical, "route")?;
+        let root = scratch.0.join("repo");
+        copy_tree(
+            &canonical.join("metrics/rust-judged-behavior-panel"),
+            &root.join("metrics/rust-judged-behavior-panel"),
+        )?;
+        fs::remove_file(root.join(super::SUBJECTS_PATH)).map_err(|error| error.to_string())?;
+        let error = super::super::check_at(&root)
+            .err()
+            .ok_or_else(|| "canonical check bypassed missing subjects".to_string())?;
+        if error.contains("read subject authority") {
+            Ok(())
+        } else {
+            Err(format!("unexpected route error: {error}"))
+        }
+    }
+}
