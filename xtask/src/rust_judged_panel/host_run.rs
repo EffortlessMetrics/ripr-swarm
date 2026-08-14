@@ -1370,6 +1370,16 @@ mod tests {
         std::os::windows::fs::symlink_dir(target, link)
     }
 
+    #[cfg(unix)]
+    fn remove_directory_symlink(link: &Path) -> std::io::Result<()> {
+        fs::remove_file(link)
+    }
+
+    #[cfg(windows)]
+    fn remove_directory_symlink(link: &Path) -> std::io::Result<()> {
+        fs::remove_dir(link)
+    }
+
     fn create_directory_symlink_or_skip(target: &Path, link: &Path) -> Result<bool, String> {
         match directory_symlink(target, link) {
             Ok(()) => Ok(true),
@@ -1539,7 +1549,7 @@ mod tests {
             return Ok(());
         }
         let rejected = load_validated_current(&root, "target/ripr/panel/current.json").is_err();
-        fs::remove_dir(&link).map_err(|error| error.to_string())?;
+        remove_directory_symlink(&link).map_err(|error| error.to_string())?;
         fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
         fs::remove_dir_all(&outside).map_err(|error| error.to_string())?;
         if rejected {
@@ -1571,7 +1581,7 @@ mod tests {
         .is_err();
         let directory_rejected =
             canonical_existing_file_under(&allowed, &allowed, &allowed, "case receipt").is_err();
-        fs::remove_dir(&link).map_err(|error| error.to_string())?;
+        remove_directory_symlink(&link).map_err(|error| error.to_string())?;
         fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
         if linked_rejected && directory_rejected {
             Ok(())

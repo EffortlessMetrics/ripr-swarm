@@ -28,6 +28,16 @@ fn directory_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
     std::os::windows::fs::symlink_dir(target, link)
 }
 
+#[cfg(unix)]
+fn remove_directory_symlink(link: &Path) -> std::io::Result<()> {
+    fs::remove_file(link)
+}
+
+#[cfg(windows)]
+fn remove_directory_symlink(link: &Path) -> std::io::Result<()> {
+    fs::remove_dir(link)
+}
+
 fn create_directory_symlink_or_skip(target: &Path, link: &Path) -> Result<bool, String> {
     match directory_symlink(target, link) {
         Ok(()) => Ok(true),
@@ -535,7 +545,7 @@ fn rust_judged_panel_packet_rejects_nested_symlink_escape() -> Result<(), String
         "portable packet",
     )
     .is_err();
-    fs::remove_dir(&link).map_err(|error| format!("remove portable link: {error}"))?;
+    remove_directory_symlink(&link).map_err(|error| format!("remove portable link: {error}"))?;
     if escaped {
         Ok(())
     } else {
