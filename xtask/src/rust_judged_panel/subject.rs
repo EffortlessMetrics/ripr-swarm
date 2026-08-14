@@ -185,6 +185,59 @@ pub(super) fn repository_state(root: &Path) -> Result<RepositoryState, String> {
     })
 }
 
+pub(super) fn executed_diff_identity(root: &Path, base: &str) -> Result<String, String> {
+    let range = format!("{base}...HEAD");
+    let args = vec![
+        "-C".to_string(),
+        root.display().to_string(),
+        "diff".to_string(),
+        "--no-ext-diff".to_string(),
+        "--submodule=short".to_string(),
+        "--unified=0".to_string(),
+        range,
+    ];
+    let bytes = crate::run::capture_process_output("git", &args, &[])
+        .map_err(|error| format!("derive executed diff identity: {}", error.message))?;
+    Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
+}
+
+#[cfg(test)]
+pub(super) fn materialize_diff_fixture(
+    root: &Path,
+) -> Result<(String, String, String, String), String> {
+    fs::create_dir_all(root).map_err(|error| format!("create diff identity fixture: {error}"))?;
+    git(root, &["init", "--quiet", "--object-format=sha1"], &[])?;
+    git(root, &["symbolic-ref", "HEAD", "refs/heads/main"], &[])?;
+    fs::write(root.join("input.txt"), b"before\n")
+        .map_err(|error| format!("write diff identity fixture base: {error}"))?;
+    git(root, &["add", "--", "input.txt"], &[])?;
+    let base_tree = git(root, &["write-tree"], &[])?;
+    let base = git(
+        root,
+        &["commit-tree", &base_tree, "-m", "diff identity base"],
+        &[],
+    )?;
+    fs::write(root.join("input.txt"), b"after\n")
+        .map_err(|error| format!("write diff identity fixture head: {error}"))?;
+    git(root, &["add", "--", "input.txt"], &[])?;
+    let tree = git(root, &["write-tree"], &[])?;
+    let head = git(
+        root,
+        &[
+            "commit-tree",
+            &tree,
+            "-p",
+            &base,
+            "-m",
+            "diff identity head",
+        ],
+        &[],
+    )?;
+    git(root, &["update-ref", "refs/heads/main", &head], &[])?;
+    let identity = executed_diff_identity(root, &base)?;
+    Ok((base, head, tree, identity))
+}
+
 fn replay_file(file: &SubjectFile) -> ReplaySubjectFile {
     ReplaySubjectFile {
         source_path: file.source_path.clone(),

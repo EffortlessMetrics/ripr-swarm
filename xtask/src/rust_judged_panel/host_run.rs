@@ -85,6 +85,7 @@ struct ExecutionPlan {
     config_sha256: String,
     diff_path: String,
     diff_sha256: String,
+    executed_diff_identity: String,
     subject_inputs: Vec<InputDigest>,
 }
 
@@ -382,6 +383,7 @@ fn execute_case(
         "draft".to_string(),
         "--json".to_string(),
     ];
+    let executed_diff_identity = subject::executed_diff_identity(&subject.root, &subject.base)?;
     let plan = ExecutionPlan {
         argv: vec![
             "check".to_string(),
@@ -403,6 +405,7 @@ fn execute_case(
         config_sha256: subject.config.sha256.clone(),
         diff_path: subject.diff.source_path.clone(),
         diff_sha256: subject.diff.sha256.clone(),
+        executed_diff_identity,
         subject_inputs: subject_input_digests(subject),
     };
     let cache_text = cache.display().to_string();
@@ -430,7 +433,18 @@ fn execute_case(
     };
     atomic_write(&case_dir.join("stdout.bin"), &output.stdout)?;
     atomic_write(&case_dir.join("stderr.bin"), &output.stderr)?;
-    let envelope = classify_output(&output, spawn_error.as_deref());
+    let mut output_envelope = classify_output(&output, spawn_error.as_deref());
+    let observed_diff_identity = subject::executed_diff_identity(&subject.root, &subject.base)?;
+    if observed_diff_identity != plan.executed_diff_identity {
+        output_envelope = envelope(
+            "input_drift",
+            output_envelope.input_identity,
+            Some(format!(
+                "materialized diff identity drifted while executing `{}`",
+                subject.case_id
+            )),
+        );
+    }
     let raw = RawEvidence {
         stdout_path: format!("cases/{}/stdout.bin", subject.case_id),
         stdout_sha256: sha256_bytes(&output.stdout),
@@ -452,13 +466,13 @@ fn execute_case(
         repository_head: subject.head.clone(),
         repository_tree: subject.tree.clone(),
         plan,
-        disposition: envelope.disposition,
+        disposition: output_envelope.disposition,
         exit_code: output.status.and_then(|status| status.code()),
         timed_out: output.timed_out,
         duration_ms: output.duration.as_millis(),
-        analyzer_input_identity: envelope.input_identity,
+        analyzer_input_identity: output_envelope.input_identity,
         raw,
-        error: envelope.error,
+        error: output_envelope.error,
     };
     atomic_write(&case_dir.join("receipt.json"), &pretty_json(&receipt)?)?;
     validate_case_receipt(attempt, &receipt, source, build)?;
@@ -710,12 +724,32 @@ fn validate_case_receipt(
             return Err(format!("host receipt raw {label} identity mismatch"));
         }
     }
+    let materialized_root = run_root.join("subjects").join(&receipt.case_id);
+    let executed_diff_identity =
+        subject::executed_diff_identity(&materialized_root, &receipt.repository_base)?;
+    if receipt.plan.executed_diff_identity != executed_diff_identity {
+        return Err(format!(
+            "host receipt `{}` executed diff identity does not match retained materialized Git bytes",
+            receipt.case_id
+        ));
+    }
+    let publishable = matches!(receipt.disposition.as_str(), "complete" | "typed_limited");
+    let analyzer_identity = receipt.analyzer_input_identity.as_deref();
+    if (publishable && analyzer_identity != Some(executed_diff_identity.as_str()))
+        || analyzer_identity.is_some_and(|identity| identity != executed_diff_identity)
+    {
+        return Err(format!(
+            "host receipt `{}` analyzer input identity does not match executed diff identity",
+            receipt.case_id
+        ));
+    }
     if receipt.plan.base != receipt.repository_base
         || receipt.plan.head != receipt.repository_head
         || receipt.plan.tree != receipt.repository_tree
         || receipt.plan.argv.is_empty()
         || receipt.plan.config_sha256.trim().is_empty()
         || receipt.plan.diff_sha256.trim().is_empty()
+        || receipt.plan.executed_diff_identity.trim().is_empty()
         || receipt.plan.subject_inputs.len() < 7
         || receipt.plan.subject_inputs.iter().any(|input| {
             input.role.trim().is_empty()
@@ -995,7 +1029,7 @@ mod tests {
     use super::{
         BuildIdentity, CaseReceipt, ExecutionPlan, InputDigest, RawEvidence, SourceIdentity,
         acquire_lock, classify_successful_stdout, confined_output, publish_complete_generation,
-        sha256_bytes, validate_binary_unchanged, validate_case_receipt, validate_case_set,
+        sha256_bytes, subject, validate_binary_unchanged, validate_case_receipt, validate_case_set,
     };
 
     fn repository_root() -> Result<PathBuf, String> {
@@ -1050,6 +1084,7 @@ mod tests {
     }
 
     fn receipt(root: &Path, case_id: &str, direction: &str) -> Result<CaseReceipt, String> {
+        let identities = subject::materialize_diff_fixture(&root.join("subjects").join(case_id))?;
         let case_dir = root.join("cases").join(case_id);
         fs::create_dir_all(&case_dir).map_err(|error| error.to_string())?;
         fs::write(case_dir.join("stdout.bin"), b"out").map_err(|error| error.to_string())?;
@@ -1063,21 +1098,22 @@ mod tests {
             source_head: source().head,
             source_tree: source().tree,
             binary_sha256: build().binary_sha256,
-            repository_base: "a".repeat(40),
-            repository_head: "b".repeat(40),
-            repository_tree: "c".repeat(40),
+            repository_base: identities.0.clone(),
+            repository_head: identities.1.clone(),
+            repository_tree: identities.2.clone(),
             plan: ExecutionPlan {
                 argv: vec!["check".to_string()],
                 root: "<materialized-subject>".to_string(),
-                base: "a".repeat(40),
-                head: "b".repeat(40),
-                tree: "c".repeat(40),
+                base: identities.0,
+                head: identities.1,
+                tree: identities.2,
                 mode: "draft".to_string(),
                 format: "json".to_string(),
                 config_path: "ripr.toml".to_string(),
                 config_sha256: "config".to_string(),
                 diff_path: "diff.patch".to_string(),
                 diff_sha256: "diff".to_string(),
+                executed_diff_identity: identities.3.clone(),
                 subject_inputs: vec![
                     InputDigest {
                         role: "fixture".to_string(),
@@ -1092,7 +1128,7 @@ mod tests {
             exit_code: Some(0),
             timed_out: false,
             duration_ms: Duration::ZERO.as_millis(),
-            analyzer_input_identity: Some("sha256:fixture".to_string()),
+            analyzer_input_identity: Some(identities.3),
             raw: RawEvidence {
                 stdout_path: format!("cases/{case_id}/stdout.bin"),
                 stdout_sha256: sha256_bytes(b"out"),
@@ -1123,12 +1159,12 @@ mod tests {
     fn output_is_confined_to_target_ripr() -> Result<(), String> {
         let root = repository_root()?;
         for value in [
-            "../escape",
-            "C:/escape",
-            "target//ripr/run",
-            "target/ripr/../escape",
+            "../escape".to_string(),
+            format!("{}:/escape", char::from(b'C')),
+            "target//ripr/run".to_string(),
+            "target/ripr/../escape".to_string(),
         ] {
-            if confined_output(&root, value).is_ok() {
+            if confined_output(&root, &value).is_ok() {
                 return Err(format!("unsafe host-run output was accepted: {value}"));
             }
         }
@@ -1176,6 +1212,30 @@ mod tests {
             return Err("typed plan tamper was accepted".to_string());
         }
         fs::remove_dir_all(&root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn stale_or_missing_analyzer_identity_is_rejected_against_materialized_diff()
+    -> Result<(), String> {
+        let root = scratch("stale-analyzer-input")?;
+        let mut value = receipt(
+            &root,
+            "rust-boundary-missing-equality-should-gap",
+            "should_gap",
+        )?;
+        validate_case_receipt(&root, &value, &source(), &build())?;
+        value.analyzer_input_identity = Some("sha256:stale-output".to_string());
+        let stale_rejected = validate_case_receipt(&root, &value, &source(), &build()).is_err();
+        value.analyzer_input_identity = None;
+        let missing_rejected = validate_case_receipt(&root, &value, &source(), &build()).is_err();
+        fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        if stale_rejected && missing_rejected {
+            Ok(())
+        } else {
+            Err(format!(
+                "analyzer input identity rejection failed: stale={stale_rejected} missing={missing_rejected}"
+            ))
+        }
     }
 
     #[test]
