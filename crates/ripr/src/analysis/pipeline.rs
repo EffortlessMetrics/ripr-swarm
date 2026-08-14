@@ -1584,6 +1584,17 @@ mod tests {
             "the reason must be the ingestion-check message, got: {:?}",
             perl_run.reason
         );
+        let advisory = analysis
+            .preview_language_advisories
+            .iter()
+            .find(|advisory| advisory.language == "perl")
+            .ok_or_else(|| "expected an enabled Perl preview advisory".to_string())?;
+        assert!(advisory.enabled, "the Perl adapter remains enabled");
+        assert_eq!(advisory.file_count, 1);
+        assert!(
+            !advisory.analyzed(&analysis.language_runs),
+            "an invalid adapter run must not claim the routed file was analyzed"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
         Ok(())

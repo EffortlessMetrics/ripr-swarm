@@ -272,25 +272,34 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
         out.push_str(",\n  \"preview_languages\": [\n");
         let advisories = &output.preview_language_advisories;
         for (idx, adv) in advisories.iter().enumerate() {
+            let analyzed = adv.analyzed(&output.language_runs);
+            let failed_run = adv.non_success_run(&output.language_runs);
             out.push_str("    {\n");
             field(&mut out, 3, "language", &adv.language, true);
             number_field(&mut out, 3, "file_count", adv.file_count, true);
             array_field(&mut out, 3, "sample_paths", &adv.sample_paths, true);
             out.push_str(&format!(
                 "      \"enabled\": {},\n      \"analyzed\": {},\n",
-                adv.enabled,
-                adv.enabled && adv.file_count > 0
+                adv.enabled, analyzed
             ));
             field(&mut out, 3, "category", "preview_language_advisory", true);
             let why_owned;
-            let why: &str = if adv.enabled {
+            let why: &str = if analyzed {
                 "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
-            } else {
+            } else if !adv.enabled {
                 why_owned = format!(
                     "preview adapter not enabled; files detected but not analyzed; empty result is not Rust-grade clean; to enable add to ripr.toml: [languages] enabled = [\"rust\", \"{}\"]",
                     adv.language
                 );
                 &why_owned
+            } else if let Some(run) = failed_run {
+                why_owned = format!(
+                    "preview adapter did not complete successfully ({}); files detected but not analyzed; empty result is not Rust-grade clean",
+                    run.status.as_str()
+                );
+                &why_owned
+            } else {
+                "preview adapter enabled but no files were routed; files not analyzed; empty result is not Rust-grade clean"
             };
             field(&mut out, 3, "why", why, false);
             out.push_str("    }");
