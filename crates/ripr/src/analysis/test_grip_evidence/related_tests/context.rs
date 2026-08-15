@@ -73,6 +73,9 @@ impl<'a> CompactGripContext<'a> {
             .iter()
             .enumerate()
             .map(|(test_index, test)| {
+                let test_scoped_function_names = (!rust_index::is_test_file(&test.file))
+                    .then(|| test_scoped_function_names_by_file.get(&test.file))
+                    .flatten();
                 let call_names = test
                     .calls
                     .iter()
@@ -96,13 +99,13 @@ impl<'a> CompactGripContext<'a> {
                     &call_names,
                     &helper_owner_lookup,
                     module_import_aliases,
-                    test_scoped_function_names_by_file.get(&test.file),
+                    test_scoped_function_names,
                 );
                 helper_owner_call_names.extend(same_file_helper_owner_call_names_for_test(
                     test,
                     &call_names,
                     &same_file_helper_owner_calls_by_file,
-                    test_scoped_function_names_by_file.get(&test.file),
+                    test_scoped_function_names,
                 ));
                 let mut target_affinity_owner_call_names =
                     helper_owner_call_names_from_qualified_calls(
@@ -129,7 +132,7 @@ impl<'a> CompactGripContext<'a> {
                         test,
                         &target_affinity_production_owner_calls_by_package,
                         local_function_names,
-                        test_scoped_function_names_by_file.get(&test.file),
+                        test_scoped_function_names,
                     ),
                 );
                 for call_name in &call_names {
