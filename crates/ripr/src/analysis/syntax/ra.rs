@@ -65,7 +65,8 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
         // that role at the producer boundary so diff probes, seam inventory,
         // evidence relation, and every downstream renderer consume the same
         // fact instead of re-inferring it independently.
-        let is_test = has_test_attribute(&function) || is_cfg_test_module_member(&function);
+        let has_test_attribute = has_test_attribute(&function);
+        let is_test = has_test_attribute || is_cfg_test_module_member(&function);
         let attrs = collect_attr_syntax(&function);
 
         file_calls.extend(calls.clone());
@@ -87,7 +88,7 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
             attrs: attrs.clone(),
         };
 
-        if is_test {
+        if has_test_attribute {
             tests.push(TestFact {
                 name,
                 file: path_buf.clone(),
@@ -1012,8 +1013,15 @@ mod tests {
             facts
                 .tests
                 .iter()
-                .any(|test| test.name == "helper_returns_result"),
-            "cfg(test) helper remains available as evidence input"
+                .any(|test| test.name == "helper_is_evidence"),
+            "actual test function remains available as evidence input"
+        );
+        assert!(
+            facts
+                .tests
+                .iter()
+                .all(|test| test.name != "helper_returns_result"),
+            "cfg(test) helper must not be promoted to a test fact"
         );
         assert!(
             facts
