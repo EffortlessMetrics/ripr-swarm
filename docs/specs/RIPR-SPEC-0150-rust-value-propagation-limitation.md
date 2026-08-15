@@ -61,7 +61,7 @@ feeding an equality predicate with two exact related tests. Negative controls
 cover a non-family `len` binding and must not receive this limitation. The
 stable enum wire string and LSP accepted-kind catalog are tested separately.
 
-## Non-goals
+## Non-Goals
 
 This slice does not resolve value propagation, prove the equality boundary,
 change probe-family inference, execute mutations, calculate rates, or create
