@@ -1457,20 +1457,47 @@ fn replace_file(temp: &Path, path: &Path) -> Result<(), String> {
 }
 
 #[cfg(windows)]
+fn replacement_backup_path(path: &Path) -> PathBuf {
+    path.with_extension(format!(
+        "{}-backup",
+        path.extension().and_then(OsStr::to_str).unwrap_or("json")
+    ))
+}
+
+#[cfg(windows)]
+fn remove_replacement_backup(path: &Path, backup: &Path) -> Result<(), String> {
+    fs::remove_file(backup).map_err(|error| {
+        format!(
+            "published `{}` but could not remove replacement backup `{}`: {error}",
+            path.display(),
+            backup.display()
+        )
+    })
+}
+
+#[cfg(windows)]
 fn replace_file(temp: &Path, path: &Path) -> Result<(), String> {
+    let backup = replacement_backup_path(path);
+    if backup.exists() {
+        if path.exists() {
+            fs::remove_file(&backup).map_err(|error| {
+                format!(
+                    "remove stale current replacement backup `{}`: {error}",
+                    backup.display()
+                )
+            })?;
+        } else {
+            fs::rename(&backup, path).map_err(|error| {
+                format!(
+                    "recover interrupted current replacement from `{}`: {error}",
+                    backup.display()
+                )
+            })?;
+        }
+    }
     if !path.exists() {
         return fs::rename(temp, path)
             .map_err(|error| format!("publish `{}`: {error}", path.display()));
-    }
-    let backup = path.with_extension(format!(
-        "{}-backup",
-        path.extension().and_then(OsStr::to_str).unwrap_or("json")
-    ));
-    if backup.exists() {
-        return Err(format!(
-            "stale current replacement backup exists: `{}`",
-            backup.display()
-        ));
     }
     fs::rename(path, &backup).map_err(|error| {
         format!(
@@ -1479,10 +1506,7 @@ fn replace_file(temp: &Path, path: &Path) -> Result<(), String> {
         )
     })?;
     match fs::rename(temp, path) {
-        Ok(()) => {
-            let _ = fs::remove_file(backup);
-            Ok(())
-        }
+        Ok(()) => remove_replacement_backup(path, &backup),
         Err(error) => {
             let restore = fs::rename(&backup, path);
             if let Err(restore_error) = restore {

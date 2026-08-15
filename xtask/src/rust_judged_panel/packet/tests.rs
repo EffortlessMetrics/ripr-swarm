@@ -4,6 +4,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{PortableCurrent, read_strict_json_bytes, replace_file};
 
+#[cfg(windows)]
+use super::{remove_replacement_backup, replacement_backup_path};
+
 fn scratch(name: &str) -> Result<PathBuf, String> {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -50,6 +53,60 @@ fn rust_judged_panel_packet_failed_current_replacement_preserves_previous_pointe
     } else {
         Err("failed replacement destroyed the previous current pointer".to_string())
     }
+}
+
+#[cfg(windows)]
+#[test]
+fn rust_judged_panel_packet_reconciles_stale_backup_before_publication() -> Result<(), String> {
+    let root = scratch("stale-backup")?;
+    let current = root.join("current.json");
+    let backup = replacement_backup_path(&current);
+    let next = root.join("next.tmp");
+    fs::write(&current, b"current-generation\n").map_err(|error| error.to_string())?;
+    fs::write(&backup, b"stale-generation\n").map_err(|error| error.to_string())?;
+    fs::write(&next, b"next-generation\n").map_err(|error| error.to_string())?;
+    replace_file(&next, &current)?;
+    let actual = fs::read(&current).map_err(|error| error.to_string())?;
+    let cleanup = fs::remove_dir_all(&root);
+    if cleanup.is_err() || actual != b"next-generation\n" || backup.exists() {
+        return Err("stale backup was not reconciled after publication".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+#[test]
+fn rust_judged_panel_packet_recovers_interrupted_staging_before_publication() -> Result<(), String>
+{
+    let root = scratch("recover-backup")?;
+    let current = root.join("current.json");
+    let backup = replacement_backup_path(&current);
+    let next = root.join("next.tmp");
+    fs::write(&backup, b"prior-generation\n").map_err(|error| error.to_string())?;
+    fs::write(&next, b"next-generation\n").map_err(|error| error.to_string())?;
+    replace_file(&next, &current)?;
+    let actual = fs::read(&current).map_err(|error| error.to_string())?;
+    let cleanup = fs::remove_dir_all(&root);
+    if cleanup.is_err() || actual != b"next-generation\n" || backup.exists() {
+        return Err("interrupted staging was not recovered before publication".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+#[test]
+fn rust_judged_panel_packet_reports_backup_cleanup_failure() -> Result<(), String> {
+    let root = scratch("cleanup-failure")?;
+    let current = root.join("current.json");
+    let backup = replacement_backup_path(&current);
+    fs::write(&current, b"prior-generation\n").map_err(|error| error.to_string())?;
+    fs::create_dir(&backup).map_err(|error| error.to_string())?;
+    let result = remove_replacement_backup(&current, &backup);
+    fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+    if result.is_ok() {
+        return Err("backup cleanup failure was not reported after publication".to_string());
+    }
+    Ok(())
 }
 
 #[test]
