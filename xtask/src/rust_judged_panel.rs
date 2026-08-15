@@ -7,6 +7,7 @@ use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 
 mod host_run;
+mod packet;
 mod subject;
 
 pub(crate) const MANIFEST_PATH: &str = "metrics/rust-judged-behavior-panel/manifest.json";
@@ -245,22 +246,30 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         [subcommand] if subcommand == "check" => {
             let manifest = check_at(Path::new("."))?;
             println!(
-                "Rust judged panel seed and subjects valid: manifest={MANIFEST_PATH} items={} directions={}",
+                "Rust judged panel seed, subjects, and portable packets valid: manifest={MANIFEST_PATH} items={} directions={}",
                 manifest.items.len(),
                 manifest.required_directions.join(",")
             );
             Ok(())
         }
         [subcommand] if subcommand == "replay" => {
-            let manifest = check_at(Path::new("."))?;
+            let manifest = check_seed_at(Path::new("."))?;
             host_run::run(Path::new("."), &manifest, None)
         }
         [subcommand, flag, output] if subcommand == "replay" && flag == "--out" => {
-            let manifest = check_at(Path::new("."))?;
+            let manifest = check_seed_at(Path::new("."))?;
             host_run::run(Path::new("."), &manifest, Some(output))
         }
+        [subcommand] if subcommand == "packet" => {
+            let manifest = check_seed_at(Path::new("."))?;
+            packet::publish(Path::new("."), &manifest, packet::DEFAULT_HOST_CURRENT)
+        }
+        [subcommand, flag, current] if subcommand == "packet" && flag == "--host-current" => {
+            let manifest = check_seed_at(Path::new("."))?;
+            packet::publish(Path::new("."), &manifest, current)
+        }
         [] => Err(format!(
-            "rust-judged-panel requires `check` or `replay [--out target/ripr/<path>]`\nrerun: {RERUN_COMMAND}"
+            "rust-judged-panel requires `check`, `replay [--out target/ripr/<path>]`, or `packet [--host-current target/ripr/<path>/current.json]`\nrerun: {RERUN_COMMAND}"
         )),
         _ => Err(format!(
             "unknown rust-judged-panel arguments `{}`\nrerun: {RERUN_COMMAND}",
@@ -274,6 +283,12 @@ pub(crate) fn check_canonical() -> Result<(), String> {
 }
 
 fn check_at(root: &Path) -> Result<RustJudgedPanelManifest, String> {
+    let manifest = check_seed_at(root)?;
+    packet::validate_at(root, &manifest)?;
+    Ok(manifest)
+}
+
+fn check_seed_at(root: &Path) -> Result<RustJudgedPanelManifest, String> {
     let manifest = load_and_validate_at(root, Path::new(MANIFEST_PATH))?;
     subject::validate_at(root, &manifest)?;
     Ok(manifest)
