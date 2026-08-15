@@ -2079,7 +2079,7 @@ The scheduled scratch-GC lane (#1028) ran 22 consecutive times over 11 hours
 and reclaimed nothing: every run ended `cancelled`, none `success` (#3274).
 
 The tell was arithmetic, not log-reading. Each run's cancellation timestamp
-equalled the *next* run's creation timestamp to the second, for 20 of 21
+equaled the *next* run's creation timestamp to the second, for 20 of 21
 consecutive transitions. That signature means pending-run eviction: the run
 never acquired a runner, sat `pending`, and was displaced when the next
 scheduled fire entered the same concurrency group.
