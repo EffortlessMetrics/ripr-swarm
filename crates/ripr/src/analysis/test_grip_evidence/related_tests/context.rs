@@ -57,6 +57,8 @@ impl<'a> CompactGripContext<'a> {
             ambiguous_target_affinity_owner_calls_by_package(index);
         let target_affinity_production_owner_calls_by_module_path =
             target_affinity_production_owner_calls_by_module_path(index);
+        let unambiguous_production_owner_names_by_package =
+            unambiguous_production_owner_names_by_package(index);
         let module_import_aliases_by_file = module_import_aliases_by_file(index);
         let function_names_by_file = local_function_names_by_file(index);
         let test_scoped_function_names_by_file = test_scoped_function_names_by_file(index);
@@ -73,9 +75,10 @@ impl<'a> CompactGripContext<'a> {
             .iter()
             .enumerate()
             .map(|(test_index, test)| {
-                let test_scoped_function_names = (!rust_index::is_test_file(&test.file))
-                    .then(|| test_scoped_function_names_by_file.get(&test.file))
-                    .flatten();
+                let test_scoped_function_names = test_scoped_function_names_by_file.get(&test.file);
+                let production_owner_names = package_scope(&test.file).and_then(|package| {
+                    unambiguous_production_owner_names_by_package.get(&package)
+                });
                 let call_names = test
                     .calls
                     .iter()
@@ -100,12 +103,14 @@ impl<'a> CompactGripContext<'a> {
                     &helper_owner_lookup,
                     module_import_aliases,
                     test_scoped_function_names,
+                    production_owner_names,
                 );
                 helper_owner_call_names.extend(same_file_helper_owner_call_names_for_test(
                     test,
                     &call_names,
                     &same_file_helper_owner_calls_by_file,
                     test_scoped_function_names,
+                    production_owner_names,
                 ));
                 let mut target_affinity_owner_call_names =
                     helper_owner_call_names_from_qualified_calls(
@@ -133,6 +138,7 @@ impl<'a> CompactGripContext<'a> {
                         &target_affinity_production_owner_calls_by_package,
                         local_function_names,
                         test_scoped_function_names,
+                        production_owner_names,
                     ),
                 );
                 for call_name in &call_names {
@@ -276,6 +282,7 @@ pub(in crate::analysis::test_grip_evidence) fn same_file_helper_owner_call_names
     call_names: &BTreeSet<String>,
     helpers: &HelperOwnerCallsByFile,
     test_scoped_function_names: Option<&BTreeSet<String>>,
+    production_owner_names: Option<&BTreeSet<String>>,
 ) -> BTreeSet<String> {
     if rust_index::is_test_file(&test.file) {
         return BTreeSet::new();
@@ -287,7 +294,11 @@ pub(in crate::analysis::test_grip_evidence) fn same_file_helper_owner_call_names
         .iter()
         .filter(|call| call_names.contains(&call.name))
         .filter(|call| {
-            same_file_unit_production_helper_call_is_allowed(call, test_scoped_function_names)
+            same_file_unit_production_helper_call_is_allowed(
+                call,
+                test_scoped_function_names,
+                production_owner_names,
+            )
         })
         .filter_map(|call| file_helpers.get(&call.name))
         .flat_map(|owner_calls| owner_calls.iter().cloned())
@@ -1749,6 +1760,7 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_call_names_for_test(
     lookup: &HelperOwnerCallLookup<'_>,
     module_import_aliases: Option<&BTreeMap<String, String>>,
     test_scoped_function_names: Option<&BTreeSet<String>>,
+    production_owner_names: Option<&BTreeSet<String>>,
 ) -> BTreeSet<String> {
     let mut owner_names = helper_owner_call_names_from_qualified_calls(
         &test.calls,
@@ -1768,6 +1780,7 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_call_names_for_test(
                 && same_file_unit_production_helper_call_is_allowed(
                     call,
                     test_scoped_function_names,
+                    production_owner_names,
                 )
         }) {
             if let Some(helper_owner_names) = file_helpers.get(&call.name) {
@@ -1967,6 +1980,7 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_call_names_from_same
     production_helpers: &HelperOwnerCallsByPackage,
     local_function_names: Option<&BTreeSet<String>>,
     test_scoped_function_names: Option<&BTreeSet<String>>,
+    production_owner_names: Option<&BTreeSet<String>>,
 ) -> BTreeSet<String> {
     let Some(local_function_names) = local_function_names else {
         return BTreeSet::new();
@@ -1981,7 +1995,11 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_call_names_from_same
         .iter()
         .filter(|call| local_function_names.contains(&call.name))
         .filter(|call| {
-            same_file_unit_production_helper_call_is_allowed(call, test_scoped_function_names)
+            same_file_unit_production_helper_call_is_allowed(
+                call,
+                test_scoped_function_names,
+                production_owner_names,
+            )
         })
         .filter_map(|call| package_helpers.get(&call.name))
         .flat_map(|owner_names| owner_names.iter().cloned())
@@ -1991,12 +2009,14 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_call_names_from_same
 pub(in crate::analysis::test_grip_evidence) fn same_file_unit_production_helper_call_is_allowed(
     call: &CallFact,
     test_scoped_function_names: Option<&BTreeSet<String>>,
+    production_owner_names: Option<&BTreeSet<String>>,
 ) -> bool {
     let cleaned = strip_comments_and_strings(&call.text);
     if code_contains_parent_qualified_helper_call(&cleaned, &call.name) {
         return true;
     }
-    !test_scoped_function_names.is_some_and(|names| names.contains(&call.name))
+    !(test_scoped_function_names.is_some_and(|names| names.contains(&call.name))
+        && production_owner_names.is_some_and(|names| names.contains(&call.name)))
         && call_text_contains_named_call(&cleaned, &call.name)
 }
 
