@@ -59,7 +59,10 @@ pub enum ripr::lsp::diagnostic_budget::DiagnosticOverflowReason
 pub enum ripr::lsp::diagnostic_budget::OmittedDiagnosticReason
 pub fn ripr::analysis::run_analysis
 pub fn ripr::analysis::run_repo_analysis
+# PR #3264: shared fail-closed validation is intentionally exported so the
+# public library route and xtask producer apply the same error-packet rule.
 pub fn ripr::app::render_check
+pub fn ripr::app::pr_evidence::reject_pr_evidence_error_packet
 pub fn ripr::cli::run
 pub fn ripr::lsp::diagnostic_budget::build_budget_items_from_diagnostics
 pub fn ripr::lsp::diagnostic_budget::evaluate_diagnostic_budget
@@ -79,6 +82,7 @@ pub fn ripr::set_verbose
 pub mod ripr::analysis
 pub mod ripr::app
 pub mod ripr::app::pr_summary
+pub mod ripr::app::pr_evidence
 pub mod ripr::cli
 pub mod ripr::config
 pub mod ripr::domain
@@ -234,3 +238,5 @@ pub use ripr::lsp::workspace_diagnostic_batches
 pub use ripr::output::json::render
 pub use ripr::output::json::render_context_packet
 pub use ripr::render_check
+pub use ripr::app::reject_pr_evidence_error_packet
+pub use ripr::reject_pr_evidence_error_packet
