@@ -60,7 +60,12 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
         let returns = extract_return_facts(&body, start_line);
         let literals = extract_literal_facts(&body, start_line);
         let probe_shapes = extract_parser_probe_shapes(&function, text, &line_index);
-        let is_test = has_test_attribute(&function);
+        // A plain helper inside an inline `#[cfg(test)]` module is test
+        // infrastructure even when it has no `#[test]` attribute. Classify
+        // that role at the producer boundary so diff probes, seam inventory,
+        // evidence relation, and every downstream renderer consume the same
+        // fact instead of re-inferring it independently.
+        let is_test = has_test_attribute(&function) || is_cfg_test_module_member(&function);
         let attrs = collect_attr_syntax(&function);
 
         file_calls.extend(calls.clone());
@@ -215,6 +220,25 @@ fn has_test_attribute(function: &ast::Fn) -> bool {
             || compact == "#[rstest]"
             || compact.starts_with("#[rstest(")
     })
+}
+
+fn is_cfg_test_module_member(function: &ast::Fn) -> bool {
+    function
+        .syntax()
+        .ancestors()
+        .filter_map(ast::Module::cast)
+        .any(|module| {
+            module.attrs().any(|attr| {
+                let compact = attr
+                    .syntax()
+                    .text()
+                    .to_string()
+                    .chars()
+                    .filter(|ch| !ch.is_whitespace())
+                    .collect::<String>();
+                compact == "#[cfg(test)]"
+            })
+        })
 }
 
 fn collect_attr_syntax(function: &ast::Fn) -> Vec<String> {
@@ -939,6 +963,65 @@ fn integration_smoke() {
                 .find(|test| test.name == "parameterized_case")
                 .is_some_and(|test| test.attrs.iter().any(|attr| attr.contains("rstest"))),
             "rstest attrs should remain available for value resolution"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ra_adapter_marks_inline_cfg_test_helpers_as_test_role() -> Result<(), Box<dyn Error>> {
+        let root = temp_dir("ra_cfg_test_helpers")?;
+        fs::create_dir_all(root.join("src"))?;
+        write_manifest(&root)?;
+        fs::write(
+            root.join("src/lib.rs"),
+            r#"
+pub fn production_control(value: i32) -> Result<i32, String> {
+    if value < 0 { return Err("negative".to_string()); }
+    Ok(value)
+}
+
+#[cfg(test)]
+mod tests {
+    fn helper_returns_result(value: i32) -> Result<(), String> {
+        if value < 0 { return Err("negative".to_string()); }
+        Ok(())
+    }
+
+    #[test]
+    fn helper_is_evidence() {
+        helper_returns_result(1).expect("fixture should pass");
+    }
+}
+"#,
+        )?;
+
+        let adapter = RaRustSyntaxAdapter;
+        let text = fs::read_to_string(root.join("src/lib.rs"))?;
+        let facts = adapter.summarize_file(&root.join("src/lib.rs"), &text)?;
+        let helper = facts
+            .functions
+            .iter()
+            .find(|function| function.name == "helper_returns_result")
+            .ok_or("missing cfg(test) helper fact")?;
+
+        assert!(
+            helper.is_test,
+            "cfg(test) helper must be producer-owned test role"
+        );
+        assert!(
+            facts
+                .tests
+                .iter()
+                .any(|test| test.name == "helper_returns_result"),
+            "cfg(test) helper remains available as evidence input"
+        );
+        assert!(
+            facts
+                .functions
+                .iter()
+                .find(|function| function.name == "production_control")
+                .is_some_and(|function| !function.is_test),
+            "production control must remain production role"
         );
         Ok(())
     }
