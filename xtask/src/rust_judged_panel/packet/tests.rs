@@ -598,7 +598,7 @@ fn rust_judged_panel_packet_strict_nested_readback_rejects_duplicate_and_unknown
     rejects::<PortablePacket>(&pretty_json(&packet)?)?;
     rejects::<RetainedAttestation>(&pretty_json(&attestation)?)?;
     fn rejects_nested<T: for<'de> Deserialize<'de>>(body: &[u8]) -> Result<(), String> {
-        let text = std::str::from_utf8(&body).map_err(|error| error.to_string())?;
+        let text = std::str::from_utf8(body).map_err(|error| error.to_string())?;
         for hostile in [
             text.replacen(
                 "\"host_evidence\": {",
