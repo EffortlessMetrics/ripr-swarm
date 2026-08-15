@@ -1261,11 +1261,27 @@ fn publish_all(
         )
     })?;
     let lock_path = staging_root.join("packet.lock");
-    OpenOptions::new()
+    let mut lock_file = match OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&lock_path)
-        .and_then(|mut file| file.write_all(b"rust-judged-panel packet publisher\n"))
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(format!(
+                "packet publication lock `{}` already exists; stale infrastructure state; remove the lock file before retrying",
+                lock_path.display()
+            ));
+        }
+        Err(error) => {
+            return Err(format!(
+                "acquire packet publication lock `{}`: {error}",
+                lock_path.display()
+            ));
+        }
+    };
+    lock_file
+        .write_all(b"rust-judged-panel packet publisher\n")
         .map_err(|error| {
             format!(
                 "acquire packet publication lock `{}`: {error}",

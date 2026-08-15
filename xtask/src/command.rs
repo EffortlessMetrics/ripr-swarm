@@ -701,7 +701,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "stdout only",
             false,
             false,
-            "Validates the governed Rust judged-panel seed manifest and anchored diffs.",
+            "Validates the governed Rust judged-panel seed manifest, subjects, anchored diffs, and committed portable packets without building or executing RIPR.",
         ),
         command_entry(
             "rust-judged-panel replay [--out target/ripr/<path>]",
@@ -717,7 +717,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "metrics/rust-judged-behavior-panel/portable",
             false,
             false,
-            "Projects one validated complete host run into three bounded portable semantic packets; it does not build or execute RIPR.",
+            "Validates the seed manifest, subjects, anchored diffs, and committed portable packets, then projects one complete host run into three bounded semantic packets; it does not build or execute RIPR.",
         ),
         command_entry(
             "check-rust-judged-panel",

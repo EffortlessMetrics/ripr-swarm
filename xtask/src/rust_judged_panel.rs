@@ -264,6 +264,9 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             let manifest = check_seed_at(Path::new("."))?;
             packet::publish(Path::new("."), &manifest, packet::DEFAULT_HOST_CURRENT)
         }
+        [subcommand, flag] if subcommand == "packet" && flag == "--host-current" => Err(
+            "rust-judged-panel packet --host-current requires a current.json path\nrerun: cargo xtask rust-judged-panel packet --host-current target/ripr/<path>/current.json".to_string(),
+        ),
         [subcommand, flag, current] if subcommand == "packet" && flag == "--host-current" => {
             let manifest = check_seed_at(Path::new("."))?;
             packet::publish(Path::new("."), &manifest, current)
