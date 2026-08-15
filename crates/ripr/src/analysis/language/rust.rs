@@ -847,6 +847,14 @@ fn binding_equality_predicate(line: &str, binding: &str) -> bool {
     let Some((left, right)) = line.split_once("==") else {
         return false;
     };
+    let left = left
+        .rsplit_once("&&")
+        .or_else(|| left.rsplit_once("||"))
+        .map_or(left, |(_, operand)| operand);
+    let right = right
+        .split_once("&&")
+        .or_else(|| right.split_once("||"))
+        .map_or(right, |(operand, _)| operand);
     [left, right].into_iter().any(|side| {
         let Some(start) = side.find(binding) else {
             return false;
@@ -1981,6 +1989,12 @@ mod tests {
     #[test]
     fn value_propagation_predicate_rejects_mixed_operator_line() {
         let body = "    let end = input.rfind(delim).map_or(0, |idx| idx);\n    if end != start && other == marker { return 0; }\n";
+        assert!(super::find_value_propagation_predicate(body, "end").is_none());
+    }
+
+    #[test]
+    fn value_propagation_predicate_rejects_binding_outside_equality_operand() {
+        let body = "    let end = input.rfind(delim).map_or(0, |idx| idx);\n    if other == marker && end > 0 { return 0; }\n";
         assert!(super::find_value_propagation_predicate(body, "end").is_none());
     }
 
