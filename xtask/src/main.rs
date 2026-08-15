@@ -18290,6 +18290,21 @@ pub(crate) fn read_file_policy_allowlist(path: &str) -> Result<Vec<GlobAllow>, S
         .collect())
 }
 
+pub(crate) fn read_file_policy_test_commands(path: &str) -> Result<Vec<(usize, String)>, String> {
+    let entries = parse_file_policy_allowlist(path)?;
+    Ok(entries
+        .into_iter()
+        .flat_map(|entry| {
+            entry
+                .covered_by
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|command| command.starts_with("cargo test "))
+                .map(move |command| (entry.line, command))
+        })
+        .collect())
+}
+
 fn parse_file_policy_allowlist(path: &str) -> Result<Vec<FilePolicyAllowEntry>, String> {
     let text = read_text_lossy(Path::new(path))?;
     let mut entries = Vec::new();

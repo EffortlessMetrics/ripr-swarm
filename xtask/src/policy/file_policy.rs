@@ -1,16 +1,19 @@
 use std::path::Path;
+use std::process::Command;
 
 use crate::{
     FixKind, PolicyReportSpec, collect_files, finish_policy_report, is_file_policy_candidate,
     is_non_rust_programming_candidate, matches_any_glob, non_rust_programming_retention_reason,
-    normalize_path, read_file_policy_allowlist,
+    normalize_path, read_file_policy_allowlist, read_file_policy_test_commands,
 };
 
 /// Validate the repository's non-Rust file policy and write its standard
 /// report. The parser and shared path predicates remain in `main.rs` until
 /// their other policy/report consumers can move in a later slice.
 pub(crate) fn check_file_policy() -> Result<(), String> {
-    let allowlist = read_file_policy_allowlist("policy/non-rust-allowlist.toml")?;
+    let policy_path = "policy/non-rust-allowlist.toml";
+    let allowlist = read_file_policy_allowlist(policy_path)?;
+    validate_test_covered_by(policy_path, &read_file_policy_test_commands(policy_path)?)?;
     let mut violations = Vec::new();
 
     for path in collect_files(Path::new("."))? {
@@ -53,4 +56,43 @@ pub(crate) fn check_file_policy() -> Result<(), String> {
         },
         &violations,
     )
+}
+
+fn validate_test_covered_by(path: &str, commands: &[(usize, String)]) -> Result<(), String> {
+    for (line, command) in commands {
+        let mut words = command.split_whitespace();
+        if words.next() != Some("cargo") || words.next() != Some("test") {
+            return Err(format!(
+                "{path}:{line} unsupported test-valued `covered_by`: {command}"
+            ));
+        }
+        let mut args = vec!["test".to_string()];
+        args.extend(words.map(ToString::to_string));
+        args.extend([
+            "--".to_string(),
+            "--list".to_string(),
+            "--format".to_string(),
+            "terse".to_string(),
+        ]);
+        let output = Command::new("cargo")
+            .args(&args)
+            .output()
+            .map_err(|error| format!("{path}:{line} enumerate `{command}`: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "{path}:{line} test-valued `covered_by` could not be enumerated: `{command}`\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        let selected = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|line| line.ends_with(": test"))
+            .count();
+        if selected == 0 {
+            return Err(format!(
+                "{path}:{line} test-valued `covered_by` selects zero tests: `{command}`"
+            ));
+        }
+    }
+    Ok(())
 }
