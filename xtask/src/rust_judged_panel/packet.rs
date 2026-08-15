@@ -269,6 +269,26 @@ pub(super) fn validate_at(root: &Path, manifest: &RustJudgedPanelManifest) -> Re
         if !seen.insert(entry.case_id.as_str()) {
             return Err(format!("portable index duplicates `{}`", entry.case_id));
         }
+        validate_case_filename(&entry.case_id)?;
+        let file_name = format!("{}.json", entry.case_id);
+        let expected_packet = format!(
+            "{PORTABLE_ROOT}/generations/{}/packets/{file_name}",
+            current.generation_id
+        );
+        let expected_attestation = format!(
+            "{PORTABLE_ROOT}/generations/{}/attestations/{file_name}",
+            current.generation_id
+        );
+        require_eq(
+            &entry.packet_path,
+            &expected_packet,
+            "portable current-generation packet path",
+        )?;
+        require_eq(
+            &entry.attestation_path,
+            &expected_attestation,
+            "portable current-generation attestation path",
+        )?;
         safe_portable_path(&entry.packet_path)?;
         let packet_path = root.join(&entry.packet_path);
         require_canonical_portable(root, &packet_path, "portable packet")?;
@@ -863,21 +883,9 @@ fn validate_direction_witness(
         ));
     }
     let (expected_missing, expected_recommendation) = match subject.expected_direction.as_str() {
-        "should_gap" => (
-            vec![format!(
-                "Missing discriminator value: {}",
-                subject.required_discriminator
-            )],
-            "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
-        ),
-        "should_stay_quiet" => (Vec::new(), ""),
-        "should_limit" => (
-            vec![
-                "No relevant oracle was detected".to_string(),
-                "No static test path reaches the changed owner".to_string(),
-                "No strong discriminator was detected".to_string(),
-            ],
-            "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists.",
+        "should_gap" | "should_stay_quiet" | "should_limit" => (
+            subject.expected_missing.clone(),
+            subject.expected_recommendation.as_str(),
         ),
         other => return Err(format!("unsupported expected direction `{other}")),
     };
@@ -889,11 +897,7 @@ fn validate_direction_witness(
     }
     match subject.expected_direction.as_str() {
         "should_gap" => {
-            let expected = format!(
-                "Missing discriminator value: {}",
-                subject.required_discriminator
-            );
-            if missing != [expected] || recommendation.is_empty() || static_limit_kind.is_some() {
+            if missing.is_empty() || recommendation.is_empty() || static_limit_kind.is_some() {
                 return Err(format!(
                     "host `{}` lacks the exact should-gap witness",
                     subject.case_id
@@ -1578,7 +1582,10 @@ fn require_canonical_generation_file(
     })?;
     let canonical = fs::canonicalize(path)
         .map_err(|error| format!("canonicalize {label} `{}`: {error}", path.display()))?;
-    if canonical.starts_with(canonical_generation) {
+    let relative = path.strip_prefix(generation).map_err(|error| {
+        format!("{label} is not lexically inside its retained generation: {error}")
+    })?;
+    if canonical == canonical_generation.join(relative) {
         Ok(())
     } else {
         Err(format!("{label} escapes its generation through a link"))
@@ -1645,7 +1652,10 @@ fn require_canonical_portable(root: &Path, path: &Path, label: &str) -> Result<(
     }
     let canonical = fs::canonicalize(path)
         .map_err(|error| format!("canonicalize {label} `{}`: {error}", path.display()))?;
-    if canonical.starts_with(portable) {
+    let relative = path
+        .strip_prefix(root.join(PORTABLE_ROOT))
+        .map_err(|error| format!("{label} is not lexically inside the portable root: {error}"))?;
+    if canonical == portable.join(relative) {
         Ok(())
     } else {
         Err(format!("{label} escapes the canonical portable root"))

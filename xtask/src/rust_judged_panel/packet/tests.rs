@@ -255,7 +255,6 @@ fn fixture(direction: &str) -> Result<Fixture, String> {
         owner: owner.to_string(),
         behavior_family: family.to_string(),
         changed_behavior: expression.to_string(),
-        required_discriminator: "amount == threshold".to_string(),
         expected_classification: class.to_string(),
         expected_actionability: action.to_string(),
         expected_static_limit_kind: limit.map(ToString::to_string),
@@ -392,35 +391,141 @@ fn projected(
 }
 
 fn rejects_reseal(fixture: &Fixture, mutate: fn(&mut PortablePacket)) -> Result<(), String> {
-    let (mut packet, attestation, mut entry) = projected(fixture)?;
-    mutate(&mut packet);
-    packet.semantic_sha256 = sha256_serialized(&packet.semantic)?;
-    entry.semantic_sha256 = packet.semantic_sha256.clone();
-    entry.packet_sha256 = sha256_serialized(&packet)?;
-    if validate_retained_packet(&packet, &entry, &attestation, &fixture.subject, "m", "s").is_ok() {
-        Err("coordinated packet re-seal passed retained authority".to_string())
-    } else {
-        Ok(())
-    }
+    rejects_structured_validate_at_reseal(
+        "authority",
+        &fixture.subject.case_id,
+        |packet, _attestation| mutate(packet),
+    )
 }
 
 fn rejects_direction_reseal(
     fixture: &Fixture,
     mutate: fn(&mut ObservedFinding),
 ) -> Result<(), String> {
-    let (mut packet, mut attestation, mut entry) = projected(fixture)?;
-    mutate(&mut packet.semantic.observed);
-    mutate(&mut attestation.semantic.observed);
-    packet.semantic_sha256 = sha256_serialized(&packet.semantic)?;
-    entry.semantic_sha256 = packet.semantic_sha256.clone();
-    let packet_bytes = pretty_json(&packet)?;
-    let attestation_bytes = pretty_json(&attestation)?;
+    rejects_structured_validate_at_reseal(
+        "direction",
+        &fixture.subject.case_id,
+        |packet, attestation| {
+            mutate(&mut packet.semantic.observed);
+            mutate(&mut attestation.semantic.observed);
+        },
+    )
+}
+
+fn rejects_validate_at_reseal(
+    name: &str,
+    case_id: &str,
+    retain_member_paths: bool,
+    prepare: impl FnOnce(
+        &PortablePacket,
+        &RetainedAttestation,
+    ) -> Result<(Vec<u8>, String, Vec<u8>), String>,
+) -> Result<(), String> {
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "xtask manifest lacks repository parent".to_string())?;
+    let root = TestRoot(scratch(name)?);
+    copy_tree(
+        &repository.join("metrics/rust-judged-behavior-panel"),
+        &root.0.join("metrics/rust-judged-behavior-panel"),
+    )?;
+    let manifest = super::super::load_and_validate_at(&root.0, Path::new(MANIFEST_PATH))?;
+    validate_at(&root.0, &manifest)?;
+    let current_path = root.0.join(CURRENT_PATH);
+    let mut current: PortableCurrent = read_strict_json(&current_path, "test current")?;
+    let original_generation = root
+        .0
+        .join(&current.index_path)
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| "test current lacks generation".to_string())?;
+    let mut index: PortableIndex =
+        read_strict_json(&original_generation.join("packet-index.json"), "test index")?;
+    let original_entry = index
+        .packets
+        .iter()
+        .find(|entry| entry.case_id == case_id)
+        .ok_or_else(|| format!("test index lacks `{case_id}`"))?
+        .clone();
+    let packet: PortablePacket =
+        read_strict_json(&root.0.join(&original_entry.packet_path), "test packet")?;
+    let attestation: RetainedAttestation = read_strict_json(
+        &root.0.join(&original_entry.attestation_path),
+        "test attestation",
+    )?;
+    let (packet_bytes, semantic_sha256, attestation_bytes) = prepare(&packet, &attestation)?;
+    let entry = index
+        .packets
+        .iter_mut()
+        .find(|entry| entry.case_id == case_id)
+        .ok_or_else(|| format!("test index lacks `{case_id}`"))?;
+    entry.semantic_sha256 = semantic_sha256;
     entry.packet_sha256 = sha256_bytes(&packet_bytes);
     entry.attestation_sha256 = sha256_bytes(&attestation_bytes);
-    if validate_retained_packet(&packet, &entry, &attestation, &fixture.subject, "m", "s").is_ok() {
-        return Err("coordinated direction reseal bypassed subject authority".to_string());
+    let next_id = generation_id(
+        &index.manifest_sha256,
+        &index.subjects_sha256,
+        &index.packets,
+    )?;
+    index.generation_id = next_id.clone();
+    for entry in &mut index.packets {
+        if !retain_member_paths || entry.case_id != case_id {
+            entry.packet_path = format!(
+                "{PORTABLE_ROOT}/generations/{next_id}/packets/{}.json",
+                entry.case_id
+            );
+            entry.attestation_path = format!(
+                "{PORTABLE_ROOT}/generations/{next_id}/attestations/{}.json",
+                entry.case_id
+            );
+        }
     }
-    Ok(())
+    let next_generation = root
+        .0
+        .join(PORTABLE_ROOT)
+        .join("generations")
+        .join(&next_id);
+    copy_tree(&original_generation, &next_generation)?;
+    let changed_packet_path = next_generation
+        .join("packets")
+        .join(format!("{case_id}.json"));
+    let changed_attestation_path = next_generation
+        .join("attestations")
+        .join(format!("{case_id}.json"));
+    fs::write(changed_packet_path, packet_bytes).map_err(|error| error.to_string())?;
+    fs::write(changed_attestation_path, attestation_bytes).map_err(|error| error.to_string())?;
+    let index_bytes = pretty_json(&index)?;
+    fs::write(next_generation.join("packet-index.json"), &index_bytes)
+        .map_err(|error| error.to_string())?;
+    current.generation_id = next_id.clone();
+    current.index_path = format!("{PORTABLE_ROOT}/generations/{next_id}/packet-index.json");
+    current.index_sha256 = sha256_bytes(&index_bytes);
+    fs::write(&current_path, pretty_json(&current)?).map_err(|error| error.to_string())?;
+    if validate_at(&root.0, &manifest).is_err() {
+        Ok(())
+    } else {
+        Err(format!(
+            "full packet/index/generation/current `{name}` reseal passed production validation"
+        ))
+    }
+}
+
+fn rejects_structured_validate_at_reseal(
+    name: &str,
+    case_id: &str,
+    mutate: impl FnOnce(&mut PortablePacket, &mut RetainedAttestation),
+) -> Result<(), String> {
+    rejects_validate_at_reseal(name, case_id, false, |packet, attestation| {
+        let mut packet = packet.clone();
+        let mut attestation = attestation.clone();
+        mutate(&mut packet, &mut attestation);
+        packet.semantic_sha256 = sha256_serialized(&packet.semantic)?;
+        Ok((
+            pretty_json(&packet)?,
+            packet.semantic_sha256.clone(),
+            pretty_json(&attestation)?,
+        ))
+    })
 }
 
 #[test]
@@ -546,6 +651,26 @@ fn rust_judged_panel_packet_validate_at_rejects_full_digest_chain_reseal() -> Re
 }
 
 #[test]
+fn rust_judged_panel_packet_rejects_resealed_stale_generation_member_paths() -> Result<(), String> {
+    let fixture = fixture("should_gap")?;
+    rejects_validate_at_reseal(
+        "stale-member-path",
+        &fixture.subject.case_id,
+        true,
+        |packet, attestation| {
+            let mut packet = packet.clone();
+            packet.semantic.producer_source_head = "next-generation".to_string();
+            packet.semantic_sha256 = sha256_serialized(&packet.semantic)?;
+            Ok((
+                pretty_json(&packet)?,
+                packet.semantic_sha256.clone(),
+                pretty_json(attestation)?,
+            ))
+        },
+    )
+}
+
+#[test]
 fn rust_judged_panel_packet_binds_all_three_exact_direction_witnesses() -> Result<(), String> {
     for direction in ["should_gap", "should_stay_quiet", "should_limit"] {
         let fixture = fixture(direction)?;
@@ -620,7 +745,46 @@ fn rust_judged_panel_packet_strict_nested_readback_rejects_duplicate_and_unknown
     rejects_nested::<PortablePacket>(&pretty_json(&packet)?)?;
     rejects_nested::<RetainedAttestation>(&pretty_json(&attestation)?)?;
     rejects::<PortableIndex>(&pretty_json(&index)?)?;
-    rejects::<PortableCurrent>(&pretty_json(&current)?)
+    rejects::<PortableCurrent>(&pretty_json(&current)?)?;
+    let case_id = fixture.subject.case_id.clone();
+    for (name, needle, replacement) in [
+        (
+            "nested-unknown",
+            "\"host_evidence\": {",
+            "\"host_evidence\": {\n    \"unexpected\": true,",
+        ),
+        (
+            "nested-duplicate",
+            "\"availability\":",
+            "\"availability\": \"duplicate\",\n    \"availability\":",
+        ),
+    ] {
+        rejects_validate_at_reseal(name, &case_id, false, |packet, attestation| {
+            let packet_bytes = pretty_json(packet)?;
+            let hostile_packet = std::str::from_utf8(&packet_bytes)
+                .map_err(|error| error.to_string())?
+                .replacen(needle, replacement, 1)
+                .into_bytes();
+            Ok((
+                hostile_packet,
+                packet.semantic_sha256.clone(),
+                pretty_json(attestation)?,
+            ))
+        })?;
+        rejects_validate_at_reseal(name, &case_id, false, |packet, attestation| {
+            let attestation_bytes = pretty_json(attestation)?;
+            let hostile_attestation = std::str::from_utf8(&attestation_bytes)
+                .map_err(|error| error.to_string())?
+                .replacen(needle, replacement, 1)
+                .into_bytes();
+            Ok((
+                pretty_json(packet)?,
+                packet.semantic_sha256.clone(),
+                hostile_attestation,
+            ))
+        })?;
+    }
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -636,14 +800,21 @@ fn rust_judged_panel_packet_rejects_in_repo_sibling_symlink() -> Result<(), Stri
     fs::write(sibling.join("packet.json"), b"outside").map_err(|error| error.to_string())?;
     fs::create_dir_all(&outside).map_err(|error| error.to_string())?;
     fs::write(outside.join("packet.json"), b"outside").map_err(|error| error.to_string())?;
+    let actual = portable.join("actual");
+    fs::create_dir_all(&actual).map_err(|error| error.to_string())?;
+    fs::write(actual.join("packet.json"), b"inside").map_err(|error| error.to_string())?;
     std::os::unix::fs::symlink(&sibling, portable.join("linked"))
         .map_err(|error| error.to_string())?;
     std::os::unix::fs::symlink(&outside, portable.join("outside"))
+        .map_err(|error| error.to_string())?;
+    std::os::unix::fs::symlink(&actual, portable.join("alias"))
         .map_err(|error| error.to_string())?;
     let rejected =
         require_canonical_portable(&root, &portable.join("linked/packet.json"), "packet").is_err();
     let outside_rejected =
         require_canonical_portable(&root, &portable.join("outside/packet.json"), "packet").is_err();
+    let alias_rejected =
+        require_canonical_portable(&root, &portable.join("alias/packet.json"), "packet").is_err();
     fs::remove_dir_all(&portable).map_err(|error| error.to_string())?;
     std::os::unix::fs::symlink(&sibling, &portable).map_err(|error| error.to_string())?;
     let fixtures = ["should_gap", "should_stay_quiet", "should_limit"]
@@ -665,11 +836,25 @@ fn rust_judged_panel_packet_rejects_in_repo_sibling_symlink() -> Result<(), Stri
         !sibling.join("current.json").exists() && !sibling.join("generations").exists();
     fs::remove_dir_all(root).map_err(|error| error.to_string())?;
     fs::remove_dir_all(outside).map_err(|error| error.to_string())?;
-    if rejected && outside_rejected && write_rejected && sibling_unchanged {
+    if rejected && outside_rejected && alias_rejected && write_rejected && sibling_unchanged {
         Ok(())
     } else {
         Err("portable sibling symlink escaped canonical root".to_string())
     }
+}
+
+#[test]
+fn rust_judged_panel_packet_rejects_noncanonical_portable_spellings() -> Result<(), String> {
+    for path in [
+        "metrics\\rust-judged-behavior-panel\\portable\\current.json",
+        "metrics/rust-judged-behavior-panel/portable//current.json",
+        "metrics/rust-judged-behavior-panel/portable/../portable/current.json",
+    ] {
+        if safe_portable_path(path).is_ok() {
+            return Err(format!("noncanonical portable spelling passed: `{path}`"));
+        }
+    }
+    Ok(())
 }
 
 #[test]

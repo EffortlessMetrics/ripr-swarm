@@ -127,7 +127,6 @@ pub(super) struct PacketSubject {
     pub(super) owner: String,
     pub(super) behavior_family: String,
     pub(super) changed_behavior: String,
-    pub(super) required_discriminator: String,
     pub(super) expected_classification: String,
     pub(super) expected_actionability: String,
     pub(super) expected_static_limit_kind: Option<String>,
@@ -220,12 +219,6 @@ pub(super) fn load_for_packet(
             owner: case.owner.clone(),
             behavior_family: case.behavior_family.clone(),
             changed_behavior: case.changed_behavior.clone(),
-            required_discriminator: manifest
-                .items
-                .iter()
-                .find(|item| item.id == case.case_id)
-                .map(|item| item.anchor.required_discriminator.clone())
-                .unwrap_or_default(),
             expected_classification: case.expected_classification.clone(),
             expected_actionability: case.expected_actionability.clone(),
             expected_static_limit_kind: case.expected_static_limit_kind.clone(),

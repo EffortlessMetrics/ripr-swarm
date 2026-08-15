@@ -59,6 +59,24 @@ pub(crate) fn check_file_policy() -> Result<(), String> {
 }
 
 fn validate_test_covered_by(path: &str, commands: &[(usize, String)]) -> Result<(), String> {
+    validate_test_covered_by_with(path, commands, |args| {
+        let output = Command::new("cargo")
+            .args(args)
+            .output()
+            .map_err(|error| format!("run cargo test selector: {error}"))?;
+        Ok((
+            output.status.success(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        ))
+    })
+}
+
+fn validate_test_covered_by_with(
+    path: &str,
+    commands: &[(usize, String)],
+    mut enumerate: impl FnMut(&[String]) -> Result<(bool, String, String), String>,
+) -> Result<(), String> {
     for (line, command) in commands {
         let mut words = command.split_whitespace();
         if words.next() != Some("cargo") || words.next() != Some("test") {
@@ -74,17 +92,15 @@ fn validate_test_covered_by(path: &str, commands: &[(usize, String)]) -> Result<
             "--format".to_string(),
             "terse".to_string(),
         ]);
-        let output = Command::new("cargo")
-            .args(&args)
-            .output()
+        let (success, stdout, stderr) = enumerate(&args)
             .map_err(|error| format!("{path}:{line} enumerate `{command}`: {error}"))?;
-        if !output.status.success() {
+        if !success {
             return Err(format!(
                 "{path}:{line} test-valued `covered_by` could not be enumerated: `{command}`\n{}",
-                String::from_utf8_lossy(&output.stderr)
+                stderr
             ));
         }
-        let selected = String::from_utf8_lossy(&output.stdout)
+        let selected = stdout
             .lines()
             .filter(|line| line.ends_with(": test"))
             .count();
@@ -95,4 +111,28 @@ fn validate_test_covered_by(path: &str, commands: &[(usize, String)]) -> Result<
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_test_covered_by_with;
+
+    #[test]
+    fn test_covered_by_requires_nonzero_successful_enumeration() -> Result<(), String> {
+        let commands = [(7, "cargo test -p xtask missing-filter".to_string())];
+        let empty = validate_test_covered_by_with("policy.toml", &commands, |_| {
+            Ok((true, String::new(), String::new()))
+        });
+        let failed = validate_test_covered_by_with("policy.toml", &commands, |_| {
+            Ok((false, String::new(), "instrument failed".to_string()))
+        });
+        let nonzero = validate_test_covered_by_with("policy.toml", &commands, |_| {
+            Ok((true, "selected_case: test\n".to_string(), String::new()))
+        });
+        if empty.is_err() && failed.is_err() && nonzero.is_ok() {
+            Ok(())
+        } else {
+            Err("test-valued covered_by did not fail closed on its denominator".to_string())
+        }
+    }
 }
