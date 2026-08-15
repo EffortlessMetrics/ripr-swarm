@@ -171,6 +171,7 @@ pub(crate) fn targeted_typescript_findings_for_scope(
         resolve_tsconfig_paths: config.typescript().resolve_tsconfig_paths(),
         perl_facts_path: None,
         git_timeout: None,
+        git_candidate: None,
     };
     let result = TypeScriptAdapter.analyze_diff(
         &options,
@@ -413,6 +414,11 @@ pub struct AnalysisOptions {
     /// behavior, byte-identical to the pre-#2303 path. Only the LSP refresh
     /// path sets this (from the `gitTimeoutMs` session option).
     pub git_timeout: Option<std::time::Duration>,
+    /// Immutable Git candidate subject (#3237 / #3276 R1). Threaded from
+    /// `CheckInput` so the object producer (#3277) can consume it here;
+    /// no current analysis path executes it, and `run_check` rejects
+    /// subject inputs before analysis begins.
+    pub git_candidate: Option<crate::domain::GitCandidateSubject>,
 }
 
 /// Advisory record for one compiled preview-language adapter whose files are
@@ -819,6 +825,7 @@ index 0000000..1111111 100644
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
             git_timeout: None,
+            git_candidate: None,
         })
         .unwrap();
         assert!(!out.findings.is_empty());
@@ -838,6 +845,7 @@ index 0000000..1111111 100644
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
             git_timeout: None,
+            git_candidate: None,
         })
         .unwrap();
         assert!(instant.findings.iter().any(|finding| {
@@ -888,6 +896,7 @@ fn premium_customer_gets_discount() {
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
             git_timeout: None,
+            git_candidate: None,
         })?;
 
         if out.findings.is_empty() {
@@ -1033,6 +1042,7 @@ fn test_with_predicate() {
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
             git_timeout: None,
+            git_candidate: None,
         })?;
 
         for finding in &out.findings {
@@ -1098,6 +1108,7 @@ index 0000000..1111111 100644
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
             git_timeout: None,
+            git_candidate: None,
         })?;
 
         if !diff_out.findings.is_empty() {
@@ -1113,6 +1124,7 @@ index 0000000..1111111 100644
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
             git_timeout: None,
+            git_candidate: None,
         })?;
 
         if repo_out.findings.is_empty() {
