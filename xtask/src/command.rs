@@ -356,6 +356,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "rust-repair-trust-report",
         "rust-judged-panel check",
         "rust-judged-panel replay [--out target/ripr/<path>]",
+        "rust-judged-panel packet-check [--host-current target/ripr/<path>/current.json]",
         "check-rust-judged-panel",
         "test-oracle-report",
         "check-test-oracles",
@@ -709,6 +710,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Freshly builds RIPR offline and atomically retains all three host-bound raw runs.",
+        ),
+        command_entry(
+            "rust-judged-panel packet-check [--host-current target/ripr/<path>/current.json]",
+            "non_mutating_check",
+            "stdout only",
+            false,
+            false,
+            "Strictly projects and reads back three bounded semantic packets from one validated complete host run; it writes nothing and does not build or execute RIPR.",
         ),
         command_entry(
             "check-rust-judged-panel",

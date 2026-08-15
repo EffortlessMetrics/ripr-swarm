@@ -59,6 +59,8 @@ struct SubjectCase {
     expected_classification: String,
     expected_actionability: String,
     expected_static_limit_kind: Option<String>,
+    expected_missing: Vec<String>,
+    expected_recommendation: String,
     relation_basis: String,
     oracle_family: String,
     propagation_witness: String,
@@ -112,6 +114,35 @@ pub(super) struct ReplaySubject {
     pub(super) source_after: ReplaySubjectFile,
     pub(super) tests: Vec<ReplaySubjectFile>,
     pub(super) diff: ReplaySubjectFile,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct PacketSubject {
+    pub(super) case_id: String,
+    pub(super) subject_id: String,
+    pub(super) repository: String,
+    pub(super) expected_direction: String,
+    pub(super) anchor_file: String,
+    pub(super) anchor_line: u64,
+    pub(super) owner: String,
+    pub(super) behavior_family: String,
+    pub(super) changed_behavior: String,
+    pub(super) required_discriminator: String,
+    pub(super) expected_classification: String,
+    pub(super) expected_actionability: String,
+    pub(super) expected_static_limit_kind: Option<String>,
+    pub(super) expected_missing: Vec<String>,
+    pub(super) expected_recommendation: String,
+    pub(super) cargo_toml: ReplaySubjectFile,
+    pub(super) cargo_lock: ReplaySubjectFile,
+    pub(super) config: ReplaySubjectFile,
+    pub(super) source_before: ReplaySubjectFile,
+    pub(super) source_after: ReplaySubjectFile,
+    pub(super) tests: Vec<ReplaySubjectFile>,
+    pub(super) diff: ReplaySubjectFile,
+    pub(super) expected_base: String,
+    pub(super) expected_head: String,
+    pub(super) expected_tree: String,
 }
 
 pub(super) struct RepositoryState {
@@ -168,6 +199,50 @@ pub(super) fn materialize_for_replay(
             })
         })
         .collect()
+}
+
+pub(super) fn load_for_packet(
+    root: &Path,
+    manifest: &RustJudgedPanelManifest,
+) -> Result<Vec<PacketSubject>, String> {
+    let authority = load_at(root)?;
+    validate_authority(root, manifest, &authority)?;
+    Ok(authority
+        .cases
+        .iter()
+        .map(|case| PacketSubject {
+            case_id: case.case_id.clone(),
+            subject_id: case.subject_id.clone(),
+            repository: case.repository.clone(),
+            expected_direction: case.expected_direction.clone(),
+            anchor_file: case.anchor_file.clone(),
+            anchor_line: case.anchor_line,
+            owner: case.owner.clone(),
+            behavior_family: case.behavior_family.clone(),
+            changed_behavior: case.changed_behavior.clone(),
+            required_discriminator: manifest
+                .items
+                .iter()
+                .find(|item| item.id == case.case_id)
+                .map(|item| item.anchor.required_discriminator.clone())
+                .unwrap_or_default(),
+            expected_classification: case.expected_classification.clone(),
+            expected_actionability: case.expected_actionability.clone(),
+            expected_static_limit_kind: case.expected_static_limit_kind.clone(),
+            expected_missing: case.expected_missing.clone(),
+            expected_recommendation: case.expected_recommendation.clone(),
+            cargo_toml: replay_file(&case.cargo_toml),
+            cargo_lock: replay_file(&case.cargo_lock),
+            config: replay_file(&case.config),
+            source_before: replay_file(&case.source_before),
+            source_after: replay_file(&case.source_after),
+            tests: case.tests.iter().map(replay_file).collect(),
+            diff: replay_file(&case.diff),
+            expected_base: case.expected_base.clone(),
+            expected_head: case.expected_head.clone(),
+            expected_tree: case.expected_tree.clone(),
+        })
+        .collect())
 }
 
 pub(super) fn repository_state(root: &Path) -> Result<RepositoryState, String> {

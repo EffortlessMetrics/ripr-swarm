@@ -52,11 +52,11 @@ any replay result exists or any label is populated.
 `cargo xtask rust-judged-panel check` is the retained semantic guard for this
 seed and its subject authority. It validates the typed manifest contract,
 selected directions, explicit null-as-unjudged state, exact Rust-token anchors,
-subject digests, manifest joins, and deterministic Git materialization. The same
-checker is reached by required precommit policy. Passing it establishes only
-that the selected seed and independent subject inputs are internally coherent;
-it does not establish analyzer execution, a replay result, judgment, rate, or
-support claim.
+subject digests, manifest joins, and deterministic Git materialization. The
+same checker is reached by required precommit policy. Passing it establishes
+only that the selected seed and independent subject inputs are internally
+coherent; it does not establish analyzer execution, a replay result, judgment,
+rate, or support claim.
 
 ## Host-bound replay receipts
 
@@ -73,10 +73,27 @@ namespace, and advances `current.json` last. A failed, partial, or concurrent
 attempt cannot become current. The build has no network fallback: an offline
 cache miss is a failed attempt.
 
-These files are host-bound run receipts, not portable semantic evidence. They
-do not select or bless findings, interpret quiet output, populate judgments,
-or support a mutation, rate, gate, badge, or support-tier claim. A later PR
-owns portable packets and exact semantic projection.
+These files are host-bound run receipts. They do not by themselves select or
+bless findings, interpret quiet output, populate judgments, or support a
+mutation, rate, gate, badge, or support-tier claim.
+
+## Portable bounded projection
+
+`cargo xtask rust-judged-panel packet-check --host-current
+target/ripr/rust-judged-panel/current.json` first validates the complete
+host-current/index/receipt/raw chain, then projects, serializes, strictly reads
+back, and validates all three cases without writing output. The bounded packets
+bind the governed subject, producer and run plan, exact input identity, probe
+path/line/family/expression and enclosing Rust owner, observed class, and the
+independently governed direction-specific missing/recommendation/limitation
+witness. Duplicate or unknown JSON keys fail closed.
+
+`should_stay_quiet` is exactly one `exposed` finding with no action evidence;
+the macro case is a complete `no_static_path` finding with its named static
+limitation, not a timeout or incomplete run. Judgment remains explicitly null
+and runtime calibration remains `not_run`. This command creates no portable
+generation, index, current pointer, staging directory, or publication lock;
+retained publication is a separate ordered follow-up.
 
 ## Item contract
 

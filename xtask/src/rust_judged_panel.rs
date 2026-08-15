@@ -7,6 +7,7 @@ use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 
 mod host_run;
+mod packet;
 mod subject;
 
 pub(crate) const MANIFEST_PATH: &str = "metrics/rust-judged-behavior-panel/manifest.json";
@@ -259,8 +260,20 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             let manifest = check_at(Path::new("."))?;
             host_run::run(Path::new("."), &manifest, Some(output))
         }
+        [subcommand] if subcommand == "packet-check" => {
+            let manifest = check_at(Path::new("."))?;
+            packet::check_host(Path::new("."), &manifest, packet::DEFAULT_HOST_CURRENT)
+        }
+        [subcommand, flag, current] if subcommand == "packet-check" && flag == "--host-current" => {
+            let manifest = check_at(Path::new("."))?;
+            packet::check_host(Path::new("."), &manifest, current)
+        }
+        [subcommand, flag] if subcommand == "packet-check" && flag == "--host-current" => Err(
+            "rust-judged-panel packet-check --host-current requires a current.json path"
+                .to_string(),
+        ),
         [] => Err(format!(
-            "rust-judged-panel requires `check` or `replay [--out target/ripr/<path>]`\nrerun: {RERUN_COMMAND}"
+            "rust-judged-panel requires `check`, `replay [--out target/ripr/<path>]`, or `packet-check [--host-current target/ripr/<path>/current.json]`\nrerun: {RERUN_COMMAND}"
         )),
         _ => Err(format!(
             "unknown rust-judged-panel arguments `{}`\nrerun: {RERUN_COMMAND}",
@@ -1073,7 +1086,7 @@ mod tests {
 
     use serde_json::{Value, json};
 
-    use super::{MANIFEST_PATH, load_and_validate_at};
+    use super::{MANIFEST_PATH, load_and_validate_at, run};
 
     struct TempFixture {
         root: PathBuf,
@@ -1138,6 +1151,20 @@ mod tests {
     impl Drop for TempFixture {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    #[test]
+    fn packet_check_reports_missing_host_current_value() -> Result<(), String> {
+        if run(&["packet-check".to_string(), "--host-current".to_string()])
+            == Err(
+                "rust-judged-panel packet-check --host-current requires a current.json path"
+                    .to_string(),
+            )
+        {
+            Ok(())
+        } else {
+            Err("missing host-current value lacks its dedicated diagnostic".to_string())
         }
     }
 
