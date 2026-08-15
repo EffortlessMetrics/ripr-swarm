@@ -51,6 +51,18 @@ struct PortableIndexEntry {
     packet_path: String,
     packet_sha256: String,
     semantic_sha256: String,
+    attestation_path: String,
+    attestation_sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RetainedAttestation {
+    schema_version: String,
+    kind: String,
+    case_id: String,
+    semantic: PortableSemantic,
+    host_evidence: HostEvidence,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -135,7 +147,7 @@ struct ObservedFinding {
     static_limit_kind: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct HostEvidence {
     availability: String,
@@ -202,7 +214,15 @@ pub(super) fn publish(
         &manifest_sha256,
         &subjects_sha256,
     )?;
-    publish_all(root, &manifest_sha256, &subjects_sha256, &packets, None)?;
+    let attestations = attest_all(&subjects, &host, &manifest_sha256, &subjects_sha256)?;
+    publish_all(
+        root,
+        &manifest_sha256,
+        &subjects_sha256,
+        &packets,
+        &attestations,
+        None,
+    )?;
     validate_at(root, manifest)?;
     println!(
         "Rust judged-panel portable packet set published: cases={} current={CURRENT_PATH}",
@@ -216,6 +236,7 @@ pub(super) fn validate_at(root: &Path, manifest: &RustJudgedPanelManifest) -> Re
     let manifest_sha256 = sha256_file(&root.join(MANIFEST_PATH))?;
     let subjects_sha256 = sha256_file(&root.join(SUBJECTS_PATH))?;
     let current_path = root.join(CURRENT_PATH);
+    require_canonical_portable(root, &current_path, "portable current")?;
     let current: PortableCurrent = read_strict_json(&current_path, "portable current")?;
     require_eq(&current.schema_version, "0.1", "portable current schema")?;
     require_eq(
@@ -225,6 +246,7 @@ pub(super) fn validate_at(root: &Path, manifest: &RustJudgedPanelManifest) -> Re
     )?;
     safe_portable_path(&current.index_path)?;
     let index_path = root.join(&current.index_path);
+    require_canonical_portable(root, &index_path, "portable index")?;
     require_eq(
         &sha256_file(&index_path)?,
         &current.index_sha256,
@@ -247,23 +269,56 @@ pub(super) fn validate_at(root: &Path, manifest: &RustJudgedPanelManifest) -> Re
         if !seen.insert(entry.case_id.as_str()) {
             return Err(format!("portable index duplicates `{}`", entry.case_id));
         }
+        validate_case_filename(&entry.case_id)?;
+        let file_name = format!("{}.json", entry.case_id);
+        let expected_packet = format!(
+            "{PORTABLE_ROOT}/generations/{}/packets/{file_name}",
+            current.generation_id
+        );
+        let expected_attestation = format!(
+            "{PORTABLE_ROOT}/generations/{}/attestations/{file_name}",
+            current.generation_id
+        );
+        require_eq(
+            &entry.packet_path,
+            &expected_packet,
+            "portable current-generation packet path",
+        )?;
+        require_eq(
+            &entry.attestation_path,
+            &expected_attestation,
+            "portable current-generation attestation path",
+        )?;
         safe_portable_path(&entry.packet_path)?;
         let packet_path = root.join(&entry.packet_path);
+        require_canonical_portable(root, &packet_path, "portable packet")?;
         require_eq(
             &sha256_file(&packet_path)?,
             &entry.packet_sha256,
             &format!("portable packet `{}` file digest", entry.case_id),
         )?;
         let packet: PortablePacket = read_strict_json(&packet_path, "portable packet")?;
+        safe_portable_path(&entry.attestation_path)?;
+        let attestation_path = root.join(&entry.attestation_path);
+        require_canonical_portable(root, &attestation_path, "portable attestation")?;
+        require_eq(
+            &sha256_file(&attestation_path)?,
+            &entry.attestation_sha256,
+            &format!("portable attestation `{}` file digest", entry.case_id),
+        )?;
+        let attestation: RetainedAttestation =
+            read_strict_json(&attestation_path, "portable attestation")?;
         let subject = subject_by_id
             .get(entry.case_id.as_str())
             .ok_or_else(|| format!("portable index references unknown case `{}`", entry.case_id))?;
-        validate_retained_packet(&packet, entry, subject, &manifest_sha256, &subjects_sha256)?;
-        let host_current_path = root.join(&packet.host_evidence.current_ref);
-        if host_current_path.is_file() {
-            let host = host_run::load_validated_current(root, &packet.host_evidence.current_ref)?;
-            validate_retained_host(&packet, subject, &host)?;
-        }
+        validate_retained_packet(
+            &packet,
+            entry,
+            &attestation,
+            subject,
+            &manifest_sha256,
+            &subjects_sha256,
+        )?;
     }
     if seen != subject_by_id.keys().copied().collect::<BTreeSet<_>>() {
         return Err("portable index does not contain the exact selected case set".to_string());
@@ -312,13 +367,52 @@ fn project_one(
     manifest_sha256: &str,
     subjects_sha256: &str,
 ) -> Result<PortablePacket, String> {
+    let semantic = project_semantic(subject, case, host, manifest_sha256, subjects_sha256)?;
+    let semantic_sha256 = sha256_serialized(&semantic)?;
+    let packet = PortablePacket {
+        schema_version: "0.1".to_string(),
+        kind: "rust_judged_panel_portable_packet".to_string(),
+        case_id: subject.case_id.clone(),
+        semantic,
+        semantic_sha256,
+        host_evidence: host_evidence(case, host),
+        judgment: NullJudgment {
+            disposition: "unjudged".to_string(),
+            structural_judgment: None,
+            false_actionable: None,
+            false_exposed: None,
+            static_under_credit: None,
+            wrong_target: None,
+            limitation_correct: None,
+            source: None,
+            judged_at: None,
+            judged_by: Vec::new(),
+        },
+        runtime_calibration: RuntimeNotRun {
+            status: "not_run".to_string(),
+            outcome: None,
+            evidence_ref: None,
+        },
+        non_claims: expected_non_claims(),
+    };
+    validate_retained_host(&packet, subject, host)?;
+    Ok(packet)
+}
+
+fn project_semantic(
+    subject: &PacketSubject,
+    case: &ValidatedHostCase,
+    host: &ValidatedHostRun,
+    manifest_sha256: &str,
+    subjects_sha256: &str,
+) -> Result<PortableSemantic, String> {
     validate_host_join(subject, case, host)?;
     let report_text = std::str::from_utf8(&case.stdout)
         .map_err(|error| format!("host stdout for `{}` is not UTF-8: {error}", case.case_id))?;
     let report = super::parse_json_without_duplicate_keys(report_text)
         .map_err(|error| format!("parse host stdout for `{}`: {error}", case.case_id))?;
     let observed = project_observed(subject, case, host, &report)?;
-    let semantic = PortableSemantic {
+    Ok(PortableSemantic {
         manifest_sha256: manifest_sha256.to_string(),
         subjects_sha256: subjects_sha256.to_string(),
         subject_id: subject.subject_id.clone(),
@@ -360,54 +454,65 @@ fn project_one(
             expression: subject.changed_behavior.clone(),
         },
         observed,
-    };
-    let semantic_sha256 = sha256_serialized(&semantic)?;
-    Ok(PortablePacket {
-        schema_version: "0.1".to_string(),
-        kind: "rust_judged_panel_portable_packet".to_string(),
-        case_id: subject.case_id.clone(),
-        semantic,
-        semantic_sha256,
-        host_evidence: HostEvidence {
-            availability: "host_bound_not_committed".to_string(),
-            host_target: host.host_target.clone(),
-            binary_sha256: host.binary_sha256.clone(),
-            run_id: host.run_id.clone(),
-            current_ref: host.current_ref.clone(),
-            current_sha256: host.current_sha256.clone(),
-            index_ref: host.index_ref.clone(),
-            index_sha256: host.index_sha256.clone(),
-            receipt_ref: case.receipt_ref.clone(),
-            receipt_sha256: case.receipt_sha256.clone(),
-            stdout_ref: case.stdout_ref.clone(),
-            stdout_sha256: case.stdout_sha256.clone(),
-            stderr_ref: case.stderr_ref.clone(),
-            stderr_sha256: case.stderr_sha256.clone(),
-            analyzer_input_identity: case.analyzer_input_identity.clone(),
-        },
-        judgment: NullJudgment {
-            disposition: "unjudged".to_string(),
-            structural_judgment: None,
-            false_actionable: None,
-            false_exposed: None,
-            static_under_credit: None,
-            wrong_target: None,
-            limitation_correct: None,
-            source: None,
-            judged_at: None,
-            judged_by: Vec::new(),
-        },
-        runtime_calibration: RuntimeNotRun {
-            status: "not_run".to_string(),
-            outcome: None,
-            evidence_ref: None,
-        },
-        non_claims: vec![
-            "bounded static projection only; no independent semantic judgment".to_string(),
-            "no runtime mutation calibration, accuracy rate, badge, gate, or support claim"
-                .to_string(),
-        ],
     })
+}
+
+fn host_evidence(case: &ValidatedHostCase, host: &ValidatedHostRun) -> HostEvidence {
+    HostEvidence {
+        availability: "host_bound_not_committed".to_string(),
+        host_target: host.host_target.clone(),
+        binary_sha256: host.binary_sha256.clone(),
+        run_id: host.run_id.clone(),
+        current_ref: host.current_ref.clone(),
+        current_sha256: host.current_sha256.clone(),
+        index_ref: host.index_ref.clone(),
+        index_sha256: host.index_sha256.clone(),
+        receipt_ref: case.receipt_ref.clone(),
+        receipt_sha256: case.receipt_sha256.clone(),
+        stdout_ref: case.stdout_ref.clone(),
+        stdout_sha256: case.stdout_sha256.clone(),
+        stderr_ref: case.stderr_ref.clone(),
+        stderr_sha256: case.stderr_sha256.clone(),
+        analyzer_input_identity: case.analyzer_input_identity.clone(),
+    }
+}
+
+fn retained_attestation(
+    subject: &PacketSubject,
+    case: &ValidatedHostCase,
+    host: &ValidatedHostRun,
+    manifest_sha256: &str,
+    subjects_sha256: &str,
+) -> Result<RetainedAttestation, String> {
+    Ok(RetainedAttestation {
+        schema_version: "0.1".to_string(),
+        kind: "rust_judged_panel_retained_attestation".to_string(),
+        case_id: subject.case_id.clone(),
+        semantic: project_semantic(subject, case, host, manifest_sha256, subjects_sha256)?,
+        host_evidence: host_evidence(case, host),
+    })
+}
+
+fn attest_all(
+    subjects: &[PacketSubject],
+    host: &ValidatedHostRun,
+    manifest_sha256: &str,
+    subjects_sha256: &str,
+) -> Result<Vec<RetainedAttestation>, String> {
+    let cases = host
+        .cases
+        .iter()
+        .map(|case| (case.case_id.as_str(), case))
+        .collect::<BTreeMap<_, _>>();
+    subjects
+        .iter()
+        .map(|subject| {
+            let case = cases
+                .get(subject.case_id.as_str())
+                .ok_or_else(|| format!("host run is missing `{}`", subject.case_id))?;
+            retained_attestation(subject, case, host, manifest_sha256, subjects_sha256)
+        })
+        .collect()
 }
 
 fn validate_host_join(
@@ -771,22 +876,16 @@ fn validate_direction_witness(
     recommendation: &str,
     static_limit_kind: Option<&str>,
 ) -> Result<(), String> {
+    if missing != subject.expected_missing || recommendation != subject.expected_recommendation {
+        return Err(format!(
+            "host direction witness for `{}` is not the governed subject witness",
+            subject.case_id
+        ));
+    }
     let (expected_missing, expected_recommendation) = match subject.expected_direction.as_str() {
-        "should_gap" => (
-            vec![format!(
-                "Missing discriminator value: {}",
-                subject.required_discriminator
-            )],
-            "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
-        ),
-        "should_stay_quiet" => (Vec::new(), ""),
-        "should_limit" => (
-            vec![
-                "No relevant oracle was detected".to_string(),
-                "No static test path reaches the changed owner".to_string(),
-                "No strong discriminator was detected".to_string(),
-            ],
-            "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists.",
+        "should_gap" | "should_stay_quiet" | "should_limit" => (
+            subject.expected_missing.clone(),
+            subject.expected_recommendation.as_str(),
         ),
         other => return Err(format!("unsupported expected direction `{other}")),
     };
@@ -798,11 +897,7 @@ fn validate_direction_witness(
     }
     match subject.expected_direction.as_str() {
         "should_gap" => {
-            let expected = format!(
-                "Missing discriminator value: {}",
-                subject.required_discriminator
-            );
-            if missing != [expected] || recommendation.is_empty() || static_limit_kind.is_some() {
+            if missing.is_empty() || recommendation.is_empty() || static_limit_kind.is_some() {
                 return Err(format!(
                     "host `{}` lacks the exact should-gap witness",
                     subject.case_id
@@ -836,6 +931,7 @@ fn validate_direction_witness(
 fn validate_retained_packet(
     packet: &PortablePacket,
     entry: &PortableIndexEntry,
+    attestation: &RetainedAttestation,
     subject: &PacketSubject,
     manifest_sha256: &str,
     subjects_sha256: &str,
@@ -847,6 +943,28 @@ fn validate_retained_packet(
         "portable packet kind",
     )?;
     require_eq(&packet.case_id, &entry.case_id, "portable packet case")?;
+    require_eq(
+        &attestation.schema_version,
+        "0.1",
+        "portable attestation schema",
+    )?;
+    require_eq(
+        &attestation.kind,
+        "rust_judged_panel_retained_attestation",
+        "portable attestation kind",
+    )?;
+    require_eq(
+        &attestation.case_id,
+        &entry.case_id,
+        "portable attestation case",
+    )?;
+    if packet.semantic != attestation.semantic || packet.host_evidence != attestation.host_evidence
+    {
+        return Err(format!(
+            "portable `{}` disagrees with retained host attestation",
+            packet.case_id
+        ));
+    }
     require_eq(
         &packet.semantic_sha256,
         &entry.semantic_sha256,
@@ -1214,14 +1332,24 @@ fn publish_all(
     manifest_sha256: &str,
     subjects_sha256: &str,
     packets: &[PortablePacket],
+    attestations: &[RetainedAttestation],
     fail_after: Option<usize>,
 ) -> Result<(), String> {
-    if packets.len() != 3 {
+    if packets.len() != 3 || attestations.len() != packets.len() {
         return Err(format!(
-            "portable publication requires exactly three packets, got {}",
-            packets.len()
+            "portable publication requires exactly three packet/attestation pairs, got {}/{}",
+            packets.len(),
+            attestations.len()
         ));
     }
+    let portable_root = root.join(PORTABLE_ROOT);
+    fs::create_dir_all(&portable_root).map_err(|error| {
+        format!(
+            "create portable root `{}`: {error}",
+            portable_root.display()
+        )
+    })?;
+    require_canonical_portable(root, &portable_root, "portable root")?;
     let staging_root = root.join(STAGING_ROOT);
     fs::create_dir_all(&staging_root).map_err(|error| {
         format!(
@@ -1250,6 +1378,7 @@ fn publish_all(
         manifest_sha256,
         subjects_sha256,
         packets,
+        attestations,
         fail_after,
     );
     if stage.exists() {
@@ -1264,43 +1393,64 @@ fn publish_staged(
     manifest_sha256: &str,
     subjects_sha256: &str,
     packets: &[PortablePacket],
+    attestations: &[RetainedAttestation],
     fail_after: Option<usize>,
 ) -> Result<(), String> {
+    let attestations = attestations
+        .iter()
+        .map(|attestation| (attestation.case_id.as_str(), attestation))
+        .collect::<BTreeMap<_, _>>();
     let mut packet_bytes = Vec::new();
     for packet in packets {
-        packet_bytes.push((packet, pretty_json(packet)?));
+        let attestation = attestations
+            .get(packet.case_id.as_str())
+            .ok_or_else(|| format!("packet `{}` lacks retained attestation", packet.case_id))?;
+        packet_bytes.push((packet, pretty_json(packet)?, pretty_json(attestation)?));
     }
-    packet_bytes.sort_by(|(left, _), (right, _)| left.case_id.cmp(&right.case_id));
+    packet_bytes.sort_by(|(left, _, _), (right, _, _)| left.case_id.cmp(&right.case_id));
     let provisional = packet_bytes
         .iter()
-        .map(|(packet, bytes)| PortableIndexEntry {
+        .map(|(packet, bytes, attestation)| PortableIndexEntry {
             case_id: packet.case_id.clone(),
             packet_path: String::new(),
             packet_sha256: sha256_bytes(bytes),
             semantic_sha256: packet.semantic_sha256.clone(),
+            attestation_path: String::new(),
+            attestation_sha256: sha256_bytes(attestation),
         })
         .collect::<Vec<_>>();
     let generation_id = generation_id(manifest_sha256, subjects_sha256, &provisional)?;
     let relative_generation = format!("{PORTABLE_ROOT}/generations/{generation_id}");
     let staged_generation = stage.join("generation");
     let staged_packets = staged_generation.join("packets");
+    let staged_attestations = staged_generation.join("attestations");
     fs::create_dir_all(&staged_packets).map_err(|error| {
         format!(
             "create staged packets `{}`: {error}",
             staged_packets.display()
         )
     })?;
+    fs::create_dir_all(&staged_attestations).map_err(|error| {
+        format!(
+            "create staged attestations `{}`: {error}",
+            staged_attestations.display()
+        )
+    })?;
     let mut entries = Vec::new();
-    for (index, (packet, bytes)) in packet_bytes.iter().enumerate() {
+    for (index, (packet, bytes, attestation)) in packet_bytes.iter().enumerate() {
         validate_case_filename(&packet.case_id)?;
         let file_name = format!("{}.json", packet.case_id);
         fs::write(staged_packets.join(&file_name), bytes)
             .map_err(|error| format!("write staged packet `{file_name}`: {error}"))?;
+        fs::write(staged_attestations.join(&file_name), attestation)
+            .map_err(|error| format!("write staged attestation `{file_name}`: {error}"))?;
         entries.push(PortableIndexEntry {
             case_id: packet.case_id.clone(),
             packet_path: format!("{relative_generation}/packets/{file_name}"),
             packet_sha256: sha256_bytes(bytes),
             semantic_sha256: packet.semantic_sha256.clone(),
+            attestation_path: format!("{relative_generation}/attestations/{file_name}"),
+            attestation_sha256: sha256_bytes(attestation),
         });
         if fail_after == Some(index + 1) {
             return Err(format!(
@@ -1322,15 +1472,24 @@ fn publish_staged(
     let index_bytes = pretty_json(&index)?;
     fs::write(staged_generation.join("packet-index.json"), &index_bytes)
         .map_err(|error| format!("write staged packet index: {error}"))?;
+    validate_generation_files(&staged_generation, &index)?;
     let final_generation = root.join(&relative_generation);
     if final_generation.exists() {
-        let retained = fs::read(final_generation.join("packet-index.json"))
+        require_canonical_portable(root, &final_generation, "retained generation")?;
+        let retained_index = final_generation.join("packet-index.json");
+        require_canonical_generation_file(
+            &final_generation,
+            &retained_index,
+            "retained packet index",
+        )?;
+        let retained = fs::read(&retained_index)
             .map_err(|error| format!("read retained packet index: {error}"))?;
         if retained != index_bytes {
             return Err(format!(
                 "content-addressed generation `{generation_id}` conflicts"
             ));
         }
+        validate_generation_files(&final_generation, &index)?;
     } else {
         let parent = final_generation
             .parent()
@@ -1341,8 +1500,11 @@ fn publish_staged(
                 parent.display()
             )
         })?;
+        require_canonical_portable(root, parent, "portable generations")?;
         fs::rename(&staged_generation, &final_generation)
             .map_err(|error| format!("publish generation `{generation_id}`: {error}"))?;
+        require_canonical_portable(root, &final_generation, "published generation")?;
+        validate_generation_files(&final_generation, &index)?;
     }
     let current = PortableCurrent {
         schema_version: "0.1".to_string(),
@@ -1352,6 +1514,82 @@ fn publish_staged(
         index_sha256: sha256_bytes(&index_bytes),
     };
     atomic_write(&root.join(CURRENT_PATH), &pretty_json(&current)?)
+}
+
+fn validate_generation_files(generation: &Path, index: &PortableIndex) -> Result<(), String> {
+    for entry in &index.packets {
+        validate_case_filename(&entry.case_id)?;
+        let file_name = format!("{}.json", entry.case_id);
+        let expected_packet = format!(
+            "{PORTABLE_ROOT}/generations/{}/packets/{file_name}",
+            index.generation_id
+        );
+        let expected_attestation = format!(
+            "{PORTABLE_ROOT}/generations/{}/attestations/{file_name}",
+            index.generation_id
+        );
+        require_eq(
+            &entry.packet_path,
+            &expected_packet,
+            "retained generation packet path",
+        )?;
+        require_eq(
+            &entry.attestation_path,
+            &expected_attestation,
+            "retained generation attestation path",
+        )?;
+        let packet_path = generation.join("packets").join(&file_name);
+        let attestation_path = generation.join("attestations").join(&file_name);
+        require_canonical_generation_file(generation, &packet_path, "retained packet")?;
+        require_canonical_generation_file(generation, &attestation_path, "retained attestation")?;
+        require_eq(
+            &sha256_file(&packet_path)?,
+            &entry.packet_sha256,
+            "retained generation packet digest",
+        )?;
+        require_eq(
+            &sha256_file(&attestation_path)?,
+            &entry.attestation_sha256,
+            "retained generation attestation digest",
+        )?;
+        let packet: PortablePacket = read_strict_json(&packet_path, "retained packet")?;
+        let attestation: RetainedAttestation =
+            read_strict_json(&attestation_path, "retained attestation")?;
+        if packet.case_id != entry.case_id
+            || packet.semantic_sha256 != entry.semantic_sha256
+            || packet.semantic != attestation.semantic
+            || packet.host_evidence != attestation.host_evidence
+        {
+            return Err(format!(
+                "retained generation authority disagrees for `{}`",
+                entry.case_id
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn require_canonical_generation_file(
+    generation: &Path,
+    path: &Path,
+    label: &str,
+) -> Result<(), String> {
+    let canonical_generation = fs::canonicalize(generation).map_err(|error| {
+        format!(
+            "canonicalize retained generation `{}`: {error}",
+            generation.display()
+        )
+    })?;
+    let canonical = fs::canonicalize(path)
+        .map_err(|error| format!("canonicalize {label} `{}`: {error}", path.display()))?;
+    let relative = path.strip_prefix(generation).map_err(|error| {
+        format!("{label} is not lexically inside its retained generation: {error}")
+    })?;
+    if canonical == canonical_generation.join(relative) {
+        Ok(())
+    } else {
+        Err(format!("{label} escapes its generation through a link"))
+    }
 }
 
 fn generation_id(
@@ -1366,6 +1604,7 @@ fn generation_id(
                 entry.case_id.as_str(),
                 entry.packet_sha256.as_str(),
                 entry.semantic_sha256.as_str(),
+                entry.attestation_sha256.as_str(),
             )
         })
         .collect::<Vec<_>>();
@@ -1397,10 +1636,30 @@ fn validate_case_filename(case_id: &str) -> Result<(), String> {
 fn safe_portable_path(value: &str) -> Result<(), String> {
     safe_relative_path(value)?;
     let prefix = format!("{PORTABLE_ROOT}/");
-    if !value.replace('\\', "/").starts_with(&prefix) {
+    if value.contains('\\') || value.contains("//") || !value.starts_with(&prefix) {
         return Err(format!("portable path `{value}` escapes `{PORTABLE_ROOT}`"));
     }
     Ok(())
+}
+
+fn require_canonical_portable(root: &Path, path: &Path, label: &str) -> Result<(), String> {
+    let repository =
+        fs::canonicalize(root).map_err(|error| format!("canonicalize repository root: {error}"))?;
+    let portable = fs::canonicalize(root.join(PORTABLE_ROOT))
+        .map_err(|error| format!("canonicalize portable root: {error}"))?;
+    if portable != repository.join(PORTABLE_ROOT) {
+        return Err("portable root is redirected through a link".to_string());
+    }
+    let canonical = fs::canonicalize(path)
+        .map_err(|error| format!("canonicalize {label} `{}`: {error}", path.display()))?;
+    let relative = path
+        .strip_prefix(root.join(PORTABLE_ROOT))
+        .map_err(|error| format!("{label} is not lexically inside the portable root: {error}"))?;
+    if canonical == portable.join(relative) {
+        Ok(())
+    } else {
+        Err(format!("{label} escapes the canonical portable root"))
+    }
 }
 
 fn safe_relative_path(value: &str) -> Result<(), String> {

@@ -392,7 +392,7 @@ surface = "repo"
 classification = "generated"
 reason = "Bounded portable semantic projections from validated host-bound Rust judged-panel receipts; null judgment and not-run runtime remain non-results."
 generated_by = "cargo xtask rust-judged-panel packet --host-current target/ripr/rust-judged-panel/current.json"
-covered_by = ["cargo xtask rust-judged-panel check", "cargo test -p xtask rust_judged_panel_packet", "cargo xtask check-file-policy"]
+covered_by = ["cargo xtask rust-judged-panel check", "cargo test -p xtask --locked --offline rust_judged_panel::packet::tests", "cargo xtask check-file-policy"]
 
 [[allow]]
 glob = "metrics/rust-repair-trust/*.json"
