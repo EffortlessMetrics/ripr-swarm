@@ -59,6 +59,8 @@ struct SubjectCase {
     expected_classification: String,
     expected_actionability: String,
     expected_static_limit_kind: Option<String>,
+    expected_missing: Vec<String>,
+    expected_recommendation: String,
     relation_basis: String,
     oracle_family: String,
     propagation_witness: String,
@@ -125,10 +127,11 @@ pub(super) struct PacketSubject {
     pub(super) owner: String,
     pub(super) behavior_family: String,
     pub(super) changed_behavior: String,
-    pub(super) required_discriminator: String,
     pub(super) expected_classification: String,
     pub(super) expected_actionability: String,
     pub(super) expected_static_limit_kind: Option<String>,
+    pub(super) expected_missing: Vec<String>,
+    pub(super) expected_recommendation: String,
     pub(super) cargo_toml: ReplaySubjectFile,
     pub(super) cargo_lock: ReplaySubjectFile,
     pub(super) config: ReplaySubjectFile,
@@ -216,15 +219,11 @@ pub(super) fn load_for_packet(
             owner: case.owner.clone(),
             behavior_family: case.behavior_family.clone(),
             changed_behavior: case.changed_behavior.clone(),
-            required_discriminator: manifest
-                .items
-                .iter()
-                .find(|item| item.id == case.case_id)
-                .map(|item| item.anchor.required_discriminator.clone())
-                .unwrap_or_default(),
             expected_classification: case.expected_classification.clone(),
             expected_actionability: case.expected_actionability.clone(),
             expected_static_limit_kind: case.expected_static_limit_kind.clone(),
+            expected_missing: case.expected_missing.clone(),
+            expected_recommendation: case.expected_recommendation.clone(),
             cargo_toml: replay_file(&case.cargo_toml),
             cargo_lock: replay_file(&case.cargo_lock),
             config: replay_file(&case.config),
