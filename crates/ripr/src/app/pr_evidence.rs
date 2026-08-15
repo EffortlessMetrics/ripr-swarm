@@ -231,7 +231,27 @@ fn write_pr_evidence_error_packet(
 
     println!("Wrote {PR_EVIDENCE_JSON}");
     println!("Wrote {PR_EVIDENCE_MD}");
-    Ok(())
+    Err(reject_pr_evidence_error_packet(&packet).unwrap_or_else(|| {
+        "PR evidence producer failed; review-comments must not run: unknown producer error"
+            .to_string()
+    }))
+}
+
+/// Return the fail-closed error for a producer error packet, if present.
+///
+/// This is the single status-level actionability authority shared by the
+/// public `ripr pr-evidence` command and the xtask compatibility wrapper.
+pub fn reject_pr_evidence_error_packet(packet: &Value) -> Option<String> {
+    (packet.get("status").and_then(Value::as_str) == Some("error")).then(|| {
+        format!(
+            "PR evidence producer failed; review-comments must not run: {}",
+            packet["warnings"]
+                .as_array()
+                .and_then(|warnings| warnings.first())
+                .and_then(|warning| warning["message"].as_str())
+                .unwrap_or("unknown producer error")
+        )
+    })
 }
 
 fn check_pr_evidence(repo: &Path, options: &PrEvidenceOptions) -> Result<(), String> {
@@ -244,6 +264,9 @@ fn check_pr_evidence(repo: &Path, options: &PrEvidenceOptions) -> Result<(), Str
         .map_err(|err| format!("missing or unreadable {PR_EVIDENCE_JSON}: {err}"))?;
     let packet: Value = serde_json::from_str(&text)
         .map_err(|err| format!("{PR_EVIDENCE_JSON} is not valid JSON: {err}"))?;
+    if let Some(error) = reject_pr_evidence_error_packet(&packet) {
+        return Err(error);
+    }
     let violations = validate_packet_value(
         &packet,
         options,
@@ -1225,10 +1248,23 @@ mod tests {
             head: "HEAD".to_string(),
             ..options()
         };
-        write_pr_evidence_with_runner(&repo, &options, |_repo, _options| {
-            Err("ripr check for PR evidence failed; retry command: ripr pr-evidence --base HEAD~1 --head HEAD --root .".to_string())
-        })?;
-        check_pr_evidence(&repo, &options)?;
+        let generation_error = match write_pr_evidence_with_runner(
+            &repo,
+            &options,
+            |_repo, _options| {
+                Err("ripr check for PR evidence failed; retry command: ripr pr-evidence --base HEAD~1 --head HEAD --root .".to_string())
+            },
+        ) {
+            Ok(()) => return Err("producer failure did not fail closed".to_string()),
+            Err(error) => error,
+        };
+        assert!(generation_error.contains("producer failed"));
+
+        let check_error = match check_pr_evidence(&repo, &options) {
+            Ok(()) => return Err("standalone check accepted preserved error packet".to_string()),
+            Err(error) => error,
+        };
+        assert!(check_error.contains("producer failed"));
 
         let packet_text = fs::read_to_string(repo.join(PR_EVIDENCE_JSON))
             .map_err(|err| format!("read packet: {err}"))?;
