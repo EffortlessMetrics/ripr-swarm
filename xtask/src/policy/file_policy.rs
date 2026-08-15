@@ -2,9 +2,10 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::{
-    FixKind, PolicyReportSpec, collect_files, finish_policy_report, is_file_policy_candidate,
-    is_non_rust_programming_candidate, matches_any_glob, non_rust_programming_retention_reason,
-    normalize_path, read_file_policy_allowlist, read_file_policy_test_commands,
+    FixKind, PolicyReportSpec, collect_files, finish_policy_report, is_cargo_test_command,
+    is_file_policy_candidate, is_non_rust_programming_candidate, matches_any_glob,
+    non_rust_programming_retention_reason, normalize_path, read_file_policy_allowlist,
+    read_file_policy_test_commands,
 };
 
 /// Validate the repository's non-Rust file policy and write its standard
@@ -78,12 +79,12 @@ fn validate_test_covered_by_with(
     mut enumerate: impl FnMut(&[String]) -> Result<(bool, String, String), String>,
 ) -> Result<(), String> {
     for (line, command) in commands {
-        let mut words = command.split_whitespace();
-        if words.next() != Some("cargo") || words.next() != Some("test") {
+        if !is_cargo_test_command(command) {
             return Err(format!(
                 "{path}:{line} unsupported test-valued `covered_by`: {command}"
             ));
         }
+        let words = command.split_whitespace().skip(2);
         let mut args = vec!["test".to_string()];
         args.extend(words.map(ToString::to_string));
         args.extend([
@@ -116,6 +117,24 @@ fn validate_test_covered_by_with(
 #[cfg(test)]
 mod tests {
     use super::validate_test_covered_by_with;
+    use crate::is_cargo_test_command;
+
+    #[test]
+    fn test_covered_by_classification_is_token_aware() -> Result<(), String> {
+        for command in ["cargo test", "cargo\ttest -p xtask", "cargo\ntest filtered"] {
+            if !is_cargo_test_command(command) {
+                return Err(format!(
+                    "cargo-test command was not classified: {command:?}"
+                ));
+            }
+        }
+        for command in ["cargo testable", "cargo check", "xcargo test"] {
+            if is_cargo_test_command(command) {
+                return Err(format!("non-test command was classified: {command:?}"));
+            }
+        }
+        Ok(())
+    }
 
     #[test]
     fn test_covered_by_requires_nonzero_successful_enumeration() -> Result<(), String> {

@@ -18299,10 +18299,15 @@ pub(crate) fn read_file_policy_test_commands(path: &str) -> Result<Vec<(usize, S
                 .covered_by
                 .unwrap_or_default()
                 .into_iter()
-                .filter(|command| command.starts_with("cargo test "))
+                .filter(|command| is_cargo_test_command(command))
                 .map(move |command| (entry.line, command))
         })
         .collect())
+}
+
+pub(crate) fn is_cargo_test_command(command: &str) -> bool {
+    let mut words = command.split_whitespace();
+    words.next() == Some("cargo") && words.next() == Some("test")
 }
 
 fn parse_file_policy_allowlist(path: &str) -> Result<Vec<FilePolicyAllowEntry>, String> {
