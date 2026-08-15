@@ -242,7 +242,9 @@ fn validate_projection(
     subjects_sha256: &str,
 ) -> Result<Vec<PortablePacket>, String> {
     if host.cases.len() != subjects.len() || subjects.len() != expected_len {
-        return Err("portable projection requires the exact complete selected case set".to_string());
+        return Err(
+            "portable projection requires the exact complete selected case set".to_string(),
+        );
     }
     let host_by_id = host
         .cases
@@ -269,8 +271,7 @@ fn validate_projection(
         .collect::<BTreeMap<_, _>>();
     for packet in &packets {
         let bytes = pretty_json(packet)?;
-        let readback: PortablePacket =
-            read_strict_json_bytes(&bytes, "projected packet")?;
+        let readback: PortablePacket = read_strict_json_bytes(&bytes, "projected packet")?;
         let subject = subject_by_id
             .get(packet.case_id.as_str())
             .ok_or_else(|| format!("projection references unknown case `{}`", packet.case_id))?;
@@ -744,14 +745,11 @@ fn validate_probe(
     };
     let expected_materialized_root = super::normalize_path(&case.reported_materialized_root);
     if normalize(raw_root) != expected_materialized_root
-        || normalize(raw_file)
-            != format!("{expected_materialized_root}/{}", subject.anchor_file)
+        || normalize(raw_file) != format!("{expected_materialized_root}/{}", subject.anchor_file)
     {
         return Err(format!(
             "host {} probe file {} is not exact materialized path {}",
-            subject.case_id,
-            raw_file,
-            expected_materialized_root
+            subject.case_id, raw_file, expected_materialized_root
         ));
     }
     let expected_file = case.materialized_root.join(&subject.anchor_file);
@@ -841,9 +839,7 @@ fn validate_direction_witness(
     recommendation: &str,
     static_limit_kind: Option<&str>,
 ) -> Result<(), String> {
-    if missing != subject.expected_missing
-        || recommendation != subject.expected_recommendation
-    {
+    if missing != subject.expected_missing || recommendation != subject.expected_recommendation {
         return Err(format!(
             "host direction witness for {} is not the governed subject witness",
             subject.case_id

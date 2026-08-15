@@ -272,14 +272,13 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             let manifest = check_seed_at(Path::new("."))?;
             packet::check_host(Path::new("."), &manifest, packet::DEFAULT_HOST_CURRENT)
         }
-        [subcommand, flag, current]
-            if subcommand == "packet-check" && flag == "--host-current" =>
-        {
+        [subcommand, flag, current] if subcommand == "packet-check" && flag == "--host-current" => {
             let manifest = check_seed_at(Path::new("."))?;
             packet::check_host(Path::new("."), &manifest, current)
         }
         [subcommand, flag] if subcommand == "packet-check" && flag == "--host-current" => Err(
-            "rust-judged-panel packet-check --host-current requires a current.json path".to_string(),
+            "rust-judged-panel packet-check --host-current requires a current.json path"
+                .to_string(),
         ),
         [] => Err(format!(
             "rust-judged-panel requires `check`, `replay [--out target/ripr/<path>]`, `packet [--host-current target/ripr/<path>/current.json]`, or `packet-check [--host-current target/ripr/<path>/current.json]`\nrerun: {RERUN_COMMAND}"
