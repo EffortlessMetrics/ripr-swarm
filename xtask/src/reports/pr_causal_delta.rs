@@ -122,9 +122,13 @@ fn materialize_snapshot(
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
-    let snapshot_dir = repo
-        .join("target/ripr/pr/canonical-snapshots")
-        .join(format!("{label}-{}-{nonce}", std::process::id()));
+    // Keep revision worktrees outside the repository's generated-artifact
+    // tree.  The canonical snapshot contains user-controlled paths, and on
+    // Windows the repository-relative staging prefix can push an otherwise
+    // valid fixture over MAX_PATH before ripr gets a chance to analyze it.
+    // These worktrees are ephemeral and are removed below, so the system temp
+    // directory is the correct ownership boundary for them.
+    let snapshot_dir = snapshot_parent().join(format!("{label}-{}-{nonce}", std::process::id()));
     let output_dir = snapshot_dir.join("output");
     let worktree = snapshot_dir.join("worktree");
     let worktree_args = vec![
@@ -138,6 +142,8 @@ fn materialize_snapshot(
     ];
 
     let result = (|| {
+        fs::create_dir_all(&snapshot_dir)
+            .map_err(|err| format!("create {label} snapshot directory: {err}"))?;
         run_output_owned("git", &worktree_args)
             .map_err(|err| format!("materialize {label} revision {revision}: {err}"))?;
         let args = vec![
@@ -196,6 +202,22 @@ fn materialize_snapshot(
         (Ok(snapshot), Ok(_)) => snapshot,
         (Ok(_), Err(err)) => Snapshot::unavailable(format!("cleanup {label} snapshot: {err}")),
         (Err(err), _) => Snapshot::unavailable(err),
+    }
+}
+
+fn snapshot_parent() -> PathBuf {
+    #[cfg(windows)]
+    {
+        // The repository's configured TEMP may itself be nested under the
+        // checkout when invoked through a command wrapper.  A short sibling
+        // on the system drive keeps long, user-controlled fixture paths below
+        // Windows' legacy worktree limit.
+        let drive = env::var_os("SystemDrive").unwrap_or_else(|| "C:".into());
+        PathBuf::from(drive).join("ripr-pr")
+    }
+    #[cfg(not(windows))]
+    {
+        env::temp_dir().join("ripr-pr")
     }
 }
 
