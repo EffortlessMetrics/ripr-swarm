@@ -1214,11 +1214,13 @@ JSON fields:
   `rust_integration_public_api_path_unresolved`, or
   `rust_macro_reach_unresolved`, or
   `rust_macro_wrapped_test_call_unresolved`, or
-  `rust_macro_wrapped_assertion_unresolved`.
+  `rust_macro_wrapped_assertion_unresolved`, or
+  `rust_value_propagation_unresolved`.
 - `static_limitation` is an additive optional per-finding object emitted only
   when a finding with `static_limit_kind` also carries a complete structured
   limitation detail. Current Rust transitive-reach, integration public-API path,
-  macro-reach, direct test macro-call, and macro-wrapped assertion limitations
+  macro-reach, direct test macro-call, macro-wrapped assertion, and
+  value-propagation limitations
   populate it from the same evidence lines rendered in human output. Fields are
   `kind`, `last_established_edge`, `first_unresolved_edge`, `analyzer_route`,
   and `non_claim`. The object is absent for static limits that do not have all
