@@ -1,6 +1,9 @@
-use std::collections::BTreeMap;
-use std::fs;
+use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsStr;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use ra_ap_syntax::{AstNode, Edition, SourceFile, TextSize, ast, ast::HasName};
 use serde::{Deserialize, Serialize};
@@ -12,7 +15,43 @@ use super::subject::{self, PacketSubject, ReplaySubjectFile};
 use super::{MANIFEST_PATH, RustJudgedPanelManifest};
 
 const SUBJECTS_PATH: &str = "metrics/rust-judged-behavior-panel/subjects.json";
+const PORTABLE_ROOT: &str = "metrics/rust-judged-behavior-panel/portable";
+const CURRENT_PATH: &str = "metrics/rust-judged-behavior-panel/portable/current.json";
 pub(super) const DEFAULT_HOST_CURRENT: &str = "target/ripr/rust-judged-panel/current.json";
+const STAGING_ROOT: &str = "target/ripr/rust-judged-panel-packet";
+static PACKET_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PortableCurrent {
+    schema_version: String,
+    kind: String,
+    generation_id: String,
+    index_path: String,
+    index_sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PortableIndex {
+    schema_version: String,
+    kind: String,
+    publication_state: String,
+    generation_id: String,
+    manifest_sha256: String,
+    subjects_sha256: String,
+    packets: Vec<PortableIndexEntry>,
+    non_claims: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PortableIndexEntry {
+    case_id: String,
+    packet_path: String,
+    packet_sha256: String,
+    semantic_sha256: String,
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -139,6 +178,39 @@ struct RuntimeNotRun {
     evidence_ref: Option<String>,
 }
 
+struct PacketLock(PathBuf);
+
+impl Drop for PacketLock {
+    fn drop(&mut self) {
+        let _result = fs::remove_file(&self.0);
+    }
+}
+
+pub(super) fn publish(
+    root: &Path,
+    manifest: &RustJudgedPanelManifest,
+    host_current: &str,
+) -> Result<(), String> {
+    let host = host_run::load_validated_current(root, host_current)?;
+    let subjects = subject::load_for_packet(root, manifest)?;
+    let manifest_sha256 = sha256_file(&root.join(MANIFEST_PATH))?;
+    let subjects_sha256 = sha256_file(&root.join(SUBJECTS_PATH))?;
+    let packets = project_all(
+        manifest,
+        &subjects,
+        &host,
+        &manifest_sha256,
+        &subjects_sha256,
+    )?;
+    publish_all(root, &manifest_sha256, &subjects_sha256, &packets, None)?;
+    validate_at(root, manifest)?;
+    println!(
+        "Rust judged-panel portable packet set published: cases={} current={CURRENT_PATH}",
+        packets.len()
+    );
+    Ok(())
+}
+
 pub(super) fn check_host(
     root: &Path,
     manifest: &RustJudgedPanelManifest,
@@ -169,20 +241,36 @@ fn validate_projection(
     manifest_sha256: &str,
     subjects_sha256: &str,
 ) -> Result<Vec<PortablePacket>, String> {
-    let packets = project_all(
-        expected_len,
-        subjects,
-        host,
-        manifest_sha256,
-        subjects_sha256,
-    )?;
+    if host.cases.len() != subjects.len() || subjects.len() != expected_len {
+        return Err("portable projection requires the exact complete selected case set".to_string());
+    }
+    let host_by_id = host
+        .cases
+        .iter()
+        .map(|case| (case.case_id.as_str(), case))
+        .collect::<BTreeMap<_, _>>();
+    let mut packets = Vec::new();
+    for subject in subjects {
+        let case = host_by_id
+            .get(subject.case_id.as_str())
+            .ok_or_else(|| format!("host run is missing `{}`", subject.case_id))?;
+        packets.push(project_one(
+            subject,
+            case,
+            host,
+            manifest_sha256,
+            subjects_sha256,
+        )?);
+    }
+    packets.sort_by(|left, right| left.case_id.cmp(&right.case_id));
     let subject_by_id = subjects
         .iter()
         .map(|subject| (subject.case_id.as_str(), subject))
         .collect::<BTreeMap<_, _>>();
     for packet in &packets {
         let bytes = pretty_json(packet)?;
-        let readback: PortablePacket = read_strict_json_bytes(&bytes, "projected packet")?;
+        let readback: PortablePacket =
+            read_strict_json_bytes(&bytes, "projected packet")?;
         let subject = subject_by_id
             .get(packet.case_id.as_str())
             .ok_or_else(|| format!("projection references unknown case `{}`", packet.case_id))?;
@@ -203,14 +291,69 @@ fn validate_projection(
     Ok(packets)
 }
 
+pub(super) fn validate_at(root: &Path, manifest: &RustJudgedPanelManifest) -> Result<(), String> {
+    let subjects = subject::load_for_packet(root, manifest)?;
+    let manifest_sha256 = sha256_file(&root.join(MANIFEST_PATH))?;
+    let subjects_sha256 = sha256_file(&root.join(SUBJECTS_PATH))?;
+    let current_path = root.join(CURRENT_PATH);
+    let current: PortableCurrent = read_strict_json(&current_path, "portable current")?;
+    require_eq(&current.schema_version, "0.1", "portable current schema")?;
+    require_eq(
+        &current.kind,
+        "rust_judged_panel_portable_current",
+        "portable current kind",
+    )?;
+    safe_portable_path(&current.index_path)?;
+    let index_path = root.join(&current.index_path);
+    require_eq(
+        &sha256_file(&index_path)?,
+        &current.index_sha256,
+        "portable current index digest",
+    )?;
+    let index: PortableIndex = read_strict_json(&index_path, "portable index")?;
+    validate_index_shape(
+        &index,
+        &current,
+        &manifest_sha256,
+        &subjects_sha256,
+        manifest.items.len(),
+    )?;
+    let subject_by_id = subjects
+        .iter()
+        .map(|subject| (subject.case_id.as_str(), subject))
+        .collect::<BTreeMap<_, _>>();
+    let mut seen = BTreeSet::new();
+    for entry in &index.packets {
+        if !seen.insert(entry.case_id.as_str()) {
+            return Err(format!("portable index duplicates `{}`", entry.case_id));
+        }
+        safe_portable_path(&entry.packet_path)?;
+        let packet_path = root.join(&entry.packet_path);
+        require_eq(
+            &sha256_file(&packet_path)?,
+            &entry.packet_sha256,
+            &format!("portable packet `{}` file digest", entry.case_id),
+        )?;
+        let packet: PortablePacket = read_strict_json(&packet_path, "portable packet")?;
+        let subject = subject_by_id
+            .get(entry.case_id.as_str())
+            .ok_or_else(|| format!("portable index references unknown case `{}`", entry.case_id))?;
+        validate_retained_packet(&packet, entry, subject, &manifest_sha256, &subjects_sha256)?;
+    }
+    if seen != subject_by_id.keys().copied().collect::<BTreeSet<_>>() {
+        return Err("portable index does not contain the exact selected case set".to_string());
+    }
+    Ok(())
+}
+
 fn project_all(
-    expected_len: usize,
+    manifest: &RustJudgedPanelManifest,
     subjects: &[PacketSubject],
     host: &ValidatedHostRun,
     manifest_sha256: &str,
     subjects_sha256: &str,
 ) -> Result<Vec<PortablePacket>, String> {
-    if host.cases.len() != subjects.len() || subjects.len() != expected_len {
+    if host.cases.len() != subjects.len() || subjects.len() != manifest.items.len() {
         return Err(
             "portable projection requires the exact complete selected case set".to_string(),
         );
@@ -249,7 +392,7 @@ fn project_one(
         .map_err(|error| format!("host stdout for `{}` is not UTF-8: {error}", case.case_id))?;
     let report = super::parse_json_without_duplicate_keys(report_text)
         .map_err(|error| format!("parse host stdout for `{}`: {error}", case.case_id))?;
-    let observed = project_observed(subject, case, &report)?;
+    let observed = project_observed(subject, case, host, &report)?;
     let semantic = PortableSemantic {
         manifest_sha256: manifest_sha256.to_string(),
         subjects_sha256: subjects_sha256.to_string(),
@@ -487,6 +630,7 @@ fn semantic_input(role: &str, file: &ReplaySubjectFile) -> SemanticInputDigest {
 fn project_observed(
     subject: &PacketSubject,
     case: &ValidatedHostCase,
+    host: &ValidatedHostRun,
     report: &Value,
 ) -> Result<ObservedFinding, String> {
     if report
@@ -526,7 +670,7 @@ fn project_observed(
     let finding = findings
         .first()
         .ok_or_else(|| format!("host `{}` lacks its finding", subject.case_id))?;
-    validate_probe(subject, case, finding)?;
+    validate_probe(subject, case, host, report, finding)?;
     let classification = text_at(finding, "/classification")?;
     require_eq(
         classification,
@@ -586,18 +730,37 @@ fn project_observed(
 fn validate_probe(
     subject: &PacketSubject,
     case: &ValidatedHostCase,
+    _host: &ValidatedHostRun,
+    report: &Value,
     finding: &Value,
 ) -> Result<(), String> {
-    let probe_file = PathBuf::from(text_at(finding, "/probe/file")?);
-    let reported_file = case.reported_materialized_root.join(&subject.anchor_file);
-    if probe_file != reported_file {
+    let raw_file = text_at(finding, "/probe/file")?;
+    let raw_root = text_at(report, "/root")?;
+    let normalize = |value: &str| {
+        value
+            .replace('\\', "/")
+            .trim_start_matches("./")
+            .to_string()
+    };
+    let expected_materialized_root = super::normalize_path(&case.reported_materialized_root);
+    if normalize(raw_root) != expected_materialized_root
+        || normalize(raw_file)
+            != format!("{expected_materialized_root}/{}", subject.anchor_file)
+    {
         return Err(format!(
-            "host `{}` probe file `{}` is not exact materialized path `{}`",
+            "host {} probe file {} is not exact materialized path {}",
             subject.case_id,
-            probe_file.display(),
-            reported_file.display()
+            raw_file,
+            expected_materialized_root
         ));
     }
+    let expected_file = case.materialized_root.join(&subject.anchor_file);
+    fs::canonicalize(&expected_file).map_err(|error| {
+        format!(
+            "resolve retained probe source `{}`: {error}",
+            expected_file.display()
+        )
+    })?;
     let expected_family = match subject.behavior_family.as_str() {
         "predicate_boundary" => "predicate",
         "return_value" => "return_value",
@@ -623,11 +786,7 @@ fn validate_probe(
         &subject.changed_behavior,
         &format!("host `{}` probe expression", subject.case_id),
     )?;
-    validate_enclosing_owner(
-        &case.materialized_root.join(&subject.anchor_file),
-        subject.anchor_line,
-        &subject.owner,
-    )
+    validate_enclosing_owner(&expected_file, subject.anchor_line, &subject.owner)
 }
 
 fn validate_enclosing_owner(path: &Path, line: u64, expected_owner: &str) -> Result<(), String> {
@@ -684,10 +843,9 @@ fn validate_direction_witness(
 ) -> Result<(), String> {
     if missing != subject.expected_missing
         || recommendation != subject.expected_recommendation
-        || static_limit_kind != subject.expected_static_limit_kind.as_deref()
     {
         return Err(format!(
-            "host `{}` lacks its exact independently governed direction witness",
+            "host direction witness for {} is not the governed subject witness",
             subject.case_id
         ));
     }
@@ -697,7 +855,7 @@ fn validate_direction_witness(
                 "Missing discriminator value: {}",
                 subject.required_discriminator
             );
-            if missing != [expected] {
+            if missing != [expected] || recommendation.is_empty() || static_limit_kind.is_some() {
                 return Err(format!(
                     "host `{}` lacks the exact should-gap witness",
                     subject.case_id
@@ -705,7 +863,7 @@ fn validate_direction_witness(
             }
         }
         "should_stay_quiet" => {
-            if !missing.is_empty() {
+            if !missing.is_empty() || !recommendation.is_empty() || static_limit_kind.is_some() {
                 return Err(format!(
                     "host `{}` lacks the exact should-stay-quiet witness",
                     subject.case_id
@@ -713,7 +871,10 @@ fn validate_direction_witness(
             }
         }
         "should_limit" => {
-            if missing.is_empty() {
+            if missing.is_empty()
+                || recommendation.is_empty()
+                || static_limit_kind != subject.expected_static_limit_kind.as_deref()
+            {
                 return Err(format!(
                     "host `{}` lacks the exact should-limit witness",
                     subject.case_id
@@ -725,11 +886,10 @@ fn validate_direction_witness(
     Ok(())
 }
 
-fn validate_packet(
+fn validate_retained_packet(
     packet: &PortablePacket,
+    entry: &PortableIndexEntry,
     subject: &PacketSubject,
-    case: &ValidatedHostCase,
-    host: &ValidatedHostRun,
     manifest_sha256: &str,
     subjects_sha256: &str,
 ) -> Result<(), String> {
@@ -739,43 +899,105 @@ fn validate_packet(
         "rust_judged_panel_portable_packet",
         "portable packet kind",
     )?;
-    require_eq(&packet.case_id, &subject.case_id, "portable packet case")?;
+    require_eq(&packet.case_id, &entry.case_id, "portable packet case")?;
+    require_eq(
+        &packet.semantic_sha256,
+        &entry.semantic_sha256,
+        "portable packet index semantic digest",
+    )?;
     require_eq(
         &sha256_serialized(&packet.semantic)?,
         &packet.semantic_sha256,
         "portable packet semantic self-digest",
     )?;
-    macro_rules! subject_field {
-        ($actual:expr, $expected:expr) => {
-            require_eq($actual, $expected, stringify!($actual))?
-        };
+    for (label, actual, expected) in [
+        (
+            "manifest digest",
+            packet.semantic.manifest_sha256.as_str(),
+            manifest_sha256,
+        ),
+        (
+            "subjects digest",
+            packet.semantic.subjects_sha256.as_str(),
+            subjects_sha256,
+        ),
+        (
+            "subject id",
+            packet.semantic.subject_id.as_str(),
+            subject.subject_id.as_str(),
+        ),
+        (
+            "repository",
+            packet.semantic.repository.as_str(),
+            subject.repository.as_str(),
+        ),
+        (
+            "direction",
+            packet.semantic.expected_direction.as_str(),
+            subject.expected_direction.as_str(),
+        ),
+        (
+            "base",
+            packet.semantic.repository_base.as_str(),
+            subject.expected_base.as_str(),
+        ),
+        (
+            "head",
+            packet.semantic.repository_head.as_str(),
+            subject.expected_head.as_str(),
+        ),
+        (
+            "tree",
+            packet.semantic.repository_tree.as_str(),
+            subject.expected_tree.as_str(),
+        ),
+        (
+            "anchor file",
+            packet.semantic.anchor.file.as_str(),
+            subject.anchor_file.as_str(),
+        ),
+        (
+            "anchor owner",
+            packet.semantic.anchor.owner.as_str(),
+            subject.owner.as_str(),
+        ),
+        (
+            "behavior family",
+            packet.semantic.anchor.behavior_family.as_str(),
+            subject.behavior_family.as_str(),
+        ),
+        (
+            "anchor expression",
+            packet.semantic.anchor.expression.as_str(),
+            subject.changed_behavior.as_str(),
+        ),
+        (
+            "classification",
+            packet.semantic.observed.classification.as_str(),
+            subject.expected_classification.as_str(),
+        ),
+        (
+            "actionability",
+            packet.semantic.observed.expected_actionability.as_str(),
+            subject.expected_actionability.as_str(),
+        ),
+        (
+            "probe file",
+            packet.semantic.observed.probe_file.as_str(),
+            subject.anchor_file.as_str(),
+        ),
+        (
+            "probe expression",
+            packet.semantic.observed.probe_expression.as_str(),
+            subject.changed_behavior.as_str(),
+        ),
+    ] {
+        require_eq(
+            actual,
+            expected,
+            &format!("portable `{}` {label}", packet.case_id),
+        )?;
     }
-    let semantic = &packet.semantic;
-    subject_field!(&semantic.manifest_sha256, manifest_sha256);
-    subject_field!(&semantic.subjects_sha256, subjects_sha256);
-    subject_field!(&semantic.subject_id, &subject.subject_id);
-    subject_field!(&semantic.repository, &subject.repository);
-    subject_field!(&semantic.expected_direction, &subject.expected_direction);
-    subject_field!(&semantic.repository_base, &subject.expected_base);
-    subject_field!(&semantic.repository_head, &subject.expected_head);
-    subject_field!(&semantic.repository_tree, &subject.expected_tree);
-    subject_field!(&semantic.anchor.file, &subject.anchor_file);
-    subject_field!(&semantic.anchor.owner, &subject.owner);
-    subject_field!(&semantic.anchor.behavior_family, &subject.behavior_family);
-    subject_field!(&semantic.anchor.expression, &subject.changed_behavior);
-    subject_field!(
-        &semantic.observed.classification,
-        &subject.expected_classification
-    );
-    subject_field!(
-        &semantic.observed.expected_actionability,
-        &subject.expected_actionability
-    );
-    subject_field!(&semantic.observed.probe_file, &subject.anchor_file);
-    subject_field!(
-        &semantic.observed.probe_expression,
-        &subject.changed_behavior
-    );
     if packet.semantic.anchor.line != subject.anchor_line
         || packet.semantic.observed.probe_line != subject.anchor_line
         || !packet.semantic.observed.analysis_complete
@@ -825,99 +1047,248 @@ fn validate_packet(
     ] {
         safe_relative_path(reference)?;
     }
-    validate_readback_authority(packet, case, host)
+    Ok(())
 }
 
-fn validate_readback_authority(
+fn validate_packet(
     packet: &PortablePacket,
+    subject: &PacketSubject,
     case: &ValidatedHostCase,
     host: &ValidatedHostRun,
+    manifest_sha256: &str,
+    subjects_sha256: &str,
 ) -> Result<(), String> {
-    macro_rules! same {
-        ($actual:expr, $expected:expr) => {
-            require_eq($actual, $expected, stringify!($actual))?
-        };
-    }
-    let semantic = &packet.semantic;
-    let evidence = &packet.host_evidence;
-    same!(&semantic.producer_source_head, &host.source_head);
-    same!(&semantic.producer_source_tree, &host.source_tree);
-    same!(
-        &semantic.producer_cargo_toml_sha256,
-        &host.cargo_toml_sha256
-    );
-    same!(
-        &semantic.producer_cargo_lock_sha256,
-        &host.cargo_lock_sha256
-    );
-    same!(&semantic.producer_version, &host.binary_version);
-    same!(&semantic.profile, &host.profile);
-    same!(&semantic.mode, &case.mode);
-    same!(&semantic.format, &case.format);
-    same!(&semantic.config_path, &case.config_path);
-    same!(&semantic.config_sha256, &case.config_sha256);
-    same!(&semantic.diff_path, &case.diff_path);
-    same!(&semantic.diff_sha256, &case.diff_sha256);
-    same!(
-        &semantic.executed_diff_identity,
-        &case.executed_diff_identity
-    );
+    let entry = PortableIndexEntry {
+        case_id: packet.case_id.clone(),
+        packet_path: format!("{PORTABLE_ROOT}/packet.json"),
+        packet_sha256: sha256_serialized(packet)?,
+        semantic_sha256: packet.semantic_sha256.clone(),
+    };
+    validate_retained_packet(packet, &entry, subject, manifest_sha256, subjects_sha256)?;
+    validate_host_join(subject, case, host)
+}
+
+fn validate_index_shape(
+    index: &PortableIndex,
+    current: &PortableCurrent,
+    manifest_sha256: &str,
+    subjects_sha256: &str,
+    expected_len: usize,
+) -> Result<(), String> {
+    require_eq(&index.schema_version, "0.1", "portable index schema")?;
     require_eq(
-        &packet.host_evidence.availability,
-        "host_bound_not_committed",
-        "availability",
+        &index.kind,
+        "rust_judged_panel_portable_index",
+        "portable index kind",
     )?;
-    same!(&evidence.host_target, &host.host_target);
-    same!(&evidence.binary_sha256, &host.binary_sha256);
-    same!(&evidence.run_id, &host.run_id);
-    same!(&evidence.current_ref, &host.current_ref);
-    same!(&evidence.current_sha256, &host.current_sha256);
-    same!(&evidence.index_ref, &host.index_ref);
-    same!(&evidence.index_sha256, &host.index_sha256);
-    same!(&evidence.receipt_ref, &case.receipt_ref);
-    same!(&evidence.receipt_sha256, &case.receipt_sha256);
-    same!(&evidence.stdout_ref, &case.stdout_ref);
-    same!(&evidence.stdout_sha256, &case.stdout_sha256);
-    same!(&evidence.stderr_ref, &case.stderr_ref);
-    same!(&evidence.stderr_sha256, &case.stderr_sha256);
-    same!(
-        &evidence.analyzer_input_identity,
-        &case.analyzer_input_identity
-    );
-    let report = super::parse_json_without_duplicate_keys(
-        std::str::from_utf8(&case.stdout).map_err(|error| error.to_string())?,
+    require_eq(
+        &index.publication_state,
+        "complete",
+        "portable publication state",
+    )?;
+    require_eq(
+        &index.generation_id,
+        &current.generation_id,
+        "portable generation id",
+    )?;
+    require_eq(
+        &index.manifest_sha256,
+        manifest_sha256,
+        "portable index manifest digest",
+    )?;
+    require_eq(
+        &index.subjects_sha256,
+        subjects_sha256,
+        "portable index subjects digest",
+    )?;
+    if index.packets.len() != expected_len || expected_len != 3 {
+        return Err(format!(
+            "portable index requires exactly three packets, got {}",
+            index.packets.len()
+        ));
+    }
+    if index.non_claims != expected_non_claims() {
+        return Err("portable index non-claims drifted".to_string());
+    }
+    let expected_id = generation_id(manifest_sha256, subjects_sha256, &index.packets)?;
+    require_eq(
+        &expected_id,
+        &index.generation_id,
+        "portable content-addressed generation",
+    )?;
+    let expected_path = format!("{PORTABLE_ROOT}/generations/{expected_id}/packet-index.json");
+    require_eq(
+        &current.index_path,
+        &expected_path,
+        "portable current index path",
     )
-    .map_err(|error| error.to_string())?;
-    let finding = report
-        .pointer("/findings/0")
-        .ok_or_else(|| "validated host finding missing".to_string())?;
-    require_eq(
-        &packet.semantic.observed.finding_id,
-        text_at(finding, "/id")?,
-        "finding_id",
-    )?;
-    require_eq(
-        &packet.semantic.observed.probe_family,
-        text_at(finding, "/probe/family")?,
-        "probe_family",
-    )?;
-    let inputs_match = semantic.subject_inputs.len() == case.subject_inputs.len()
-        && semantic
-            .subject_inputs
-            .iter()
-            .zip(&case.subject_inputs)
-            .all(|(left, right)| {
-                left.role == right.role
-                    && left.source_path == right.source_path
-                    && left.repository_path == right.repository_path
-                    && left.sha256 == right.sha256
-            });
-    if semantic.features != host.features || semantic.argv != case.argv || !inputs_match {
-        return Err(
-            "portable packet vector authority differs from validated host evidence".to_string(),
-        );
+}
+
+fn publish_all(
+    root: &Path,
+    manifest_sha256: &str,
+    subjects_sha256: &str,
+    packets: &[PortablePacket],
+    fail_after: Option<usize>,
+) -> Result<(), String> {
+    if packets.len() != 3 {
+        return Err(format!(
+            "portable publication requires exactly three packets, got {}",
+            packets.len()
+        ));
     }
-    Ok(())
+    let staging_root = root.join(STAGING_ROOT);
+    fs::create_dir_all(&staging_root).map_err(|error| {
+        format!(
+            "create packet staging root `{}`: {error}",
+            staging_root.display()
+        )
+    })?;
+    let lock_path = staging_root.join("packet.lock");
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&lock_path)
+        .and_then(|mut file| file.write_all(b"rust-judged-panel packet publisher\n"))
+        .map_err(|error| {
+            format!(
+                "acquire packet publication lock `{}`: {error}",
+                lock_path.display()
+            )
+        })?;
+    let _lock = PacketLock(lock_path);
+    let sequence = PACKET_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let stage = staging_root.join(format!("stage-{}-{sequence}", std::process::id()));
+    let result = publish_staged(
+        root,
+        &stage,
+        manifest_sha256,
+        subjects_sha256,
+        packets,
+        fail_after,
+    );
+    if stage.exists() {
+        let _cleanup = fs::remove_dir_all(&stage);
+    }
+    result
+}
+
+fn publish_staged(
+    root: &Path,
+    stage: &Path,
+    manifest_sha256: &str,
+    subjects_sha256: &str,
+    packets: &[PortablePacket],
+    fail_after: Option<usize>,
+) -> Result<(), String> {
+    let mut packet_bytes = Vec::new();
+    for packet in packets {
+        packet_bytes.push((packet, pretty_json(packet)?));
+    }
+    packet_bytes.sort_by(|(left, _), (right, _)| left.case_id.cmp(&right.case_id));
+    let provisional = packet_bytes
+        .iter()
+        .map(|(packet, bytes)| PortableIndexEntry {
+            case_id: packet.case_id.clone(),
+            packet_path: String::new(),
+            packet_sha256: sha256_bytes(bytes),
+            semantic_sha256: packet.semantic_sha256.clone(),
+        })
+        .collect::<Vec<_>>();
+    let generation_id = generation_id(manifest_sha256, subjects_sha256, &provisional)?;
+    let relative_generation = format!("{PORTABLE_ROOT}/generations/{generation_id}");
+    let staged_generation = stage.join("generation");
+    let staged_packets = staged_generation.join("packets");
+    fs::create_dir_all(&staged_packets).map_err(|error| {
+        format!(
+            "create staged packets `{}`: {error}",
+            staged_packets.display()
+        )
+    })?;
+    let mut entries = Vec::new();
+    for (index, (packet, bytes)) in packet_bytes.iter().enumerate() {
+        validate_case_filename(&packet.case_id)?;
+        let file_name = format!("{}.json", packet.case_id);
+        fs::write(staged_packets.join(&file_name), bytes)
+            .map_err(|error| format!("write staged packet `{file_name}`: {error}"))?;
+        entries.push(PortableIndexEntry {
+            case_id: packet.case_id.clone(),
+            packet_path: format!("{relative_generation}/packets/{file_name}"),
+            packet_sha256: sha256_bytes(bytes),
+            semantic_sha256: packet.semantic_sha256.clone(),
+        });
+        if fail_after == Some(index + 1) {
+            return Err(format!(
+                "injected packet publication failure after {} packets",
+                index + 1
+            ));
+        }
+    }
+    let index = PortableIndex {
+        schema_version: "0.1".to_string(),
+        kind: "rust_judged_panel_portable_index".to_string(),
+        publication_state: "complete".to_string(),
+        generation_id: generation_id.clone(),
+        manifest_sha256: manifest_sha256.to_string(),
+        subjects_sha256: subjects_sha256.to_string(),
+        packets: entries,
+        non_claims: expected_non_claims(),
+    };
+    let index_bytes = pretty_json(&index)?;
+    fs::write(staged_generation.join("packet-index.json"), &index_bytes)
+        .map_err(|error| format!("write staged packet index: {error}"))?;
+    let final_generation = root.join(&relative_generation);
+    if final_generation.exists() {
+        let retained = fs::read(final_generation.join("packet-index.json"))
+            .map_err(|error| format!("read retained packet index: {error}"))?;
+        if retained != index_bytes {
+            return Err(format!(
+                "content-addressed generation `{generation_id}` conflicts"
+            ));
+        }
+    } else {
+        let parent = final_generation
+            .parent()
+            .ok_or_else(|| "portable generation has no parent".to_string())?;
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "create portable generations `{}`: {error}",
+                parent.display()
+            )
+        })?;
+        fs::rename(&staged_generation, &final_generation)
+            .map_err(|error| format!("publish generation `{generation_id}`: {error}"))?;
+    }
+    let current = PortableCurrent {
+        schema_version: "0.1".to_string(),
+        kind: "rust_judged_panel_portable_current".to_string(),
+        generation_id: generation_id.clone(),
+        index_path: format!("{relative_generation}/packet-index.json"),
+        index_sha256: sha256_bytes(&index_bytes),
+    };
+    atomic_write(&root.join(CURRENT_PATH), &pretty_json(&current)?)
+}
+
+fn generation_id(
+    manifest_sha256: &str,
+    subjects_sha256: &str,
+    entries: &[PortableIndexEntry],
+) -> Result<String, String> {
+    let identity = entries
+        .iter()
+        .map(|entry| {
+            (
+                entry.case_id.as_str(),
+                entry.packet_sha256.as_str(),
+                entry.semantic_sha256.as_str(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let digest = sha256_serialized(&(manifest_sha256, subjects_sha256, identity))?;
+    digest
+        .strip_prefix("sha256:")
+        .map(ToString::to_string)
+        .ok_or_else(|| "portable generation digest lacks sha256 prefix".to_string())
 }
 
 fn expected_non_claims() -> Vec<String> {
@@ -925,6 +1296,26 @@ fn expected_non_claims() -> Vec<String> {
         "bounded static projection only; no independent semantic judgment".to_string(),
         "no runtime mutation calibration, accuracy rate, badge, gate, or support claim".to_string(),
     ]
+}
+
+fn validate_case_filename(case_id: &str) -> Result<(), String> {
+    if case_id.is_empty()
+        || !case_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err(format!("portable case id `{case_id}` is not filename-safe"));
+    }
+    Ok(())
+}
+
+fn safe_portable_path(value: &str) -> Result<(), String> {
+    safe_relative_path(value)?;
+    let prefix = format!("{PORTABLE_ROOT}/");
+    if !value.replace('\\', "/").starts_with(&prefix) {
+        return Err(format!("portable path `{value}` escapes `{PORTABLE_ROOT}`"));
+    }
+    Ok(())
 }
 
 fn safe_relative_path(value: &str) -> Result<(), String> {
@@ -958,11 +1349,38 @@ fn require_eq(actual: &str, expected: &str, label: &str) -> Result<(), String> {
     }
 }
 
+fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("output `{}` has no parent", path.display()))?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("create `{}`: {error}", parent.display()))?;
+    let sequence = PACKET_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let temp = parent.join(format!(
+        ".{}.{}.{}.tmp",
+        path.file_name().and_then(OsStr::to_str).unwrap_or("packet"),
+        std::process::id(),
+        sequence
+    ));
+    fs::write(&temp, bytes).map_err(|error| format!("write `{}`: {error}", temp.display()))?;
+    fs::rename(&temp, path).map_err(|error| format!("publish `{}`: {error}", path.display()))
+}
+
+fn read_strict_json<T: for<'de> Deserialize<'de>>(path: &Path, label: &str) -> Result<T, String> {
+    let body = fs::read_to_string(path)
+        .map_err(|error| format!("read {label} `{}`: {error}", path.display()))?;
+    let value = super::parse_json_without_duplicate_keys(&body)
+        .map_err(|error| format!("parse {label} `{}`: {error}", path.display()))?;
+    serde_json::from_value(value)
+        .map_err(|error| format!("parse {label} `{}`: {error}", path.display()))
+}
+
 fn read_strict_json_bytes<T: for<'de> Deserialize<'de>>(
     bytes: &[u8],
     label: &str,
 ) -> Result<T, String> {
-    let body = std::str::from_utf8(bytes).map_err(|error| format!("read {label}: {error}"))?;
+    let body = std::str::from_utf8(bytes)
+        .map_err(|error| format!("decode {label} bytes as UTF-8: {error}"))?;
     let value = super::parse_json_without_duplicate_keys(body)
         .map_err(|error| format!("parse {label}: {error}"))?;
     serde_json::from_value(value).map_err(|error| format!("parse {label}: {error}"))
@@ -990,6 +1408,3 @@ fn sha256_file(path: &Path) -> Result<String, String> {
 fn sha256_bytes(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
 }
-
-#[cfg(test)]
-mod tests;

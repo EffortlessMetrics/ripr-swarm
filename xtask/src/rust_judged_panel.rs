@@ -246,34 +246,43 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         [subcommand] if subcommand == "check" => {
             let manifest = check_at(Path::new("."))?;
             println!(
-                "Rust judged panel seed and subjects valid: manifest={MANIFEST_PATH} items={} directions={}",
+                "Rust judged panel seed, subjects, and portable packets valid: manifest={MANIFEST_PATH} items={} directions={}",
                 manifest.items.len(),
                 manifest.required_directions.join(",")
             );
             Ok(())
         }
         [subcommand] if subcommand == "replay" => {
-            let manifest = check_at(Path::new("."))?;
+            let manifest = check_seed_at(Path::new("."))?;
             host_run::run(Path::new("."), &manifest, None)
         }
         [subcommand, flag, output] if subcommand == "replay" && flag == "--out" => {
-            let manifest = check_at(Path::new("."))?;
+            let manifest = check_seed_at(Path::new("."))?;
             host_run::run(Path::new("."), &manifest, Some(output))
         }
+        [subcommand] if subcommand == "packet" => {
+            let manifest = check_seed_at(Path::new("."))?;
+            packet::publish(Path::new("."), &manifest, packet::DEFAULT_HOST_CURRENT)
+        }
+        [subcommand, flag, current] if subcommand == "packet" && flag == "--host-current" => {
+            let manifest = check_seed_at(Path::new("."))?;
+            packet::publish(Path::new("."), &manifest, current)
+        }
         [subcommand] if subcommand == "packet-check" => {
-            let manifest = check_at(Path::new("."))?;
+            let manifest = check_seed_at(Path::new("."))?;
             packet::check_host(Path::new("."), &manifest, packet::DEFAULT_HOST_CURRENT)
         }
-        [subcommand, flag, current] if subcommand == "packet-check" && flag == "--host-current" => {
-            let manifest = check_at(Path::new("."))?;
+        [subcommand, flag, current]
+            if subcommand == "packet-check" && flag == "--host-current" =>
+        {
+            let manifest = check_seed_at(Path::new("."))?;
             packet::check_host(Path::new("."), &manifest, current)
         }
         [subcommand, flag] if subcommand == "packet-check" && flag == "--host-current" => Err(
-            "rust-judged-panel packet-check --host-current requires a current.json path"
-                .to_string(),
+            "rust-judged-panel packet-check --host-current requires a current.json path".to_string(),
         ),
         [] => Err(format!(
-            "rust-judged-panel requires `check`, `replay [--out target/ripr/<path>]`, or `packet-check [--host-current target/ripr/<path>/current.json]`\nrerun: {RERUN_COMMAND}"
+            "rust-judged-panel requires `check`, `replay [--out target/ripr/<path>]`, `packet [--host-current target/ripr/<path>/current.json]`, or `packet-check [--host-current target/ripr/<path>/current.json]`\nrerun: {RERUN_COMMAND}"
         )),
         _ => Err(format!(
             "unknown rust-judged-panel arguments `{}`\nrerun: {RERUN_COMMAND}",
@@ -287,6 +296,12 @@ pub(crate) fn check_canonical() -> Result<(), String> {
 }
 
 fn check_at(root: &Path) -> Result<RustJudgedPanelManifest, String> {
+    let manifest = check_seed_at(root)?;
+    packet::validate_at(root, &manifest)?;
+    Ok(manifest)
+}
+
+fn check_seed_at(root: &Path) -> Result<RustJudgedPanelManifest, String> {
     let manifest = load_and_validate_at(root, Path::new(MANIFEST_PATH))?;
     subject::validate_at(root, &manifest)?;
     Ok(manifest)
@@ -1086,7 +1101,7 @@ mod tests {
 
     use serde_json::{Value, json};
 
-    use super::{MANIFEST_PATH, load_and_validate_at, run};
+    use super::{MANIFEST_PATH, load_and_validate_at};
 
     struct TempFixture {
         root: PathBuf,
@@ -1151,20 +1166,6 @@ mod tests {
     impl Drop for TempFixture {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.root);
-        }
-    }
-
-    #[test]
-    fn packet_check_reports_missing_host_current_value() -> Result<(), String> {
-        if run(&["packet-check".to_string(), "--host-current".to_string()])
-            == Err(
-                "rust-judged-panel packet-check --host-current requires a current.json path"
-                    .to_string(),
-            )
-        {
-            Ok(())
-        } else {
-            Err("missing host-current value lacks its dedicated diagnostic".to_string())
         }
     }
 

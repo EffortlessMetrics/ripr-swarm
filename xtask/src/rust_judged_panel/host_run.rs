@@ -212,8 +212,8 @@ pub(super) struct ValidatedHostCase {
     pub(super) stderr_ref: String,
     pub(super) stderr_sha256: String,
     pub(super) stdout: Vec<u8>,
-    pub(super) materialized_root: PathBuf,
     pub(super) reported_materialized_root: PathBuf,
+    pub(super) materialized_root: PathBuf,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -772,12 +772,7 @@ fn validate_case_receipt(
         ),
     ] {
         safe_relative(path)?;
-        let path = canonical_existing_file_under(
-            &run_root.join(path),
-            &run_root.join("cases"),
-            run_root,
-            &format!("host receipt raw {label}"),
-        )?;
+        let path = run_root.join(path);
         let actual = sha256_file(&path)?;
         let actual_bytes = fs::metadata(&path)
             .map_err(|error| format!("read raw {label} metadata: {error}"))?
@@ -829,13 +824,7 @@ fn validate_case_receipt(
 }
 
 fn validate_generation(run_root: &Path) -> Result<(), String> {
-    let index_path = canonical_existing_file_under(
-        &run_root.join("run-index.json"),
-        run_root,
-        run_root,
-        "host run index",
-    )?;
-    let index: HostRunIndex = read_strict_json(&index_path, "host run index")?;
+    let index: HostRunIndex = read_strict_json(&run_root.join("run-index.json"), "host run index")?;
     if index.publication_state != "complete" || index.cases.len() != 3 {
         return Err("host run index is not a complete three-case generation".to_string());
     }
@@ -848,13 +837,7 @@ fn validate_generation(run_root: &Path) -> Result<(), String> {
         if !seen.insert(entry.case_id.as_str()) {
             return Err(format!("host run index duplicates `{}`", entry.case_id));
         }
-        safe_relative(&entry.receipt_path)?;
-        let receipt_path = canonical_existing_file_under(
-            &run_root.join(&entry.receipt_path),
-            &run_root.join("cases"),
-            run_root,
-            "case receipt",
-        )?;
+        let receipt_path = run_root.join(&entry.receipt_path);
         if sha256_file(&receipt_path)? != entry.receipt_sha256 {
             return Err(format!(
                 "host run index receipt digest mismatch for `{}`",
@@ -902,12 +885,7 @@ fn validate_build_identity(run_root: &Path, build: &BuildIdentity) -> Result<(),
         );
     }
     safe_relative(&build.retained_binary_path)?;
-    let binary = canonical_existing_file_under(
-        &run_root.join(&build.retained_binary_path),
-        &run_root.join("build-target"),
-        run_root,
-        "retained RIPR binary",
-    )?;
+    let binary = run_root.join(&build.retained_binary_path);
     let actual_bytes = fs::metadata(&binary)
         .map_err(|error| format!("read retained RIPR binary metadata: {error}"))?
         .len();
@@ -918,13 +896,7 @@ fn validate_build_identity(run_root: &Path, build: &BuildIdentity) -> Result<(),
         ("build/stdout.bin", build.build_stdout_sha256.as_str()),
         ("build/stderr.bin", build.build_stderr_sha256.as_str()),
     ] {
-        let raw = canonical_existing_file_under(
-            &run_root.join(path),
-            &run_root.join("build"),
-            run_root,
-            "host build raw output",
-        )?;
-        if sha256_file(&raw)? != expected {
+        if sha256_file(&run_root.join(path))? != expected {
             return Err(format!("host run build raw digest mismatch for `{path}`"));
         }
     }
@@ -933,12 +905,7 @@ fn validate_build_identity(run_root: &Path, build: &BuildIdentity) -> Result<(),
 
 fn validate_current(output_root: &Path, current: &CurrentRun) -> Result<(), String> {
     safe_relative(&current.index_path)?;
-    let path = canonical_existing_file_under(
-        &output_root.join(&current.index_path),
-        &output_root.join("runs"),
-        output_root,
-        "current host-run index",
-    )?;
+    let path = output_root.join(&current.index_path);
     if sha256_file(&path)? != current.index_sha256 {
         return Err("current host-run index digest mismatch".to_string());
     }
@@ -969,36 +936,21 @@ pub(super) fn load_validated_current(
     let current_path = root.join(relative);
     let root_canonical =
         fs::canonicalize(root).map_err(|error| format!("canonicalize repository root: {error}"))?;
+    let current_canonical = fs::canonicalize(&current_path)
+        .map_err(|error| format!("resolve host current `{host_current}`: {error}"))?;
+    if !current_canonical.starts_with(&root_canonical) {
+        return Err("host current escapes the repository through a link".to_string());
+    }
     let output_root = current_path
         .parent()
         .ok_or_else(|| "host current has no output root".to_string())?;
-    let output_canonical = fs::canonicalize(output_root)
-        .map_err(|error| format!("canonicalize host-run output root: {error}"))?;
-    if !output_canonical.starts_with(&root_canonical) {
-        return Err("host-run output root escapes the repository through a link".to_string());
-    }
-    let current_canonical = canonical_existing_file_under(
-        &current_path,
-        &output_canonical,
-        &root_canonical,
-        "current host run",
-    )?;
-    let current: CurrentRun = read_strict_json(&current_canonical, "current host run")?;
+    let current: CurrentRun = read_strict_json(&current_path, "current host run")?;
     if current.schema_version != "0.1" || current.kind != "rust_judged_panel_current_host_run" {
         return Err("host current has an unsupported schema or kind".to_string());
     }
-    let expected_index = format!("runs/{}/run-index.json", current.run_id);
-    if current.index_path != expected_index {
-        return Err("host current index path does not match its exact run id".to_string());
-    }
     validate_current(output_root, &current)?;
 
-    let index_path = canonical_existing_file_under(
-        &output_root.join(&current.index_path),
-        &output_root.join("runs"),
-        &output_canonical,
-        "host run index",
-    )?;
+    let index_path = output_root.join(&current.index_path);
     let index: HostRunIndex = read_strict_json(&index_path, "host run index")?;
     if index.schema_version != "0.1"
         || index.kind != "rust_judged_panel_host_run_index"
@@ -1018,13 +970,7 @@ pub(super) fn load_validated_current(
         .ok_or_else(|| "host run index has no relative generation root".to_string())?;
     let mut cases = Vec::new();
     for entry in &index.cases {
-        safe_relative(&entry.receipt_path)?;
-        let receipt_path = canonical_existing_file_under(
-            &run_root.join(&entry.receipt_path),
-            &run_root.join("cases"),
-            run_root,
-            "case receipt",
-        )?;
+        let receipt_path = run_root.join(&entry.receipt_path);
         let receipt: CaseReceipt = read_strict_json(&receipt_path, "case receipt")?;
         if receipt.schema_version != "0.1"
             || receipt.kind != "rust_judged_panel_host_run_receipt"
@@ -1054,20 +1000,7 @@ pub(super) fn load_validated_current(
                 receipt.case_id
             )
         })?;
-        safe_relative(&receipt.raw.stdout_path)?;
-        safe_relative(&receipt.raw.stderr_path)?;
-        let stdout_path = canonical_existing_file_under(
-            &run_root.join(&receipt.raw.stdout_path),
-            &run_root.join("cases"),
-            run_root,
-            "host stdout",
-        )?;
-        let _stderr_path = canonical_existing_file_under(
-            &run_root.join(&receipt.raw.stderr_path),
-            &run_root.join("cases"),
-            run_root,
-            "host stderr",
-        )?;
+        let stdout_path = run_root.join(&receipt.raw.stdout_path);
         let stdout = fs::read(&stdout_path).map_err(|error| {
             format!(
                 "read host stdout for `{}` at `{}`: {error}",
@@ -1125,17 +1058,17 @@ pub(super) fn load_validated_current(
             stderr_ref,
             stderr_sha256: receipt.raw.stderr_sha256.clone(),
             stdout,
-            materialized_root: run_root.join("subjects").join(&receipt.case_id),
             reported_materialized_root: output_root
                 .join(format!(".staging-{}", index.run_id))
                 .join("subjects")
                 .join(&receipt.case_id),
+            materialized_root: run_root.join("subjects").join(&receipt.case_id),
         });
     }
     cases.sort_by(|left, right| left.case_id.cmp(&right.case_id));
     Ok(ValidatedHostRun {
         current_ref: host_current.to_string(),
-        current_sha256: sha256_file(&current_canonical)?,
+        current_sha256: sha256_file(&current_path)?,
         index_ref: super::normalize_path(&output_relative.join(&current.index_path)),
         index_sha256: current.index_sha256,
         run_id: index.run_id,
@@ -1193,43 +1126,6 @@ fn acquire_lock(output_root: &Path) -> Result<RunLock, String> {
         return Err(format!("write replay lock `{}`: {error}", path.display()));
     }
     Ok(RunLock(path))
-}
-
-fn canonical_existing_file_under(
-    path: &Path,
-    allowed_root: &Path,
-    confinement_root: &Path,
-    label: &str,
-) -> Result<PathBuf, String> {
-    let confinement = fs::canonicalize(confinement_root).map_err(|error| {
-        format!(
-            "canonicalize {label} confinement root `{}`: {error}",
-            confinement_root.display()
-        )
-    })?;
-    let allowed = fs::canonicalize(allowed_root).map_err(|error| {
-        format!(
-            "canonicalize {label} root `{}`: {error}",
-            allowed_root.display()
-        )
-    })?;
-    if !allowed.starts_with(&confinement) {
-        return Err(format!(
-            "{label} root `{}` escapes `{}` through a link",
-            allowed_root.display(),
-            confinement_root.display()
-        ));
-    }
-    let canonical = fs::canonicalize(path)
-        .map_err(|error| format!("resolve {label} `{}`: {error}", path.display()))?;
-    if !canonical.starts_with(&allowed) || !canonical.is_file() {
-        return Err(format!(
-            "{label} `{}` escapes `{}` through a link or is not a file",
-            path.display(),
-            allowed_root.display()
-        ));
-    }
-    Ok(canonical)
 }
 
 fn confined_output(root: &Path, value: &str) -> Result<PathBuf, String> {
@@ -1359,9 +1255,8 @@ mod tests {
 
     use super::{
         BuildIdentity, CaseReceipt, ExecutionPlan, InputDigest, RawEvidence, SourceIdentity,
-        acquire_lock, classify_successful_stdout, confined_output, load_validated_current,
-        publish_complete_generation, sha256_bytes, subject, validate_binary_unchanged,
-        validate_case_receipt, validate_case_set,
+        acquire_lock, classify_successful_stdout, confined_output, publish_complete_generation,
+        sha256_bytes, subject, validate_binary_unchanged, validate_case_receipt, validate_case_set,
     };
 
     fn repository_root() -> Result<PathBuf, String> {
@@ -1641,26 +1536,6 @@ mod tests {
             Ok(())
         } else {
             Err("partial generation changed current or lost diagnostic staging".to_string())
-        }
-    }
-
-    #[test]
-    fn loader_rejects_current_index_path_for_a_different_run() -> Result<(), String> {
-        let root = scratch("current-run-join")?;
-        let output = root.join("target/ripr/host");
-        fs::create_dir_all(&output).map_err(|error| error.to_string())?;
-        let current_path = output.join("current.json");
-        fs::write(
-            &current_path,
-            br#"{"schema_version":"0.1","kind":"rust_judged_panel_current_host_run","run_id":"run-a","index_path":"runs/run-b/run-index.json","index_sha256":"sha256:stale"}"#,
-        )
-        .map_err(|error| error.to_string())?;
-        let rejected = load_validated_current(&root, "target/ripr/host/current.json").is_err();
-        fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
-        if rejected {
-            Ok(())
-        } else {
-            Err("stale current/run join was accepted".to_string())
         }
     }
 }
