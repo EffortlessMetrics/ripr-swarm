@@ -3,6 +3,18 @@
 ## Pending
 
 Reason:
+RIPR-SPEC-0133/#3213: the changed predicate is inside an inline `#[cfg(test)]` assertion helper. Under the producer-owned source-role contract, the helper remains evidence but does not create a production finding; regenerate the zero-finding check and human outputs.
+
+Command:
+`cargo xtask goldens bless assertion_shaped_oracle_cfg_test --reason "RIPR-SPEC-0133/#3213: inline cfg(test) helper is evidence, not a production subject"`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending
+
+Reason:
 RIPR-SPEC-0133: assertion-shaped owner guidance fixtures (new fixture)
 
 Command:
