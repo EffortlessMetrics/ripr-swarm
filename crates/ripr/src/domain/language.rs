@@ -414,6 +414,7 @@ mod tests {
             StaticLimitKind::RustMacroReachUnresolved,
             StaticLimitKind::RustMacroWrappedTestCallUnresolved,
             StaticLimitKind::RustMacroWrappedAssertionUnresolved,
+            StaticLimitKind::RustValuePropagationUnresolved,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
         // static-language vocabulary is enforced repo-wide by

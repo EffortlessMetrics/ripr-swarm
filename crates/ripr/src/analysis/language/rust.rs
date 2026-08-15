@@ -759,8 +759,11 @@ fn apply_rust_value_propagation_limit(finding: &mut Finding, probe: &Probe, inde
     let Some((binding, rhs)) = changed_let_binding(&probe.expression) else {
         return;
     };
-    if !rhs.contains("map_or")
-        || !(rhs.contains(".find(") || rhs.contains(".rfind(") || rhs.contains(".len_utf8("))
+    let masked_rhs = mask_rust_comments_and_strings(rhs);
+    if !masked_rhs.contains(".map_or(")
+        || !(masked_rhs.contains(".find(")
+            || masked_rhs.contains(".rfind(")
+            || masked_rhs.contains(".len_utf8("))
     {
         return;
     }
@@ -774,11 +777,7 @@ fn apply_rust_value_propagation_limit(finding: &mut Finding, probe: &Probe, inde
     else {
         return;
     };
-    let Some(predicate) = owner
-        .body
-        .lines()
-        .find(|line| line.contains("==") && contains_identifier_token(line, binding))
-    else {
+    let Some(predicate) = find_value_propagation_predicate(&owner.body, binding) else {
         return;
     };
 
@@ -800,6 +799,48 @@ fn apply_rust_value_propagation_limit(finding: &mut Finding, probe: &Probe, inde
         "limitation_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"
             .to_string(),
     );
+}
+
+/// Find an equality predicate that refers to the established binding after
+/// its declaration. Comments, strings, member names, and later shadowing are
+/// intentionally excluded so this limitation remains fail-closed.
+fn find_value_propagation_predicate<'a>(body: &'a str, binding: &str) -> Option<&'a str> {
+    let masked = mask_rust_comments_and_strings(body);
+    let mut established = false;
+    let mut shadowed = false;
+    for (line, masked_line) in body.lines().zip(masked.lines()) {
+        let trimmed = masked_line.trim();
+        if trimmed.starts_with("let ") && contains_identifier_token(trimmed, binding) {
+            if established {
+                shadowed = true;
+            }
+            established = trimmed
+                .split_once('=')
+                .is_some_and(|(lhs, _)| contains_identifier_token(lhs, binding));
+            continue;
+        }
+        if shadowed
+            || !established
+            || !trimmed.contains("==")
+            || !contains_identifier_token(trimmed, binding)
+        {
+            continue;
+        }
+        let mut search = 0;
+        while let Some(offset) = trimmed[search..].find(binding) {
+            let start = search + offset;
+            let before = trimmed[..start].chars().next_back();
+            let after = trimmed[start + binding.len()..].chars().next();
+            if !before.is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+                && !after.is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+                && !trimmed[..start].trim_end().ends_with('.')
+            {
+                return Some(line);
+            }
+            search = start.saturating_add(binding.len());
+        }
+    }
+    None
 }
 
 fn changed_let_binding(expression: &str) -> Option<(&str, &str)> {
@@ -1906,6 +1947,25 @@ mod tests {
             "    let start = delim.chars().next().map_or(1, |ch| ch.len_utf8());",
             true,
         )
+    }
+
+    #[test]
+    fn value_propagation_predicate_ignores_non_entity_text_and_shadowing() {
+        let body = r#"
+    let end = input.rfind(delim).map_or(0, |idx| idx);
+    // end == start is only documentation.
+    let text = "end == start";
+    if other.end == start { return 0; }
+    let end = 1;
+    if end == start { return 1; }
+"#;
+        assert!(find_value_propagation_predicate(body, "end").is_none());
+    }
+
+    #[test]
+    fn value_propagation_predicate_rejects_map_or_else_shape() {
+        let rhs = mask_rust_comments_and_strings("input.find(delim).map_or_else(|| 0, |idx| idx)");
+        assert!(!rhs.contains(".map_or("));
     }
 
     #[test]
