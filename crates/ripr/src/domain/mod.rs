@@ -9,6 +9,7 @@ mod evidence;
 mod fix_instruction;
 mod language;
 mod probe;
+mod source_resolution;
 mod summary;
 mod support;
 mod test_evidence_summary;
@@ -50,6 +51,9 @@ pub use probe::{
 // Internal formatting convention, not library API: `lib.rs` re-exports
 // `pub mod domain`, so this stays crate-private.
 pub(crate) use probe::MISSING_DISCRIMINATOR_VALUE_PREFIX;
+pub use source_resolution::{
+    FindingSourceIdentity, FindingSourceResolution, SourceCurrentness,
+};
 pub use summary::{LanguageFileCount, Summary};
 pub use support::{ProbeId, SourceLocation, SymbolId};
 pub use test_evidence_summary::{TestEvidenceEntry, TestEvidenceSummary};
