@@ -1959,12 +1959,13 @@ mod tests {
     let end = 1;
     if end == start { return 1; }
 "#;
-        assert!(find_value_propagation_predicate(body, "end").is_none());
+        assert!(super::find_value_propagation_predicate(body, "end").is_none());
     }
 
     #[test]
     fn value_propagation_predicate_rejects_map_or_else_shape() {
-        let rhs = mask_rust_comments_and_strings("input.find(delim).map_or_else(|| 0, |idx| idx)");
+        let rhs =
+            super::mask_rust_comments_and_strings("input.find(delim).map_or_else(|| 0, |idx| idx)");
         assert!(!rhs.contains(".map_or("));
     }
 
