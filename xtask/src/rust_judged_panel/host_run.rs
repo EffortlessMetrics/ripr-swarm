@@ -772,6 +772,7 @@ fn validate_case_receipt(
     ] {
         safe_relative(path)?;
         let path = run_root.join(path);
+        ensure_confined(run_root, &path, &format!("host raw {label}"))?;
         let actual = sha256_file(&path)?;
         let actual_bytes = fs::metadata(&path)
             .map_err(|error| format!("read raw {label} metadata: {error}"))?
@@ -781,6 +782,7 @@ fn validate_case_receipt(
         }
     }
     let materialized_root = run_root.join("subjects").join(&receipt.case_id);
+    ensure_confined(run_root, &materialized_root, "materialized subject")?;
     let executed_diff_identity =
         subject::executed_diff_identity(&materialized_root, &receipt.repository_base)?;
     if receipt.plan.executed_diff_identity != executed_diff_identity {
@@ -836,7 +838,16 @@ fn validate_generation(run_root: &Path) -> Result<(), String> {
         if !seen.insert(entry.case_id.as_str()) {
             return Err(format!("host run index duplicates `{}`", entry.case_id));
         }
+        safe_relative(&entry.receipt_path)?;
+        let expected_receipt = format!("cases/{}/receipt.json", entry.case_id);
+        if entry.receipt_path != expected_receipt {
+            return Err(format!(
+                "host run index receipt path for `{}` is not `{expected_receipt}`",
+                entry.case_id
+            ));
+        }
         let receipt_path = run_root.join(&entry.receipt_path);
+        ensure_confined(run_root, &receipt_path, "host receipt")?;
         if sha256_file(&receipt_path)? != entry.receipt_sha256 {
             return Err(format!(
                 "host run index receipt digest mismatch for `{}`",
@@ -885,6 +896,7 @@ fn validate_build_identity(run_root: &Path, build: &BuildIdentity) -> Result<(),
     }
     safe_relative(&build.retained_binary_path)?;
     let binary = run_root.join(&build.retained_binary_path);
+    ensure_confined(run_root, &binary, "retained binary")?;
     let actual_bytes = fs::metadata(&binary)
         .map_err(|error| format!("read retained RIPR binary metadata: {error}"))?
         .len();
@@ -895,6 +907,7 @@ fn validate_build_identity(run_root: &Path, build: &BuildIdentity) -> Result<(),
         ("build/stdout.bin", build.build_stdout_sha256.as_str()),
         ("build/stderr.bin", build.build_stderr_sha256.as_str()),
     ] {
+        ensure_confined(run_root, &run_root.join(path), "build raw evidence")?;
         if sha256_file(&run_root.join(path))? != expected {
             return Err(format!("host run build raw digest mismatch for `{path}`"));
         }
@@ -903,8 +916,22 @@ fn validate_build_identity(run_root: &Path, build: &BuildIdentity) -> Result<(),
 }
 
 fn validate_current(output_root: &Path, current: &CurrentRun) -> Result<(), String> {
+    if current.run_id.is_empty()
+        || current.run_id.contains('/')
+        || current.run_id.contains('\\')
+        || current.run_id.contains(':')
+    {
+        return Err("current host-run run id is not a single safe path component".to_string());
+    }
     safe_relative(&current.index_path)?;
+    let expected_path = format!("runs/{}/run-index.json", current.run_id);
+    if current.index_path != expected_path {
+        return Err(format!(
+            "current host-run index path must be `{expected_path}`"
+        ));
+    }
     let path = output_root.join(&current.index_path);
+    ensure_confined(output_root, &path, "host run index")?;
     if sha256_file(&path)? != current.index_sha256 {
         return Err("current host-run index digest mismatch".to_string());
     }
@@ -970,6 +997,7 @@ pub(super) fn load_validated_current(
     let mut cases = Vec::new();
     for entry in &index.cases {
         let receipt_path = run_root.join(&entry.receipt_path);
+        ensure_confined(run_root, &receipt_path, "host receipt")?;
         let receipt: CaseReceipt = read_strict_json(&receipt_path, "case receipt")?;
         if receipt.schema_version != "0.1"
             || receipt.kind != "rust_judged_panel_host_run_receipt"
@@ -999,7 +1027,12 @@ pub(super) fn load_validated_current(
                 receipt.case_id
             )
         })?;
+        safe_relative(&receipt.raw.stdout_path)?;
+        safe_relative(&receipt.raw.stderr_path)?;
         let stdout_path = run_root.join(&receipt.raw.stdout_path);
+        let stderr_path = run_root.join(&receipt.raw.stderr_path);
+        ensure_confined(run_root, &stdout_path, "host stdout")?;
+        ensure_confined(run_root, &stderr_path, "host stderr")?;
         let stdout = fs::read(&stdout_path).map_err(|error| {
             format!(
                 "read host stdout for `{}` at `{}`: {error}",
@@ -1242,6 +1275,18 @@ fn safe_relative(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn ensure_confined(root: &Path, path: &Path, label: &str) -> Result<(), String> {
+    let root = fs::canonicalize(root)
+        .map_err(|error| format!("canonicalize {label} root `{}`: {error}", root.display()))?;
+    let resolved = fs::canonicalize(path)
+        .map_err(|error| format!("canonicalize {label} `{}`: {error}", path.display()))?;
+    if resolved.starts_with(&root) {
+        Ok(())
+    } else {
+        Err(format!("{label} escapes its retained generation"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -1249,9 +1294,10 @@ mod tests {
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use super::{
-        BuildIdentity, CaseReceipt, ExecutionPlan, InputDigest, RawEvidence, SourceIdentity,
-        acquire_lock, classify_successful_stdout, confined_output, publish_complete_generation,
-        sha256_bytes, subject, validate_binary_unchanged, validate_case_receipt, validate_case_set,
+        BuildIdentity, CaseReceipt, CurrentRun, ExecutionPlan, InputDigest, RawEvidence,
+        SourceIdentity, acquire_lock, classify_successful_stdout, confined_output,
+        publish_complete_generation, sha256_bytes, subject, validate_binary_unchanged,
+        validate_case_receipt, validate_case_set, validate_current,
     };
 
     fn repository_root() -> Result<PathBuf, String> {
@@ -1391,6 +1437,25 @@ mod tests {
             }
         }
         confined_output(&root, "target/ripr/rust-judged-panel").map(|_| ())
+    }
+
+    #[test]
+    fn current_pointer_must_join_exact_run_index() -> Result<(), String> {
+        let root = scratch("current-join")?;
+        let current = CurrentRun {
+            schema_version: "0.1".to_string(),
+            kind: "rust_judged_panel_current_host_run".to_string(),
+            run_id: "run-a".to_string(),
+            index_path: "runs/run-b/run-index.json".to_string(),
+            index_sha256: "sha256:index".to_string(),
+        };
+        let rejected = validate_current(&root, &current).is_err();
+        fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        if rejected {
+            Ok(())
+        } else {
+            Err("current pointer accepted a mismatched generation path".to_string())
+        }
     }
 
     #[test]

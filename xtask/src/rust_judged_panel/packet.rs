@@ -67,7 +67,7 @@ struct PortablePacket {
     non_claims: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct PortableSemantic {
     manifest_sha256: String,
@@ -107,7 +107,7 @@ struct SemanticInputDigest {
     sha256: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct SemanticAnchor {
     file: String,
@@ -117,7 +117,7 @@ struct SemanticAnchor {
     expression: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ObservedFinding {
     finding_id: String,
@@ -259,6 +259,11 @@ pub(super) fn validate_at(root: &Path, manifest: &RustJudgedPanelManifest) -> Re
             .get(entry.case_id.as_str())
             .ok_or_else(|| format!("portable index references unknown case `{}`", entry.case_id))?;
         validate_retained_packet(&packet, entry, subject, &manifest_sha256, &subjects_sha256)?;
+        let host_current_path = root.join(&packet.host_evidence.current_ref);
+        if host_current_path.is_file() {
+            let host = host_run::load_validated_current(root, &packet.host_evidence.current_ref)?;
+            validate_retained_host(&packet, subject, &host)?;
+        }
     }
     if seen != subject_by_id.keys().copied().collect::<BTreeSet<_>>() {
         return Err("portable index does not contain the exact selected case set".to_string());
@@ -766,6 +771,31 @@ fn validate_direction_witness(
     recommendation: &str,
     static_limit_kind: Option<&str>,
 ) -> Result<(), String> {
+    let (expected_missing, expected_recommendation) = match subject.expected_direction.as_str() {
+        "should_gap" => (
+            vec![format!(
+                "Missing discriminator value: {}",
+                subject.required_discriminator
+            )],
+            "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
+        ),
+        "should_stay_quiet" => (Vec::new(), ""),
+        "should_limit" => (
+            vec![
+                "No relevant oracle was detected".to_string(),
+                "No static test path reaches the changed owner".to_string(),
+                "No strong discriminator was detected".to_string(),
+            ],
+            "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists.",
+        ),
+        other => return Err(format!("unsupported expected direction `{other}")),
+    };
+    if missing != expected_missing || recommendation != expected_recommendation {
+        return Err(format!(
+            "host `{}` direction witness is not the governed subject witness",
+            subject.case_id
+        ));
+    }
     match subject.expected_direction.as_str() {
         "should_gap" => {
             let expected = format!(
@@ -963,6 +993,162 @@ fn validate_retained_packet(
         &packet.host_evidence.stderr_ref,
     ] {
         safe_relative_path(reference)?;
+    }
+    Ok(())
+}
+
+fn validate_retained_host(
+    packet: &PortablePacket,
+    subject: &PacketSubject,
+    host: &ValidatedHostRun,
+) -> Result<(), String> {
+    validate_host_evidence(&packet.host_evidence, &packet.case_id, host)?;
+    let case = host
+        .cases
+        .iter()
+        .find(|case| case.case_id == packet.case_id)
+        .ok_or_else(|| format!("host run is missing `{}`", packet.case_id))?;
+    validate_host_join(subject, case, host)?;
+    for (label, actual, expected) in [
+        (
+            "producer source head",
+            &packet.semantic.producer_source_head,
+            &host.source_head,
+        ),
+        (
+            "producer source tree",
+            &packet.semantic.producer_source_tree,
+            &host.source_tree,
+        ),
+        (
+            "producer Cargo.toml digest",
+            &packet.semantic.producer_cargo_toml_sha256,
+            &host.cargo_toml_sha256,
+        ),
+        (
+            "producer Cargo.lock digest",
+            &packet.semantic.producer_cargo_lock_sha256,
+            &host.cargo_lock_sha256,
+        ),
+        (
+            "producer version",
+            &packet.semantic.producer_version,
+            &host.binary_version,
+        ),
+    ] {
+        require_eq(
+            actual,
+            expected,
+            &format!("portable `{}` {label}", packet.case_id),
+        )?;
+    }
+    if packet.semantic.profile != host.profile || packet.semantic.features != host.features {
+        return Err(format!(
+            "portable `{}` build authority drifted",
+            packet.case_id
+        ));
+    }
+    let inputs_match = packet.semantic.subject_inputs.len() == case.subject_inputs.len()
+        && packet
+            .semantic
+            .subject_inputs
+            .iter()
+            .zip(&case.subject_inputs)
+            .all(|(actual, expected)| {
+                actual.role == expected.role
+                    && actual.source_path == expected.source_path
+                    && actual.repository_path == expected.repository_path
+                    && actual.sha256 == expected.sha256
+            });
+    if packet.semantic.argv != case.argv
+        || packet.semantic.mode != case.mode
+        || packet.semantic.format != case.format
+        || packet.semantic.config_path != case.config_path
+        || packet.semantic.config_sha256 != case.config_sha256
+        || packet.semantic.diff_path != case.diff_path
+        || packet.semantic.diff_sha256 != case.diff_sha256
+        || packet.semantic.executed_diff_identity != case.executed_diff_identity
+        || !inputs_match
+    {
+        return Err(format!(
+            "portable `{}` execution authority drifted",
+            packet.case_id
+        ));
+    }
+    let report_text = std::str::from_utf8(&case.stdout)
+        .map_err(|error| format!("host stdout for `{}` is not UTF-8: {error}", packet.case_id))?;
+    let report = super::parse_json_without_duplicate_keys(report_text)
+        .map_err(|error| format!("parse host stdout for `{}`: {error}", packet.case_id))?;
+    let observed = project_observed(subject, case, host, &report)?;
+    if packet.semantic.observed != observed {
+        return Err(format!(
+            "portable `{}` finding authority drifted",
+            packet.case_id
+        ));
+    }
+    Ok(())
+}
+
+fn validate_host_evidence(
+    evidence: &HostEvidence,
+    case_id: &str,
+    host: &ValidatedHostRun,
+) -> Result<(), String> {
+    require_eq(
+        &evidence.availability,
+        "host_bound_not_committed",
+        "host evidence availability",
+    )?;
+    for (label, actual, expected) in [
+        ("host target", &evidence.host_target, &host.host_target),
+        (
+            "binary digest",
+            &evidence.binary_sha256,
+            &host.binary_sha256,
+        ),
+        ("run id", &evidence.run_id, &host.run_id),
+        ("current ref", &evidence.current_ref, &host.current_ref),
+        (
+            "current digest",
+            &evidence.current_sha256,
+            &host.current_sha256,
+        ),
+        ("index ref", &evidence.index_ref, &host.index_ref),
+        ("index digest", &evidence.index_sha256, &host.index_sha256),
+    ] {
+        require_eq(actual, expected, &format!("host evidence {label}"))?;
+    }
+    let case = host
+        .cases
+        .iter()
+        .find(|case| case.case_id == case_id)
+        .ok_or_else(|| format!("host run is missing `{case_id}`"))?;
+    for (label, actual, expected) in [
+        ("receipt ref", &evidence.receipt_ref, &case.receipt_ref),
+        (
+            "receipt digest",
+            &evidence.receipt_sha256,
+            &case.receipt_sha256,
+        ),
+        ("stdout ref", &evidence.stdout_ref, &case.stdout_ref),
+        (
+            "stdout digest",
+            &evidence.stdout_sha256,
+            &case.stdout_sha256,
+        ),
+        ("stderr ref", &evidence.stderr_ref, &case.stderr_ref),
+        (
+            "stderr digest",
+            &evidence.stderr_sha256,
+            &case.stderr_sha256,
+        ),
+        (
+            "analyzer input identity",
+            &evidence.analyzer_input_identity,
+            &case.analyzer_input_identity,
+        ),
+    ] {
+        require_eq(actual, expected, &format!("host evidence {label}"))?;
     }
     Ok(())
 }
@@ -1262,7 +1448,76 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
         sequence
     ));
     fs::write(&temp, bytes).map_err(|error| format!("write `{}`: {error}", temp.display()))?;
-    fs::rename(&temp, path).map_err(|error| format!("publish `{}`: {error}", path.display()))
+    replace_file(&temp, path)
+}
+
+#[cfg(not(windows))]
+fn replace_file(temp: &Path, path: &Path) -> Result<(), String> {
+    fs::rename(temp, path).map_err(|error| format!("publish `{}`: {error}", path.display()))
+}
+
+#[cfg(windows)]
+fn replacement_backup_path(path: &Path) -> PathBuf {
+    path.with_extension(format!(
+        "{}-backup",
+        path.extension().and_then(OsStr::to_str).unwrap_or("json")
+    ))
+}
+
+#[cfg(windows)]
+fn remove_replacement_backup(path: &Path, backup: &Path) -> Result<(), String> {
+    fs::remove_file(backup).map_err(|error| {
+        format!(
+            "published `{}` but could not remove replacement backup `{}`: {error}",
+            path.display(),
+            backup.display()
+        )
+    })
+}
+
+#[cfg(windows)]
+fn replace_file(temp: &Path, path: &Path) -> Result<(), String> {
+    let backup = replacement_backup_path(path);
+    if backup.exists() {
+        if path.exists() {
+            fs::remove_file(&backup).map_err(|error| {
+                format!(
+                    "remove stale current replacement backup `{}`: {error}",
+                    backup.display()
+                )
+            })?;
+        } else {
+            fs::rename(&backup, path).map_err(|error| {
+                format!(
+                    "recover interrupted current replacement from `{}`: {error}",
+                    backup.display()
+                )
+            })?;
+        }
+    }
+    if !path.exists() {
+        return fs::rename(temp, path)
+            .map_err(|error| format!("publish `{}`: {error}", path.display()));
+    }
+    fs::rename(path, &backup).map_err(|error| {
+        format!(
+            "stage existing `{}` for replacement: {error}",
+            path.display()
+        )
+    })?;
+    match fs::rename(temp, path) {
+        Ok(()) => remove_replacement_backup(path, &backup),
+        Err(error) => {
+            let restore = fs::rename(&backup, path);
+            if let Err(restore_error) = restore {
+                return Err(format!(
+                    "publish `{}` failed: {error}; restoring prior current also failed: {restore_error}",
+                    path.display()
+                ));
+            }
+            Err(format!("publish `{}`: {error}", path.display()))
+        }
+    }
 }
 
 fn read_strict_json<T: for<'de> Deserialize<'de>>(path: &Path, label: &str) -> Result<T, String> {
@@ -1272,6 +1527,18 @@ fn read_strict_json<T: for<'de> Deserialize<'de>>(path: &Path, label: &str) -> R
         .map_err(|error| format!("parse {label} `{}`: {error}", path.display()))?;
     serde_json::from_value(value)
         .map_err(|error| format!("parse {label} `{}`: {error}", path.display()))
+}
+
+#[cfg(test)]
+fn read_strict_json_bytes<T: for<'de> Deserialize<'de>>(
+    bytes: &[u8],
+    label: &str,
+) -> Result<T, String> {
+    let body = std::str::from_utf8(bytes)
+        .map_err(|error| format!("decode {label} bytes as UTF-8: {error}"))?;
+    let value = super::parse_json_without_duplicate_keys(body)
+        .map_err(|error| format!("parse {label}: {error}"))?;
+    serde_json::from_value(value).map_err(|error| format!("parse {label}: {error}"))
 }
 
 fn pretty_json<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
@@ -1296,3 +1563,6 @@ fn sha256_file(path: &Path) -> Result<String, String> {
 fn sha256_bytes(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
 }
+
+#[cfg(test)]
+mod tests;
