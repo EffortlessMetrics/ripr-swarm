@@ -96,11 +96,13 @@ impl<'a> CompactGripContext<'a> {
                     &call_names,
                     &helper_owner_lookup,
                     module_import_aliases,
+                    test_scoped_function_names_by_file.get(&test.file),
                 );
                 helper_owner_call_names.extend(same_file_helper_owner_call_names_for_test(
                     test,
                     &call_names,
                     &same_file_helper_owner_calls_by_file,
+                    test_scoped_function_names_by_file.get(&test.file),
                 ));
                 let mut target_affinity_owner_call_names =
                     helper_owner_call_names_from_qualified_calls(
@@ -270,6 +272,7 @@ pub(in crate::analysis::test_grip_evidence) fn same_file_helper_owner_call_names
     test: &TestSummary,
     call_names: &BTreeSet<String>,
     helpers: &HelperOwnerCallsByFile,
+    test_scoped_function_names: Option<&BTreeSet<String>>,
 ) -> BTreeSet<String> {
     if rust_index::is_test_file(&test.file) {
         return BTreeSet::new();
@@ -277,9 +280,13 @@ pub(in crate::analysis::test_grip_evidence) fn same_file_helper_owner_call_names
     let Some(file_helpers) = helpers.get(&test.file) else {
         return BTreeSet::new();
     };
-    call_names
+    test.calls
         .iter()
-        .filter_map(|call_name| file_helpers.get(call_name))
+        .filter(|call| call_names.contains(&call.name))
+        .filter(|call| {
+            same_file_unit_production_helper_call_is_allowed(call, test_scoped_function_names)
+        })
+        .filter_map(|call| file_helpers.get(&call.name))
         .flat_map(|owner_calls| owner_calls.iter().cloned())
         .collect()
 }
@@ -1138,11 +1145,10 @@ pub(in crate::analysis::test_grip_evidence) fn test_scoped_function_names_by_fil
     for (file, facts) in &index.files {
         let cfg_test_module_ranges = cfg_test_module_line_ranges(&facts.source);
         for function in facts.functions.iter().filter(|function| {
-            !function.is_test
-                && (rust_index::is_test_file(file)
-                    || cfg_test_module_ranges.iter().any(|(start, end)| {
-                        *start < function.start_line && function.start_line <= *end
-                    }))
+            rust_index::is_test_file(file)
+                || cfg_test_module_ranges
+                    .iter()
+                    .any(|(start, end)| *start < function.start_line && function.start_line <= *end)
         }) {
             names_by_file
                 .entry(file.clone())
@@ -1739,6 +1745,7 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_call_names_for_test(
     call_names: &BTreeSet<String>,
     lookup: &HelperOwnerCallLookup<'_>,
     module_import_aliases: Option<&BTreeMap<String, String>>,
+    test_scoped_function_names: Option<&BTreeSet<String>>,
 ) -> BTreeSet<String> {
     let mut owner_names = helper_owner_call_names_from_qualified_calls(
         &test.calls,
@@ -1753,11 +1760,17 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_call_names_for_test(
         local_function_names,
     ));
     if let Some(file_helpers) = lookup.helpers.get(&test.file) {
-        for helper_name in call_names {
-            if let Some(helper_owner_names) = file_helpers.get(helper_name) {
+        for call in test.calls.iter().filter(|call| {
+            call_names.contains(&call.name)
+                && same_file_unit_production_helper_call_is_allowed(
+                    call,
+                    test_scoped_function_names,
+                )
+        }) {
+            if let Some(helper_owner_names) = file_helpers.get(&call.name) {
                 owner_names.extend(helper_owner_names.iter().cloned());
             }
-            if let Some(helper_owner_names) = lookup.unique_helpers.get(helper_name) {
+            if let Some(helper_owner_names) = lookup.unique_helpers.get(&call.name) {
                 owner_names.extend(helper_owner_names.iter().cloned());
             }
         }
