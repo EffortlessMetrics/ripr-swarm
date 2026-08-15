@@ -810,20 +810,17 @@ fn find_value_propagation_predicate<'a>(body: &'a str, binding: &str) -> Option<
     let mut shadowed = false;
     for (line, masked_line) in body.lines().zip(masked.lines()) {
         let trimmed = masked_line.trim();
-        if trimmed.starts_with("let ") && contains_identifier_token(trimmed, binding) {
-            if established {
-                shadowed = true;
-            }
-            established = trimmed
+        if trimmed.starts_with("let ") {
+            let is_binding_declaration = trimmed
                 .split_once('=')
                 .is_some_and(|(lhs, _)| contains_identifier_token(lhs, binding));
+            if is_binding_declaration && established {
+                shadowed = true;
+            }
+            established = is_binding_declaration || established;
             continue;
         }
-        if shadowed
-            || !established
-            || !trimmed.contains("==")
-            || !contains_identifier_token(trimmed, binding)
-        {
+        if shadowed || !established || !binding_equality_predicate(trimmed, binding) {
             continue;
         }
         let mut search = 0;
@@ -841,6 +838,24 @@ fn find_value_propagation_predicate<'a>(body: &'a str, binding: &str) -> Option<
         }
     }
     None
+}
+
+fn binding_equality_predicate(line: &str, binding: &str) -> bool {
+    if line.contains("!=") {
+        return false;
+    }
+    let Some((left, right)) = line.split_once("==") else {
+        return false;
+    };
+    [left, right].into_iter().any(|side| {
+        let Some(start) = side.find(binding) else {
+            return false;
+        };
+        let before = side[..start].chars().next_back();
+        let after = side[start + binding.len()..].chars().next();
+        !before.is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric() || ch == '.')
+            && !after.is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+    })
 }
 
 fn changed_let_binding(expression: &str) -> Option<(&str, &str)> {
@@ -1953,12 +1968,19 @@ mod tests {
     fn value_propagation_predicate_ignores_non_entity_text_and_shadowing() {
         let body = r#"
     let end = input.rfind(delim).map_or(0, |idx| idx);
+    let copied = end;
     // end == start is only documentation.
     let text = "end == start";
     if other.end == start { return 0; }
     let end = 1;
     if end == start { return 1; }
 "#;
+        assert!(super::find_value_propagation_predicate(body, "end").is_none());
+    }
+
+    #[test]
+    fn value_propagation_predicate_rejects_mixed_operator_line() {
+        let body = "    let end = input.rfind(delim).map_or(0, |idx| idx);\n    if end != start && other == marker { return 0; }\n";
         assert!(super::find_value_propagation_predicate(body, "end").is_none());
     }
 
