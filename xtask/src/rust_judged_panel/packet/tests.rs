@@ -682,6 +682,9 @@ fn rust_judged_panel_packet_binds_all_three_exact_direction_witnesses() -> Resul
         rejects_direction_reseal(&fixture, |observed| {
             observed.missing.push("stale".to_string())
         })?;
+        rejects_direction_reseal(&fixture, |observed| {
+            observed.static_limit_kind = Some("stale".to_string())
+        })?;
     }
     Ok(())
 }
