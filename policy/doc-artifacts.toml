@@ -320,9 +320,9 @@ standalone_reason = "Umbrella contract for turning the existing oxc-AST TypeScri
 id = "RIPR-SPEC-0086"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0086-python-eval-sweep.md"
-status = "proposed"
+status = "accepted"
 owner = "language-adapter-swarm"
-standalone_reason = "Standalone evidence-tooling contract for the Tier A external-repo eval sweep (cargo xtask eval-sweep); #1161 landed the command (xtask dispatch plus reports/eval_sweep.rs) but the spec stays proposed because the run algorithm requires classification from exit code and JSON while run_check classifies solely from parseable stdout, so the implementation is weaker than the spec; adds no product library behavior or public API; anchors the eval-sweep-driven Python reliability campaign; references ADR 0009; no separate proposal artifact."
+standalone_reason = "Standalone evidence-tooling contract for the Tier A external-repo eval sweep (cargo xtask eval-sweep); accepted because #1161 landed the command, #3259 completed the exit-code-plus-JSON classification contract with boundary tests, and #3261 added the fixed-run byte-exact JSON/Markdown golden test; adds no product library behavior or public API; anchors the eval-sweep-driven Python reliability campaign; references ADR 0009; no separate proposal artifact."
 
 [[artifact]]
 id = "RIPR-SPEC-0087"
