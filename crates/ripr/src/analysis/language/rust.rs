@@ -742,6 +742,150 @@ fn apply_rust_macro_wrapped_assertion_limit(finding: &mut Finding, index: &RustI
         .extend(rust_macro_assertion_limitation_detail_lines(&witness));
 }
 
+/// Name the bounded value-propagation limitation from #3215 without
+/// pretending that syntax-first analysis proved the equality boundary.
+///
+/// This deliberately recognizes only a changed `let` binding whose value is
+/// produced by `find`/`rfind` or `len_utf8`, normalized through `map_or`, and
+/// whose same-owner body later compares that binding. Other helper, loop,
+/// coercion, and data-flow shapes remain unchanged and fail closed as before.
+fn apply_rust_value_propagation_limit(finding: &mut Finding, probe: &Probe, index: &RustIndex) {
+    if finding.class != ExposureClass::StaticUnknown
+        || finding.static_limit_kind.is_some()
+        || finding.related_tests.is_empty()
+    {
+        return;
+    }
+    let Some((binding, rhs)) = changed_let_binding(&probe.expression) else {
+        return;
+    };
+    let masked_rhs = mask_rust_comments_and_strings(rhs);
+    if !masked_rhs.contains(".map_or(")
+        || !(masked_rhs.contains(".find(")
+            || masked_rhs.contains(".rfind(")
+            || masked_rhs.contains(".len_utf8("))
+    {
+        return;
+    }
+    let Some(owner_id) = probe.owner.as_ref() else {
+        return;
+    };
+    let Some(owner) = index
+        .functions
+        .iter()
+        .find(|function| &function.id == owner_id)
+    else {
+        return;
+    };
+    let Some(predicate) = find_value_propagation_predicate(&owner.body, binding) else {
+        return;
+    };
+
+    finding.static_limit_kind = Some(StaticLimitKind::RustValuePropagationUnresolved);
+    finding
+        .stop_reasons
+        .push(StopReason::PropagationEvidenceUnknown);
+    finding.evidence.push(format!(
+        "limitation_last_established_edge: changed binding `{binding}` uses `{rhs}`"
+    ));
+    finding.evidence.push(format!(
+        "limitation_first_unresolved_edge: `{binding}` value propagation into equality predicate `{}`",
+        predicate.trim()
+    ));
+    finding
+        .evidence
+        .push("limitation_analyzer_route: analysis/rust-value-propagation".to_string());
+    finding.evidence.push(
+        "limitation_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"
+            .to_string(),
+    );
+}
+
+/// Find an equality predicate that refers to the established binding after
+/// its declaration. Comments, strings, member names, and later shadowing are
+/// intentionally excluded so this limitation remains fail-closed.
+fn find_value_propagation_predicate<'a>(body: &'a str, binding: &str) -> Option<&'a str> {
+    let masked = mask_rust_comments_and_strings(body);
+    let mut established = false;
+    let mut shadowed = false;
+    for (line, masked_line) in body.lines().zip(masked.lines()) {
+        let trimmed = masked_line.trim();
+        if trimmed.starts_with("let ") {
+            let is_binding_declaration = trimmed
+                .split_once('=')
+                .is_some_and(|(lhs, _)| contains_identifier_token(lhs, binding));
+            if is_binding_declaration && established {
+                shadowed = true;
+            }
+            established = is_binding_declaration || established;
+            continue;
+        }
+        if shadowed || !established || !binding_equality_predicate(trimmed, binding) {
+            continue;
+        }
+        let mut search = 0;
+        while let Some(offset) = trimmed[search..].find(binding) {
+            let start = search + offset;
+            let before = trimmed[..start].chars().next_back();
+            let after = trimmed[start + binding.len()..].chars().next();
+            if !before.is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+                && !after.is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+                && !trimmed[..start].trim_end().ends_with('.')
+            {
+                return Some(line);
+            }
+            search = start.saturating_add(binding.len());
+        }
+    }
+    None
+}
+
+fn binding_equality_predicate(line: &str, binding: &str) -> bool {
+    if line.contains("!=") {
+        return false;
+    }
+    let Some((left, right)) = line.split_once("==") else {
+        return false;
+    };
+    let left = left
+        .rsplit_once("&&")
+        .or_else(|| left.rsplit_once("||"))
+        .map_or(left, |(_, operand)| operand);
+    let right = right
+        .split_once("&&")
+        .or_else(|| right.split_once("||"))
+        .map_or(right, |(operand, _)| operand);
+    [left, right].into_iter().any(|side| {
+        let Some(start) = side.find(binding) else {
+            return false;
+        };
+        let before = side[..start].chars().next_back();
+        let after = side[start + binding.len()..].chars().next();
+        !before.is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric() || ch == '.')
+            && !after.is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+    })
+}
+
+fn changed_let_binding(expression: &str) -> Option<(&str, &str)> {
+    let text = expression.trim().trim_end_matches(';').trim();
+    let rest = text.strip_prefix("let ")?;
+    let (lhs, rhs) = rest.split_once('=')?;
+    let binding = lhs.trim().strip_prefix("mut ").unwrap_or(lhs.trim());
+    if binding.is_empty()
+        || !binding
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    {
+        return None;
+    }
+    Some((binding, rhs.trim()))
+}
+
+fn contains_identifier_token(text: &str, ident: &str) -> bool {
+    text.split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+        .any(|token| token == ident)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct RustMacroAssertionWitness {
     test_name: String,
@@ -1414,6 +1558,7 @@ impl RustAdapter {
                 // the seam. This is an oracle limitation, not macro expansion
                 // or promotion.
                 apply_rust_macro_wrapped_assertion_limit(&mut finding, &index);
+                apply_rust_value_propagation_limit(&mut finding, &probe, &index);
                 // Fail closed on cross-language seams: when the probe owner
                 // carries an FFI/binding attribute, replace any Rust-gap
                 // static_limit_kind with the cross-language limitation so
@@ -1548,6 +1693,7 @@ impl RustAdapter {
                 // disclosure for repo-mode (same logic as diff-mode).
                 apply_rust_no_static_path_limit(&mut finding, &probe, &index);
                 apply_rust_macro_wrapped_assertion_limit(&mut finding, &index);
+                apply_rust_value_propagation_limit(&mut finding, &probe, &index);
                 // Fail closed on cross-language seams (#910).
                 if let Some(limit) = cross_language_limit_kind(&probe, &index, &finding.class) {
                     finding.static_limit_kind = Some(limit);
@@ -1699,6 +1845,164 @@ mod tests {
             result.findings
         );
         Ok(())
+    }
+
+    fn value_propagation_fixture(
+        name: &str,
+        changed_line_number: usize,
+        old_line: &str,
+        changed_line: &str,
+        expected_limit: bool,
+    ) -> Result<(), String> {
+        let root = temp_root(name)?;
+        let cleanup_root = root.clone();
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='value-propagation'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        let start_line = if changed_line_number == 2 {
+            changed_line
+        } else {
+            "    let start = delim.chars().next().map_or(0, |ch| ch.len_utf8());"
+        };
+        let end_line = if changed_line_number == 3 {
+            changed_line
+        } else {
+            "    let end = input.rfind(delim).map_or(0, |idx| idx);"
+        };
+        let source = format!(
+            "pub fn split(input: &str, delim: &str) -> usize {{\n{start_line}\n{end_line}\n    if end == start {{ 1 }} else {{ 0 }}\n}}\n"
+        );
+        write(&root.join("src/lib.rs"), &source)?;
+        write(
+            &root.join("tests/split.rs"),
+            "#[test]\nfn empty_delimiter_splits_at_start() {\n    assert_eq!(split(\"abc\", \"\"), 1);\n}\n#[test]\nfn nonempty_delimiter_splits() {\n    assert_eq!(split(\"abc\", \"b\"), 0);\n}\n",
+        )?;
+        let diff_text = format!(
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{changed_line_number},1 +{changed_line_number},1 @@\n-{old_line}\n+{changed_line}\n"
+        );
+        let changed_files = diff::parse_unified_diff(&diff_text);
+        let result = RustAdapter.analyze_diff(
+            &AnalysisOptions {
+                root,
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+            },
+            &OraclePolicy::default(),
+            &changed_files,
+        )?;
+        let binding_name = changed_line
+            .trim()
+            .strip_prefix("let ")
+            .and_then(|rest| rest.split_whitespace().next())
+            .unwrap_or("end");
+        let finding = result
+            .findings
+            .iter()
+            .find(|finding| {
+                finding
+                    .probe
+                    .expression
+                    .contains(&format!("let {binding_name}"))
+            })
+            .ok_or_else(|| format!("missing changed binding finding: {:?}", result.findings))?;
+        assert_eq!(
+            finding
+                .static_limit_kind
+                .as_ref()
+                .map(StaticLimitKind::as_str)
+                == Some("rust_value_propagation_unresolved"),
+            expected_limit,
+            "unexpected value-propagation finding: {finding:?}"
+        );
+        if expected_limit {
+            assert_eq!(finding.class, ExposureClass::StaticUnknown);
+            assert!(
+                finding
+                    .evidence
+                    .iter()
+                    .any(|line| line.contains("limitation_first_unresolved_edge"))
+            );
+            assert!(
+                finding
+                    .evidence
+                    .iter()
+                    .any(|line| line.contains("analysis/rust-value-propagation"))
+            );
+        }
+        fs::remove_dir_all(cleanup_root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_names_rfind_value_propagation_limitation() -> Result<(), String> {
+        value_propagation_fixture(
+            "rfind-value-limit",
+            3,
+            "    let end = input.rfind(delim).map_or(0, |idx| idx);",
+            "    let end = input.rfind(delim).map_or(1, |idx| idx);",
+            true,
+        )
+    }
+
+    #[test]
+    fn diff_analysis_keeps_unbounded_value_shapes_fail_closed() -> Result<(), String> {
+        value_propagation_fixture(
+            "unbounded-value-limit",
+            3,
+            "    let end = input.rfind(delim).map_or(0, |idx| idx);",
+            "    let end = input.len();",
+            false,
+        )
+    }
+
+    #[test]
+    fn diff_analysis_names_len_utf8_value_propagation_limitation() -> Result<(), String> {
+        value_propagation_fixture(
+            "len-utf8-value-limit",
+            2,
+            "    let start = delim.chars().next().map_or(0, |ch| ch.len_utf8());",
+            "    let start = delim.chars().next().map_or(1, |ch| ch.len_utf8());",
+            true,
+        )
+    }
+
+    #[test]
+    fn value_propagation_predicate_ignores_non_entity_text_and_shadowing() {
+        let body = r#"
+    let end = input.rfind(delim).map_or(0, |idx| idx);
+    let copied = end;
+    // end == start is only documentation.
+    let text = "end == start";
+    if other.end == start { return 0; }
+    let end = 1;
+    if end == start { return 1; }
+"#;
+        assert!(super::find_value_propagation_predicate(body, "end").is_none());
+    }
+
+    #[test]
+    fn value_propagation_predicate_rejects_mixed_operator_line() {
+        let body = "    let end = input.rfind(delim).map_or(0, |idx| idx);\n    if end != start && other == marker { return 0; }\n";
+        assert!(super::find_value_propagation_predicate(body, "end").is_none());
+    }
+
+    #[test]
+    fn value_propagation_predicate_rejects_binding_outside_equality_operand() {
+        let body = "    let end = input.rfind(delim).map_or(0, |idx| idx);\n    if other == marker && end > 0 { return 0; }\n";
+        assert!(super::find_value_propagation_predicate(body, "end").is_none());
+    }
+
+    #[test]
+    fn value_propagation_predicate_rejects_map_or_else_shape() {
+        let rhs =
+            super::mask_rust_comments_and_strings("input.find(delim).map_or_else(|| 0, |idx| idx)");
+        assert!(!rhs.contains(".map_or("));
     }
 
     #[test]

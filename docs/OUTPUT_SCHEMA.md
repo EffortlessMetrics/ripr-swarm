@@ -1214,11 +1214,13 @@ JSON fields:
   `rust_integration_public_api_path_unresolved`, or
   `rust_macro_reach_unresolved`, or
   `rust_macro_wrapped_test_call_unresolved`, or
-  `rust_macro_wrapped_assertion_unresolved`.
+  `rust_macro_wrapped_assertion_unresolved`, or
+  `rust_value_propagation_unresolved`.
 - `static_limitation` is an additive optional per-finding object emitted only
   when a finding with `static_limit_kind` also carries a complete structured
   limitation detail. Current Rust transitive-reach, integration public-API path,
-  macro-reach, direct test macro-call, and macro-wrapped assertion limitations
+  macro-reach, direct test macro-call, macro-wrapped assertion, and
+  value-propagation limitations
   populate it from the same evidence lines rendered in human output. Fields are
   `kind`, `last_established_edge`, `first_unresolved_edge`, `analyzer_route`,
   and `non_claim`. The object is absent for static limits that do not have all
@@ -1436,6 +1438,8 @@ suppression.
 - `rust_macro_wrapped_test_call_unresolved` -- (RIPR-SPEC-0119, additive) A Rust test directly invokes a same-repo macro whose definition mentions the changed owner. ripr does not expand macros, so classification stays `no_static_path`; this is a named limitation, not a reach, coverage, or oracle claim.
 
 - `rust_macro_wrapped_assertion_unresolved` -- (RIPR-SPEC-0120, additive) A Rust test reaches the changed owner, but its assertion-like custom macro is not classified as an oracle. Classification stays `reachable_unrevealed`; this is a named limitation, not an oracle, coverage, or repair-packet claim.
+
+- `rust_value_propagation_unresolved` -- (RIPR-SPEC-0150, additive) A changed Rust value-producing binding reaches a same-owner equality predicate through a bounded `map_or` shape that ripr cannot fully resolve. Classification stays `static_unknown`; this is a named limitation, not a propagation, coverage, or repair claim.
 
 Reserved `flow_sink` values:
 

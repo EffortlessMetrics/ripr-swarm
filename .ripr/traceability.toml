@@ -6515,6 +6515,32 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0150"
+name = "Rust bounded value-propagation limitation"
+spec = "docs/specs/RIPR-SPEC-0150-rust-value-propagation-limitation.md"
+tests = [
+  "crates/ripr/src/analysis/language/rust.rs::tests::diff_analysis_names_rfind_value_propagation_limitation",
+  "crates/ripr/src/analysis/language/rust.rs::tests::diff_analysis_names_len_utf8_value_propagation_limitation",
+  "crates/ripr/src/analysis/language/rust.rs::tests::diff_analysis_keeps_unbounded_value_shapes_fail_closed",
+  "crates/ripr/src/analysis/language/rust.rs::tests::value_propagation_predicate_ignores_non_entity_text_and_shadowing",
+  "crates/ripr/src/analysis/language/rust.rs::tests::value_propagation_predicate_rejects_map_or_else_shape",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/language/rust.rs",
+  "crates/ripr/src/domain/language.rs",
+  "crates/ripr/src/lsp/gap_artifacts.rs",
+]
+outputs = [
+  "docs/OUTPUT_SCHEMA.md",
+  "docs/STATIC_LIMITS.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0149"
 name = "history-preserving back-sync verifier"
 spec = "docs/specs/RIPR-SPEC-0149-back-sync-verifier.md"
