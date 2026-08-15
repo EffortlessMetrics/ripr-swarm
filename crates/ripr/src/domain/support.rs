@@ -2,11 +2,20 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::PathBuf;
 
+use super::FindingSourceResolution;
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SourceLocation {
     pub file: PathBuf,
     pub line: usize,
     pub column: usize,
+    /// Producer-owned source identity for diff findings. Ordinary/non-diff
+    /// locations retain the omitted unresolved default.
+    #[serde(
+        default,
+        skip_serializing_if = "FindingSourceResolution::is_empty_unresolved"
+    )]
+    pub source_resolution: FindingSourceResolution,
 }
 
 impl SourceLocation {
@@ -15,7 +24,13 @@ impl SourceLocation {
             file: file.into(),
             line,
             column,
+            source_resolution: FindingSourceResolution::default(),
         }
+    }
+
+    pub fn with_source_resolution(mut self, source_resolution: FindingSourceResolution) -> Self {
+        self.source_resolution = source_resolution;
+        self
     }
 }
 
@@ -48,6 +63,7 @@ mod tests {
         assert_eq!(location.file, PathBuf::from("src/lib.rs"));
         assert_eq!(location.line, 12);
         assert_eq!(location.column, 4);
+        assert!(location.source_resolution.is_empty_unresolved());
     }
 
     #[test]
