@@ -505,7 +505,8 @@ fn gap_record_comment_json(
 ) -> Result<Value, Value> {
     // Route through the shared eligibility authority (#3281): a record
     // whose source is not established candidate-current produces no PR-comment
-    // obligation even when a stale ledger's map still says eligible.
+    // obligation even when a stale ledger's map still says eligible. The
+    // authority call subsumes the map's own eligible flag.
     let Some(projection) = record.projection_eligibility.get("pr_comment") else {
         return Err(gap_record_suppressed_json(
             record,
@@ -514,13 +515,6 @@ fn gap_record_comment_json(
         ));
     };
     if !crate::output::gap_decision_ledger::projection_eligible(record, "pr_comment") {
-        return Err(gap_record_suppressed_json(
-            record,
-            "not_pr_comment_eligible",
-            &projection.reason,
-        ));
-    }
-    if !projection.eligible {
         return Err(gap_record_suppressed_json(
             record,
             "not_pr_comment_eligible",
