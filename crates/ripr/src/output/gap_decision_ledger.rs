@@ -2420,7 +2420,12 @@ pub(crate) fn projection_eligible(record: &GapRecord, projection: &str) -> bool 
     // without becoming obligations.
     if matches!(
         projection,
-        "agent_packet" | "pr_comment" | "gate_candidate" | "ripr_zero_count" | "ripr_plus_count"
+        "agent_packet"
+            | "pr_comment"
+            | "gate_candidate"
+            | "ripr_zero_count"
+            | "ripr_plus_count"
+            | "lsp_diagnostic"
     ) && record.source_currentness.as_deref() != Some("candidate_current")
     {
         return false;

@@ -49,14 +49,16 @@ pub(crate) fn select_human_triage<'a>(
         .collect();
     let mut selected = None;
     let mut visible_findings: usize = 0;
+    let mut considered_findings: usize = 0;
     for finding in &output.findings {
         if suppressed_ids.contains(finding.id.as_str()) {
             continue;
         }
+        considered_findings += 1;
         // Candidate-actionable eligibility (#3281): "Start here" names a
         // current candidate-side obligation. Base-side evidence and
-        // unresolved subjects remain listed findings but never become the
-        // top gap.
+        // unresolved subjects remain counted findings (the hidden-count
+        // denominator below keeps them) but never become the top gap.
         if !finding.is_candidate_actionable() {
             continue;
         }
@@ -90,7 +92,7 @@ pub(crate) fn select_human_triage<'a>(
     HumanTriage {
         state,
         selected,
-        omitted_findings: visible_findings.saturating_sub(usize::from(selected.is_some())),
+        omitted_findings: considered_findings.saturating_sub(usize::from(selected.is_some())),
     }
 }
 

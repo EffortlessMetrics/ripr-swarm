@@ -495,6 +495,11 @@ fn targeted_mutation_route(check_value: &Value, required: bool) -> Value {
         let Some(classification) = finding.get("classification").and_then(Value::as_str) else {
             continue;
         };
+        // Candidate-actionable eligibility (#3281): mutation candidates are
+        // current obligations; base-side evidence never names a head target.
+        if finding.get("source_currentness").and_then(Value::as_str) != Some("candidate_current") {
+            continue;
+        }
         if !matches!(
             classification,
             "weakly_exposed" | "reachable_unrevealed" | "no_static_path"
@@ -1146,7 +1151,9 @@ mod tests {
             "source_currentness": "candidate_current",
             "probe": {"family": "call_presence", "file": "src/lib.rs", "line": 9, "expression": "publish(value)"}
         }));
-        findings.push(json!({"classification": "weakly_exposed"}));
+        findings.push(
+            json!({"classification": "weakly_exposed", "source_currentness": "candidate_current"}),
+        );
         findings.push(json!({
             "classification": "weakly_exposed",
             "source_currentness": "candidate_current",

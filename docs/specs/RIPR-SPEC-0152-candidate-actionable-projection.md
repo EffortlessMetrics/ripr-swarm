@@ -41,28 +41,31 @@ Routed surfaces:
   without the field and the explicit unknown keep forming bounded,
   inspectable records. Gap records carry `source_currentness`, and the
   authority projections (`agent_packet`, `pr_comment`, `gate_candidate`,
-  `ripr_zero_count`, `ripr_plus_count`) require
+  `ripr_zero_count`, `ripr_plus_count`, `lsp_diagnostic`) require
   `candidate_current` — markdown advisory visibility does not. Alignment
   items earn `candidate_current` only when every raw finding they grouped
   is candidate-current in the same payload; repo-exposure seams are
   candidate-current by construction (current-tree analysis).
-- The human "Start here" triage names a current obligation only;
-  base-side findings render with an explicit revision label and stay
-  listed.
+- The human "Start here" triage names a current obligation only; the
+  hidden-count denominator keeps every non-suppressed finding, and the
+  `human-full` surface lists base-side findings with an explicit revision
+  label (the bounded default view omits lower-priority findings exactly as
+  before).
 - The LSP actionable profile shows candidate-actionable findings only;
   the full profile keeps base-side evidence visible as history.
 - SARIF results and GitHub annotations — current CI diagnostics — carry
   candidate-actionable findings only; the check JSON and human output
   remain the visibility surfaces for base-side evidence.
-- PR evidence severe-gap counts recompute from candidate-actionable
-  findings when the findings array is present, falling back to the
-  classification summary only when it is absent.
+- PR evidence severe-gap counts and targeted-mutation candidates recompute
+  from candidate-actionable findings when the findings array is present,
+  falling back to the classification summary only when it is absent.
 - The context packet carries `source_currentness` so agent consumers can
   refuse non-current edit targets.
 
-Gate decisions, baselines, RIPR Zero, RIPR+, agent packets, and repair
-cards inherit the authority transitively through `projection_eligible`
-and the packet validator.
+Review comments, gate decisions, baselines, RIPR Zero, RIPR+, agent
+packets, and repair cards inherit the authority transitively through
+`projection_eligible` and the packet validator — no consumer may read the
+eligibility map directly.
 
 ## Required Evidence
 

@@ -2309,6 +2309,7 @@ fn given_gap_ledger_record_with_eligible_projection_but_unsafe_predicate_then_re
               "gap_records": [
                 {
                   "gap_id": "gap:pricing",
+                  "source_currentness": "candidate_current",
                   "canonical_gap_id": "pricing::discount::unsafe",
                   "kind": "MissingBoundaryAssertion",
                   "language": "rust",
@@ -2398,6 +2399,7 @@ fn given_gap_ledger_record_with_safe_predicate_but_missing_anchor_then_reason_ci
               "gap_records": [
                 {
                   "gap_id": "gap:pricing",
+                  "source_currentness": "candidate_current",
                   "canonical_gap_id": "pricing::discount::no_anchor",
                   "kind": "MissingBoundaryAssertion",
                   "language": "rust",
@@ -3266,6 +3268,7 @@ const GAP_LEDGER_BLOCKING_JSON: &str = r#"{
       "gap_records": [
         {
           "gap_id": "gap:pricing",
+          "source_currentness": "candidate_current",
           "canonical_gap_id": "pricing::discount::threshold",
           "seam_id": "seam-pricing-threshold",
           "kind": "MissingBoundaryAssertion",
@@ -3332,6 +3335,7 @@ const GAP_LEDGER_REPORT_ONLY_JSON: &str = r#"{
       "gap_records": [
         {
           "gap_id": "gap:unknown",
+          "source_currentness": "candidate_current",
           "canonical_gap_id": "pricing::unknown",
           "kind": "Unknown",
           "language": "rust",
