@@ -71,7 +71,7 @@
       "changed_sink": "client, total_with_retry",
       "oracle_alignment": "unknown",
       "alignment_reason": "no_strong_oracle",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     }
   ],
   "preview_languages": [

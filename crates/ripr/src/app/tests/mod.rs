@@ -70,7 +70,7 @@ fn sample_finding(file: &str, line: usize) -> Finding {
         observed_sink: None,
         oracle_alignment: None,
         alignment_reason: None,
-        source_currentness: crate::domain::SourceCurrentness::UnresolvedSubject,
+        source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
     }
 }
 

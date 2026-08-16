@@ -127,6 +127,12 @@ pub(crate) struct GapRecord {
     pub(crate) evidence_ids: Vec<String>,
     #[serde(default)]
     pub(crate) projection_eligibility: BTreeMap<String, ProjectionEligibility>,
+    /// Which revision owns the source finding (#3281): `candidate_current`
+    /// for established head-side evidence; `None` for sources that predate the
+    /// field (legacy pinned reports). Authority projections require
+    /// `candidate_current`; markdown advisory visibility does not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) source_currentness: Option<String>,
     #[serde(default)]
     pub(crate) verification_commands: Vec<String>,
     /// Producer-owned typed routes. These are the machine-facing authority;
@@ -627,11 +633,43 @@ fn gap_records_from_check_output_json(contents: &str) -> Result<Vec<GapRecord>, 
     }
 
     let mut records = Vec::new();
+    // Alignment items group findings that fresh renders only admit when
+    // candidate-actionable (#3281); rendered payloads carry the per-finding
+    // dispositions alongside, so an item's record is candidate-current only
+    // when every raw finding it grouped is — conservative when the payload
+    // predates the field (empty set ⇒ unknown ⇒ authorities off).
+    let candidate_current_ids: std::collections::BTreeSet<String> = findings
+        .map(|findings| {
+            findings
+                .iter()
+                .filter(|finding| {
+                    finding.get("source_currentness").and_then(Value::as_str)
+                        == Some("candidate_current")
+                })
+                .filter_map(|finding| finding.get("id").and_then(Value::as_str))
+                .map(ToString::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
     if let Some(items) = items {
         for (index, item) in items.iter().enumerate() {
-            let Some(record) = gap_record_from_finding_alignment_item(item, index) else {
+            let Some(mut record) = gap_record_from_finding_alignment_item(item, index) else {
                 continue;
             };
+            let raw_ids = item
+                .get("raw_findings")
+                .and_then(Value::as_array)
+                .map(|raws| {
+                    raws.iter()
+                        .filter_map(|raw| raw.get("source_id").and_then(Value::as_str))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let item_is_current =
+                !raw_ids.is_empty() && raw_ids.iter().all(|id| candidate_current_ids.contains(*id));
+            if item_is_current {
+                record.source_currentness = Some("candidate_current".to_string());
+            }
             if record.gap_id.is_empty() {
                 return Err(format!(
                     "finding_alignment item {index} produced an empty gap_id"
@@ -642,7 +680,18 @@ fn gap_records_from_check_output_json(contents: &str) -> Result<Vec<GapRecord>, 
     }
     if let Some(findings) = findings {
         for (index, finding) in findings.iter().enumerate() {
-            let Some(record) = gap_record_from_python_repair_finding(finding, index)
+            // Candidate-actionable eligibility (#3281): established base-side
+            // evidence never becomes a gap record. Missing fields (legacy
+            // pinned reports) and the explicit unknown keep forming
+            // bounded records; their authority projections stay off via
+            // `projection_eligible`.
+            if matches!(
+                finding.get("source_currentness").and_then(Value::as_str),
+                Some("base_deleted") | Some("moved_or_renamed")
+            ) {
+                continue;
+            }
+            let Some(mut record) = gap_record_from_python_repair_finding(finding, index)
                 .or_else(|| gap_record_from_typescript_repair_finding(finding, index))
                 .or_else(|| gap_record_from_python_static_limit_finding(finding, index))
                 .or_else(|| gap_record_from_python_no_action_finding(finding, index))
@@ -650,6 +699,10 @@ fn gap_records_from_check_output_json(contents: &str) -> Result<Vec<GapRecord>, 
             else {
                 continue;
             };
+            record.source_currentness = finding
+                .get("source_currentness")
+                .and_then(Value::as_str)
+                .map(str::to_string);
             if record.gap_id.is_empty() {
                 return Err(format!("finding {index} produced an empty gap_id"));
             }
@@ -676,9 +729,12 @@ fn gap_records_from_repo_exposure_json(contents: &str) -> Result<Vec<GapRecord>,
                 format!("seam {index} contains invalid typed command specs: {error}")
             })?;
         }
-        let Some(record) = gap_record_from_repo_exposure_seam(seam) else {
+        let Some(mut record) = gap_record_from_repo_exposure_seam(seam) else {
             continue;
         };
+        // Repo-exposure seams are classified from the current tree, so
+        // their source is candidate-side by construction (#3281).
+        record.source_currentness = Some("candidate_current".to_string());
         if record.gap_id.is_empty() {
             return Err(format!("seam {index} produced an empty gap_id"));
         }
@@ -764,6 +820,7 @@ fn gap_record_from_repo_exposure_seam(seam: &Value) -> Option<GapRecord> {
     );
 
     Some(GapRecord {
+        source_currentness: None,
         gap_id,
         canonical_gap_id,
         seam_id: Some(seam_id.to_string()),
@@ -980,6 +1037,7 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
     }
 
     Some(GapRecord {
+        source_currentness: None,
         gap_id: format!("gap:pr:{canonical_gap_id}"),
         canonical_gap_id,
         seam_id: None,
@@ -1171,6 +1229,7 @@ fn gap_record_from_typescript_repair_finding(finding: &Value, index: usize) -> O
     }
 
     Some(GapRecord {
+        source_currentness: None,
         gap_id: format!("gap:pr:{canonical_gap_id}"),
         canonical_gap_id,
         seam_id: None,
@@ -1332,6 +1391,7 @@ fn gap_record_from_perl_preview_finding(finding: &Value, index: usize) -> Option
     ]);
 
     Some(GapRecord {
+        source_currentness: None,
         gap_id: format!("gap:pr:{canonical_gap_id}"),
         canonical_gap_id,
         seam_id: None,
@@ -1425,6 +1485,7 @@ fn gap_record_from_python_static_limit_finding(finding: &Value, index: usize) ->
     }
 
     Some(GapRecord {
+        source_currentness: None,
         gap_id: format!("gap:pr:{canonical_gap_id}"),
         canonical_gap_id,
         seam_id: None,
@@ -1516,6 +1577,7 @@ fn gap_record_from_python_no_action_finding(finding: &Value, index: usize) -> Op
         gap_id: format!("gap:pr:{canonical_gap_id}"),
         canonical_gap_id,
         seam_id: None,
+        source_currentness: None,
         kind: kind.to_string(),
         language: "python".to_string(),
         language_status: string_at(finding, &["language_status"])
@@ -1843,6 +1905,7 @@ fn gap_record_from_finding_alignment_item(item: &Value, index: usize) -> Option<
 
     Some(GapRecord {
         gap_id: format!("gap:pr:{canonical_gap_id}"),
+        source_currentness: None,
         canonical_gap_id: canonical_gap_id.clone(),
         seam_id: string_at(item, &["seam_id"]).map(ToString::to_string),
         kind: gap_kind_from_evidence(gap_state, evidence_class).to_string(),
@@ -2351,6 +2414,22 @@ pub(crate) fn safe_gate_predicate_satisfied(record: &GapRecord) -> bool {
 }
 
 pub(crate) fn projection_eligible(record: &GapRecord, projection: &str) -> bool {
+    // RIPR-SPEC-0152: authority projections require the record's source to
+    // be established candidate-current. Advisory visibility (markdown) is
+    // unaffected, so base-side and unresolved records stay inspectable
+    // without becoming obligations.
+    if matches!(
+        projection,
+        "agent_packet"
+            | "pr_comment"
+            | "gate_candidate"
+            | "ripr_zero_count"
+            | "ripr_plus_count"
+            | "lsp_diagnostic"
+    ) && record.source_currentness.as_deref() != Some("candidate_current")
+    {
+        return false;
+    }
     record
         .projection_eligibility
         .get(projection)
@@ -2651,6 +2730,10 @@ mod tests {
         let report = report_from_check_output(serde_json::json!({
             "schema_version": "0.1",
             "tool": "ripr",
+            "findings": [
+                {"id": "help-label-decl", "source_currentness": "candidate_current"},
+                {"id": "help-label-literal", "source_currentness": "candidate_current"}
+            ],
             "finding_alignment": {
                 "scope": "supported_classes",
                 "items": [
@@ -2884,6 +2967,7 @@ mod tests {
             "records": [
                 {
                     "gap_id": "gap:bad",
+                    "source_currentness": "candidate_current",
                     "canonical_gap_id": "gap:bad",
                     "kind": "MissingBoundaryAssertion",
                     "language": "typescript",
@@ -3383,6 +3467,7 @@ mod tests {
         let payload = serde_json::json!({
             "findings": [{
                 "id": "probe:src_pricing.py:2:python_preview",
+                "source_currentness": "candidate_current",
                 "canonical_gap_id": "gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold",
                 "canonical_gap": {
                     "file": "src/pricing.py",
@@ -3884,7 +3969,9 @@ mod tests {
         let payload = serde_json::json!({
             "findings": [{
                 "id": "probe:src_discount.ts:typescript_preview:2396aec1",
+                "source_currentness": "candidate_current",
                 "classification": "weakly_exposed",
+                "source_currentness": "candidate_current",
                 "probe": {
                     "file": "src/discount.ts",
                     "line": 2,
@@ -4108,6 +4195,7 @@ mod tests {
         let payload = r#"{
             "findings": [{
                 "id": "probe:lib_My_App_pm:8:perl_return",
+                "source_currentness": "candidate_current",
                 "canonical_gap_id": "gap:perl:lib/My/App.pm:My::App::discount:return_value:exact_return_assertion:return_value",
                 "canonical_gap": {
                     "file": "lib/My/App.pm",
@@ -4291,6 +4379,7 @@ mod tests {
             "findings": [
                 {
                     "id": "probe:src_discount.py:2:python_preview",
+                    "source_currentness": "candidate_current",
                     "canonical_gap_id": "gap:python:src/discount.py:apply_discount:predicate_boundary:predicate:amount>=threshold",
                     "canonical_gap": {
                         "language": "python",
@@ -4299,6 +4388,7 @@ mod tests {
                         "behavior_kind": "predicate_boundary"
                     },
                     "classification": "exposed",
+                    "source_currentness": "candidate_current",
                     "probe": {
                         "family": "predicate_boundary",
                         "file": "src/discount.py",
@@ -4310,6 +4400,7 @@ mod tests {
                 },
                 {
                     "id": "probe:src_pricing.py:2:python_preview",
+                    "source_currentness": "candidate_current",
                     "canonical_gap_id": "gap:python:src/pricing.py:apply_discount:return_value:return_value:amount-10",
                     "canonical_gap": {
                         "language": "python",
@@ -4318,6 +4409,7 @@ mod tests {
                         "behavior_kind": "return_value"
                     },
                     "classification": "no_static_path",
+                    "source_currentness": "candidate_current",
                     "probe": {
                         "family": "return_value",
                         "file": "src/pricing.py",
@@ -4329,6 +4421,7 @@ mod tests {
                 },
                 {
                     "id": "probe:src_pricing.py:3:python_preview",
+                    "source_currentness": "candidate_current",
                     "canonical_gap_id": "gap:python:src/pricing.py:shipping_fee:return_value:return_value:amount+2",
                     "canonical_gap": {
                         "language": "python",
@@ -4337,6 +4430,7 @@ mod tests {
                         "behavior_kind": "return_value"
                     },
                     "classification": "weakly_exposed",
+                    "source_currentness": "candidate_current",
                     "probe": {
                         "family": "return_value",
                         "file": "src/pricing.py",
@@ -4613,6 +4707,7 @@ mod tests {
         };
         let good_record = GapRecord {
             gap_id: "gap:test".to_string(),
+            source_currentness: Some("candidate_current".to_string()),
             language: "rust".to_string(),
             language_status: "stable".to_string(),
             scope: "pr_local".to_string(),
@@ -4776,6 +4871,7 @@ mod tests {
     fn validate_record_warns_on_blank_kind() {
         let record = GapRecord {
             gap_id: "gap:test".to_string(),
+            source_currentness: Some("candidate_current".to_string()),
             kind: "".to_string(),
             ..GapRecord::default()
         };
@@ -4790,6 +4886,7 @@ mod tests {
         insert_projection(&mut projections, "pr_comment", true, "test");
         let record = GapRecord {
             gap_id: "gap:test".to_string(),
+            source_currentness: Some("candidate_current".to_string()),
             kind: "SomeKind".to_string(),
             projection_eligibility: projections,
             anchor: Some(GapAnchor {
@@ -4811,6 +4908,7 @@ mod tests {
     fn validate_record_warns_artifact_missing_without_regeneration_commands() {
         let record = GapRecord {
             gap_id: "gap:test".to_string(),
+            source_currentness: Some("candidate_current".to_string()),
             kind: "MissingArtifact".to_string(),
             scope: "artifact_missing".to_string(),
             regeneration_commands: vec![],
@@ -4829,6 +4927,7 @@ mod tests {
     fn validate_record_no_warnings_for_clean_record() {
         let record = GapRecord {
             gap_id: "gap:clean".to_string(),
+            source_currentness: Some("candidate_current".to_string()),
             kind: "NoActionAlreadyObserved".to_string(),
             repairability: "no_action".to_string(),
             ..GapRecord::default()
@@ -4852,30 +4951,35 @@ mod tests {
         let records = vec![
             GapRecord {
                 gap_id: "gap:r1".to_string(),
+                source_currentness: Some("candidate_current".to_string()),
                 kind: "MissingValueAssertion".to_string(),
                 repairability: "repairable".to_string(),
                 ..GapRecord::default()
             },
             GapRecord {
                 gap_id: "gap:r2".to_string(),
+                source_currentness: Some("candidate_current".to_string()),
                 kind: "StaticLimitation".to_string(),
                 repairability: "analyzer_limitation".to_string(),
                 ..GapRecord::default()
             },
             GapRecord {
                 gap_id: "gap:r3".to_string(),
+                source_currentness: Some("candidate_current".to_string()),
                 kind: "NoActionAlreadyObserved".to_string(),
                 repairability: "no_action".to_string(),
                 ..GapRecord::default()
             },
             GapRecord {
                 gap_id: "gap:r4".to_string(),
+                source_currentness: Some("candidate_current".to_string()),
                 kind: "NoActionInternal".to_string(),
                 repairability: "no_action".to_string(),
                 ..GapRecord::default()
             },
             GapRecord {
                 gap_id: "gap:r5".to_string(),
+                source_currentness: Some("candidate_current".to_string()),
                 kind: "MissingArtifact".to_string(),
                 scope: "artifact_missing".to_string(),
                 repairability: "unknown".to_string(),
@@ -4883,6 +4987,7 @@ mod tests {
             },
             GapRecord {
                 gap_id: "gap:r6".to_string(),
+                source_currentness: Some("candidate_current".to_string()),
                 kind: "MissingOutputContract".to_string(),
                 projection_eligibility: projections_gate.clone(),
                 verification_commands: vec!["cargo test".to_string()],
@@ -4891,6 +4996,7 @@ mod tests {
             },
             GapRecord {
                 gap_id: "gap:r7".to_string(),
+                source_currentness: Some("candidate_current".to_string()),
                 kind: "MissingValueAssertion".to_string(),
                 language_status: "preview".to_string(),
                 repairability: "no_action".to_string(),
@@ -4898,6 +5004,7 @@ mod tests {
             },
             GapRecord {
                 gap_id: "gap:r8".to_string(),
+                source_currentness: Some("candidate_current".to_string()),
                 kind: "MissingValueAssertion".to_string(),
                 repairability: "no_action".to_string(),
                 receipt: Some(GapReceipt {
@@ -4908,6 +5015,7 @@ mod tests {
             },
             GapRecord {
                 gap_id: "gap:r9".to_string(),
+                source_currentness: Some("candidate_current".to_string()),
                 kind: "MissingValueAssertion".to_string(),
                 repairability: "no_action".to_string(),
                 receipt: Some(GapReceipt {
@@ -4953,6 +5061,7 @@ mod tests {
         ] {
             let summary = summarize_records(&[GapRecord {
                 gap_id: "gap:invalid-commands".to_string(),
+                source_currentness: Some("candidate_current".to_string()),
                 language_status: "preview".to_string(),
                 projection_eligibility: projections.clone(),
                 verification_commands: commands,
@@ -4973,6 +5082,7 @@ mod tests {
     fn render_record_markdown_without_optional_fields() {
         let record = GapRecord {
             gap_id: "gap:bare".to_string(),
+            source_currentness: Some("candidate_current".to_string()),
             kind: "NoActionAlreadyObserved".to_string(),
             scope: "repo_scoped".to_string(),
             policy_state: "baseline".to_string(),
@@ -5009,6 +5119,7 @@ mod tests {
         ] {
             let record = GapRecord {
                 gap_id: "gap:incomplete-verify".to_string(),
+                source_currentness: Some("candidate_current".to_string()),
                 verification_commands: commands,
                 ..GapRecord::default()
             };
@@ -5024,6 +5135,7 @@ mod tests {
     fn render_record_markdown_with_anchor_no_line_no_owner() {
         let record = GapRecord {
             gap_id: "gap:anchor".to_string(),
+            source_currentness: Some("candidate_current".to_string()),
             kind: "MissingBoundaryAssertion".to_string(),
             anchor: Some(GapAnchor {
                 file: Some("src/lib.rs".to_string()),
@@ -5043,6 +5155,7 @@ mod tests {
     fn render_record_markdown_repair_route_with_no_target_file_no_assertion() {
         let record = GapRecord {
             gap_id: "gap:nofile".to_string(),
+            source_currentness: Some("candidate_current".to_string()),
             kind: "MissingValueAssertion".to_string(),
             repair_route: Some(GapRepairRoute {
                 route_kind: "AddValueAssertion".to_string(),
@@ -5822,5 +5935,116 @@ mod tests {
             "missing typed-spec context: {error}"
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod candidate_actionable_ledger_tests {
+    use super::build_gap_decision_ledger_report;
+    use crate::output::gap_decision_ledger::GapDecisionLedgerInput;
+    use crate::output::gap_decision_ledger::GapDecisionLedgerSourceKind;
+
+    #[test]
+    fn base_deleted_findings_project_to_no_gap_records() -> Result<(), String> {
+        // RIPR-SPEC-0152: base-side evidence never becomes a gap record on
+        // any authority; the candidate-current twin keeps its record.
+        let payload = serde_json::json!({
+            "findings": [
+                {
+                    "id": "probe:src_pricing.py:2:python_preview",
+                    "source_currentness": "base_deleted",
+                    "classification": "weakly_exposed",
+                    "probe": {"file": "src/pricing.py", "line": 2, "family": "predicate"},
+                    "python_repair_card": {
+                        "canonical_gap_id": "gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold",
+                        "language": "python",
+                        "language_status": "preview",
+                        "authority_boundary": "preview_advisory_only",
+                        "repair_action": "strengthen_existing_test",
+                        "changed_owner": "calculate_discount",
+                        "changed_behavior": "predicate_boundary changed",
+                        "missing_discriminator": "amount == threshold",
+                        "suggested_assertion": "Assert the boundary.",
+                        "suggested_location": {"test_file": "tests/test_pricing.py", "test_name": "test_smoke"},
+                        "verify": {"command": "pytest tests/test_pricing.py::test_smoke"},
+                        "receipt": {"command": null, "status": "unavailable_until_python_gap_ledger"},
+                        "stop_conditions": ["Stop if the owner cannot be imported."],
+                        "limits": ["preview_advisory_only"]
+                    },
+                    "related_tests": [{"name": "test_smoke", "file": "tests/test_pricing.py", "line": 4}],
+                    "oracle_alignment": "direct",
+                    "alignment_reason": "strong_oracle_observes_owner_name",
+                    "canonical_gap_id": "gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold"
+                }
+            ]
+        })
+        .to_string();
+        let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: "fixtures/probe".to_string(),
+            generated_at: "test".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "fixtures/probe/expected/check.json".to_string(),
+            records_json: Ok(payload),
+        });
+        assert!(
+            report.records.is_empty(),
+            "base-deleted finding must not become a gap record"
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod source_currentness_authority_tests {
+    use super::GapRecord;
+    use super::projection_eligible;
+    use std::collections::BTreeMap;
+
+    fn record_with(currentness: Option<&str>) -> GapRecord {
+        let mut projections = BTreeMap::new();
+        projections.insert(
+            "agent_packet".to_string(),
+            super::ProjectionEligibility {
+                eligible: true,
+                reason: "test".to_string(),
+            },
+        );
+        projections.insert(
+            "markdown_advisory".to_string(),
+            super::ProjectionEligibility {
+                eligible: true,
+                reason: "test".to_string(),
+            },
+        );
+        GapRecord {
+            projection_eligibility: projections,
+            source_currentness: currentness.map(ToString::to_string),
+            ..GapRecord::default()
+        }
+    }
+
+    #[test]
+    fn authority_projections_require_proven_candidate_currentness() {
+        // RIPR-SPEC-0152: even an explicitly-eligible map cannot make a
+        // non-current or unknown record an authority obligation; advisory
+        // visibility is unaffected.
+        let current = record_with(Some("candidate_current"));
+        assert!(projection_eligible(&current, "agent_packet"));
+        for value in [
+            Some("base_deleted"),
+            Some("moved_or_renamed"),
+            Some("unresolved_subject"),
+            None,
+        ] {
+            let record = record_with(value);
+            assert!(
+                !projection_eligible(&record, "agent_packet"),
+                "authority must stay off for {value:?}"
+            );
+            assert!(
+                projection_eligible(&record, "markdown_advisory"),
+                "advisory visibility must survive for {value:?}"
+            );
+        }
     }
 }

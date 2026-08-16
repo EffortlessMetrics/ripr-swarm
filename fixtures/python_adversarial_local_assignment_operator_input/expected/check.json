@@ -91,7 +91,7 @@
       "observed_sink": "assert base == 10",
       "oracle_alignment": "orthogonal",
       "alignment_reason": "strong_oracle_observes_different_sink",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     }
   ],
   "preview_languages": [

@@ -6271,6 +6271,14 @@ fn classify_change_with_old(
         }
     }
 
+    // Resolved from the probe's own delta evidence (#3281) before the probe
+    // moves into the finding: Python probes are seeded from head-side added
+    // lines.
+    let source_currentness = crate::domain::SourceCurrentness::from_probe_delta(
+        probe.before.as_deref(),
+        probe.after.as_deref(),
+    );
+
     Some(Finding {
         id: probe.id.0.clone(),
         canonical_gap,
@@ -6308,10 +6316,8 @@ fn classify_change_with_old(
         observed_sink: surfaced_alignment.observed_sink,
         oracle_alignment: Some(surfaced_alignment.oracle_alignment),
         alignment_reason: Some(surfaced_alignment.alignment_reason),
-        // Source currentness is resolved by the producer that observed the diff
-        // evidence; this constructor has none, so the disposition stays the
-        // explicit unknown (#3280).
-        source_currentness: crate::domain::SourceCurrentness::UnresolvedSubject,
+        // Resolved above, before the probe moved into the finding (#3281).
+        source_currentness,
     })
 }
 

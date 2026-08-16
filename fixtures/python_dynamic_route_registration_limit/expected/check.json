@@ -71,7 +71,7 @@
       "changed_sink": "detail, coupon, expired, coupon expired",
       "oracle_alignment": "unknown",
       "alignment_reason": "no_strong_oracle",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     }
   ],
   "preview_languages": [

@@ -71,7 +71,7 @@
       "changed_sink": "remote_total, client, include_tax",
       "oracle_alignment": "unknown",
       "alignment_reason": "no_strong_oracle",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     }
   ],
   "preview_languages": [

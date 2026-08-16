@@ -503,6 +503,10 @@ fn gap_record_comment_json(
     seen_dedupe: &mut BTreeSet<String>,
     causal_projection: Option<&CausalDeltaArtifact>,
 ) -> Result<Value, Value> {
+    // Route through the shared eligibility authority (#3281): a record
+    // whose source is not established candidate-current produces no PR-comment
+    // obligation even when a stale ledger's map still says eligible. The
+    // authority call subsumes the map's own eligible flag.
     let Some(projection) = record.projection_eligibility.get("pr_comment") else {
         return Err(gap_record_suppressed_json(
             record,
@@ -510,7 +514,7 @@ fn gap_record_comment_json(
             "missing_pr_comment_projection",
         ));
     };
-    if !projection.eligible {
+    if !crate::output::gap_decision_ledger::projection_eligible(record, "pr_comment") {
         return Err(gap_record_suppressed_json(
             record,
             "not_pr_comment_eligible",
@@ -1713,6 +1717,7 @@ mod tests {
   "records": [
     {
       "gap_id": "gap:pr:pricing:threshold-boundary",
+      "source_currentness": "candidate_current",
       "canonical_gap_id": "gap:rust:pricing:discount:threshold-boundary",
       "seam_id": "seam:pricing:threshold-boundary",
       "kind": "MissingBoundaryAssertion",
@@ -1754,6 +1759,7 @@ mod tests {
     },
     {
       "gap_id": "gap:duplicate",
+      "source_currentness": "candidate_current",
       "kind": "MissingBoundaryAssertion",
       "language": "rust",
       "language_status": "stable",
@@ -1783,6 +1789,7 @@ mod tests {
     },
     {
       "gap_id": "gap:preview",
+      "source_currentness": "candidate_current",
       "kind": "StaticLimitation",
       "language": "typescript",
       "language_status": "preview",
@@ -1805,6 +1812,7 @@ mod tests {
 
     fn eligible_gap_record_json(gap_id: &str, dedupe: &str) -> Value {
         serde_json::json!({
+            "source_currentness": "candidate_current",
             "gap_id": gap_id,
             "seam_id": gap_id,
             "kind": "MissingBoundaryAssertion",

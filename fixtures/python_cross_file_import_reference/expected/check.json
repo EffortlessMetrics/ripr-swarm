@@ -84,7 +84,7 @@
       "observed_sink": "assert taxed(10) == 12",
       "oracle_alignment": "alias",
       "alignment_reason": "strong_oracle_observes_import_alias",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     }
   ],
   "preview_languages": [

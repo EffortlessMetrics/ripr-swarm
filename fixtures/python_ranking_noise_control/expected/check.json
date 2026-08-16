@@ -131,7 +131,7 @@
       "changed_sink": "amount, threshold",
       "oracle_alignment": "unknown",
       "alignment_reason": "no_strong_oracle",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_b_observed.py:python_preview:3c7333c2",
@@ -207,7 +207,7 @@
       "observed_sink": "assert calculate_fee(100) == 105",
       "oracle_alignment": "direct",
       "alignment_reason": "strong_oracle_observes_owner_name",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_d_isolated.py:python_preview:557fe7cf",
@@ -274,7 +274,7 @@
       "changed_sink": "amount",
       "oracle_alignment": "unknown",
       "alignment_reason": "no_strong_oracle",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_a_dynamic.py:python_preview:01f806b7",
@@ -337,7 +337,7 @@
       "changed_sink": "getattr, client, method_name",
       "oracle_alignment": "unknown",
       "alignment_reason": "no_strong_oracle",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     }
   ],
   "preview_languages": [

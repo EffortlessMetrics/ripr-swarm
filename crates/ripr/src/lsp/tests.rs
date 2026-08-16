@@ -620,7 +620,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
         observed_sink: None,
         oracle_alignment: None,
         alignment_reason: None,
-        source_currentness: crate::domain::SourceCurrentness::UnresolvedSubject,
+        source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
     };
 
     // Build snapshot satisfying is_consistent().
@@ -11402,7 +11402,7 @@ fn sample_finding() -> Finding {
         observed_sink: None,
         oracle_alignment: None,
         alignment_reason: None,
-        source_currentness: crate::domain::SourceCurrentness::UnresolvedSubject,
+        source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
     }
 }
 

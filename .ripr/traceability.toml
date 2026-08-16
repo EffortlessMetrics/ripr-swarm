@@ -8072,3 +8072,40 @@ metrics = [
   "unit_test_pass_rate",
   "golden_fixture_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0152"
+name = "Candidate-actionable projection authority"
+spec = "docs/specs/RIPR-SPEC-0152-candidate-actionable-projection.md"
+tests = [
+  "crates/ripr/src/domain/probe.rs::candidate_actionable_predicate_tests::only_proven_candidate_currentness_permits_action",
+  "crates/ripr/src/domain/probe.rs::candidate_actionable_predicate_tests::delta_rule_resolves_head_side_probes_only",
+  "crates/ripr/src/output/badge/tests.rs::base_deleted_findings_never_count_as_exposure_gaps",
+  "crates/ripr/src/output/json/finding_alignment.rs::tests::base_deleted_findings_form_no_alignment_items",
+  "crates/ripr/src/output/gap_decision_ledger.rs::candidate_actionable_ledger_tests::base_deleted_findings_project_to_no_gap_records",
+  "crates/ripr/src/output/gap_decision_ledger.rs::source_currentness_authority_tests::authority_projections_require_proven_candidate_currentness",
+  "crates/ripr/src/lsp/diagnostics.rs::diagnostic_policy_tests::actionable_profile_excludes_base_side_evidence",
+  "crates/ripr/src/output/sarif.rs::tests::base_deleted_findings_emit_no_sarif_results",
+  "crates/ripr/src/output/github.rs::tests::base_deleted_findings_emit_no_github_annotations",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/domain/probe.rs",
+  "crates/ripr/src/output/badge/summaries.rs",
+  "crates/ripr/src/output/json/finding_alignment.rs",
+  "crates/ripr/src/output/gap_decision_ledger.rs",
+  "crates/ripr/src/output/human/triage.rs",
+  "crates/ripr/src/lsp/diagnostics.rs",
+  "crates/ripr/src/output/sarif.rs",
+  "crates/ripr/src/output/github.rs",
+  "crates/ripr/src/app/pr_evidence.rs",
+  "crates/ripr/src/domain/context_packet.rs",
+]
+outputs = [
+  "docs/OUTPUT_SCHEMA.md",
+  "policy/output_contracts.txt",
+]
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]

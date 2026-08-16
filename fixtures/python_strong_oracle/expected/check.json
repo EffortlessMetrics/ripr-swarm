@@ -84,7 +84,7 @@
       "observed_sink": "assert apply_discount(100, 100) == 90",
       "oracle_alignment": "direct",
       "alignment_reason": "strong_oracle_observes_owner_name",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     }
   ],
   "preview_languages": [

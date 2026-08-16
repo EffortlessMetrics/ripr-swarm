@@ -132,7 +132,7 @@
       "observed_sink": "assert render(\"Sam\", verbose=False) == \"Sam\"",
       "oracle_alignment": "direct",
       "alignment_reason": "strong_oracle_observes_owner_name",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     }
   ],
   "preview_languages": [

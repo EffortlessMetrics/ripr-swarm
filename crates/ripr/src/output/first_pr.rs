@@ -3062,6 +3062,7 @@ mod tests {
             "records": [
                 {
                     "gap_id": "gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold",
+                    "source_currentness": "candidate_current",
                     "canonical_gap_id": "gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold",
                     "kind": "MissingBoundaryAssertion",
                     "language": "python",
@@ -3116,7 +3117,9 @@ mod tests {
             "findings": [
                 {
                     "id": "probe:app_pricing.py:2:python_preview",
+                    "source_currentness": "candidate_current",
                     "classification": "weakly_exposed",
+                    "source_currentness": "candidate_current",
                     "oracle_alignment": "direct",
                     "alignment_reason": "strong_oracle_observes_owner_name",
                     "probe": {

@@ -6,6 +6,7 @@
   "records": [
     {
       "gap_id": "gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold",
+      "source_currentness": "candidate_current",
       "canonical_gap_id": "gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold",
       "kind": "MissingBoundaryAssertion",
       "language": "python",

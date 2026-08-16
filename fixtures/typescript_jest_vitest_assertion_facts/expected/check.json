@@ -136,7 +136,7 @@
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_signals.ts:typescript_preview:8ca5702a",
@@ -275,7 +275,7 @@
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_signals.ts:typescript_preview:54d687f5",
@@ -414,7 +414,7 @@
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_signals.ts:typescript_preview:5f264af5",
@@ -553,7 +553,7 @@
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_signals.ts:typescript_preview:7d6e77de",
@@ -692,7 +692,7 @@
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_signals.ts:typescript_preview:a68ad559",
@@ -811,7 +811,7 @@
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     }
   ],
   "preview_languages": [
