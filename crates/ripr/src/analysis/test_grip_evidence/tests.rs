@@ -11739,3 +11739,71 @@ fn lower_ast_has_unrelated_storage_local() {
     }
     Ok(())
 }
+
+#[test]
+fn given_full_evidence_when_cfg_test_module_helper_calls_owner_then_relation_is_retained()
+-> Result<(), String> {
+    // #3286 regression shape: #3273 marks plain helpers inside inline
+    // `#[cfg(test)]` modules as `is_test`, and the helper-relation graph
+    // excluded every `is_test` function — silently dropping the
+    // #[test] -> cfg(test) helper -> owner evidence path. The helper must
+    // stay out of production subjects while still mediating evidence.
+    let source = PathBuf::from("src/labels.rs");
+    let source_src = r#"
+pub fn device_labels() -> Vec<&'static str> {
+  Vec::new()
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn exercise_device_labels() -> Vec<&'static str> {
+    device_labels()
+  }
+
+  #[test]
+  fn helper_reaches_device_labels() {
+    let labels = exercise_device_labels();
+    assert!(labels.is_empty());
+  }
+}
+"#;
+    let index = index_from_files(&[(source, source_src)])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/labels.rs")], &index);
+    let return_seam = seams
+        .iter()
+        .find(|s| {
+            s.kind() == SeamKind::ReturnValue
+                && s.owner().ends_with("::device_labels")
+                && s.expression().contains("Vec::new()")
+        })
+        .ok_or_else(|| "expected Vec::new return_value seam".to_string())?;
+
+    let evidence = evidence_for_seam(return_seam, &index);
+
+    assert_eq!(evidence.reach.state, StageState::Yes);
+    assert!(
+        evidence
+            .related_tests
+            .iter()
+            .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+        "cfg(test)-module helper must keep mediating the helper owner-call relation: {:?}",
+        evidence.related_tests
+    );
+    assert!(
+        !index
+            .tests
+            .iter()
+            .any(|test| test.name == "exercise_device_labels"),
+        "a plain helper must not become an executable TestFact selector"
+    );
+    assert!(
+        index
+            .functions
+            .iter()
+            .any(|function| function.name == "exercise_device_labels" && function.is_test),
+        "the helper keeps its #3273 evidence-role classification"
+    );
+    Ok(())
+}
