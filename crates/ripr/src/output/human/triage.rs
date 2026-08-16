@@ -53,6 +53,13 @@ pub(crate) fn select_human_triage<'a>(
         if suppressed_ids.contains(finding.id.as_str()) {
             continue;
         }
+        // Candidate-actionable eligibility (#3281): "Start here" names a
+        // current candidate-side obligation. Base-side evidence and
+        // unresolved subjects remain listed findings but never become the
+        // top gap.
+        if !finding.is_candidate_actionable() {
+            continue;
+        }
         visible_findings += 1;
         if selected.is_none_or(|current| triage_rank(finding) < triage_rank(current)) {
             selected = Some(finding);

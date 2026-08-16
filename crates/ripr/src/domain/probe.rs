@@ -371,6 +371,32 @@ impl SourceCurrentness {
             Self::UnresolvedSubject => "unresolved_subject",
         }
     }
+
+    /// Delta-only resolution for producers that seed probes from head-side
+    /// lines and never produce removed-only probes (#3281). A probe whose
+    /// expression is candidate-side code (`after` present) is
+    /// `CandidateCurrent`; a producer with no delta evidence at all (the
+    /// Perl fact-packet path) stays the explicit unknown. Removed-only
+    /// probes need the diff-level resolver in
+    /// `analysis::probes` (movement evidence), not this helper.
+    pub fn from_probe_delta(before: Option<&str>, after: Option<&str>) -> Self {
+        match (before, after) {
+            (_, Some(_)) => Self::CandidateCurrent,
+            (None, None) => Self::UnresolvedSubject,
+            // A before-only probe from a delta-only producer carries no
+            // movement evidence; the diff-level resolver owns that case.
+            (Some(_), None) => Self::UnresolvedSubject,
+        }
+    }
+
+    /// Whether this disposition may drive current candidate-side
+    /// obligations (repair routes, gate candidates, diagnostics, agent
+    /// actions). Only proven candidate currentness qualifies: base-side
+    /// evidence and the explicit unknown are never silently upgraded
+    /// because classification or severity suggests action (#3281).
+    pub fn permits_candidate_action(&self) -> bool {
+        matches!(self, Self::CandidateCurrent)
+    }
 }
 
 /// Controlled enum values for [`Finding::source_currentness`]. Registered in
@@ -404,6 +430,19 @@ impl Finding {
         StopReason::for_unknown_class(&self.class)
             .into_iter()
             .collect()
+    }
+
+    /// The single candidate-actionable eligibility authority (#3281, C2 of
+    /// #3212): every count, gate candidate, repair route, diagnostic, and
+    /// agent action derived from a finding must flow through this
+    /// predicate. A finding qualifies only when its producer proved the
+    /// source is candidate-current; `base_deleted` and `moved_or_renamed`
+    /// are base-side evidence, and `unresolved_subject` (the Perl
+    /// fact-packet path today, and pre-#3280 artifacts) is not proven
+    /// current. Classifications, severity, and repair readiness never
+    /// upgrade a non-current finding.
+    pub fn is_candidate_actionable(&self) -> bool {
+        self.source_currentness.permits_candidate_action()
     }
 }
 
@@ -496,5 +535,51 @@ mod source_currentness_tests {
             assert_eq!(value.as_str(), label);
             assert!(SOURCE_CURRENTNESS_VALUES.contains(&label));
         }
+    }
+}
+
+#[cfg(test)]
+mod candidate_actionable_predicate_tests {
+    use super::SourceCurrentness;
+
+    #[test]
+    fn only_proven_candidate_currentness_permits_action() {
+        // RIPR-SPEC-0152: the single eligibility authority. Class and
+        // severity never upgrade a non-current finding.
+        for (value, eligible) in [
+            (SourceCurrentness::CandidateCurrent, true),
+            (SourceCurrentness::BaseDeleted, false),
+            (SourceCurrentness::MovedOrRenamed, false),
+            (SourceCurrentness::UnresolvedSubject, false),
+        ] {
+            assert_eq!(value.permits_candidate_action(), eligible, "{value:?}");
+        }
+    }
+
+    #[test]
+    fn delta_rule_resolves_head_side_probes_only() {
+        use SourceCurrentness::{BaseDeleted, CandidateCurrent, UnresolvedSubject};
+        assert_eq!(
+            SourceCurrentness::from_probe_delta(None, Some("head text")),
+            CandidateCurrent
+        );
+        assert_eq!(
+            SourceCurrentness::from_probe_delta(Some("base"), Some("head")),
+            CandidateCurrent
+        );
+        assert_eq!(
+            SourceCurrentness::from_probe_delta(None, None),
+            UnresolvedSubject
+        );
+        // The delta-only helper never claims base_deleted: removed-only
+        // probes need the diff-level resolver with movement evidence.
+        assert_eq!(
+            SourceCurrentness::from_probe_delta(Some("base"), None),
+            UnresolvedSubject
+        );
+        assert_ne!(
+            SourceCurrentness::from_probe_delta(Some("base"), None),
+            BaseDeleted
+        );
     }
 }

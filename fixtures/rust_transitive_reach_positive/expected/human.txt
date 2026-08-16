@@ -25,8 +25,7 @@ Next: drill into the top finding:
   ripr explain --root fixtures/rust_transitive_reach_positive/input --diff fixtures/rust_transitive_reach_positive/diff.patch --mode fast probe:src_internal.rs:predicate:114f2322
   ripr context --root fixtures/rust_transitive_reach_positive/input --diff fixtures/rust_transitive_reach_positive/diff.patch --mode fast --at probe:src_internal.rs:predicate:114f2322
 
-Hidden:
-  1 lower-priority finding(s) omitted from default human output.
+More:
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

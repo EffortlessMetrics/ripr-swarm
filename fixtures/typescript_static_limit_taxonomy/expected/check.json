@@ -116,7 +116,7 @@
       "language_status": "preview",
       "owner_kind": "method",
       "static_limit_kind": "decorator_indirection",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_dispatch.ts:typescript_preview:dd0f8848",
@@ -237,7 +237,7 @@
       "language_status": "preview",
       "owner_kind": "function",
       "static_limit_kind": "dynamic_dispatch",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_label.jsx:typescript_preview:a7ceb842",
@@ -359,7 +359,7 @@
       "language_status": "preview",
       "owner_kind": "function",
       "static_limit_kind": "missing_import_graph",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_proxy.js:typescript_preview:1bd78c56",
@@ -481,7 +481,7 @@
       "language_status": "preview",
       "owner_kind": "function",
       "static_limit_kind": "metaprogramming",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     }
   ],
   "preview_languages": [

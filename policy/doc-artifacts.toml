@@ -691,3 +691,11 @@ path = "docs/specs/RIPR-SPEC-0151-source-currentness.md"
 status = "proposed"
 owner = "product-swarm"
 standalone_reason = "Issue #3280 producer-currentness slice for #3212: every finding carries a producer-owned source_currentness disposition naming which revision owns the actionable source; removed-only Rust probes keep their recorded coordinate; the disposition alone states which revision owns the actionable source, ids remain content-addressed, and gate/actionability policy is unchanged in this slice."
+
+[[artifact]]
+id = "RIPR-SPEC-0152"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0152-candidate-actionable-projection.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #3281 projection slice for #3212: one Finding::is_candidate_actionable predicate gates every actionability-bearing surface; TS/JS/Python producers resolve candidate_current from head-side delta evidence, Perl remains the explicit unresolved unknown, base-side evidence stays visible with revision labels while never becoming an obligation, and denominators keep every finding."

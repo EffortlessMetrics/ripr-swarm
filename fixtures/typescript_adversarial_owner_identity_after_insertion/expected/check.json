@@ -120,7 +120,7 @@
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "module_function",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_pricing.ts:typescript_preview:bd772dc8",
@@ -243,7 +243,7 @@
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     }
   ],
   "preview_languages": [

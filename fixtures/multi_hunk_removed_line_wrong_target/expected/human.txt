@@ -26,7 +26,7 @@ Next: drill into the top finding:
   ripr context --root fixtures/multi_hunk_removed_line_wrong_target/input --diff fixtures/multi_hunk_removed_line_wrong_target/diff.patch --mode fast --at probe:src_lib.rs:return_value:93054610
 
 Hidden:
-  5 lower-priority finding(s) omitted from default human output.
+  3 lower-priority finding(s) omitted from default human output.
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

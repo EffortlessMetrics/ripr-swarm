@@ -201,6 +201,15 @@ pub(crate) fn render_finding_with_config(finding: &Finding, config: &RiprConfig)
     } else {
         out.push_str(&wrapped_fragment("  expr:   ", &finding.probe.expression));
     }
+    // Revision labelling (#3281): base-side evidence stays visible here —
+    // the human surface explicitly supports historical context — but is
+    // labelled non-actionable so it cannot read as a current obligation.
+    if !finding.is_candidate_actionable() {
+        out.push_str(&format!(
+            "  source:  {} — base-side evidence, not a candidate edit target\n",
+            finding.source_currentness.as_str()
+        ));
+    }
 
     out.push_str("\nProbe\n");
     out.push_str(&format!(

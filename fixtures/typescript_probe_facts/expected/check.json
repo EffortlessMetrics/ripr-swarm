@@ -134,7 +134,7 @@
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_ambiguous.ts:typescript_preview:62d9564b",
@@ -255,7 +255,7 @@
       "language_status": "preview",
       "owner_kind": "function",
       "static_limit_kind": "dynamic_dispatch",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_errors.ts:typescript_preview:491cf8da",
@@ -394,7 +394,7 @@
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_notify.js:typescript_preview:2f0e6fff",
@@ -533,7 +533,7 @@
       "language": "javascript",
       "language_status": "preview",
       "owner_kind": "function",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_pricing.ts:typescript_preview:eaef2ad8",
@@ -671,7 +671,7 @@
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_pricing.ts:typescript_preview:11e59c24",
@@ -810,7 +810,7 @@
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_profile.ts:typescript_preview:7c5ce045",
@@ -949,7 +949,7 @@
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_profile.ts:typescript_preview:be31b1f9",
@@ -1088,7 +1088,7 @@
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_view.jsx:typescript_preview:48669bf1",
@@ -1227,7 +1227,7 @@
       "language": "javascript",
       "language_status": "preview",
       "owner_kind": "component",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_widget.tsx:typescript_preview:9044230b",
@@ -1366,7 +1366,7 @@
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     }
   ],
   "preview_languages": [

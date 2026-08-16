@@ -127,7 +127,7 @@
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "arrow_function",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_owners.ts:typescript_preview:bd728bcd",
@@ -266,7 +266,7 @@
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "method",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_owners.ts:typescript_preview:3416313c",
@@ -405,7 +405,7 @@
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "class_method",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_owners.ts:typescript_preview:961b59c7",
@@ -531,7 +531,7 @@
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "module_function",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     }
   ],
   "preview_languages": [

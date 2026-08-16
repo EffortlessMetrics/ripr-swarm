@@ -131,7 +131,7 @@
       "changed_sink": "notifier, receipt, sent, order_id, receipt.sent",
       "oracle_alignment": "unknown",
       "alignment_reason": "no_strong_oracle",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     }
   ],
   "preview_languages": [

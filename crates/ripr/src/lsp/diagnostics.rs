@@ -396,16 +396,21 @@ pub(super) fn finding_is_visible_in_profile(
     finding: &Finding,
 ) -> bool {
     match profile {
+        // The Full profile keeps base-side evidence visible as historical
+        // context; the Actionable profile is an obligation surface and only
+        // candidate-current findings qualify (#3281).
         LspDiagnosticProfile::Full => true,
         LspDiagnosticProfile::Actionable => {
-            matches!(
-                finding.class,
-                ExposureClass::WeaklyExposed
-                    | ExposureClass::ReachableUnrevealed
-                    | ExposureClass::NoStaticPath
-            ) && DiagnosticWitness::from_finding(finding).is_some_and(|witness| {
-                !witness.missing_discriminators.is_empty() && witness.fix_site.is_some()
-            })
+            finding.is_candidate_actionable()
+                && matches!(
+                    finding.class,
+                    ExposureClass::WeaklyExposed
+                        | ExposureClass::ReachableUnrevealed
+                        | ExposureClass::NoStaticPath
+                )
+                && DiagnosticWitness::from_finding(finding).is_some_and(|witness| {
+                    !witness.missing_discriminators.is_empty() && witness.fix_site.is_some()
+                })
         }
     }
 }
@@ -2858,6 +2863,7 @@ mod seam_diagnostic_tests {
             },
         );
         GapRecord {
+        source_currentness: Some("candidate_current".to_string()),
             gap_id: "gap:pr:pricing:threshold-boundary".to_string(),
             canonical_gap_id: "gap:rust:pricing:threshold-boundary".to_string(),
             seam_id: None,
@@ -3079,7 +3085,7 @@ mod diagnostic_policy_tests {
             observed_sink: None,
             oracle_alignment: None,
             alignment_reason: None,
-            source_currentness: crate::domain::SourceCurrentness::UnresolvedSubject,
+            source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
         }
     }
 
@@ -3157,6 +3163,7 @@ mod diagnostic_policy_tests {
             },
         );
         GapRecord {
+            source_currentness: Some("candidate_current".to_string()),
             gap_id: "gap:pr:pricing:policy-test".to_string(),
             canonical_gap_id: "gap:rust:pricing:policy-test".to_string(),
             seam_id: None,
@@ -3279,6 +3286,49 @@ mod diagnostic_policy_tests {
             ));
         }
         Ok(())
+    }
+
+    #[test]
+    fn actionable_profile_excludes_base_side_evidence() {
+        // RIPR-SPEC-0152: the actionable profile is an obligation surface;
+        // the full profile keeps base-side evidence visible as history.
+        // Both findings carry the same witness-enriched shape; only the
+        // currentness differs.
+        let witness = || {
+            let mut finding = policy_finding();
+            finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+                value: "Price::Boundary".to_string(),
+                reason: "exact boundary is not observed".to_string(),
+                flow_sink: None,
+            }];
+            finding.related_tests.push(RelatedTest {
+                name: "checks_boundary".to_string(),
+                file: std::path::PathBuf::from("tests/pricing.rs"),
+                line: 12,
+                oracle: Some("assert_eq!(price, expected)".to_string()),
+                oracle_kind: OracleKind::ExactValue,
+                oracle_strength: OracleStrength::Strong,
+                relation_reason: None,
+                relation_confidence: None,
+            });
+            finding
+        };
+        let mut deleted = witness();
+        deleted.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        assert!(
+            !finding_is_visible_in_profile(LspDiagnosticProfile::Actionable, &deleted),
+            "base-deleted evidence is not an actionable diagnostic"
+        );
+        assert!(
+            finding_is_visible_in_profile(LspDiagnosticProfile::Full, &deleted),
+            "the full profile keeps base-side evidence visible"
+        );
+        let mut current = witness();
+        current.source_currentness = crate::domain::SourceCurrentness::CandidateCurrent;
+        assert!(
+            finding_is_visible_in_profile(LspDiagnosticProfile::Actionable, &current),
+            "the candidate-current twin keeps its actionable diagnostic"
+        );
     }
 
     #[test]
@@ -4009,7 +4059,7 @@ mod lsp_next_step_parity_tests {
             observed_sink: None,
             oracle_alignment: None,
             alignment_reason: None,
-            source_currentness: crate::domain::SourceCurrentness::UnresolvedSubject,
+            source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
         }
     }
 

@@ -47,6 +47,11 @@ pub(crate) fn render_findings_sarif(
     let results = output
         .findings
         .iter()
+        // Candidate-actionable eligibility (#3281): a SARIF result is a
+        // current diagnostic for CI annotation consumers; base-side
+        // evidence and unresolved subjects stay visible on the check JSON
+        // and human surfaces instead of becoming annotation obligations.
+        .filter(|finding| finding.is_candidate_actionable())
         .filter_map(|finding| finding_result(finding, config, suppressions, &today))
         .collect::<Vec<_>>();
     sarif_document("finding", rules, results, output.analysis_outcome.as_ref())
@@ -1782,7 +1787,7 @@ weakly_gripped = "note"
             observed_sink: None,
             oracle_alignment: None,
             alignment_reason: None,
-            source_currentness: crate::domain::SourceCurrentness::UnresolvedSubject,
+            source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
         }
     }
 
@@ -1874,5 +1879,40 @@ weakly_gripped = "note"
 
     fn stage(state: StageState, summary: &str) -> StageEvidence {
         StageEvidence::new(state, Confidence::Medium, summary)
+    }
+
+    #[test]
+    fn base_deleted_findings_emit_no_sarif_results() {
+        // RIPR-SPEC-0152: SARIF results are current CI diagnostics;
+        // base-side evidence is not one.
+        let mut deleted = sample_finding();
+        deleted.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        let mut deleted_output = sample_output();
+        deleted_output.findings = vec![deleted];
+        let sarif =
+            render_findings_sarif(&deleted_output, &crate::config::RiprConfig::default(), &[]);
+        let parsed: serde_json::Value = serde_json::from_str(&sarif)
+            .map_err(|error| error.to_string())
+            .unwrap_or_default();
+        assert_eq!(
+            parsed["runs"][0]["results"].as_array().map(Vec::len),
+            Some(0),
+            "base-deleted finding must not become a SARIF result"
+        );
+
+        let mut current = sample_finding();
+        current.source_currentness = crate::domain::SourceCurrentness::CandidateCurrent;
+        let mut current_output = sample_output();
+        current_output.findings = vec![current];
+        let sarif =
+            render_findings_sarif(&current_output, &crate::config::RiprConfig::default(), &[]);
+        let parsed: serde_json::Value = serde_json::from_str(&sarif)
+            .map_err(|error| error.to_string())
+            .unwrap_or_default();
+        assert_eq!(
+            parsed["runs"][0]["results"].as_array().map(Vec::len),
+            Some(1),
+            "candidate-current twin keeps its SARIF result"
+        );
     }
 }

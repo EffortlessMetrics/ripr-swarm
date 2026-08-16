@@ -113,7 +113,7 @@
       "language": "typescript",
       "language_status": "preview",
       "static_limit_kind": "unsupported_syntax",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     }
   ],
   "preview_languages": [

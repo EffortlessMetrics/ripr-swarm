@@ -129,7 +129,7 @@
       "language_status": "preview",
       "owner_kind": "function",
       "static_limit_kind": "mocked_module",
-      "source_currentness": "unresolved_subject"
+      "source_currentness": "candidate_current"
     }
   ],
   "preview_languages": [
