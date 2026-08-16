@@ -562,7 +562,20 @@ pub struct AnalysisResult {
 /// behaviorally identical to the pre-Campaign-27 Rust-only pipeline.
 const DEFAULT_LANGUAGES: &[language::LanguageId] = &[language::LanguageId::Rust];
 
+/// Rejects immutable Git candidate subjects at the direct analysis entry
+/// points (#3276): executing a subject here would silently fall back to
+/// worktree/diff semantics. Subject inputs are bound, validated, and —
+/// once the object producer lands (#3277) — consumed through the
+/// `check_workspace*` entries only.
+fn reject_git_candidate_subject(options: &AnalysisOptions) -> Result<(), String> {
+    if options.git_candidate.is_some() {
+        return Err(crate::domain::GitCandidateSubjectError::ExecutionUnsupported.to_string());
+    }
+    Ok(())
+}
+
 pub fn run_analysis(options: &AnalysisOptions) -> Result<AnalysisResult, String> {
+    reject_git_candidate_subject(options)?;
     run_analysis_with_oracle_policy(options, &OraclePolicy::default(), DEFAULT_LANGUAGES)
 }
 
@@ -603,6 +616,7 @@ pub(crate) fn run_worktree_analysis_with_oracle_policy_and_generated_file_patter
 }
 
 pub fn run_repo_analysis(options: &AnalysisOptions) -> Result<AnalysisResult, String> {
+    reject_git_candidate_subject(options)?;
     run_repo_analysis_with_oracle_policy(options, &OraclePolicy::default(), DEFAULT_LANGUAGES)
 }
 
@@ -1130,6 +1144,63 @@ index 0000000..1111111 100644
         if repo_out.findings.is_empty() {
             return Err("expected at least one finding from repo analysis".to_string());
         }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod git_candidate_entry_tests {
+    use super::*;
+    use crate::domain::{GitCandidateBase, GitCandidateSubject, GitObjectId};
+
+    fn subject_options() -> Result<AnalysisOptions, String> {
+        Ok(AnalysisOptions {
+            git_candidate: Some(GitCandidateSubject::new(
+                std::env::temp_dir(),
+                GitCandidateBase::EmptyTree,
+                GitObjectId::parse(
+                    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                )
+                .map_err(|error| error.to_string())?,
+            )),
+            ..default_options_for_entry_test()?
+        })
+    }
+
+    fn default_options_for_entry_test() -> Result<AnalysisOptions, String> {
+        Ok(AnalysisOptions {
+            root: std::env::temp_dir(),
+            base: None,
+            diff_file: None,
+            mode: AnalysisMode::Draft,
+            include_unchanged_tests: true,
+            resolve_tsconfig_paths: false,
+            perl_facts_path: None,
+            git_timeout: None,
+            git_candidate: None,
+        })
+    }
+
+    #[test]
+    fn direct_analysis_entries_reject_git_candidate_subjects() -> Result<(), String> {
+        // #3276: the direct public entries must never execute a subject
+        // against worktree/diff semantics. The named error is the single
+        // authority (GitCandidateSubjectError::ExecutionUnsupported).
+        let options = subject_options()?;
+        let error = run_analysis(&options)
+            .err()
+            .unwrap_or_else(|| "expected rejection".to_string());
+        assert!(
+            error.contains("refusing to fall back"),
+            "run_analysis must fail closed: {error:?}"
+        );
+        let repo_error = run_repo_analysis(&options)
+            .err()
+            .unwrap_or_else(|| "expected rejection".to_string());
+        assert!(
+            repo_error.contains("refusing to fall back"),
+            "run_repo_analysis must fail closed: {repo_error:?}"
+        );
         Ok(())
     }
 }
