@@ -3396,6 +3396,26 @@ mod generation_transition_tests {
                 ));
             }
         }
+        // Copied-file defense: even if the stale envelope were copied to
+        // the current key's entry path, the embedded key identity inside
+        // the envelope mismatches and the load still misses.
+        let current_path = cache.entry_path(&current_key);
+        let stale_bytes = std::fs::read(cache.entry_path(&previous_key))
+            .map_err(|error| format!("read stale envelope: {error}"))?;
+        if let Some(parent) = current_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("create current entry dir: {error}"))?;
+        }
+        std::fs::write(&current_path, stale_bytes)
+            .map_err(|error| format!("copy stale envelope: {error}"))?;
+        match cache.load_file_facts(&current_key) {
+            CacheLoad::Miss => {}
+            other => {
+                return Err(format!(
+                    "expected Miss for a copied previous-generation envelope, got {other:?}"
+                ));
+            }
+        }
         // And the stale entry itself, loaded by its own key, no longer
         // satisfies current analysis identity: it can only be reached by
         // the previous key, which current code never constructs.
@@ -3420,15 +3440,13 @@ mod generation_transition_tests {
         let _ = std::fs::remove_dir_all(&dir);
         let cache = RepoFileFactCache::at_dir(dir.clone());
         let file = Path::new("src/labels.rs");
-        let content = cfg_test_helper_source().as_bytes().to_vec();
+        let source = cfg_test_helper_source();
+        let content = source.as_bytes().to_vec();
         let key = RepoFileFactCacheKey::new(file, &content);
 
         // Cold: current producer facts carry the corrected semantics.
         let parsed = crate::analysis::syntax::RaRustSyntaxAdapter
-            .summarize_file(
-                file,
-                std::str::from_utf8(&content).map_err(|error| error.to_string())?,
-            )
+            .summarize_file(file, source)
             .map_err(|error| format!("parse fixture: {error}"))?;
         cache.store_file_facts(&key, &parsed)?;
         let warm = match cache.load_file_facts(&key) {
@@ -3494,6 +3512,13 @@ mod generation_transition_tests {
                 .ends_with(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION),
             "compact cache directory must be generation-scoped: {:?}",
             compact.dir
+        );
+
+        let file_facts = RepoFileFactCache::at(Path::new("/ws"));
+        assert!(
+            file_facts.dir.ends_with(FILE_FACT_CACHE_SCHEMA_VERSION),
+            "file-fact cache directory must be generation-scoped: {:?}",
+            file_facts.dir
         );
         Ok(())
     }
