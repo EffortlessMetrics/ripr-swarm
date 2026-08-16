@@ -23,13 +23,31 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify candidate transport chunks
+      - name: Verify and reassemble exact first transport chunk
         shell: bash
         run: |
-          test "$(wc -c < .github/3294-draft-v4/part-00)" = 4001
-          echo 'c6946d0cb41041397dc71e97fbe403a854f2786f86b140aa94d964aa27468805  .github/3294-draft-v4/part-00' | sha256sum -c -
-          head -c 4000 .github/3294-draft-v4/part-00 > /tmp/3294-part-00.exact
+          : > /tmp/3294-part-00.exact
+          for index in 00 01 02 03; do
+            path=".github/3294-draft-v4-part00/part-${index}"
+            test "$(wc -c < "$path")" -ge 1000
+            head -c 1000 "$path" > "/tmp/3294-part-${index}.exact"
+            cat "/tmp/3294-part-${index}.exact" >> /tmp/3294-part-00.exact
+          done
+          cat > /tmp/3294-part00-slices.sha256 <<'EOF'
+          b2995d73fd7eb965a6ca52183d190b395bfef72c35178a3630fbeb472dffe404  /tmp/3294-part-00.exact.slice-00
+          9420d04739460ad039de22a69fe7d485ecc5b96388af9693c905fc05de8aecdd  /tmp/3294-part-00.exact.slice-01
+          de83fe6decb2afea00fd479805f856945c12a58940c16fdd75103e009dcf6561  /tmp/3294-part-00.exact.slice-02
+          c8d171fb8bf3bf7cd417c6d158b8553f99d4428fd79b180cb2c033b44b260ab3  /tmp/3294-part-00.exact.slice-03
+          EOF
+          cp /tmp/3294-part-00.exact /tmp/3294-part-00.full
+          split -b 1000 -d -a 2 /tmp/3294-part-00.full /tmp/3294-part-00.exact.slice-
+          sha256sum -c /tmp/3294-part00-slices.sha256
+          test "$(wc -c < /tmp/3294-part-00.exact)" = 4000
           echo '44ca1a513bc204c1b56bff983a6e0435828794f4f6e1d252817e56748655a522  /tmp/3294-part-00.exact' | sha256sum -c -
+
+      - name: Verify remaining candidate transport chunks
+        shell: bash
+        run: |
           cat > /tmp/3294-chunks.sha256 <<'EOF'
           06d3d3771e3764d41a89c8ace6f7205ddc844c66d07c5cdbca40997e92993740  .github/3294-draft-v4/part-01
           77333ce04f5cf3b3a142f7fb44b0b4778f94754f7e0549b3ae0d97254f6149a6  .github/3294-draft-v4/part-02
