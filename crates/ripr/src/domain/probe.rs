@@ -478,53 +478,21 @@ mod tests {
 
 #[cfg(test)]
 mod source_currentness_tests {
-    use super::{Finding, SourceCurrentness};
+    use super::{SOURCE_CURRENTNESS_VALUES, SourceCurrentness};
 
     #[test]
-    fn source_currentness_serializes_the_controlled_vocabulary() {
-        for value in [
-            SourceCurrentness::CandidateCurrent,
-            SourceCurrentness::BaseDeleted,
-            SourceCurrentness::MovedOrRenamed,
-            SourceCurrentness::UnresolvedSubject,
+    fn source_currentness_labels_are_the_controlled_vocabulary() {
+        // The wire form is pinned where JSON is allowed to be known
+        // (`app::check_artifact` tests); here the stable labels themselves
+        // are the contract.
+        for (value, label) in [
+            (SourceCurrentness::CandidateCurrent, "candidate_current"),
+            (SourceCurrentness::BaseDeleted, "base_deleted"),
+            (SourceCurrentness::MovedOrRenamed, "moved_or_renamed"),
+            (SourceCurrentness::UnresolvedSubject, "unresolved_subject"),
         ] {
-            let wire = serde_json::to_string(&value).unwrap_or_default();
-            assert!(
-                super::SOURCE_CURRENTNESS_VALUES.contains(&wire.trim_matches('"')),
-                "value {wire:?} must use the controlled vocabulary"
-            );
+            assert_eq!(value.as_str(), label);
+            assert!(SOURCE_CURRENTNESS_VALUES.contains(&label));
         }
-    }
-
-    #[test]
-    fn finding_without_source_currentness_reads_back_unresolved() -> Result<(), String> {
-        // Pre-#3280 artifacts carry no field; the deserialize default must
-        // be the explicit unknown, never a fabricated disposition.
-        let legacy = r#"{
-            "id": "probe:x", "canonical_gap": null,
-            "probe": {
-                "id": "probe:x", "location": {"file": "x.rs", "line": 1, "column": 1},
-                "owner": null, "family": "side_effect", "delta": "effect",
-                "before": null, "after": null, "expression": "x()",
-                "expected_sinks": [], "required_oracles": []
-            },
-            "class": "static_unknown",
-            "ripr": {
-                "reach": {"state":"Unknown","confidence":"Low","summary":"s"},
-                "infect": {"state":"Unknown","confidence":"Low","summary":"s"},
-                "propagate": {"state":"Unknown","confidence":"Low","summary":"s"},
-                "reveal": {"observe":{"state":"Unknown","confidence":"Low","summary":"s"},"discriminate":{"state":"Unknown","confidence":"Low","summary":"s"}}
-            },
-            "confidence": 0.1, "evidence": [], "missing": [], "flow_sinks": [],
-            "activation": {"observed_values": [], "missing_discriminators": []}, "stop_reasons": [], "related_tests": [],
-            "recommended_next_step": null
-        }"#;
-        let finding: Finding = serde_json::from_str(legacy)
-            .map_err(|error| format!("legacy finding must deserialize: {error}"))?;
-        assert_eq!(
-            finding.source_currentness,
-            SourceCurrentness::UnresolvedSubject
-        );
-        Ok(())
     }
 }
