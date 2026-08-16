@@ -1538,6 +1538,7 @@ impl RustAdapter {
             cancellation::checkpoint()?;
             let probes = probes::probes_for_file(&options.root, changed, &index);
             for probe in probes {
+                candidate_lines.insert((probe.location.file.clone(), probe.location.line));
                 cancellation::checkpoint()?;
                 let mut finding =
                     classifier::classify_probe(&probe, &index, workspace_index_complete);
@@ -1546,12 +1547,6 @@ impl RustAdapter {
                 // evidence that seeded the probe, before any limitation shaping.
                 finding.source_currentness =
                     probes::resolve_probe_source_currentness(changed, &probe);
-                // The candidate-line count discloses distinct candidate-side
-                // anchors only; base-side evidence coordinates (#3280) do
-                // not inflate it.
-                if finding.source_currentness == SourceCurrentness::CandidateCurrent {
-                    candidate_lines.insert((probe.location.file.clone(), probe.location.line));
-                }
                 // `language_status` is omitted for Rust per RIPR-SPEC-0026.
                 // RIPR-SPEC-0114: when the direct-call classifier finds no related
                 // test (no_static_path + empty related_tests), run the bounded

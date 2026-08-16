@@ -7,12 +7,13 @@ Issue: #3280 (parent #3212)
 ## Problem
 
 A diff finding records a source location but not which revision owns the
-actionable source. A removed-line probe currently records a projected
-new-side coordinate, so a base expression deleted from a 13-line candidate
-file can be presented at line 29 — an impossible candidate edit target.
-Downstream consumers cannot tell candidate-current obligations from
-deleted-side evidence, and every surface re-derives that judgment
-differently.
+actionable source. A removed-line probe carries only a projected new-side
+coordinate: deleted-side evidence is presented with a coordinate that
+reads as a candidate position — pointing at whatever line the projection
+lands on, with no revision semantics and no way for a consumer to stop
+treating it as a candidate edit target. Downstream surfaces re-derive
+that judgment differently (the #3212 incident: guidance and aggregate
+counts disagreed about the same deleted-side records).
 
 ## Behavior
 
@@ -23,11 +24,12 @@ candidate_current   the source expression is present in the candidate
                      (head-side) source at the recorded location; the
                      location is a candidate edit target
 base_deleted        the expression was removed on the candidate side; the
-                     finding is base-side evidence carrying the base-side
-                     coordinate, not a candidate edit target
+                     finding is base-side evidence, not a candidate edit
+                     target
 moved_or_renamed    the same expression re-appears elsewhere in the
-                     candidate file, but the producer cannot prove the
-                     exact candidate identity; not a candidate edit target
+                     candidate file, but the producer cannot establish
+                     the exact candidate identity; not a candidate edit
+                     target
 unresolved_subject  the producing surface does not resolve currentness;
                      the explicit unknown, and the value read back from
                      artifacts written before this field existed
@@ -40,13 +42,13 @@ trimmed expression text appears among the file's added lines. Repo-mode
 findings are `candidate_current` by construction. Preview-language findings
 are `unresolved_subject` until their producers resolve currentness.
 
-A removed-only Rust probe records the base-side line number as its location
-coordinate. Finding identity does not change: probe ids are content
-addressed over path, family, owner, and normalized expression, excluding
-line numbers.
-
-In this slice the disposition is informational for consumers. Gate,
-actionability, and repair policy consume it in the #3212 projection slice.
+In this slice the disposition is informational for consumers and the
+probe's recorded location coordinate is unchanged: a removed-only probe
+keeps the projected new-side coordinate that the new-file index, the flow
+and value classifiers, and IDE navigation already read (#1222 RANK-1).
+Re-coordinating deleted-side evidence — base-side identity, consumer
+projections, and edit-target suppression — is the #3212 projection
+slice.
 
 ## Required Evidence
 
@@ -54,7 +56,7 @@ actionability, and repair policy consume it in the #3212 projection slice.
   finding with the controlled vocabulary above (registered in
   `policy/output_contracts.txt`, `SOURCE_CURRENTNESS_VALUES`).
 - `docs/OUTPUT_SCHEMA.md` documents the field, the vocabulary, and the
-  base-side coordinate rule for `base_deleted`.
+  deferred re-coordination of deleted-side evidence.
 - Producer tests pin each disposition: deleted-tail `base_deleted`,
   moved-expression `moved_or_renamed`, added seam `candidate_current`, and
   the explicit unknown for evidence-less shapes.
@@ -65,17 +67,17 @@ actionability, and repair policy consume it in the #3212 projection slice.
 
 - No producer may emit a disposition it cannot prove from its own
   evidence; the unknown is explicit, never guessed.
-- `base_deleted` and `moved_or_renamed` findings carry no candidate edit
-  target: their location coordinate is base-side.
+- This slice changes no classification, stage, confidence, gate, count,
+  actionability, repair-readiness, or location-coordinate outcome: the
+  golden corpus diff is exactly the additive field.
 - Deserializing artifacts written before this field yields
   `unresolved_subject`, not a fabricated disposition.
-- This slice changes no gate, count, actionability, or repair-readiness
-  outcome.
 
 ## Acceptance Examples
 
 - Accept: a removed-only Rust probe whose expression has no added-line
-  match yields `base_deleted` with the base-side line coordinate.
+  match yields `base_deleted` while keeping its recorded coordinate
+  unchanged.
 - Accept: the same removed expression re-appearing among the file's added
   lines yields `moved_or_renamed`.
 - Accept: an added or replacement probe yields `candidate_current` at the
@@ -86,19 +88,19 @@ actionability, and repair policy consume it in the #3212 projection slice.
 ## Test Mapping
 
 `crates/ripr/src/analysis/probes/diff.rs` `source_currentness_tests` pin
-the deleted-tail, moved-expression, added-seam, and unresolved shapes plus
-the base-side coordinate and content-addressed-id guard. The re-blessed
-golden corpus (176 fixtures) carries the field on every finding;
-`multi_hunk_removed_line_wrong_target` additionally pins the base-side
-coordinate on a real removed-line diff.
+the deleted-tail, moved-expression, added-seam, unresolved, and
+coordinate-stability shapes plus the content-addressed-id guard. The
+re-blessed golden corpus (176 fixtures) carries the field on every
+finding with no other behavioral delta.
 
 ## Non-Goals
 
 This slice does not change gate, ledger, diagnostic, or repair actionability
-policy; does not retain rename maps in the diff parser (pure renames stay
-excluded with disclosure); does not resolve currentness for preview-language
-producers; and does not bump the check schema version. Those land in the
-#3212 projection slice and later producer work.
+policy; does not change any recorded location coordinate (deleted-side
+re-coordination is the #3212 projection slice); does not retain rename maps
+in the diff parser (pure renames stay excluded with disclosure); does not
+resolve currentness for preview-language producers; and does not bump the
+check schema version.
 
 ## Implementation Mapping
 

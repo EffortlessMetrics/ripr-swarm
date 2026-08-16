@@ -709,8 +709,10 @@ The evidence-first fields are additive in schema `0.2`:
     candidate (head-side) source at the recorded `probe.file`/`probe.line`;
     the location is a candidate edit target.
   - `base_deleted` — the expression was removed on the candidate side. The
-    retained evidence is base-side: `probe.line` records the **base-side**
-    coordinate, and the finding is not a candidate edit target.
+    retained evidence is base-side and the finding is not a candidate edit
+    target; `probe.line` still records the projected new-side coordinate in
+    this slice, and consumer re-coordination of deleted-side evidence is
+    the #3212 projection slice.
   - `moved_or_renamed` — the same expression re-appears elsewhere in the
     candidate file, but the producer cannot prove the exact candidate
     identity of the source; not a candidate edit target.

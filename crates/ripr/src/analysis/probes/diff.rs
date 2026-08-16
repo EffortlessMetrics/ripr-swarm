@@ -179,20 +179,15 @@ fn build_probe(
 ) -> Probe {
     let text = changed_line.text.trim();
     let delta = delta_for_family(&family);
-    // Use `new_side_line` for all index lookups: for added lines this equals
-    // `line`; for removed lines it is the new-file coordinate, which is what
-    // the RustIndex (built from the new file) requires (RANK-1 fix, #1222).
+    // Use `new_side_line` for all index lookups and the SourceLocation: for
+    // added lines this equals `line`; for removed lines it is the new-file
+    // coordinate, which is what the RustIndex (built from the new file),
+    // the flow/value classifiers, and any IDE navigation into the new file
+    // require (RANK-1 fix, #1222). #3280 keeps this coordinate in the
+    // producer slice — a removed-only probe's revision semantics are stated
+    // by its `source_currentness` disposition, and re-coordinating
+    // deleted-side evidence is the #3212 projection slice's consumer work.
     let new_line = changed_line.new_side_line;
-    // A removed-only probe (`after == None`) records the base-side
-    // coordinate instead: its evidence lives in the base revision, and the
-    // projected new-side position is not a candidate edit target (#3280).
-    // Ids are content-addressed without line numbers, so this does not
-    // change finding identity.
-    let location_line = if after.is_none() {
-        changed_line.line
-    } else {
-        new_line
-    };
     let owner = context
         .changed_nodes
         .iter()
@@ -216,7 +211,7 @@ fn build_probe(
 
     Probe {
         id,
-        location: SourceLocation::new(context.root.join(&context.changed.path), location_line, 1),
+        location: SourceLocation::new(context.root.join(&context.changed.path), new_line, 1),
         owner,
         family,
         delta,
@@ -949,10 +944,14 @@ mod source_currentness_tests {
     }
 
     #[test]
-    fn removed_only_probe_records_base_side_line_and_resolves_base_deleted() -> Result<(), String> {
-        // The #3212 incident shape: a base expression at old line 29 whose
-        // candidate file only has 13 lines. The projected new-side
-        // coordinate must not be presented as the finding's location.
+    fn removed_only_probe_resolves_base_deleted_and_keeps_new_side_coordinate() -> Result<(), String>
+    {
+        // The #3212 incident shape: a base expression whose candidate file
+        // no longer contains it. In the producer slice the probe's recorded
+        // coordinate stays the projected new-side position (#1222 RANK-1:
+        // the index, flow classifiers, and IDE navigation all read the new
+        // file); the revision semantics are carried by the disposition, and
+        // consumer re-coordination is the #3212 projection slice.
         let changed = removed_only_changed(29, 13, "events.publish(invoice);");
         let index = RustIndex::default();
         let probes = probes_for_file(Path::new("workspace"), &changed, &index);
@@ -963,8 +962,8 @@ mod source_currentness_tests {
             return Err("side-effect probe expected".to_string());
         };
         assert_eq!(
-            probe.location.line, 29,
-            "base-side evidence carries the base coordinate"
+            probe.location.line, 13,
+            "producer slice keeps the projected new-side coordinate"
         );
         assert_eq!(
             resolve_probe_source_currentness(&changed, probe),

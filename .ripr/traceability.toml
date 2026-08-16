@@ -8050,7 +8050,7 @@ id = "RIPR-SPEC-0151"
 name = "Finding source currentness"
 spec = "docs/specs/RIPR-SPEC-0151-source-currentness.md"
 tests = [
-  "crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::removed_only_probe_records_base_side_line_and_resolves_base_deleted",
+  "crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::removed_only_probe_resolves_base_deleted_and_keeps_new_side_coordinate",
   "crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::moved_expression_resolves_moved_or_renamed",
   "crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::added_probe_keeps_new_side_line_and_resolves_candidate_current",
   "crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::resolver_stays_unresolved_without_diff_evidence",
