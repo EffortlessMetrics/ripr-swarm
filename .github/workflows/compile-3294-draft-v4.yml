@@ -26,10 +26,11 @@ jobs:
       - name: Verify candidate transport chunks
         shell: bash
         run: |
-          wc -c .github/3294-draft-v4/part-*
-          sha256sum .github/3294-draft-v4/part-*
+          test "$(wc -c < .github/3294-draft-v4/part-00)" = 4001
+          echo 'c6946d0cb41041397dc71e97fbe403a854f2786f86b140aa94d964aa27468805  .github/3294-draft-v4/part-00' | sha256sum -c -
+          head -c 4000 .github/3294-draft-v4/part-00 > /tmp/3294-part-00.exact
+          echo '44ca1a513bc204c1b56bff983a6e0435828794f4f6e1d252817e56748655a522  /tmp/3294-part-00.exact' | sha256sum -c -
           cat > /tmp/3294-chunks.sha256 <<'EOF'
-          44ca1a513bc204c1b56bff983a6e0435828794f4f6e1d252817e56748655a522  .github/3294-draft-v4/part-00
           06d3d3771e3764d41a89c8ace6f7205ddc844c66d07c5cdbca40997e92993740  .github/3294-draft-v4/part-01
           77333ce04f5cf3b3a142f7fb44b0b4778f94754f7e0549b3ae0d97254f6149a6  .github/3294-draft-v4/part-02
           45885e2d774a5f8703f3b497d0b454b7797442a445a6c77f80f25eaf810337d7  .github/3294-draft-v4/part-03
@@ -42,7 +43,7 @@ jobs:
       - name: Reassemble and verify exact candidate patch
         shell: bash
         run: |
-          cat .github/3294-draft-v4/part-* > /tmp/3294.patch.gz.b64
+          cat /tmp/3294-part-00.exact .github/3294-draft-v4/part-0{1..6} > /tmp/3294.patch.gz.b64
           test "$(wc -c < /tmp/3294.patch.gz.b64)" = 25996
           echo 'bbba044eee42eaddc4d30719dcd3fae621c6a4e432abd154c9a3e1ea830bcef2  /tmp/3294.patch.gz.b64' | sha256sum -c -
           base64 -d /tmp/3294.patch.gz.b64 | gzip -d > /tmp/3294.patch
