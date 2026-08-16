@@ -120,7 +120,8 @@
       "suggested_next_action": "TypeScript preview advisory: method receiver relation is missing context; use a direct `new ClassName(...)` receiver observer when safe, and keep factories, dependency injection, mocked modules, prototype aliases, and dynamic property access advisory.",
       "language": "typescript",
       "language_status": "preview",
-      "owner_kind": "method"
+      "owner_kind": "method",
+      "source_currentness": "unresolved_subject"
     }
   ],
   "preview_languages": [

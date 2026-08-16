@@ -131,7 +131,8 @@
       "suggested_next_action": "TypeScript preview advisory: related-test proximity is heuristic only; add a direct owner call before treating this as an actionable repair target.",
       "language": "typescript",
       "language_status": "preview",
-      "owner_kind": "function"
+      "owner_kind": "function",
+      "source_currentness": "unresolved_subject"
     }
   ],
   "preview_languages": [

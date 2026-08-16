@@ -322,7 +322,63 @@ pub struct Finding {
     /// Stable snake_case reason token explaining the `oracle_alignment` value.
     /// Additive optional per RIPR-SPEC-0028.
     pub alignment_reason: Option<String>,
+    /// Producer-owned resolution of this finding's source against the
+    /// candidate (head-side) revision (#3212 / #3280). Set by the producer
+    /// that observed the diff evidence; `UnresolvedSubject` is the explicit
+    /// unknown for surfaces that do not resolve it and the
+    /// backward-compatibility default for artifacts written before the
+    /// field existed. A `BaseDeleted` or `MovedOrRenamed` finding is
+    /// base-side evidence, not a candidate edit target.
+    #[serde(default)]
+    pub source_currentness: SourceCurrentness,
 }
+
+/// Typed source-currentness disposition for a [`Finding`] (#3212 / #3280).
+///
+/// The vocabulary is deliberately conservative: the producer states which
+/// revision owns the actionable source, or states that it could not tell.
+/// It never claims a deleted-side record is current.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceCurrentness {
+    /// The finding's source expression is present in the candidate source
+    /// at the recorded location; the location is a candidate edit target.
+    CandidateCurrent,
+    /// The expression was removed on the candidate side. The retained
+    /// evidence is base-side: it carries the base coordinate and is not a
+    /// candidate edit target.
+    BaseDeleted,
+    /// Movement evidence exists (the same expression re-appears elsewhere
+    /// in the candidate file), but the producer cannot prove the candidate
+    /// identity of the exact source. Not a candidate edit target.
+    MovedOrRenamed,
+    /// The producing surface does not resolve source currentness; the
+    /// disposition is explicitly unknown, never fabricated. Also the
+    /// deserialize default for pre-#3280 artifacts.
+    #[default]
+    UnresolvedSubject,
+}
+
+impl SourceCurrentness {
+    /// Stable wire label (matches the serde form).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::CandidateCurrent => "candidate_current",
+            Self::BaseDeleted => "base_deleted",
+            Self::MovedOrRenamed => "moved_or_renamed",
+            Self::UnresolvedSubject => "unresolved_subject",
+        }
+    }
+}
+
+/// Controlled enum values for [`Finding::source_currentness`]. Registered in
+/// `policy/output_contracts.txt` and documented in `docs/OUTPUT_SCHEMA.md`.
+pub const SOURCE_CURRENTNESS_VALUES: [&str; 4] = [
+    "candidate_current",
+    "base_deleted",
+    "moved_or_renamed",
+    "unresolved_subject",
+];
 
 /// Controlled enum values for [`Finding::oracle_alignment`]. Registered in
 /// `policy/output_contracts.txt` and documented in `docs/OUTPUT_SCHEMA.md`.
@@ -416,6 +472,27 @@ mod tests {
 
         for (context, value) in cases {
             assert_eq!(context.as_str(), value);
+        }
+    }
+}
+
+#[cfg(test)]
+mod source_currentness_tests {
+    use super::{SOURCE_CURRENTNESS_VALUES, SourceCurrentness};
+
+    #[test]
+    fn source_currentness_labels_are_the_controlled_vocabulary() {
+        // The wire form is pinned where JSON is allowed to be known
+        // (`app::check_artifact` tests); here the stable labels themselves
+        // are the contract.
+        for (value, label) in [
+            (SourceCurrentness::CandidateCurrent, "candidate_current"),
+            (SourceCurrentness::BaseDeleted, "base_deleted"),
+            (SourceCurrentness::MovedOrRenamed, "moved_or_renamed"),
+            (SourceCurrentness::UnresolvedSubject, "unresolved_subject"),
+        ] {
+            assert_eq!(value.as_str(), label);
+            assert!(SOURCE_CURRENTNESS_VALUES.contains(&label));
         }
     }
 }

@@ -112,7 +112,8 @@
       "suggested_next_action": "TypeScript preview advisory: static limit `unsupported_syntax`; Repair route: fix or isolate the unsupported syntax before relying on repair guidance; no actionable repair packet is emitted.",
       "language": "typescript",
       "language_status": "preview",
-      "static_limit_kind": "unsupported_syntax"
+      "static_limit_kind": "unsupported_syntax",
+      "source_currentness": "unresolved_subject"
     }
   ],
   "preview_languages": [

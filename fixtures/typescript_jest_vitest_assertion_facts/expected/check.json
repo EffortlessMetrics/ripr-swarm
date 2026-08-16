@@ -135,7 +135,8 @@
       "suggested_next_action": "TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.",
       "language": "typescript",
       "language_status": "preview",
-      "owner_kind": "function"
+      "owner_kind": "function",
+      "source_currentness": "unresolved_subject"
     },
     {
       "id": "probe:src_signals.ts:typescript_preview:8ca5702a",
@@ -273,7 +274,8 @@
       "suggested_next_action": "TypeScript preview advisory: add an exact-value assertion alongside the snapshot for missing discriminator `return value == `summary:${status.trim()}``; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "typescript",
       "language_status": "preview",
-      "owner_kind": "function"
+      "owner_kind": "function",
+      "source_currentness": "unresolved_subject"
     },
     {
       "id": "probe:src_signals.ts:typescript_preview:54d687f5",
@@ -411,7 +413,8 @@
       "suggested_next_action": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for missing discriminator `return value == count >= 1`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "typescript",
       "language_status": "preview",
-      "owner_kind": "function"
+      "owner_kind": "function",
+      "source_currentness": "unresolved_subject"
     },
     {
       "id": "probe:src_signals.ts:typescript_preview:5f264af5",
@@ -549,7 +552,8 @@
       "suggested_next_action": "TypeScript preview advisory: related mock interaction evidence is present, but mock payloads are not yet a safe discriminator for `call sink.record includes status`; no actionable repair packet is emitted until mock-shape support can name verify, receipt, evidence refs, and edit boundaries.",
       "language": "typescript",
       "language_status": "preview",
-      "owner_kind": "function"
+      "owner_kind": "function",
+      "source_currentness": "unresolved_subject"
     },
     {
       "id": "probe:src_signals.ts:typescript_preview:7d6e77de",
@@ -687,7 +691,8 @@
       "suggested_next_action": "TypeScript preview advisory: related mock payload evidence `expect(sink.record).toHaveBeenCalledWith(\"ready\")` is syntax-bounded for `call sink.record includes \"ready\"`, but no actionable repair packet is emitted until verify, receipt, evidence refs, and edit boundaries are available.",
       "language": "typescript",
       "language_status": "preview",
-      "owner_kind": "function"
+      "owner_kind": "function",
+      "source_currentness": "unresolved_subject"
     },
     {
       "id": "probe:src_signals.ts:typescript_preview:a68ad559",
@@ -805,7 +810,8 @@
       "suggested_next_action": "TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.",
       "language": "typescript",
       "language_status": "preview",
-      "owner_kind": "function"
+      "owner_kind": "function",
+      "source_currentness": "unresolved_subject"
     }
   ],
   "preview_languages": [

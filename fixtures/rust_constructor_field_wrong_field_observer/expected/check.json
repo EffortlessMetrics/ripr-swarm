@@ -64,7 +64,8 @@
         "kind": "rust_integration_public_api_path_unresolved",
         "last_established_edge": "test `lower_ast_only_checks_name` (tests/lower.rs:4) -> entry `lower_ast`",
         "non_claim": "named limitation only; ripr cannot confirm or deny that this path observes the change"
-      }
+      },
+      "source_currentness": "candidate_current"
     }
   ]
 }

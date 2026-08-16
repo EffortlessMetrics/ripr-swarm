@@ -49,8 +49,8 @@ pub use git_candidate::{
 pub use language::{LanguageId, LanguageStatus, OwnerKind, StaticLimitKind};
 pub use probe::{
     ActivationEvidence, DeltaKind, Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind,
-    MissingDiscriminatorFact, ORACLE_ALIGNMENT_VALUES, Probe, ProbeFamily, RelatedTest, StopReason,
-    ValueContext, ValueFact,
+    MissingDiscriminatorFact, ORACLE_ALIGNMENT_VALUES, Probe, ProbeFamily, RelatedTest,
+    SOURCE_CURRENTNESS_VALUES, SourceCurrentness, StopReason, ValueContext, ValueFact,
 };
 // Internal formatting convention, not library API: `lib.rs` re-exports
 // `pub mod domain`, so this stays crate-private.

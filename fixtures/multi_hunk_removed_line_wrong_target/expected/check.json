@@ -56,7 +56,8 @@
       "oracle_strength": "none",
       "recommended_next_step": "Escalate to real mutation testing or deep static analysis for this probe.",
       "suggested_next_action": "Escalate to real mutation testing or deep static analysis for this probe.",
-      "language": "rust"
+      "language": "rust",
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_lib.rs:static_unknown:8e9320f2",
@@ -104,7 +105,8 @@
       "oracle_strength": "none",
       "recommended_next_step": "Escalate to real mutation testing or deep static analysis for this probe.",
       "suggested_next_action": "Escalate to real mutation testing or deep static analysis for this probe.",
-      "language": "rust"
+      "language": "rust",
+      "source_currentness": "base_deleted"
     },
     {
       "id": "probe:src_lib.rs:static_unknown:20c6f50e",
@@ -152,7 +154,8 @@
       "oracle_strength": "none",
       "recommended_next_step": "Escalate to real mutation testing or deep static analysis for this probe.",
       "suggested_next_action": "Escalate to real mutation testing or deep static analysis for this probe.",
-      "language": "rust"
+      "language": "rust",
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_lib.rs:return_value:93054610",
@@ -200,7 +203,8 @@
       "oracle_strength": "none",
       "recommended_next_step": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists.",
       "suggested_next_action": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists.",
-      "language": "rust"
+      "language": "rust",
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_lib.rs:predicate:431be027",
@@ -247,7 +251,8 @@
       "oracle_strength": "none",
       "recommended_next_step": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists.",
       "suggested_next_action": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists.",
-      "language": "rust"
+      "language": "rust",
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_lib.rs:predicate:e0b8a3fd",
@@ -294,7 +299,8 @@
       "oracle_strength": "none",
       "recommended_next_step": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists.",
       "suggested_next_action": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists.",
-      "language": "rust"
+      "language": "rust",
+      "source_currentness": "base_deleted"
     }
   ]
 }

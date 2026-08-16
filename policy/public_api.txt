@@ -131,6 +131,7 @@ pub use ripr::PreviewLanguageAdvisory
 pub use ripr::Probe
 pub use ripr::ProbeFamily
 pub use ripr::RiprEvidence
+pub use ripr::SourceCurrentness
 pub use ripr::Summary
 pub use ripr::SuppressedCheckFinding
 pub use ripr::analysis::PARTIAL_DIFF_LANGUAGE_TIER_VERSION
@@ -225,6 +226,8 @@ pub use ripr::domain::RelationConfidence
 pub use ripr::domain::RelationReason
 pub use ripr::domain::RevealEvidence
 pub use ripr::domain::RiprEvidence
+pub use ripr::domain::SOURCE_CURRENTNESS_VALUES
+pub use ripr::domain::SourceCurrentness
 pub use ripr::domain::SourceLocation
 pub use ripr::domain::StageEvidence
 pub use ripr::domain::StageState

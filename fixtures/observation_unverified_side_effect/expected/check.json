@@ -77,7 +77,8 @@
       "oracle_strength": "weak",
       "recommended_next_step": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
       "suggested_next_action": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
-      "language": "rust"
+      "language": "rust",
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_lib.rs:side_effect:95da2a37",
@@ -146,7 +147,8 @@
       "oracle_strength": "weak",
       "recommended_next_step": "Add a mock expectation, event receiver assertion, persisted-state check, or metric assertion for the changed effect.",
       "suggested_next_action": "Add a mock expectation, event receiver assertion, persisted-state check, or metric assertion for the changed effect.",
-      "language": "rust"
+      "language": "rust",
+      "source_currentness": "candidate_current"
     }
   ]
 }

@@ -130,7 +130,8 @@
       "owner_kind": "function",
       "changed_sink": "click, echo, shipment, queued, shipment queued",
       "oracle_alignment": "unknown",
-      "alignment_reason": "no_strong_oracle"
+      "alignment_reason": "no_strong_oracle",
+      "source_currentness": "unresolved_subject"
     }
   ],
   "preview_languages": [

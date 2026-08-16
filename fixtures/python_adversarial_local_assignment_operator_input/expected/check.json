@@ -90,7 +90,8 @@
       "changed_sink": "total, base, bonus",
       "observed_sink": "assert base == 10",
       "oracle_alignment": "orthogonal",
-      "alignment_reason": "strong_oracle_observes_different_sink"
+      "alignment_reason": "strong_oracle_observes_different_sink",
+      "source_currentness": "unresolved_subject"
     }
   ],
   "preview_languages": [

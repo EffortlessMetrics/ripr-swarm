@@ -119,7 +119,8 @@
       "suggested_next_action": "TypeScript preview advisory: no test references the changed owner; add a test that calls the owner and asserts the changed behavior with `toBe` / `toEqual` before any repair packet is emitted.",
       "language": "typescript",
       "language_status": "preview",
-      "owner_kind": "function"
+      "owner_kind": "function",
+      "source_currentness": "unresolved_subject"
     }
   ],
   "preview_languages": [

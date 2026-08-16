@@ -115,7 +115,8 @@
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "method",
-      "static_limit_kind": "decorator_indirection"
+      "static_limit_kind": "decorator_indirection",
+      "source_currentness": "unresolved_subject"
     },
     {
       "id": "probe:src_dispatch.ts:typescript_preview:dd0f8848",
@@ -235,7 +236,8 @@
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",
-      "static_limit_kind": "dynamic_dispatch"
+      "static_limit_kind": "dynamic_dispatch",
+      "source_currentness": "unresolved_subject"
     },
     {
       "id": "probe:src_label.jsx:typescript_preview:a7ceb842",
@@ -356,7 +358,8 @@
       "language": "javascript",
       "language_status": "preview",
       "owner_kind": "function",
-      "static_limit_kind": "missing_import_graph"
+      "static_limit_kind": "missing_import_graph",
+      "source_currentness": "unresolved_subject"
     },
     {
       "id": "probe:src_proxy.js:typescript_preview:1bd78c56",
@@ -477,7 +480,8 @@
       "language": "javascript",
       "language_status": "preview",
       "owner_kind": "function",
-      "static_limit_kind": "metaprogramming"
+      "static_limit_kind": "metaprogramming",
+      "source_currentness": "unresolved_subject"
     }
   ],
   "preview_languages": [

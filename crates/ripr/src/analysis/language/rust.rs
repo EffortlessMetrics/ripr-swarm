@@ -16,7 +16,9 @@ use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult,
 use crate::analysis::cancellation;
 use crate::analysis::facts::{FunctionSummary, RustIndex};
 use crate::config::OraclePolicy;
-use crate::domain::{ExposureClass, Finding, Probe, StaticLimitKind, StopReason};
+use crate::domain::{
+    ExposureClass, Finding, Probe, SourceCurrentness, StaticLimitKind, StopReason,
+};
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -1541,6 +1543,10 @@ impl RustAdapter {
                 let mut finding =
                     classifier::classify_probe(&probe, &index, workspace_index_complete);
                 finding.language = Some(LanguageId::Rust);
+                // Producer-owned source currentness (#3280): resolved from the diff
+                // evidence that seeded the probe, before any limitation shaping.
+                finding.source_currentness =
+                    probes::resolve_probe_source_currentness(changed, &probe);
                 // `language_status` is omitted for Rust per RIPR-SPEC-0026.
                 // RIPR-SPEC-0114: when the direct-call classifier finds no related
                 // test (no_static_path + empty related_tests), run the bounded
@@ -1688,6 +1694,10 @@ impl RustAdapter {
             for probe in probes {
                 let mut finding = classifier::classify_probe(&probe, &index, true);
                 finding.language = Some(LanguageId::Rust);
+                // Repo mode seeds probes from the current tree, so every
+                // finding's source is candidate-side by construction
+                // (#3280).
+                finding.source_currentness = SourceCurrentness::CandidateCurrent;
                 // `language_status` is omitted for Rust per RIPR-SPEC-0026.
                 // RIPR-SPEC-0114 + 0115 + 0117: no_static_path limitation
                 // disclosure for repo-mode (same logic as diff-mode).
@@ -3280,6 +3290,7 @@ let _ = (result, note, raw);"##,
             observed_sink: None,
             oracle_alignment: None,
             alignment_reason: None,
+            source_currentness: crate::domain::SourceCurrentness::UnresolvedSubject,
         }
     }
 

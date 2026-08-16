@@ -72,6 +72,7 @@ fn finding(class: ExposureClass, related: Vec<RelatedTest>) -> Finding {
         observed_sink: None,
         oracle_alignment: None,
         alignment_reason: None,
+        source_currentness: crate::domain::SourceCurrentness::UnresolvedSubject,
     }
 }
 

@@ -105,7 +105,8 @@
         "kind": "rust_macro_wrapped_assertion_unresolved",
         "last_established_edge": "test `test_inner_with_custom_assertion_macro` (tests/it.rs:8) -> assertion macro `assert_result!` at tests/it.rs:10",
         "non_claim": "named limitation only; ripr cannot confirm or deny that the macro assertion discriminates the change"
-      }
+      },
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_internal.rs:predicate:10b08bc9",
@@ -202,7 +203,8 @@
         "kind": "rust_macro_wrapped_assertion_unresolved",
         "last_established_edge": "test `test_inner_with_custom_assertion_macro` (tests/it.rs:8) -> assertion macro `assert_result!` at tests/it.rs:10",
         "non_claim": "named limitation only; ripr cannot confirm or deny that the macro assertion discriminates the change"
-      }
+      },
+      "source_currentness": "base_deleted"
     }
   ]
 }

@@ -145,7 +145,8 @@
       "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `base == 0`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "typescript",
       "language_status": "preview",
-      "owner_kind": "function"
+      "owner_kind": "function",
+      "source_currentness": "unresolved_subject"
     }
   ],
   "preview_languages": [

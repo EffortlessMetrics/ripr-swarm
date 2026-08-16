@@ -131,7 +131,8 @@
       "changed_sink": "code, NO:{code}",
       "observed_sink": "assert len(status_label(7)) == 4",
       "oracle_alignment": "orthogonal",
-      "alignment_reason": "strong_oracle_observes_different_sink"
+      "alignment_reason": "strong_oracle_observes_different_sink",
+      "source_currentness": "unresolved_subject"
     }
   ],
   "preview_languages": [

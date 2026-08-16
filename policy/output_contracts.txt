@@ -66,6 +66,10 @@ schema_version|0.2|Current check JSON schema version.
 severity|info|Output and LSP severity value.
 severity|note|Output and LSP severity value.
 severity|warning|Output and LSP severity value.
+source_currentness|base_deleted|Finding source removed on the candidate side; base-side evidence, not a candidate edit target (#3280).
+source_currentness|candidate_current|Finding source present in the candidate source at the recorded location (#3280).
+source_currentness|moved_or_renamed|Movement evidence exists but candidate identity unproven; not a candidate edit target (#3280).
+source_currentness|unresolved_subject|Producing surface does not resolve source currentness; explicit unknown (#3280).
 stage_state|not_applicable|RIPR stage state value.
 stage_state|no|RIPR stage state value.
 stage_state|opaque|RIPR stage state value.

@@ -88,7 +88,8 @@
       "oracle_strength": "none",
       "recommended_next_step": "Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect.",
       "suggested_next_action": "Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect.",
-      "language": "rust"
+      "language": "rust",
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_lib.rs:return_value:e88897cd",
@@ -178,7 +179,8 @@
       "oracle_strength": "strong",
       "recommended_next_step": "",
       "suggested_next_action": "",
-      "language": "rust"
+      "language": "rust",
+      "source_currentness": "candidate_current"
     }
   ]
 }

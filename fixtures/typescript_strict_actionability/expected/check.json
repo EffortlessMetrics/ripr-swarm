@@ -119,7 +119,8 @@
       "suggested_next_action": "TypeScript preview advisory: no test references the changed owner; add a test that calls the owner and asserts the changed behavior with `toBe` / `toEqual` before any repair packet is emitted.",
       "language": "typescript",
       "language_status": "preview",
-      "owner_kind": "function"
+      "owner_kind": "function",
+      "source_currentness": "unresolved_subject"
     },
     {
       "id": "probe:src_observed.ts:typescript_preview:d09a8abb",
@@ -237,7 +238,8 @@
       "suggested_next_action": "TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.",
       "language": "typescript",
       "language_status": "preview",
-      "owner_kind": "function"
+      "owner_kind": "function",
+      "source_currentness": "unresolved_subject"
     },
     {
       "id": "probe:src_pricing.ts:typescript_preview:eaef2ad8",
@@ -374,7 +376,8 @@
       "suggested_next_action": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for missing discriminator `amount == threshold`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "typescript",
       "language_status": "preview",
-      "owner_kind": "function"
+      "owner_kind": "function",
+      "source_currentness": "unresolved_subject"
     }
   ],
   "preview_languages": [

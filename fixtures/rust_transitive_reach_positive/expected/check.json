@@ -64,7 +64,8 @@
         "kind": "rust_integration_public_api_path_unresolved",
         "last_established_edge": "test `test_outer_returns_difference` (tests/it.rs:4) -> entry `outer`",
         "non_claim": "named limitation only; ripr cannot confirm or deny that this path observes the change"
-      }
+      },
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_internal.rs:predicate:10b08bc9",
@@ -120,7 +121,8 @@
         "kind": "rust_integration_public_api_path_unresolved",
         "last_established_edge": "test `test_outer_returns_difference` (tests/it.rs:4) -> entry `outer`",
         "non_claim": "named limitation only; ripr cannot confirm or deny that this path observes the change"
-      }
+      },
+      "source_currentness": "base_deleted"
     }
   ]
 }

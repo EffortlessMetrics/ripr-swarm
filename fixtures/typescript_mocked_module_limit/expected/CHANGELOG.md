@@ -394,3 +394,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending
+
+Reason:
+RIPR-SPEC-0151: additive per-finding source_currentness disposition (#3280); removed-only Rust probes record the base-side line coordinate
+
+Command:
+`cargo xtask goldens bless typescript_mocked_module_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
