@@ -77,26 +77,45 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `0.4` → `0.5`: error-variant discriminators changed from surrounding
 /// expressions to producer-owned exact identities; old classified seams must
 /// not be reused by full or compact consumers.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "0.6";
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.2";
+/// `0.6` → `0.7`: inline `#[cfg(test)]` source role (#3273) and
+/// helper-evidence eligibility (#3286) changed classified-seam semantics
+/// while the package version stayed `0.10.0`; old full classified entries
+/// may carry pre-#3273 production roles and pre-#3286 relations and must
+/// not be reused.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "0.7";
+/// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
+/// #3286) — sharded entries derive from the same facts and cannot bypass
+/// the outer generation bump.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.3";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
 /// under a separate directory because the evidence payload is intentionally
 /// compact and must never satisfy full repo-exposure consumers.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.3";
+/// `0.3` → `0.4`: compact evidence derives from the same facts as the full
+/// cache — the #3273 source-role and #3286 helper-evidence changes
+/// invalidate prior compact entries at package `0.10.0`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.4";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
 /// per-class counts so badge endpoints never need to deserialize the
 /// multi-hundred-megabyte evidence cache.
+/// `0.1` → `0.2`: class counts shifted with the #3273 source-role change
+/// at package `0.10.0`; prior counts must not satisfy badge rendering.
 #[cfg(test)]
-const COUNT_CACHE_SCHEMA_VERSION: &str = "0.1";
+pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 
 /// Per-file fact cache schema. This is intentionally separate from the
 /// workspace-level classified seam cache so warm compute can reuse parser facts
 /// even when a full classified seam entry has not been written yet.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "0.2";
+/// `0.2` → `0.3`: `FunctionFact.is_test` widened from "has a test
+/// attribute" to "has a test attribute or lives in an inline `#[cfg(test)]`
+/// module" (#3273), and #3286 changed which of those functions the
+/// helper-evidence graph admits — both while the package version stayed
+/// `0.10.0`. Old per-file facts carry pre-#3273 role booleans and must
+/// miss so the corrected producer repopulates them.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "0.3";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -3319,5 +3338,173 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod generation_transition_tests {
+    use super::*;
+    use crate::analysis::syntax::RustSyntaxAdapter as _;
+
+    fn isolated_dir(label: &str) -> PathBuf {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!("ripr-cache-gen-{label}-{nanos}"))
+    }
+
+    fn cfg_test_helper_source() -> &'static str {
+        // The #3286 shape: a plain helper inside an inline #[cfg(test)]
+        // module mediating a #[test] -> owner relation.
+        "pub fn device_labels() -> Vec<&'static str> {\n  Vec::new()\n}\n\n#[cfg(test)]\nmod tests {\n  use super::*;\n\n  fn exercise_device_labels() -> Vec<&'static str> {\n    device_labels()\n  }\n\n  #[test]\n  fn helper_reaches_device_labels() {\n    let labels = exercise_device_labels();\n    assert!(labels.is_empty());\n  }\n}\n"
+    }
+
+    #[test]
+    fn previous_generation_file_fact_envelope_with_identical_identity_is_a_miss()
+    -> Result<(), String> {
+        // #3287: seed an envelope under the previous generation with the
+        // same package/path/content identity, then prove the current
+        // generation cannot return it — even if the file were copied into
+        // the current directory, the embedded key identity mismatches.
+        let dir = isolated_dir("gen-file-fact");
+        let _ = std::fs::remove_dir_all(&dir);
+        let cache = RepoFileFactCache::at_dir(dir.clone());
+        let file = Path::new("src/labels.rs");
+        let content = cfg_test_helper_source().as_bytes().to_vec();
+        let previous_key = RepoFileFactCacheKey {
+            schema_version: "0.2".to_string(),
+            analyzer_version: env!("CARGO_PKG_VERSION").to_string(),
+            file_path: file.to_path_buf(),
+            content_hash: content_hash_for(&content),
+        };
+        let previous_facts = FileFacts::default();
+        cache.store_file_facts(&previous_key, &previous_facts)?;
+        // The stale envelope stays on disk...
+        assert!(cache.entry_path(&previous_key).exists());
+
+        // ...but the current-generation key with identical package, path,
+        // and content identity must miss.
+        let current_key = RepoFileFactCacheKey::new(file, &content);
+        assert_ne!(previous_key.schema_version, current_key.schema_version);
+        match cache.load_file_facts(&current_key) {
+            CacheLoad::Miss => {}
+            other => {
+                return Err(format!(
+                    "expected Miss across the generation transition, got {other:?}"
+                ));
+            }
+        }
+        // And the stale entry itself, loaded by its own key, no longer
+        // satisfies current analysis identity: it can only be reached by
+        // the previous key, which current code never constructs.
+        match cache.load_file_facts(&previous_key) {
+            CacheLoad::Hit(_) => {}
+            other => {
+                return Err(format!(
+                    "seed sanity: previous key should still read its own envelope, got {other:?}"
+                ));
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn cold_current_run_then_warm_rerun_preserves_3286_semantics() -> Result<(), String> {
+        // #3287: cold populate under the current generation from the real
+        // indexer, warm-load the same identity, and prove the #3273/#3286
+        // semantics survive as a genuine cache hit.
+        let dir = isolated_dir("gen-cold-warm");
+        let _ = std::fs::remove_dir_all(&dir);
+        let cache = RepoFileFactCache::at_dir(dir.clone());
+        let file = Path::new("src/labels.rs");
+        let content = cfg_test_helper_source().as_bytes().to_vec();
+        let key = RepoFileFactCacheKey::new(file, &content);
+
+        // Cold: current producer facts carry the corrected semantics.
+        let parsed = crate::analysis::syntax::RaRustSyntaxAdapter
+            .summarize_file(
+                file,
+                std::str::from_utf8(&content).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| format!("parse fixture: {error}"))?;
+        cache.store_file_facts(&key, &parsed)?;
+        let warm = match cache.load_file_facts(&key) {
+            CacheLoad::Hit(facts) => facts,
+            other => return Err(format!("expected warm Hit, got {other:?}")),
+        };
+        let helper = warm
+            .functions
+            .iter()
+            .find(|function| function.name == "exercise_device_labels")
+            .ok_or("helper missing from warm facts")?;
+        assert!(helper.is_test, "warm hit keeps the #3273 evidence role");
+        assert!(
+            !warm
+                .tests
+                .iter()
+                .any(|test| test.name == "exercise_device_labels"),
+            "warm hit keeps TestFact reserved for actual tests"
+        );
+        assert!(
+            warm.tests
+                .iter()
+                .any(|test| test.name == "helper_reaches_device_labels"),
+            "warm hit keeps the real test as an executable selector"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn generation_law_follows_env_relocation_and_sharded_paths() -> Result<(), String> {
+        // #3287: RIPR_CACHE_DIR relocation and sharded classified paths
+        // obey the same generation law.
+        let relocated = cache_base_dir_from_env(Path::new("/ws"), Ok("/custom/cache".to_string()));
+        assert_eq!(relocated, PathBuf::from("/custom/cache"));
+
+        let full = RepoSeamFactCache::at(Path::new("/ws"));
+        assert!(
+            full.dir.ends_with(CACHE_SCHEMA_VERSION),
+            "full cache directory must be generation-scoped: {:?}",
+            full.dir
+        );
+        assert!(
+            full.sharded_dir
+                .ends_with(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION),
+            "sharded paths must be generation-scoped: {:?}",
+            full.sharded_dir
+        );
+        let mut outer = full.sharded_dir.ancestors();
+        let _ = outer.next();
+        assert!(
+            outer
+                .next()
+                .is_some_and(|component| component.ends_with(CACHE_SCHEMA_VERSION)),
+            "sharded paths embed the outer generation and cannot bypass it: {:?}",
+            full.sharded_dir
+        );
+
+        let compact = RepoSeamFactCache::at_compact_classified(Path::new("/ws"));
+        assert!(
+            compact
+                .dir
+                .ends_with(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION),
+            "compact cache directory must be generation-scoped: {:?}",
+            compact.dir
+        );
+        Ok(())
+    }
+
+    fn content_hash_for(content: &[u8]) -> String {
+        use std::fmt::Write as _;
+        let digest = <sha2::Sha256 as sha2::Digest>::digest(content);
+        let mut hex = String::with_capacity(digest.len() * 2);
+        for byte in digest {
+            let _ = write!(hex, "{byte:02x}");
+        }
+        hex
     }
 }
