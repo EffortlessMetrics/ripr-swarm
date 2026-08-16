@@ -75,6 +75,11 @@ pub fn check_workspace_repo_with_config(
 /// disk artifacts as needed, so this avoids running `run_repo_analysis`
 /// to compute legacy `Findings` those formats discard. The rest of the
 /// fields are populated for schema-consistency only.
+///
+/// This helper performs no analysis, so a [`crate::GitCandidateSubject`]
+/// on the input is not consumed or validated here (#3276): callers reach
+/// the subject's fail-closed boundary only through the `check_workspace*`
+/// entry points.
 pub fn repo_seam_inventory_input(input: CheckInput) -> CheckOutput {
     output_builder::check_output_from_analysis(
         input,
