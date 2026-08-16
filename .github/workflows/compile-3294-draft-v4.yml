@@ -23,6 +23,22 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Verify candidate transport chunks
+        shell: bash
+        run: |
+          wc -c .github/3294-draft-v4/part-*
+          sha256sum .github/3294-draft-v4/part-*
+          cat > /tmp/3294-chunks.sha256 <<'EOF'
+          44ca1a513bc204c1b56bff983a6e0435828794f4f6e1d252817e56748655a522  .github/3294-draft-v4/part-00
+          06d3d3771e3764d41a89c8ace6f7205ddc844c66d07c5cdbca40997e92993740  .github/3294-draft-v4/part-01
+          77333ce04f5cf3b3a142f7fb44b0b4778f94754f7e0549b3ae0d97254f6149a6  .github/3294-draft-v4/part-02
+          45885e2d774a5f8703f3b497d0b454b7797442a445a6c77f80f25eaf810337d7  .github/3294-draft-v4/part-03
+          68b35a0a627e5c12028499ed416969d7b41c0914eccda1a2bb2adea3cf58ae40  .github/3294-draft-v4/part-04
+          85fedb4567adda46c4908ffbfddec5e598e86b3b7c89a5601891da82d7eb7227  .github/3294-draft-v4/part-05
+          396bb6de82979b814b30659a93aee33d71e3358ff7bab176e008dd7d025d3a13  .github/3294-draft-v4/part-06
+          EOF
+          sha256sum -c /tmp/3294-chunks.sha256
+
       - name: Reassemble and verify exact candidate patch
         shell: bash
         run: |
