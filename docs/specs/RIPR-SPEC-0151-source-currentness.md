@@ -108,8 +108,9 @@ check schema version.
   `SOURCE_CURRENTNESS_VALUES`, the serde contract, and the
   backward-compatible `Finding` field.
 - `crates/ripr/src/analysis/probes/diff.rs` resolves the disposition from
-  diff evidence and records the base-side coordinate for removed-only
-  probes.
+  diff evidence while retaining the projected new-side coordinate for
+  removed-only probes; the disposition carries base-side semantics until
+  #3281 re-coordinates consumer surfaces.
 - `crates/ripr/src/analysis/language/rust.rs` wires the resolution into the
   diff loop and marks repo-mode findings candidate-current.
 - `crates/ripr/src/output/json/report.rs` emits the field;

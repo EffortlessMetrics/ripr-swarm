@@ -327,8 +327,9 @@ pub struct Finding {
     /// that observed the diff evidence; `UnresolvedSubject` is the explicit
     /// unknown for surfaces that do not resolve it and the
     /// backward-compatibility default for artifacts written before the
-    /// field existed. A `BaseDeleted` or `MovedOrRenamed` finding is
-    /// base-side evidence, not a candidate edit target.
+    /// field existed. A `BaseDeleted` finding is base-side evidence; a
+    /// `MovedOrRenamed` finding carries unresolved movement evidence.
+    /// Neither is a candidate edit target.
     #[serde(default)]
     pub source_currentness: SourceCurrentness,
 }
@@ -345,8 +346,9 @@ pub enum SourceCurrentness {
     /// at the recorded location; the location is a candidate edit target.
     CandidateCurrent,
     /// The expression was removed on the candidate side. The retained
-    /// evidence is base-side: it carries the base coordinate and is not a
-    /// candidate edit target.
+    /// evidence is base-side and is not a candidate edit target. In the C1
+    /// producer slice, the recorded probe coordinate remains the projected
+    /// new-side coordinate; consumer re-coordination is owned by #3281.
     BaseDeleted,
     /// Movement evidence exists (the same expression re-appears elsewhere
     /// in the candidate file), but the producer cannot prove the candidate
