@@ -16,5 +16,6 @@ pub(crate) fn analysis_options_from_input_and_config(
         perl_facts_path: input.perl_facts_path.clone(),
         git_timeout: input.git_timeout,
         git_candidate: input.git_candidate.clone(),
+        production_like_targets: config.analysis().production_like_targets().clone(),
     }
 }

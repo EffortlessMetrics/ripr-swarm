@@ -67,11 +67,18 @@ const LATENCY_TRACE_ENV: &str = "RIPR_REPO_EXPOSURE_LATENCY_TRACE";
 /// Walk production Rust files at `root` and emit the raw seam inventory.
 /// Used by the `repo-seams-*` formats; the classified inventory used by
 /// `repo-exposure-*` formats lives in [`inventory_classified_seams_at`].
-pub(crate) fn inventory_seams_at(root: &Path) -> Result<Vec<RepoSeam>, String> {
+pub(crate) fn inventory_seams_at_with_config(
+    root: &Path,
+    config: &RiprConfig,
+) -> Result<Vec<RepoSeam>, String> {
     let rust_files = workspace::discover_rust_files(root)?;
+    // Producer-owned source role (#3283).
+    let mut context =
+        workspace::context_for_files(root, rust_files.iter().map(|path| path.as_path()));
+    context.production_like_targets = config.analysis().production_like_targets().clone();
     let production_files: Vec<PathBuf> = rust_files
         .iter()
-        .filter(|p| workspace::is_production_rust_path(p))
+        .filter(|p| workspace::classify_with(p, &context).seeds_production_findings())
         .cloned()
         .collect();
 
@@ -544,9 +551,13 @@ fn inventory_seam_grip_class_counts_uncached_with_config(
     config: &RiprConfig,
 ) -> Result<SeamGripClassCounts, String> {
     let rust_files = workspace::discover_rust_files(root)?;
+    // Producer-owned source role (#3283).
+    let mut context =
+        workspace::context_for_files(root, rust_files.iter().map(|path| path.as_path()));
+    context.production_like_targets = config.analysis().production_like_targets().clone();
     let production_files: Vec<PathBuf> = rust_files
         .iter()
-        .filter(|p| workspace::is_production_rust_path(p))
+        .filter(|p| workspace::classify_with(p, &context).seeds_production_findings())
         .cloned()
         .collect();
 
@@ -567,7 +578,7 @@ fn inventory_compact_classified_seams_from_state_with_config(
     state: &OwnedWorkspaceState,
     config: &RiprConfig,
 ) -> Result<(Vec<ClassifiedSeam>, Vec<PathBuf>), String> {
-    let production_files = production_files_from_state(state);
+    let production_files = production_files_from_state_with_role(state, config);
     let build_started = Instant::now();
     trace_latency_phase(
         "file_fact_cache",
@@ -610,7 +621,7 @@ fn inventory_classified_seams_from_state_with_config(
     state: &OwnedWorkspaceState,
     config: &RiprConfig,
 ) -> Result<ClassifiedSeamInventory, String> {
-    let production_files = production_files_from_state(state);
+    let production_files = production_files_from_state_with_role(state, config);
     let build_started = Instant::now();
     trace_latency_phase(
         "file_fact_cache",
@@ -786,7 +797,7 @@ pub(crate) fn inventory_diff_scoped_classified_seams_at_with_config(
     let state = collect_workspace_state(root, config)?;
     let workspace_cache_key = state.cache_key();
     let total_rust_files = state.files.len();
-    let production_files = production_files_from_state(&state);
+    let production_files = production_files_from_state_with_role(&state, config);
     let total_production_files = production_files.len();
     let production_file_set = production_files
         .iter()
@@ -1029,7 +1040,7 @@ fn inventory_seam_grip_class_counts_from_state_with_config(
     state: &OwnedWorkspaceState,
     config: &RiprConfig,
 ) -> Result<SeamGripClassCounts, String> {
-    let production_files = production_files_from_state(state);
+    let production_files = production_files_from_state_with_role(state, config);
     let build_started = Instant::now();
     trace_latency_phase(
         "file_fact_cache",
@@ -1059,12 +1070,22 @@ fn inventory_seam_grip_class_counts_from_state_with_config(
     Ok(counts)
 }
 
-fn production_files_from_state(state: &OwnedWorkspaceState) -> Vec<PathBuf> {
+fn production_files_from_state_with_role(
+    state: &OwnedWorkspaceState,
+    config: &RiprConfig,
+) -> Vec<PathBuf> {
+    // Producer-owned source role (#3283): layout plus declared Cargo
+    // targets plus the repository production-like opt-in.
+    let mut context = workspace::context_for_files(
+        &state.workspace_root,
+        state.files.iter().map(|(path, _)| path.as_path()),
+    );
+    context.production_like_targets = config.analysis().production_like_targets().clone();
     state
         .files
         .iter()
         .map(|(path, _)| path)
-        .filter(|path| workspace::is_production_rust_path(path))
+        .filter(|path| workspace::classify_with(path, &context).seeds_production_findings())
         .cloned()
         .collect()
 }

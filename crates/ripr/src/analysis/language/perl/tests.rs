@@ -61,6 +61,7 @@ fn packet_test_options() -> crate::analysis::AnalysisOptions {
         perl_facts_path: None,
         git_timeout: None,
         git_candidate: None,
+        production_like_targets: Default::default(),
     }
 }
 

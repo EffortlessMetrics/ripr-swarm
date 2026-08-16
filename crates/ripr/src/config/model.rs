@@ -80,9 +80,19 @@ impl RiprConfig {
 pub struct AnalysisConfig {
     pub mode: Option<Mode>,
     pub include_unchanged_tests: Option<bool>,
+    /// Workspace-relative targets opted in as production-like
+    /// test infrastructure (#3283). Empty by default.
+    pub production_like_targets: std::collections::BTreeSet<std::path::PathBuf>,
 }
 
 impl AnalysisConfig {
+    /// Explicit production-like test-infrastructure opt-in (#3283):
+    /// workspace-relative targets analyzed as production behavior.
+    pub(crate) fn production_like_targets(
+        &self,
+    ) -> &std::collections::BTreeSet<std::path::PathBuf> {
+        &self.production_like_targets
+    }
     pub(crate) fn mode(&self) -> Option<&Mode> {
         self.mode.as_ref()
     }
@@ -528,7 +538,7 @@ pub struct CheckInputExplicit {
 /// same PR. The classification is closed: the field enumerator destructures
 /// every config struct without `..`, so an unclassified field fails to
 /// compile, and a unit test pins the resulting role of every field.
-pub const CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION: u32 = 1;
+pub const CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION: u32 = 2;
 
 /// How one `ripr.toml` field participates in the check-artifact identity gate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -585,6 +595,7 @@ impl RiprConfig {
         let AnalysisConfig {
             mode: _,
             include_unchanged_tests: _,
+            production_like_targets,
         } = analysis;
         let OraclePolicy {
             snapshot_strength,
@@ -655,6 +666,18 @@ impl RiprConfig {
                 role: ConfigIdentityRole::CapturedElsewhere,
                 value: None,
                 note: "resolved into the artifact identity analysis input options via CheckInput",
+            },
+            ConfigIdentityField {
+                name: "analysis.production_like_targets",
+                role: ConfigIdentityRole::FindingAffecting,
+                value: Some(
+                    production_like_targets
+                        .iter()
+                        .map(|path| path.to_string_lossy().to_string())
+                        .collect::<Vec<_>>()
+                        .join(","),
+                ),
+                note: "the production-like opt-in changes which files are production subjects (#3283)",
             },
             ConfigIdentityField {
                 name: "oracles.snapshot_strength",

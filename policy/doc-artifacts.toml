@@ -699,3 +699,11 @@ path = "docs/specs/RIPR-SPEC-0152-candidate-actionable-projection.md"
 status = "proposed"
 owner = "product-swarm"
 standalone_reason = "Issue #3281 projection slice for #3212: one Finding::is_candidate_actionable predicate gates every actionability-bearing surface; TS/JS/Python producers resolve candidate_current from head-side delta evidence, Perl remains the explicit unresolved unknown, base-side evidence stays visible with revision labels while never becoming an obligation, and denominators keep every finding."
+
+[[artifact]]
+id = "RIPR-SPEC-0153"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0153-rust-source-role.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #3283 S2 slice for #3213: one producer-owned typed source role classifies Cargo tests, benches, examples, fixtures, and explicit production-like opt-ins; diff probe seeding and repo seam inventory route through it, declared Cargo targets confirm evidence outside default layouts, filename conventions alone never classify, and evidence files stay fully indexed with TestFact semantics untouched."

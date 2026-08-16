@@ -8109,3 +8109,32 @@ metrics = [
   "unit_test_pass_rate",
   "golden_fixture_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0153"
+name = "Rust producer-owned source role"
+spec = "docs/specs/RIPR-SPEC-0153-rust-source-role.md"
+tests = [
+  "crates/ripr/src/analysis/workspace/source_role.rs::tests::layout_classifies_evidence_and_production",
+  "crates/ripr/src/analysis/workspace/source_role.rs::tests::cargo_autodiscovery_shapes_govern_benches_and_examples",
+  "crates/ripr/src/analysis/workspace/source_role.rs::tests::declared_targets_and_opt_in_override_layout",
+  "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::explicit_test_and_bench_paths_are_extracted",
+  "crates/ripr/src/analysis/language/rust.rs::tests::diff_analysis_treats_cargo_benches_as_evidence_not_production",
+  "crates/ripr/src/analysis/language/rust.rs::tests::diff_analysis_confirms_declared_test_targets_but_not_unconfirmed_names",
+  "crates/ripr/src/analysis/language/rust.rs::tests::diff_analysis_opt_in_restores_production_like_analysis",
+  "crates/ripr/src/config/tests.rs::parse_config_reads_production_like_targets",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/workspace/source_role.rs",
+  "crates/ripr/src/analysis/workspace/cargo_targets.rs",
+  "crates/ripr/src/analysis/language/rust.rs",
+  "crates/ripr/src/analysis/seam_inventory.rs",
+  "crates/ripr/src/config.rs",
+  "crates/ripr/src/config/model.rs",
+]
+outputs = []
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]
