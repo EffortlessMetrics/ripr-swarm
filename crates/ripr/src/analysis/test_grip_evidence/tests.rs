@@ -11783,14 +11783,19 @@ mod tests {
     let evidence = evidence_for_seam(return_seam, &index);
 
     assert_eq!(evidence.reach.state, StageState::Yes);
-    assert!(
-        evidence
-            .related_tests
-            .iter()
-            .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
-        "cfg(test)-module helper must keep mediating the helper owner-call relation: {:?}",
-        evidence.related_tests
-    );
+    let helper_relation = evidence
+        .related_tests
+        .iter()
+        .find(|test| test.relation_reason == RelationReason::HelperOwnerCall)
+        .ok_or_else(|| {
+            format!(
+                "cfg(test)-module helper must keep mediating the helper owner-call relation: {:?}",
+                evidence.related_tests
+            )
+        })?;
+    assert_eq!(helper_relation.test_name, "helper_reaches_device_labels");
+    assert_eq!(helper_relation.oracle_kind, OracleKind::RelationalCheck);
+    assert_eq!(helper_relation.oracle_strength, OracleStrength::Weak);
     assert!(
         !index
             .tests
