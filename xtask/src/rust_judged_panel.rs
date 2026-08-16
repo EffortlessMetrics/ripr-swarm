@@ -1167,7 +1167,7 @@ mod tests {
     fn symlink_file(source: &Path, target: &Path) -> Result<bool, String> {
         match std::os::windows::fs::symlink_file(source, target) {
             Ok(()) => Ok(true),
-            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(false),
+            Err(error) if symlink_unsupported(&error) => Ok(false),
             Err(error) => Err(error.to_string()),
         }
     }
@@ -1183,10 +1183,24 @@ mod tests {
     fn symlink_dir(source: &Path, target: &Path) -> Result<bool, String> {
         match std::os::windows::fs::symlink_dir(source, target) {
             Ok(()) => Ok(true),
-            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(false),
+            Err(error) if symlink_unsupported(&error) => Ok(false),
             Err(error) => Err(error.to_string()),
         }
     }
+
+    /// Windows maps `ERROR_PRIVILEGE_NOT_HELD` (1314) to an `ErrorKind` that
+    /// is not `PermissionDenied` on this toolchain, so both the kind and the
+    /// raw code must read as "symlinks unsupported" for the
+    /// `*_when_supported` tests to skip instead of fail (#3289).
+    #[cfg(windows)]
+    fn symlink_unsupported(error: &std::io::Error) -> bool {
+        error.kind() == std::io::ErrorKind::PermissionDenied
+            || error.raw_os_error() == Some(WINDOWS_ERROR_PRIVILEGE_NOT_HELD)
+    }
+
+    /// `ERROR_PRIVILEGE_NOT_HELD`.
+    #[cfg(windows)]
+    const WINDOWS_ERROR_PRIVILEGE_NOT_HELD: i32 = 1314;
 
     fn valid_item(
         id: &str,

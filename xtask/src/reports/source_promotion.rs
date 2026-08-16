@@ -1453,7 +1453,13 @@ mod tests {
 
     #[test]
     fn fixture_points_to_source_promotion_spec() -> Result<(), String> {
-        let text = fs::read_to_string("../fixtures/source_promotion/SPEC.md")
+        // Compile-time-absolute: other tests change the process CWD under
+        // the CWD write guard, and a CWD-relative read races them (#3289).
+        let spec = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../fixtures/source_promotion/SPEC.md"
+        );
+        let text = fs::read_to_string(spec)
             .map_err(|error| format!("failed to read source-promotion fixture: {error}"))?;
         if !text
             .lines()
@@ -1569,7 +1575,13 @@ mod tests {
 
     #[test]
     fn fixture_receipt_contract_is_discriminating() -> Result<(), String> {
-        let text = fs::read_to_string("../fixtures/source_promotion/diverged-conflict.json")
+        // Compile-time-absolute for the same CWD-race reason as the spec
+        // read above (#3289).
+        let fixture = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../fixtures/source_promotion/diverged-conflict.json"
+        );
+        let text = fs::read_to_string(fixture)
             .map_err(|error| format!("failed to read source-promotion fixture: {error}"))?;
         let value: serde_json::Value = serde_json::from_str(&text)
             .map_err(|error| format!("failed to parse source-promotion fixture: {error}"))?;
