@@ -83,7 +83,8 @@
       "changed_sink": "amount",
       "observed_sink": "assert calculate_total(10) == 17",
       "oracle_alignment": "direct",
-      "alignment_reason": "strong_oracle_observes_owner_name"
+      "alignment_reason": "strong_oracle_observes_owner_name",
+      "source_currentness": "unresolved_subject"
     }
   ],
   "preview_languages": [

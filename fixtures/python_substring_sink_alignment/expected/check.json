@@ -131,7 +131,8 @@
       "changed_sink": "len, buffer, limit",
       "observed_sink": "assert buffered_output == [1, 2]",
       "oracle_alignment": "orthogonal",
-      "alignment_reason": "strong_oracle_observes_different_sink"
+      "alignment_reason": "strong_oracle_observes_different_sink",
+      "source_currentness": "unresolved_subject"
     }
   ],
   "preview_languages": [

@@ -1348,6 +1348,10 @@ pub(crate) fn bun_cross_language_finding_for_changed_rust_line_with_profile(
         observed_sink: None,
         oracle_alignment: None,
         alignment_reason: None,
+        // Source currentness is resolved by the producer that observed the diff
+        // evidence; this constructor has none, so the disposition stays the
+        // explicit unknown (#3280).
+        source_currentness: crate::domain::SourceCurrentness::UnresolvedSubject,
     })
 }
 

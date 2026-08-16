@@ -87,7 +87,8 @@
       "oracle_strength": "weak",
       "recommended_next_step": "Strengthen the related assertion so it discriminates the changed behavior.",
       "suggested_next_action": "Strengthen the related assertion so it discriminates the changed behavior.",
-      "language": "rust"
+      "language": "rust",
+      "source_currentness": "base_deleted"
     },
     {
       "id": "probe:src_lib.rs:return_value:8ed284d1",
@@ -156,7 +157,8 @@
       "oracle_strength": "weak",
       "recommended_next_step": "Escalate to real mutation testing or deep static analysis for this probe.",
       "suggested_next_action": "Escalate to real mutation testing or deep static analysis for this probe.",
-      "language": "rust"
+      "language": "rust",
+      "source_currentness": "candidate_current"
     }
   ]
 }

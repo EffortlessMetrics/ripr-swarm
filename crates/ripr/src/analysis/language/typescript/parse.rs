@@ -120,5 +120,9 @@ pub(crate) fn unsupported_syntax_finding(
         observed_sink: None,
         oracle_alignment: None,
         alignment_reason: None,
+        // Source currentness is resolved by the producer that observed the diff
+        // evidence; this constructor has none, so the disposition stays the
+        // explicit unknown (#3280).
+        source_currentness: crate::domain::SourceCurrentness::UnresolvedSubject,
     }
 }

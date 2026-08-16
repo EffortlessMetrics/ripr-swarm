@@ -131,7 +131,8 @@
       "changed_sink": "render, name, verbose",
       "observed_sink": "assert render(\"Sam\", verbose=False) == \"Sam\"",
       "oracle_alignment": "direct",
-      "alignment_reason": "strong_oracle_observes_owner_name"
+      "alignment_reason": "strong_oracle_observes_owner_name",
+      "source_currentness": "unresolved_subject"
     }
   ],
   "preview_languages": [

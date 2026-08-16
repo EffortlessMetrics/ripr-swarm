@@ -83,7 +83,8 @@
       "changed_sink": "status, paid",
       "observed_sink": "assert invoice.status == \"paid\"",
       "oracle_alignment": "changed_sink_token",
-      "alignment_reason": "strong_oracle_observes_changed_sink_token"
+      "alignment_reason": "strong_oracle_observes_changed_sink_token",
+      "source_currentness": "unresolved_subject"
     }
   ],
   "preview_languages": [

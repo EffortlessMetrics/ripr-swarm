@@ -107,7 +107,8 @@
       "oracle_strength": "strong",
       "recommended_next_step": "Escalate to real mutation testing or deep static analysis for this probe.",
       "suggested_next_action": "Escalate to real mutation testing or deep static analysis for this probe.",
-      "language": "rust"
+      "language": "rust",
+      "source_currentness": "candidate_current"
     }
   ]
 }

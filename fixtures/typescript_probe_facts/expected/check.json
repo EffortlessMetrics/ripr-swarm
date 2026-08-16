@@ -133,7 +133,8 @@
       "suggested_next_action": "TypeScript preview advisory: add a test that exercises the changed behavior with an exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`); no actionable repair packet is emitted until the target shape is explicit.",
       "language": "typescript",
       "language_status": "preview",
-      "owner_kind": "function"
+      "owner_kind": "function",
+      "source_currentness": "unresolved_subject"
     },
     {
       "id": "probe:src_ambiguous.ts:typescript_preview:62d9564b",
@@ -253,7 +254,8 @@
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",
-      "static_limit_kind": "dynamic_dispatch"
+      "static_limit_kind": "dynamic_dispatch",
+      "source_currentness": "unresolved_subject"
     },
     {
       "id": "probe:src_errors.ts:typescript_preview:491cf8da",
@@ -391,7 +393,8 @@
       "suggested_next_action": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for missing discriminator `throws RangeError matching \"missing token\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "typescript",
       "language_status": "preview",
-      "owner_kind": "function"
+      "owner_kind": "function",
+      "source_currentness": "unresolved_subject"
     },
     {
       "id": "probe:src_notify.js:typescript_preview:2f0e6fff",
@@ -529,7 +532,8 @@
       "suggested_next_action": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for missing discriminator `mock interaction mockSend called with payload`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "javascript",
       "language_status": "preview",
-      "owner_kind": "function"
+      "owner_kind": "function",
+      "source_currentness": "unresolved_subject"
     },
     {
       "id": "probe:src_pricing.ts:typescript_preview:eaef2ad8",
@@ -666,7 +670,8 @@
       "suggested_next_action": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for missing discriminator `amount == threshold`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "typescript",
       "language_status": "preview",
-      "owner_kind": "function"
+      "owner_kind": "function",
+      "source_currentness": "unresolved_subject"
     },
     {
       "id": "probe:src_pricing.ts:typescript_preview:11e59c24",
@@ -804,7 +809,8 @@
       "suggested_next_action": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for missing discriminator `return value == amount - discount`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "typescript",
       "language_status": "preview",
-      "owner_kind": "function"
+      "owner_kind": "function",
+      "source_currentness": "unresolved_subject"
     },
     {
       "id": "probe:src_profile.ts:typescript_preview:7c5ce045",
@@ -942,7 +948,8 @@
       "suggested_next_action": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for missing discriminator `profile.status == status`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "typescript",
       "language_status": "preview",
-      "owner_kind": "function"
+      "owner_kind": "function",
+      "source_currentness": "unresolved_subject"
     },
     {
       "id": "probe:src_profile.ts:typescript_preview:be31b1f9",
@@ -1080,7 +1087,8 @@
       "suggested_next_action": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for missing discriminator `call audit.record includes status`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "typescript",
       "language_status": "preview",
-      "owner_kind": "function"
+      "owner_kind": "function",
+      "source_currentness": "unresolved_subject"
     },
     {
       "id": "probe:src_view.jsx:typescript_preview:48669bf1",
@@ -1218,7 +1226,8 @@
       "suggested_next_action": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for missing discriminator `log contains \"status-ready\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "javascript",
       "language_status": "preview",
-      "owner_kind": "component"
+      "owner_kind": "component",
+      "source_currentness": "unresolved_subject"
     },
     {
       "id": "probe:src_widget.tsx:typescript_preview:9044230b",
@@ -1356,7 +1365,8 @@
       "suggested_next_action": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for missing discriminator `status == \"ready\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "typescript",
       "language_status": "preview",
-      "owner_kind": "function"
+      "owner_kind": "function",
+      "source_currentness": "unresolved_subject"
     }
   ],
   "preview_languages": [

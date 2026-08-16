@@ -146,7 +146,8 @@
       "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `profile.status == status`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "typescript",
       "language_status": "preview",
-      "owner_kind": "function"
+      "owner_kind": "function",
+      "source_currentness": "unresolved_subject"
     },
     {
       "id": "probe:src_profile.ts:typescript_preview:be31b1f9",
@@ -284,7 +285,8 @@
       "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `call audit.record includes status`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "typescript",
       "language_status": "preview",
-      "owner_kind": "function"
+      "owner_kind": "function",
+      "source_currentness": "unresolved_subject"
     }
   ],
   "preview_languages": [

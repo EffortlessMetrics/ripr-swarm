@@ -701,6 +701,28 @@ The evidence-first fields are additive in schema `0.2`:
     "oracle_alignment": "orthogonal",
     "alignment_reason": "strong_oracle_observes_different_sink" }
   ```
+- `source_currentness` is an additive per-finding field (#3280, parent #3212)
+  that states which revision owns the finding's actionable source. It is
+  always emitted and does **not** bump `schema_version` (still `0.2`). The
+  value is a controlled enum (`SOURCE_CURRENTNESS_VALUES`):
+  - `candidate_current` — the finding's source expression is present in the
+    candidate (head-side) source at the recorded `probe.file`/`probe.line`;
+    the location is a candidate edit target.
+  - `base_deleted` — the expression was removed on the candidate side. The
+    retained evidence is base-side: `probe.line` records the **base-side**
+    coordinate, and the finding is not a candidate edit target.
+  - `moved_or_renamed` — the same expression re-appears elsewhere in the
+    candidate file, but the producer cannot prove the exact candidate
+    identity of the source; not a candidate edit target.
+  - `unresolved_subject` — the producing surface does not resolve source
+    currentness (preview-language findings today); the explicit unknown, and
+    the backward-compatibility value when reading artifacts written before
+    the field existed.
+  For Rust diff findings the disposition is resolved from the diff evidence
+  that seeded the probe; repo-mode findings are `candidate_current` by
+  construction (they seed from the current tree). In this slice the field is
+  informational for consumers: gate and actionability policy follow in the
+  #3212 projection slice.
 - `repair_placement` is an additive optional object for preview-language
   findings that can statically name a bounded test location and command before
   full repair-card projection. It currently appears for direct weak Python

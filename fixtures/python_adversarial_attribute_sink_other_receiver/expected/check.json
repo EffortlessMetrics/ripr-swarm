@@ -131,7 +131,8 @@
       "changed_sink": "status, active",
       "observed_sink": "assert conn.status == \"closed\"",
       "oracle_alignment": "orthogonal",
-      "alignment_reason": "strong_oracle_observes_different_sink"
+      "alignment_reason": "strong_oracle_observes_different_sink",
+      "source_currentness": "unresolved_subject"
     }
   ],
   "preview_languages": [

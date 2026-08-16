@@ -87,7 +87,8 @@
       "oracle_strength": "strong",
       "recommended_next_step": "",
       "suggested_next_action": "",
-      "language": "rust"
+      "language": "rust",
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_lib.rs:static_unknown:35a08f71",
@@ -166,7 +167,8 @@
       "oracle_strength": "unknown",
       "recommended_next_step": "Escalate to real mutation testing or deep static analysis for this probe.",
       "suggested_next_action": "Escalate to real mutation testing or deep static analysis for this probe.",
-      "language": "rust"
+      "language": "rust",
+      "source_currentness": "base_deleted"
     }
   ]
 }

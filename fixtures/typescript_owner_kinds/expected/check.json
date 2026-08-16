@@ -126,7 +126,8 @@
       "suggested_next_action": "TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.",
       "language": "typescript",
       "language_status": "preview",
-      "owner_kind": "arrow_function"
+      "owner_kind": "arrow_function",
+      "source_currentness": "unresolved_subject"
     },
     {
       "id": "probe:src_owners.ts:typescript_preview:bd728bcd",
@@ -264,7 +265,8 @@
       "suggested_next_action": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for missing discriminator `return value == this.items.length + 1`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "typescript",
       "language_status": "preview",
-      "owner_kind": "method"
+      "owner_kind": "method",
+      "source_currentness": "unresolved_subject"
     },
     {
       "id": "probe:src_owners.ts:typescript_preview:3416313c",
@@ -402,7 +404,8 @@
       "suggested_next_action": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for missing discriminator `return value == new Cart({ tracked: true })`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "typescript",
       "language_status": "preview",
-      "owner_kind": "class_method"
+      "owner_kind": "class_method",
+      "source_currentness": "unresolved_subject"
     },
     {
       "id": "probe:src_owners.ts:typescript_preview:961b59c7",
@@ -527,7 +530,8 @@
       "suggested_next_action": "TypeScript preview advisory: related module-initializer observer reaches `DEFAULT_RATE` but no safe target shape is available; add an exact value assertion for the exported value and keep the finding advisory until repair-card fields are complete.",
       "language": "typescript",
       "language_status": "preview",
-      "owner_kind": "module_function"
+      "owner_kind": "module_function",
+      "source_currentness": "unresolved_subject"
     }
   ],
   "preview_languages": [

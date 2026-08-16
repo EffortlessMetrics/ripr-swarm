@@ -680,6 +680,10 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
             observed_sink: None,
             oracle_alignment: None,
             alignment_reason: None,
+            // Source currentness is resolved by the producer that observed the diff
+            // evidence; this constructor has none, so the disposition stays the
+            // explicit unknown (#3280).
+            source_currentness: crate::domain::SourceCurrentness::UnresolvedSubject,
         });
     }
 

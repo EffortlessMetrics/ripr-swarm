@@ -70,7 +70,8 @@
       "static_limit_kind": "missing_import_graph",
       "changed_sink": "importlib, import_module, module_name, handle, payload, strict",
       "oracle_alignment": "unknown",
-      "alignment_reason": "no_strong_oracle"
+      "alignment_reason": "no_strong_oracle",
+      "source_currentness": "unresolved_subject"
     }
   ],
   "preview_languages": [

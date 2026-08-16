@@ -179,11 +179,20 @@ fn build_probe(
 ) -> Probe {
     let text = changed_line.text.trim();
     let delta = delta_for_family(&family);
-    // Use `new_side_line` for all index lookups and the SourceLocation: for
-    // added lines this equals `line`; for removed lines it is the new-file
-    // coordinate, which is what the RustIndex (built from the new file) and any
-    // IDE navigation into the new file require (RANK-1 fix, #1222).
+    // Use `new_side_line` for all index lookups: for added lines this equals
+    // `line`; for removed lines it is the new-file coordinate, which is what
+    // the RustIndex (built from the new file) requires (RANK-1 fix, #1222).
     let new_line = changed_line.new_side_line;
+    // A removed-only probe (`after == None`) records the base-side
+    // coordinate instead: its evidence lives in the base revision, and the
+    // projected new-side position is not a candidate edit target (#3280).
+    // Ids are content-addressed without line numbers, so this does not
+    // change finding identity.
+    let location_line = if after.is_none() {
+        changed_line.line
+    } else {
+        new_line
+    };
     let owner = context
         .changed_nodes
         .iter()
@@ -207,7 +216,7 @@ fn build_probe(
 
     Probe {
         id,
-        location: SourceLocation::new(context.root.join(&context.changed.path), new_line, 1),
+        location: SourceLocation::new(context.root.join(&context.changed.path), location_line, 1),
         owner,
         family,
         delta,
@@ -216,6 +225,39 @@ fn build_probe(
         expression: text.to_string(),
         expected_sinks,
         required_oracles,
+    }
+}
+
+/// Producer-owned source-currentness resolution for one diff probe
+/// (#3212 / #3280).
+///
+/// `after`-carrying probes are candidate-side by construction: the probe's
+/// expression is head-side code. Removed-only probes (`before` set, `after`
+/// absent) are base-side evidence: when the same trimmed expression
+/// re-appears among the file's added lines, movement evidence exists but the
+/// exact candidate identity of the source cannot be proven, so the probe is
+/// `MovedOrRenamed`; otherwise the source was deleted from the candidate and
+/// the probe is `BaseDeleted`. The defensive no-evidence shape stays the
+/// explicit unknown rather than guessing.
+pub(crate) fn resolve_probe_source_currentness(
+    changed: &ChangedFile,
+    probe: &Probe,
+) -> crate::domain::SourceCurrentness {
+    use crate::domain::SourceCurrentness;
+    match (&probe.after, &probe.before) {
+        (Some(_), _) => SourceCurrentness::CandidateCurrent,
+        (None, Some(before)) => {
+            let expression_moved = changed
+                .added_lines
+                .iter()
+                .any(|added| added.text.trim() == before.trim());
+            if expression_moved {
+                SourceCurrentness::MovedOrRenamed
+            } else {
+                SourceCurrentness::BaseDeleted
+            }
+        }
+        (None, None) => SourceCurrentness::UnresolvedSubject,
     }
 }
 
@@ -883,5 +925,155 @@ mod tests {
 
         let probes = probes_for_file(Path::new("workspace"), &changed, &RustIndex::default());
         assert!(probes.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod source_currentness_tests {
+    use super::super::super::diff::ChangedLine;
+    use super::super::super::rust_index::RustIndex;
+    use super::*;
+    use crate::domain::{ProbeFamily, SourceCurrentness, SymbolId};
+    use std::path::{Path, PathBuf};
+
+    fn removed_only_changed(line: usize, new_side_line: usize, text: &str) -> ChangedFile {
+        ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: vec![],
+            removed_lines: vec![ChangedLine {
+                line,
+                new_side_line,
+                text: text.to_string(),
+            }],
+        }
+    }
+
+    #[test]
+    fn removed_only_probe_records_base_side_line_and_resolves_base_deleted() -> Result<(), String> {
+        // The #3212 incident shape: a base expression at old line 29 whose
+        // candidate file only has 13 lines. The projected new-side
+        // coordinate must not be presented as the finding's location.
+        let changed = removed_only_changed(29, 13, "events.publish(invoice);");
+        let index = RustIndex::default();
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+        let Some(probe) = probes
+            .iter()
+            .find(|probe| probe.after.is_none() && probe.family == ProbeFamily::SideEffect)
+        else {
+            return Err("side-effect probe expected".to_string());
+        };
+        assert_eq!(
+            probe.location.line, 29,
+            "base-side evidence carries the base coordinate"
+        );
+        assert_eq!(
+            resolve_probe_source_currentness(&changed, probe),
+            SourceCurrentness::BaseDeleted
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn moved_expression_resolves_moved_or_renamed() -> Result<(), String> {
+        let mut changed = removed_only_changed(4, 4, "events.publish(invoice);");
+        // The same expression re-appears, non-adjacent, further down the
+        // candidate file: movement evidence exists, exact identity does not.
+        changed.added_lines.push(ChangedLine {
+            line: 50,
+            new_side_line: 50,
+            text: "events.publish(invoice);".to_string(),
+        });
+        let index = RustIndex::default();
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+        let Some(probe) = probes
+            .iter()
+            .find(|probe| probe.after.is_none() && probe.family == ProbeFamily::SideEffect)
+        else {
+            return Err("side-effect probe expected".to_string());
+        };
+        assert_eq!(
+            resolve_probe_source_currentness(&changed, probe),
+            SourceCurrentness::MovedOrRenamed
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn added_probe_keeps_new_side_line_and_resolves_candidate_current() -> Result<(), String> {
+        let changed = ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: vec![ChangedLine {
+                line: 7,
+                new_side_line: 7,
+                text: "events.publish(invoice);".to_string(),
+            }],
+            removed_lines: vec![],
+        };
+        // An index without the file keeps the added-line path on the lexical
+        // classifier, which is what seeds the side-effect family here.
+        let index = RustIndex::default();
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+        let Some(probe) = probes
+            .iter()
+            .find(|probe| probe.family == ProbeFamily::SideEffect)
+        else {
+            return Err("side-effect probe expected".to_string());
+        };
+        assert_eq!(probe.location.line, 7);
+        assert_eq!(
+            resolve_probe_source_currentness(&changed, probe),
+            SourceCurrentness::CandidateCurrent
+        );
+        // Reused line number with a different expression must not inherit
+        // base identity: ids are content-addressed over the expression.
+        let other = ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: vec![ChangedLine {
+                line: 7,
+                new_side_line: 7,
+                text: "ledger.persist(invoice);".to_string(),
+            }],
+            removed_lines: vec![],
+        };
+        let other_probes = probes_for_file(Path::new("workspace"), &other, &index);
+        let Some(other_probe) = other_probes
+            .iter()
+            .find(|probe| probe.family == ProbeFamily::SideEffect)
+        else {
+            return Err("side-effect probe expected".to_string());
+        };
+        assert_ne!(probe.id.0, other_probe.id.0);
+        Ok(())
+    }
+
+    #[test]
+    fn resolver_stays_unresolved_without_diff_evidence() {
+        let changed = ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: vec![],
+            removed_lines: vec![],
+        };
+        let bare = Probe {
+            id: diff_probe_id(
+                &changed.path,
+                &ProbeFamily::SideEffect,
+                Some(&SymbolId("owner".to_string())),
+                "x()",
+                1,
+            ),
+            location: SourceLocation::new(PathBuf::from("src/lib.rs"), 1, 1),
+            owner: None,
+            family: ProbeFamily::SideEffect,
+            delta: super::super::family::delta_for_family(&ProbeFamily::SideEffect),
+            before: None,
+            after: None,
+            expression: "x()".to_string(),
+            expected_sinks: vec![],
+            required_oracles: vec![],
+        };
+        assert_eq!(
+            resolve_probe_source_currentness(&changed, &bare),
+            SourceCurrentness::UnresolvedSubject
+        );
     }
 }

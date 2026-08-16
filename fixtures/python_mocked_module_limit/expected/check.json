@@ -70,7 +70,8 @@
       "static_limit_kind": "mocked_module",
       "changed_sink": "client, total_with_tax",
       "oracle_alignment": "unknown",
-      "alignment_reason": "no_strong_oracle"
+      "alignment_reason": "no_strong_oracle",
+      "source_currentness": "unresolved_subject"
     }
   ],
   "preview_languages": [

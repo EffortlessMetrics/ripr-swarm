@@ -87,7 +87,8 @@
       "oracle_strength": "strong",
       "recommended_next_step": "",
       "suggested_next_action": "",
-      "language": "rust"
+      "language": "rust",
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_lib.rs:return_value:e21dcccc",
@@ -166,7 +167,8 @@
       "oracle_strength": "strong",
       "recommended_next_step": "",
       "suggested_next_action": "",
-      "language": "rust"
+      "language": "rust",
+      "source_currentness": "candidate_current"
     }
   ]
 }

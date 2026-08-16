@@ -11910,7 +11910,7 @@ fn check_output_contracts() -> Result<(), String> {
             }
             "exposure_class" | "severity" | "probe_family" | "delta" | "flow_sink"
             | "stage_state" | "confidence" | "oracle_kind" | "oracle_strength" | "stop_reason"
-            | "value_context" | "oracle_alignment" => {
+            | "value_context" | "oracle_alignment" | "source_currentness" => {
                 require_contract_value(
                     "crates/ripr/src/domain/",
                     &domain,

@@ -97,7 +97,8 @@
       "oracle_strength": "unknown",
       "recommended_next_step": "Escalate to real mutation testing or deep static analysis for this probe.",
       "suggested_next_action": "Escalate to real mutation testing or deep static analysis for this probe.",
-      "language": "rust"
+      "language": "rust",
+      "source_currentness": "candidate_current"
     },
     {
       "id": "probe:src_lib.rs:return_value:d146b764",
@@ -186,7 +187,8 @@
       "oracle_strength": "strong",
       "recommended_next_step": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
       "suggested_next_action": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
-      "language": "rust"
+      "language": "rust",
+      "source_currentness": "candidate_current"
     }
   ]
 }

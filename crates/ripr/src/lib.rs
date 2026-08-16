@@ -132,7 +132,7 @@ pub use domain::{
     GitCandidateBase, GitCandidateDiffSemantics, GitCandidateSubject, GitCandidateSubjectError,
     GitHashFormat, GitObjectId, GitTreeish,
 };
-pub use domain::{LanguageFileCount, Summary};
+pub use domain::{LanguageFileCount, SourceCurrentness, Summary};
 pub use output::suppressions::CheckSuppressionOutcome;
 pub use output::suppressions::SuppressedCheckFinding;
 

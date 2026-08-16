@@ -602,115 +602,58 @@ fn finding_json_with_config_and_counts(
         &reconciled_step,
         true,
     );
-    let has_language = finding.language.is_some();
-    let has_status = finding.language_status.is_some();
-    let has_owner_kind = finding.owner_kind.is_some();
-    let has_static_limit_kind = finding.static_limit_kind.is_some();
-    let static_limitation = static_limitation_json_value(finding);
-    let has_static_limitation = static_limitation.is_some();
-    let has_changed_sink = finding.changed_sink.is_some();
-    let has_observed_sink = finding.observed_sink.is_some();
-    let has_oracle_alignment = finding.oracle_alignment.is_some();
-    let has_alignment_reason = finding.alignment_reason.is_some();
-    // The Python sink-alignment fields are the final optional fields, so every
-    // preceding optional field must also account for them when deciding whether
-    // to emit a trailing comma.
-    let has_alignment =
-        has_changed_sink || has_observed_sink || has_oracle_alignment || has_alignment_reason;
+    // `source_currentness` is always emitted as the final finding field
+    // (#3280), so every preceding optional field unconditionally carries a
+    // trailing comma.
     field(
         out,
         indent + 1,
         "suggested_next_action",
         &reconciled_step,
-        has_language
-            || has_status
-            || has_owner_kind
-            || has_static_limit_kind
-            || has_static_limitation
-            || has_alignment,
+        true,
     );
     if let Some(language) = finding.language {
-        field(
-            out,
-            indent + 1,
-            "language",
-            language.as_str(),
-            has_status
-                || has_owner_kind
-                || has_static_limit_kind
-                || has_static_limitation
-                || has_alignment,
-        );
+        field(out, indent + 1, "language", language.as_str(), true);
     }
     if let Some(status) = finding.language_status {
-        field(
-            out,
-            indent + 1,
-            "language_status",
-            status.as_str(),
-            has_owner_kind || has_static_limit_kind || has_static_limitation || has_alignment,
-        );
+        field(out, indent + 1, "language_status", status.as_str(), true);
     }
     if let Some(kind) = finding.owner_kind {
-        field(
-            out,
-            indent + 1,
-            "owner_kind",
-            kind.as_str(),
-            has_static_limit_kind || has_static_limitation || has_alignment,
-        );
+        field(out, indent + 1, "owner_kind", kind.as_str(), true);
     }
     if let Some(kind) = finding.static_limit_kind {
-        field(
-            out,
-            indent + 1,
-            "static_limit_kind",
-            kind.as_str(),
-            has_static_limitation || has_alignment,
-        );
+        field(out, indent + 1, "static_limit_kind", kind.as_str(), true);
     }
-    if let Some(static_limitation) = &static_limitation {
+    if let Some(static_limitation) = &static_limitation_json_value(finding) {
         json_value_field(out, indent + 1, "static_limitation", static_limitation);
-        if has_alignment {
-            out.push_str(",\n");
-        } else {
-            out.push('\n');
-        }
+        out.push_str(",\n");
     }
     // Python oracle sink-alignment (additive optional, RIPR-SPEC-0028): why a
     // strong oracle did or did not credit `exposed`. Present only on Python
     // findings; absent on Rust/TypeScript. `oracle_alignment` is a controlled
     // enum (`ORACLE_ALIGNMENT_VALUES`).
     if let Some(changed_sink) = &finding.changed_sink {
-        field(
-            out,
-            indent + 1,
-            "changed_sink",
-            changed_sink,
-            has_observed_sink || has_oracle_alignment || has_alignment_reason,
-        );
+        field(out, indent + 1, "changed_sink", changed_sink, true);
     }
     if let Some(observed_sink) = &finding.observed_sink {
-        field(
-            out,
-            indent + 1,
-            "observed_sink",
-            observed_sink,
-            has_oracle_alignment || has_alignment_reason,
-        );
+        field(out, indent + 1, "observed_sink", observed_sink, true);
     }
     if let Some(oracle_alignment) = &finding.oracle_alignment {
-        field(
-            out,
-            indent + 1,
-            "oracle_alignment",
-            oracle_alignment,
-            has_alignment_reason,
-        );
+        field(out, indent + 1, "oracle_alignment", oracle_alignment, true);
     }
     if let Some(alignment_reason) = &finding.alignment_reason {
-        field(out, indent + 1, "alignment_reason", alignment_reason, false);
+        field(out, indent + 1, "alignment_reason", alignment_reason, true);
     }
+    // Producer-owned source-currentness disposition (#3280): always
+    // emitted, with `unresolved_subject` as the explicit unknown for
+    // producers that do not resolve it.
+    field(
+        out,
+        indent + 1,
+        "source_currentness",
+        finding.source_currentness.as_str(),
+        false,
+    );
     out.push_str(&format!("{sp}}}"));
 }
 

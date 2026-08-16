@@ -3079,6 +3079,7 @@ mod diagnostic_policy_tests {
             observed_sink: None,
             oracle_alignment: None,
             alignment_reason: None,
+            source_currentness: crate::domain::SourceCurrentness::UnresolvedSubject,
         }
     }
 
@@ -4008,6 +4009,7 @@ mod lsp_next_step_parity_tests {
             observed_sink: None,
             oracle_alignment: None,
             alignment_reason: None,
+            source_currentness: crate::domain::SourceCurrentness::UnresolvedSubject,
         }
     }
 

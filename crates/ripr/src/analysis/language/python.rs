@@ -6308,6 +6308,10 @@ fn classify_change_with_old(
         observed_sink: surfaced_alignment.observed_sink,
         oracle_alignment: Some(surfaced_alignment.oracle_alignment),
         alignment_reason: Some(surfaced_alignment.alignment_reason),
+        // Source currentness is resolved by the producer that observed the diff
+        // evidence; this constructor has none, so the disposition stays the
+        // explicit unknown (#3280).
+        source_currentness: crate::domain::SourceCurrentness::UnresolvedSubject,
     })
 }
 
