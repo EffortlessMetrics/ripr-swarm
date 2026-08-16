@@ -456,25 +456,10 @@ Updated:
 ## Pending
 
 Reason:
-RIPR-SPEC-0151: additive per-finding source_currentness disposition (#3280); removed-only Rust probes record the base-side line coordinate
+RIPR-SPEC-0151: rebless check JSON for the additive source_currentness field; classifications, stages, confidence, counts, and recorded coordinates remain unchanged.
 
 Command:
 `cargo xtask goldens bless boundary_gap --reason "..."`
 
 Updated:
 - `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending
-
-Reason:
-RIPR-SPEC-0151: additive per-finding source_currentness disposition (#3280); removed-only Rust probes record the base-side line coordinate
-
-Command:
-`cargo xtask goldens bless boundary_gap --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
