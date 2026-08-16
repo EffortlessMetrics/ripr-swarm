@@ -128,6 +128,13 @@ pub(crate) fn classify_with(path: &Path, context: &SourceRoleContext) -> SourceR
 
 /// Layout-only classification (context-free base shared by every
 /// consumer, including surfaces without Cargo metadata at hand).
+///
+/// The production-subject rules carry over the pre-#3283
+/// `is_production_rust_path` contract exactly: a production subject
+/// requires a `src` component, is not named `tests.rs`, and is not under
+/// `xtask/` or a non-source directory. Anything the old repo predicate
+/// excluded stays non-production here, so routing the repo production
+/// set through this model cannot widen it.
 pub(crate) fn classify(path: &Path) -> SourceRole {
     let normalized = normalize(path);
     let components = normalized.components().collect::<Vec<_>>();
@@ -158,7 +165,21 @@ pub(crate) fn classify(path: &Path) -> SourceRole {
         || has_component(".ripr")
         || has_component("node_modules")
         || has_component("editors")
+        || has_component("xtask")
     {
+        return SourceRole::FixtureOrReceiptEvidence;
+    }
+    // A file whose stem is exactly `tests` (e.g. `src/tests.rs`) is the
+    // module aggregate for inline tests — the pre-#3283 production
+    // predicate excluded it and the pin in `workspace::classify` still
+    // does.
+    if normalized.file_stem().is_some_and(|stem| stem == "tests") {
+        return SourceRole::TestEvidence;
+    }
+    // Production requires a `src` layout: loose root files (build.rs,
+    // metrics subjects) were never repo production subjects and stay
+    // non-production here.
+    if !has_component("src") {
         return SourceRole::FixtureOrReceiptEvidence;
     }
     SourceRole::ProductionSubject
@@ -221,6 +242,41 @@ mod tests {
     }
 
     #[test]
+    fn repo_production_contract_carries_over_exactly() {
+        // The pre-#3283 `is_production_rust_path` exclusions must all
+        // carry into the role model: routing the repo production set
+        // through the role cannot widen it (#3283 review finding).
+        assert_eq!(
+            role("xtask/src/main.rs"),
+            SourceRole::FixtureOrReceiptEvidence
+        );
+        assert_eq!(role("src/tests.rs"), SourceRole::TestEvidence);
+        assert_eq!(role("build.rs"), SourceRole::FixtureOrReceiptEvidence);
+        assert_eq!(
+            role("metrics/subjects/source.after.rs"),
+            SourceRole::FixtureOrReceiptEvidence
+        );
+        // Every path the old predicate calls production, the role calls
+        // production — plus exactly one declared divergence: a nested src
+        // layout under examples/ (e.g. ripr's own
+        // `crates/ripr/examples/sample/src/lib.rs`) is not a
+        // Cargo-discoverable example target, seeded production probes in
+        // diff mode since the beginning, and stays a production subject.
+        for path in ["src/lib.rs", "crates/x/src/lib.rs"] {
+            assert!(
+                crate::analysis::workspace::is_production_rust_path(Path::new(path))
+                    == (role(path) == SourceRole::ProductionSubject),
+                "role and old predicate disagree on {path}"
+            );
+        }
+        assert_eq!(
+            role("examples/sample/src/lib.rs"),
+            SourceRole::ProductionSubject,
+            "declared divergence: nested-src demo crates stay production"
+        );
+    }
+
+    #[test]
     fn layout_classifies_evidence_and_production() {
         assert_eq!(role("tests/pricing.rs"), SourceRole::TestEvidence);
         assert_eq!(role("crates/x/tests/it.rs"), SourceRole::TestEvidence);
@@ -231,7 +287,6 @@ mod tests {
             SourceRole::FixtureOrReceiptEvidence
         );
         assert_eq!(role("src/lib.rs"), SourceRole::ProductionSubject);
-        assert_eq!(role("src/tests.rs"), SourceRole::ProductionSubject);
         // Filename conventions alone never classify (#3283 acceptance):
         // an unconfirmed *_test.rs stays a production subject.
         assert_eq!(role("src/pricing_test.rs"), SourceRole::ProductionSubject);

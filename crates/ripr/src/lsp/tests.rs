@@ -10132,11 +10132,13 @@ fn workspace_diagnostics_scope_changed_test_file_findings_out_of_projection() ->
         "pub fn gate_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
     )
     .map_err(|err| format!("write changed production file failed: {err}"))?;
+    std::fs::create_dir_all(root.path().join("examples/demo/src"))
+        .map_err(|err| format!("create examples dir failed: {err}"))?;
     std::fs::write(
-        root.path().join("src/tests.rs"),
+        root.path().join("examples/demo/src/lib.rs"),
         "pub fn helper_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
     )
-    .map_err(|err| format!("write changed src/tests.rs failed: {err}"))?;
+    .map_err(|err| format!("write changed examples/demo/src/lib.rs failed: {err}"))?;
     std::fs::write(
         root.path().join("tests/end_to_end.rs"),
         "#[test]\nfn end_to_end_changed() {\n    let value = if true { 1 } else { 2 };\n    assert_eq!(value, 1);\n}\n",
@@ -10152,7 +10154,7 @@ fn workspace_diagnostics_scope_changed_test_file_findings_out_of_projection() ->
     if production_count == 0 {
         return Err("changed production file received no LSP diagnostics".to_string());
     }
-    for scoped_out in ["src/tests.rs", "tests/end_to_end.rs"] {
+    for scoped_out in ["examples/demo/src/lib.rs", "tests/end_to_end.rs"] {
         let count = lsp_test_scope_diagnostic_count(&diagnostics, root.path(), scoped_out)?;
         if count != 0 {
             return Err(format!(
@@ -10160,14 +10162,16 @@ fn workspace_diagnostics_scope_changed_test_file_findings_out_of_projection() ->
             ));
         }
     }
-    if diagnostics
-        .snapshot
-        .findings
-        .iter()
-        .any(|finding| finding.probe.location.file.ends_with("src/tests.rs"))
-    {
+    if diagnostics.snapshot.findings.iter().any(|finding| {
+        finding
+            .probe
+            .location
+            .file
+            .ends_with("examples/demo/src/lib.rs")
+    }) {
         return Err(
-            "out-of-scope src/tests.rs finding must not remain in the snapshot".to_string(),
+            "out-of-scope examples/demo/src/lib.rs finding must not remain in the snapshot"
+                .to_string(),
         );
     }
     if diagnostics.snapshot.out_of_scope_test_file_findings == 0 {
@@ -10183,11 +10187,13 @@ fn workspace_diagnostics_test_only_diff_publishes_no_line_local_diagnostics() ->
 {
     let root = unique_lsp_test_root("lsp-test-file-scope-test-only")?;
     init_lsp_test_scope_repo(root.path())?;
+    std::fs::create_dir_all(root.path().join("examples/demo/src"))
+        .map_err(|err| format!("create examples dir failed: {err}"))?;
     std::fs::write(
-        root.path().join("src/tests.rs"),
+        root.path().join("examples/demo/src/lib.rs"),
         "pub fn helper_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
     )
-    .map_err(|err| format!("write changed src/tests.rs failed: {err}"))?;
+    .map_err(|err| format!("write changed examples/demo/src/lib.rs failed: {err}"))?;
     std::fs::write(
         root.path().join("tests/end_to_end.rs"),
         "#[test]\nfn end_to_end_changed() {\n    let value = if true { 1 } else { 2 };\n    assert_eq!(value, 1);\n}\n",

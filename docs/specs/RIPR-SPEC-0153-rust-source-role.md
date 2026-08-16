@@ -43,8 +43,10 @@ Role is derived from authoritative context in priority order:
    so `autotests = false` / `autobenches = false` need no separate
    handling; malformed manifests yield no targets and layout keeps
    applying (fail-closed toward production);
-3. package layout: `tests/` anywhere (matching the pre-existing
-   `is_test_file` contract, including in-src module dirs named `tests`);
+3. package layout: `tests/` anywhere and a `tests.rs` stem (matching
+   the pre-existing contracts); `xtask/`, non-source directories, and
+   files without a `src` component (the full pre-#3283 repo production
+   contract — routing the repo set through the role cannot widen it);
    `benches/` and `examples/` only in Cargo-autodiscovery shapes
    (`<dir>/<name>.rs`, `<dir>/<name>/main.rs`) — nested src layouts like
    `examples/sample/src/lib.rs` are NOT discoverable targets and stay
@@ -68,8 +70,9 @@ hashes the `ripr.toml` text, so no generation bump is required for it.
 ## Required Evidence
 
 - A changed Cargo bench seeds no production probes but stays in
-  changed-file accounting (regression fixture, verified failing on
-  main).
+  changed-file accounting: pinned by the `benches_harness_evidence`
+  corpus fixture (four bench findings on main, zero after the slice) and
+  an in-crate regression test verified failing on main.
 - A declared `[[test]] path="src/contract_test.rs"` target's plain
   harness helper seeds no production probes while the same-shaped
   undeclared `src/unconfirmed_test.rs` stays a production subject;
@@ -89,6 +92,11 @@ hashes the `ripr.toml` text, so no generation bump is required for it.
 - `#3273`'s inline `#[cfg(test)]` controls and `#3286`'s helper-evidence
   regression tests remain green.
 
+- The repo production contract carries over exactly: `xtask/`, files
+  without a `src` component, and `tests.rs` stems stay non-production;
+  the single declared divergence is nested-src layouts under
+  `examples/`/`benches/` (not Cargo-discoverable targets, production
+  in diff mode since before #3283).
 ## Required guards
 
 - No filename-only classification: an unconfirmed convention name is a
