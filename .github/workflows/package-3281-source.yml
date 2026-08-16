@@ -1,0 +1,44 @@
+name: Package exact 3281 source base
+
+on:
+  push:
+    branches:
+      - control/3281-source-package
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the exact repaired source base
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: 46b3e2ba0db81f8c82cbcdc733afbfdc50e269a8
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prove and package the source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 46b3e2ba0db81f8c82cbcdc733afbfdc50e269a8
+          mkdir -p target/review-control/3281
+          git archive --format=tar.gz --prefix=ripr-swarm-3281/ HEAD \
+            -o target/review-control/3281/ripr-swarm-3281-source.tar.gz
+          sha256sum target/review-control/3281/ripr-swarm-3281-source.tar.gz \
+            > target/review-control/3281/sha256sums.txt
+          printf '%s\n' \
+            'SOURCE_SHA=46b3e2ba0db81f8c82cbcdc733afbfdc50e269a8' \
+            'PARENT_MAIN=261aa86514ee1ae273ac65f7c6351e47cd50f47f' \
+            > target/review-control/3281/identities.env
+
+      - name: Upload the exact source package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ripr-3281-exact-source-base
+          path: target/review-control/3281
+          if-no-files-found: error
+          retention-days: 7
