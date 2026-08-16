@@ -128,7 +128,7 @@ pub(crate) struct GapRecord {
     #[serde(default)]
     pub(crate) projection_eligibility: BTreeMap<String, ProjectionEligibility>,
     /// Which revision owns the source finding (#3281): `candidate_current`
-    /// for proven head-side evidence; `None` for sources that predate the
+    /// for established head-side evidence; `None` for sources that predate the
     /// field (legacy pinned reports). Authority projections require
     /// `candidate_current`; markdown advisory visibility does not.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -680,7 +680,7 @@ fn gap_records_from_check_output_json(contents: &str) -> Result<Vec<GapRecord>, 
     }
     if let Some(findings) = findings {
         for (index, finding) in findings.iter().enumerate() {
-            // Candidate-actionable eligibility (#3281): proven base-side
+            // Candidate-actionable eligibility (#3281): established base-side
             // evidence never becomes a gap record. Missing fields (legacy
             // pinned reports) and the explicit unknown keep forming
             // bounded records; their authority projections stay off via
@@ -2415,7 +2415,7 @@ pub(crate) fn safe_gate_predicate_satisfied(record: &GapRecord) -> bool {
 
 pub(crate) fn projection_eligible(record: &GapRecord, projection: &str) -> bool {
     // RIPR-SPEC-0152: authority projections require the record's source to
-    // be proven candidate-current. Advisory visibility (markdown) is
+    // be established candidate-current. Advisory visibility (markdown) is
     // unaffected, so base-side and unresolved records stay inspectable
     // without becoming obligations.
     if matches!(

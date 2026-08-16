@@ -708,6 +708,13 @@ The evidence-first fields are additive in schema `0.2`:
   - `candidate_current` — the finding's source expression is present in the
     candidate (head-side) source at the recorded `probe.file`/`probe.line`;
     the location is a candidate edit target.
+  RIPR-SPEC-0152 routes every actionability surface through this field:
+  badge gaps and unknowns, alignment items, gap records (authority
+  projections only for `candidate_current`), start-here triage, the LSP
+  actionable profile, SARIF results, GitHub annotations, and PR severe-gap
+  counts exclude non-current findings while denominators keep everything;
+  TS/JS/Python findings now resolve `candidate_current` from their
+  head-side probes and Perl stays the explicit unknown.
   - `base_deleted` — the expression was removed on the candidate side. The
     retained evidence is base-side and the finding is not a candidate edit
     target; `probe.line` still records the projected new-side coordinate in
@@ -2047,7 +2054,10 @@ producer-owned facts: `fix_site` and `oracle_location` are absent when the
 producer cannot identify them, and `suggested_assertion` remains `null` until
 the producer supplies a symbol-resolved assertion template. `limitations[]`
 names unavailable evidence; renderers must not infer it from paths, lines,
-classes, or prose.
+classes, or prose. `source_currentness` (RIPR-SPEC-0152) mirrors the finding's
+disposition: agent consumers must not treat a `base_deleted`,
+`moved_or_renamed`, or `unresolved_subject` packet as a candidate edit
+target.
 
 ## Repo Seam Inventory
 

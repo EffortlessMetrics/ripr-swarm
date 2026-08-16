@@ -391,7 +391,7 @@ impl SourceCurrentness {
 
     /// Whether this disposition may drive current candidate-side
     /// obligations (repair routes, gate candidates, diagnostics, agent
-    /// actions). Only proven candidate currentness qualifies: base-side
+    /// actions). Only established candidate currentness qualifies: base-side
     /// evidence and the explicit unknown are never silently upgraded
     /// because classification or severity suggests action (#3281).
     pub fn permits_candidate_action(&self) -> bool {
@@ -438,7 +438,7 @@ impl Finding {
     /// predicate. A finding qualifies only when its producer proved the
     /// source is candidate-current; `base_deleted` and `moved_or_renamed`
     /// are base-side evidence, and `unresolved_subject` (the Perl
-    /// fact-packet path today, and pre-#3280 artifacts) is not proven
+    /// fact-packet path today, and pre-#3280 artifacts) is not established
     /// current. Classifications, severity, and repair readiness never
     /// upgrade a non-current finding.
     pub fn is_candidate_actionable(&self) -> bool {
