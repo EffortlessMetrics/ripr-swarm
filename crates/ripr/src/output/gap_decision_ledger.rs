@@ -5988,3 +5988,58 @@ mod candidate_actionable_ledger_tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod source_currentness_authority_tests {
+    use super::GapRecord;
+    use super::projection_eligible;
+    use std::collections::BTreeMap;
+
+    fn record_with(currentness: Option<&str>) -> GapRecord {
+        let mut projections = BTreeMap::new();
+        projections.insert(
+            "agent_packet".to_string(),
+            super::ProjectionEligibility {
+                eligible: true,
+                reason: "test".to_string(),
+            },
+        );
+        projections.insert(
+            "markdown_advisory".to_string(),
+            super::ProjectionEligibility {
+                eligible: true,
+                reason: "test".to_string(),
+            },
+        );
+        GapRecord {
+            projection_eligibility: projections,
+            source_currentness: currentness.map(ToString::to_string),
+            ..GapRecord::default()
+        }
+    }
+
+    #[test]
+    fn authority_projections_require_proven_candidate_currentness() {
+        // RIPR-SPEC-0152: even an explicitly-eligible map cannot make a
+        // non-current or unknown record an authority obligation; advisory
+        // visibility is unaffected.
+        let current = record_with(Some("candidate_current"));
+        assert!(projection_eligible(&current, "agent_packet"));
+        for value in [
+            Some("base_deleted"),
+            Some("moved_or_renamed"),
+            Some("unresolved_subject"),
+            None,
+        ] {
+            let record = record_with(value);
+            assert!(
+                !projection_eligible(&record, "agent_packet"),
+                "authority must stay off for {value:?}"
+            );
+            assert!(
+                projection_eligible(&record, "markdown_advisory"),
+                "advisory visibility must survive for {value:?}"
+            );
+        }
+    }
+}
