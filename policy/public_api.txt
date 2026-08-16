@@ -59,10 +59,8 @@ pub enum ripr::lsp::diagnostic_budget::DiagnosticOverflowReason
 pub enum ripr::lsp::diagnostic_budget::OmittedDiagnosticReason
 pub fn ripr::analysis::run_analysis
 pub fn ripr::analysis::run_repo_analysis
-# PR #3264: shared fail-closed validation is intentionally exported so the
-# public library route and xtask producer apply the same error-packet rule.
-pub fn ripr::app::render_check
 pub fn ripr::app::pr_evidence::reject_pr_evidence_error_packet
+pub fn ripr::app::render_check
 pub fn ripr::cli::run
 pub fn ripr::lsp::diagnostic_budget::build_budget_items_from_diagnostics
 pub fn ripr::lsp::diagnostic_budget::evaluate_diagnostic_budget
@@ -81,8 +79,8 @@ pub fn ripr::output::start_here_state::start_here_output_state_is_known
 pub fn ripr::set_verbose
 pub mod ripr::analysis
 pub mod ripr::app
-pub mod ripr::app::pr_summary
 pub mod ripr::app::pr_evidence
+pub mod ripr::app::pr_summary
 pub mod ripr::cli
 pub mod ripr::config
 pub mod ripr::domain
@@ -115,6 +113,13 @@ pub use ripr::CheckOutput
 pub use ripr::CheckSuppressionOutcome
 pub use ripr::ExposureClass
 pub use ripr::Finding
+pub use ripr::GitCandidateBase
+pub use ripr::GitCandidateDiffSemantics
+pub use ripr::GitCandidateSubject
+pub use ripr::GitCandidateSubjectError
+pub use ripr::GitHashFormat
+pub use ripr::GitObjectId
+pub use ripr::GitTreeish
 pub use ripr::LanguageFileCount
 pub use ripr::LanguageRun
 pub use ripr::LanguageRunStatus
@@ -148,6 +153,7 @@ pub use ripr::app::pr_summary::PrEvidenceSummaryJson
 pub use ripr::app::pr_summary::build_pr_evidence_summary
 pub use ripr::app::pr_summary::render_evidence_summary_md
 pub use ripr::app::pr_summary::render_pr_evidence_summary_json
+pub use ripr::app::reject_pr_evidence_error_packet
 pub use ripr::app::repo_seam_inventory_input
 pub use ripr::check_workspace
 pub use ripr::collect_context
@@ -195,6 +201,13 @@ pub use ripr::domain::FixInstructionSummary
 pub use ripr::domain::FlowSinkFact
 pub use ripr::domain::FlowSinkKind
 pub use ripr::domain::GapState
+pub use ripr::domain::GitCandidateBase
+pub use ripr::domain::GitCandidateDiffSemantics
+pub use ripr::domain::GitCandidateSubject
+pub use ripr::domain::GitCandidateSubjectError
+pub use ripr::domain::GitHashFormat
+pub use ripr::domain::GitObjectId
+pub use ripr::domain::GitTreeish
 pub use ripr::domain::LanguageFileCount
 pub use ripr::domain::LanguageId
 pub use ripr::domain::LanguageStatus
@@ -237,6 +250,5 @@ pub use ripr::lsp::DiagnosticBatch
 pub use ripr::lsp::workspace_diagnostic_batches
 pub use ripr::output::json::render
 pub use ripr::output::json::render_context_packet
-pub use ripr::render_check
-pub use ripr::app::reject_pr_evidence_error_packet
 pub use ripr::reject_pr_evidence_error_packet
+pub use ripr::render_check
