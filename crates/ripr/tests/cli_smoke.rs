@@ -1499,6 +1499,7 @@ const SMOKE_COMPLETE_GAP_LEDGER_JSON: &str = r#"{
   "gap_records": [
     {
       "gap_id": "gap:pricing",
+      "source_currentness": "candidate_current",
       "canonical_gap_id": "pricing::discount::threshold",
       "seam_id": "seam-pricing-threshold",
       "kind": "MissingBoundaryAssertion",
@@ -7742,6 +7743,7 @@ fn check_repo_badge_json_can_use_gap_ledger_targets() -> Result<(), String> {
           "gap_records": [
             {
               "gap_id": "gap:repo:pricing:reintroduced-boundary",
+              "source_currentness": "candidate_current",
               "kind": "MissingBoundaryAssertion",
               "language": "rust",
               "language_status": "stable",
@@ -7756,6 +7758,7 @@ fn check_repo_badge_json_can_use_gap_ledger_targets() -> Result<(), String> {
             },
             {
               "gap_id": "gap:repo:waived",
+              "source_currentness": "candidate_current",
               "kind": "MissingValueAssertion",
               "language": "rust",
               "language_status": "stable",
@@ -9380,6 +9383,7 @@ fn receipt_check_orphan_exits_nonzero() -> Result<(), Box<dyn std::error::Error>
     let ledger_path = out_dir.join("ledger.json");
     let ledger_json = serde_json::json!([{
         "gap_id": "gap:other:12345678",
+        "source_currentness": "candidate_current",
         "canonical_gap_id": "gap:other:12345678",
         "kind": "MissingValueAssertion",
         "language": "rust",
@@ -10316,6 +10320,7 @@ fn producer_verify_packet(
         "root": ".",
         "records": [{
             "gap_id": "gap-verify-execute",
+            "source_currentness": "candidate_current",
             "canonical_gap_id": "gap-verify-execute",
             "kind": "MissingBoundaryAssertion",
             "language": "rust",
