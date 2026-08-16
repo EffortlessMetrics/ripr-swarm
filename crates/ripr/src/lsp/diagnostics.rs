@@ -767,10 +767,13 @@ pub(super) fn workspace_diagnostics_with_config(
     let partial_scope = output.partial_scope;
     // Scope the LSP projection to production Rust anchors, matching the CLI
     // review surface (`changed_production_files_plus_immediate_callers`).
-    // Diff probe seeding already skips `tests/` trees, but the seeding
-    // predicate is narrower than the shared production classifier
-    // (`workspace::is_production_rust_path`): `src/tests.rs`, `examples/`,
-    // `benches/`, and other non-production trees can still seed findings.
+    // Since #3283 the diff-seeding predicate is the producer-owned
+    // source-role model, which covers `tests/`, cargo-discoverable
+    // `benches/`/`examples/` shapes, and declared targets; this
+    // partition still uses the narrower legacy path predicate, so an
+    // opted-in production-like target (`production_like_targets`)
+    // seeds CLI findings that this editor partition drops as
+    // out-of-scope — converging it on the role model is #3285 work.
     // Dropping them here — with the suppressed count disclosed on the
     // snapshot — keeps the editor from pinning line-local gap diagnostics in
     // files the review surface explicitly treats as out of scope (#2130).

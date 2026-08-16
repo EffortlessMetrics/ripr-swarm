@@ -41,7 +41,7 @@ pub(crate) use seam_inventory::{
     SeamLimitSource, apply_pilot_seam_budget,
     inventory_changed_test_classified_seams_at_with_config_node,
     inventory_classified_seams_at_with_config, inventory_compact_classified_seams_at_with_config,
-    inventory_diff_scoped_classified_seams_at_with_config, inventory_seams_at,
+    inventory_diff_scoped_classified_seams_at_with_config, inventory_seams_at_with_config,
     workspace_cache_key_at_with_config,
 };
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
@@ -172,6 +172,7 @@ pub(crate) fn targeted_typescript_findings_for_scope(
         perl_facts_path: None,
         git_timeout: None,
         git_candidate: None,
+        production_like_targets: Default::default(),
     };
     let result = TypeScriptAdapter.analyze_diff(
         &options,
@@ -414,6 +415,11 @@ pub struct AnalysisOptions {
     /// behavior, byte-identical to the pre-#2303 path. Only the LSP refresh
     /// path sets this (from the `gitTimeoutMs` session option).
     pub git_timeout: Option<std::time::Duration>,
+    /// Explicit production-like test-infrastructure opt-in (#3283):
+    /// workspace-relative targets this repository wants analyzed as
+    /// production behavior even though their layout or Cargo target
+    /// declares evidence role. Empty by default.
+    pub production_like_targets: std::collections::BTreeSet<std::path::PathBuf>,
     /// Immutable Git candidate subject (#3237 / #3276 R1). Threaded from
     /// `CheckInput` so the object producer (#3277) can consume it here;
     /// no current analysis path executes it, and `run_check` rejects
@@ -840,6 +846,7 @@ index 0000000..1111111 100644
             perl_facts_path: None,
             git_timeout: None,
             git_candidate: None,
+            production_like_targets: Default::default(),
         })
         .unwrap();
         assert!(!out.findings.is_empty());
@@ -860,6 +867,7 @@ index 0000000..1111111 100644
             perl_facts_path: None,
             git_timeout: None,
             git_candidate: None,
+            production_like_targets: Default::default(),
         })
         .unwrap();
         assert!(instant.findings.iter().any(|finding| {
@@ -911,6 +919,7 @@ fn premium_customer_gets_discount() {
             perl_facts_path: None,
             git_timeout: None,
             git_candidate: None,
+            production_like_targets: Default::default(),
         })?;
 
         if out.findings.is_empty() {
@@ -1057,6 +1066,7 @@ fn test_with_predicate() {
             perl_facts_path: None,
             git_timeout: None,
             git_candidate: None,
+            production_like_targets: Default::default(),
         })?;
 
         for finding in &out.findings {
@@ -1123,6 +1133,7 @@ index 0000000..1111111 100644
             perl_facts_path: None,
             git_timeout: None,
             git_candidate: None,
+            production_like_targets: Default::default(),
         })?;
 
         if !diff_out.findings.is_empty() {
@@ -1139,6 +1150,7 @@ index 0000000..1111111 100644
             perl_facts_path: None,
             git_timeout: None,
             git_candidate: None,
+            production_like_targets: Default::default(),
         })?;
 
         if repo_out.findings.is_empty() {
@@ -1178,6 +1190,7 @@ mod git_candidate_entry_tests {
             perl_facts_path: None,
             git_timeout: None,
             git_candidate: None,
+            production_like_targets: Default::default(),
         })
     }
 

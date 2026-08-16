@@ -10387,6 +10387,7 @@ def test_build_user_smoke():
             perl_facts_path: None,
             git_timeout: None,
             git_candidate: None,
+            production_like_targets: Default::default(),
         };
         let policy = OraclePolicy::default();
         let changed_files = vec![
@@ -10415,6 +10416,7 @@ def test_build_user_smoke():
             perl_facts_path: None,
             git_timeout: None,
             git_candidate: None,
+            production_like_targets: Default::default(),
         };
         let policy = OraclePolicy::default();
         let result = adapter.analyze_repo(&options, &policy)?;

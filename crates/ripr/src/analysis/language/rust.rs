@@ -1503,6 +1503,16 @@ impl RustAdapter {
         let mut changed_rust_files = 0usize;
         let mut candidate_lines = BTreeSet::new();
 
+        // Authoritative source-role context (#3283): declared Cargo
+        // test/bench targets confirm evidence role outside the default
+        // layouts, and the repository opt-in restores production-like
+        // analysis for selected targets.
+        let mut source_role_context = workspace::context_for_files(
+            &options.root,
+            analyzable_rust_files.iter().map(|path| path.as_path()),
+        );
+        source_role_context.production_like_targets = options.production_like_targets.clone();
+
         // #2971: The cross-crate calls_owner bypass in find_related_tests
         // requires a workspace-complete function index. In Instant/Draft/Fast
         // mode, index.functions is scoped to changed files or changed packages,
@@ -1529,7 +1539,13 @@ impl RustAdapter {
             })
         {
             changed_rust_files += 1;
-            if rust_index::is_test_file(&changed.path) {
+            // Producer-owned source role (#3283): only production
+            // subjects and explicitly opted-in production-like targets
+            // seed diff probes; Cargo benches, examples, integration
+            // tests, and confirmed test-target files stay indexed
+            // evidence without harness-plumbing obligations.
+            let role = workspace::classify_with(&changed.path, &source_role_context);
+            if !role.seeds_production_findings() {
                 continue;
             }
             // Cooperative cancellation (#1972): check once per changed file
@@ -1655,9 +1671,23 @@ impl RustAdapter {
         // not an unbounded read+index that can exhaust host memory.
         let scope_limit = repo_index_file_limit_from_env(std::env::var(REPO_INDEX_FILE_LIMIT_ENV))?;
         enforce_repo_index_file_limit(analyzable_rust_files.len(), scope_limit)?;
+        // Producer-owned source role (#3283): the repo production set
+        // routes through the same role as diff seeding — layout plus
+        // declared Cargo targets plus the production-like opt-in.
+        let repo_source_role_context = {
+            let mut context = workspace::context_for_files(
+                &options.root,
+                analyzable_rust_files.iter().map(|path| path.as_path()),
+            );
+            context.production_like_targets = options.production_like_targets.clone();
+            context
+        };
         let production_files = analyzable_rust_files
             .iter()
-            .filter(|path| workspace::is_production_rust_path(path))
+            .filter(|path| {
+                workspace::classify_with(path, &repo_source_role_context)
+                    .seeds_production_findings()
+            })
             .cloned()
             .collect::<Vec<_>>();
 
@@ -1821,6 +1851,7 @@ mod tests {
                 perl_facts_path: None,
                 git_timeout: None,
                 git_candidate: None,
+                production_like_targets: Default::default(),
             },
             &OraclePolicy::default(),
             &changed_files,
@@ -1889,6 +1920,7 @@ mod tests {
                 perl_facts_path: None,
                 git_timeout: None,
                 git_candidate: None,
+                production_like_targets: Default::default(),
             },
             &OraclePolicy::default(),
             &changed_files,
@@ -1976,6 +2008,7 @@ mod tests {
                 perl_facts_path: None,
                 git_timeout: None,
                 git_candidate: None,
+                production_like_targets: Default::default(),
             },
             &OraclePolicy::default(),
             &changed_files,
@@ -2867,6 +2900,7 @@ mod tests {
                 perl_facts_path: None,
                 git_timeout: None,
                 git_candidate: None,
+                production_like_targets: Default::default(),
             },
             &OraclePolicy::default(),
             &changed_files,
@@ -3464,6 +3498,7 @@ let _ = (result, note, raw);"##,
             perl_facts_path: None,
             git_timeout: None,
             git_candidate: None,
+            production_like_targets: Default::default(),
         };
         let policy = OraclePolicy::default();
         let result = cancellation::with_token(&token, || {
@@ -3514,6 +3549,286 @@ let _ = (result, note, raw);"##,
                 "expected a deadline-exceeded cancellation from the classify loop, got: {error}"
             ));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_treats_cargo_benches_as_evidence_not_production() -> Result<(), String> {
+        // #3283: benches/** is excluded from the repo production set today,
+        // but the diff path seeds production probes from changed bench files
+        // — harness plumbing (`iter!`, black_box, Ok(()) returns) generates
+        // recursive obligations. A changed bench must stay indexed evidence
+        // without seeding production findings, exactly like tests/**.
+        let root = temp_root("benches-are-evidence")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='bench-role'\nversion='0.1.0'\nedition='2024'\n\n[[bench]]\nname='exposure'\nharness = false\n",
+        )?;
+        write(
+            &root.join("src/lib.rs"),
+            "pub fn price(amount: i32) -> i32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n",
+        )?;
+        write(
+            &root.join("benches/exposure.rs"),
+            "use criterion::Criterion;\nfn bench_price(c: &mut Criterion) {\n    c.bench_function(\"price\", |b| b.iter(|| price(120)));\n}\ncriterion_group!(benches, bench_price);\ncriterion_main!(benches);\n",
+        )?;
+        let changed_files = diff::parse_unified_diff(
+            "diff --git a/src/lib.rs b/src/lib.rs\n\
+         new file mode 100644\n\
+         --- /dev/null\n\
+         +++ b/src/lib.rs\n\
+         @@ -0,0 +1,3 @@\n\
+         +pub fn price(amount: i32) -> i32 {\n\
+         +    if amount > 100 { amount - 10 } else { amount }\n\
+         +}\n\
+         diff --git a/benches/exposure.rs b/benches/exposure.rs\n\
+         new file mode 100644\n\
+         --- /dev/null\n\
+         +++ b/benches/exposure.rs\n\
+         @@ -0,0 +1,6 @@\n\
+         +use criterion::Criterion;\n\
+         +fn bench_price(c: &mut Criterion) {\n\
+         +    c.bench_function(\"price\", |b| b.iter(|| price(120)));\n\
+         +}\n\
+         +criterion_group!(benches, bench_price);\n\
+         +criterion_main!(benches);\n",
+        );
+
+        let result = RustAdapter.analyze_diff(
+            &AnalysisOptions {
+                root,
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+            },
+            &OraclePolicy::default(),
+            &changed_files,
+        )?;
+
+        assert_eq!(
+            result.changed_files, 2,
+            "changed-file accounting must retain the bench file"
+        );
+        assert!(
+            result.findings.iter().all(|finding| !finding
+                .probe
+                .location
+                .file
+                .to_string_lossy()
+                .replace('\\', "/")
+                .contains("benches/")),
+            "bench harness plumbing must not become production probes: {:?}",
+            result.findings
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_confirms_declared_test_targets_but_not_unconfirmed_names() -> Result<(), String>
+    {
+        // #3283: a `[[test]]` target with an explicit path confirms
+        // evidence role outside tests/; the same filename without a
+        // declaration stays a production subject.
+        let root = temp_root("declared-test-target")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='declared-target'\nversion='0.1.0'\nedition='2024'\n\n[[test]]\nname='contract'\npath='src/contract_test.rs'\n",
+        )?;
+        write(
+            &root.join("src/lib.rs"),
+            "pub fn price(amount: i32) -> i32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n",
+        )?;
+        write(
+            &root.join("src/contract_test.rs"),
+            "fn setup_price(amount: i32) -> i32 {\n    if amount < 0 { 0 } else { price(amount) }\n}\n\n#[test]\nfn price_at_boundary() {\n    assert_eq!(setup_price(100), 90);\n}\n",
+        )?;
+        write(
+            &root.join("src/unconfirmed_test.rs"),
+            "pub fn helper_path(amount: i32) -> i32 {\n    if amount < 0 { 0 } else { amount }\n}\n",
+        )?;
+        let changed_files = diff::parse_unified_diff(
+            "diff --git a/src/lib.rs b/src/lib.rs\n\
+             new file mode 100644\n\
+             --- /dev/null\n\
+             +++ b/src/lib.rs\n\
+             @@ -0,0 +1,3 @@\n\
+             +pub fn price(amount: i32) -> i32 {\n\
+             +    if amount > 100 { amount - 10 } else { amount }\n\
+             +}\n\
+             diff --git a/src/contract_test.rs b/src/contract_test.rs\n\
+             new file mode 100644\n\
+             --- /dev/null\n\
+             +++ b/src/contract_test.rs\n\
+             @@ -0,0 +1,8 @@\n\
+             +fn setup_price(amount: i32) -> i32 {\n\
+             +    if amount < 0 { 0 } else { price(amount) }\n\
+             +}\n\
+             +\n\
+             +#[test]\n\
+             +fn price_at_boundary() {\n\
+             +    assert_eq!(setup_price(100), 90);\n\
+             +}\n\
+             diff --git a/src/unconfirmed_test.rs b/src/unconfirmed_test.rs\n\
+             new file mode 100644\n\
+             --- /dev/null\n\
+             +++ b/src/unconfirmed_test.rs\n\
+             @@ -0,0 +1,3 @@\n\
+             +pub fn helper_path(amount: i32) -> i32 {\n\
+             +    if amount < 0 { 0 } else { amount }\n\
+             +}\n",
+        );
+        let result = RustAdapter.analyze_diff(
+            &AnalysisOptions {
+                root,
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+            },
+            &OraclePolicy::default(),
+            &changed_files,
+        )?;
+        let path_text = |finding: &crate::domain::Finding| {
+            finding
+                .probe
+                .location
+                .file
+                .to_string_lossy()
+                .replace('\\', "/")
+        };
+        assert!(
+            result
+                .findings
+                .iter()
+                .all(|finding| !path_text(finding).ends_with("src/contract_test.rs")),
+            "a declared [[test]] target must not seed production probes: {:?}",
+            result.findings
+        );
+        assert!(
+            result
+                .findings
+                .iter()
+                .any(|finding| path_text(finding).ends_with("src/unconfirmed_test.rs")),
+            "an unconfirmed *_test.rs filename stays a production subject: {:?}",
+            result.findings
+        );
+        // The confirmed target's test still relates to the changed owner:
+        // evidence stays indexed and usable.
+        assert!(
+            result
+                .findings
+                .iter()
+                .any(|finding| path_text(finding).ends_with("src/lib.rs")
+                    && finding
+                        .related_tests
+                        .iter()
+                        .any(|test| test.name == "price_at_boundary")),
+            "the declared target's test must remain usable evidence: {:?}",
+            result.findings
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_opt_in_restores_production_like_analysis() -> Result<(), String> {
+        // #3283: `production_like_targets` restores ordinary production
+        // analysis for the selected target only.
+        let root = temp_root("production-like-opt-in")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='opt-in'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        write(
+            &root.join("src/lib.rs"),
+            "pub fn price(amount: i32) -> i32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n",
+        )?;
+        write(
+            &root.join("tests/api_contract.rs"),
+            "pub fn contract_helper(amount: i32) -> i32 {\n    if amount < 0 { 0 } else { amount }\n}\n",
+        )?;
+        write(
+            &root.join("tests/other.rs"),
+            "pub fn other_helper(amount: i32) -> i32 {\n    if amount < 0 { 0 } else { amount }\n}\n",
+        )?;
+        let changed_files = diff::parse_unified_diff(
+            "diff --git a/src/lib.rs b/src/lib.rs\n\
+             new file mode 100644\n\
+             --- /dev/null\n\
+             +++ b/src/lib.rs\n\
+             @@ -0,0 +1,3 @@\n\
+             +pub fn price(amount: i32) -> i32 {\n\
+             +    if amount > 100 { amount - 10 } else { amount }\n\
+             +}\n\
+             diff --git a/tests/api_contract.rs b/tests/api_contract.rs\n\
+             new file mode 100644\n\
+             --- /dev/null\n\
+             +++ b/tests/api_contract.rs\n\
+             @@ -0,0 +1,3 @@\n\
+             +pub fn contract_helper(amount: i32) -> i32 {\n\
+             +    if amount < 0 { 0 } else { amount }\n\
+             +}\n\
+             diff --git a/tests/other.rs b/tests/other.rs\n\
+             new file mode 100644\n\
+             --- /dev/null\n\
+             +++ b/tests/other.rs\n\
+             @@ -0,0 +1,3 @@\n\
+             +pub fn other_helper(amount: i32) -> i32 {\n\
+             +    if amount < 0 { 0 } else { amount }\n\
+             +}\n",
+        );
+        let mut production_like = std::collections::BTreeSet::new();
+        production_like.insert(std::path::PathBuf::from("tests/api_contract.rs"));
+        let result = RustAdapter.analyze_diff(
+            &AnalysisOptions {
+                root,
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: production_like,
+            },
+            &OraclePolicy::default(),
+            &changed_files,
+        )?;
+        let path_text = |finding: &crate::domain::Finding| {
+            finding
+                .probe
+                .location
+                .file
+                .to_string_lossy()
+                .replace('\\', "/")
+        };
+        assert!(
+            result
+                .findings
+                .iter()
+                .any(|finding| path_text(finding).ends_with("tests/api_contract.rs")),
+            "the opted-in target is analyzed as production-like: {:?}",
+            result.findings
+        );
+        assert!(
+            result
+                .findings
+                .iter()
+                .all(|finding| !path_text(finding).ends_with("tests/other.rs")),
+            "sibling test targets stay evidence-only: {:?}",
+            result.findings
+        );
         Ok(())
     }
 }

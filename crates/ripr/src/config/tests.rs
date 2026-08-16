@@ -965,6 +965,7 @@ fn check_artifact_identity_fields_classify_every_config_field() -> Result<(), St
 
     let finding_affecting = [
         "languages.rust.generated_file_patterns",
+        "analysis.production_like_targets",
         "oracles.broad_error_strength",
         "oracles.mock_expectation_strength",
         "oracles.snapshot_strength",
@@ -1157,6 +1158,7 @@ proptest! {
             analysis: Some(RawAnalysisConfig {
                 mode,
                 include_unchanged_tests,
+                production_like_targets: None,
             }),
             oracles: Some(RawOraclePolicy {
                 snapshot_strength,
@@ -1251,4 +1253,54 @@ fn valid_repository_paths() -> impl Strategy<Value = String> {
         "config/ripr.toml".to_string(),
         "fixtures/policy.toml".to_string(),
     ])
+}
+
+#[test]
+fn parse_config_reads_production_like_targets() -> Result<(), String> {
+    // #3283: the opt-in parses as workspace-relative paths and joins the
+    // check-artifact identity as FindingAffecting.
+    let raw = toml::from_str::<RawConfig>(
+        "[analysis]\nproduction_like_targets = [\"tests/api_contract.rs\", \"benches/perf.rs\"]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let config = RiprConfig::from_raw(raw)?;
+    let targets = config.analysis().production_like_targets();
+    assert_eq!(targets.len(), 2);
+    assert!(
+        targets.contains(&std::path::PathBuf::from("tests/api_contract.rs"))
+            && targets.contains(&std::path::PathBuf::from("benches/perf.rs"))
+    );
+    let identity = config.check_artifact_identity_fields();
+    let field = identity
+        .iter()
+        .find(|field| field.name == "analysis.production_like_targets")
+        .ok_or("identity must classify the opt-in")?;
+    assert_eq!(
+        field.value.as_deref(),
+        Some("2\u{0}benches/perf.rs\u{0}tests/api_contract.rs"),
+        "the identity encoding must be injective: count + NUL separators"
+    );
+    Ok(())
+}
+
+#[test]
+fn parse_config_rejects_absolute_production_like_target() -> Result<(), String> {
+    // Fail closed: an absolute path can never match a workspace-relative
+    // discovery identity, so it must be a named parse error. TOML literal
+    // strings (single quotes) keep backslashes intact for the windows arm.
+    let outside = if cfg!(windows) {
+        concat!("C:", '\\', "outside", '\\', "target.rs")
+    } else {
+        "/outside/target.rs"
+    };
+    let text = format!("[analysis]\nproduction_like_targets = ['{outside}']\n");
+    let raw = toml::from_str::<RawConfig>(&text).map_err(|error| error.to_string())?;
+    match RiprConfig::from_raw(raw) {
+        Err(error) => assert!(
+            error.contains("production_like_targets"),
+            "error must name the field: {error}"
+        ),
+        Ok(_) => return Err("absolute opt-in paths must fail closed".to_string()),
+    }
+    Ok(())
 }

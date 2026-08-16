@@ -231,10 +231,13 @@ pub(crate) fn check_artifact_config_identity_hash(config: &RiprConfig) -> String
 /// comparable). Closed set: when the producer starts consuming another config
 /// field, add it here in the same PR; do not widen the filter to whole
 /// sections.
-pub(crate) const REPO_EXPOSURE_CONSUMED_CONFIG_FIELDS: [&str; 3] = [
+pub(crate) const REPO_EXPOSURE_CONSUMED_CONFIG_FIELDS: [&str; 4] = [
     "oracles.broad_error_strength",
     "oracles.mock_expectation_strength",
     "oracles.snapshot_strength",
+    // The production-like opt-in changes which files are production
+    // subjects in the repo seam inventory (#3283).
+    "analysis.production_like_targets",
 ];
 
 /// Canonical config identity for the repo-exposure artifact input identity
@@ -294,6 +297,16 @@ impl RiprConfig {
                 config.analysis.mode = Some(parse_mode_value(&mode)?);
             }
             config.analysis.include_unchanged_tests = analysis.include_unchanged_tests;
+            if let Some(targets) = analysis.production_like_targets {
+                let mut parsed = std::collections::BTreeSet::new();
+                for target in targets {
+                    parsed.insert(parse_relative_path(
+                        "analysis.production_like_targets",
+                        &target,
+                    )?);
+                }
+                config.analysis.production_like_targets = parsed;
+            }
         }
         if let Some(oracles) = raw.oracles {
             if let Some(strength) = oracles.snapshot_strength {
@@ -513,6 +526,7 @@ struct RawBunUbProfileConfig {
 struct RawAnalysisConfig {
     mode: Option<String>,
     include_unchanged_tests: Option<bool>,
+    production_like_targets: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
