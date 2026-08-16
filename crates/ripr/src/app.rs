@@ -5,6 +5,7 @@ pub(crate) mod agent_review_summary;
 pub(crate) mod agent_status;
 pub(crate) mod agent_workflow;
 pub(crate) mod analysis_outcome_artifact;
+pub(crate) mod analysis_subject;
 pub(crate) mod annotations;
 pub(crate) mod causal_projection;
 mod check;
@@ -99,6 +100,14 @@ pub struct CheckInput {
     /// `RIPR_GIT_TIMEOUT` env var (default: 5 minutes); the LSP refresh path
     /// populates it from the `gitTimeoutMs` session option.
     pub git_timeout: Option<std::time::Duration>,
+    /// Immutable Git candidate subject (#3237 / #3276 R1). When `Some`, the
+    /// run must consume base and candidate bytes from the named Git tree
+    /// objects — never the worktree or live index. Mutually exclusive with
+    /// `diff_file` and `base`. This build binds and validates the subject
+    /// but has no object producer yet, so `check_workspace*` fails closed
+    /// with a named error rather than falling back to worktree analysis
+    /// (the producer lands with #3277).
+    pub git_candidate: Option<crate::domain::GitCandidateSubject>,
 }
 
 impl Default for CheckInput {
@@ -113,6 +122,7 @@ impl Default for CheckInput {
             perl_facts_path: None,
             suppression_policy: None,
             git_timeout: None,
+            git_candidate: None,
         }
     }
 }

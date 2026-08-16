@@ -125,6 +125,13 @@ pub use app::{
 pub use app::{Mode, OutputFormat};
 /// Domain model types exposed as part of the stable public contract.
 pub use domain::{ExposureClass, Finding, Probe, ProbeFamily, RiprEvidence};
+/// Immutable Git candidate subject family (#3237 / #3276): construction
+/// and validation types for naming an exact base/candidate tree pair as
+/// the analysis input.
+pub use domain::{
+    GitCandidateBase, GitCandidateDiffSemantics, GitCandidateSubject, GitCandidateSubjectError,
+    GitHashFormat, GitObjectId, GitTreeish,
+};
 pub use domain::{LanguageFileCount, Summary};
 pub use output::suppressions::CheckSuppressionOutcome;
 pub use output::suppressions::SuppressedCheckFinding;

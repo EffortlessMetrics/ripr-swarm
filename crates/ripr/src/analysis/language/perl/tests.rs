@@ -60,6 +60,7 @@ fn packet_test_options() -> crate::analysis::AnalysisOptions {
         resolve_tsconfig_paths: false,
         perl_facts_path: None,
         git_timeout: None,
+        git_candidate: None,
     }
 }
 

@@ -7,6 +7,7 @@ pub mod context_packet;
 mod diagnostic_witness;
 mod evidence;
 mod fix_instruction;
+mod git_candidate;
 mod language;
 mod probe;
 mod summary;
@@ -41,6 +42,10 @@ pub use evidence::{
     RiprEvidence, StageEvidence, StageState,
 };
 pub use fix_instruction::{FixInstructionState, FixInstructionSummary};
+pub use git_candidate::{
+    GitCandidateBase, GitCandidateDiffSemantics, GitCandidateSubject, GitCandidateSubjectError,
+    GitHashFormat, GitObjectId, GitTreeish,
+};
 pub use language::{LanguageId, LanguageStatus, OwnerKind, StaticLimitKind};
 pub use probe::{
     ActivationEvidence, DeltaKind, Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind,

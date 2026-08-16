@@ -128,6 +128,7 @@ fn malformed_perl_adapter_run_is_enabled_but_not_analyzed_in_every_renderer() ->
                 perl_facts_path: Some(facts),
                 suppression_policy: None,
                 git_timeout: None,
+                git_candidate: None,
             },
             &config,
         )?;
@@ -182,6 +183,7 @@ fn typescript_output(enabled: bool) -> Result<(std::path::PathBuf, crate::CheckO
             perl_facts_path: None,
             suppression_policy: None,
             git_timeout: None,
+            git_candidate: None,
         },
         &config,
     )?;

@@ -3215,6 +3215,7 @@ fn run_diff_check_from_file(
         perl_facts_path: None,
         suppression_policy: None,
         git_timeout: None,
+        git_candidate: None,
     };
     apply_to_check_input(&mut input, config, options.explicit);
     app::check_workspace_with_config(input, config)

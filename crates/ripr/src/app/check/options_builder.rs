@@ -15,5 +15,6 @@ pub(crate) fn analysis_options_from_input_and_config(
         resolve_tsconfig_paths: config.typescript().resolve_tsconfig_paths(),
         perl_facts_path: input.perl_facts_path.clone(),
         git_timeout: input.git_timeout,
+        git_candidate: input.git_candidate.clone(),
     }
 }

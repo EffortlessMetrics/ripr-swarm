@@ -1410,6 +1410,7 @@ fn analyze_diff_emits_finding_for_changed_python_file_on_disk() -> Result<(), St
         resolve_tsconfig_paths: false,
         perl_facts_path: None,
         git_timeout: None,
+        git_candidate: None,
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![
@@ -1499,6 +1500,7 @@ def test_encode_status():\n    assert encode_status('paid')['status'] == 'paid'\
         resolve_tsconfig_paths: false,
         perl_facts_path: None,
         git_timeout: None,
+        git_candidate: None,
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![ChangedFile {
@@ -2271,6 +2273,7 @@ fn analyze_diff_counts_python_file_but_skips_unreadable_workspace_source() -> Re
         resolve_tsconfig_paths: false,
         perl_facts_path: None,
         git_timeout: None,
+        git_candidate: None,
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![ChangedFile {
