@@ -235,7 +235,7 @@ fn build_probe(
 /// expression is head-side code. Removed-only probes (`before` set, `after`
 /// absent) are base-side evidence: when the same trimmed expression
 /// re-appears among the file's added lines, movement evidence exists but the
-/// exact candidate identity of the source cannot be proven, so the probe is
+/// exact candidate identity of the source cannot be established, so the probe is
 /// `MovedOrRenamed`; otherwise the source was deleted from the candidate and
 /// the probe is `BaseDeleted`. The defensive no-evidence shape stays the
 /// explicit unknown rather than guessing.
