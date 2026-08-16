@@ -1,0 +1,116 @@
+name: Verify issue 3294 candidate v4
+
+on:
+  push:
+    branches:
+      - control/3294-compile
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-3294-candidate-v4
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout transport branch
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Reassemble and verify exact candidate patch
+        shell: bash
+        run: |
+          cat .github/3294-draft-v4/part-* > /tmp/3294.patch.gz.b64
+          test "$(wc -c < /tmp/3294.patch.gz.b64)" = 25996
+          echo 'bbba044eee42eaddc4d30719dcd3fae621c6a4e432abd154c9a3e1ea830bcef2  /tmp/3294.patch.gz.b64' | sha256sum -c -
+          base64 -d /tmp/3294.patch.gz.b64 | gzip -d > /tmp/3294.patch
+          test "$(wc -c < /tmp/3294.patch)" = 85910
+          echo 'dfa07f08eaed2acb0555b272b57a78f109a68908b4831a24404d94fa594cc12c  /tmp/3294.patch' | sha256sum -c -
+
+      - name: Checkout exact main head and apply candidate
+        shell: bash
+        run: |
+          git checkout --detach 6a15d4125bf12e16c7fe58d7e8e448805ce88f6e
+          git apply --index /tmp/3294.patch
+
+      - name: Install governed Rust toolchain
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: 1.95.0
+          components: rustfmt, clippy
+
+      - name: Format candidate
+        shell: bash
+        run: cargo fmt --all
+
+      - name: Require clean formatting
+        shell: bash
+        run: cargo fmt --all -- --check
+
+      - name: Check library compile
+        shell: bash
+        run: cargo check -p ripr --lib
+
+      - name: Run focused relation tests
+        shell: bash
+        run: |
+          cargo test -p ripr --lib binding_predicate -- --nocapture
+          cargo test -p ripr --lib given_known_predicate_infection_when_overridden -- --nocapture
+          cargo test -p ripr --lib diff_analysis_retargets -- --nocapture
+          cargo test -p ripr --lib diff_analysis_keeps_unsupported_len_initializer -- --nocapture
+
+      - name: Run full library suite
+        shell: bash
+        run: cargo test -p ripr --lib
+
+      - name: Run strict library clippy
+        shell: bash
+        run: cargo clippy -p ripr --lib -- -D warnings
+
+      - name: Check goldens
+        shell: bash
+        run: cargo xtask goldens check
+
+      - name: Check output contracts
+        shell: bash
+        run: cargo xtask check-output-contracts
+
+      - name: Check evidence-promotion honesty
+        shell: bash
+        run: cargo xtask check-evidence-promotion-honesty
+
+      - name: Check traceability
+        shell: bash
+        run: cargo xtask check-traceability
+
+      - name: Check architecture
+        shell: bash
+        run: cargo xtask check-architecture
+
+      - name: Run dogfood
+        shell: bash
+        run: cargo xtask dogfood
+
+      - name: Run full PR gate
+        shell: bash
+        run: cargo xtask check-pr
+
+      - name: Export formatted candidate patch
+        if: always()
+        shell: bash
+        run: git diff --binary 6a15d4125bf12e16c7fe58d7e8e448805ce88f6e > /tmp/3294-formatted.patch
+
+      - name: Upload formatted candidate patch
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: issue-3294-formatted-candidate-v4
+          path: /tmp/3294-formatted.patch
+          if-no-files-found: error
+          retention-days: 1
