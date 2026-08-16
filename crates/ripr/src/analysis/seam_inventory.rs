@@ -1769,7 +1769,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             .join("ripr")
             .join("cache")
             .join("repo-seam-counts")
-            .join("0.1")
+            .join(crate::analysis::seam_cache::COUNT_CACHE_SCHEMA_VERSION)
     }
 
     fn compact_cache_dir_under(root: &Path) -> PathBuf {
