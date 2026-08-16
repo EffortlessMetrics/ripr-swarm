@@ -11812,3 +11812,79 @@ mod tests {
     );
     Ok(())
 }
+
+#[test]
+fn given_same_file_test_and_helper_names_the_exact_identity_key_distinguishes_them()
+-> Result<(), String> {
+    // #3286 collision control: a `#[test]` fn and a plain helper sharing
+    // (file, name) must not collapse — the plain helper stays admitted to
+    // the evidence graph on its own start_line identity, and the test
+    // stays excluded from helper admission.
+    let source = PathBuf::from("src/labels.rs");
+    let source_src = r#"
+pub fn device_labels() -> Vec<&'static str> {
+  Vec::new()
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn exercise_device_labels() -> Vec<&'static str> {
+    device_labels()
+  }
+
+  #[test]
+  fn helper_reaches_device_labels() {
+    let labels = exercise_device_labels();
+    assert!(labels.is_empty());
+  }
+}
+
+#[cfg(test)]
+mod other {
+  use super::*;
+
+  #[test]
+  fn exercise_device_labels() {
+    let labels = super::device_labels();
+    assert!(labels.is_empty());
+  }
+}
+"#;
+    let index = index_from_files(&[(source, source_src)])?;
+    assert_eq!(
+        index
+            .tests
+            .iter()
+            .filter(|test| test.name == "exercise_device_labels")
+            .count(),
+        1,
+        "only the attribute-bearing fn is a TestFact"
+    );
+    assert_eq!(
+        index
+            .functions
+            .iter()
+            .filter(|function| function.name == "exercise_device_labels")
+            .count(),
+        2,
+        "both the plain helper and the test are indexed functions"
+    );
+
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/labels.rs")], &index);
+    let return_seam = seams
+        .iter()
+        .find(|s| s.kind() == SeamKind::ReturnValue && s.owner().ends_with("::device_labels"))
+        .ok_or_else(|| "expected return_value seam".to_string())?;
+    let evidence = evidence_for_seam(return_seam, &index);
+    assert!(
+        evidence
+            .related_tests
+            .iter()
+            .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+        "the same-named plain helper keeps mediating evidence despite the test-name collision: {:?}",
+        evidence.related_tests
+    );
+    Ok(())
+}
