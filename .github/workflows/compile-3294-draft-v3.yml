@@ -1,0 +1,72 @@
+name: Compile and format issue 3294 draft v3
+
+on:
+  push:
+    branches:
+      - control/3294-compile
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compile-3294-draft-v3
+  cancel-in-progress: false
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout transport branch
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Reassemble and verify exact draft patch
+        shell: bash
+        run: |
+          cat .github/3294-draft/part-* > /tmp/3294.patch.gz.b64
+          test "$(wc -c < /tmp/3294.patch.gz.b64)" = 13928
+          echo 'ab826744f296af96aacf208247b5533bce0281437f9233d6068db6057bee5944  /tmp/3294.patch.gz.b64' | sha256sum -c -
+          base64 -d /tmp/3294.patch.gz.b64 | gzip -d > /tmp/3294.patch
+          test "$(wc -c < /tmp/3294.patch)" = 52283
+          echo 'f28bf2cff3109b26c6da28d708e8d2c09cc08277f428107ac2cd72dbbed4e886  /tmp/3294.patch' | sha256sum -c -
+
+      - name: Checkout exact main head and apply draft
+        shell: bash
+        run: |
+          git checkout --detach 6a15d4125bf12e16c7fe58d7e8e448805ce88f6e
+          git apply --index /tmp/3294.patch
+
+      - name: Install governed Rust toolchain
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: 1.95.0
+          components: rustfmt, clippy
+
+      - name: Format draft
+        shell: bash
+        run: cargo fmt --all
+
+      - name: Check library compile
+        shell: bash
+        run: cargo check -p ripr --lib
+
+      - name: Run focused resolver tests
+        shell: bash
+        run: cargo test -p ripr --lib binding_predicate -- --nocapture
+
+      - name: Export formatted patch
+        if: always()
+        shell: bash
+        run: git diff --binary 6a15d4125bf12e16c7fe58d7e8e448805ce88f6e > /tmp/3294-formatted.patch
+
+      - name: Upload formatted draft patch
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: issue-3294-formatted-draft-v3
+          path: /tmp/3294-formatted.patch
+          if-no-files-found: error
+          retention-days: 1
