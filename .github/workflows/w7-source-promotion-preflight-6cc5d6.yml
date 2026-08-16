@@ -21,6 +21,7 @@ jobs:
       SOURCE_PARENT: 6cc5d6135593d9fb9a745eb215c5b0f92cbd14d5
       SWARM_PARENT: 83217e97ec6847db41d757f57279a8b1ca433fe6
       SWARM_REF: refs/tags/ripr-release-0.11.0-83217e97ec6847db41d757f57279a8b1ca433fe6
+      RULESET_ID: '20661783'
       VERSION: 0.11.0
 
     steps:
@@ -57,8 +58,9 @@ jobs:
           test "$(git -C source rev-parse origin/main)" = "$SOURCE_PARENT"
           git -C swarm merge-base --is-ancestor "$SWARM_PARENT" origin/main
           test "$(git -C swarm rev-parse "$SWARM_REF^{commit}")" = "$SWARM_PARENT"
-          live_ref=$(git ls-remote --refs https://github.com/EffortlessMetrics/ripr-swarm.git "$SWARM_REF")
-          test "$(printf '%s\n' "$live_ref" | wc -l)" -eq 1
+          live_ref=$(git -c credential.helper= -c http.extraheader= \
+            ls-remote --refs https://github.com/EffortlessMetrics/ripr-swarm.git "$SWARM_REF")
+          test "$(printf '%s\n' "$live_ref" | awk 'NF {count++} END {print count + 0}')" -eq 1
           test "$(printf '%s\n' "$live_ref" | awk '{print $1}')" = "$SWARM_PARENT"
 
           mkdir -p preflight
@@ -69,11 +71,105 @@ jobs:
             printf 'swarm_main=%s\n' "$(git -C swarm rev-parse origin/main)"
             printf 'swarm_ref=%s\n' "$SWARM_REF"
             printf 'swarm_ref_sha=%s\n' "$(printf '%s\n' "$live_ref" | awk '{print $1}')"
+            printf 'ruleset_id=%s\n' "$RULESET_ID"
             printf 'reviewed_resolved_tree=%s\n' 'not-established'
             git --version
             rustc -Vv
             cargo -V
           } | tee preflight/environment.txt
+
+      - name: Verify active candidate-tag ruleset without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          ruleset_source_url="https://api.github.com/repos/EffortlessMetrics/ripr-swarm/rulesets/${RULESET_ID}"
+          ruleset_file="$(mktemp)"
+          ruleset_headers="$(mktemp)"
+          ruleset_status=""
+          ruleset_rate_remaining="unknown"
+          ruleset_rate_reset="unknown"
+          ruleset_response_sha256="unavailable"
+
+          for attempt in 1 2 3; do
+            : > "$ruleset_file"
+            : > "$ruleset_headers"
+            transport_ok=false
+            if ruleset_status="$(curl --silent --show-error --location \
+              --connect-timeout 10 --max-time 20 \
+              --dump-header "$ruleset_headers" \
+              --output "$ruleset_file" \
+              --write-out '%{http_code}' \
+              "$ruleset_source_url")"; then
+              transport_ok=true
+            fi
+            ruleset_rate_remaining="$(awk 'BEGIN {IGNORECASE=1} /^x-ratelimit-remaining:/ {sub("\r", "", $2); print $2}' "$ruleset_headers" | tail -n 1)"
+            ruleset_rate_reset="$(awk 'BEGIN {IGNORECASE=1} /^x-ratelimit-reset:/ {sub("\r", "", $2); print $2}' "$ruleset_headers" | tail -n 1)"
+            [[ "$ruleset_rate_remaining" =~ ^[0-9]{1,20}$ ]] || ruleset_rate_remaining=unknown
+            [[ "$ruleset_rate_reset" =~ ^[0-9]{1,20}$ ]] || ruleset_rate_reset=unknown
+            if [[ "$transport_ok" == true ]]; then
+              ruleset_response_sha256="$(sha256sum "$ruleset_file" | awk '{print $1}')"
+            else
+              ruleset_response_sha256=unavailable
+            fi
+            if [[ "$ruleset_status" == "200" ]]; then
+              break
+            fi
+            echo "::warning::ruleset verification request failed: attempt=${attempt}/3 http_status=${ruleset_status:-transport-error} rate_limit_remaining=${ruleset_rate_remaining} rate_limit_reset=${ruleset_rate_reset} response_sha256=${ruleset_response_sha256}" >&2
+            sleep "$((attempt * 2))"
+          done
+
+          if [[ "$ruleset_status" != "200" ]]; then
+            echo "::error::ruleset verification unavailable after 3 attempts: http_status=${ruleset_status:-transport-error} rate_limit_remaining=${ruleset_rate_remaining} rate_limit_reset=${ruleset_rate_reset} response_sha256=${ruleset_response_sha256}" >&2
+            exit 1
+          fi
+
+          jq -e --argjson expected_id "$RULESET_ID" '
+            (.id == $expected_id) and
+            (.target == "tag") and
+            (.enforcement == "active") and
+            (.conditions.ref_name.include | type == "array" and length == 1 and .[0] == "refs/tags/ripr-release-*") and
+            (.conditions.ref_name.exclude | type == "array" and length == 0) and
+            ([.rules[]?.type] | index("update") != null) and
+            ([.rules[]?.type] | index("deletion") != null)
+          ' "$ruleset_file" >/dev/null || {
+            safe_summary="$(jq -c 'if type == "object" then {id, target, enforcement, include: (.conditions.ref_name.include // []), exclude: (.conditions.ref_name.exclude // []), rule_types: ([.rules[]?.type] | sort)} else {json_object:false} end' "$ruleset_file" 2>/dev/null || echo '{"json_object":false}')"
+            echo "::error::ruleset verification shape mismatch: http_status=200 response_sha256=${ruleset_response_sha256} summary=${safe_summary}" >&2
+            exit 1
+          }
+
+          jq -n \
+            --argjson id "$RULESET_ID" \
+            --arg source_url "$ruleset_source_url" \
+            --arg response_sha256 "$ruleset_response_sha256" \
+            --arg rate_limit_remaining "$ruleset_rate_remaining" \
+            --arg rate_limit_reset "$ruleset_rate_reset" \
+            --slurpfile ruleset "$ruleset_file" '
+              {
+                schema: "ripr.release_ruleset_verification.v1",
+                mode: "credential_free_public_rest",
+                ruleset_id: $id,
+                source_url: $source_url,
+                response_sha256: $response_sha256,
+                rate_limit: {
+                  remaining: $rate_limit_remaining,
+                  reset: $rate_limit_reset
+                },
+                policy: {
+                  target: $ruleset[0].target,
+                  enforcement: $ruleset[0].enforcement,
+                  include: $ruleset[0].conditions.ref_name.include,
+                  exclude: $ruleset[0].conditions.ref_name.exclude,
+                  rule_types: ([$ruleset[0].rules[]?.type] | sort)
+                },
+                verified: true
+              }
+            ' > preflight/ruleset-verification.json
+
+          {
+            printf 'ruleset_mode=%s\n' 'credential-free-public-rest'
+            printf 'ruleset_source_url=%s\n' "$ruleset_source_url"
+            printf 'ruleset_response_sha256=%s\n' "$ruleset_response_sha256"
+          } >> preflight/environment.txt
 
       - name: Generate exact-pair unfinalized preflight
         shell: bash
@@ -102,7 +198,9 @@ jobs:
         run: |
           set -euo pipefail
           receipt=preflight/source-promotion-preflight.json
+          ruleset_receipt=preflight/ruleset-verification.json
           test -s "$receipt"
+          test -s "$ruleset_receipt"
           jq -e \
             --arg source "$SOURCE_PARENT" \
             --arg swarm "$SWARM_PARENT" \
@@ -117,6 +215,18 @@ jobs:
               .dry_merge.reviewed_resolved_tree == null and
               .dry_merge.reviewed_resolved_tree_verified == false
             ' "$receipt" >/dev/null
+          jq -e --argjson expected_id "$RULESET_ID" '
+            .schema == "ripr.release_ruleset_verification.v1" and
+            .ruleset_id == $expected_id and
+            .mode == "credential_free_public_rest" and
+            .policy.target == "tag" and
+            .policy.enforcement == "active" and
+            .policy.include == ["refs/tags/ripr-release-*"] and
+            .policy.exclude == [] and
+            (.policy.rule_types | index("update") != null) and
+            (.policy.rule_types | index("deletion") != null) and
+            .verified == true
+          ' "$ruleset_receipt" >/dev/null
           test -z "$(git -C source status --porcelain)"
           test -z "$(git -C swarm status --porcelain)"
           sha256sum preflight/* | sort > preflight/SHA256SUMS
