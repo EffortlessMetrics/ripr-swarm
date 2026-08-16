@@ -330,11 +330,11 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_file_with_f
     let production_owner_names = production_owner_names(index);
     let actual_tests = actual_test_keys(index);
     for function in index.functions.iter().filter(|function| {
-        !actual_tests.contains(&(
-            function.file.clone(),
-            function.name.clone(),
-            function.start_line,
-        ))
+        !actual_tests.contains(&ActualTestKey {
+            file: &function.file,
+            name: &function.name,
+            start_line: function.start_line,
+        })
     }) {
         let helper_name_lower = function.name.to_ascii_lowercase();
         let local_function_names = function_names_by_file.get(&function.file);
@@ -1155,11 +1155,11 @@ pub(in crate::analysis::test_grip_evidence) fn local_function_names_by_file(
     // function as a potential owner call.
     let actual_tests = actual_test_keys(index);
     for function in index.functions.iter().filter(|function| {
-        !actual_tests.contains(&(
-            function.file.clone(),
-            function.name.clone(),
-            function.start_line,
-        ))
+        !actual_tests.contains(&ActualTestKey {
+            file: &function.file,
+            name: &function.name,
+            start_line: function.start_line,
+        })
     }) {
         names_by_file
             .entry(function.file.clone())
@@ -1169,18 +1169,31 @@ pub(in crate::analysis::test_grip_evidence) fn local_function_names_by_file(
     names_by_file
 }
 
-/// (file, name, start_line) keys of functions that are actual executable
-/// tests (`TestFact` members). #3273 widened `FunctionFact::is_test` to
-/// cover plain helpers inside inline `#[cfg(test)]` modules; those helpers
-/// are evidence-role, not tests, so helper-graph admission must exclude
-/// only real tests (#3286) while seam/production-owner filters keep using
-/// the wider role. The start_line component makes the key exact identity
-/// rather than a same-file same-name over-exclusion.
-fn actual_test_keys(index: &RustIndex) -> BTreeSet<(PathBuf, String, usize)> {
+/// Borrowed (file, name, start_line) identity of a function that is an
+/// actual executable test (`TestFact` member), so graph-admission lookups
+/// need no per-function key clones. #3273 widened
+/// `FunctionFact::is_test` to cover plain helpers inside inline
+/// `#[cfg(test)]` modules; those helpers are evidence-role, not tests, so
+/// helper-graph admission must exclude only real tests (#3286) while
+/// seam/production-owner filters keep using the wider role. The
+/// start_line component makes the key exact identity rather than a
+/// same-file same-name over-exclusion.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct ActualTestKey<'a> {
+    file: &'a Path,
+    name: &'a str,
+    start_line: usize,
+}
+
+fn actual_test_keys(index: &RustIndex) -> BTreeSet<ActualTestKey<'_>> {
     index
         .tests
         .iter()
-        .map(|test| (test.file.clone(), test.name.clone(), test.start_line))
+        .map(|test| ActualTestKey {
+            file: test.file.as_path(),
+            name: test.name.as_str(),
+            start_line: test.start_line,
+        })
         .collect()
 }
 
