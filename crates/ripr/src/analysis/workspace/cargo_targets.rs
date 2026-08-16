@@ -85,7 +85,7 @@ pub(crate) fn context_for_files<'a, I>(workspace_root: &Path, files: I) -> Sourc
 where
     I: IntoIterator<Item = &'a Path>,
 {
-    let mut manifests: BTreeMap<PathBuf, Option<DeclaredCargoTargets>> = BTreeMap::new();
+    let mut manifests: BTreeMap<PathBuf, DeclaredCargoTargets> = BTreeMap::new();
     let mut context = SourceRoleContext::empty();
     for file in files {
         let anchored = workspace_root.join(file);
@@ -93,13 +93,12 @@ where
             continue;
         };
         if !manifests.contains_key(&root) {
-            let text = std::fs::read_to_string(root.join("Cargo.toml")).ok();
-            let targets = text
+            let targets = std::fs::read_to_string(root.join("Cargo.toml"))
                 .map(|text| declared_targets_from_manifest(&text, &root))
                 .unwrap_or_default();
-            manifests.insert(root.clone(), Some(targets));
+            manifests.insert(root.clone(), targets);
         }
-        if let Some(Some(targets)) = manifests.get(&root) {
+        if let Some(targets) = manifests.get(&root) {
             context
                 .declared_test_targets
                 .extend(strip_root(workspace_root, &targets.tests));
@@ -207,5 +206,61 @@ mod tests {
         );
         // A file with no Cargo source-layout ancestor has no package root.
         assert_eq!(package_root_of(Path::new("/ws/loose.rs")), None);
+    }
+}
+
+#[cfg(test)]
+mod context_tests {
+    use super::*;
+
+    #[test]
+    fn context_for_files_collects_declared_targets_from_disk() -> Result<(), String> {
+        // #3283 discriminating test for the aggregation itself: a real
+        // manifest on disk contributes its declared targets, workspace
+        // relative, while an unrelated package contributes nothing.
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-targets-ctx-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(dir.join("pkg-a/src")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(dir.join("pkg-b/src")).map_err(|e| e.to_string())?;
+        std::fs::write(
+            dir.join("pkg-a/Cargo.toml"),
+            "[package]\nname='a'\nversion='0.1.0'\n\n[[test]]\npath='src/contract_test.rs'\n[[bench]]\npath='src/perf.rs'\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("pkg-b/Cargo.toml"),
+            "[package]\nname='b'\nversion='0.1.0'\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let files = [dir.join("pkg-a/src/lib.rs"), dir.join("pkg-b/src/lib.rs")]
+            .iter()
+            .map(|path| {
+                path.strip_prefix(&dir)
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|_| path.clone())
+            })
+            .collect::<Vec<_>>();
+        let context = context_for_files(
+            &dir,
+            files.iter().map(|path| path.as_path()).collect::<Vec<_>>(),
+        );
+        assert!(
+            context
+                .declared_test_targets
+                .contains(&PathBuf::from("pkg-a/src/contract_test.rs"))
+        );
+        assert!(
+            context
+                .declared_bench_targets
+                .contains(&PathBuf::from("pkg-a/src/perf.rs"))
+        );
+        assert!(context.production_like_targets.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
     }
 }

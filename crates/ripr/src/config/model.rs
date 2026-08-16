@@ -670,13 +670,18 @@ impl RiprConfig {
             ConfigIdentityField {
                 name: "analysis.production_like_targets",
                 role: ConfigIdentityRole::FindingAffecting,
-                value: Some(
+                // NUL-separated with a count prefix: an injective encoding,
+                // so distinct sets never collide (a comma join would be
+                // ambiguous for paths containing commas).
+                value: Some(format!(
+                    "{}\u{0}{}",
+                    production_like_targets.len(),
                     production_like_targets
                         .iter()
                         .map(|path| path.to_string_lossy().to_string())
                         .collect::<Vec<_>>()
-                        .join(","),
-                ),
+                        .join("\u{0}")
+                )),
                 note: "the production-like opt-in changes which files are production subjects (#3283)",
             },
             ConfigIdentityField {

@@ -1277,7 +1277,8 @@ fn parse_config_reads_production_like_targets() -> Result<(), String> {
         .ok_or("identity must classify the opt-in")?;
     assert_eq!(
         field.value.as_deref(),
-        Some("benches/perf.rs,tests/api_contract.rs")
+        Some("2\u{0}benches/perf.rs\u{0}tests/api_contract.rs"),
+        "the identity encoding must be injective: count + NUL separators"
     );
     Ok(())
 }

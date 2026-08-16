@@ -129,6 +129,10 @@ pub(crate) fn classify_with(path: &Path, context: &SourceRoleContext) -> SourceR
 /// Layout-only classification (context-free base shared by every
 /// consumer, including surfaces without Cargo metadata at hand).
 ///
+/// Expects a workspace-relative path; absolute inputs keep their
+/// components and still classify, but context-set membership is keyed on
+/// the workspace-relative normalized identity.
+///
 /// The production-subject rules carry over the pre-#3283
 /// `is_production_rust_path` contract exactly: a production subject
 /// requires a `src` component, is not named `tests.rs`, and is not under
@@ -185,13 +189,13 @@ pub(crate) fn classify(path: &Path) -> SourceRole {
     SourceRole::ProductionSubject
 }
 
-/// Whether the path below a `dir` component matches a Cargo
-/// autodiscovery target shape: `<dir>/<name>.rs` or
-/// `<dir>/<name>/main.rs`.
 fn component_name(component: &std::path::Component) -> String {
     component.as_os_str().to_string_lossy().to_string()
 }
 
+/// Whether the path below a `dir` component matches a Cargo
+/// autodiscovery target shape: `<dir>/<name>.rs` or
+/// `<dir>/<name>/main.rs`.
 fn cargo_discoverable_under(components: &[std::path::Component], dir: &str) -> bool {
     components.iter().enumerate().any(|(index, component)| {
         if component.as_os_str().to_string_lossy() != dir {

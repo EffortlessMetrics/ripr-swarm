@@ -97,7 +97,9 @@ hashes the `ripr.toml` text, so no generation bump is required for it.
   the single declared divergence is nested-src layouts under
   `examples/`/`benches/` (not Cargo-discoverable targets, production
   in diff mode since before #3283).
+
 ## Required guards
+
 
 - No filename-only classification: an unconfirmed convention name is a
   production subject.
