@@ -12,7 +12,7 @@ use crate::analysis::rust_index::{
     FunctionFact, OracleFact, PROBE_SHAPE_CALL_DELETION, PROBE_SHAPE_ERROR_PATH,
     PROBE_SHAPE_FIELD_CONSTRUCTION, PROBE_SHAPE_MATCH_ARM, PROBE_SHAPE_PREDICATE,
     PROBE_SHAPE_RETURN_VALUE, PROBE_SHAPE_SIDE_EFFECT, ProbeShapeFact, TestFact,
-    classify_assertion, extract_call_facts, extract_identifier_tokens,
+    classify_assertion, err_return_guard_oracles, extract_call_facts, extract_identifier_tokens,
     extract_line_scanned_oracles, extract_literal_facts, extract_return_facts,
     is_unwrap_err_bound_error_assertion, unwrap_err_bound_variables,
 };
@@ -237,7 +237,14 @@ fn is_cfg_test_module_member(function: &ast::Fn) -> bool {
                     .chars()
                     .filter(|ch| !ch.is_whitespace())
                     .collect::<String>();
-                compact == "#[cfg(test)]"
+                // #3284: `#[cfg(all(test, ...))]` gates the module on test
+                // plus other predicates, which still means harness-only in
+                // every non-test build that satisfies the other conjuncts
+                // is NOT guaranteed — but the module is compiled under
+                // test, so its helpers are evidence role. `any(test, ..)`
+                // and `not(test)` stay excluded: they compile outside
+                // test builds.
+                compact == "#[cfg(test)]" || compact.starts_with("#[cfg(all(test,")
             })
         })
 }
@@ -727,6 +734,11 @@ fn extract_parser_oracles(
     }
 
     let function_start = line_index.line(function.syntax().text_range().start());
+    // #3284: terminal Err-return guards credit as their assertion twins
+    // on the parser path too, so both adapters agree.
+    for oracle in err_return_guard_oracles(&function_text, function_start) {
+        assertions.push(oracle);
+    }
     for oracle in
         extract_line_scanned_oracles(&function.syntax().text().to_string(), function_start)
     {
@@ -1145,5 +1157,100 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
         );
 
         assert!(nodes.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod cfg_all_test_tests {
+    use super::RaRustSyntaxAdapter;
+    use super::RustSyntaxAdapter;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn temp_dir(name: &str) -> Result<PathBuf, String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!("ripr-{name}-{stamp}"));
+        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+        Ok(dir)
+    }
+
+    fn write_manifest(root: &std::path::Path) -> Result<(), String> {
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]
+name='test'
+version='0.1.0'
+edition='2024'
+",
+        )
+        .map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn cfg_all_test_module_members_carry_evidence_role() -> Result<(), String> {
+        // #3284: a module gated on `cfg(all(test, feature))` compiles under
+        // test; its helpers are harness plumbing and must carry the
+        // evidence role, exactly like plain `#[cfg(test)]`. `not(test)`
+        // and `any(test, ..)` stay production.
+        let root = temp_dir("ra_cfg_all_test")?;
+        fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        write_manifest(&root)?;
+        fs::write(
+            root.join("src/lib.rs"),
+            "pub fn production_control() -> i32 { 1 }\n\n#[cfg(all(test, feature = \"slow\"))]\nmod slow_tests {\n    fn helper_under_all_test() -> i32 { production_control() }\n\n    #[test]\n    fn runs() { let _ = helper_under_all_test(); }\n}\n\n#[cfg(not(test))]\nmod prod_only {\n    pub fn production_shape() -> i32 { 2 }\n}\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let facts = RaRustSyntaxAdapter
+            .summarize_file(
+                &root.join("src/lib.rs"),
+                &fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?;
+        let helper = facts
+            .functions
+            .iter()
+            .find(|function| function.name == "helper_under_all_test")
+            .ok_or("helper missing from facts")?;
+        assert!(
+            helper.is_test,
+            "cfg(all(test, ..)) members are evidence role"
+        );
+        let prod = facts
+            .functions
+            .iter()
+            .find(|function| function.name == "production_shape")
+            .ok_or("cfg(not(test)) fn missing from facts")?;
+        assert!(!prod.is_test, "cfg(not(test)) members stay production");
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod guard_pipeline_debug_tests {
+    use super::RaRustSyntaxAdapter;
+    use super::RustSyntaxAdapter;
+
+    #[test]
+    fn parser_path_credits_err_guard_in_test_facts() -> Result<(), String> {
+        let source = "use parity_err_guard::discounted_total;\n\n#[test]\nfn boundary_matches_expected() -> Result<(), String> {\n    let actual = discounted_total(100, 100);\n    let expected = 90;\n    if actual != expected {\n        return Err(format!(\"actual={actual:?}\"));\n    }\n    Ok(())\n}\n";
+        let facts = RaRustSyntaxAdapter
+            .summarize_file(std::path::Path::new("tests/pricing.rs"), source)
+            .map_err(|error| error.to_string())?;
+        let test = facts
+            .tests
+            .iter()
+            .find(|test| test.name == "boundary_matches_expected")
+            .ok_or_else(|| format!("test missing: {:?}", facts.tests))?;
+        assert!(
+            test.assertions
+                .iter()
+                .any(|oracle| oracle.kind == crate::domain::OracleKind::RelationalCheck),
+            "guard must credit through the parser path: {:?}",
+            test.assertions
+        );
+        Ok(())
     }
 }

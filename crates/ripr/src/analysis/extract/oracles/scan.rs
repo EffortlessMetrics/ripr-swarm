@@ -38,9 +38,194 @@ pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFac
                 strength: classification.strength,
                 observed_tokens,
             });
+        } else if trimmed.starts_with("if ") || trimmed.starts_with("if(") {
+            // #3284: a terminal `if <cond> { return Err(...) }` guard is
+            // the manual expansion of a message-carrying assertion. The
+            // lexical path recognizes it WITHOUT consuming the block:
+            // joining the whole if-body would swallow real assertions
+            // inside it (review finding — a main regression in the first
+            // draft), so only the condition line plus a one-line peek at
+            // the first body statement participates.
+            if let Some(oracle) =
+                peeked_err_return_guard_oracle(&trimmed, lines.peek(), start_line + offset)
+            {
+                out.push(oracle);
+            }
         }
     }
     out
+}
+
+/// Scan a function body for terminal Err-return guards and credit each
+/// as its assertion twin (#3284). Used by the ra parser path, whose
+/// assertion facts come from the AST — joining the guard block here
+/// cannot swallow sibling assertions.
+pub(crate) fn err_return_guard_oracles(body: &str, start_line: usize) -> Vec<OracleFact> {
+    let mut out = Vec::new();
+    let mut lines = body.lines().enumerate().peekable();
+    while let Some((offset, line)) = lines.next() {
+        let mut trimmed = line.trim().to_string();
+        let guard_line = trimmed.starts_with("if ") || trimmed.starts_with("if(");
+        if guard_line
+            && let Some(oracle) =
+                err_return_guard_oracle(&mut trimmed, &mut lines, start_line + offset)
+        {
+            out.push(oracle);
+        }
+    }
+    out
+}
+
+/// The lexical-path guard oracle: recognize from the condition line plus
+/// a single peeked body line, consuming nothing, so assertions inside the
+/// guard body stay visible to the outer loop (review finding: the first
+/// draft joined the whole block and swallowed them).
+fn peeked_err_return_guard_oracle(
+    line: &str,
+    next: Option<&(usize, &str)>,
+    line_number: usize,
+) -> Option<OracleFact> {
+    let brace = line.find('{')?;
+    let head = line[..brace].trim();
+    let condition = head.strip_prefix("if")?.trim();
+    if condition.is_empty() {
+        return None;
+    }
+    // Same fail-closed gate as the parser path: the Err return must be
+    // the body's first statement, so a commented-out or string-embedded
+    // `return Err(` never credits.
+    let returns_on_line = line[brace..].replace(' ', "").starts_with("{returnErr(");
+    let returns_on_next = next.is_some_and(|(_, next)| {
+        let compact = next.replace(' ', "");
+        compact.starts_with("returnErr(")
+    });
+    if !returns_on_line && !returns_on_next {
+        return None;
+    }
+    let twin = err_return_guard_assertion(&format!("if {condition} {{ return Err(()) }}"))?;
+    let classification = classify_assertion(&twin);
+    let observed_tokens = extract_identifier_tokens(condition);
+    Some(OracleFact {
+        line: line_number,
+        text: format!("if {condition} {{ return Err(..) }}"),
+        kind: classification.kind,
+        strength: classification.strength,
+        observed_tokens,
+    })
+}
+
+/// Join a guard line's continuation and recognize the assertion twin.
+fn err_return_guard_oracle<'a, I>(
+    trimmed: &mut String,
+    lines: &mut std::iter::Peekable<I>,
+    line: usize,
+) -> Option<OracleFact>
+where
+    I: Iterator<Item = (usize, &'a str)>,
+{
+    collect_multiline_assertion(trimmed, lines);
+    let equivalent_assertion = err_return_guard_assertion(trimmed)?;
+    let classification = classify_assertion(&equivalent_assertion);
+    let observed_tokens = extract_identifier_tokens(trimmed);
+    Some(OracleFact {
+        line,
+        text: trimmed.clone(),
+        kind: classification.kind,
+        strength: classification.strength,
+        observed_tokens,
+    })
+}
+
+/// The assertion twin of a terminal Err-return guard, when the guard's
+/// condition can be structurally negated (#3284).
+///
+/// `if <lhs> != <rhs> { return Err(...) }` is equivalent to
+/// `assert!(<lhs> == <rhs>, ...)`; `if !<expr> { ... }` is equivalent to
+/// `assert!(<expr>)`; a top-level `==` condition negates to `!=`. Any
+/// other condition returns `None` — exactness is never inferred from
+/// messages or names.
+///
+/// Two fail-closed gates: the Err return must be the guard body's first
+/// statement (`{returnErr(` after whitespace compaction — a commented-out
+/// or string-embedded `return Err(` never credits), and the condition
+/// must not carry a top-level `&&`/`||` (a compound's correct negation is
+/// not a single assert twin, so it stays unrecognized rather than
+/// mis-twinned).
+fn err_return_guard_assertion(line: &str) -> Option<String> {
+    let compact: String = line.chars().filter(|ch| !ch.is_whitespace()).collect();
+    if !compact.starts_with("if") || !compact.contains("{returnErr(") {
+        return None;
+    }
+    let brace = compact.find('{')?;
+    let condition = &compact[2..brace];
+    if condition.is_empty() || has_top_level_boolean_operator(condition) {
+        return None;
+    }
+    if let Some(inner) = condition
+        .strip_prefix("!(")
+        .and_then(|rest| rest.strip_suffix(')'))
+    {
+        return Some(format!("assert!({inner})"));
+    }
+    if let Some(inner) = condition.strip_prefix('!') {
+        if !inner.starts_with('=') {
+            return Some(format!("assert!({inner})"));
+        }
+        return None;
+    }
+    // Top-level comparison: split on `==`/`!=` outside any nesting. The
+    // condition has no braces here (they end the condition), so a flat
+    // scan at depth zero suffices.
+    let mut depth = 0usize;
+    let bytes = condition.as_bytes();
+    let mut split = None;
+    let mut index = 0usize;
+    while index + 1 < bytes.len() {
+        match bytes[index] {
+            b'(' | b'[' => depth += 1,
+            b')' | b']' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        if depth == 0 {
+            let two = &condition[index..index + 2];
+            if two == "==" || two == "!=" {
+                split = Some((index, two));
+                break;
+            }
+        }
+        index += 1;
+    }
+    let (at, operator) = split?;
+    let lhs = &condition[..at];
+    let rhs = &condition[at + 2..];
+    if lhs.is_empty() || rhs.is_empty() {
+        return None;
+    }
+    let negated = if operator == "!=" { "==" } else { "!=" };
+    Some(format!("assert!({lhs} {negated} {rhs})"))
+}
+
+/// Whether a compacted condition carries a top-level `&&`/`||`: its
+/// correct negation is not a single `assert!` twin (#3284 fail-closed).
+fn has_top_level_boolean_operator(condition: &str) -> bool {
+    let mut depth = 0usize;
+    let bytes = condition.as_bytes();
+    let mut index = 0usize;
+    while index + 1 < bytes.len() {
+        match bytes[index] {
+            b'(' | b'[' => depth += 1,
+            b')' | b']' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        if depth == 0 {
+            let two = &condition[index..index + 2];
+            if two == "&&" || two == "||" {
+                return true;
+            }
+        }
+        index += 1;
+    }
+    false
 }
 
 fn collect_multiline_assertion<'a, I>(statement: &mut String, lines: &mut std::iter::Peekable<I>)
@@ -450,6 +635,91 @@ mod spec_0106_scan_tests {
             got.map(|f| f.kind.clone()),
             Some(OracleKind::ExactErrorVariant),
             "generic assertion without variant token must not be upgraded to ExactErrorVariant"
+        );
+    }
+}
+
+#[cfg(test)]
+mod err_guard_parity_tests {
+    use super::extract_assertions;
+    use crate::domain::{OracleKind, OracleStrength};
+
+    #[test]
+    fn err_return_guard_is_an_oracle_equal_to_its_assert_twin() {
+        // #3284: `if actual != expected { return Err(...) }` in a test body
+        // is the manual expansion of a message-carrying assertion; leaving
+        // it unrecognized made equivalent harness forms change the
+        // credited oracle and, through it, the production gap accounting.
+        let guard = extract_assertions(
+            "if actual != expected {\n    return Err(anyhow!(\"actual={actual:?}\"));\n}\nOk(())\n",
+            3,
+        );
+        assert!(
+            guard
+                .iter()
+                .any(|fact| fact.kind == OracleKind::RelationalCheck),
+            "the Err-return guard must be recognized: {guard:?}"
+        );
+        let twin = extract_assertions("assert!(actual == expected, \"actual={actual:?}\");\n", 3);
+        let guard_best = guard
+            .iter()
+            .find(|fact| fact.kind == OracleKind::RelationalCheck)
+            .map(|fact| (fact.kind.clone(), fact.strength.clone()));
+        let twin_best = twin
+            .iter()
+            .find(|fact| fact.kind == OracleKind::RelationalCheck)
+            .map(|fact| (fact.kind.clone(), fact.strength.clone()));
+        assert_eq!(
+            guard_best, twin_best,
+            "the guard and its assert! twin must carry identical oracle meaning"
+        );
+        assert_eq!(
+            guard_best.map(|(_, strength)| strength),
+            Some(OracleStrength::Weak)
+        );
+    }
+
+    #[test]
+    fn comment_only_or_compound_guards_never_credit() {
+        // #3284 fail-closed gates: an Err return that is not the body's
+        // first statement (commented out or in a string), and compound
+        // conditions whose negation is not a single assert twin, produce
+        // no oracle.
+        let commented = extract_assertions(
+            "if actual != expected { /* previously: return Err(\"m\") */ eprintln!(\"m\"); }
+",
+            3,
+        );
+        assert!(
+            commented.is_empty(),
+            "commented-out Err must not credit: {commented:?}"
+        );
+        let compound = extract_assertions(
+            "if a != b || c != d { return Err(\"x\"); }
+",
+            3,
+        );
+        assert!(
+            compound.is_empty(),
+            "compound guard must stay unrecognized: {compound:?}"
+        );
+    }
+
+    #[test]
+    fn guard_conditions_without_structural_equivalence_stay_unrecognized() {
+        // No inference from messages or opaque conditions: a guard whose
+        // condition cannot be structurally negated into an assertion
+        // contributes no oracle fact.
+        let opaque = extract_assertions(
+            "if !matches!(result, Expected::Good(_)) {\n    return Err(anyhow!(\"bad\"));\n}\n",
+            3,
+        );
+        assert!(
+            !opaque
+                .iter()
+                .any(|fact| fact.kind == OracleKind::RelationalCheck
+                    || fact.kind == OracleKind::ExactValue),
+            "opaque guard conditions must not be guessed into oracles: {opaque:?}"
         );
     }
 }

@@ -8233,3 +8233,30 @@ metrics = [
   "unit_test_pass_rate",
   "golden_fixture_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0154"
+name = "Assertion-form parity"
+spec = "docs/specs/RIPR-SPEC-0154-assertion-form-parity.md"
+tests = [
+  "crates/ripr/src/analysis/extract/oracles/scan.rs::err_guard_parity_tests::err_return_guard_is_an_oracle_equal_to_its_assert_twin",
+  "crates/ripr/src/analysis/extract/oracles/scan.rs::err_guard_parity_tests::guard_conditions_without_structural_equivalence_stay_unrecognized",
+  "crates/ripr/src/analysis/syntax/ra.rs::guard_pipeline_debug_tests::parser_path_credits_err_guard_in_test_facts",
+  "crates/ripr/src/analysis/probes/repo.rs::cfg_test_leak_tests::cfg_test_module_probe_shapes_seed_no_repo_probes",
+  "crates/ripr/src/analysis/syntax/ra.rs::cfg_all_test_tests::cfg_all_test_module_members_carry_evidence_role",
+]
+fixtures = [
+  "fixtures/assertion_form_parity_assert_msg",
+  "fixtures/assertion_form_parity_err_guard",
+]
+code = [
+  "crates/ripr/src/analysis/extract/oracles/scan.rs",
+  "crates/ripr/src/analysis/syntax/ra.rs",
+  "crates/ripr/src/analysis/probes/repo.rs",
+  "crates/ripr/src/analysis/seam_cache.rs",
+]
+outputs = []
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]

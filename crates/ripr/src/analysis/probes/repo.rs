@@ -17,7 +17,16 @@ pub fn probes_for_repo_file(root: &Path, path: &Path, index: &RustIndex) -> Vec<
             continue;
         };
 
-        let owner = find_owner_function(index, path, shape.start_line).map(|f| f.id.clone());
+        // #3284: harness-role functions never enter the production
+        // subject inventory. A cfg(test)-module helper inside a
+        // production file still contributes probe shapes to the file
+        // facts; an owner carrying the test/evidence role is skipped,
+        // mirroring the diff path and the seam inventory.
+        let owner_function = find_owner_function(index, path, shape.start_line);
+        if owner_function.is_some_and(|function| function.is_test) {
+            continue;
+        }
+        let owner = owner_function.map(|function| function.id.clone());
         let norm_expr = normalize_expression(&shape.text);
         // Ordinal 1 here; post-hoc dedup below handles collisions.
         let id = repo_probe_id(path, &family, owner.as_ref(), &norm_expr, 1);
@@ -137,5 +146,58 @@ mod tests {
             &RustIndex::default(),
         );
         assert!(probes.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod cfg_test_leak_tests {
+    use super::probes_for_repo_file;
+    use std::path::Path;
+
+    #[test]
+    fn cfg_test_module_probe_shapes_seed_no_repo_probes() -> Result<(), String> {
+        // #3284: harness-only control flow inside an inline #[cfg(test)]
+        // module must never enter the production subject inventory. The
+        // repo path iterates probe_shapes without an owner-role check, so
+        // a cfg(test) helper's shapes leak as repo findings.
+        let root = std::env::temp_dir().join(format!(
+            "ripr-repo-leak-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname='repo-leak'\nversion='0.1.0'\nedition='2024'\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "pub fn price(amount: i32) -> i32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    fn check_price(result: i32, expected: i32) {\n        if result != expected {\n            panic!(\"price mismatch\");\n        }\n    }\n\n    #[test]\n    fn price_at_boundary() {\n        check_price(price(100), 90);\n    }\n}\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let index =
+            crate::analysis::facts::build_index(&root, &[std::path::PathBuf::from("src/lib.rs")])
+                .map_err(|error| error.to_string())?;
+        let lib = Path::new("src/lib.rs");
+        let probes = probes_for_repo_file(&root, lib, &index);
+        let leaked: Vec<_> = probes
+            .iter()
+            .filter(|probe| probe.expression.contains("result != expected"))
+            .collect();
+        assert!(
+            leaked.is_empty(),
+            "cfg(test) helper probe shapes must not seed repo probes: {leaked:?}"
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.expression.contains("amount > 100")),
+            "production shapes still seed repo probes"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
     }
 }

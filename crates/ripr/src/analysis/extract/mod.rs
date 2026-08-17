@@ -10,7 +10,7 @@ pub(crate) use literals::{extract_literal_facts, extract_literals};
 #[cfg(test)]
 pub(crate) use oracles::contains_macro_invocation;
 pub(crate) use oracles::{
-    classify_assertion, equality_assertion_arguments, extract_assertions,
+    classify_assertion, equality_assertion_arguments, err_return_guard_oracles, extract_assertions,
     extract_line_scanned_oracles, is_unwrap_err_bound_error_assertion, unwrap_err_bound_variables,
 };
 pub(crate) use probe_shapes::{
