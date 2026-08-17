@@ -260,17 +260,23 @@ mod tests {
             role("metrics/subjects/source.after.rs"),
             SourceRole::FixtureOrReceiptEvidence
         );
-        // Every path the old predicate calls production, the role calls
-        // production — plus exactly one declared divergence: a nested src
+        // Production layouts stay production subjects and keep seeding —
+        // pinned directly rather than against `classify` (which `role`
+        // already calls), so a both-sides flip to evidence role fails
+        // here — plus exactly one declared divergence: a nested src
         // layout under examples/ (e.g. ripr's own
         // `crates/ripr/examples/sample/src/lib.rs`) is not a
         // Cargo-discoverable example target, seeded production probes in
         // diff mode since the beginning, and stays a production subject.
         for path in ["src/lib.rs", "crates/x/src/lib.rs"] {
+            assert_eq!(
+                role(path),
+                SourceRole::ProductionSubject,
+                "production layout must retain its role for {path}"
+            );
             assert!(
-                classify(Path::new(path)).seeds_production_findings()
-                    == (role(path) == SourceRole::ProductionSubject),
-                "layout base and context model disagree on {path}"
+                role(path).seeds_production_findings(),
+                "production role must seed findings for {path}"
             );
         }
         assert_eq!(

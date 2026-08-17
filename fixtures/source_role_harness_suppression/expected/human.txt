@@ -5,7 +5,7 @@ root: fixtures/source_role_harness_suppression/input
 Summary: 3 probe(s), 0 exposed, 0 weak, 0 unrevealed, 0 no path, 3 unknown
 
 Analysis outcome: complete_with_findings (analysis complete).
-  Counts: 2 changed file(s), 30 changed line(s), 3 candidate line(s), 3 probe(s), 3 finding(s).
+  Counts: 2 changed file(s), 31 changed line(s), 3 candidate line(s), 3 probe(s), 3 finding(s).
 
 Start here:
   State: static_limited
@@ -20,7 +20,7 @@ Start here:
   Evidence:
     - reach yes: Related tests appear to reach price: contract_journey
     - infection yes: Detected related test input at the changed boundary
-    - 11 more evidence line(s) hidden
+    - 14 more evidence line(s) hidden
 
 Next: drill into the top finding:
   ripr explain --root fixtures/source_role_harness_suppression/input --diff fixtures/source_role_harness_suppression/diff.patch --mode fast probe:src_lib.rs:predicate:34000fd8

@@ -10,7 +10,7 @@ diff --git a/tests/contract.rs b/tests/contract.rs
 new file mode 100644
 --- /dev/null
 +++ b/tests/contract.rs
-@@ -0,0 +1,27 @@
+@@ -0,0 +1,28 @@
 +use harness_suppression::price;
 +
 +fn driver() -> Result<(), String> {
@@ -36,5 +36,6 @@ new file mode 100644
 +    if price(100, 100) != 90 {
 +        return Err("boundary mismatch".to_string());
 +    }
++    assert_eq!(price(100, 100), 90);
 +    Ok(())
 +}

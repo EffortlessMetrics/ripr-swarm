@@ -23,5 +23,6 @@ fn contract_journey() -> Result<(), String> {
     if price(100, 100) != 90 {
         return Err("boundary mismatch".to_string());
     }
+    assert_eq!(price(100, 100), 90);
     Ok(())
 }

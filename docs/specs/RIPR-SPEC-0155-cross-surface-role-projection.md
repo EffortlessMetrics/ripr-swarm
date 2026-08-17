@@ -10,8 +10,8 @@ After #3283 gave ripr one producer-owned source-role model, exactly one
 production surface still re-inferred role from paths: the LSP
 out-of-scope partition used the retired path predicate, so an opted-in
 `production_like_targets` target seeded CLI findings that the editor
-partition dropped as out-of-scope — the last surface disagreement in the
-#3213 matrix.
+partition dropped as out-of-scope — the last surface disagreement in
+the #3213 matrix.
 
 ## Behavior
 
