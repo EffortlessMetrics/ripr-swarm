@@ -122,10 +122,7 @@ impl RiprAnalysisRequestV1 {
         require_non_empty("request_id", &self.request_id)?;
         self.repository.validate()?;
         require_optional_non_empty("requirement_id", self.subject.requirement_id.as_deref())?;
-        require_optional_non_empty(
-            "evidence_purpose",
-            self.subject.evidence_purpose.as_deref(),
-        )?;
+        require_optional_non_empty("evidence_purpose", self.subject.evidence_purpose.as_deref())?;
         require_non_empty("seam_id", &self.subject.seam_id)?;
         require_non_empty("subject_id", &self.subject.subject_id)?;
         require_sha256("subject_body_digest", &self.subject.subject_body_digest)?;
@@ -297,9 +294,7 @@ fn validate_diagnostic(
     }
 }
 
-fn require_disclosure(
-    receipt: &RiprAnalysisReceiptV1,
-) -> Result<(), RiprProviderContractErrorV1> {
+fn require_disclosure(receipt: &RiprAnalysisReceiptV1) -> Result<(), RiprProviderContractErrorV1> {
     if receipt.diagnostics.is_empty() && receipt.limitations.is_empty() {
         return Err(error(
             RiprProviderContractErrorCodeV1::MissingField,
@@ -350,10 +345,7 @@ fn require_derived_snapshot(
     Ok(())
 }
 
-fn require_sha256(
-    field: &str,
-    value: &str,
-) -> Result<(), RiprProviderContractErrorV1> {
+fn require_sha256(field: &str, value: &str) -> Result<(), RiprProviderContractErrorV1> {
     let digest = value.strip_prefix("sha256:").ok_or_else(|| {
         error(
             RiprProviderContractErrorCodeV1::MalformedIdentity,
@@ -382,10 +374,7 @@ fn validate_portable_relative_path(
         || value.starts_with('\\')
         || value.contains('\\')
         || value.split('/').any(|component| {
-            component.is_empty()
-                || component == "."
-                || component == ".."
-                || component.contains(':')
+            component.is_empty() || component == "." || component == ".." || component.contains(':')
         })
     {
         return Err(error(
@@ -396,10 +385,7 @@ fn validate_portable_relative_path(
     Ok(())
 }
 
-fn validate_text_list(
-    field: &str,
-    values: &[String],
-) -> Result<(), RiprProviderContractErrorV1> {
+fn validate_text_list(field: &str, values: &[String]) -> Result<(), RiprProviderContractErrorV1> {
     if values.iter().any(|value| value.trim().is_empty()) {
         return Err(error(
             RiprProviderContractErrorCodeV1::MissingField,
@@ -422,10 +408,7 @@ fn require_optional_non_empty(
     Ok(())
 }
 
-fn require_non_empty(
-    field: &str,
-    value: &str,
-) -> Result<(), RiprProviderContractErrorV1> {
+fn require_non_empty(field: &str, value: &str) -> Result<(), RiprProviderContractErrorV1> {
     if value.trim().is_empty() {
         return Err(error(
             RiprProviderContractErrorCodeV1::MissingField,
