@@ -4,7 +4,8 @@ use super::super::rust_index::{
     find_owner_function,
 };
 use super::binding_predicate::{
-    BindingPredicateResolution, ChangedBindingPredicateUse, resolve_changed_binding_uses,
+    BindingPredicateResolution, ChangedBindingPredicateUse, masked_brace_delta, masked_paren_delta,
+    resolve_changed_binding_uses,
 };
 use super::classify::{parser_probe_shapes_for_changed_line, should_ignore_changed_line};
 use super::expectations::{expected_sinks, required_oracles};
@@ -194,6 +195,13 @@ fn retarget_changed_binding_predicates(
     changed_lines: &[usize],
 ) -> Option<Vec<ProbeWithRelation>> {
     let (binding, initializer) = changed_let_binding(text)?;
+    // Only a complete single-line declaration retargets: a multi-line
+    // initializer's first added line would otherwise retarget with a
+    // truncated initializer (and a false plain-value resolution), so it
+    // fails closed to the generic per-line probes (#3294 review).
+    if !text.ends_with(';') || masked_paren_delta(text) != 0 || masked_brace_delta(text) != 0 {
+        return None;
+    }
     let owner = find_owner_function(context.index, &context.changed.path, added.new_side_line)?;
     let resolution = resolve_changed_binding_uses(
         binding,

@@ -106,6 +106,13 @@ const COMPARISON_OPERATORS: [&str; 6] = ["==", "!=", "<=", ">=", "<", ">"];
 /// line (body line offset 0 sits on it), and `changed_line` is the
 /// changed declaration's absolute line: only uses after that line, with
 /// no intervening shadow or reassignment, relate.
+///
+/// Region tracking keeps the scan inside the owning function's own
+/// scope (review-hardened #3294): braces opened by a closure or a
+/// nested item are no-use regions (their bodies are separate binding
+/// scopes or unmodeled capture), and lines inside an unclosed foreign
+/// expression (running parentheses from a previous line) are
+/// continuations, not use sites.
 pub(crate) fn resolve_changed_binding_uses(
     binding: &str,
     initializer: &str,
@@ -117,78 +124,140 @@ pub(crate) fn resolve_changed_binding_uses(
     let mut uses = Vec::new();
     let mut live = false;
     let mut blocker: Option<BindingUseScope> = None;
+    let mut brace_regions: Vec<bool> = Vec::new();
+    let mut open_parens: isize = 0;
+    let mut pending_item_signature = false;
     for (offset, (raw_line, masked_line)) in body.lines().zip(masked.lines()).enumerate() {
         let absolute = body_start_line + offset;
         let masked_trimmed = masked_line.trim();
-        if masked_trimmed.starts_with("let ") {
-            if let Some((declared, _)) = changed_let_binding(masked_trimmed) {
-                if declared == binding {
-                    if absolute == changed_line {
-                        live = true;
-                    } else if live {
-                        live = false;
-                        blocker.get_or_insert(BindingUseScope::ShadowedBeforeUse);
+        let leading_closes = masked_trimmed.chars().take_while(|ch| *ch == '}').count();
+        for _ in 0..leading_closes {
+            brace_regions.pop();
+        }
+        let opens = masked_line.matches('{').count();
+        let closes = masked_line.matches('}').count();
+        let in_continuation = open_parens > 0;
+        let inside_no_use = brace_regions.iter().any(|no_use| *no_use);
+
+        // A nested item's multi-line signature: skip until its body
+        // brace opens (a no-use region) or a `;` ends the bodyless
+        // item.
+        if pending_item_signature {
+            let opens_here = masked_line.contains('{');
+            reconcile_braces(&mut brace_regions, opens, closes, leading_closes, true);
+            if opens_here || masked_trimmed.ends_with(';') {
+                pending_item_signature = false;
+            }
+            open_parens = (open_parens + paren_delta(masked_line)).max(0);
+            continue;
+        }
+        // Nested items (and the owner's own signature line) are never
+        // use sites; a nested item's parameters and locals are a
+        // separate binding scope, so its whole body is a no-use region.
+        // The owner's own signature (offset 0) opens the body the scan
+        // lives in, so its brace stays a plain region.
+        if is_item_line(masked_trimmed) {
+            let item_no_use = offset > 0;
+            if !masked_line.contains('{') && !masked_trimmed.ends_with(';') {
+                pending_item_signature = true;
+            }
+            reconcile_braces(
+                &mut brace_regions,
+                opens,
+                closes,
+                leading_closes,
+                item_no_use,
+            );
+            open_parens = (open_parens + paren_delta(masked_line)).max(0);
+            continue;
+        }
+        if !inside_no_use {
+            if masked_trimmed.starts_with("let ") {
+                if let Some((declared, _)) = changed_let_binding(masked_trimmed) {
+                    if declared == binding {
+                        if absolute == changed_line {
+                            live = true;
+                        } else if live {
+                            live = false;
+                            blocker.get_or_insert(BindingUseScope::ShadowedBeforeUse);
+                        }
+                    } else if live && direct_predicate_operand(masked_trimmed, binding).is_some() {
+                        // Another binding's `let` initializer may still
+                        // carry a closure capture or macro use of ours.
+                        // V1 relates no predicate inside a foreign
+                        // initializer, but the closure/macro ambiguity
+                        // is recorded as the explicit blocker rather
+                        // than silently dropped.
+                        if has_closure_pipes(masked_trimmed) {
+                            blocker.get_or_insert(BindingUseScope::ClosureCaptureUnsupported);
+                        } else if is_macro_invocation_line(masked_trimmed) {
+                            blocker.get_or_insert(BindingUseScope::MacroExpansionUnsupported);
+                        }
                     }
+                    reconcile_braces(
+                        &mut brace_regions,
+                        opens,
+                        closes,
+                        leading_closes,
+                        has_closure_pipes(masked_trimmed),
+                    );
+                    open_parens = (open_parens + paren_delta(masked_line)).max(0);
                     continue;
                 }
-                // Another binding's `let` initializer may still carry a
-                // closure capture or macro use of ours. V1 relates no
-                // predicate inside a foreign initializer (bounded rule:
-                // control statements and scrutinees only), but the
-                // closure/macro ambiguity is recorded as the explicit
-                // blocker rather than silently dropped.
-                if live && direct_predicate_operand(masked_trimmed, binding).is_some() {
-                    if has_closure_pipes(masked_trimmed) {
-                        blocker.get_or_insert(BindingUseScope::ClosureCaptureUnsupported);
-                    } else if is_macro_invocation_line(masked_trimmed) {
-                        blocker.get_or_insert(BindingUseScope::MacroExpansionUnsupported);
-                    }
+                // Non-simple `let` (destructuring or pattern): it can
+                // still re-bind the identifier, which ends the live
+                // span.
+                if live && pattern_rebinds_binding(masked_trimmed, binding) {
+                    live = false;
+                    blocker.get_or_insert(BindingUseScope::ShadowedBeforeUse);
                 }
+                reconcile_braces(
+                    &mut brace_regions,
+                    opens,
+                    closes,
+                    leading_closes,
+                    has_closure_pipes(masked_trimmed),
+                );
+                open_parens = (open_parens + paren_delta(masked_line)).max(0);
                 continue;
             }
-            // Non-simple `let` (destructuring or pattern): it can still
-            // re-bind the identifier, which ends the live span.
-            if live && pattern_rebinds_binding(masked_trimmed, binding) {
+            // `if let`/`while let`/`for` bind their own pattern
+            // variable: a same-named binding there is a re-bind, and
+            // the control line is never a predicate use of ours.
+            if live && pattern_control_rebinds(masked_trimmed, binding) {
                 live = false;
                 blocker.get_or_insert(BindingUseScope::ShadowedBeforeUse);
+            } else if live && is_reassignment(masked_trimmed, binding) {
+                live = false;
+                blocker.get_or_insert(BindingUseScope::ReassignedBeforeUse);
+            } else if live && !in_continuation {
+                let side = direct_predicate_operand(masked_trimmed, binding);
+                if let Some(side) = side {
+                    if is_macro_invocation_line(masked_trimmed) {
+                        blocker.get_or_insert(BindingUseScope::MacroExpansionUnsupported);
+                    } else if has_closure_pipes(masked_trimmed) {
+                        blocker.get_or_insert(BindingUseScope::ClosureCaptureUnsupported);
+                    } else {
+                        uses.push(ChangedBindingPredicateUse {
+                            binding: binding.to_string(),
+                            initializer: initializer.to_string(),
+                            predicate_expression: raw_line.trim().to_string(),
+                            predicate_line: absolute,
+                            operand_side: side,
+                            value_resolution: value_resolution(initializer),
+                        });
+                    }
+                }
             }
-            continue;
         }
-        // `if let`/`while let`/`for` bind their own pattern variable: a
-        // same-named binding there is a re-bind, and the control line is
-        // never a predicate use of ours.
-        if live && pattern_control_rebinds(masked_trimmed, binding) {
-            live = false;
-            blocker.get_or_insert(BindingUseScope::ShadowedBeforeUse);
-            continue;
-        }
-        if live && is_reassignment(masked_trimmed, binding) {
-            live = false;
-            blocker.get_or_insert(BindingUseScope::ReassignedBeforeUse);
-            continue;
-        }
-        if !live {
-            continue;
-        }
-        let Some(side) = direct_predicate_operand(masked_trimmed, binding) else {
-            continue;
-        };
-        if is_macro_invocation_line(masked_trimmed) {
-            blocker.get_or_insert(BindingUseScope::MacroExpansionUnsupported);
-            continue;
-        }
-        if has_closure_pipes(masked_trimmed) {
-            blocker.get_or_insert(BindingUseScope::ClosureCaptureUnsupported);
-            continue;
-        }
-        uses.push(ChangedBindingPredicateUse {
-            binding: binding.to_string(),
-            initializer: initializer.to_string(),
-            predicate_expression: raw_line.trim().to_string(),
-            predicate_line: absolute,
-            operand_side: side,
-            value_resolution: value_resolution(initializer),
-        });
+        reconcile_braces(
+            &mut brace_regions,
+            opens,
+            closes,
+            leading_closes,
+            has_closure_pipes(masked_line),
+        );
+        open_parens = (open_parens + paren_delta(masked_line)).max(0);
     }
     if uses.is_empty() {
         BindingPredicateResolution::NoDirectUse {
@@ -197,6 +266,71 @@ pub(crate) fn resolve_changed_binding_uses(
     } else {
         BindingPredicateResolution::DirectUses(uses)
     }
+}
+
+/// Apply a line's net brace effect to the region stack. Braces the line
+/// opens become no-use regions when `no_use` is set (closure bodies,
+/// item bodies); braces it closes beyond any already-popped leading
+/// closes pop from the stack.
+fn reconcile_braces(
+    brace_regions: &mut Vec<bool>,
+    opens: usize,
+    closes: usize,
+    leading_closes: usize,
+    no_use: bool,
+) {
+    let net = opens as isize - closes as isize + leading_closes as isize;
+    if net > 0 {
+        for _ in 0..net {
+            brace_regions.push(no_use);
+        }
+    } else {
+        for _ in 0..(-net).min(brace_regions.len() as isize) {
+            brace_regions.pop();
+        }
+    }
+}
+
+fn paren_delta(line: &str) -> isize {
+    line.matches('(').count() as isize - line.matches(')').count() as isize
+}
+
+/// Net parenthesis balance of a changed `let` line with comment/string
+/// text masked, so a literal `"("` cannot fake balance. A non-zero
+/// delta means the declaration continues on the next line.
+pub(crate) fn masked_paren_delta(line: &str) -> isize {
+    paren_delta(&mask_rust_comments_and_strings(line))
+}
+
+/// Net brace balance of a changed `let` line with comment/string text
+/// masked. A non-zero delta means the initializer's block continues on
+/// the next line.
+pub(crate) fn masked_brace_delta(line: &str) -> isize {
+    let masked = mask_rust_comments_and_strings(line);
+    masked.matches('{').count() as isize - masked.matches('}').count() as isize
+}
+
+/// A nested (or the owner's own) item line: separate binding scope,
+/// never a use site.
+fn is_item_line(line: &str) -> bool {
+    [
+        "fn ",
+        "pub ",
+        "pub(",
+        "async ",
+        "impl ",
+        "struct ",
+        "enum ",
+        "trait ",
+        "mod ",
+        "const ",
+        "static ",
+        "macro_rules!",
+        "unsafe ",
+        "extern ",
+    ]
+    .iter()
+    .any(|prefix| line.starts_with(prefix))
 }
 
 /// A non-simple `let` line whose binding pattern mentions the
@@ -232,7 +366,7 @@ fn pattern_control_rebinds(line: &str, binding: &str) -> bool {
 /// `<ident> = …` / `<ident> += …` (and friends) on a live binding —
 /// but never `==`, `!=`, `<=`, `>=`, or a `let`.
 fn is_reassignment(line: &str, binding: &str) -> bool {
-    for operator in ["+=", "-=", "*=", "/=", "|=", "&=", "^=", "<<=", ">>="] {
+    for operator in ["+=", "-=", "*=", "/=", "%=", "|=", "&=", "^=", "<<=", ">>="] {
         if let Some((lhs, _)) = line.split_once(operator)
             && binding_is_plain_operand(lhs, binding)
         {
@@ -267,6 +401,13 @@ fn direct_predicate_operand(line: &str, binding: &str) -> Option<PredicateOperan
         let mut search = 0;
         while let Some(offset) = line[search..].find(operator) {
             let at = search + offset;
+            // A `<`/`>` that is half of a shift operator is not a
+            // comparison: `sink(flags << end)` must never read as a
+            // predicate use of `end` (#3294 review).
+            if is_shift_operator_half(line, at, operator) {
+                search = at + operator.len();
+                continue;
+            }
             let left = bound_left_operand(&line[..at]);
             let right = bound_right_operand(&line[at + operator.len()..]);
             if operand_holds_binding(left, binding) {
@@ -279,6 +420,8 @@ fn direct_predicate_operand(line: &str, binding: &str) -> Option<PredicateOperan
         }
     }
     let condition = line
+        .trim_start()
+        .trim_start_matches('}')
         .trim_start()
         .strip_prefix("else ")
         .unwrap_or(line.trim_start());
@@ -295,13 +438,29 @@ fn direct_predicate_operand(line: &str, binding: &str) -> Option<PredicateOperan
             }
         }
     }
-    if let Some(rest) = line.trim_start().strip_prefix("match ") {
+    if let Some(rest) = line
+        .trim_start()
+        .trim_start_matches('}')
+        .trim_start()
+        .strip_prefix("match ")
+    {
         let scrutinee = rest.split('{').next().unwrap_or(rest);
         if operand_holds_binding(scrutinee, binding) {
             return Some(PredicateOperandSide::MatchScrutinee);
         }
     }
     None
+}
+
+/// Whether the `<`/`>` at `at` is one character of a `<<`/`>>` shift
+/// operator rather than a comparison.
+fn is_shift_operator_half(line: &str, at: usize, operator: &str) -> bool {
+    if operator != "<" && operator != ">" {
+        return false;
+    }
+    let before = line[..at].chars().next_back();
+    let after = line[at + 1..].chars().next();
+    matches!(before, Some('<') | Some('>')) || matches!(after, Some('<') | Some('>'))
 }
 
 /// The operand text immediately left of an operator: bounded by the
@@ -350,12 +509,23 @@ fn is_macro_invocation_line(line: &str) -> bool {
     line.contains("!(")
 }
 
-/// A use line carrying closure pipes (`move |x|`, `|x| …`): the capture
+/// A use line carrying closure pipes (`|x| …`, `move |x|`): the capture
 /// and call timing are not modeled, so the use fails closed. `||` in a
-/// boolean condition is explicitly not a closure pipe.
+/// boolean condition is explicitly not a closure pipe, and a single `|`
+/// between operands is a bitwise OR, not a pipe — a pipe counts only in
+/// an argument position (line start, or after `=`, `(`, `,`, `;`, `{`).
 fn has_closure_pipes(line: &str) -> bool {
     let without_boolean_ops = line.replace("||", "");
-    without_boolean_ops.contains('|')
+    without_boolean_ops.char_indices().any(|(at, character)| {
+        if character != '|' {
+            return false;
+        }
+        let before = without_boolean_ops[..at].trim_end().chars().next_back();
+        matches!(
+            before,
+            None | Some('=') | Some('(') | Some(',') | Some(';') | Some('{')
+        )
+    })
 }
 
 /// The earliest (leftmost) unresolved operation in the initializer, or
@@ -384,12 +554,19 @@ fn earliest_operation(trimmed: &str) -> Option<String> {
             consider(at, token.to_string());
         }
     }
+    for token in ["<<", ">>"] {
+        if let Some(at) = trimmed.find(token) {
+            consider(at, token.to_string());
+        }
+    }
     if let Some(at) = trimmed.find('(') {
         consider(at, trimmed[..=at].to_string());
     }
     for (at, character) in trimmed.char_indices() {
         match character {
-            '+' | '*' | '/' | '%' => consider(at, character.to_string()),
+            '+' | '*' | '/' | '%' | '&' | '|' | '^' | '<' | '>' => {
+                consider(at, character.to_string());
+            }
             // A `-` is an operation only between operands; a leading or
             // post-operator `-` is a literal sign, not an operation.
             '-' if at > 0
@@ -693,6 +870,133 @@ mod tests {
         assert_eq!(uses.len(), 1);
         assert_eq!(uses[0].predicate_line, 6);
         Ok(())
+    }
+
+    // #3294 review finding 1 (blocker): shift operators are not
+    // comparisons — `flags << end` on a call or assignment line must
+    // never read as a predicate use of the binding.
+    #[test]
+    fn shift_operands_never_relate() -> Result<(), String> {
+        let shapes = [
+            "pub fn f(flags: u32, sink: &mut u32) {\n    let end = 1;\n    sink(flags << end);\n}\n",
+            "pub fn f(flags: u32, sum: &mut u32) {\n    let end = 1;\n    *sum += flags << end;\n}\n",
+        ];
+        for body in shapes {
+            let resolution = resolve_end(body, 2);
+            assert_eq!(
+                blocked_scope(&resolution)?,
+                BindingUseScope::NoPredicateUse,
+                "shift operand must not relate: {body}"
+            );
+        }
+        // A shift inside a real comparison relates through the
+        // comparison, labeled at the comparison's operand.
+        assert_eq!(
+            direct_predicate_operand("if (1 << end) > 2 {", "end"),
+            Some(PredicateOperandSide::Left)
+        );
+        Ok(())
+    }
+
+    // #3294 review finding 2: a closure body opened on a previous line
+    // is a no-use region; the captured use never relates.
+    #[test]
+    fn multiline_closure_body_never_relates() -> Result<(), String> {
+        let body = "pub fn f() -> bool {\n    let end = 1;\n    let check = |other: usize| {\n        end == other\n    };\n    check(2)\n}\n";
+        let resolution = resolve_end(body, 2);
+        assert_eq!(
+            blocked_scope(&resolution)?,
+            BindingUseScope::NoPredicateUse,
+            "a use inside the closure body must not relate"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn closure_local_shadow_does_not_end_outer_liveness() -> Result<(), String> {
+        let body = "pub fn f() -> bool {\n    let end = 1;\n    let check = |x: usize| {\n        let end = 2;\n        end == 2\n    };\n    end == 3\n}\n";
+        let resolution = resolve_end(body, 2);
+        let uses = direct_uses(&resolution)?;
+        assert_eq!(uses.len(), 1, "only the post-closure outer use relates");
+        assert_eq!(uses[0].predicate_line, 7);
+        Ok(())
+    }
+
+    // #3294 review finding 3: a nested item is a separate binding
+    // scope; its parameters and locals never relate.
+    #[test]
+    fn nested_function_body_never_relates() -> Result<(), String> {
+        let body = "pub fn f() -> bool {\n    let end = 1;\n    fn inner(end: usize) -> bool {\n        end == 3\n    }\n    inner(end)\n}\n";
+        let resolution = resolve_end(body, 2);
+        assert_eq!(
+            blocked_scope(&resolution)?,
+            BindingUseScope::NoPredicateUse,
+            "nested item parameters are a different binding"
+        );
+        Ok(())
+    }
+
+    // #3294 review finding 5: a comparison inside a foreign `let`'s
+    // multi-line initializer is a continuation line, not a use.
+    #[test]
+    fn foreign_let_multiline_initializer_never_relates() -> Result<(), String> {
+        let body = "pub fn f(wrap: fn(bool) -> bool) -> bool {\n    let end = 1;\n    let other = wrap(\n        end == 3\n    );\n    other\n}\n";
+        let resolution = resolve_end(body, 2);
+        assert_eq!(
+            blocked_scope(&resolution)?,
+            BindingUseScope::NoPredicateUse,
+            "continuation lines inside foreign parens are not use sites"
+        );
+        Ok(())
+    }
+
+    // #3294 review finding 6: bit operations in the initializer are
+    // unresolved operations, not resolved text.
+    #[test]
+    fn bit_operation_initializers_stay_unresolved() {
+        let cases = [("flags & mask", "&"), ("1 << shift", "<<"), ("x | y", "|")];
+        for (initializer, operation) in cases {
+            assert_eq!(
+                value_resolution(initializer),
+                BindingValueResolution::Unresolved {
+                    earliest_operation: operation.to_string()
+                },
+                "initializer `{initializer}` must stay unresolved"
+            );
+        }
+    }
+
+    // A single `|` between operands is a bitwise OR, not a closure pipe:
+    // the real comparison still relates.
+    #[test]
+    fn bitwise_or_in_condition_is_not_a_closure() -> Result<(), String> {
+        assert_eq!(
+            direct_predicate_operand("if a | end == b {", "end"),
+            Some(PredicateOperandSide::Left)
+        );
+        let body = "pub fn f(a: u8, b: u8) -> bool {\n    let end = 1;\n    if a | end == b {\n        true\n    } else {\n        false\n    }\n}\n";
+        let resolution = resolve_end(body, 2);
+        assert_eq!(direct_uses(&resolution)?.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn modulo_reassignment_ends_liveness() -> Result<(), String> {
+        let body = "pub fn f() -> bool {\n    let mut end = 7;\n    end %= 2;\n    end == 3\n}\n";
+        let resolution = resolve_end(body, 2);
+        assert_eq!(
+            blocked_scope(&resolution)?,
+            BindingUseScope::ReassignedBeforeUse
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn brace_leading_else_if_still_relates() {
+        assert_eq!(
+            direct_predicate_operand("} else if end {", "end"),
+            Some(PredicateOperandSide::Boolean)
+        );
     }
 
     #[test]

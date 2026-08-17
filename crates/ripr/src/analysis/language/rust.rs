@@ -825,13 +825,15 @@ fn attach_changed_binding_predicate_evidence(
         &relation.value_resolution
     {
         finding.evidence.push(format!(
-            "limitation_first_unresolved_edge: operand value of `{}` unresolved at earliest initializer operation `{}`",
-            relation.binding, earliest_operation
+            "{}operand value of `{}` unresolved at earliest initializer operation `{}`",
+            crate::domain::LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX,
+            relation.binding,
+            earliest_operation
         ));
-        finding.evidence.push(
-            "limitation_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"
-                .to_string(),
-        );
+        finding.evidence.push(format!(
+            "{}named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test",
+            crate::domain::LIMITATION_NON_CLAIM_PREFIX
+        ));
     }
 }
 

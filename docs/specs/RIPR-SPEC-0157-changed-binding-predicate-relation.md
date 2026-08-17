@@ -33,20 +33,34 @@ syntax reason.
   (`==`, `!=`, `<`, `<=`, `>`, `>=`), direct boolean tests
   (`if ident`, `while ident`), and a `match` scrutinee. Comment and
   string text is masked. Field paths (`self.end`) and longer
-  identifiers (`endpoint`) never relate.
+  identifiers (`endpoint`) never relate, and a `<`/`>` that is half of
+  a `<<`/`>>` shift is not a comparison — `sink(flags << end)` never
+  relates.
+- Region tracking keeps the scan in the owning scope: braces opened by
+  a closure or a nested item are no-use regions (separate binding
+  scopes or unmodeled capture), a nested item's multi-line signature is
+  skipped to its body brace, and a line inside unclosed foreign
+  parentheses (a multi-line initializer or call continuation) is a
+  continuation, not a use site. A single `|` between operands is a
+  bitwise OR, not a closure pipe; only argument-position pipes count.
 - On resolution, the probe retargets to the predicate: family
   `predicate`, location at the use line, expression the predicate line,
   and the old/new initializers as `before`/`after` causal evidence.
   Identity stays content-addressed over the predicate expression, so
   multiple uses stay separately identifiable and deterministic.
+- The retarget only fires on a complete single-line declaration: an
+  added `let` line that does not end in `;` or leaves
+  parentheses/braces unbalanced is the first fragment of a multi-line
+  initializer and fails closed to the generic per-line probes.
 - The finding keeps its normal predicate-shaped classification and
   gains evidence: `binding_predicate_relation` names the binding,
   initializer, and use line; when the initializer contains an
   operation, `limitation_first_unresolved_edge` names the earliest
   (leftmost) one — a std-operation token (`.find(`, `.rfind(`,
-  `.len_utf8(`, `.chars(`, `.map_or(`), else the earliest call prefix,
-  else the earliest binary operator. A bare literal/identifier copy
-  resolves to text with no limitation line.
+  `.len_utf8(`, `.chars(`, `.map_or(`), a shift (`<<`/`>>`), the
+  earliest call prefix, or the earliest binary operator (arithmetic,
+  bitwise, comparison). A bare literal/identifier copy resolves to
+  text with no limitation line.
 - The generic `changed syntax is not mapped` limitation is absent for
   supported direct binding-use cases.
 - Fail-closed blockers (recorded as the relation's explicit scope
