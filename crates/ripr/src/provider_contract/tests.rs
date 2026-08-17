@@ -14,6 +14,10 @@ fn error_code(
     result.err().map(|error| error.code)
 }
 
+fn json_error(message: impl Into<String>) -> serde_json::Error {
+    serde_json::Error::io(std::io::Error::other(message.into()))
+}
+
 fn required_excluded_claims() -> Vec<String> {
     RIPR_REQUIRED_EXCLUDED_CLAIMS
         .iter()
@@ -229,19 +233,14 @@ fn request_rejects_nonportable_output_roots_and_malformed_digests() {
 }
 
 #[test]
-fn canonical_exposure_class_is_the_only_complete_native_status() {
+fn canonical_exposure_class_is_the_only_complete_native_status() -> Result<(), serde_json::Error> {
     let receipt = receipt();
     assert_eq!(receipt.validate(), Ok(()));
     assert_eq!(receipt.native_status, Some(ExposureClass::Exposed));
 
-    let wire = match serde_json::to_value(&receipt) {
-        Ok(value) => value,
-        Err(error) => {
-            assert!(false, "serialization failed: {error}");
-            return;
-        }
-    };
+    let wire = serde_json::to_value(&receipt)?;
     assert_eq!(wire["native_status"], json!("exposed"));
+    Ok(())
 }
 
 #[test]
@@ -323,32 +322,19 @@ fn receipt_validation_rejects_identity_schema_and_completeness_conflicts() {
 }
 
 #[test]
-fn public_wire_round_trips_and_rejects_unknown_fields() {
+fn public_wire_round_trips_and_rejects_unknown_fields() -> Result<(), serde_json::Error> {
     let receipt = receipt();
-    let serialized = match serde_json::to_string(&receipt) {
-        Ok(serialized) => serialized,
-        Err(error) => {
-            assert!(false, "serialization failed: {error}");
-            return;
-        }
-    };
-    match serde_json::from_str::<RiprAnalysisReceiptV1>(&serialized) {
-        Ok(decoded) => assert_eq!(decoded, receipt),
-        Err(error) => assert!(false, "round-trip deserialization failed: {error}"),
-    }
+    let serialized = serde_json::to_string(&receipt)?;
+    let decoded = serde_json::from_str::<RiprAnalysisReceiptV1>(&serialized)?;
+    assert_eq!(decoded, receipt);
 
-    let mut request_value = match serde_json::to_value(request()) {
-        Ok(value) => value,
-        Err(error) => {
-            assert!(false, "request serialization failed: {error}");
-            return;
-        }
+    let mut request_value = serde_json::to_value(request())?;
+    let Some(object) = request_value.as_object_mut() else {
+        return Err(json_error("request did not serialize as an object"));
     };
-    if let Some(object) = request_value.as_object_mut() {
-        object.insert("unexpected".into(), json!(true));
-    } else {
-        assert!(false, "request did not serialize as an object");
-        return;
+    object.insert("unexpected".into(), json!(true));
+    match serde_json::from_value::<RiprAnalysisRequestV1>(request_value) {
+        Err(_) => Ok(()),
+        Ok(_) => Err(json_error("unknown request field was accepted")),
     }
-    assert!(serde_json::from_value::<RiprAnalysisRequestV1>(request_value).is_err());
 }
