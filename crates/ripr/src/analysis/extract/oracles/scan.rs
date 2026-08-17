@@ -175,29 +175,32 @@ fn err_return_guard_assertion(line: &str) -> Option<String> {
     }
     // Top-level comparison: split on `==`/`!=` outside any nesting. The
     // condition has no braces here (they end the condition), so a flat
-    // scan at depth zero suffices.
+    // scan at depth zero suffices. char_indices keeps every slice on a
+    // char boundary — a multibyte comparison operand (`✓`) must not
+    // panic the byte-index arithmetic.
     let mut depth = 0usize;
-    let bytes = condition.as_bytes();
     let mut split = None;
-    let mut index = 0usize;
-    while index + 1 < bytes.len() {
-        match bytes[index] {
-            b'(' | b'[' => depth += 1,
-            b')' | b']' => depth = depth.saturating_sub(1),
-            _ => {}
-        }
-        if depth == 0 {
-            let two = &condition[index..index + 2];
-            if two == "==" || two == "!=" {
-                split = Some((index, two));
+    for (index, character) in condition.char_indices() {
+        let top_level_comparison = depth == 0
+            && (condition[index..].starts_with("==") || condition[index..].starts_with("!="));
+        match character {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth = depth.saturating_sub(1),
+            _ if top_level_comparison => {
+                split = Some(index);
                 break;
             }
+            _ => {}
         }
-        index += 1;
     }
-    let (at, operator) = split?;
+    let at = split?;
+    let (operator, rest) = if condition[at..].starts_with("!=") {
+        ("!=", &condition[at + 2..])
+    } else {
+        ("==", &condition[at + 2..])
+    };
     let lhs = &condition[..at];
-    let rhs = &condition[at + 2..];
+    let rhs = rest;
     if lhs.is_empty() || rhs.is_empty() {
         return None;
     }
@@ -209,21 +212,15 @@ fn err_return_guard_assertion(line: &str) -> Option<String> {
 /// correct negation is not a single `assert!` twin (#3284 fail-closed).
 fn has_top_level_boolean_operator(condition: &str) -> bool {
     let mut depth = 0usize;
-    let bytes = condition.as_bytes();
-    let mut index = 0usize;
-    while index + 1 < bytes.len() {
-        match bytes[index] {
-            b'(' | b'[' => depth += 1,
-            b')' | b']' => depth = depth.saturating_sub(1),
+    for (index, character) in condition.char_indices() {
+        let top_level_operator = depth == 0
+            && (condition[index..].starts_with("&&") || condition[index..].starts_with("||"));
+        match character {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth = depth.saturating_sub(1),
+            _ if top_level_operator => return true,
             _ => {}
         }
-        if depth == 0 {
-            let two = &condition[index..index + 2];
-            if two == "&&" || two == "||" {
-                return true;
-            }
-        }
-        index += 1;
     }
     false
 }
@@ -720,6 +717,29 @@ mod err_guard_parity_tests {
                 .any(|fact| fact.kind == OracleKind::RelationalCheck
                     || fact.kind == OracleKind::ExactValue),
             "opaque guard conditions must not be guessed into oracles: {opaque:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod multibyte_guard_tests {
+    use super::extract_assertions;
+    use crate::domain::OracleKind;
+
+    #[test]
+    fn multibyte_comparison_operands_do_not_panic() {
+        // #3284: the Linux CI panic — a guard comparing a multibyte
+        // operand must classify (or reject) without byte-slicing inside
+        // a character boundary.
+        let guard = extract_assertions(
+            "if actual != \"\u{2713}\" {\n    return Err(\"mismatch\");\n}\n",
+            3,
+        );
+        assert!(
+            guard
+                .iter()
+                .any(|fact| fact.kind == OracleKind::RelationalCheck),
+            "multibyte guard must credit: {guard:?}"
         );
     }
 }
