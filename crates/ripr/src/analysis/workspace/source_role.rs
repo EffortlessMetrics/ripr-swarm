@@ -133,8 +133,8 @@ pub(crate) fn classify_with(path: &Path, context: &SourceRoleContext) -> SourceR
 /// components and still classify, but context-set membership is keyed on
 /// the workspace-relative normalized identity.
 ///
-/// The production-subject rules carry over the pre-#3283
-/// `is_production_rust_path` contract exactly: a production subject
+/// The production-subject rules carry over the retired pre-#3283
+/// path-predicate contract exactly: a production subject
 /// requires a `src` component, is not named `tests.rs`, and is not under
 /// `xtask/` or a non-source directory. Anything the old repo predicate
 /// excluded stays non-production here, so routing the repo production
@@ -247,7 +247,7 @@ mod tests {
 
     #[test]
     fn repo_production_contract_carries_over_exactly() {
-        // The pre-#3283 `is_production_rust_path` exclusions must all
+        // The retired path-predicate exclusions must all
         // carry into the role model: routing the repo production set
         // through the role cannot widen it (#3283 review finding).
         assert_eq!(
@@ -260,17 +260,23 @@ mod tests {
             role("metrics/subjects/source.after.rs"),
             SourceRole::FixtureOrReceiptEvidence
         );
-        // Every path the old predicate calls production, the role calls
-        // production — plus exactly one declared divergence: a nested src
+        // Production layouts stay production subjects and keep seeding —
+        // pinned directly rather than against `classify` (which `role`
+        // already calls), so a both-sides flip to evidence role fails
+        // here — plus exactly one declared divergence: a nested src
         // layout under examples/ (e.g. ripr's own
         // `crates/ripr/examples/sample/src/lib.rs`) is not a
         // Cargo-discoverable example target, seeded production probes in
         // diff mode since the beginning, and stays a production subject.
         for path in ["src/lib.rs", "crates/x/src/lib.rs"] {
+            assert_eq!(
+                role(path),
+                SourceRole::ProductionSubject,
+                "production layout must retain its role for {path}"
+            );
             assert!(
-                crate::analysis::workspace::is_production_rust_path(Path::new(path))
-                    == (role(path) == SourceRole::ProductionSubject),
-                "role and old predicate disagree on {path}"
+                role(path).seeds_production_findings(),
+                "production role must seed findings for {path}"
             );
         }
         assert_eq!(

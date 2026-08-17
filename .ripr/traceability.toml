@@ -8260,3 +8260,30 @@ metrics = [
   "unit_test_pass_rate",
   "golden_fixture_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0155"
+name = "Cross-surface source-role projection"
+spec = "docs/specs/RIPR-SPEC-0155-cross-surface-role-projection.md"
+tests = [
+  "crates/ripr/src/lsp/tests.rs::workspace_diagnostics_production_like_opt_in_target_keeps_editor_projection",
+  "crates/ripr/src/lsp/tests.rs::workspace_diagnostics_scope_changed_test_file_findings_out_of_projection",
+  "crates/ripr/src/lsp/tests.rs::workspace_diagnostics_test_only_diff_publishes_no_line_local_diagnostics",
+  "crates/ripr/src/analysis/workspace/source_role.rs::tests::repo_production_contract_carries_over_exactly",
+  "crates/ripr/src/analysis/workspace/select.rs::tests::source_role_excludes_xtask_automation",
+]
+fixtures = [
+  "fixtures/source_role_harness_suppression",
+]
+code = [
+  "crates/ripr/src/lsp/diagnostics.rs",
+  "crates/ripr/src/lsp/state.rs",
+  "crates/ripr/src/analysis/workspace/classify.rs",
+  "crates/ripr/src/analysis/workspace/select.rs",
+  "crates/ripr/src/analysis/seam_inventory.rs",
+]
+outputs = []
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]

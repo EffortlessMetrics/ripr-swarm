@@ -12,7 +12,7 @@
 //! 1. Two runs over the same source tree must produce the same seams in
 //!    the same order regardless of file walk order.
 //! 2. Test files do not generate production seams (they are filtered by
-//!    `workspace::is_production_rust_path`).
+//!    the shared source-role model).
 //!
 //! Both contracts are pinned by tests in this file.
 
@@ -383,9 +383,13 @@ pub(crate) fn inventory_classified_seams_uncached_with_config(
         }
     };
     let filter_started = Instant::now();
+    // Same shared role authority as the production paths (#3285).
+    let mut uncached_context =
+        workspace::context_for_files(root, rust_files.iter().map(|path| path.as_path()));
+    uncached_context.production_like_targets = config.analysis().production_like_targets().clone();
     let production_files: Vec<PathBuf> = rust_files
         .iter()
-        .filter(|p| workspace::is_production_rust_path(p))
+        .filter(|p| workspace::classify_with(p, &uncached_context).seeds_production_findings())
         .cloned()
         .collect();
     trace_latency_phase("filter_production_files", "ok", filter_started.elapsed());
@@ -1307,7 +1311,7 @@ fn build_seam_from_shape(
     let owner_fact = rust_index::find_owner_function(index, path, shape.start_line)?;
     // Skip shapes whose owner is itself a test function (e.g.,
     // `#[test] fn ...` inside an in-file `#[cfg(test)] mod tests`).
-    // `is_production_rust_path` already excludes physical test files;
+    // the source-role model already excludes physical test files;
     // this catches inline test modules.
     if owner_fact.is_test {
         return None;
@@ -1464,12 +1468,12 @@ fn predicate_inside_test() {
             (prod.clone(), prod_source),
             (test_path.clone(), test_source),
         ])?;
-        // Caller filters production files exactly the way `inventory_seams_at`
-        // does: `is_production_rust_path` excludes anything whose path
-        // contains a `tests` segment.
+        // Caller filters production files exactly the way the role model
+        // does: evidence role never enters the production set.
+        let context = workspace::SourceRoleContext::empty();
         let production_files: Vec<PathBuf> = [prod, test_path.clone()]
             .into_iter()
-            .filter(|p| workspace::is_production_rust_path(p))
+            .filter(|p| workspace::classify_with(p, &context).seeds_production_findings())
             .collect();
 
         if production_files.iter().any(|p| p == &test_path) {
@@ -1978,7 +1982,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         // Inline `#[test]` modules inside production files share the
         // file with real production code. The walker drops shapes whose
         // owner is itself a test function so the seam inventory stays
-        // production-only even when `is_production_rust_path` cannot
+        // production-only even when the layout role alone cannot
         // exclude the file outright.
         let path = PathBuf::from("src/lib.rs");
         let test_owner = FunctionFact {
