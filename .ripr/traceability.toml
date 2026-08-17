@@ -8299,6 +8299,7 @@ fixtures = [
   "fixtures/currentness_matrix_tail",
   "fixtures/currentness_matrix_reuse",
   "fixtures/currentness_matrix_move",
+  "fixtures/currentness_matrix_whole_delete",
 ]
 code = [
   "crates/ripr/src/lsp/lens.rs",

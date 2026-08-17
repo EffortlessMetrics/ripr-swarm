@@ -18,16 +18,19 @@ cargo xtask fixtures currentness_matrix_whole_delete
 or:
 
 ```bash
-ripr check --root fixtures/currentness_matrix_whole_delete/input --diff fixtures/currentness_matrix_whole_delete --mode fast
+ripr check --root fixtures/currentness_matrix_whole_delete/input --diff fixtures/currentness_matrix_whole_delete/diff.patch --mode fast
 ```
 
 ## Then
 
-A whole-file deletion is disclose-not-probe: no probe, no finding, and
-no repair target is emitted for the deleted file, and the run discloses
-the deletion as a named non-claim (deleted behavior has no candidate-side
-code to analyze). The changed production owner in the same diff stays
-actionable (`candidate_current`), proving the deletion adds no
+A whole-file deletion is disclose-not-probe: the deleted file
+contributes no probe, no finding, and no repair target in either golden
+(the deleted behavior has no candidate-side code to analyze), and the
+run discloses the deletion as a named non-claim on the process's
+diagnostic stream — that stderr disclosure is the disclosure surface
+today and is not carried in `expected/check.json` or
+`expected/human.txt`. The changed production owner in the same diff
+stays `candidate_current` and actionable, proving the deletion adds no
 obligation while the real seam keeps its teeth (#3212 matrix row 3).
 
 ## Must Not

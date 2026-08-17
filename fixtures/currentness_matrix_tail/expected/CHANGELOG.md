@@ -11,3 +11,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending
+
+Reason:
+RIPR-SPEC-0156: corrected hunk header line counts (header/body mismatch only; dispositions unchanged)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_tail --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
