@@ -778,7 +778,7 @@ pub(super) fn workspace_diagnostics_with_config(
     // snapshot — keeps the editor from pinning line-local gap diagnostics in
     // files the review surface explicitly treats as out of scope (#2130).
     let (findings, out_of_scope_test_file_findings) =
-        partition_out_of_scope_test_file_findings(&root, output.findings);
+        partition_out_of_scope_test_file_findings(&root, config.repo_config(), output.findings);
 
     // Typed component-outcome authority (#1997, RIPR-SPEC-0141): every
     // optional analysis component records one bounded outcome on the
@@ -2267,21 +2267,34 @@ fn absolute_finding_path(root: &Path, finding: &Finding) -> PathBuf {
 /// Split diff-analysis findings into the production scope the LSP publishes
 /// and the out-of-scope tail it must not pin as line-local diagnostics.
 ///
-/// The scope predicate is the shared `workspace::is_production_rust_path`
-/// classifier — the same production/test boundary the CLI review surface and
-/// the seam inventory use — not a parallel LSP-only test-path matcher. It is
+/// The scope predicate is the producer-owned source-role model (#3285) —
+/// the same authority the CLI seeding surface and the seam inventory use —
+/// not a parallel LSP-only test-path matcher. It is
 /// applied only to Rust anchors (`.rs`); other languages keep their own
 /// adapter-owned test-file handling. Paths are relativized against the
 /// workspace root first so an absolute anchor cannot be misclassified by a
 /// root prefix component (e.g. a checkout under a `target/` parent).
 fn partition_out_of_scope_test_file_findings(
     root: &Path,
+    config: &crate::config::RiprConfig,
     findings: Vec<Finding>,
 ) -> (Vec<Finding>, usize) {
+    // #3285: the partition consumes the producer-owned source-role
+    // model — the same authority diff seeding and the seam inventory
+    // use — so an opted-in production-like target keeps its editor
+    // projection and every role judgment (declared Cargo targets
+    // included) agrees across surfaces.
+    let mut context = crate::analysis::context_for_files(
+        root,
+        findings
+            .iter()
+            .map(|finding| finding.probe.location.file.as_path()),
+    );
+    context.production_like_targets = config.analysis().production_like_targets().clone();
     let mut scoped = Vec::with_capacity(findings.len());
     let mut out_of_scope = 0usize;
     for finding in findings {
-        if finding_anchor_is_out_of_scope_rust_path(root, &finding) {
+        if finding_anchor_is_out_of_scope_rust_path(root, &context, &finding) {
             out_of_scope += 1;
         } else {
             scoped.push(finding);
@@ -2290,7 +2303,11 @@ fn partition_out_of_scope_test_file_findings(
     (scoped, out_of_scope)
 }
 
-fn finding_anchor_is_out_of_scope_rust_path(root: &Path, finding: &Finding) -> bool {
+fn finding_anchor_is_out_of_scope_rust_path(
+    root: &Path,
+    context: &crate::analysis::SourceRoleContext,
+    finding: &Finding,
+) -> bool {
     let file = &finding.probe.location.file;
     if file.extension().and_then(|ext| ext.to_str()) != Some("rs") {
         return false;
@@ -2300,7 +2317,7 @@ fn finding_anchor_is_out_of_scope_rust_path(root: &Path, finding: &Finding) -> b
     } else {
         file.as_path()
     };
-    !crate::analysis::is_production_rust_path(relative)
+    !crate::analysis::classify_with(relative, context).seeds_production_findings()
 }
 
 #[cfg(test)]

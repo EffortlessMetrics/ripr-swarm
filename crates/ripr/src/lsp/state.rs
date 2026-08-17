@@ -659,9 +659,9 @@ pub(super) struct AnalysisSnapshot {
     /// only through process stderr.
     pub(super) component_outcomes: Vec<ComponentOutcome>,
     /// Count of diff-analysis findings the projection dropped because their
-    /// anchor is a Rust path outside the production scope (the shared
-    /// `workspace::is_production_rust_path` classifier: `tests/`,
-    /// `examples/`, `benches/`, `tests.rs`, and other non-production trees).
+    /// anchor is a Rust path outside the production scope (the producer-owned
+    /// source-role model: `tests/`, cargo-discoverable `benches/` and
+    /// `examples/` shapes, `tests.rs`, and other evidence-role paths).
     /// The LSP scope must match the CLI review surface, which scopes to
     /// changed production files; an editor that pins line-local gap
     /// diagnostics in a test-only file inverts that signal. The findings are

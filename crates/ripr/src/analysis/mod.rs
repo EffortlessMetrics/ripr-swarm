@@ -45,7 +45,9 @@ pub(crate) use seam_inventory::{
     workspace_cache_key_at_with_config,
 };
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
-pub(crate) use workspace::is_production_rust_path;
+pub(crate) use workspace::SourceRoleContext;
+pub(crate) use workspace::classify_with;
+pub(crate) use workspace::context_for_files;
 
 /// Re-export workspace discovery helpers for the output layer so it can
 /// detect TS-predominant workspaces without importing through analysis::workspace

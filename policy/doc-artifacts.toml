@@ -715,3 +715,11 @@ path = "docs/specs/RIPR-SPEC-0154-assertion-form-parity.md"
 status = "proposed"
 owner = "product-swarm"
 standalone_reason = "Issue #3284 S3 slice for #3213: equivalent harness assertion forms credit identical oracle evidence by constructing each terminal Err-return guard's structural assert! twin and classifying it with the single existing authority; harness-role owners leave the repo probe inventory by role; no inference from messages or names."
+
+[[artifact]]
+id = "RIPR-SPEC-0155"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0155-cross-surface-role-projection.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #3285 S4 slice for #3213: the last path-inferring surface (the LSP scope partition) consumes the producer-owned source-role model with declared targets and the production-like opt-in; the retired path predicate is deleted from production code; harness plumbing across Result, map_err, and output-check forms creates zero production obligations."
