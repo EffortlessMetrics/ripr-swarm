@@ -731,3 +731,11 @@ path = "docs/specs/RIPR-SPEC-0156-currentness-editor-projection.md"
 status = "proposed"
 owner = "product-swarm"
 standalone_reason = "Issue #3282 C3 slice for #3212: the last editor projection without a currentness gate (code lenses) consumes the shared candidate-actionable authority so deleted-side evidence is never pinned at its projected coordinate, and a four-fixture corpus pins deleted-tail, reused-coordinate identity, movement-without-evidence, and whole-file-delete dispositions end to end as the downstream-consumable export."
+
+[[artifact]]
+id = "RIPR-SPEC-0157"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0157-changed-binding-predicate-relation.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #3294 P2 slice for #3215: a changed simple let initializer retargets its probe to the same-function predicate use it feeds through one internal typed relation, keeping the initializers as causal evidence, naming the earliest unresolved initializer operation, and failing closed for shadowing, reassignment, closure capture, macro invocation, sibling functions, comment/string text, and destructuring declarations."

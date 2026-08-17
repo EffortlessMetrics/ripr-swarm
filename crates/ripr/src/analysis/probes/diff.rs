@@ -3,15 +3,38 @@ use super::super::rust_index::{
     RustIndex, SyntaxNodeFact, changed_nodes_for_lines, extract_identifier_tokens,
     find_owner_function,
 };
+use super::binding_predicate::{
+    BindingPredicateResolution, ChangedBindingPredicateUse, resolve_changed_binding_uses,
+};
 use super::classify::{parser_probe_shapes_for_changed_line, should_ignore_changed_line};
 use super::expectations::{expected_sinks, required_oracles};
 use super::family::delta_for_family;
 use super::ids::{diff_probe_id, normalize_expression};
 use super::lexical::classify_changed_line;
+use crate::analysis::language::changed_let_binding;
 use crate::domain::{Probe, ProbeFamily, SourceLocation};
 use std::path::Path;
 
-pub fn probes_for_file(root: &Path, changed: &ChangedFile, index: &RustIndex) -> Vec<Probe> {
+/// One seeded probe plus the #3294 changed-binding relation when the
+/// probe was retargeted from a changed `let` initializer to its
+/// same-function predicate use.
+pub(crate) type ProbeWithRelation = (Probe, Option<ChangedBindingPredicateUse>);
+
+/// Test surface: the probe vec without the #3294 relations. Production
+/// callers use [`probes_for_file_with_relations`].
+#[cfg(test)]
+pub(crate) fn probes_for_file(root: &Path, changed: &ChangedFile, index: &RustIndex) -> Vec<Probe> {
+    probes_for_file_with_relations(root, changed, index)
+        .into_iter()
+        .map(|(probe, _)| probe)
+        .collect()
+}
+
+pub(crate) fn probes_for_file_with_relations(
+    root: &Path,
+    changed: &ChangedFile,
+    index: &RustIndex,
+) -> Vec<ProbeWithRelation> {
     let mut probes = Vec::new();
     // Use `new_side_line` for all lines: for added lines this equals `line`; for
     // removed lines `new_side_line` is the new-file coordinate, which is what
@@ -68,35 +91,58 @@ pub fn probes_for_file(root: &Path, changed: &ChangedFile, index: &RustIndex) ->
                     new_side_line: shape.start_line,
                     text: canonical_text.clone(),
                 };
-                probes.push(build_probe(
-                    &build_context,
-                    &canonical_line,
-                    shape.family,
-                    nearby_removed_line(shape.start_line, &canonical_text, changed),
-                    Some(canonical_text),
+                probes.push((
+                    build_probe(
+                        &build_context,
+                        &canonical_line,
+                        shape.family,
+                        nearby_removed_line(shape.start_line, &canonical_text, changed),
+                        Some(canonical_text),
+                    ),
+                    None,
                 ));
             }
             continue;
         }
         if !parser_shapes.is_empty() {
             for shape in parser_shapes {
-                probes.push(build_probe(
-                    &build_context,
-                    added,
-                    shape.family,
-                    nearby_removed_line(added.new_side_line, text, changed),
-                    Some(text.to_string()),
+                probes.push((
+                    build_probe(
+                        &build_context,
+                        added,
+                        shape.family,
+                        nearby_removed_line(added.new_side_line, text, changed),
+                        Some(text.to_string()),
+                    ),
+                    None,
                 ));
             }
             continue;
         }
-        for family in classify_changed_line(text) {
-            probes.push(build_probe(
-                &build_context,
-                added,
-                family,
-                nearby_removed_line(added.new_side_line, text, changed),
-                Some(text.to_string()),
+        let families = classify_changed_line(text);
+        // #3294: a changed simple `let` initializer that only lands in the
+        // static-unknown catch-all retargets to its same-function predicate
+        // uses when the binding reaches them directly. The changed
+        // initializer stays causal evidence (before/after), so the finding
+        // names the actual behavioral predicate instead of a generic
+        // changed-syntax limitation.
+        if families == [ProbeFamily::StaticUnknown]
+            && let Some(retargeted) =
+                retarget_changed_binding_predicates(&build_context, added, text, &changed_lines)
+        {
+            probes.extend(retargeted);
+            continue;
+        }
+        for family in families {
+            probes.push((
+                build_probe(
+                    &build_context,
+                    added,
+                    family,
+                    nearby_removed_line(added.new_side_line, text, changed),
+                    Some(text.to_string()),
+                ),
+                None,
             ));
         }
     }
@@ -116,11 +162,14 @@ pub fn probes_for_file(root: &Path, changed: &ChangedFile, index: &RustIndex) ->
             if has_matching_added_line(removed, &family, changed) {
                 continue;
             }
-            probes.push(build_probe(
-                &build_context,
-                removed,
-                family,
-                Some(text.to_string()),
+            probes.push((
+                build_probe(
+                    &build_context,
+                    removed,
+                    family,
+                    Some(text.to_string()),
+                    None,
+                ),
                 None,
             ));
         }
@@ -131,6 +180,65 @@ pub fn probes_for_file(root: &Path, changed: &ChangedFile, index: &RustIndex) ->
     dedup_probe_ids(&mut probes);
 
     probes
+}
+
+/// Retarget a changed simple `let` line to the same-function predicate
+/// uses of its binding (#3294). Fails closed to `None` — keeping the
+/// generic static-unknown path — unless at least one direct use
+/// survives the scope rules at a line the diff itself does not change
+/// (a directly changed predicate already carries its own probe).
+fn retarget_changed_binding_predicates(
+    context: &ProbeBuildContext<'_>,
+    added: &ChangedLine,
+    text: &str,
+    changed_lines: &[usize],
+) -> Option<Vec<ProbeWithRelation>> {
+    let (binding, initializer) = changed_let_binding(text)?;
+    let owner = find_owner_function(context.index, &context.changed.path, added.new_side_line)?;
+    let resolution = resolve_changed_binding_uses(
+        binding,
+        initializer,
+        &owner.body,
+        owner.start_line,
+        added.new_side_line,
+    );
+    let uses = match resolution {
+        BindingPredicateResolution::DirectUses(uses) if !uses.is_empty() => uses,
+        _ => return None,
+    };
+    // The removed counterpart of this replacement, when it is the same
+    // binding's old initializer, becomes the probe's `before` evidence.
+    let before_initializer = nearby_removed_line(added.new_side_line, text, context.changed)
+        .and_then(|removed_text| {
+            changed_let_binding(&removed_text).map(|(removed_binding, removed_initializer)| {
+                (removed_binding.to_string(), removed_initializer.to_string())
+            })
+        })
+        .and_then(|(removed_binding, removed_initializer)| {
+            (removed_binding == binding).then_some(removed_initializer)
+        });
+    let mut retargeted = Vec::new();
+    for use_site in uses {
+        if changed_lines.contains(&use_site.predicate_line) {
+            continue;
+        }
+        let predicate_line = ChangedLine {
+            line: use_site.predicate_line,
+            new_side_line: use_site.predicate_line,
+            text: use_site.predicate_expression.clone(),
+        };
+        retargeted.push((
+            build_probe(
+                context,
+                &predicate_line,
+                ProbeFamily::Predicate,
+                before_initializer.clone(),
+                Some(use_site.initializer.clone()),
+            ),
+            Some(use_site),
+        ));
+    }
+    (!retargeted.is_empty()).then_some(retargeted)
 }
 
 fn canonical_probe_text(changed_head: &str, parser_expression: &str) -> String {
@@ -144,10 +252,10 @@ fn canonical_probe_text(changed_head: &str, parser_expression: &str) -> String {
 
 /// Scan `probes` in order; for any id that appears more than once, rewrite the
 /// 2nd+ occurrences to append `.2`, `.3`, … (ordinal-based collision suffix).
-fn dedup_probe_ids(probes: &mut [Probe]) {
+fn dedup_probe_ids(probes: &mut [ProbeWithRelation]) {
     use std::collections::HashMap;
     let mut seen: HashMap<String, u32> = HashMap::new();
-    for probe in probes.iter_mut() {
+    for (probe, _) in probes.iter_mut() {
         let count = seen.entry(probe.id.0.clone()).or_insert(0);
         *count += 1;
         if *count > 1 {
@@ -360,7 +468,6 @@ mod tests {
     use crate::domain::SymbolId;
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
-
     #[test]
     fn probes_for_file_uses_syntax_shape_owner_and_removed_context() {
         let path = PathBuf::from("src/lib.rs");
@@ -920,6 +1027,194 @@ mod tests {
 
         let probes = probes_for_file(Path::new("workspace"), &changed, &RustIndex::default());
         assert!(probes.is_empty());
+    }
+
+    // #3294: the changed `let` initializer retargets to its same-function
+    // predicate use. The probe is predicate-shaped at the predicate line,
+    // the initializers stay causal before/after evidence, and the typed
+    // relation rides along with the probe.
+    #[test]
+    fn changed_binding_initializer_retargets_to_predicate_use() -> Result<(), String> {
+        let path = PathBuf::from("src/split.rs");
+        let body = "pub fn split_first(input: &str, delim: char) -> &str {\n    let end = input.rfind(delim).map_or(0, |idx| idx);\n    let start = delim.chars().next().map_or(0, |c| c.len_utf8());\n    if end == start {\n        &input[..end]\n    } else {\n        input\n    }\n}";
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![ChangedLine {
+                line: 2,
+                new_side_line: 2,
+                text: "let end = input.rfind(delim).map_or(0, |idx| idx);".to_string(),
+            }],
+            removed_lines: vec![ChangedLine {
+                line: 2,
+                new_side_line: 2,
+                text: "let end = input.rfind(delim).map_or(0, |idx| idx + 1);".to_string(),
+            }],
+        };
+        let index = RustIndex {
+            files: BTreeMap::from([(
+                path.clone(),
+                FileFacts {
+                    path: path.clone(),
+                    functions: vec![FunctionFact {
+                        id: SymbolId("src/split.rs::split_first".to_string()),
+                        name: "split_first".to_string(),
+                        file: path.clone(),
+                        start_line: 1,
+                        end_line: 9,
+                        body: body.to_string(),
+                        calls: vec![],
+                        returns: vec![],
+                        literals: vec![],
+                        is_test: false,
+                        attrs: vec![],
+                    }],
+                    ..FileFacts::default()
+                },
+            )]),
+            ..RustIndex::default()
+        };
+
+        let probes = probes_for_file_with_relations(Path::new("workspace"), &changed, &index);
+
+        let [(probe, relation)] = probes.as_slice() else {
+            return Err(format!("expected one retargeted probe, got {probes:?}"));
+        };
+        if probe.family != ProbeFamily::Predicate {
+            return Err(format!("expected predicate family, got {probe:?}"));
+        }
+        if probe.expression != "if end == start {" || probe.location.line != 4 {
+            return Err(format!(
+                "probe must sit on the predicate use, got {probe:?}"
+            ));
+        }
+        if probe.before.as_deref() != Some("input.rfind(delim).map_or(0, |idx| idx + 1)") {
+            return Err(format!("old initializer is causal evidence: {probe:?}"));
+        }
+        if probe.after.as_deref() != Some("input.rfind(delim).map_or(0, |idx| idx)") {
+            return Err(format!("new initializer is causal evidence: {probe:?}"));
+        }
+        let relation = relation
+            .as_ref()
+            .ok_or_else(|| "retargeted probe must carry the relation".to_string())?;
+        if relation.binding != "end" || relation.predicate_line != 4 {
+            return Err(format!(
+                "relation must name the binding and use: {relation:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    // #3294 control: when the binding never reaches a predicate directly
+    // (inner-scope shadowing), the generic static-unknown path stays.
+    #[test]
+    fn shadowed_binding_initializer_keeps_static_unknown() -> Result<(), String> {
+        let path = PathBuf::from("src/lib.rs");
+        let body = "pub fn f() -> bool {\n    let end = 1;\n    {\n        let end = 2;\n        end == 3\n    }\n}";
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![ChangedLine {
+                line: 2,
+                new_side_line: 2,
+                text: "let end = 1;".to_string(),
+            }],
+            removed_lines: vec![],
+        };
+        let index = RustIndex {
+            files: BTreeMap::from([(
+                path.clone(),
+                FileFacts {
+                    path,
+                    functions: vec![FunctionFact {
+                        id: SymbolId("src/lib.rs::f".to_string()),
+                        name: "f".to_string(),
+                        file: PathBuf::from("src/lib.rs"),
+                        start_line: 1,
+                        end_line: 8,
+                        body: body.to_string(),
+                        calls: vec![],
+                        returns: vec![],
+                        literals: vec![],
+                        is_test: false,
+                        attrs: vec![],
+                    }],
+                    ..FileFacts::default()
+                },
+            )]),
+            ..RustIndex::default()
+        };
+
+        let probes = probes_for_file_with_relations(Path::new("workspace"), &changed, &index);
+
+        let [(probe, relation)] = probes.as_slice() else {
+            return Err(format!("expected the generic probe only, got {probes:?}"));
+        };
+        if probe.family != ProbeFamily::StaticUnknown || relation.is_some() {
+            return Err(format!(
+                "shadowed binding must keep the generic path: {probes:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    // #3294 control: a predicate line the diff itself changes keeps its
+    // own direct probe; the changed binding does not retarget onto it.
+    #[test]
+    fn retarget_skips_predicate_lines_that_are_changed() -> Result<(), String> {
+        let path = PathBuf::from("src/lib.rs");
+        let body = "pub fn f(flag: bool) -> bool {\n    let end = 1;\n    if end == 2 {\n        true\n    } else {\n        false\n    }\n}";
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![
+                ChangedLine {
+                    line: 2,
+                    new_side_line: 2,
+                    text: "let end = 1;".to_string(),
+                },
+                ChangedLine {
+                    line: 3,
+                    new_side_line: 3,
+                    text: "if end == 2 {".to_string(),
+                },
+            ],
+            removed_lines: vec![],
+        };
+        let index = RustIndex {
+            files: BTreeMap::from([(
+                path.clone(),
+                FileFacts {
+                    path,
+                    functions: vec![FunctionFact {
+                        id: SymbolId("src/lib.rs::f".to_string()),
+                        name: "f".to_string(),
+                        file: PathBuf::from("src/lib.rs"),
+                        start_line: 1,
+                        end_line: 8,
+                        body: body.to_string(),
+                        calls: vec![],
+                        returns: vec![],
+                        literals: vec![],
+                        is_test: false,
+                        attrs: vec![],
+                    }],
+                    ..FileFacts::default()
+                },
+            )]),
+            ..RustIndex::default()
+        };
+
+        let probes = probes_for_file_with_relations(Path::new("workspace"), &changed, &index);
+
+        // The changed let stays generic; the changed predicate carries its
+        // own probe; neither is a retarget.
+        if probes.len() != 2 {
+            return Err(format!("expected two direct probes, got {probes:?}"));
+        }
+        if probes.iter().any(|(_, relation)| relation.is_some()) {
+            return Err(format!(
+                "no retarget may attach to a changed predicate: {probes:?}"
+            ));
+        }
+        Ok(())
     }
 }
 
