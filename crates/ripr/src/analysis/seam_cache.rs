@@ -82,11 +82,16 @@ pub(crate) struct CachedSeamLimitInfo {
 /// while the package version stayed `0.10.0`; old full classified entries
 /// may carry pre-#3273 production roles and pre-#3286 relations and must
 /// not be reused.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "0.7";
+/// `0.7` -> `0.8`: Err-return guards now credit as assertion twins
+/// (#3284) and repo-mode probe seeding filters evidence-role owners,
+/// changing classified-seam content at package `0.10.0`.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "0.8";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.3";
+/// `0.3` → `0.4`: #3284 changes the facts sharded entries derive from
+/// (guard oracle twins, evidence-role repo probe filtering).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.4";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -95,7 +100,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.3";
 /// `0.3` → `0.4`: compact evidence derives from the same facts as the full
 /// cache — the #3273 source-role and #3286 helper-evidence changes
 /// invalidate prior compact entries at package `0.10.0`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.4";
+/// `0.4` → `0.5`: #3284 changes guard oracle facts and repo probe seeding.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.5";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -115,7 +121,10 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// helper-evidence graph admits — both while the package version stayed
 /// `0.10.0`. Old per-file facts carry pre-#3273 role booleans and must
 /// miss so the corrected producer repopulates them.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "0.3";
+/// `0.3` -> `0.4`: TestFact assertions now include Err-return guards
+/// (#3284); warm per-file facts from before the change would serve
+/// guard-blind evidence at package `0.10.0`.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "0.4";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live

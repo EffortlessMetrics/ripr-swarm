@@ -707,3 +707,11 @@ path = "docs/specs/RIPR-SPEC-0153-rust-source-role.md"
 status = "proposed"
 owner = "product-swarm"
 standalone_reason = "Issue #3283 S2 slice for #3213: one producer-owned typed source role classifies Cargo tests, benches, examples, fixtures, and explicit production-like opt-ins; diff probe seeding and repo seam inventory route through it, declared Cargo targets confirm evidence outside default layouts, filename conventions alone never classify, and evidence files stay fully indexed with TestFact semantics untouched."
+
+[[artifact]]
+id = "RIPR-SPEC-0154"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0154-assertion-form-parity.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #3284 S3 slice for #3213: equivalent harness assertion forms credit identical oracle evidence by constructing each terminal Err-return guard's structural assert! twin and classifying it with the single existing authority; harness-role owners leave the repo probe inventory by role; no inference from messages or names."
