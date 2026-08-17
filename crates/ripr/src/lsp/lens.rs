@@ -120,6 +120,11 @@ pub(super) fn code_lens_response(uri: &Uri, snapshot: Option<&AnalysisSnapshot>)
     snapshot
         .findings
         .iter()
+        // Candidate-actionable eligibility (#3282, per RIPR-SPEC-0152):
+        // a lens anchors an advisory at the finding's recorded line,
+        // and a base-deleted finding's recorded line is the projected
+        // new-side coordinate — not a candidate position to pin.
+        .filter(|finding| finding.is_candidate_actionable())
         .filter(|finding| finding_matches_uri(finding, uri, &snapshot.root))
         .map(|finding| finding_to_code_lens(finding, age))
         .collect()
@@ -255,12 +260,12 @@ mod tests {
     use std::path::PathBuf;
     use tower_lsp_server::ls_types::{Diagnostic, Position, Range};
 
-    fn parse_uri(s: &str) -> Result<Uri, String> {
+    pub(in crate::lsp::lens) fn parse_uri(s: &str) -> Result<Uri, String> {
         s.parse()
             .map_err(|e| format!("failed to parse test URI {s}: {e}"))
     }
 
-    fn make_related_test(i: usize) -> RelatedTest {
+    pub(in crate::lsp::lens) fn make_related_test(i: usize) -> RelatedTest {
         RelatedTest {
             name: format!("test_{i}"),
             file: PathBuf::from("tests/lib.rs"),
@@ -273,7 +278,7 @@ mod tests {
         }
     }
 
-    fn make_finding(
+    pub(in crate::lsp::lens) fn make_finding(
         file: &str,
         line: usize,
         class: ExposureClass,
@@ -330,7 +335,10 @@ mod tests {
         }
     }
 
-    fn make_snapshot_with_findings(root: &str, findings: Vec<Finding>) -> AnalysisSnapshot {
+    pub(in crate::lsp::lens) fn make_snapshot_with_findings(
+        root: &str,
+        findings: Vec<Finding>,
+    ) -> AnalysisSnapshot {
         // Build a diagnostics_by_uri that satisfies is_consistent():
         // one diagnostic per finding, each carrying "finding_id".
         let mut diagnostics_by_uri = BTreeMap::new();
@@ -751,6 +759,52 @@ mod tests {
                 ));
             }
         }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod currentness_lens_tests {
+    use super::code_lens_response;
+    use super::tests::{make_finding, make_snapshot_with_findings, parse_uri};
+    use crate::domain::SourceCurrentness;
+
+    #[test]
+    fn base_deleted_findings_get_no_code_lens() -> Result<(), String> {
+        // #3282: a lens anchors an advisory at the finding's recorded line.
+        // A base-deleted finding's recorded coordinate is the projected
+        // new-side line (the #3212 incident shape — base line 29 against a
+        // 13-line candidate), so pinning a lens there presents deleted-side
+        // evidence at an impossible candidate position with no revision
+        // marker. Candidate-actionable eligibility gates the lens exactly
+        // as it gates diagnostics and annotations (RIPR-SPEC-0152).
+        let uri = parse_uri("file:///ws/src/lib.rs")?;
+        let mut deleted = make_finding(
+            "src/lib.rs",
+            29,
+            crate::domain::ExposureClass::NoStaticPath,
+            1,
+            None,
+        );
+        deleted.source_currentness = SourceCurrentness::BaseDeleted;
+        let current = make_finding(
+            "src/lib.rs",
+            3,
+            crate::domain::ExposureClass::NoStaticPath,
+            1,
+            None,
+        );
+        let snapshot = make_snapshot_with_findings("/ws", vec![deleted, current]);
+        let lenses = code_lens_response(&uri, Some(&snapshot));
+        let lines: Vec<u32> = lenses.iter().map(|lens| lens.range.start.line).collect();
+        assert!(
+            !lines.contains(&(29 - 1)),
+            "base_deleted finding must not receive a lens at its projected coordinate: {lines:?}"
+        );
+        assert!(
+            lines.contains(&(3 - 1)),
+            "the candidate-current twin keeps its lens: {lines:?}"
+        );
         Ok(())
     }
 }

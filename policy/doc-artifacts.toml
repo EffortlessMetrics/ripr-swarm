@@ -723,3 +723,11 @@ path = "docs/specs/RIPR-SPEC-0155-cross-surface-role-projection.md"
 status = "proposed"
 owner = "product-swarm"
 standalone_reason = "Issue #3285 S4 slice for #3213: the last path-inferring surface (the LSP scope partition) consumes the producer-owned source-role model with declared targets and the production-like opt-in; the retired path predicate is deleted from production code; harness plumbing across Result, map_err, and output-check forms creates zero production obligations."
+
+[[artifact]]
+id = "RIPR-SPEC-0156"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0156-currentness-editor-projection.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #3282 C3 slice for #3212: the last editor projection without a currentness gate (code lenses) consumes the shared candidate-actionable authority so deleted-side evidence is never pinned at its projected coordinate, and a three-fixture corpus pins deleted-tail, reused-coordinate identity, and movement-without-evidence dispositions end to end as the downstream-consumable export."

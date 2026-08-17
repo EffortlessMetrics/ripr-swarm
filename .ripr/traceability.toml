@@ -8287,3 +8287,24 @@ metrics = [
   "unit_test_pass_rate",
   "golden_fixture_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0156"
+name = "Currentness editor projection and qualification corpus"
+spec = "docs/specs/RIPR-SPEC-0156-currentness-editor-projection.md"
+tests = [
+  "crates/ripr/src/lsp/lens.rs::currentness_lens_tests::base_deleted_findings_get_no_code_lens",
+]
+fixtures = [
+  "fixtures/currentness_matrix_tail",
+  "fixtures/currentness_matrix_reuse",
+  "fixtures/currentness_matrix_move",
+]
+code = [
+  "crates/ripr/src/lsp/lens.rs",
+]
+outputs = []
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]
