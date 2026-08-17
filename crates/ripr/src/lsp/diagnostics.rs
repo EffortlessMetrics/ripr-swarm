@@ -767,16 +767,13 @@ pub(super) fn workspace_diagnostics_with_config(
     let partial_scope = output.partial_scope;
     // Scope the LSP projection to production Rust anchors, matching the CLI
     // review surface (`changed_production_files_plus_immediate_callers`).
-    // Since #3283 the diff-seeding predicate is the producer-owned
-    // source-role model, which covers `tests/`, cargo-discoverable
-    // `benches/`/`examples/` shapes, and declared targets; this
-    // partition still uses the narrower legacy path predicate, so an
-    // opted-in production-like target (`production_like_targets`)
-    // seeds CLI findings that this editor partition drops as
-    // out-of-scope — converging it on the role model is #3285 work.
-    // Dropping them here — with the suppressed count disclosed on the
-    // snapshot — keeps the editor from pinning line-local gap diagnostics in
-    // files the review surface explicitly treats as out of scope (#2130).
+    // Since #3285 the partition consumes the same producer-owned
+    // source-role model as diff seeding — `tests/`, cargo-discoverable
+    // `benches/`/`examples/` shapes, declared targets, and the
+    // `production_like_targets` opt-in — so an opted-in target keeps its
+    // editor projection and the partition suppresses nothing seeding
+    // already excluded. The suppressed count stays on the snapshot as the
+    // typed safety net against anchor-model divergence (#2130).
     let (findings, out_of_scope_test_file_findings) =
         partition_out_of_scope_test_file_findings(&root, config.repo_config(), output.findings);
 
