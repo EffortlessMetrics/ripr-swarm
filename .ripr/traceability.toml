@@ -8309,3 +8309,34 @@ metrics = [
   "unit_test_pass_rate",
   "golden_fixture_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0157"
+name = "Changed-binding to predicate-operand relation"
+spec = "docs/specs/RIPR-SPEC-0157-changed-binding-predicate-relation.md"
+tests = [
+  "crates/ripr/src/analysis/probes/binding_predicate.rs::tests",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::changed_binding_initializer_retargets_to_predicate_use",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::shadowed_binding_initializer_keeps_static_unknown",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::retarget_skips_predicate_lines_that_are_changed",
+  "crates/ripr/src/analysis/language/rust.rs::tests::diff_analysis_retargets_changed_binding_to_predicate_use",
+  "crates/ripr/src/analysis/language/rust.rs::tests::diff_analysis_retargets_len_utf8_binding_to_predicate_use",
+  "crates/ripr/src/analysis/language/rust.rs::tests::diff_analysis_retargets_unbounded_initializer_naming_earliest_call",
+  "crates/ripr/src/analysis/language/rust.rs::tests::diff_analysis_keeps_value_propagation_limitation_for_macro_guarded_use",
+]
+fixtures = [
+  "fixtures/binding_predicate_equality_boundary",
+  "fixtures/binding_predicate_positions",
+  "fixtures/binding_predicate_two_uses",
+  "fixtures/binding_predicate_scope_controls",
+]
+code = [
+  "crates/ripr/src/analysis/probes/binding_predicate.rs",
+  "crates/ripr/src/analysis/probes/diff.rs",
+  "crates/ripr/src/analysis/language/rust.rs",
+]
+outputs = []
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]
