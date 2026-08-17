@@ -17,5 +17,5 @@ pub fn band_label(score: usize) -> &'static str {
 
 pub fn within(limit: usize, value: usize) -> bool {
     let margin = 10;
-    limit + margin > value
+    margin > value
 }

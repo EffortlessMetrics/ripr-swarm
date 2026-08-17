@@ -24,5 +24,5 @@ diff --git a/src/lib.rs b/src/lib.rs
  pub fn within(limit: usize, value: usize) -> bool {
 -    let margin = 10;
 +    let margin = 12;
-     limit + margin > value
+     margin > value
  }

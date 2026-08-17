@@ -3,6 +3,11 @@ pub fn sibling_a(input: &str) -> usize {
     end
 }
 
+pub fn sibling_b(other: &str) -> bool {
+    let end = other.len();
+    end == 9
+}
+
 pub fn shadowed(flag: bool) -> bool {
     let end = 1;
     let adjusted = {

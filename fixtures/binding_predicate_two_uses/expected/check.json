@@ -34,7 +34,7 @@
       "flow_sinks": [
         {"kind":"return_value","text":"\"over\"","line":4}
       ],
-      "evidence": ["Changed behavior appears to influence returned value: \"over\"", "No assertion can discriminate the changed behavior without a reachable test", "No reachable test oracle found", "No static test path found for the changed owner", "No tests were found, so activation/infection cannot be estimated", "binding_predicate_relation: changed binding `ceiling` initializer `60` flows into predicate operand at line 3"],
+      "evidence": ["Changed behavior appears to influence returned value: \"over\"", "No assertion can discriminate the changed behavior without a reachable test", "No reachable test oracle found", "No static test path found for the changed owner", "No tests were found, so activation/infection cannot be estimated", "binding_predicate_relation: changed binding `ceiling` initializer `50` -> `60` flows into predicate operand at line 3"],
       "missing": ["No detected boundary input for the changed predicate", "No relevant oracle was detected", "No static test path reaches the changed owner", "No strong discriminator was detected"],
       "assertion_texts": {
       },
@@ -83,7 +83,7 @@
       "flow_sinks": [
         {"kind":"return_value","text":"\"shifted\"","line":6}
       ],
-      "evidence": ["Changed behavior appears to influence returned value: \"shifted\"", "No assertion can discriminate the changed behavior without a reachable test", "No reachable test oracle found", "No static test path found for the changed owner", "No tests were found, so activation/infection cannot be estimated", "binding_predicate_relation: changed binding `ceiling` initializer `60` flows into predicate operand at line 5"],
+      "evidence": ["Changed behavior appears to influence returned value: \"shifted\"", "No assertion can discriminate the changed behavior without a reachable test", "No reachable test oracle found", "No static test path found for the changed owner", "No tests were found, so activation/infection cannot be estimated", "binding_predicate_relation: changed binding `ceiling` initializer `50` -> `60` flows into predicate operand at line 5"],
       "missing": ["No detected boundary input for the changed predicate", "No relevant oracle was detected", "No static test path reaches the changed owner", "No strong discriminator was detected"],
       "assertion_texts": {
       },

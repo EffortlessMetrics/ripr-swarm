@@ -15,12 +15,12 @@ Start here:
   Why propagation_unknown: the change propagates but the downstream effect is unknown statically
   Changed behavior: input.rfind(delim).map_or(1, |idx| idx)
   Missing discriminator: end == start
-  Related test: tests/split.rs:2 delimiter_boundary_returns_prefix
+  Related test: tests/split.rs:9 absent_delimiter_boundary_returns_head
   Next step: Escalate to real mutation testing or deep static analysis for this probe.
   Evidence:
-    - reach yes: Related tests appear to reach split_after: delimiter_boundary_returns_prefix
+    - reach yes: Related tests appear to reach split_after: absent_delimiter_boundary_returns_head, present_delimiter_returns_prefix
     - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
-    - 6 more evidence line(s) hidden
+    - 9 more evidence line(s) hidden
 
 Next: drill into the top finding:
   ripr explain --root fixtures/binding_predicate_equality_boundary/input --diff fixtures/binding_predicate_equality_boundary/diff.patch --mode fast probe:src_lib.rs:predicate:5290fd4d

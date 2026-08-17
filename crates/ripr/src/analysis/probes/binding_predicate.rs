@@ -61,6 +61,9 @@ pub(crate) enum BindingUseScope {
     /// The only candidate use sits inside a macro invocation; ripr does
     /// not expand macros.
     MacroExpansionUnsupported,
+    /// The changed declaration's block ended before any predicate use;
+    /// a later same-named binding is a different binding.
+    ScopeExitedBeforeUse,
     /// No direct predicate use of the binding exists in the function.
     NoPredicateUse,
 }
@@ -127,12 +130,25 @@ pub(crate) fn resolve_changed_binding_uses(
     let mut brace_regions: Vec<bool> = Vec::new();
     let mut open_parens: isize = 0;
     let mut pending_item_signature = false;
+    // The brace depth at the changed declaration: when the scan leaves
+    // that depth, the declaration's scope has ended and the binding no
+    // longer exists — a same-named outer binding's later uses belong to
+    // that outer binding, never to this one (#3294 review).
+    let mut declaration_depth: Option<usize> = None;
     for (offset, (raw_line, masked_line)) in body.lines().zip(masked.lines()).enumerate() {
         let absolute = body_start_line + offset;
         let masked_trimmed = masked_line.trim();
         let leading_closes = masked_trimmed.chars().take_while(|ch| *ch == '}').count();
         for _ in 0..leading_closes {
             brace_regions.pop();
+        }
+        if live && declaration_depth.is_some_and(|depth| brace_regions.len() < depth) {
+            live = false;
+            // The function's own closing brace empties the region
+            // stack — that is the end of the scan, not a scope event.
+            if !brace_regions.is_empty() {
+                blocker.get_or_insert(BindingUseScope::ScopeExitedBeforeUse);
+            }
         }
         let opens = masked_line.matches('{').count();
         let closes = masked_line.matches('}').count();
@@ -177,6 +193,7 @@ pub(crate) fn resolve_changed_binding_uses(
                     if declared == binding {
                         if absolute == changed_line {
                             live = true;
+                            declaration_depth = Some(brace_regions.len());
                         } else if live {
                             live = false;
                             blocker.get_or_insert(BindingUseScope::ShadowedBeforeUse);
@@ -392,64 +409,173 @@ fn binding_is_plain_operand(text: &str, binding: &str) -> bool {
     }
 }
 
-/// Whether `binding` is a direct identifier operand of a supported
+/// Whether `binding` is a **direct identifier operand** of a supported
 /// comparison, boolean test, or `match` scrutinee on this (masked)
-/// line. Field paths (`self.end`) and longer identifiers
-/// (`endpoint`) never match.
+/// line. Direct means the operand position holds exactly the binding,
+/// optionally behind `&`/`*` — never a method receiver
+/// (`end.is_empty()`), a call or index interior (`map.get(&end)`), a
+/// composite expression (`end + 1`), a field path (`self.end`), or a
+/// longer identifier (`endpoint`).
 fn direct_predicate_operand(line: &str, binding: &str) -> Option<PredicateOperandSide> {
+    let base = strip_leading_closing_and_else(line);
+    let is_boolean_control = ["if ", "while "]
+        .iter()
+        .any(|prefix| base.starts_with(prefix));
+    let is_match_control = base.starts_with("match ");
+    let head = strip_control_keywords(base);
     for operator in COMPARISON_OPERATORS {
         let mut search = 0;
-        while let Some(offset) = line[search..].find(operator) {
+        while let Some(offset) = head[search..].find(operator) {
             let at = search + offset;
             // A `<`/`>` that is half of a shift operator is not a
             // comparison: `sink(flags << end)` must never read as a
             // predicate use of `end` (#3294 review).
-            if is_shift_operator_half(line, at, operator) {
+            if is_shift_operator_half(head, at, operator) {
                 search = at + operator.len();
                 continue;
             }
-            let left = bound_left_operand(&line[..at]);
-            let right = bound_right_operand(&line[at + operator.len()..]);
-            if operand_holds_binding(left, binding) {
+            // An operator inside unclosed parentheses/brackets sits in
+            // a call or index argument, not at statement level.
+            if has_unclosed_group_before(&head[..at]) {
+                search = at + operator.len();
+                continue;
+            }
+            let left = operand_before(&head[..at]);
+            let right = operand_after(&head[at + operator.len()..]);
+            if operand_is_binding(left, binding) {
                 return Some(PredicateOperandSide::Left);
             }
-            if operand_holds_binding(right, binding) {
+            if operand_is_binding(right, binding) {
                 return Some(PredicateOperandSide::Right);
             }
             search = at + operator.len();
         }
     }
-    let condition = line
-        .trim_start()
-        .trim_start_matches('}')
-        .trim_start()
-        .strip_prefix("else ")
-        .unwrap_or(line.trim_start());
-    for prefix in ["if ", "while "] {
-        if let Some(rest) = condition.strip_prefix(prefix) {
-            let condition_text = rest.split('{').next().unwrap_or(rest);
-            // `if let`/`while let` conditions bind a pattern, they do
-            // not test our binding (pattern re-binds are handled by
-            // `pattern_control_rebinds`).
-            if !condition_text.trim_start().starts_with("let ")
-                && operand_holds_binding(condition_text, binding)
-            {
-                return Some(PredicateOperandSide::Boolean);
-            }
+    if is_boolean_control {
+        let condition_text = head.split('{').next().unwrap_or(head);
+        // `if let`/`while let` conditions bind a pattern, they do
+        // not test our binding (pattern re-binds are handled by
+        // `pattern_control_rebinds`); otherwise the binding must be
+        // a whole `&&`/`||` term of the condition.
+        if !condition_text.trim_start().starts_with("let ")
+            && condition_terms(condition_text).any(|term| operand_is_binding(Some(term), binding))
+        {
+            return Some(PredicateOperandSide::Boolean);
         }
     }
-    if let Some(rest) = line
-        .trim_start()
-        .trim_start_matches('}')
-        .trim_start()
-        .strip_prefix("match ")
-    {
-        let scrutinee = rest.split('{').next().unwrap_or(rest);
-        if operand_holds_binding(scrutinee, binding) {
+    if is_match_control {
+        let scrutinee = head.split('{').next().unwrap_or(head);
+        if operand_is_binding(Some(scrutinee), binding) {
             return Some(PredicateOperandSide::MatchScrutinee);
         }
     }
     None
+}
+
+/// Strip leading closing braces and `else` so `} else if …` shapes read
+/// as their control form.
+fn strip_leading_closing_and_else(line: &str) -> &str {
+    let mut base = line.trim_start();
+    loop {
+        let next = base
+            .strip_prefix('}')
+            .map(str::trim_start)
+            .or_else(|| base.strip_prefix("else ").map(str::trim_start));
+        match next {
+            Some(stripped) if stripped != base => base = stripped,
+            _ => return base,
+        }
+    }
+}
+
+/// Strip a leading control keyword (`if `, `while `, `match `) so the
+/// operand scan sees the statement's expression head.
+fn strip_control_keywords(base: &str) -> &str {
+    ["if ", "while ", "match "]
+        .iter()
+        .find_map(|prefix| base.strip_prefix(prefix))
+        .unwrap_or(base)
+}
+
+/// Whether the text before an operator leaves a `(`/`[` unclosed at the
+/// operator itself: the operator sits inside a call or index argument.
+/// A fully closed group before the operator is fine — the operator is
+/// still at statement level.
+fn has_unclosed_group_before(text: &str) -> bool {
+    let mut depth = 0isize;
+    for character in text.chars() {
+        match character {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth -= 1,
+            _ => {}
+        }
+    }
+    depth > 0
+}
+
+/// The operand text immediately left of an operator: the segment since
+/// the nearest `(`/`[`/`{`/`,` boundary. `None` when that boundary was
+/// a group opener or the segment still holds a group character — both
+/// mean the operand position is a call/index interior or a composite.
+fn operand_before(text: &str) -> Option<&str> {
+    let after_and = text.rsplit("&&").next().unwrap_or(text);
+    let after_or = after_and.rsplit("||").next().unwrap_or(after_and);
+    let boundary = after_or
+        .rfind(['(', '[', '{', ','])
+        .map(|at| (at, after_or.as_bytes()[at] as char));
+    let segment = match boundary {
+        Some((_, '(' | '[')) => return None,
+        Some((at, _)) => &after_or[at + 1..],
+        None => after_or,
+    };
+    if segment.contains(['(', ')', '[', ']', ',']) {
+        return None;
+    }
+    Some(segment)
+}
+
+/// The operand text immediately right of an operator: the segment up to
+/// the nearest `(`/`[`/`)`/`]`/`{`/`,` boundary. `None` when the segment
+/// holds a group character — the operand is a call/index or composite.
+fn operand_after(text: &str) -> Option<&str> {
+    let before_and = text.split("&&").next().unwrap_or(text);
+    let before_or = before_and.split("||").next().unwrap_or(before_and);
+    let cut = before_or
+        .find(['(', '[', ')', ']', '{', ','])
+        .unwrap_or(before_or.len());
+    let segment = &before_or[..cut];
+    if segment.contains(['(', ')', '[', ']', ',']) {
+        return None;
+    }
+    Some(segment)
+}
+
+/// The `&&`/`||`-separated terms of a boolean condition.
+fn condition_terms(condition: &str) -> impl Iterator<Item = &str> {
+    condition
+        .split("&&")
+        .flat_map(|part| part.split("||"))
+        .map(str::trim)
+}
+
+/// Whether an operand segment is exactly `binding`, behind any number
+/// of `&`/`*` references and dereferences.
+fn operand_is_binding(operand: Option<&str>, binding: &str) -> bool {
+    let Some(operand) = operand else {
+        return false;
+    };
+    let mut operand = operand.trim();
+    loop {
+        let stripped = operand
+            .strip_prefix('&')
+            .or_else(|| operand.strip_prefix('*'))
+            .map(str::trim_start);
+        match stripped {
+            Some(next) => operand = next,
+            None => break,
+        }
+    }
+    operand == binding
 }
 
 /// Whether the `<`/`>` at `at` is one character of a `<<`/`>>` shift
@@ -463,50 +589,18 @@ fn is_shift_operator_half(line: &str, at: usize, operator: &str) -> bool {
     matches!(before, Some('<') | Some('>')) || matches!(after, Some('<') | Some('>'))
 }
 
-/// The operand text immediately left of an operator: bounded by the
-/// nearest enclosing `&&`/`||`/`(`/`{` to its left.
-fn bound_left_operand(text: &str) -> &str {
-    let after_and = text.rsplit("&&").next().unwrap_or(text);
-    let after_or = after_and.rsplit("||").next().unwrap_or(after_and);
-    after_or.rsplit(['(', '{']).next().unwrap_or(after_or)
-}
-
-/// The operand text immediately right of an operator: bounded by the
-/// nearest `&&`/`||`/`)`/`{` to its right.
-fn bound_right_operand(text: &str) -> &str {
-    let before_and = text.split("&&").next().unwrap_or(text);
-    let before_or = before_and.split("||").next().unwrap_or(before_and);
-    before_or.split([')', '{']).next().unwrap_or(before_or)
-}
-
-/// Whether an operand position holds `binding` as a standalone
-/// identifier token (bounded against `.`-prefixed fields and longer
-/// identifiers on both sides).
-fn operand_holds_binding(operand: &str, binding: &str) -> bool {
-    let operand = operand.trim();
-    if operand == binding {
-        return true;
-    }
-    let mut search = 0;
-    while let Some(offset) = operand[search..].find(binding) {
-        let at = search + offset;
-        let before = operand[..at].chars().next_back();
-        let after = operand[at + binding.len()..].chars().next();
-        let before_ok =
-            !before.is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric() || ch == '.');
-        let after_ok = !after.is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric());
-        if before_ok && after_ok {
-            return true;
-        }
-        search = at + binding.len();
-    }
-    false
-}
-
 /// A use line that invokes a macro (`ensure!(…)`, `debug_assert!(…)`):
-/// ripr does not expand macros, so the use fails closed.
+/// ripr does not expand macros, so the use fails closed. `!(`
+/// negation is not a macro — the `!` must follow an identifier.
 fn is_macro_invocation_line(line: &str) -> bool {
-    line.contains("!(")
+    line.char_indices().any(|(at, character)| {
+        character == '!'
+            && line[at + 1..].starts_with('(')
+            && line[..at]
+                .chars()
+                .next_back()
+                .is_some_and(|prev| prev.is_ascii_alphanumeric() || prev == '_')
+    })
 }
 
 /// A use line carrying closure pipes (`|x| …`, `move |x|`): the capture
@@ -531,10 +625,12 @@ fn has_closure_pipes(line: &str) -> bool {
 /// The earliest (leftmost) unresolved operation in the initializer, or
 /// `None` when the initializer is a bare literal/identifier copy. Any
 /// call or arithmetic is unresolved — ripr never pretends to know an
-/// operand value it did not evaluate.
+/// operand value it did not evaluate. Operation characters inside a
+/// string literal never count: the scan runs over masked text.
 fn value_resolution(initializer: &str) -> BindingValueResolution {
     let trimmed = initializer.trim();
-    match earliest_operation(trimmed) {
+    let masked = mask_rust_comments_and_strings(trimmed);
+    match earliest_operation(&masked) {
         Some(earliest_operation) => BindingValueResolution::Unresolved { earliest_operation },
         None => BindingValueResolution::ResolvedToText(trimmed.to_string()),
     }
@@ -686,7 +782,7 @@ mod tests {
 
     #[test]
     fn literals_and_identifier_copies_resolve_to_text() {
-        for initializer in ["10", "-1", "\"done\"", "copied"] {
+        for initializer in ["10", "-1", "\"done\"", "\"50%\"", "\"a/b\"", "copied"] {
             assert_eq!(
                 value_resolution(initializer),
                 BindingValueResolution::ResolvedToText(initializer.to_string()),
@@ -736,6 +832,30 @@ mod tests {
             None
         );
         assert_eq!(direct_predicate_operand("if start == rend {", "end"), None);
+    }
+
+    // Strict direct-operand semantics (#3294 review): a method
+    // receiver, a composite expression operand, and a call or index
+    // interior are never predicate uses.
+    #[test]
+    fn receivers_composites_and_call_interiors_never_relate() {
+        assert_eq!(direct_predicate_operand("if end.is_empty() {", "end"), None);
+        assert_eq!(direct_predicate_operand("match end.kind() {", "end"), None);
+        assert_eq!(direct_predicate_operand("if end + 1 == 2 {", "end"), None);
+        assert_eq!(
+            direct_predicate_operand("if map.get(&end) < limit {", "end"),
+            None
+        );
+        assert_eq!(direct_predicate_operand("if f(a == end, b) {", "end"), None);
+        // A reference or dereference of the binding is still direct.
+        assert_eq!(
+            direct_predicate_operand("if *end == 2 {", "end"),
+            Some(PredicateOperandSide::Left)
+        );
+        assert_eq!(
+            direct_predicate_operand("if ready && end {", "end"),
+            Some(PredicateOperandSide::Boolean)
+        );
     }
 
     #[test]
@@ -808,7 +928,17 @@ mod tests {
 
     #[test]
     fn closure_use_fails_closed() -> Result<(), String> {
+        // The comparison inside the foreign closure initializer is not
+        // a direct use, and pipes on the line block any candidate.
         let body = "pub fn f() -> bool {\n    let end = 1;\n    let check = |other: usize| end == other;\n    check(2)\n}\n";
+        let resolution = resolve_end(body, 2);
+        assert_eq!(blocked_scope(&resolution)?, BindingUseScope::NoPredicateUse);
+        Ok(())
+    }
+
+    #[test]
+    fn closure_pipes_on_the_use_line_block_it() -> Result<(), String> {
+        let body = "pub fn f() -> bool {\n    let end = 1;\n    if end == 2 { sink(|c| c); }\n    true\n}\n";
         let resolution = resolve_end(body, 2);
         assert_eq!(
             blocked_scope(&resolution)?,
@@ -819,11 +949,41 @@ mod tests {
 
     #[test]
     fn macro_use_fails_closed() -> Result<(), String> {
-        let body = "pub fn f() -> bool {\n    let end = 1;\n    ensure!(end == 2);\n    true\n}\n";
+        // A comparison inside macro parentheses is not a direct use;
+        // the macro blocker fires for a statement-level use on a line
+        // that also invokes a macro.
+        let body = "pub fn f() -> bool {\n    let end = 1;\n    if end == 2 { ensure!(true); }\n    true\n}\n";
         let resolution = resolve_end(body, 2);
         assert_eq!(
             blocked_scope(&resolution)?,
             BindingUseScope::MacroExpansionUnsupported
+        );
+        Ok(())
+    }
+
+    // `!(` negation is not a macro invocation; the negated (grouped)
+    // comparison is simply not a direct operand and fails closed
+    // without the wrong blocker.
+    #[test]
+    fn negated_grouped_comparison_is_not_a_macro() -> Result<(), String> {
+        assert!(!is_macro_invocation_line("if !(end == start) {"));
+        let body = "pub fn f() -> bool {\n    let end = 1;\n    if !(end == 2) {\n        true\n    } else {\n        false\n    }\n}\n";
+        let resolution = resolve_end(body, 2);
+        assert_eq!(blocked_scope(&resolution)?, BindingUseScope::NoPredicateUse);
+        Ok(())
+    }
+
+    // A changed declaration inside an inner block ends with the block:
+    // a later same-named outer binding's use never relates to it.
+    #[test]
+    fn block_scope_exit_ends_the_live_span() -> Result<(), String> {
+        let body = "pub fn f(flag: bool) -> bool {\n    let end = 1;\n    {\n        let end = 2;\n        flag\n    }\n    end == 4\n}\n";
+        // The changed declaration is the inner `let end = 2;` (line 4);
+        // the later `end == 4` belongs to the outer binding.
+        let resolution = resolve_end(body, 4);
+        assert_eq!(
+            blocked_scope(&resolution)?,
+            BindingUseScope::ScopeExitedBeforeUse
         );
         Ok(())
     }
@@ -889,12 +1049,10 @@ mod tests {
                 "shift operand must not relate: {body}"
             );
         }
-        // A shift inside a real comparison relates through the
-        // comparison, labeled at the comparison's operand.
-        assert_eq!(
-            direct_predicate_operand("if (1 << end) > 2 {", "end"),
-            Some(PredicateOperandSide::Left)
-        );
+        // A shift inside a real comparison whose operand is the
+        // composite `(1 << end)` is not a direct identifier operand:
+        // strict semantics fail closed.
+        assert_eq!(direct_predicate_operand("if (1 << end) > 2 {", "end"), None);
         Ok(())
     }
 
@@ -966,17 +1124,15 @@ mod tests {
         }
     }
 
-    // A single `|` between operands is a bitwise OR, not a closure pipe:
-    // the real comparison still relates.
+    // A single `|` between operands is a bitwise OR, not a closure
+    // pipe — but the composite `a | end` is not a direct comparison
+    // operand either, so the shape fails closed on both readings.
     #[test]
     fn bitwise_or_in_condition_is_not_a_closure() -> Result<(), String> {
-        assert_eq!(
-            direct_predicate_operand("if a | end == b {", "end"),
-            Some(PredicateOperandSide::Left)
-        );
+        assert_eq!(direct_predicate_operand("if a | end == b {", "end"), None);
         let body = "pub fn f(a: u8, b: u8) -> bool {\n    let end = 1;\n    if a | end == b {\n        true\n    } else {\n        false\n    }\n}\n";
         let resolution = resolve_end(body, 2);
-        assert_eq!(direct_uses(&resolution)?.len(), 1);
+        assert_eq!(blocked_scope(&resolution)?, BindingUseScope::NoPredicateUse);
         Ok(())
     }
 

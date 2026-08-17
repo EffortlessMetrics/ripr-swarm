@@ -817,9 +817,18 @@ fn attach_changed_binding_predicate_evidence(
     let Some(relation) = relation else {
         return;
     };
+    // The relation names both causal values when the diff carries the
+    // old initializer; the probe's before/after already hold them, and
+    // the relation line states them together.
+    let initializer_range = match finding.probe.before.as_deref() {
+        Some(before) if before != relation.initializer => {
+            format!("`{before}` -> `{}`", relation.initializer)
+        }
+        _ => format!("`{}`", relation.initializer),
+    };
     finding.evidence.push(format!(
-        "binding_predicate_relation: changed binding `{}` initializer `{}` flows into predicate operand at line {}",
-        relation.binding, relation.initializer, relation.predicate_line
+        "binding_predicate_relation: changed binding `{}` initializer {initializer_range} flows into predicate operand at line {}",
+        relation.binding, relation.predicate_line
     ));
     if let probes::BindingValueResolution::Unresolved { earliest_operation } =
         &relation.value_resolution

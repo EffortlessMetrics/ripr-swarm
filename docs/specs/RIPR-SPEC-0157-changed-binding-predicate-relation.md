@@ -6,17 +6,17 @@ Issue: #3294 (parent #3215; follows #3271)
 
 ## Problem
 
-#3271 made the `find`/`rfind`/`len_utf8` through `map_or` boundary
-honest by naming `rust_value_propagation_unresolved` on the generic
-static-unknown finding — but it did not make the changed behavior
-satisfiable. When a diff changes a `let` initializer whose binding later
-feeds a same-function predicate (`let end = input.rfind(delim)
-.map_or(0, |idx| idx); … if end == start {`), the probe stays the
-catch-all static-unknown "changed syntax is not mapped to a
-high-confidence probe family" finding even though the exact behavioral
-predicate is lexically present. The user can already have exact
-equality-boundary tests while infection reads as unknown for a generic
-syntax reason.
+Slice #3271 made the `find`/`rfind`/`len_utf8` through `map_or`
+boundary honest by naming `rust_value_propagation_unresolved` on the
+generic static-unknown finding — but it did not make the changed
+behavior satisfiable. When a diff changes a `let` initializer whose
+binding later feeds a same-function predicate (`let end =
+input.rfind(delim).map_or(0, |idx| idx); … if end == start {`), the
+probe stays the catch-all static-unknown "changed syntax is not mapped
+to a high-confidence probe family" finding even though the exact
+behavioral predicate is lexically present. The user can already have
+exact equality-boundary tests while infection reads as unknown for a
+generic syntax reason.
 
 ## Behavior
 
@@ -29,20 +29,27 @@ syntax reason.
   functions never relate) and only when the binding reaches the use
   directly: no re-binding (including a destructuring re-bind) and no
   reassignment between the changed declaration and the use.
-- Supported use positions: direct comparison operands
-  (`==`, `!=`, `<`, `<=`, `>`, `>=`), direct boolean tests
-  (`if ident`, `while ident`), and a `match` scrutinee. Comment and
-  string text is masked. Field paths (`self.end`) and longer
-  identifiers (`endpoint`) never relate, and a `<`/`>` that is half of
-  a `<<`/`>>` shift is not a comparison — `sink(flags << end)` never
-  relates.
+- Supported use positions, under **strict direct-operand semantics**:
+  the operand position must hold exactly the binding, optionally behind
+  `&`/`*`. Supported positions are a comparison operand
+  (`==`, `!=`, `<`, `<=`, `>`, `>=`) anywhere at statement level, a
+  whole `&&`/`||` term of an `if`/`while` condition, and a bare `match`
+  scrutinee. Comment and string text is masked. A method receiver
+  (`end.is_empty()`), a call or index interior (`map.get(&end)`,
+  `f(a == end, b)`), a composite expression operand (`end + 1`), a
+  grouped or negated comparison (`(end == start)`, `!(end == start)`),
+  a field path (`self.end`), and a longer identifier (`endpoint`) never
+  relate, and a `<`/`>` that is half of a `<<`/`>>` shift is not a
+  comparison — `sink(flags << end)` never relates.
 - Region tracking keeps the scan in the owning scope: braces opened by
   a closure or a nested item are no-use regions (separate binding
   scopes or unmodeled capture), a nested item's multi-line signature is
-  skipped to its body brace, and a line inside unclosed foreign
+  skipped to its body brace, a line inside unclosed foreign
   parentheses (a multi-line initializer or call continuation) is a
-  continuation, not a use site. A single `|` between operands is a
-  bitwise OR, not a closure pipe; only argument-position pipes count.
+  continuation, not a use site, and leaving the changed declaration's
+  block depth ends the live span (a same-named outer binding's later
+  uses belong to that outer binding). A single `|` between operands is
+  a bitwise OR, not a closure pipe; only argument-position pipes count.
 - On resolution, the probe retargets to the predicate: family
   `predicate`, location at the use line, expression the predicate line,
   and the old/new initializers as `before`/`after` causal evidence.
@@ -123,8 +130,12 @@ fixtures `binding_predicate_{equality_boundary,positions,two_uses,scope_controls
   arithmetic values (later #3215 slices).
 - No cross-function helper propagation, closure modeling, or macro
   expansion.
-- No relation for foreign-`let`-initializer comparisons (bounded V1:
-  control statements and scrutinees only).
+- No relation through a foreign `let` initializer or a call argument
+  interior: `foreign` means any comparison whose operand position is
+  not the direct identifier — a comparison elsewhere in the statement
+  (a control condition or a tail expression) still relates when the
+  operand is the bare binding. Composite, grouped, negated, and
+  receiver operands fail closed.
 
 ## Implementation Mapping
 

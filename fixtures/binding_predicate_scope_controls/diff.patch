@@ -7,28 +7,28 @@ diff --git a/src/lib.rs b/src/lib.rs
 +    let end = input.trim_end().len();
      end
  }
-@@ -6,5 +6,5 @@
+@@ -11,5 +11,5 @@
  pub fn shadowed(flag: bool) -> bool {
 -    let end = 1;
 +    let end = 3;
      let adjusted = {
          let end = 2;
          end > 1
-@@ -15,5 +15,5 @@
+@@ -20,5 +20,5 @@
  pub fn mutated(seed: usize) -> bool {
 -    let mut end = seed;
 +    let mut end = seed + 1;
      end = end + 1;
      end == 2
  }
-@@ -21,5 +21,5 @@
+@@ -26,5 +26,5 @@
  pub fn documented(delim: char) -> usize {
 -    let end = delim.len_utf8();
 +    let end = delim.len_utf8() + 1;
      // end == start is only documentation.
      let label = "end == start";
      delim.len_utf8()
-@@ -28,4 +28,4 @@
+@@ -33,4 +33,4 @@
  pub fn destructured(pair: (usize, usize)) -> bool {
 -    let (end, other) = pair;
 +    let (end, other) = (pair.0 + 1, pair.1);
