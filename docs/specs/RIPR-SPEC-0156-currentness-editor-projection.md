@@ -16,7 +16,7 @@ no end-to-end corpus a downstream consumer could run against.
 ## Behavior
 
 - LSP code lenses gate on
-  [`Finding::is_candidate_actionable`](RIPR-SPEC-0152): a base-deleted
+  `Finding::is_candidate_actionable` (RIPR-SPEC-0152): a base-deleted
   finding's recorded line is the projected new-side coordinate (the
   #3212 incident shape), and pinning an advisory lens there presents
   deleted-side evidence at an impossible candidate position. A
@@ -32,13 +32,19 @@ no end-to-end corpus a downstream consumer could run against.
     never merges into a same-line different-expression finding;
   - **whole-helper move without same-text evidence** — no resolved
     move is claimed; the records stay `base_deleted` base-side
-    evidence.
+    evidence;
+  - **whole-file delete (mixed cell)** — the deleted file contributes
+    no probe, finding, or repair target (disclose-not-probe, disclosed
+    as a named non-claim) while the changed production owner in the
+    same diff stays `candidate_current` and actionable.
 
 ## Required Evidence
 
 - The lens reproduction (base-deleted finding received a lens at its
-  projected coordinate on main) and its discriminating fix.
-- The three corpus fixtures with real golden outputs (the
+  projected coordinate on main) and its discriminating fix; the lens
+  view identity now mirrors the visible set, so non-actionable-only
+  changes do not trigger a spurious refresh.
+- The four corpus fixtures with real golden outputs (the
   downstream-consumable export pattern).
 - Existing C1/C2 recurrence tests remain green.
 
@@ -62,7 +68,7 @@ no end-to-end corpus a downstream consumer could run against.
 ## Test Mapping
 
 `lsp/lens.rs` `currentness_lens_tests`; fixtures
-`currentness_matrix_{tail,reuse,move}`.
+`currentness_matrix_{tail,reuse,move,whole_delete}`.
 
 ## Non-Goals
 

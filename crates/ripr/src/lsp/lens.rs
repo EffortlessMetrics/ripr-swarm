@@ -66,10 +66,14 @@ struct LensViewItem {
 
 /// Compute the lens-view identity for a snapshot. Pure: reads only the
 /// snapshot's structured fields, never the wall clock or rendered titles.
+// #3282: the identity mirrors the visible lens set, so a change
+// touching only non-actionable findings does not trigger a spurious
+// workspace/codeLens/refresh.
 pub(super) fn lens_view_identity(snapshot: &AnalysisSnapshot) -> LensViewIdentity {
     let mut items: Vec<LensViewItem> = snapshot
         .findings
         .iter()
+        .filter(|finding| finding.is_candidate_actionable())
         .map(|finding| {
             let file = &finding.probe.location.file;
             let absolute = if file.is_absolute() {
