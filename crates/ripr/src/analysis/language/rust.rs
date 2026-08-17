@@ -833,16 +833,18 @@ fn attach_changed_binding_predicate_evidence(
     if let probes::BindingValueResolution::Unresolved { earliest_operation } =
         &relation.value_resolution
     {
+        // Neutral prefixes: this is a value disclosure on a
+        // predicate-shaped finding, not a `static_limit_kind` record,
+        // so it deliberately stays outside the structured
+        // `limitation_*` evidence contract (#3294 review).
         finding.evidence.push(format!(
-            "{}operand value of `{}` unresolved at earliest initializer operation `{}`",
-            crate::domain::LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX,
-            relation.binding,
-            earliest_operation
+            "binding_predicate_value_unresolved: operand value of `{}` unresolved at earliest initializer operation `{}`",
+            relation.binding, earliest_operation
         ));
-        finding.evidence.push(format!(
-            "{}named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test",
-            crate::domain::LIMITATION_NON_CLAIM_PREFIX
-        ));
+        finding.evidence.push(
+            "binding_predicate_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"
+                .to_string(),
+        );
     }
 }
 
@@ -2109,7 +2111,7 @@ mod tests {
         );
         assert!(
             finding.evidence.iter().any(|line| line.contains(
-                "limitation_first_unresolved_edge: operand value of `end` unresolved at earliest initializer operation `.rfind(`"
+                "binding_predicate_value_unresolved: operand value of `end` unresolved at earliest initializer operation `.rfind(`"
             )),
             "earliest operation evidence missing: {:?}",
             finding.evidence
@@ -2146,7 +2148,7 @@ mod tests {
             .ok_or_else(|| format!("missing retargeted finding: {:?}", result.findings))?;
         assert!(
             finding.evidence.iter().any(|line| line.contains(
-                "limitation_first_unresolved_edge: operand value of `start` unresolved at earliest initializer operation `.chars(`"
+                "binding_predicate_value_unresolved: operand value of `start` unresolved at earliest initializer operation `.chars(`"
             )),
             "earliest operation evidence missing: {:?}",
             finding.evidence
@@ -2177,7 +2179,7 @@ mod tests {
             .ok_or_else(|| format!("missing retargeted finding: {:?}", result.findings))?;
         assert!(
             finding.evidence.iter().any(|line| line.contains(
-                "limitation_first_unresolved_edge: operand value of `end` unresolved at earliest initializer operation `input.len(`"
+                "binding_predicate_value_unresolved: operand value of `end` unresolved at earliest initializer operation `input.len(`"
             )),
             "earliest call evidence missing: {:?}",
             finding.evidence

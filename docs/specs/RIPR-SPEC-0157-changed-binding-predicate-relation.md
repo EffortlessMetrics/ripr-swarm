@@ -60,14 +60,16 @@ generic syntax reason.
   parentheses/braces unbalanced is the first fragment of a multi-line
   initializer and fails closed to the generic per-line probes.
 - The finding keeps its normal predicate-shaped classification and
-  gains evidence: `binding_predicate_relation` names the binding,
-  initializer, and use line; when the initializer contains an
-  operation, `limitation_first_unresolved_edge` names the earliest
-  (leftmost) one — a std-operation token (`.find(`, `.rfind(`,
+  gains evidence: `binding_predicate_relation` names the binding, both
+  causal initializers, and the use line; when the initializer contains
+  an operation, `binding_predicate_value_unresolved` (a neutral
+  disclosure prefix, deliberately outside the structured `limitation_*`
+  contract, since the finding carries no `static_limit_kind`) names the
+  earliest (leftmost) one — a std-operation token (`.find(`, `.rfind(`,
   `.len_utf8(`, `.chars(`, `.map_or(`), a shift (`<<`/`>>`), the
   earliest call prefix, or the earliest binary operator (arithmetic,
   bitwise, comparison). A bare literal/identifier copy resolves to
-  text with no limitation line.
+  text with no value-unresolved line.
 - The generic `changed syntax is not mapped` limitation is absent for
   supported direct binding-use cases.
 - Fail-closed blockers (recorded as the relation's explicit scope
@@ -82,6 +84,9 @@ generic syntax reason.
   generic static-unknown on main) and the removal experiment: with the
   relation disabled, the positive shape regresses to the old generic
   limitation.
+- Golden blast radius measured on the slice head:
+  `cargo xtask goldens check` (zero drift on pre-existing goldens; the
+  four new fixtures blessed) and `cargo xtask dogfood` green.
 - The corpus fixtures: the equality-boundary positive, direct-position
   positives (boolean test, `match` scrutinee, numeric comparison),
   two-uses determinism, and the scope-control set (sibling function,

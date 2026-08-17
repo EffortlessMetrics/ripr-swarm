@@ -364,7 +364,8 @@ fn pattern_rebinds_binding(let_line: &str, binding: &str) -> bool {
 /// identifier (e.g. `if let Some(end) = opt {`, `for end in items {`)
 /// re-binds it; the control line is a pattern, never a predicate use.
 fn pattern_control_rebinds(line: &str, binding: &str) -> bool {
-    let line = line.trim_start().strip_prefix("else ").unwrap_or(line);
+    // Normalize the rustfmt shape `} else if let …` before matching.
+    let line = strip_leading_closing_and_else(line);
     let pattern = if let Some(rest) = line
         .strip_prefix("if let ")
         .or_else(|| line.strip_prefix("while let "))
@@ -1009,6 +1010,19 @@ mod tests {
         Ok(())
     }
 
+    // The rustfmt shape `} else if let Some(end) = opt {` re-binds
+    // its pattern variable: the leading `}` must not hide the pattern.
+    #[test]
+    fn else_if_let_pattern_rebind_blocks_later_uses() -> Result<(), String> {
+        let body = "pub fn f(opt: Option<usize>) -> bool {\n    let end = 1;\n    if opt.is_none() {\n        false\n    } else if let Some(end) = opt {\n        end == 3\n    } else {\n        false\n    }\n}\n";
+        let resolution = resolve_end(body, 2);
+        assert_eq!(
+            blocked_scope(&resolution)?,
+            BindingUseScope::ShadowedBeforeUse
+        );
+        Ok(())
+    }
+
     #[test]
     fn for_loop_pattern_rebind_blocks_later_uses() -> Result<(), String> {
         let body = "pub fn f(items: &[usize]) -> bool {\n    let end = 1;\n    for end in items {\n        end == 3\n    }\n    false\n}\n";
@@ -1153,6 +1167,23 @@ mod tests {
             direct_predicate_operand("} else if end {", "end"),
             Some(PredicateOperandSide::Boolean)
         );
+    }
+
+    // The unit of relation is the predicate use line: the same
+    // binding appearing twice in one predicate statement yields one
+    // relation naming that statement, not two occurrences of the same
+    // line and text (#3294 review: deterministic by design).
+    #[test]
+    fn duplicated_operand_on_one_line_yields_one_relation() -> Result<(), String> {
+        let body = "pub fn f(start: usize) -> bool {\n    let end = 1;\n    if end == start || end == start {\n        true\n    } else {\n        false\n    }\n}\n";
+        let resolution = resolve_end(body, 2);
+        let uses = direct_uses(&resolution)?;
+        assert_eq!(uses.len(), 1);
+        assert_eq!(
+            uses[0].predicate_expression,
+            "if end == start || end == start {"
+        );
+        Ok(())
     }
 
     #[test]
