@@ -628,8 +628,9 @@ The evidence-first fields are additive in schema `0.2`:
   oracles, observed values, and missing discriminator evidence.
 - `identity.git_candidate_subject` (additive, no `schema_version` bump,
   #3278) appears in the `analysis_outcome.outcome.identity` object
-  exactly when the run analyzed an immutable Git candidate
-  (`--candidate-tree`). It binds directly to the resolved producer
+  as a non-null object exactly when the run analyzed an immutable Git
+  candidate (`--candidate-tree`); the key itself is always present, and
+  ordinary runs leave it `null`. It binds directly to the resolved producer
   state — `subject_kind` (`tree_to_tree`), `base_tree` and
   `candidate_tree` object IDs, and `diff_identity` (SHA-256 of the
   derived base→candidate unified diff). A consumer compares the emitted

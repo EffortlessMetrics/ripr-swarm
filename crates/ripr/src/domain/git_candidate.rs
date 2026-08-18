@@ -281,9 +281,9 @@ impl fmt::Display for GitCandidateSubjectError {
             ),
             Self::ExecutionUnsupported => write!(
                 formatter,
-                "git candidate subjects are bound and validated by this \
-                 build but not executable: the Git object producer lands \
-                 with #3277; refusing to fall back to worktree analysis"
+                "git candidate subjects are not executable on this \
+                 path: the object producer executes diff-mode subjects only \
+                 (#3277); refusing to fall back to worktree or repo analysis"
             ),
         }
     }

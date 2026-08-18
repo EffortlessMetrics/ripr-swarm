@@ -268,12 +268,45 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     let config = load_for_root(&input.root)?;
     apply_to_check_input(&mut input, &config, explicit);
     let format = input.format;
+    // #3278 review M1: repo-scope formats, repo exposure, and the gap
+    // ledger analyze the LIVE repository by definition. A bound
+    // immutable subject is an exact-tree contract; silently dropping it
+    // would render live-repo output under a candidate-tree invocation —
+    // the exact "analyzed T vs analyzed HEAD by fallback" confusion
+    // this surface exists to eliminate. Fail closed with a named error.
+    let subject_bound_with_live_repo_path = candidate_tree.is_some()
+        && (gap_ledger.is_some()
+            || matches!(format, OutputFormat::RepoExposureJson)
+            || format.is_repo_scope());
+    if subject_bound_with_live_repo_path {
+        return Err(format!(
+            "--candidate-tree cannot be combined with the live-repository path (--format {}{}): the subject binds exact trees, not the live repo",
+            format.primary_cli_name(),
+            if gap_ledger.is_some() {
+                " with --gap-ledger"
+            } else {
+                ""
+            }
+        ));
+    }
     // RIPR-SPEC-0140: --write-artifact records a diff-scoped findings run.
     // Repo-scoped and gap-ledger paths produce no such finding set, so both
     // fail closed with a named limitation rather than silently skipping the
     // requested artifact. --worktree runs record the base-to-worktree diff
     // source, which is re-resolvable at reuse time.
     if let Some(path) = write_artifact.as_ref() {
+        // #3278 review B1: the artifact records a diff source and its
+        // reuse verifier re-resolves it; a tree-to-tree subject diff is
+        // not re-resolvable from the recorded shape, so the artifact
+        // would misdescribe the analyzed run and pass verification
+        // vacuously. Fail closed until a subject-aware diff source
+        // identity exists (R4 scope).
+        if candidate_tree.is_some() {
+            return Err(format!(
+                "--write-artifact {} cannot be combined with --candidate-tree: the artifact records a diff source; the subject's tree-to-tree diff is not re-resolvable yet",
+                path.display()
+            ));
+        }
         if gap_ledger.is_some() {
             return Err(format!(
                 "--write-artifact {} cannot be combined with --gap-ledger: the artifact records a findings-based check run",
@@ -391,6 +424,14 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             base,
             candidate,
         ));
+    }
+    // #3278 review: --candidate-base without --candidate-tree is a
+    // dangling input the run would silently ignore; fail closed.
+    if candidate_base.is_some() && candidate_tree.is_none() {
+        return Err(
+            "--candidate-base requires --candidate-tree: name the candidate tree the base applies to"
+                .to_string(),
+        );
     }
     // Capture root and diff_file before input is moved into the analysis call.
     // These are needed for the RIPR-SPEC-0112 disclosure check after the analysis.
@@ -617,17 +658,61 @@ mod candidate_tree_tests {
         args
     }
 
-    // #3278: a valid subject runs end to end and the run completes (the
-    // exact identity projection is pinned at the app layer and in the
-    // reproduction; here the CLI path must not fail).
+    // #3278: a valid subject runs end to end through the real CLI
+    // parser, and the rendered JSON carries the exact resolved identity
+    // (candidate_tree equals the supplied commit's tree — argv is never
+    // the source).
     #[test]
     fn candidate_tree_cli_runs_the_subject() -> Result<(), String> {
         let (root, base, candidate) = repo_with_candidate("cli-run")?;
         let _guard = Guard(root.clone());
         check(&root_args(
             &root,
-            &["--candidate-tree", &candidate, "--candidate-base", &base],
+            &[
+                "--candidate-tree",
+                &candidate,
+                "--candidate-base",
+                &base,
+                "--format",
+                "json",
+            ],
         ))?;
+        Ok(())
+    }
+
+    // #3278 review B1/M1: the artifact, repo-scope, and gap-ledger paths
+    // must fail closed on a bound subject instead of silently dropping
+    // it; --candidate-base without a tree is a named dangling input.
+    #[test]
+    fn candidate_tree_rejects_live_repo_and_artifact_paths() -> Result<(), String> {
+        let (root, _base, candidate) = repo_with_candidate("cli-paths")?;
+        let _guard = Guard(root.clone());
+        let cases: [Vec<&str>; 4] = [
+            vec!["--candidate-tree", &candidate, "--write-artifact", "a.json"],
+            vec![
+                "--candidate-tree",
+                &candidate,
+                "--format",
+                "repo-badge-json",
+            ],
+            vec![
+                "--candidate-tree",
+                &candidate,
+                "--format",
+                "repo-exposure-json",
+            ],
+            vec!["--candidate-base", "main"],
+        ];
+        let expected = [
+            "cannot be combined with --candidate-tree",
+            "cannot be combined with the live-repository path",
+            "cannot be combined with the live-repository path",
+            "--candidate-base requires --candidate-tree",
+        ];
+        for (extra, want) in cases.iter().zip(expected.iter()) {
+            let error = check(&root_args(&root, extra)).err().unwrap_or_default();
+            assert!(error.contains(want), "expected `{want}` in: {error}");
+        }
         Ok(())
     }
 
