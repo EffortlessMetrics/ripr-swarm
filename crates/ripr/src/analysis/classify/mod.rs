@@ -9,6 +9,7 @@ mod related_tests;
 mod reveal;
 mod text;
 mod transitive_reach;
+mod value_transfer;
 
 pub(in crate::analysis) use activation::activation_evidence;
 pub(in crate::analysis) use context::ProbeContext;

@@ -739,3 +739,11 @@ path = "docs/specs/RIPR-SPEC-0157-changed-binding-predicate-relation.md"
 status = "proposed"
 owner = "product-swarm"
 standalone_reason = "Issue #3294 P2 slice for #3215: a changed simple let initializer retargets its probe to the same-function predicate use it feeds through one internal typed relation, keeping the initializers as causal evidence, naming the earliest unresolved initializer operation, and failing closed for shadowing, reassignment, closure capture, macro invocation, sibling functions, comment/string text, and destructuring declarations."
+
+[[artifact]]
+id = "RIPR-SPEC-0158"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0158-bounded-value-transfer.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #3295 P3 slice for #3215: one typed value-transfer evaluator resolves changed and sibling local bindings from exact related-test inputs across the enumerated std families, feeding the #3294 predicate operands so the equality boundary is observed instead of unknown, with named fail-closed edges for everything unevaluated."

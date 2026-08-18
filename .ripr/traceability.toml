@@ -8340,3 +8340,27 @@ metrics = [
   "unit_test_pass_rate",
   "golden_fixture_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0158"
+name = "Bounded value transfer from exact test inputs"
+spec = "docs/specs/RIPR-SPEC-0158-bounded-value-transfer.md"
+tests = [
+  "crates/ripr/src/analysis/classify/value_transfer.rs::tests",
+  "crates/ripr/src/analysis/classify/activation.rs::tests::activation_evidence_resolves_computed_local_boundary_operands",
+  "crates/ripr/src/analysis/language/rust.rs::tests::diff_analysis_evaluates_exact_boundary_from_test_inputs",
+]
+fixtures = [
+  "fixtures/binding_predicate_equality_boundary",
+  "fixtures/binding_value_family_matrix",
+  "fixtures/binding_value_fail_closed",
+]
+code = [
+  "crates/ripr/src/analysis/classify/value_transfer.rs",
+  "crates/ripr/src/analysis/classify/activation.rs",
+]
+outputs = []
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]

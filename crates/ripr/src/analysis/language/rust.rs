@@ -2188,6 +2188,101 @@ mod tests {
         Ok(())
     }
 
+    // #3295: the exact test inputs evaluate the changed and sibling
+    // bindings, so the equality boundary is observed (infection yes at
+    // the changed boundary) instead of `observed end values: unknown`.
+    #[test]
+    fn diff_analysis_evaluates_exact_boundary_from_test_inputs() -> Result<(), String> {
+        let root = temp_root("exact-boundary-evaluation")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]
+name='value-propagation'
+version='0.1.0'
+edition='2024'
+",
+        )?;
+        write(
+            &root.join("src/lib.rs"),
+            "pub fn split_after(input: &str, delim: char) -> &str {
+    let end = input.rfind(delim).map_or(1, |idx| idx);
+    let start = delim.len_utf8();
+    if end == start {
+        &input[..end]
+    } else {
+        input
+    }
+}
+",
+        )?;
+        write(
+            &root.join("tests/split.rs"),
+            "use value_propagation::split_after;
+#[test]
+fn absent_delimiter_boundary_returns_head() {
+    assert_eq!(split_after(\"ab\", 'x'), \"a\");
+}
+",
+        )?;
+        let diff_text = "diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -2,1 +2,1 @@
+-    let end = input.rfind(delim).map_or(0, |idx| idx);
++    let end = input.rfind(delim).map_or(1, |idx| idx);
+";
+        let changed_files = diff::parse_unified_diff(diff_text);
+        let result = RustAdapter.analyze_diff(
+            &AnalysisOptions {
+                root: root.clone(),
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+            },
+            &OraclePolicy::default(),
+            &changed_files,
+        )?;
+        let finding = result
+            .findings
+            .iter()
+            .find(|finding| {
+                finding.probe.family == ProbeFamily::Predicate
+                    && finding.probe.expression.contains("end == start")
+            })
+            .ok_or_else(|| format!("missing retargeted finding: {:?}", result.findings))?;
+        assert_eq!(
+            finding.ripr.infect.state,
+            StageState::Yes,
+            "the exact inputs end=1, start=1 observe the boundary: {finding:?}"
+        );
+        assert!(
+            finding
+                .activation
+                .observed_values
+                .iter()
+                .any(|fact| fact.value == "end == start"),
+            "the boundary equality must be an observed value: {:?}",
+            finding.activation.observed_values
+        );
+        assert!(
+            finding
+                .activation
+                .missing_discriminators
+                .iter()
+                .all(|fact| fact.value != "end == start"),
+            "the boundary discriminator is no longer missing: {:?}",
+            finding.activation.missing_discriminators
+        );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
     // #3271 stays the fallback for shapes #3294 cannot relate: a
     // predicate use behind a macro invocation is blocked by the
     // relation, so the generic static-unknown finding keeps the
