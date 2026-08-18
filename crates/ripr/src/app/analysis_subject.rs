@@ -6,7 +6,7 @@
 //! `CheckInput` boundary: the subject is mutually exclusive with the
 //! external-diff and top-level-base inputs, its repository root must name
 //! an existing directory, and — until the Git object producer lands
-//! (#3277) — a subject input fails closed here instead of ever reaching
+//! (#3277) — a subject input binds and defers execution to the object producer instead of ever reaching
 //! worktree diff analysis.
 
 use crate::app::CheckInput;

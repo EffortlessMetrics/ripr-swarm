@@ -27,11 +27,23 @@ use std::time::Duration;
 /// Bounded invocation deadline for each plumbing call.
 const GIT_DEADLINE: Option<Duration> = Some(Duration::from_mins(1));
 
+/// Upper bound on the candidate archive size. A tree whose archive
+/// exceeds it fails closed with a named limit instead of an unbounded
+/// allocation.
+const MAX_ARCHIVE_BYTES: usize = 512 * 1024 * 1024;
 /// The resolved, analyzed form of one immutable subject: the derived
 /// unified diff, the materialized candidate root (owned temp directory
 /// — dropping the guard removes it), and the identities the diff was
 /// derived from (recorded for R3 output projection).
-#[allow(dead_code, reason = "recorded for the R3 output projection (#3277)")]
+/// The exact subject identity the diff was derived from, for
+/// disclosure and the R3 output projection.
+pub(crate) fn subject_identity(resolved: &ResolvedGitCandidate) -> String {
+    format!(
+        "base_tree={} candidate_tree={}",
+        resolved.base_tree, resolved.candidate_tree
+    )
+}
+
 pub(crate) struct ResolvedGitCandidate {
     pub(crate) base_tree: String,
     pub(crate) candidate_tree: String,
@@ -73,24 +85,29 @@ fn git(root: &Path, args: &[&str]) -> Result<String, SubjectError> {
 /// repository's real empty-tree semantics when no base is requested.
 fn resolve_base_tree(subject: &GitCandidateSubject) -> Result<String, SubjectError> {
     match &subject.base {
-        GitCandidateBase::EmptyTree => git(
-            &subject.repository_root,
-            &[
-                "rev-parse",
-                "--verify",
-                "4b825dc642cb6eb9a060e54bf8d69288fbee4904^{tree}",
-            ],
-        )
-        .or_else(|_| {
-            // A SHA-256 repository's empty tree has a different object
-            // ID; ask Git for it rather than hard-coding either hash.
-            let hash = git(&subject.repository_root, &["hash-object", "-t", "tree", ""])?;
-            let tree = git(
+        GitCandidateBase::EmptyTree => {
+            // The empty tree's object ID is fixed per hash format; ask
+            // the repository which format it uses rather than writing
+            // an object or passing a literal empty filename (the old
+            // `hash-object -t tree ""` fallback always failed with
+            // "could not open ''").
+            let format = git(
                 &subject.repository_root,
-                &["rev-parse", "--verify", &format!("{hash}^{{tree}}")],
+                &["rev-parse", "--show-object-format"],
             )?;
-            Ok(tree)
-        }),
+            let empty_tree_id = match format.trim() {
+                "sha256" => "6ef19b41225c5369f1c104d45d8d85efa9d058d53bc6434cd0f5d23e5dc71d12",
+                _ => "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+            };
+            git(
+                &subject.repository_root,
+                &[
+                    "rev-parse",
+                    "--verify",
+                    &format!("{empty_tree_id}^{{tree}}"),
+                ],
+            )
+        }
         GitCandidateBase::Treeish(treeish) => {
             let commit = git(
                 &subject.repository_root,
@@ -119,6 +136,10 @@ fn resolve_candidate_tree(subject: &GitCandidateSubject) -> Result<String, Subje
 
 /// Derive the base→candidate unified diff from the trees alone.
 fn derive_diff(root: &Path, base: &str, candidate: &str) -> Result<String, SubjectError> {
+    // -M preserves rename information so the pipeline's pinned
+    // rename semantics (pure-rename paths produce no probes) fire for
+    // subject runs too (#3296 review: without -M a pure rename became
+    // delete+add and probed unchanged content).
     git(
         root,
         &[
@@ -126,6 +147,7 @@ fn derive_diff(root: &Path, base: &str, candidate: &str) -> Result<String, Subje
             "--unified=0",
             "--no-ext-diff",
             "--root",
+            "-M",
             base,
             candidate,
         ],
@@ -163,11 +185,18 @@ fn materialize(
     }
     std::fs::create_dir_all(&target)
         .map_err(|error| failed(format!("materialization dir failed: {error}")))?;
-    let tar_path = target.join("__candidate.tar");
-    let archive = crate::git::run_git_output_with_deadline(
+    // The tar lives OUTSIDE the extraction target so a candidate file
+    // named `__candidate.tar` cannot collide with or be deleted by the
+    // extraction (#3296 review note). The archive output is size-bounded
+    // through the shared limited-output authority so a bound tree
+    // cannot OOM the process (unbounded read-to-end was the previous
+    // behavior).
+    let tar_path = base_dir.join(format!("{candidate_tree}.tar"));
+    let archive = crate::git::run_git_output_with_deadline_and_limit(
         root,
         &["archive", "--format=tar", candidate_tree],
-        GIT_DEADLINE,
+        GIT_DEADLINE.unwrap_or(Duration::from_mins(1)),
+        MAX_ARCHIVE_BYTES,
     )
     .map_err(|error| failed(format!("git archive failed: {error}")))?;
     if !archive.status.success() {
@@ -191,9 +220,20 @@ fn untar(tar_path: &Path, target: &Path) -> Result<usize, SubjectError> {
         std::fs::read(tar_path).map_err(|error| failed(format!("archive read failed: {error}")))?;
     let mut entries = 0usize;
     let mut offset = 0usize;
+    let mut pending_path: Option<String> = None;
     while offset + 512 <= bytes.len() {
         let header = &bytes[offset..offset + 512];
-        let name = tar_string(&header[0..100]);
+        // ustar long paths split across the prefix field (345..500) and
+        // the name field: the real path is prefix + '/' + name. git
+        // archive prefers this split and only emits a pax 'x' header
+        // when even the split does not fit (#3296 review).
+        let prefix = tar_string(&header[345..500]);
+        let raw_name = tar_string(&header[0..100]);
+        let name = if prefix.is_empty() {
+            raw_name
+        } else {
+            format!("{prefix}/{raw_name}")
+        };
         let size = tar_octal(&header[124..136]);
         let typeflag = header[156];
         let data_start = offset + 512;
@@ -210,8 +250,20 @@ fn untar(tar_path: &Path, target: &Path) -> Result<usize, SubjectError> {
             break;
         }
         match typeflag {
+            // pax extended header: its records apply to the NEXT entry.
+            // `git archive` emits these for paths longer than the
+            // 100-character tar name field; the `path=` record carries
+            // the real name (#3296 review: rejecting them failed the
+            // whole run on any long path).
+            b'g' => continue,
+            b'x' => {
+                let data = &bytes[data_start..data_end];
+                pending_path = pax_path_record(data);
+                continue;
+            }
             b'0' | 0 => {
-                let path = safe_join(target, &name)?;
+                let effective_name = pending_path.take().unwrap_or(name);
+                let path = safe_join(target, &effective_name)?;
                 if let Some(parent) = path.parent() {
                     std::fs::create_dir_all(parent).map_err(|error| {
                         failed(format!("materialization mkdir failed: {error}"))
@@ -291,6 +343,20 @@ pub(crate) fn resolve(subject: &GitCandidateSubject) -> Result<ResolvedGitCandid
     })
 }
 
+/// The `path=` record of a pax extended header, if present.
+fn pax_path_record(data: &[u8]) -> Option<String> {
+    let text = String::from_utf8_lossy(data);
+    for line in text.lines() {
+        let rest = line.trim_start_matches(|ch: char| ch.is_ascii_digit());
+        if let Some(value) = rest.strip_prefix(" path=")
+            && !value.trim().is_empty()
+        {
+            return Some(value.trim().to_string());
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -323,10 +389,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
         let run = |args: &[&str]| -> Result<String, String> {
-            let out = std::process::Command::new("git")
-                .args(args)
-                .current_dir(&root)
-                .output()
+            let out = crate::git::run_git_output_with_deadline(&root, args, GIT_DEADLINE)
                 .map_err(|e| e.to_string())?;
             if !out.status.success() {
                 return Err(format!(
@@ -397,9 +460,8 @@ mod tests {
             .map_err(|e| e.to_string())?;
         std::fs::write(guard.0.join("src/staged.rs"), "pub fn staged() {}\n")
             .map_err(|e| e.to_string())?;
-        let mut add = std::process::Command::new("git");
-        add.args(["add", "."]).current_dir(&guard.0);
-        add.output().map_err(|e| e.to_string())?;
+        crate::git::run_git_output_with_deadline(&guard.0, &["add", "."], GIT_DEADLINE)
+            .map_err(|e| e.to_string())?;
         let second = resolve(&s).map_err(|e| e.to_string())?;
         assert_eq!(
             first.diff, second.diff,
@@ -417,6 +479,127 @@ mod tests {
         Ok(())
     }
 
+    // #3296 review finding 4: a pure rename stays a rename (delete+add
+    // would probe unchanged content).
+    #[test]
+    fn rename_information_is_preserved_in_the_derived_diff() -> Result<(), String> {
+        let (guard, base, candidate) = fixture_repo("rename")?;
+        let s = subject(
+            &guard.0,
+            GitCandidateBase::Treeish(GitTreeish::new(&base).map_err(|e| e.to_string())?),
+            &candidate,
+        )?;
+        let resolved = resolve(&s).map_err(|e| e.to_string())?;
+        assert!(
+            resolved.diff.contains("rename from") || resolved.diff.contains("src/renamed.rs"),
+            "rename must survive derivation: {}",
+            resolved.diff
+        );
+        Ok(())
+    }
+
+    // #3296 review finding 3: paths longer than the 100-char tar name
+    // field arrive as pax extended headers and must materialize.
+    #[test]
+    fn long_paths_materialize_through_pax_headers() -> Result<(), String> {
+        let (guard, base, _fixture_candidate) = fixture_repo("longpath")?;
+        let deep = format!("metrics/{}", "x".repeat(60));
+        let nested = guard.0.join(&deep);
+        std::fs::create_dir_all(&nested).map_err(|e| e.to_string())?;
+        let long_name = "y".repeat(60);
+        std::fs::write(
+            nested.join(&long_name),
+            "long path content
+",
+        )
+        .map_err(|e| e.to_string())?;
+        crate::git::run_git_output_with_deadline(&guard.0, &["add", "."], GIT_DEADLINE)
+            .map_err(|e| e.to_string())?;
+        crate::git::run_git_output_with_deadline(
+            &guard.0,
+            &["commit", "-m", "long path"],
+            GIT_DEADLINE,
+        )
+        .map_err(|e| e.to_string())?;
+        let candidate = String::from_utf8_lossy(
+            &crate::git::run_git_output_with_deadline(
+                &guard.0,
+                &["rev-parse", "HEAD"],
+                GIT_DEADLINE,
+            )
+            .map_err(|e| e.to_string())?
+            .stdout,
+        )
+        .trim()
+        .to_string();
+        let s = subject(
+            &guard.0,
+            GitCandidateBase::Treeish(GitTreeish::new(&base).map_err(|e| e.to_string())?),
+            &candidate,
+        )?;
+        let resolved = resolve(&s).map_err(|e| e.to_string())?;
+        assert!(
+            resolved.root.join(&deep).join(&long_name).exists(),
+            "long path must materialize from the pax header"
+        );
+        assert_eq!(
+            std::fs::read_to_string(resolved.root.join(&deep).join(&long_name))
+                .map_err(|e| e.to_string())?,
+            "long path content
+"
+        );
+        Ok(())
+    }
+
+    // #3296 review blocker 1: worktree and repo modes fail closed on a
+    // bound subject instead of silently analyzing the live tree.
+    #[test]
+    fn worktree_and_repo_modes_reject_a_bound_subject() -> Result<(), String> {
+        let (guard, base, candidate) = fixture_repo("modes")?;
+        let s = subject(
+            &guard.0,
+            GitCandidateBase::Treeish(GitTreeish::new(&base).map_err(|e| e.to_string())?),
+            &candidate,
+        )?;
+        let options = crate::analysis::AnalysisOptions {
+            root: guard.0.clone(),
+            base: None,
+            diff_file: None,
+            mode: crate::analysis::AnalysisMode::Draft,
+            include_unchanged_tests: false,
+            resolve_tsconfig_paths: false,
+            perl_facts_path: None,
+            git_timeout: None,
+            git_candidate: Some(s.clone()),
+            production_like_targets: Default::default(),
+        };
+        let error =
+            crate::analysis::run_worktree_analysis_with_oracle_policy_and_generated_file_patterns(
+                &options,
+                &crate::config::OraclePolicy::default(),
+                &[crate::analysis::language::LanguageId::Rust],
+                &[],
+            )
+            .err()
+            .ok_or("worktree mode must fail closed on a subject")?;
+        assert!(
+            error.contains("git candidate subject"),
+            "worktree rejection must name the subject: {error}"
+        );
+        let repo_error = crate::analysis::run_repo_analysis_with_oracle_policy(
+            &options,
+            &crate::config::OraclePolicy::default(),
+            &[crate::analysis::language::LanguageId::Rust],
+        )
+        .err()
+        .ok_or("repo mode must fail closed on a subject")?;
+        assert!(
+            repo_error.contains("git candidate subject"),
+            "repo rejection must name the subject: {repo_error}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn pipeline_executes_the_subject_against_candidate_bytes() -> Result<(), String> {
         let (guard, base, candidate) = fixture_repo("pipeline")?;
@@ -428,9 +611,8 @@ mod tests {
 ",
         )
         .map_err(|e| e.to_string())?;
-        let mut add = std::process::Command::new("git");
-        add.args(["add", "."]).current_dir(&guard.0);
-        add.output().map_err(|e| e.to_string())?;
+        crate::git::run_git_output_with_deadline(&guard.0, &["add", "."], GIT_DEADLINE)
+            .map_err(|e| e.to_string())?;
         let subject = subject(
             &guard.0,
             GitCandidateBase::Treeish(GitTreeish::new(&base).map_err(|e| e.to_string())?),
