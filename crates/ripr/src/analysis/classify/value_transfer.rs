@@ -16,8 +16,10 @@
 //! - `checked_add` / `checked_sub` on exact integers
 //! - bounded string slicing from exact indices on established UTF-8
 //!   boundaries
-//! - literal string match arms
 //!
+//! Literal-driven match arms are NOT an evaluated family: their arms
+//! feed sinks, not comparison operands (RIPR-SPEC-0158 Non-Goals).
+
 //! Every other shape fails closed to `Unsupported` naming the earliest
 //! edge. No value ever becomes exact from token resemblance, an oracle
 //! expectation, or a runtime result.
@@ -154,12 +156,27 @@ fn eval_expression(text: &str, inputs: &ExactInputs, steps: &mut Vec<EvalStep>) 
 }
 
 fn eval_method_chain(text: &str, inputs: &ExactInputs, steps: &mut Vec<EvalStep>) -> EvalResult {
-    // Split into receiver and trailing method-call segments on '.'.
+    // Split into receiver and trailing method-call segments on '.',
+    // skipping dots inside string and char literals (`"a.b".len()` is
+    // one receiver, not three segments).
     let mut segments: Vec<&str> = Vec::new();
     let mut depth = 0usize;
     let mut start = 0usize;
+    let mut literal: Option<char> = None;
+    let mut escaped = false;
     for (at, character) in text.char_indices() {
+        if let Some(quote) = literal {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == quote {
+                literal = None;
+            }
+            continue;
+        }
         match character {
+            '"' | '\'' => literal = Some(character),
             '(' => depth += 1,
             ')' => depth = depth.saturating_sub(1),
             '.' if depth == 0 => {
@@ -405,15 +422,23 @@ fn eval_slicing(text: &str, inputs: &ExactInputs, steps: &mut Vec<EvalStep>) -> 
             _ => return Some(Err(unsupported("slice end is not an exact index"))),
         }
     };
-    if !receiver.is_char_boundary(start)
-        || !receiver.is_char_boundary(end)
-        || start > end
-        || end > receiver.len()
-    {
+    if !receiver.is_char_boundary(start) || !receiver.is_char_boundary(end) {
         return Some(Err(EvalOutcome::InvalidBoundary {
             reason: format!(
-                "slice [{start}..{end}] is not a valid UTF-8 boundary of \"{}\"",
-                receiver
+                "slice [{start}..{end}] is not a valid UTF-8 boundary of \"{receiver}\""
+            ),
+        }));
+    }
+    if start > end {
+        return Some(Err(EvalOutcome::InvalidBoundary {
+            reason: format!("slice [{start}..{end}] is inverted"),
+        }));
+    }
+    if end > receiver.len() {
+        return Some(Err(EvalOutcome::InvalidBoundary {
+            reason: format!(
+                "slice end {end} is out of range for \"{receiver}\" (len {})",
+                receiver.len()
             ),
         }));
     }
@@ -427,8 +452,21 @@ fn eval_slicing(text: &str, inputs: &ExactInputs, steps: &mut Vec<EvalStep>) -> 
 /// Split a two-argument call list at the top-level comma.
 fn split_call_arguments(argument: &str) -> Option<(&str, &str)> {
     let mut depth = 0usize;
+    let mut literal: Option<char> = None;
+    let mut escaped = false;
     for (at, character) in argument.char_indices() {
+        if let Some(quote) = literal {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == quote {
+                literal = None;
+            }
+            continue;
+        }
         match character {
+            '"' | '\'' => literal = Some(character),
             '(' | '[' => depth += 1,
             ')' | ']' => depth = depth.saturating_sub(1),
             ',' if depth == 0 => return Some((&argument[..at], &argument[at + 1..])),
@@ -512,7 +550,20 @@ fn parse_char_literal(text: &str) -> Option<char> {
     if chars.next().is_some() {
         return None;
     }
-    Some(first)
+    match first {
+        // The common escape grammar, mirroring `parse_str_literal`;
+        // anything else fails closed.
+        '\\' => match inner.chars().nth(1)? {
+            'n' => Some('\n'),
+            't' => Some('\t'),
+            'r' => Some('\r'),
+            '0' => Some('\0'),
+            '\\' => Some('\\'),
+            '\'' => Some('\''),
+            _ => None,
+        },
+        plain => Some(plain),
+    }
 }
 
 fn parse_index_literal(text: &str) -> Option<usize> {

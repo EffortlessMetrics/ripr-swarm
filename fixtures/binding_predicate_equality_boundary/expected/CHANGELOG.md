@@ -47,3 +47,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending
+
+Reason:
+RIPR-SPEC-0158: review round 2 — operand resolution hoisted per probe (provenance text unchanged in content but regenerated), the starts_with hunk made a real behavior change, and quote-aware splitting/char escapes/dedup refinements
+
+Command:
+`cargo xtask goldens bless binding_predicate_equality_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

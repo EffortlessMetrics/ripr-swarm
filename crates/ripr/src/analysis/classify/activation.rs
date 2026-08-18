@@ -154,37 +154,29 @@ fn observed_discriminator_values(
     let call_values = owner_call_parameter_values(related_tests, &owner.name, &parameters);
     let left_parameter = boundary_operand_parameter(owner, &parameters, &left);
     let right_parameter = boundary_operand_parameter(owner, &parameters, &right);
+    // #3295: the operands resolve once per probe (initializer or
+    // parameter); only the input row changes per call.
+    let left_resolved = resolve_boundary_operand(owner, &left, probe.location.line, &parameters);
+    let right_resolved = resolve_boundary_operand(owner, &right, probe.location.line, &parameters);
     let mut facts = Vec::new();
 
     for row in call_values {
-        // #3295 exact path: computed local operands resolve through
-        // the bounded evaluator before the parameter-alias path.
         let inputs: super::value_transfer::ExactInputs = row
             .iter()
             .map(|cell| (cell.parameter.clone(), cell.value.clone()))
             .collect();
-        let left_exact = boundary_operand_exact_value(
-            owner,
-            &left,
-            probe.location.line,
-            &parameters,
-            &row,
-            &inputs,
-        );
-        let right_exact = boundary_operand_exact_value(
-            owner,
-            &right,
-            probe.location.line,
-            &parameters,
-            &row,
-            &inputs,
-        )
-        .or_else(|| {
-            literal_operand_value(&right).map(|value| ExactOperand {
-                provenance: format!("literal operand {right} = {value}"),
-                value,
-            })
-        });
+        let left_exact = left_resolved
+            .as_ref()
+            .and_then(|resolved| exact_operand_for_row(resolved, &row, &inputs));
+        let right_exact = right_resolved
+            .as_ref()
+            .and_then(|resolved| exact_operand_for_row(resolved, &row, &inputs))
+            .or_else(|| {
+                literal_operand_value(&right).map(|value| ExactOperand {
+                    provenance: format!("literal operand {right} = {value}"),
+                    value,
+                })
+            });
         if let (Some(left_value), Some(right_value)) = (&left_exact, &right_exact)
             && comparable_value(&left_value.value) == comparable_value(&right_value.value)
         {
@@ -235,37 +227,55 @@ fn observed_discriminator_values(
 /// local binding resolves through the #3294 binding relation (the
 /// predicate must be a direct use in the binding's live span) and the
 /// bounded value-transfer evaluator. `None` keeps the operand unknown.
-fn boundary_operand_exact_value(
+/// One comparison operand resolved once per probe (#3295 review): a
+/// shadowing local's initializer (evaluated per row) or the raw
+/// parameter.
+enum ResolvedOperand {
+    Parameter(String),
+    Local(String, String),
+}
+
+fn resolve_boundary_operand(
     owner: &FunctionSummary,
     operand: &str,
     predicate_line: usize,
     parameters: &[String],
+) -> Option<ResolvedOperand> {
+    if let Some(initializer) = live_local_initializer(owner, operand, predicate_line) {
+        return Some(ResolvedOperand::Local(operand.to_string(), initializer));
+    }
+    parameters
+        .iter()
+        .find(|parameter| parameter.as_str() == operand)
+        .map(|parameter| ResolvedOperand::Parameter(parameter.clone()))
+}
+
+/// Evaluate one resolved operand against one related-test call row.
+fn exact_operand_for_row(
+    resolved: &ResolvedOperand,
     row: &[ParameterValue],
     inputs: &super::value_transfer::ExactInputs,
 ) -> Option<ExactOperand> {
-    // A shadowing local wins over the raw parameter: when the operand
-    // re-binds the parameter name before the predicate, the compared
-    // value is the local's initializer, not the call argument
-    // (#3295 review).
-    if let Some(initializer) = live_local_initializer(owner, operand, predicate_line) {
-        return match super::value_transfer::evaluate_initializer(&initializer, inputs) {
-            super::value_transfer::EvalOutcome::Exact { value, provenance } => Some(
-                exact_operand_from_evaluation(operand, &value, &provenance, inputs),
-            ),
-            _ => None,
-        };
+    match resolved {
+        ResolvedOperand::Local(name, initializer) => {
+            match super::value_transfer::evaluate_initializer(initializer, inputs) {
+                super::value_transfer::EvalOutcome::Exact { value, provenance } => Some(
+                    exact_operand_from_evaluation(name, &value, &provenance, inputs),
+                ),
+                _ => None,
+            }
+        }
+        ResolvedOperand::Parameter(parameter) => {
+            let cell = row
+                .iter()
+                .find(|cell| cell.parameter == *parameter)
+                .cloned()?;
+            Some(ExactOperand {
+                value: cell.value.clone(),
+                provenance: format!("exact input {parameter} = {}", cell.value),
+            })
+        }
     }
-    if let Some(value) = parameters
-        .iter()
-        .find(|parameter| parameter.as_str() == operand)
-        .and_then(|parameter| row.iter().find(|cell| cell.parameter == *parameter))
-    {
-        return Some(ExactOperand {
-            value: value.value.clone(),
-            provenance: format!("exact input {operand} = {}", value.value),
-        });
-    }
-    None
 }
 
 /// Build the exact operand with its provenance chain: operation
@@ -320,11 +330,23 @@ fn live_local_initializer(
     for (offset, (raw_line, masked_line)) in owner.body.lines().zip(masked.lines()).enumerate() {
         let absolute = owner.start_line + offset;
         let trimmed = masked_line.trim();
+        // A trailing comment (`let x = …; // note`) survives on the
+        // raw line: cut the raw statement at the masked line's first
+        // semicolon, which string masking keeps honest.
+        let raw_statement = masked_line
+            .find(';')
+            .map(|cut| {
+                &raw_line[..raw_line
+                    .char_indices()
+                    .nth(cut)
+                    .map_or(raw_line.len(), |(byte, _)| byte + 1)]
+            })
+            .unwrap_or(raw_line);
         if trimmed.starts_with("let ")
-            && trimmed.ends_with(';')
+            && trimmed.contains(';')
             && let Some((_declared, _)) = crate::analysis::language::changed_let_binding(trimmed)
             && let Some((declared, initializer)) =
-                crate::analysis::language::changed_let_binding(raw_line.trim())
+                crate::analysis::language::changed_let_binding(raw_statement.trim())
             && declared == operand
         {
             let initializer = initializer.to_string();
@@ -405,6 +427,8 @@ fn missing_boundary_discriminator(
     // bounded evaluator resolves its value from the row's exact
     // inputs; the boundary is observed when both sides compare equal
     // under any row.
+    let left_resolved = resolve_boundary_operand(owner, &left, probe.location.line, &parameters);
+    let right_resolved = resolve_boundary_operand(owner, &right, probe.location.line, &parameters);
     let exact_rows: Vec<(Vec<ExactOperand>, Vec<ExactOperand>)> = call_values
         .iter()
         .map(|row| {
@@ -412,32 +436,22 @@ fn missing_boundary_discriminator(
                 .iter()
                 .map(|cell| (cell.parameter.clone(), cell.value.clone()))
                 .collect();
-            let lefts = boundary_operand_exact_value(
-                owner,
-                &left,
-                probe.location.line,
-                &parameters,
-                row,
-                &inputs,
-            )
-            .into_iter()
-            .collect::<Vec<_>>();
-            let rights = boundary_operand_exact_value(
-                owner,
-                &right,
-                probe.location.line,
-                &parameters,
-                row,
-                &inputs,
-            )
-            .or_else(|| {
-                literal_operand_value(&right).map(|value| ExactOperand {
-                    provenance: format!("literal operand {right} = {value}"),
-                    value,
+            let lefts = left_resolved
+                .as_ref()
+                .and_then(|resolved| exact_operand_for_row(resolved, row, &inputs))
+                .into_iter()
+                .collect::<Vec<_>>();
+            let rights = right_resolved
+                .as_ref()
+                .and_then(|resolved| exact_operand_for_row(resolved, row, &inputs))
+                .or_else(|| {
+                    literal_operand_value(&right).map(|value| ExactOperand {
+                        provenance: format!("literal operand {right} = {value}"),
+                        value,
+                    })
                 })
-            })
-            .into_iter()
-            .collect::<Vec<_>>();
+                .into_iter()
+                .collect::<Vec<_>>();
             (lefts, rights)
         })
         .collect();
@@ -481,6 +495,8 @@ fn missing_boundary_discriminator(
         .filter(|value| !left_values.contains(value))
         .collect();
     left_values.extend(exact_lefts);
+    left_values.sort();
+    left_values.dedup();
     let right_parameter_values = right_parameter
         .as_deref()
         .and_then(|parameter| parameter_value_set(&call_values, parameter));

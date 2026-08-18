@@ -5,7 +5,7 @@ diff --git a/src/lib.rs b/src/lib.rs
 -    let body = label.strip_prefix("pre-").map_or("off", |s| s);
 +    let body = label.strip_prefix("pre-").map_or("none", |s| s);
 @@ -11,1 +11,1 @@
--    let open = label.starts_with("pre-");
+-    let open = label.starts_with("prefix-");
 +    let open = label.starts_with("pre-");
 @@ -16,1 +16,1 @@
 -    let size = input.len();
