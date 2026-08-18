@@ -1,0 +1,32 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/helper_chain_controls/input
+
+Summary: 2 probe(s), 0 exposed, 0 weak, 0 unrevealed, 1 no path, 1 unknown
+
+Analysis outcome: complete_with_findings (analysis complete).
+  Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 2 probe(s), 2 finding(s).
+
+Start here:
+  State: static_limited
+  Safe next action: inspect the named static limitation before treating this as repair-ready.
+  File: fixtures/helper_chain_controls/input/src/lib.rs:14
+  Static exposure: propagation_unknown (note, confidence 0.66)
+  Why propagation_unknown: the change propagates but the downstream effect is unknown statically
+  Changed behavior: let prev = input.chars().next().map_or(false, |c| c == ' ');
+  Missing discriminator: let prev = input.chars().next().map_or(false, |c| c == ' ')
+  Related test: tests/controls.rs:4 classify_leading_space_is_other
+  Next step: Escalate to real mutation testing or deep static analysis for this probe.
+  Evidence:
+    - reach yes: Related tests appear to reach classify: classify_leading_space_is_other
+    - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
+    - 6 more evidence line(s) hidden
+
+Next: drill into the top finding:
+  ripr explain --root fixtures/helper_chain_controls/input --diff fixtures/helper_chain_controls/diff.patch --mode fast probe:src_lib.rs:predicate:b33e6196
+  ripr context --root fixtures/helper_chain_controls/input --diff fixtures/helper_chain_controls/diff.patch --mode fast --at probe:src_lib.rs:predicate:b33e6196
+
+Hidden:
+  1 lower-priority finding(s) omitted from default human output.
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json

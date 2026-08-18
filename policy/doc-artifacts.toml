@@ -747,3 +747,11 @@ path = "docs/specs/RIPR-SPEC-0158-bounded-value-transfer.md"
 status = "proposed"
 owner = "product-swarm"
 standalone_reason = "Issue #3295 P3 slice for #3215: one typed value-transfer evaluator resolves changed and sibling local bindings from exact related-test inputs across the enumerated std families, feeding the #3294 predicate operands so the equality boundary is observed instead of unknown, with named fail-closed edges for everything unevaluated."
+
+[[artifact]]
+id = "RIPR-SPEC-0159"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0159-bounded-helper-transfer.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #3296 P4 slice for #3215: one typed helper-transfer authority resolves bounded unique-callee chains with positional argument binding so helper-owned probes relate their tests, connect exact oracles, and evaluate operands with transferred inputs, while every unsupported edge stops by name."
