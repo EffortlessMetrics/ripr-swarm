@@ -265,6 +265,34 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
                 .to_string(),
         );
     }
+    // #3237/#3278: bind the immutable subject before the analysis
+    // call. Construction runs #3276's typed validation (malformed OIDs,
+    // oversized treeishes) and the binding layer rejects --diff/--base
+    // combinations with named errors, so an invalid subject never
+    // reaches analysis.
+    if let Some(tree) = candidate_tree.as_deref() {
+        let base = match candidate_base.as_deref() {
+            Some(explicit) => crate::domain::GitCandidateBase::Treeish(
+                crate::domain::GitTreeish::new(explicit).map_err(|error| error.to_string())?,
+            ),
+            None => crate::domain::GitCandidateBase::EmptyTree,
+        };
+        let candidate =
+            crate::domain::GitObjectId::parse(tree).map_err(|error| error.to_string())?;
+        input.git_candidate = Some(crate::domain::GitCandidateSubject::new(
+            input.root.clone(),
+            base,
+            candidate,
+        ));
+    }
+    // #3278 review: --candidate-base without --candidate-tree is a
+    // dangling input the run would silently ignore; fail closed.
+    if candidate_base.is_some() && candidate_tree.is_none() {
+        return Err(
+            "--candidate-base requires --candidate-tree: name the candidate tree the base applies to"
+                .to_string(),
+        );
+    }
     let config = load_for_root(&input.root)?;
     apply_to_check_input(&mut input, &config, explicit);
     let format = input.format;
@@ -339,6 +367,19 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             ));
         }
     }
+    // #3279 R4: a bound subject configures itself — the candidate
+    // tree's own ripr.toml (or the pure default when the tree carries
+    // none) replaces the worktree file, so a dirty worktree config
+    // cannot change a subject run. Applied AFTER the argv conflict
+    // gates so an input conflict never depends on a Git object read
+    // (the R3 conflict tests pin the error text, not the ordering;
+    // #3279 review m1). The worktree `config` value above fed only
+    // gates that reject subject combinations outright.
+    let mut config = config;
+    if let Some(subject) = input.git_candidate.as_ref() {
+        config = crate::config::config_for_candidate(subject, &config)?;
+        apply_to_check_input(&mut input, &config, explicit);
+    }
     // #2644: `fast` is currently behaviorally identical to `draft`. The notice
     // fires on the EFFECTIVE mode after `apply_to_check_input`, not on argv
     // position, so a repo `ripr.toml` with `mode = "fast"` is disclosed too,
@@ -404,34 +445,6 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             &mut handle,
         )?;
         return Ok(());
-    }
-    // #3237/#3278: bind the immutable subject before the analysis
-    // call. Construction runs #3276's typed validation (malformed OIDs,
-    // oversized treeishes) and the binding layer rejects --diff/--base
-    // combinations with named errors, so an invalid subject never
-    // reaches analysis.
-    if let Some(tree) = candidate_tree.as_deref() {
-        let base = match candidate_base.as_deref() {
-            Some(explicit) => crate::domain::GitCandidateBase::Treeish(
-                crate::domain::GitTreeish::new(explicit).map_err(|error| error.to_string())?,
-            ),
-            None => crate::domain::GitCandidateBase::EmptyTree,
-        };
-        let candidate =
-            crate::domain::GitObjectId::parse(tree).map_err(|error| error.to_string())?;
-        input.git_candidate = Some(crate::domain::GitCandidateSubject::new(
-            input.root.clone(),
-            base,
-            candidate,
-        ));
-    }
-    // #3278 review: --candidate-base without --candidate-tree is a
-    // dangling input the run would silently ignore; fail closed.
-    if candidate_base.is_some() && candidate_tree.is_none() {
-        return Err(
-            "--candidate-base requires --candidate-tree: name the candidate tree the base applies to"
-                .to_string(),
-        );
     }
     // Capture root and diff_file before input is moved into the analysis call.
     // These are needed for the RIPR-SPEC-0112 disclosure check after the analysis.

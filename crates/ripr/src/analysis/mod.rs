@@ -1175,7 +1175,7 @@ index 0000000..1111111 100644
     }
 }
 
-mod git_candidate_execution;
+pub(crate) mod git_candidate_execution;
 
 #[cfg(test)]
 mod git_candidate_entry_tests {

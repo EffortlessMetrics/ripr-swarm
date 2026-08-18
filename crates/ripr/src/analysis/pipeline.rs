@@ -92,13 +92,21 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_generated_file_patterns(
             ..options.clone()
         };
         cancellation::checkpoint()?;
-        return run_pipeline_for_diff_text(
+        let mut result = run_pipeline_for_diff_text(
             &candidate_options,
             oracle_policy,
             languages,
             generated_file_patterns,
             &resolved.diff,
-        );
+        )?;
+        // #3279 R4: finding locations name the user's repository, not
+        // the ephemeral materialization directory — the temp root is
+        // machine-local and unreplayable. The relative path inside the
+        // candidate tree is unchanged; only the prefix is rebased from
+        // the materialized root back to the named repository root at
+        // the same seam that set it.
+        rebase_finding_paths_to_repository(&mut result, &resolved.root, &options.root);
+        return Ok(result);
     }
     let diff_text = diff::load_diff(
         &options.root,
@@ -975,6 +983,27 @@ fn unavailable_language<T>(language: LanguageId) -> Result<T, String> {
         language.as_str(),
         language.required_feature()
     ))
+}
+
+/// Rebase every finding/probe location prefix from the materialized
+/// candidate root onto the named repository root (#3279 R4). The
+/// relative path is preserved exactly; a path outside the materialized
+/// root is left untouched (fail-open on the rewrite is honest — the
+/// analyzer produced it from candidate bytes).
+fn rebase_finding_paths_to_repository(
+    result: &mut AnalysisResult,
+    materialized_root: &std::path::Path,
+    repository_root: &std::path::Path,
+) {
+    let rebase = |path: &std::path::Path| -> std::path::PathBuf {
+        path.strip_prefix(materialized_root).map_or_else(
+            |_| path.to_path_buf(),
+            |relative| repository_root.join(relative),
+        )
+    };
+    for finding in &mut result.findings {
+        finding.probe.location.file = rebase(&finding.probe.location.file);
+    }
 }
 
 #[cfg(test)]

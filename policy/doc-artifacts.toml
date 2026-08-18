@@ -763,3 +763,11 @@ path = "docs/specs/RIPR-SPEC-0160-immutable-candidate-surface.md"
 status = "proposed"
 owner = "product-swarm"
 standalone_reason = "Issue #3278 R3 slice for #3237: the immutable Git candidate becomes callable (two CLI flags, binding-layer conflict rejection) and machine-verifiable (an additive identity object bound to the resolved producer state), with fail-closed subject errors and no schema-version bump."
+
+[[artifact]]
+id = "RIPR-SPEC-0161"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0161-immutable-candidate-qualification.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #3279 R4 slice for #3237: the qualification corpus breaks the isolation claim on purpose — post-bind mutations, committed parity, identity echo, delete/rename shapes, fail-closed invalid inputs, a substitution removal experiment, and temp-state cleanup — and the two real defects it found (worktree config leaking into subject runs; ephemeral temp roots leaking into finding paths) are repaired at the producer/config seams, not in renderers."
