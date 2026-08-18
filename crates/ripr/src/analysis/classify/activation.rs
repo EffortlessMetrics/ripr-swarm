@@ -357,7 +357,8 @@ fn exact_operand_for_row(
                     .get(index)
                     .cloned()
                     .unwrap_or_else(|| format!("arg{index}"));
-                let value = if let Some(literal) = scalar_values(argument).into_iter().next() {
+                let value = if let Some(literal) = super::helper_transfer::strict_literal(argument)
+                {
                     literal
                 } else if let Some(cell) = owner_parameters
                     .iter()
@@ -855,11 +856,11 @@ fn helper_transferred_rows(
         } else {
             function_parameters(&chain.hops[step - 1].caller)
         };
-        let caller_parameters: Vec<String> = if step + 1 < chain.hops.len() {
-            function_parameters(&chain.hops[step + 1].caller)
-        } else {
-            entry_parameters.clone()
-        };
+        // The hop's call site lives in the hop's own caller: its
+        // arguments reference THAT function's parameters (#3296 review
+        // M3 — the previous off-by-one silently dropped every row when
+        // parameter names differed between hops).
+        let caller_parameters = function_parameters(&hop.caller);
         let mut bound_rows = Vec::new();
         for row in &rows {
             let mut bound = Vec::new();
@@ -895,7 +896,10 @@ fn bind_helper_argument(
     caller_parameters: &[String],
     row: &[ParameterValue],
 ) -> Option<String> {
-    if let Some(literal) = scalar_values(argument).into_iter().next() {
+    // #3296 review B2: only a strict whole-token literal binds; the
+    // substring scanner must never fabricate a value from an
+    // identifier like `a2`.
+    if let Some(literal) = super::helper_transfer::strict_literal(argument) {
         return Some(literal);
     }
     let trimmed = argument.trim();

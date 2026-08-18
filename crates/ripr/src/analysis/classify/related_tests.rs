@@ -82,6 +82,18 @@ pub(in crate::analysis) fn find_related_tests<'a>(
         .map(String::as_str)
         .collect();
 
+    // #3296: resolve the helper chain once for this probe's owner; the
+    // relation loop below only checks each test's calls against it
+    // (#3296 review M1).
+    let helper_chain = if owner_name.is_empty() {
+        None
+    } else {
+        match super::helper_transfer::resolve_chain(owner_name, index, workspace_complete, &[]) {
+            chain if chain.hops.is_empty() => None,
+            chain => Some(chain),
+        }
+    };
+
     for test in &index.tests {
         // Compute calls_owner BEFORE the package-prefix guard so a cross-crate
         // test that genuinely calls a uniquely-named owner is not filtered out
@@ -142,19 +154,17 @@ pub(in crate::analysis) fn find_related_tests<'a>(
 
         // #3296 helper transfer: a test that calls a resolved hop's
         // caller directly reaches the owner through the bounded chain
-        // (same authority the activation rows consume). The #2971
-        // uniqueness and workspace-completeness rules live inside the
-        // resolver; a chain that stops simply does not relate here.
+        // (same authority the activation rows consume). The chain is
+        // resolved once per probe above the test loop (#3296 review
+        // M1 — the per-test re-resolution was O(tests x functions)).
         let helper_chain_reaches = !calls_owner
             && !assertions_reference_owner
             && !same_file_or_named
-            && super::test_reaches_through_chain(
-                &test.calls,
-                owner_name,
-                index,
-                workspace_complete,
-            )
-            .is_some();
+            && helper_chain.as_ref().is_some_and(|chain| {
+                test.calls
+                    .iter()
+                    .any(|call| chain.hops.iter().any(|hop| hop.caller.name == call.name))
+            });
 
         if !calls_owner
             && !assertions_reference_owner

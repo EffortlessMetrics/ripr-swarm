@@ -4,11 +4,12 @@ Spec: RIPR-SPEC-0159
 
 ## Given
 
-Three fail-closed controls. The computed-argument control calls its
-helper with `input.trim()` — a computed argument, not a literal or
-parameter. The same-name control defines `is_word_start` in a second
-module, so the callee name is not unique and neither chain may
-transfer. The tests call only the entry functions with exact values.
+Three fail-closed controls, each with its changed line under the diff:
+the computed-argument control (`classify` calls its helper with
+`input.trim()`), and two same-name `is_word_start` helpers (root and
+`other::`) so the callee name is non-unique and path-qualified call
+sites are refused — neither helper chain may relate or transfer. The
+tests call only the entry functions with exact values.
 
 ## When
 
@@ -18,10 +19,10 @@ cargo xtask fixtures helper_chain_controls
 
 ## Then
 
-No helper-owned probe relates through a chain: every control keeps the
-pre-transfer output (the lexical transitive-reach limitation, or the
-ordinary direct analysis), and no transferred input row or call-operand
-evaluation appears for these shapes.
+No helper-owned probe relates through a chain: both changed helpers
+stay `no_static_path` with no related tests, keeping the pre-transfer
+output, and no transferred input row or call-operand evaluation
+appears for these shapes.
 
 ## Must Not
 

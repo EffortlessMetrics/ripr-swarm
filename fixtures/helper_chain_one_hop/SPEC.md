@@ -18,9 +18,9 @@ cargo xtask fixtures helper_chain_one_hop
 
 The helper-owned probe relates both tests through the resolved chain
 (`HelperOwnerCall`): reach yes, both exact oracles connected, and the
-helper's inputs bound from the call site (`input = " x"` /
-`"hello"`), so the boundary machinery evaluates the helper's operands
-with the tests' literals.
+transferred rows carry the bound input values (`" x"` / `"hello"`)
+into the observed values. The changed `map_or` closure is not an
+evaluated family, so infection stays weak — the honest outcome.
 
 ## Must Not
 

@@ -18,9 +18,10 @@ cargo xtask fixtures helper_chain_multi_hop
 ## Then
 
 The innermost helper-owned probe relates the test through the resolved
-two-hop chain with its exact oracle connected, and its operand
-evaluates with the entry call's bound input (`input = " x"`), so the
-boundary is observed exactly.
+two-hop chain (`classify -> boundary_char -> first_char`) with its
+exact oracle connected (reach yes) and the entry call's bound input
+(`input = " x"`) among the observed values. The changed initializer has
+no comparison predicate, so no boundary is claimed.
 
 ## Must Not
 

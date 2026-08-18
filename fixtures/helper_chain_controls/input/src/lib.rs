@@ -14,7 +14,7 @@ pub fn classify(input: &str) -> &'static str {
 }
 
 pub fn ambiguous(input: &str) -> &'static str {
-    if other::is_word_start(input) {
+    if other::is_word_start(input.trim()) {
         "other"
     } else {
         "word"

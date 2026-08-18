@@ -105,10 +105,32 @@ pub(crate) fn call_sites(
         if call.name != callee_name {
             continue;
         }
+        // #3296 review B1: a method call (`word.validate()`) or a
+        // path-qualified invocation (`internal::inner(..)`) is recorded
+        // under the bare callee name, and name identity is not callee
+        // identity. Only a direct free-function call site may bind.
+        if !is_direct_call_site(&call.text, callee_name) {
+            continue;
+        }
         let arguments = split_call_arguments_text(&call.text, callee_name)?;
         sites.push((call.text.clone(), arguments));
     }
     (!sites.is_empty()).then_some(sites)
+}
+
+/// Whether `text` invokes `callee_name` as a direct free-function call:
+/// the callee occurrence is at a token boundary and is preceded by
+/// neither a receiver (`.`) nor a path qualifier (`::`).
+pub(crate) fn is_direct_call_site(text: &str, callee_name: &str) -> bool {
+    let needle = format!("{callee_name}(");
+    let Some(at) = text.find(&needle) else {
+        return false;
+    };
+    let before = text[..at].chars().next_back();
+    match before {
+        None => true,
+        Some(ch) => !ch.is_ascii_alphanumeric() && ch != '_' && ch != '.' && ch != ':',
+    }
 }
 
 /// Split a call's argument texts, quote- and nesting-aware.
@@ -228,6 +250,12 @@ pub(crate) fn resolve_chain(
         mut hops,
         stop_above,
     } = resolve_chain(&caller.name, index, workspace_complete, &next_visited);
+    // #3296 review M2: tests are ordinary functions in the index, so
+    // the chain must never climb into a test body — the entry a test
+    // can call directly is the topmost production caller.
+    while hops.last().is_some_and(|top| top.caller.is_test) {
+        hops.pop();
+    }
     let mut resolved = vec![hop];
     resolved.append(&mut hops);
     HelperChain {
@@ -238,7 +266,10 @@ pub(crate) fn resolve_chain(
 
 /// Whether a test reaches `callee_name` through a bounded helper chain
 /// (the relation stage's question): the test calls some resolved hop's
-/// caller directly.
+/// caller directly. The relation stage resolves the chain once per
+/// probe and checks the calls itself (#3296 review M1); this query
+/// stays as the unit-test surface for the reach question.
+#[cfg_attr(not(test), allow(dead_code, reason = "unit-test query surface"))]
 pub(crate) fn test_reaches_through_chain(
     test_calls: &[CallFact],
     callee_name: &str,
@@ -293,7 +324,11 @@ pub(crate) fn helper_return_value(
             || cleaned.starts_with("//")
             || cleaned.starts_with('#')
             || cleaned.starts_with("pub ")
+            || cleaned.starts_with("pub(")
             || cleaned.starts_with("fn ")
+            || cleaned.starts_with("async ")
+            || cleaned.starts_with("const ")
+            || cleaned.starts_with("unsafe ")
             || cleaned.starts_with('}')
             || cleaned.starts_with("return ")
         {
@@ -325,6 +360,34 @@ pub(crate) fn helper_return_value(
         super::value_transfer::EvalOutcome::Exact { value, .. } => Some(value),
         _ => None,
     }
+}
+
+/// The single-quote character, named so the strict literal parser does
+/// not need an escaped char constant.
+const CHAR_QUOTE: char = '\'';
+
+fn char_quote() -> char {
+    CHAR_QUOTE
+}
+
+/// Parse a call-site argument as a strict literal (#3296 review B2):
+/// only a whole-token string, char, integer, or boolean literal counts.
+/// An identifier like `a2` is a parameter reference, never the literal
+/// `2` — the substring scanner must not fabricate values.
+pub(crate) fn strict_literal(argument: &str) -> Option<String> {
+    let trimmed = argument.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let is_string = trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() >= 2;
+    let is_char =
+        trimmed.starts_with(char_quote()) && trimmed.ends_with(char_quote()) && trimmed.len() >= 3;
+    let is_integer = trimmed.chars().all(|ch| ch.is_ascii_digit());
+    let is_boolean = trimmed == "true" || trimmed == "false";
+    if !(is_string || is_char || is_integer || is_boolean) {
+        return None;
+    }
+    Some(trimmed.to_string())
 }
 
 #[cfg(test)]
@@ -449,6 +512,36 @@ mod tests {
                 .as_ref()
                 .is_some_and(|edge| edge.contains("2 callers"))
         );
+        Ok(())
+    }
+
+    // #3296 review B1: a method call site (`word.validate()`) shares
+    // the callee's bare name but is not callee identity — it must
+    // never bind a hop.
+    #[test]
+    fn method_call_sites_never_bind() -> Result<(), String> {
+        assert!(!is_direct_call_site("word.validate()", "validate"));
+        assert!(!is_direct_call_site("internal::inner(a, b)", "inner"));
+        assert!(!is_direct_call_site("outer_inner(inner(2))", "inner"));
+        assert!(is_direct_call_site(
+            "is_word_start(input, 0)",
+            "is_word_start"
+        ));
+        assert!(is_direct_call_site("let x = helper();", "helper"));
+        Ok(())
+    }
+
+    // #3296 review B2: only whole-token literals bind; an identifier
+    // like `a2` is never the literal `2`.
+    #[test]
+    fn strict_literals_reject_identifiers() -> Result<(), String> {
+        assert_eq!(strict_literal("\"ab\"").as_deref(), Some("\"ab\""));
+        assert_eq!(strict_literal("'x'").as_deref(), Some("'x'"));
+        assert_eq!(strict_literal("42").as_deref(), Some("42"));
+        assert_eq!(strict_literal("true").as_deref(), Some("true"));
+        assert_eq!(strict_literal("a2"), None);
+        assert_eq!(strict_literal("input"), None);
+        assert_eq!(strict_literal("input.trim()"), None);
         Ok(())
     }
 

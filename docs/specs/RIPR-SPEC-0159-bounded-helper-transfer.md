@@ -62,12 +62,15 @@ limitation unchanged.
   callee stop, incomplete-workspace stop, recursion stop, multi-caller
   stop, entry-hop test reach, helper return evaluation (identity tail
   evaluates; non-identity closure fails closed).
-- The two drifted goldens re-blessed with the typed-relation reason:
-  `rust_transitive_reach_positive` and
-  `rust_constructor_field_wrong_field_observer` promote past
-  `no_static_path` because their chains are genuinely resolvable under
-  the typed conditions — this is the intended behavior change, not a
-  lexical-walk regression.
+- `rust_constructor_field_wrong_field_observer` re-blessed and its
+  corpus expectation graduated (`no_static_path` ->
+  `propagation_unknown`): its chain is genuinely resolvable under the
+  typed conditions, so the test legitimately relates while
+  `must_not_promote` and every repair guard stay intact.
+  `rust_transitive_reach_positive` keeps its SPEC-0114 pin exactly: a
+  second same-name `inner` makes the callee non-unique, the typed
+  transfer refuses, and the lexical-walk limitation stays the pinned
+  outcome (golden byte-identical to main).
 - The fixture corpus: one-hop positive/negative with exact tests,
   bounded multi-hop, the fail-closed controls (same-name helper in
   another module, computed argument, wrong-sink assertion).
@@ -94,8 +97,11 @@ limitation unchanged.
   operands evaluate with `input = " x"`.
 - Accept: a comparison operand that is a unique helper call evaluates
   through a simple binding-tail return.
-- Reject: relating through a non-unique callee, a computed argument, a
-  partial index, recursion, or multiple callers.
+- Reject: relating through a non-unique callee, a method or
+  path-qualified call site, a partial index, recursion, or multiple
+  callers. A computed argument stops the value/row transfer (named
+  edge) while the reach relation may still hold — the call chain is
+  genuinely reachable; only the exact values stop.
 
 ## Test Mapping
 

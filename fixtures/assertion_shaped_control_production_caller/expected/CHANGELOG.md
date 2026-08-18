@@ -94,3 +94,15 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending
+
+Reason:
+RIPR-SPEC-0159: the validate_score -> check_score_invariants chain is genuinely resolvable under the typed transfer (unique callee, single caller and site, parameter binding), so the helper-owned probe legitimately relates its test; the SPEC-0133 assertion-shaped guidance story is unchanged
+
+Command:
+`cargo xtask goldens bless assertion_shaped_control_production_caller --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
