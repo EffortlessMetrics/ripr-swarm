@@ -170,3 +170,14 @@ materialize exact replay repositories and analysis identities
 No analyzer change, automated judgment, mutation execution, provider call,
 generated test, repair assignment, gate, or support-tier promotion is made by
 this seed.
+
+Additional stated boundaries (audit #3297, see `AUDIT-3198.md`):
+
+- Retained attestations are **reviewed, unsigned** authority. They
+  establish reviewed coherence, not cryptographic authenticity; a
+  coherent full-authority rewrite is rejected by the digest chain, and
+  authenticity beyond review remains out of scope.
+- **Windows junction/reparse-point confinement is `NOT_ESTABLISHED`.**
+  The symlink-escape discriminators run only where symlink support
+  exists; no junction- or reparse-point proof has been produced on any
+  host. This is a stated boundary, not a claim.
