@@ -8407,3 +8407,22 @@ metrics = [
   "unit_test_pass_rate",
   "golden_fixture_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0161"
+name = "Immutable candidate isolation and parity qualification"
+spec = "docs/specs/RIPR-SPEC-0161-immutable-candidate-qualification.md"
+tests = [
+  "crates/ripr/tests/immutable_candidate_falsifier.rs",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/config.rs",
+  "crates/ripr/src/analysis/git_candidate_execution.rs",
+  "crates/ripr/src/analysis/pipeline.rs",
+]
+outputs = []
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]

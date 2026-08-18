@@ -394,6 +394,29 @@ fn pax_path_record(data: &[u8]) -> Option<String> {
     None
 }
 
+/// The candidate tree's `ripr.toml` bytes, when the tree carries one
+/// (#3279 R4: a worktree ripr.toml must not configure a subject run).
+/// Read from the tree object alone; the worktree file is never opened.
+pub(crate) fn candidate_config_bytes(
+    subject: &GitCandidateSubject,
+    deadline: Option<Duration>,
+) -> Result<Option<String>, SubjectError> {
+    let treeish = subject.candidate_tree.as_str();
+    let output = crate::git::run_git_output_with_deadline(
+        &subject.repository_root,
+        &["show", &format!("{treeish}:ripr.toml")],
+        deadline,
+    )
+    .map_err(|error| SubjectError::ExecutionFailed {
+        detail: format!("reading candidate ripr.toml failed: {error}"),
+    })?;
+    if !output.status.success() {
+        // A tree without a ripr.toml uses the default config.
+        return Ok(None);
+    }
+    Ok(Some(String::from_utf8_lossy(&output.stdout).to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
