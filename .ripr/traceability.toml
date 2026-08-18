@@ -8434,7 +8434,29 @@ spec = "docs/specs/RIPR-SPEC-0162-propagation-unknown-wording.md"
 tests = [
   "crates/ripr/src/output/human.rs::tests::propagation_unknown_wording_is_honest",
 ]
-fixtures = []
+fixtures = [
+  "fixtures/assertion_shaped_control_production_caller",
+  "fixtures/binding_predicate_equality_boundary",
+  "fixtures/binding_predicate_scope_controls",
+  "fixtures/binding_value_family_matrix",
+  "fixtures/helper_chain_multi_hop",
+  "fixtures/helper_chain_one_hop",
+  "fixtures/infect_wildcard_discard",
+  "fixtures/lsp_agent_protocol",
+  "fixtures/observation_unverified_field_construction",
+  "fixtures/observation_verified_field_construction",
+  "fixtures/propagate_stdout_macro",
+  "fixtures/propagate_swallowed_ok",
+  "fixtures/python_adversarial_changed_sink_non_delta_operand",
+  "fixtures/python_decorator_indirection_limit",
+  "fixtures/python_dynamic_dispatch_limit",
+  "fixtures/python_dynamic_import_limit",
+  "fixtures/rust_async_fn_owner",
+  "fixtures/rust_constructor_field_observation",
+  "fixtures/rust_constructor_field_wrong_field_observer",
+  "fixtures/rust_long_expression_display_bound",
+  "fixtures/source_role_harness_suppression",
+]
 code = [
   "crates/ripr/src/output/human/sections.rs",
 ]
