@@ -118,3 +118,27 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending
+
+Reason:
+RIPR-SPEC-0158: boolean literals in test-call arguments are now extracted as exact inputs, adding the boolean observed-value fact to this fixture's evidence
+
+Command:
+`cargo xtask goldens bless observation_unverified_call_deletion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending
+
+Reason:
+RIPR-SPEC-0158: review round 2 — operand resolution hoisted per probe (provenance text unchanged in content but regenerated), the starts_with hunk made a real behavior change, and quote-aware splitting/char escapes/dedup refinements
+
+Command:
+`cargo xtask goldens bless observation_unverified_call_deletion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

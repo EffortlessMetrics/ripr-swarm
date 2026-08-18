@@ -152,14 +152,53 @@ fn observed_discriminator_values(
     };
     let parameters = function_parameters(owner);
     let call_values = owner_call_parameter_values(related_tests, &owner.name, &parameters);
-    let Some(left_parameter) = boundary_operand_parameter(owner, &parameters, &left) else {
-        return Vec::new();
-    };
+    let left_parameter = boundary_operand_parameter(owner, &parameters, &left);
     let right_parameter = boundary_operand_parameter(owner, &parameters, &right);
+    // #3295: the operands resolve once per probe (initializer or
+    // parameter); only the input row changes per call.
+    let left_resolved = resolve_boundary_operand(owner, &left, probe.location.line, &parameters);
+    let right_resolved = resolve_boundary_operand(owner, &right, probe.location.line, &parameters);
     let mut facts = Vec::new();
 
     for row in call_values {
-        let Some(left_value) = parameter_value(&row, &left_parameter) else {
+        let inputs: super::value_transfer::ExactInputs = row
+            .iter()
+            .map(|cell| (cell.parameter.clone(), cell.value.clone()))
+            .collect();
+        let left_exact = left_resolved
+            .as_ref()
+            .and_then(|resolved| exact_operand_for_row(resolved, &row, &inputs));
+        let right_exact = right_resolved
+            .as_ref()
+            .and_then(|resolved| exact_operand_for_row(resolved, &row, &inputs))
+            .or_else(|| {
+                literal_operand_value(&right).map(|value| ExactOperand {
+                    provenance: format!("literal operand {right} = {value}"),
+                    value,
+                })
+            });
+        if let (Some(left_value), Some(right_value)) = (&left_exact, &right_exact)
+            && left_value.value == right_value.value
+        {
+            facts.push(ValueFact {
+                line: row.first().map(|cell| cell.line).unwrap_or_default(),
+                text: format!(
+                    "{} | {}; {}",
+                    row.first()
+                        .map(|cell| cell.text.clone())
+                        .unwrap_or_default(),
+                    left_value.provenance,
+                    right_value.provenance,
+                ),
+                value: format!("{left} == {right}"),
+                context: ValueContext::FunctionArgument,
+            });
+            continue;
+        }
+        let Some(left_parameter) = left_parameter.as_deref() else {
+            continue;
+        };
+        let Some(left_value) = parameter_value(&row, left_parameter) else {
             continue;
         };
         let right_value = right_parameter
@@ -181,6 +220,157 @@ fn observed_discriminator_values(
     }
 
     facts
+}
+
+/// The exact value of one comparison operand under one related-test
+/// call row (#3295). A parameter resolves to the row's literal; a
+/// local binding resolves through the #3294 binding relation (the
+/// predicate must be a direct use in the binding's live span) and the
+/// bounded value-transfer evaluator. `None` keeps the operand unknown.
+/// One comparison operand resolved once per probe (#3295 review): a
+/// shadowing local's initializer (evaluated per row) or the raw
+/// parameter.
+enum ResolvedOperand {
+    Parameter(String),
+    Local(String, String),
+}
+
+fn resolve_boundary_operand(
+    owner: &FunctionSummary,
+    operand: &str,
+    predicate_line: usize,
+    parameters: &[String],
+) -> Option<ResolvedOperand> {
+    if let Some(initializer) = live_local_initializer(owner, operand, predicate_line) {
+        return Some(ResolvedOperand::Local(operand.to_string(), initializer));
+    }
+    parameters
+        .iter()
+        .find(|parameter| parameter.as_str() == operand)
+        .map(|parameter| ResolvedOperand::Parameter(parameter.clone()))
+}
+
+/// Evaluate one resolved operand against one related-test call row.
+fn exact_operand_for_row(
+    resolved: &ResolvedOperand,
+    row: &[ParameterValue],
+    inputs: &super::value_transfer::ExactInputs,
+) -> Option<ExactOperand> {
+    match resolved {
+        ResolvedOperand::Local(name, initializer) => {
+            match super::value_transfer::evaluate_initializer(initializer, inputs) {
+                super::value_transfer::EvalOutcome::Exact { value, provenance } => Some(
+                    exact_operand_from_evaluation(name, &value, &provenance, inputs),
+                ),
+                _ => None,
+            }
+        }
+        ResolvedOperand::Parameter(parameter) => {
+            let cell = row
+                .iter()
+                .find(|cell| cell.parameter == *parameter)
+                .cloned()?;
+            Some(ExactOperand {
+                value: cell.value.clone(),
+                provenance: format!("exact input {parameter} = {}", cell.value),
+            })
+        }
+    }
+}
+
+/// Build the exact operand with its provenance chain: operation
+/// families, source inputs, and chain depth (#3295 evidence contract).
+fn exact_operand_from_evaluation(
+    operand: &str,
+    value: &super::value_transfer::TypedValue,
+    provenance: &[super::value_transfer::EvalStep],
+    inputs: &super::value_transfer::ExactInputs,
+) -> ExactOperand {
+    let chain = provenance
+        .iter()
+        .map(|step| step.operation.as_str())
+        .collect::<Vec<_>>()
+        .join(" -> ");
+    let input_literals = inputs
+        .iter()
+        .map(|(parameter, literal)| format!("{parameter} = {literal}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if provenance.is_empty() {
+        return ExactOperand {
+            value: value.render(),
+            provenance: format!("{operand} = {} (exact literal)", value.render()),
+        };
+    }
+    ExactOperand {
+        value: value.render(),
+        provenance: format!(
+            "{operand} = {} via {chain} over {input_literals} (chain depth {})",
+            value.render(),
+            provenance.len()
+        ),
+    }
+}
+
+/// One exact comparison operand: the rendered value plus the #3295
+/// provenance chain retained on the fact text (source inputs,
+/// operation families, chain depth).
+struct ExactOperand {
+    value: String,
+    provenance: String,
+}
+
+/// The initializer of a local binding whose live span (per the #3294
+/// binding relation) covers the predicate line: the predicate must be
+/// one of the binding's direct uses, so the initializer provably feeds
+/// the compared operand. At most one declaration generation can hold
+/// the predicate in its live span; the first that does wins.
+fn live_local_initializer(
+    owner: &FunctionSummary,
+    operand: &str,
+    predicate_line: usize,
+) -> Option<String> {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    // Detection runs on the masked line; the initializer is taken from
+    // the raw line so string literals survive for evaluation (#3295).
+    for (offset, (raw_line, masked_line)) in owner.body.lines().zip(masked.lines()).enumerate() {
+        let absolute = owner.start_line + offset;
+        let trimmed = masked_line.trim();
+        // A trailing comment (`let x = …; // note`) survives on the
+        // raw line: cut the raw statement at the masked line's first
+        // semicolon, which string masking keeps honest.
+        // Masking preserves byte offsets, so the masked semicolon's
+        // byte index cuts the raw line directly.
+        let raw_statement = masked_line
+            .find(';')
+            .map(|cut| &raw_line[..=cut])
+            .unwrap_or(raw_line);
+        if trimmed.starts_with("let ")
+            && trimmed.contains(';')
+            && let Some((_declared, _)) = crate::analysis::language::changed_let_binding(trimmed)
+            && let Some((declared, initializer)) =
+                crate::analysis::language::changed_let_binding(raw_statement.trim())
+            && declared == operand
+        {
+            let initializer = initializer.to_string();
+            let resolution = crate::analysis::probes::resolve_changed_binding_uses(
+                operand,
+                &initializer,
+                &owner.body,
+                owner.start_line,
+                absolute,
+            );
+            if let crate::analysis::probes::BindingPredicateResolution::DirectUses(uses) =
+                &resolution
+                && uses
+                    .iter()
+                    .any(|use_site| use_site.predicate_line == predicate_line)
+            {
+                return Some(initializer);
+            }
+        }
+    }
+    None
 }
 
 fn missing_discriminator_facts(
@@ -236,29 +426,83 @@ fn missing_boundary_discriminator(
     let left_parameter = boundary_operand_parameter(owner, &parameters, &left);
     let right_parameter = boundary_operand_parameter(owner, &parameters, &right);
 
-    let equality_observed = left_parameter.as_deref().is_some_and(|left_parameter| {
-        call_values.iter().any(|row| {
-            let Some(left_value) = parameter_value(row, left_parameter) else {
-                return false;
-            };
-            let right_value = right_parameter
-                .as_deref()
-                .and_then(|parameter| parameter_value(row, parameter))
-                .map(|value| value.value)
-                .or_else(|| literal_operand_value(&right));
-            right_value
-                .as_deref()
-                .is_some_and(|value| comparable_value(value) == comparable_value(&left_value.value))
+    // #3295 exact path: when either operand is a computed local, the
+    // bounded evaluator resolves its value from the row's exact
+    // inputs; the boundary is observed when both sides compare equal
+    // under any row.
+    let left_resolved = resolve_boundary_operand(owner, &left, probe.location.line, &parameters);
+    let right_resolved = resolve_boundary_operand(owner, &right, probe.location.line, &parameters);
+    let exact_rows: Vec<(Vec<ExactOperand>, Vec<ExactOperand>)> = call_values
+        .iter()
+        .map(|row| {
+            let inputs: super::value_transfer::ExactInputs = row
+                .iter()
+                .map(|cell| (cell.parameter.clone(), cell.value.clone()))
+                .collect();
+            let lefts = left_resolved
+                .as_ref()
+                .and_then(|resolved| exact_operand_for_row(resolved, row, &inputs))
+                .into_iter()
+                .collect::<Vec<_>>();
+            let rights = right_resolved
+                .as_ref()
+                .and_then(|resolved| exact_operand_for_row(resolved, row, &inputs))
+                .or_else(|| {
+                    literal_operand_value(&right).map(|value| ExactOperand {
+                        provenance: format!("literal operand {right} = {value}"),
+                        value,
+                    })
+                })
+                .into_iter()
+                .collect::<Vec<_>>();
+            (lefts, rights)
+        })
+        .collect();
+    // Exact operands compare by their canonical renderings directly:
+    // the digit-oriented literal normalization (underscore/quote
+    // stripping) would equate distinct strings (#3295 review).
+    let exact_equality_observed = exact_rows.iter().any(|(lefts, rights)| {
+        lefts.iter().any(|left_value| {
+            rights
+                .iter()
+                .any(|right_value| right_value.value == left_value.value)
         })
     });
+
+    let equality_observed = exact_equality_observed
+        || left_parameter.as_deref().is_some_and(|left_parameter| {
+            call_values.iter().any(|row| {
+                let Some(left_value) = parameter_value(row, left_parameter) else {
+                    return false;
+                };
+                let right_value = right_parameter
+                    .as_deref()
+                    .and_then(|parameter| parameter_value(row, parameter))
+                    .map(|value| value.value)
+                    .or_else(|| literal_operand_value(&right));
+                right_value.as_deref().is_some_and(|value| {
+                    comparable_value(value) == comparable_value(&left_value.value)
+                })
+            })
+        });
     if equality_observed {
         return None;
     }
 
-    let left_values = left_parameter
+    let mut left_values = left_parameter
         .as_deref()
         .map(|parameter| observed_parameter_values(&call_values, parameter))
         .unwrap_or_default();
+    // Exact evaluated lefts join the observed listing so the reason
+    // names real values instead of `unknown` (#3295).
+    let exact_lefts: Vec<String> = exact_rows
+        .iter()
+        .flat_map(|(lefts, _)| lefts.iter().map(|operand| operand.value.clone()))
+        .filter(|value| !left_values.contains(value))
+        .collect();
+    left_values.extend(exact_lefts);
+    left_values.sort();
+    left_values.dedup();
     let right_parameter_values = right_parameter
         .as_deref()
         .and_then(|parameter| parameter_value_set(&call_values, parameter));
@@ -729,6 +973,48 @@ fn scalar_values(text: &str) -> Vec<String> {
             idx = cursor.saturating_add(1);
             continue;
         }
+        if ch == '\'' {
+            // A char literal `'x'` / `'\n'` / `'\''`; a lifetime
+            // (`'a`, never closed by a quote on its own) is not a
+            // value. #3295: char arguments are exact inputs.
+            let closing = if chars
+                .get(idx + 1)
+                .is_some_and(|(_, next_ch)| *next_ch == '\\')
+            {
+                chars.get(idx + 3)
+            } else {
+                chars.get(idx + 2)
+            };
+            if let Some((end_byte, end_ch)) = closing
+                && *end_ch == '\''
+                && let Some(value) = text.get(byte_idx..end_byte + end_ch.len_utf8())
+            {
+                values.push(value.to_string());
+                idx = chars
+                    .iter()
+                    .position(|(scan_byte, _)| *scan_byte == *end_byte)
+                    .map_or(idx + 1, |position| position.saturating_add(1));
+                continue;
+            }
+        }
+        // Boolean literals are exact inputs too (#3295). Both edges
+        // must be identifier boundaries: `is_true`/`true_flag` are
+        // identifiers, not booleans (#3295 review).
+        for literal in ["true", "false"] {
+            if text[byte_idx..].starts_with(literal) {
+                let before = text[..byte_idx].chars().next_back();
+                let after = text[byte_idx + literal.len()..].chars().next();
+                let before_ok = !before
+                    .is_some_and(|prev_ch: char| prev_ch.is_ascii_alphanumeric() || prev_ch == '_');
+                let after_ok = !after
+                    .is_some_and(|next_ch: char| next_ch.is_ascii_alphanumeric() || next_ch == '_');
+                if before_ok && after_ok {
+                    values.push(literal.to_string());
+                    idx += 1;
+                    break;
+                }
+            }
+        }
         if ch.is_ascii_digit()
             || (ch == '-'
                 && chars
@@ -810,6 +1096,118 @@ mod tests {
         assert!(activation.missing_discriminators.is_empty());
         assert!(activation.observed_values.iter().any(|fact| {
             fact.context == ValueContext::FunctionArgument && fact.value == "amount == threshold"
+        }));
+    }
+
+    // #3295 review F2: an identifier argument like `is_true` never
+    // yields a boolean exact input.
+    #[test]
+    fn boolean_extraction_requires_identifier_boundaries() {
+        assert!(scalar_values("check(is_true)").is_empty());
+        assert!(scalar_values("run(x_false)").is_empty());
+        assert_eq!(
+            scalar_values("f(true_flag)"),
+            Vec::<String>::new(),
+            "trailing identifier chars reject the token"
+        );
+        assert_eq!(scalar_values("check(true)"), vec!["true".to_string()]);
+        assert_eq!(scalar_values("check(Some(true))"), vec!["true".to_string()]);
+    }
+
+    // #3295 review N4: a local that re-binds a parameter name wins over
+    // the raw call argument.
+    #[test]
+    fn shadowing_local_wins_over_the_parameter_argument() -> Result<(), String> {
+        let owner = function(
+            "pub fn split_after(input: &str) -> bool {
+    let input = input.strip_prefix(\"x\").map_or(\"none\", |s| s);
+    input == \"y\"
+}",
+        );
+        let test = test_with_call("boundary", "score(\"xy\");");
+        let mut probe = probe(ProbeFamily::Predicate, "input == \"y\"");
+        probe.location = SourceLocation::new("src/lib.rs", 3, 1);
+
+        let activation = activation_evidence(&probe, Some(&owner), &[&test], &[]);
+
+        // strip_prefix("x") over "xy" yields exactly "y": the boundary
+        // is observed through the shadowing local, not the raw "xy".
+        assert!(
+            has_observed_boundary_equality(&activation),
+            "observed: {:?}",
+            activation.observed_values
+        );
+        let Some(fact) = activation
+            .observed_values
+            .iter()
+            .find(|fact| fact.value == "input == \"y\"")
+        else {
+            return Err("boundary fact missing".to_string());
+        };
+        assert!(
+            fact.text.contains("strip_prefix -> map_or"),
+            "provenance names the evaluated chain: {}",
+            fact.text
+        );
+        Ok(())
+    }
+
+    // #3295: computed local operands resolve through the bounded
+    // evaluator over the exact test inputs, so the #3215 equality
+    // boundary is observed instead of `unknown`.
+    #[test]
+    fn activation_evidence_resolves_computed_local_boundary_operands() {
+        let owner = FunctionSummary {
+            id: SymbolId("src/lib.rs::split_after".to_string()),
+            name: "split_after".to_string(),
+            file: PathBuf::from("src/lib.rs"),
+            start_line: 1,
+            end_line: 9,
+            body: "pub fn split_after(input: &str, delim: char) -> &str {\n    let end = input.rfind(delim).map_or(1, |idx| idx);\n    let start = delim.len_utf8();\n    if end == start {\n        &input[..end]\n    } else {\n        input\n    }\n}".to_string(),
+            calls: Vec::new(),
+            returns: Vec::new(),
+            literals: Vec::new(),
+            is_test: false,
+            attrs: Vec::new(),
+        };
+        let test = TestSummary {
+            name: "absent_delimiter_boundary".to_string(),
+            file: PathBuf::from("tests/split.rs"),
+            start_line: 4,
+            end_line: 6,
+            body: "split_after(\"ab\", 'x');".to_string(),
+            calls: vec![CallFact {
+                name: "split_after".to_string(),
+                line: 5,
+                text: "split_after(\"ab\", 'x');".to_string(),
+            }],
+            assertions: Vec::new(),
+            literals: Vec::new(),
+            attrs: Vec::new(),
+        };
+        let probe = Probe {
+            id: ProbeId("probe:src_lib.rs:predicate:eval".to_string()),
+            location: SourceLocation::new("src/lib.rs", 4, 1),
+            owner: Some(SymbolId("src/lib.rs::split_after".to_string())),
+            family: ProbeFamily::Predicate,
+            delta: DeltaKind::Control,
+            before: None,
+            after: Some("if end == start {".to_string()),
+            expression: "if end == start {".to_string(),
+            expected_sinks: Vec::new(),
+            required_oracles: Vec::new(),
+        };
+
+        let activation = activation_evidence(&probe, Some(&owner), &[&test], &[]);
+
+        assert!(
+            has_observed_boundary_equality(&activation),
+            "the exact inputs end=1, start=1 must observe the boundary: {:?}",
+            activation.observed_values
+        );
+        assert!(activation.missing_discriminators.is_empty());
+        assert!(activation.observed_values.iter().any(|fact| {
+            fact.context == ValueContext::FunctionArgument && fact.value == "end == start"
         }));
     }
 
