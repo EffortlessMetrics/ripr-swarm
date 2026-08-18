@@ -35,8 +35,6 @@ const MAX_ARCHIVE_BYTES: usize = 512 * 1024 * 1024;
 /// unified diff, the materialized candidate root (owned temp directory
 /// — dropping the guard removes it), and the identities the diff was
 /// derived from (recorded for R3 output projection).
-/// The exact subject identity the diff was derived from, for
-/// disclosure and the R3 output projection.
 pub(crate) fn subject_identity(resolved: &ResolvedGitCandidate) -> String {
     format!(
         "base_tree={} candidate_tree={}",
@@ -44,6 +42,10 @@ pub(crate) fn subject_identity(resolved: &ResolvedGitCandidate) -> String {
     )
 }
 
+/// The resolved, analyzed form of one immutable subject: the derived
+/// unified diff, the materialized candidate root (owned temp directory
+/// — dropping the guard removes it), and the identities the diff was
+/// derived from (recorded for R3 output projection).
 pub(crate) struct ResolvedGitCandidate {
     pub(crate) base_tree: String,
     pub(crate) candidate_tree: String,

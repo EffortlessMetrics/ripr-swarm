@@ -617,10 +617,15 @@ mod tests {
             error.contains("git candidate subject"),
             "error must name the subject boundary: {error:?}"
         );
+        // Both producer failures are valid here and which one fires is
+        // environment-dependent: the ambient temp dir may sit inside a
+        // git repository, in which case the repository gate passes and
+        // the nonexistent sample tree OID fails resolution instead.
+        // Either way the failure must stay inside the subject boundary
+        // (the producer prefix) — never leak into worktree loading.
         assert!(
-            error.contains("does not own a Git object database")
-                || error.contains("git rev-parse failed"),
-            "error must name the exact identity failure: {error:?}"
+            error.contains("git candidate subject: object producer failed"),
+            "error must stay inside the subject boundary: {error:?}"
         );
         Ok(())
     }

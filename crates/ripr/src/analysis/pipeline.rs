@@ -115,7 +115,7 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_generated_file_patter
     // previously ignored in this mode).
     if options.git_candidate.is_some() {
         return Err(crate::domain::GitCandidateSubjectError::ExecutionFailed {
-            detail: "git candidate subjects are diff-semantics inputs;                      worktree mode cannot execute them"
+            detail: "git candidate subjects are diff-semantics inputs; worktree mode cannot execute them"
                 .to_string(),
         }
         .to_string());
@@ -622,7 +622,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy(
     if let Some(subject) = options.git_candidate.as_ref() {
         return Err(crate::domain::GitCandidateSubjectError::ExecutionFailed {
             detail: format!(
-                "git candidate subjects are diff-semantics inputs; repo mode cannot                  execute subject `{}`",
+                "git candidate subjects are diff-semantics inputs; repo mode cannot execute subject `{}`",
                 subject.candidate_tree.as_str()
             ),
         }
