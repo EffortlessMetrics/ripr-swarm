@@ -771,3 +771,11 @@ path = "docs/specs/RIPR-SPEC-0161-immutable-candidate-qualification.md"
 status = "proposed"
 owner = "product-swarm"
 standalone_reason = "Issue #3279 R4 slice for #3237: the qualification corpus breaks the isolation claim on purpose — post-bind mutations, committed parity, identity echo, delete/rename shapes, fail-closed invalid inputs, a substitution removal experiment, and temp-state cleanup — and the two real defects it found (worktree config leaking into subject runs; ephemeral temp roots leaking into finding paths) are repaired at the producer/config seams, not in renderers."
+
+[[artifact]]
+id = "RIPR-SPEC-0162"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0162-propagation-unknown-wording.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "PR #3317 review follow-up: the shared human template asserted the propagation the propagation_unknown class marks unknown and labeled class-limitation prose as a missing discriminator; this renderer-owned slice makes both honest without touching the shared decision-layer text."
