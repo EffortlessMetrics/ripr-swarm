@@ -17,8 +17,7 @@ behaves as claimed.
 - **Config isolation** (the qualification's first real defect, found by
   the reproduction): a bound subject configures itself. The candidate
   tree's own `ripr.toml` — read from the tree object via `git show
-  <tree>:ripr.toml` — replaces the worktree file for the run; a tree
-  without one uses the default config. `source_path` is cleared so the
+  <tree>:ripr.toml` — replaces the worktree file for the run; a tree without one uses the PURE default config — no worktree fact (including the enabled-languages list) may enter the fallback (#3279 review B1: toggling the worktree languages flipped subject completeness). `source_path` is cleared so the
   recorded identity cannot claim the worktree file as its source. The
   CLI binds the subject **before** loading config so `apply_to_check_input`
   consumes the candidate config, not the worktree's.
@@ -42,14 +41,20 @@ behaves as claimed.
      per-format empty-tree base OID, `sha256:` diff identity) and no
      `ripr-git-candidate` temp path appears anywhere in the output;
   4. delete and rename shapes resolve from objects with a dirty
-     worktree (a resurrection of the deleted file never enters the run);
+     worktree (a resurrection of the deleted file never enters the run),
+     and a type change (regular file to symlink) fails closed naming
+     the entry;
   5. invalid subjects fail closed inside the named boundary — never
      clean zero findings;
   6. the removal experiment: the findings carry the candidate bytes
      (`expression: "2"`), and worktree-only bytes never appear — a
      producer that silently substituted the worktree would flip both
      discriminators;
-  7. a completed subject run leaves no materialization roots behind.
+  7. a completed subject run leaves no per-run materialization roots
+     behind (children of the shared parent, with a settle bound for
+     concurrent corpus runs); and a treeless-config control toggles the
+     worktree enabled-languages list and requires identical subject
+     output (the review's B1 reproduction pinned).
 
 ## Required Evidence
 

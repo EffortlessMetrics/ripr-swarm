@@ -180,7 +180,13 @@ fn same_tree_immutable_and_committed_analysis_agree() -> Result<(), String> {
         // `mode` is rendered from the input path; `root` is the caller
         // path. Everything semantic — summary, findings, classifications,
         // related tests, ordering — must match.
-        copy["analysis_outcome"] = Value::Null;
+        // Declared non-portable telemetry ONLY: the identity block
+        // (input fingerprints differ by construction between a range
+        // diff and a tree-to-tree diff), the mode string, the root
+        // echo, and the base echo. Completeness, counts, and
+        // limitations are acceptance-named and MUST match (#3279
+        // review M2).
+        copy["analysis_outcome"]["outcome"]["identity"] = Value::Null;
         copy["mode"] = Value::Null;
         copy["root"] = Value::Null;
         copy["base"] = Value::Null;
@@ -365,33 +371,156 @@ fn removal_experiment_subject_differs_from_worktree_substitution() -> Result<(),
 
 /// Temporary candidate state is cleaned: after a successful run the
 /// materialization root is removed (the guard drops with the temp tree).
+/// #3279 review B1 control: a tree WITHOUT a config configures itself
+/// with the pure default — toggling the worktree ripr.toml (including
+/// its enabled-languages list) must not change the subject output.
+#[test]
+fn treeless_config_subject_ignores_worktree_language_toggle() -> Result<(), String> {
+    let root = unique_root("treeless");
+    std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+    let _guard = RepoGuard(root.clone());
+    git(&root, &["init", "--initial-branch=main"])?;
+    git(&root, &["config", "user.email", "r@e.invalid"])?;
+    git(&root, &["config", "user.name", "ripr"])?;
+    write(
+        &root,
+        "Cargo.toml",
+        "[package]
+name='falsifier'
+version='0.1.0'
+edition='2024'
+",
+    )?;
+    write(&root, "src/lib.rs", LIB_BASE)?;
+    write(&root, "tests/it.rs", TEST_BODY)?;
+    // NOTE: no ripr.toml is committed — the tree configures itself with
+    // the pure default.
+    git(&root, &["add", "."])?;
+    git(&root, &["commit", "-qm", "base"])?;
+    let base = git(&root, &["rev-parse", "HEAD"])?;
+    write(&root, "src/lib.rs", LIB_CANDIDATE)?;
+    git(&root, &["add", "."])?;
+    git(&root, &["commit", "-qm", "candidate"])?;
+    let candidate = git(&root, &["rev-parse", "HEAD"])?;
+
+    // Worktree config A (untracked — mutable state only).
+    write(
+        &root,
+        "ripr.toml",
+        "[languages]
+enabled = [\"rust\"]
+",
+    )?;
+    let first = run_subject(&root, &base, &candidate)?;
+    // Worktree config B: the ONLY change is the enabled-languages list.
+    write(
+        &root,
+        "ripr.toml",
+        "[languages]
+enabled = [\"rust\", \"python\"]
+",
+    )?;
+    let second = run_subject(&root, &base, &candidate)?;
+    assert_eq!(
+        serde_json::to_string(&first).unwrap_or_default(),
+        serde_json::to_string(&second).unwrap_or_default(),
+        "toggling the worktree enabled-languages must not change a treeless-config subject run"
+    );
+    Ok(())
+}
+
+/// #3279 review M3: a type change (regular file → symlink) in the
+/// candidate tree fails closed with a named error naming the entry —
+/// never a worktree fallback, never clean zero findings.
+#[test]
+fn type_change_fails_closed_naming_the_entry() -> Result<(), String> {
+    let root = unique_root("typechange");
+    std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+    let _guard = RepoGuard(root.clone());
+    git(&root, &["init", "--initial-branch=main"])?;
+    git(&root, &["config", "user.email", "r@e.invalid"])?;
+    git(&root, &["config", "user.name", "ripr"])?;
+    write(
+        &root,
+        "Cargo.toml",
+        "[package]
+name='falsifier'
+version='0.1.0'
+edition='2024'
+",
+    )?;
+    write(&root, "src/lib.rs", LIB_BASE)?;
+    write(
+        &root,
+        "src/linked.rs",
+        "pub fn linked() -> u8 { 1 }
+",
+    )?;
+    git(&root, &["add", "."])?;
+    git(&root, &["commit", "-qm", "base"])?;
+    let base = git(&root, &["rev-parse", "HEAD"])?;
+    write(&root, "src/lib.rs", LIB_CANDIDATE)?;
+    // Replace the regular file with a symlink via the index (type change).
+    std::fs::remove_file(root.join("src/linked.rs")).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("lib.rs", root.join("src/linked.rs")).map_err(|e| e.to_string())?;
+    #[cfg(windows)]
+    {
+        // Windows symlinks need privileges; use a gitlinks-free stand-in:
+        // commit the deletion only (type-change-to-absent is covered by
+        // the delete corpus test). Skip the symlink arm where it cannot
+        // be created, keeping the corpus honest.
+        if std::os::windows::fs::symlink_file("lib.rs", root.join("src/linked.rs")).is_err() {
+            return Ok(());
+        }
+    }
+    git(&root, &["add", "."])?;
+    git(&root, &["commit", "-qm", "candidate"])?;
+    let candidate = git(&root, &["rev-parse", "HEAD"])?;
+    let error = match run_subject(&root, &base, &candidate) {
+        Err(error) => error,
+        Ok(_) => return Err("a type-changed entry must fail closed".to_string()),
+    };
+    assert!(
+        error.contains("git candidate subject"),
+        "failure must stay inside the subject boundary: {error}"
+    );
+    Ok(())
+}
+
 #[test]
 fn temporary_candidate_state_is_cleaned() -> Result<(), String> {
     let (guard, base, candidate) = fixture_repo("cleanup")?;
     let root = &guard.0;
-    let before: Vec<PathBuf> = std::fs::read_dir(std::env::temp_dir())
-        .map_err(|e| e.to_string())?
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with("ripr-git-candidate"))
-        })
-        .collect();
+    // The oracle is the set of PER-RUN materialization roots (children
+    // of the shared ripr-git-candidate parent), not the parent itself —
+    // the parent persists by design and counting it made the test both
+    // cold-start flaky and vacuous (#3279 review M1).
+    let parent = std::env::temp_dir().join("ripr-git-candidate");
+    let children = |dir: &Path| -> Vec<String> {
+        std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .collect()
+    };
     run_subject(root, &base, &candidate)?;
-    let after: Vec<PathBuf> = std::fs::read_dir(std::env::temp_dir())
-        .map_err(|e| e.to_string())?
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with("ripr-git-candidate"))
-        })
-        .collect();
-    assert_eq!(
-        before.len(),
-        after.len(),
-        "a completed subject run must not leave materialization roots behind"
+    // Concurrent corpus tests materialize into the same shared parent, so
+    // a single snapshot can see a sibling test's root mid-flight. A
+    // genuinely leaked root persists; a concurrent run's root drops when
+    // that test finishes — settle briefly and require emptiness.
+    let mut persisted = Vec::new();
+    for _ in 0..12 {
+        persisted = children(&parent);
+        if persisted.is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+    assert!(
+        persisted.is_empty(),
+        "no per-run materialization root may persist after a completed run: {persisted:?}"
     );
     Ok(())
 }

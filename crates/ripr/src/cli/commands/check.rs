@@ -294,15 +294,6 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         );
     }
     let config = load_for_root(&input.root)?;
-    // #3279 R4: a bound subject configures itself — the candidate
-    // tree's own ripr.toml (or the default when the tree carries none)
-    // replaces the worktree file, so a dirty worktree config cannot
-    // change a subject run.
-    let config = if let Some(subject) = input.git_candidate.as_ref() {
-        crate::config::config_for_candidate(subject, &config)?
-    } else {
-        config
-    };
     apply_to_check_input(&mut input, &config, explicit);
     let format = input.format;
     // #3278 review M1: repo-scope formats, repo exposure, and the gap
@@ -375,6 +366,19 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
                 path.display()
             ));
         }
+    }
+    // #3279 R4: a bound subject configures itself — the candidate
+    // tree's own ripr.toml (or the pure default when the tree carries
+    // none) replaces the worktree file, so a dirty worktree config
+    // cannot change a subject run. Applied AFTER the argv conflict
+    // gates so an input conflict never depends on a Git object read
+    // (the R3 conflict tests pin the error text, not the ordering;
+    // #3279 review m1). The worktree `config` value above fed only
+    // gates that reject subject combinations outright.
+    let mut config = config;
+    if let Some(subject) = input.git_candidate.as_ref() {
+        config = crate::config::config_for_candidate(subject, &config)?;
+        apply_to_check_input(&mut input, &config, explicit);
     }
     // #2644: `fast` is currently behaviorally identical to `draft`. The notice
     // fires on the EFFECTIVE mode after `apply_to_check_input`, not on argv

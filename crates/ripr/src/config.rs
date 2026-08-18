@@ -829,16 +829,12 @@ pub(crate) fn config_for_candidate(
     )
     .map_err(|error| error.to_string())?;
     let Some(text) = bytes else {
-        let mut config = RiprConfig::default();
-        // Preserve only environment-level facts the worktree cannot lie
-        // about (the enabled-language availability of this binary).
-        if worktree.languages.enabled.contains(&LanguageId::Python)
-            && LanguageId::Python.is_available()
-            && !config.languages.enabled.contains(&LanguageId::Python)
-        {
-            config.languages.enabled.push(LanguageId::Python);
-        }
-        return Ok(config);
+        // Pure default: no worktree fact may enter a subject run
+        // (#3279 review B1 — the worktree's enabled-languages list is
+        // mutable state, and toggling it flipped subject completeness).
+        // Binary capability is already inside the default config.
+        let _ = worktree;
+        return Ok(RiprConfig::default());
     };
     let mut config =
         parse_config(&text).map_err(|err| format!("candidate tree ripr.toml: {err}"))?;
