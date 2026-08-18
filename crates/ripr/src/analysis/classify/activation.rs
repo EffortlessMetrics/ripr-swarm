@@ -243,6 +243,18 @@ fn boundary_operand_exact_value(
     row: &[ParameterValue],
     inputs: &super::value_transfer::ExactInputs,
 ) -> Option<ExactOperand> {
+    // A shadowing local wins over the raw parameter: when the operand
+    // re-binds the parameter name before the predicate, the compared
+    // value is the local's initializer, not the call argument
+    // (#3295 review).
+    if let Some(initializer) = live_local_initializer(owner, operand, predicate_line) {
+        return match super::value_transfer::evaluate_initializer(&initializer, inputs) {
+            super::value_transfer::EvalOutcome::Exact { value, provenance } => Some(
+                exact_operand_from_evaluation(operand, &value, &provenance, inputs),
+            ),
+            _ => None,
+        };
+    }
     if let Some(value) = parameters
         .iter()
         .find(|parameter| parameter.as_str() == operand)
@@ -253,29 +265,34 @@ fn boundary_operand_exact_value(
             provenance: format!("exact input {operand} = {}", value.value),
         });
     }
-    let initializer = live_local_initializer(owner, operand, predicate_line)?;
-    match super::value_transfer::evaluate_initializer(&initializer, inputs) {
-        super::value_transfer::EvalOutcome::Exact { value, provenance } => {
-            let chain = provenance
-                .iter()
-                .map(|step| step.operation.as_str())
-                .collect::<Vec<_>>()
-                .join(" -> ");
-            let input_literals = inputs
-                .iter()
-                .map(|(parameter, literal)| format!("{parameter} = {literal}"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            Some(ExactOperand {
-                value: value.render(),
-                provenance: format!(
-                    "{operand} = {} via {chain} over {input_literals} (chain depth {})",
-                    value.render(),
-                    provenance.len()
-                ),
-            })
-        }
-        _ => None,
+    None
+}
+
+/// Build the exact operand with its provenance chain: operation
+/// families, source inputs, and chain depth (#3295 evidence contract).
+fn exact_operand_from_evaluation(
+    operand: &str,
+    value: &super::value_transfer::TypedValue,
+    provenance: &[super::value_transfer::EvalStep],
+    inputs: &super::value_transfer::ExactInputs,
+) -> ExactOperand {
+    let chain = provenance
+        .iter()
+        .map(|step| step.operation.as_str())
+        .collect::<Vec<_>>()
+        .join(" -> ");
+    let input_literals = inputs
+        .iter()
+        .map(|(parameter, literal)| format!("{parameter} = {literal}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    ExactOperand {
+        value: value.render(),
+        provenance: format!(
+            "{operand} = {} via {chain} over {input_literals} (chain depth {})",
+            value.render(),
+            provenance.len()
+        ),
     }
 }
 
@@ -958,13 +975,18 @@ fn scalar_values(text: &str) -> Vec<String> {
                 continue;
             }
         }
-        // Boolean literals are exact inputs too (#3295).
+        // Boolean literals are exact inputs too (#3295). Both edges
+        // must be identifier boundaries: `is_true`/`true_flag` are
+        // identifiers, not booleans (#3295 review).
         for literal in ["true", "false"] {
             if text[byte_idx..].starts_with(literal) {
+                let before = text[..byte_idx].chars().next_back();
                 let after = text[byte_idx + literal.len()..].chars().next();
-                if !after
-                    .is_some_and(|next_ch: char| next_ch.is_ascii_alphanumeric() || next_ch == '_')
-                {
+                let before_ok = !before
+                    .is_some_and(|prev_ch: char| prev_ch.is_ascii_alphanumeric() || prev_ch == '_');
+                let after_ok = !after
+                    .is_some_and(|next_ch: char| next_ch.is_ascii_alphanumeric() || next_ch == '_');
+                if before_ok && after_ok {
                     values.push(literal.to_string());
                     idx += 1;
                     break;
@@ -1053,6 +1075,59 @@ mod tests {
         assert!(activation.observed_values.iter().any(|fact| {
             fact.context == ValueContext::FunctionArgument && fact.value == "amount == threshold"
         }));
+    }
+
+    // #3295 review F2: an identifier argument like `is_true` never
+    // yields a boolean exact input.
+    #[test]
+    fn boolean_extraction_requires_identifier_boundaries() {
+        assert!(scalar_values("check(is_true)").is_empty());
+        assert!(scalar_values("run(x_false)").is_empty());
+        assert_eq!(
+            scalar_values("f(true_flag)"),
+            Vec::<String>::new(),
+            "trailing identifier chars reject the token"
+        );
+        assert_eq!(scalar_values("check(true)"), vec!["true".to_string()]);
+        assert_eq!(scalar_values("check(Some(true))"), vec!["true".to_string()]);
+    }
+
+    // #3295 review N4: a local that re-binds a parameter name wins over
+    // the raw call argument.
+    #[test]
+    fn shadowing_local_wins_over_the_parameter_argument() -> Result<(), String> {
+        let owner = function(
+            "pub fn split_after(input: &str) -> bool {
+    let input = input.strip_prefix(\"x\").map_or(\"none\", |s| s);
+    input == \"y\"
+}",
+        );
+        let test = test_with_call("boundary", "score(\"xy\");");
+        let mut probe = probe(ProbeFamily::Predicate, "input == \"y\"");
+        probe.location = SourceLocation::new("src/lib.rs", 3, 1);
+
+        let activation = activation_evidence(&probe, Some(&owner), &[&test], &[]);
+
+        // strip_prefix("x") over "xy" yields exactly "y": the boundary
+        // is observed through the shadowing local, not the raw "xy".
+        assert!(
+            has_observed_boundary_equality(&activation),
+            "observed: {:?}",
+            activation.observed_values
+        );
+        let Some(fact) = activation
+            .observed_values
+            .iter()
+            .find(|fact| fact.value == "input == \"y\"")
+        else {
+            return Err("boundary fact missing".to_string());
+        };
+        assert!(
+            fact.text.contains("strip_prefix -> map_or"),
+            "provenance names the evaluated chain: {}",
+            fact.text
+        );
+        Ok(())
     }
 
     // #3295: computed local operands resolve through the bounded

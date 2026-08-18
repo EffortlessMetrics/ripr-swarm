@@ -226,12 +226,13 @@ fn apply_method(
     } else {
         Some(eval_expression(argument, inputs, steps)?)
     };
+    let receiver_render = receiver.render();
     let detail = format!(
         "{name}({}) on {}",
         evaluated_argument
             .as_ref()
             .map_or(String::new(), TypedValue::render),
-        receiver.render()
+        receiver_render
     );
     let next = match (receiver, name, evaluated_argument) {
         (TypedValue::Str(haystack), "rfind", Some(TypedValue::Char(needle))) => {
@@ -275,9 +276,12 @@ fn apply_method(
         (TypedValue::Index(left), "checked_sub", Some(TypedValue::Index(right))) => {
             TypedValue::OptIndex(left.checked_sub(right))
         }
+        // The family is evaluated but the receiver (or argument) type
+        // is not one of its operand shapes — name the mismatch, not the
+        // family (#3295 review).
         _ => {
             return Err(unsupported(&format!(
-                "method `.{name}({argument})` is not an evaluated operation family"
+                "method `.{name}({argument})` receiver {receiver_render} is not an evaluated operand shape"
             )));
         }
     };
@@ -316,12 +320,31 @@ fn eval_map_or(text: &str, inputs: &ExactInputs, steps: &mut Vec<EvalStep>) -> O
         Ok(value) => value,
         Err(outcome) => return Some(Err(outcome)),
     };
+    if steps.len() >= MAX_CHAIN_STEPS {
+        return Some(Err(unsupported(
+            "chain depth exceeds the bounded step limit",
+        )));
+    }
     let applied = match receiver {
         TypedValue::OptIndex(Some(value)) => TypedValue::Index(value),
         TypedValue::OptChar(Some(value)) => TypedValue::Char(value),
         TypedValue::OptStr(Some(value)) => TypedValue::Str(value),
         TypedValue::OptIndex(None) | TypedValue::OptChar(None) | TypedValue::OptStr(None) => {
-            return Some(eval_expression(default_text.trim(), inputs, steps));
+            // The default produced the value: the step is part of the
+            // provenance chain even on the None arm (#3295 review).
+            let default_value = match eval_expression(default_text.trim(), inputs, steps) {
+                Ok(value) => value,
+                Err(outcome) => return Some(Err(outcome)),
+            };
+            steps.push(EvalStep {
+                operation: "map_or".to_string(),
+                detail: format!(
+                    "default {} over none, default {}",
+                    default_text.trim(),
+                    default_value.render()
+                ),
+            });
+            return Some(Ok(default_value));
         }
         other => {
             return Some(Err(unsupported(&format!(
@@ -415,10 +438,70 @@ fn split_call_arguments(argument: &str) -> Option<(&str, &str)> {
     None
 }
 
+/// Parse a Rust string literal. The common escape grammar is
+/// implemented exactly; any other escape, a raw/byte-string prefix, or
+/// an over-size literal fails closed (`None`) so the value never
+/// becomes a wrong exact (#3295 review: a misparsed `\n` fabricated
+/// byte indices end to end).
 fn parse_str_literal(text: &str) -> Option<String> {
     let trimmed = text.trim();
+    if trimmed.starts_with('r') || trimmed.starts_with('b') {
+        return None;
+    }
     let inner = trimmed.strip_prefix('"')?.strip_suffix('"')?;
-    Some(inner.replace("\\\"", "\"").replace("\\\\", "\\"))
+    let mut parsed = String::new();
+    let mut chars = inner.chars();
+    while let Some(character) = chars.next() {
+        if character != '\\' {
+            parsed.push(character);
+            continue;
+        }
+        let escaped = chars.next()?;
+        match escaped {
+            'n' => parsed.push('\n'),
+            't' => parsed.push('\t'),
+            'r' => parsed.push('\r'),
+            '0' => parsed.push('\0'),
+            '\\' => parsed.push('\\'),
+            '"' => parsed.push('"'),
+            '\'' => parsed.push('\''),
+            'x' => {
+                let high = chars.next()?.to_digit(16)?;
+                let low = chars.next()?.to_digit(16)?;
+                let byte = u8::try_from(high * 16 + low).ok()?;
+                // Only ASCII byte escapes are valid in a &str literal;
+                // anything above is a compile error and fails closed.
+                if byte > 0x7f {
+                    return None;
+                }
+                parsed.push(byte as char);
+            }
+            'u' => {
+                let open = chars.next()?;
+                if open != '{' {
+                    return None;
+                }
+                let mut digits = String::new();
+                loop {
+                    let next = chars.next()?;
+                    if next == '}' {
+                        break;
+                    }
+                    if !next.is_ascii_hexdigit() || digits.len() > 6 {
+                        return None;
+                    }
+                    digits.push(next);
+                }
+                let code = u32::from_str_radix(&digits, 16).ok()?;
+                parsed.push(char::from_u32(code)?);
+            }
+            _ => return None,
+        }
+    }
+    if parsed.len() > MAX_LITERAL_BYTES {
+        return None;
+    }
+    Some(parsed)
 }
 
 fn parse_char_literal(text: &str) -> Option<char> {
@@ -673,6 +756,55 @@ mod tests {
             &evaluate_initializer("count.rfind(delim)", &inputs(table)),
             "not one of the exact inputs"
         ));
+    }
+
+    // #3295 review F1: string escapes follow Rust's grammar exactly;
+    // a misparsed escape must never produce a wrong exact value.
+    #[test]
+    fn string_escapes_evaluate_exactly() -> Result<(), String> {
+        // The row values are the SOURCE TEXT of test-call literals
+        // (backslash escapes as written), exactly what scalar_values
+        // extracts from a call like `f("a\nb")`.
+        assert_eq!(
+            exact("input.len()", &[("input", "\"a\\nb\"")]),
+            TypedValue::Index(3)
+        );
+        assert_eq!(
+            exact("input.find(\"x\")", &[("input", "\"\\tx\"")]),
+            TypedValue::OptIndex(Some(1))
+        );
+        assert_eq!(
+            exact("input.len()", &[("input", "\"\\u{41}\"")]),
+            TypedValue::Index(1)
+        );
+        assert_eq!(
+            exact("input.find(\"y\")", &[("input", "\"x\\ny\"")]),
+            TypedValue::OptIndex(Some(2))
+        );
+        // An unknown escape is not a string literal at all: the input
+        // fails to parse and the chain fails closed instead of
+        // guessing a value.
+        assert!(matches_unsupported(
+            &evaluate_initializer("input.len()", &inputs(&[("input", "\"a\\qb\"")])),
+            "not a supported operation chain"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn map_or_default_arm_keeps_its_provenance_step() -> Result<(), String> {
+        match evaluate_initializer(
+            "input.rfind(delim).map_or(7, |idx| idx)",
+            &inputs(&[("input", "\"ab\""), ("delim", "'x'")]),
+        ) {
+            EvalOutcome::Exact { value, provenance } => {
+                assert_eq!(value, TypedValue::Index(7));
+                assert_eq!(provenance.len(), 2, "rfind + the default arm");
+                assert_eq!(provenance[1].operation, "map_or");
+            }
+            other => return Err(format!("expected exact, got {other:?}")),
+        }
+        Ok(())
     }
 
     #[test]

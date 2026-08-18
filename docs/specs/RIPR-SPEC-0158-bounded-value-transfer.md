@@ -58,9 +58,10 @@ exercised boundary from a missing one.
 - The classifier wiring test
   (`activation_evidence_resolves_computed_local_boundary_operands`) and
   the end-to-end diff-analysis test.
-- Golden blast radius measured: only the equality-boundary fixture
-  flips (the intended behavior change); `cargo xtask goldens check`
-  and `cargo xtask dogfood` green otherwise.
+- Golden blast radius measured: the equality-boundary fixture flips
+  (the intended behavior change) and `observation_unverified_call_deletion`
+  gains the additive boolean observed-value fact; `cargo xtask goldens
+  check` and `cargo xtask dogfood` green otherwise.
 
 ## Required guards
 
@@ -72,6 +73,11 @@ exercised boundary from a missing one.
   exact input value establishes activation/infection evidence only.
 - Chain depth and literal size are bounded and the limit is disclosed
   (`Unsupported`), never silently truncated.
+- Exact operand comparison uses the classifier's existing literal
+  normalization (`comparable_value`): underscores are ignored and
+  string quotes stripped, so a computed `"a_b"` compares equal to a
+  literal `"ab"`. The normalization is pre-existing and applies
+  identically to parameter operands.
 
 ## Acceptance Examples
 
