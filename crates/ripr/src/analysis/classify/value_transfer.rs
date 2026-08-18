@@ -422,13 +422,9 @@ fn eval_slicing(text: &str, inputs: &ExactInputs, steps: &mut Vec<EvalStep>) -> 
             _ => return Some(Err(unsupported("slice end is not an exact index"))),
         }
     };
-    if !receiver.is_char_boundary(start) || !receiver.is_char_boundary(end) {
-        return Some(Err(EvalOutcome::InvalidBoundary {
-            reason: format!(
-                "slice [{start}..{end}] is not a valid UTF-8 boundary of \"{receiver}\""
-            ),
-        }));
-    }
+    // Range relations first: `is_char_boundary` is false for any
+    // index beyond `len`, so the boundary check alone would name the
+    // wrong cause for an out-of-range or inverted slice.
     if start > end {
         return Some(Err(EvalOutcome::InvalidBoundary {
             reason: format!("slice [{start}..{end}] is inverted"),
@@ -439,6 +435,13 @@ fn eval_slicing(text: &str, inputs: &ExactInputs, steps: &mut Vec<EvalStep>) -> 
             reason: format!(
                 "slice end {end} is out of range for \"{receiver}\" (len {})",
                 receiver.len()
+            ),
+        }));
+    }
+    if !receiver.is_char_boundary(start) || !receiver.is_char_boundary(end) {
+        return Some(Err(EvalOutcome::InvalidBoundary {
+            reason: format!(
+                "slice [{start}..{end}] is not a valid UTF-8 boundary of \"{receiver}\""
             ),
         }));
     }
@@ -525,7 +528,9 @@ fn parse_str_literal(text: &str) -> Option<String> {
                     if next == '}' {
                         break;
                     }
-                    if !next.is_ascii_hexdigit() || digits.len() > 6 {
+                    // Rust's unicode escape accepts at most six hex
+                    // digits; reject the seventh instead of parsing it.
+                    if !next.is_ascii_hexdigit() || digits.len() >= 6 {
                         return None;
                     }
                     digits.push(next);

@@ -178,7 +178,7 @@ fn observed_discriminator_values(
                 })
             });
         if let (Some(left_value), Some(right_value)) = (&left_exact, &right_exact)
-            && comparable_value(&left_value.value) == comparable_value(&right_value.value)
+            && left_value.value == right_value.value
         {
             facts.push(ValueFact {
                 line: row.first().map(|cell| cell.line).unwrap_or_default(),
@@ -296,6 +296,12 @@ fn exact_operand_from_evaluation(
         .map(|(parameter, literal)| format!("{parameter} = {literal}"))
         .collect::<Vec<_>>()
         .join(", ");
+    if provenance.is_empty() {
+        return ExactOperand {
+            value: value.render(),
+            provenance: format!("{operand} = {} (exact literal)", value.render()),
+        };
+    }
     ExactOperand {
         value: value.render(),
         provenance: format!(
@@ -333,14 +339,11 @@ fn live_local_initializer(
         // A trailing comment (`let x = …; // note`) survives on the
         // raw line: cut the raw statement at the masked line's first
         // semicolon, which string masking keeps honest.
+        // Masking preserves byte offsets, so the masked semicolon's
+        // byte index cuts the raw line directly.
         let raw_statement = masked_line
             .find(';')
-            .map(|cut| {
-                &raw_line[..raw_line
-                    .char_indices()
-                    .nth(cut)
-                    .map_or(raw_line.len(), |(byte, _)| byte + 1)]
-            })
+            .map(|cut| &raw_line[..=cut])
             .unwrap_or(raw_line);
         if trimmed.starts_with("let ")
             && trimmed.contains(';')
@@ -455,11 +458,14 @@ fn missing_boundary_discriminator(
             (lefts, rights)
         })
         .collect();
+    // Exact operands compare by their canonical renderings directly:
+    // the digit-oriented literal normalization (underscore/quote
+    // stripping) would equate distinct strings (#3295 review).
     let exact_equality_observed = exact_rows.iter().any(|(lefts, rights)| {
         lefts.iter().any(|left_value| {
-            rights.iter().any(|right_value| {
-                comparable_value(&left_value.value) == comparable_value(&right_value.value)
-            })
+            rights
+                .iter()
+                .any(|right_value| right_value.value == left_value.value)
         })
     });
 

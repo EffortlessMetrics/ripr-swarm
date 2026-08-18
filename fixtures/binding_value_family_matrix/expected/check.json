@@ -24,20 +24,21 @@
         "expression": "if body == \"fix\" {"
        },
       "ripr": {
-        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach body_of: strip_prefix_boundary_is_observed"},
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach body_of: strip_prefix_boundary_is_observed, strip_prefix_fallback_is_observed"},
         "infect": {"state":"yes","confidence":"medium","summary":"Detected related test input at the changed boundary"},
         "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: \"matched\""},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach body_of: strip_prefix_boundary_is_observed", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: \"matched\"", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: \"matched\" (line 4)", "related test tests/matrix.rs:4 strip_prefix_boundary_is_observed uses strong exact value oracle: assert_eq!(body_of(\"pre-fix\"), \"matched\");", "observed assertion argument value \"matched\" at line 5", "observed function argument value body == \"fix\" at line 5", "observed function argument value label = \"pre-fix\" at line 5"],
+      "evidence_path": ["reach yes: Related tests appear to reach body_of: strip_prefix_boundary_is_observed, strip_prefix_fallback_is_observed", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: \"matched\"", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: \"matched\" (line 4)", "related test tests/matrix.rs:4 strip_prefix_boundary_is_observed uses strong exact value oracle: assert_eq!(body_of(\"pre-fix\"), \"matched\");", "related test tests/matrix.rs:9 strip_prefix_fallback_is_observed uses strong exact value oracle: assert_eq!(body_of(\"raw\"), \"none\");", "observed assertion argument value \"matched\" at line 5", "observed function argument value body == \"fix\" at line 5", "observed function argument value label = \"pre-fix\" at line 5", "observed assertion argument value \"none\" at line 10", "observed function argument value label = \"raw\" at line 10"],
       "flow_sinks": [
         {"kind":"return_value","text":"\"matched\"","line":4}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: \"matched\"", "Detected related test input at the changed boundary", "Related tests appear to reach body_of: strip_prefix_boundary_is_observed", "Strong oracle found: exact value or pattern assertion", "binding_predicate_relation: changed binding `body` initializer `label.strip_prefix(\"pre-\").map_or(\"off\", |s| s)` -> `label.strip_prefix(\"pre-\").map_or(\"none\", |s| s)` flows into predicate operand at line 3", "binding_predicate_value_unresolved: operand value of `body` unresolved at earliest initializer operation `label.strip_prefix(`", "binding_predicate_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: \"matched\"", "Detected related test input at the changed boundary", "Related tests appear to reach body_of: strip_prefix_boundary_is_observed, strip_prefix_fallback_is_observed", "Strong oracle found: exact value or pattern assertion", "binding_predicate_relation: changed binding `body` initializer `label.strip_prefix(\"pre-\").map_or(\"off\", |s| s)` -> `label.strip_prefix(\"pre-\").map_or(\"none\", |s| s)` flows into predicate operand at line 3", "binding_predicate_value_unresolved: operand value of `body` unresolved at earliest initializer operation `label.strip_prefix(`", "binding_predicate_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"],
       "missing": [],
       "assertion_texts": {
-        "5": "assert_eq!(body_of(\"pre-fix\"), \"matched\");"
+        "5": "assert_eq!(body_of(\"pre-fix\"), \"matched\");",
+        "10": "assert_eq!(body_of(\"raw\"), \"none\");"
       },
       "activation": {
         "observed_values": [
@@ -54,6 +55,16 @@
           {
             "line": 5,
             "value": "label = \"pre-fix\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 10,
+            "value": "\"none\"",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 10,
+            "value": "label = \"raw\"",
             "context": "function_argument"
           }
         ],
@@ -75,11 +86,21 @@
           "line": 5,
           "value": "label = \"pre-fix\"",
           "context": "function_argument"
+        },
+        {
+          "line": 10,
+          "value": "\"none\"",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 10,
+          "value": "label = \"raw\"",
+          "context": "function_argument"
         }
       ],
       "missing_discriminators": [
       ],
-      "related_tests_total": 1,
+      "related_tests_total": 2,
       "related_tests": [
         {
           "name": "strip_prefix_boundary_is_observed",
@@ -88,6 +109,16 @@
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(body_of(\"pre-fix\"), \"matched\");",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "strip_prefix_fallback_is_observed",
+          "file": "tests/matrix.rs",
+          "line": 9,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(body_of(\"raw\"), \"none\");",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high"
         }
@@ -120,28 +151,28 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"high","summary":"Only relational oracle found; it may not discriminate the changed value exactly"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach gate: starts_with_boundary_is_observed", "infection yes: Detected related test input at the changed boundary", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly", "related test tests/matrix.rs:9 starts_with_boundary_is_observed uses weak relational check oracle: assert!(gate(\"pre-fix\", true));", "observed function argument value label = \"pre-fix\" at line 10", "observed function argument value open == want at line 10", "observed function argument value want = true at line 10"],
+      "evidence_path": ["reach yes: Related tests appear to reach gate: starts_with_boundary_is_observed", "infection yes: Detected related test input at the changed boundary", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly", "related test tests/matrix.rs:14 starts_with_boundary_is_observed uses weak relational check oracle: assert!(gate(\"pre-fix\", true));", "observed function argument value label = \"pre-fix\" at line 15", "observed function argument value open == want at line 15", "observed function argument value want = true at line 15"],
       "flow_sinks": [
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Detected related test input at the changed boundary", "Only relational oracle found; it may not discriminate the changed value exactly", "Propagation is not statically obvious from syntax-first analysis", "Related tests appear to reach gate: starts_with_boundary_is_observed", "binding_predicate_relation: changed binding `open` initializer `label.starts_with(\"prefix-\")` -> `label.starts_with(\"pre-\")` flows into predicate operand at line 12", "binding_predicate_value_unresolved: operand value of `open` unresolved at earliest initializer operation `label.starts_with(`", "binding_predicate_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"],
       "missing": ["No clear propagation path from changed behavior to an observable sink", "No strong discriminator was detected"],
       "assertion_texts": {
-        "10": "assert!(gate(\"pre-fix\", true));"
+        "15": "assert!(gate(\"pre-fix\", true));"
       },
       "activation": {
         "observed_values": [
           {
-            "line": 10,
+            "line": 15,
             "value": "label = \"pre-fix\"",
             "context": "function_argument"
           },
           {
-            "line": 10,
+            "line": 15,
             "value": "open == want",
             "context": "function_argument"
           },
           {
-            "line": 10,
+            "line": 15,
             "value": "want = true",
             "context": "function_argument"
           }
@@ -151,17 +182,17 @@
       },
       "observed_values": [
         {
-          "line": 10,
+          "line": 15,
           "value": "label = \"pre-fix\"",
           "context": "function_argument"
         },
         {
-          "line": 10,
+          "line": 15,
           "value": "open == want",
           "context": "function_argument"
         },
         {
-          "line": 10,
+          "line": 15,
           "value": "want = true",
           "context": "function_argument"
         }
@@ -173,7 +204,7 @@
         {
           "name": "starts_with_boundary_is_observed",
           "file": "tests/matrix.rs",
-          "line": 9,
+          "line": 14,
           "oracle_strength": "weak",
           "oracle_kind": "relational_check",
           "oracle": "assert!(gate(\"pre-fix\", true));",
@@ -209,28 +240,28 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"high","summary":"Only relational oracle found; it may not discriminate the changed value exactly"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach within: len_boundary_is_observed", "infection yes: Detected related test input at the changed boundary", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly", "related test tests/matrix.rs:14 len_boundary_is_observed uses weak relational check oracle: assert!(within(\"zz\", \"abc\"));", "observed function argument value input = \"zz\" at line 15", "observed function argument value other = \"abc\" at line 15", "observed function argument value size == 3 at line 15"],
+      "evidence_path": ["reach yes: Related tests appear to reach within: len_boundary_is_observed", "infection yes: Detected related test input at the changed boundary", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly", "related test tests/matrix.rs:19 len_boundary_is_observed uses weak relational check oracle: assert!(within(\"zz\", \"abc\"));", "observed function argument value input = \"zz\" at line 20", "observed function argument value other = \"abc\" at line 20", "observed function argument value size == 3 at line 20"],
       "flow_sinks": [
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Detected related test input at the changed boundary", "Only relational oracle found; it may not discriminate the changed value exactly", "Propagation is not statically obvious from syntax-first analysis", "Related tests appear to reach within: len_boundary_is_observed", "binding_predicate_relation: changed binding `size` initializer `input.len()` -> `other.len()` flows into predicate operand at line 17", "binding_predicate_value_unresolved: operand value of `size` unresolved at earliest initializer operation `other.len(`", "binding_predicate_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"],
       "missing": ["No clear propagation path from changed behavior to an observable sink", "No strong discriminator was detected"],
       "assertion_texts": {
-        "15": "assert!(within(\"zz\", \"abc\"));"
+        "20": "assert!(within(\"zz\", \"abc\"));"
       },
       "activation": {
         "observed_values": [
           {
-            "line": 15,
+            "line": 20,
             "value": "input = \"zz\"",
             "context": "function_argument"
           },
           {
-            "line": 15,
+            "line": 20,
             "value": "other = \"abc\"",
             "context": "function_argument"
           },
           {
-            "line": 15,
+            "line": 20,
             "value": "size == 3",
             "context": "function_argument"
           }
@@ -240,17 +271,17 @@
       },
       "observed_values": [
         {
-          "line": 15,
+          "line": 20,
           "value": "input = \"zz\"",
           "context": "function_argument"
         },
         {
-          "line": 15,
+          "line": 20,
           "value": "other = \"abc\"",
           "context": "function_argument"
         },
         {
-          "line": 15,
+          "line": 20,
           "value": "size == 3",
           "context": "function_argument"
         }
@@ -262,7 +293,7 @@
         {
           "name": "len_boundary_is_observed",
           "file": "tests/matrix.rs",
-          "line": 14,
+          "line": 19,
           "oracle_strength": "weak",
           "oracle_kind": "relational_check",
           "oracle": "assert!(within(\"zz\", \"abc\"));",
@@ -298,23 +329,23 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"high","summary":"Only relational oracle found; it may not discriminate the changed value exactly"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach bump: checked_add_boundary_is_observed", "infection yes: Detected related test input at the changed boundary", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly", "related test tests/matrix.rs:19 checked_add_boundary_is_observed uses weak relational check oracle: assert!(bump(3));", "observed function argument value base = 3 at line 20", "observed function argument value next == 4 at line 20"],
+      "evidence_path": ["reach yes: Related tests appear to reach bump: checked_add_boundary_is_observed", "infection yes: Detected related test input at the changed boundary", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly", "related test tests/matrix.rs:24 checked_add_boundary_is_observed uses weak relational check oracle: assert!(bump(3));", "observed function argument value base = 3 at line 25", "observed function argument value next == 4 at line 25"],
       "flow_sinks": [
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Detected related test input at the changed boundary", "Only relational oracle found; it may not discriminate the changed value exactly", "Propagation is not statically obvious from syntax-first analysis", "Related tests appear to reach bump: checked_add_boundary_is_observed", "binding_predicate_relation: changed binding `next` initializer `base.checked_add(1).map_or(0, |v| v)` -> `base.checked_add(1).map_or(4, |v| v)` flows into predicate operand at line 22", "binding_predicate_value_unresolved: operand value of `next` unresolved at earliest initializer operation `base.checked_add(`", "binding_predicate_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"],
       "missing": ["No clear propagation path from changed behavior to an observable sink", "No strong discriminator was detected"],
       "assertion_texts": {
-        "20": "assert!(bump(3));"
+        "25": "assert!(bump(3));"
       },
       "activation": {
         "observed_values": [
           {
-            "line": 20,
+            "line": 25,
             "value": "base = 3",
             "context": "function_argument"
           },
           {
-            "line": 20,
+            "line": 25,
             "value": "next == 4",
             "context": "function_argument"
           }
@@ -324,12 +355,12 @@
       },
       "observed_values": [
         {
-          "line": 20,
+          "line": 25,
           "value": "base = 3",
           "context": "function_argument"
         },
         {
-          "line": 20,
+          "line": 25,
           "value": "next == 4",
           "context": "function_argument"
         }
@@ -341,7 +372,7 @@
         {
           "name": "checked_add_boundary_is_observed",
           "file": "tests/matrix.rs",
-          "line": 19,
+          "line": 24,
           "oracle_strength": "weak",
           "oracle_kind": "relational_check",
           "oracle": "assert!(bump(3));",

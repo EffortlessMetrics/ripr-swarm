@@ -3,7 +3,7 @@ pub fn body_of(label: &str) -> &str {
     if body == "fix" {
         "matched"
     } else {
-        "other"
+        body
     }
 }
 

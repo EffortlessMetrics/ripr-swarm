@@ -59,3 +59,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending
+
+Reason:
+RIPR-SPEC-0158: exact operands compare canonical renderings directly; the literal-case provenance renders explicitly
+
+Command:
+`cargo xtask goldens bless binding_predicate_equality_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -6,6 +6,11 @@ fn strip_prefix_boundary_is_observed() {
 }
 
 #[test]
+fn strip_prefix_fallback_is_observed() {
+    assert_eq!(body_of("raw"), "none");
+}
+
+#[test]
 fn starts_with_boundary_is_observed() {
     assert!(gate("pre-fix", true));
 }
