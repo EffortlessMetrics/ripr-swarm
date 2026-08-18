@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending
+
+Reason:
+RIPR-SPEC-0158: the additive per-value provenance field now surfaces the evaluation chains and call sources the line-keyed assertion_texts map dropped (deferred #3295 follow-up)
+
+Command:
+`cargo xtask goldens bless assertion_form_parity_assert_msg --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

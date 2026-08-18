@@ -635,6 +635,18 @@ The evidence-first fields are additive in schema `0.2`:
   share the same line number within one finding, only one text is retained.
   This is a low-probability edge case; a future schema could use `"file:line"`
   composite keys.
+- Per-value objects in `observed_values` carry an **optional `provenance`**
+  field (additive, no `schema_version` bump, #3295 follow-up). It carries
+  the fact's retained source text **whenever it differs from the shared
+  assertion source for its line** — the exact texts the line-keyed
+  `assertion_texts` map drops. That includes call-source text for plain
+  `function_argument` facts and, for facts computed by the bounded
+  value-transfer evaluator (`#3295`) or the helper-transfer chain
+  (`#3296`), the full evaluation chain with bound inputs and chain depth
+  (e.g.
+  `assert_eq!(…); | body = "fix" via strip_prefix -> map_or over label = "pre-fix" (chain depth 2)`).
+  Facts whose text **is** the plain assertion source stay deduped and omit
+  the field, so `assertion_texts` remains the recovery path for them.
 - `flow_sinks`, `observed_values`, and `missing_discriminators` promote the
   nested activation evidence for consumers that want direct finding-level
   access.

@@ -54,7 +54,8 @@
           {
             "line": 5,
             "value": "end == start",
-            "context": "function_argument"
+            "context": "function_argument",
+            "provenance": "assert_eq!(split_after(\"a.b\", '.'), \"a\"); | end = 1 via rfind -> map_or over delim = '.', input = \"a.b\" (chain depth 2); start = 1 via len_utf8 over delim = '.', input = \"a.b\" (chain depth 1)"
           },
           {
             "line": 5,
@@ -74,7 +75,8 @@
           {
             "line": 10,
             "value": "end == start",
-            "context": "function_argument"
+            "context": "function_argument",
+            "provenance": "assert_eq!(split_after(\"ab\", 'x'), \"a\"); | end = 1 via rfind -> map_or over delim = 'x', input = \"ab\" (chain depth 2); start = 1 via len_utf8 over delim = 'x', input = \"ab\" (chain depth 1)"
           },
           {
             "line": 10,
@@ -99,7 +101,8 @@
         {
           "line": 5,
           "value": "end == start",
-          "context": "function_argument"
+          "context": "function_argument",
+          "provenance": "assert_eq!(split_after(\"a.b\", '.'), \"a\"); | end = 1 via rfind -> map_or over delim = '.', input = \"a.b\" (chain depth 2); start = 1 via len_utf8 over delim = '.', input = \"a.b\" (chain depth 1)"
         },
         {
           "line": 5,
@@ -119,7 +122,8 @@
         {
           "line": 10,
           "value": "end == start",
-          "context": "function_argument"
+          "context": "function_argument",
+          "provenance": "assert_eq!(split_after(\"ab\", 'x'), \"a\"); | end = 1 via rfind -> map_or over delim = 'x', input = \"ab\" (chain depth 2); start = 1 via len_utf8 over delim = 'x', input = \"ab\" (chain depth 1)"
         },
         {
           "line": 10,
