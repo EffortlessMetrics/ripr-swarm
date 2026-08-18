@@ -4527,7 +4527,8 @@ mod tests {
                         "config_identity": null,
                         "base_revision": "main",
                         "input_identity": input_identity,
-                        "snapshot_identity": null
+                        "snapshot_identity": null,
+                        "git_candidate_subject": null
                     },
                     "counts": {
                         "changed_file_count": 0,

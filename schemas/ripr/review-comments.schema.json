@@ -406,7 +406,8 @@
         "config_identity",
         "base_revision",
         "input_identity",
-        "snapshot_identity"
+        "snapshot_identity",
+        "git_candidate_subject"
       ],
       "properties": {
         "repository_identity": { "type": ["string", "null"] },
@@ -414,7 +415,23 @@
         "config_identity": { "type": ["string", "null"] },
         "base_revision": { "type": ["string", "null"] },
         "input_identity": { "type": ["string", "null"] },
-        "snapshot_identity": { "type": ["string", "null"] }
+        "snapshot_identity": { "type": ["string", "null"] },
+        "git_candidate_subject": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["subject_kind", "base_tree", "candidate_tree", "diff_identity"],
+              "properties": {
+                "subject_kind": { "type": "string" },
+                "base_tree": { "type": "string" },
+                "candidate_tree": { "type": "string" },
+                "diff_identity": { "type": "string" }
+              }
+            }
+          ]
+        }
       }
     },
     "analysis_outcome_counts": {

@@ -609,6 +609,7 @@ mod tests {
             git_timeout: None,
             git_candidate: Some(s.clone()),
             production_like_targets: Default::default(),
+            resolved_subject_identity: None,
         };
         let error =
             crate::analysis::run_worktree_analysis_with_oracle_policy_and_generated_file_patterns(
@@ -666,6 +667,7 @@ mod tests {
             git_timeout: None,
             git_candidate: Some(subject),
             production_like_targets: Default::default(),
+            resolved_subject_identity: None,
         };
         let result = crate::analysis::run_analysis_with_oracle_policy(
             &options,
