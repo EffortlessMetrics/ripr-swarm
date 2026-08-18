@@ -67,11 +67,28 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_generated_file_patterns(
                 super::git_candidate_execution::subject_identity(&resolved)
             );
         }
+        let subject_identity_outcome = crate::analysis_outcome::GitCandidateSubjectIdentity {
+            subject_kind: "tree_to_tree".to_string(),
+            base_tree: resolved.base_tree.clone(),
+            candidate_tree: resolved.candidate_tree.clone(),
+            diff_identity: format!(
+                "sha256:{}",
+                Sha256::digest(resolved.diff.as_bytes()).iter().fold(
+                    String::new(),
+                    |mut acc, byte| {
+                        use std::fmt::Write as _;
+                        let _ = write!(acc, "{byte:02x}");
+                        acc
+                    }
+                )
+            ),
+        };
         let candidate_options = AnalysisOptions {
             root: resolved.root.clone(),
             base: None,
             diff_file: None,
             git_candidate: None,
+            resolved_subject_identity: Some(subject_identity_outcome),
             ..options.clone()
         };
         cancellation::checkpoint()?;
@@ -532,6 +549,7 @@ fn run_pipeline_for_diff_text(
         AnalysisIdentity {
             base_revision: options.base.clone(),
             input_identity: Some(input_identity),
+            git_candidate_subject: options.resolved_subject_identity.clone(),
             ..AnalysisIdentity::default()
         },
         AnalysisOutcomeCounts {
@@ -1088,6 +1106,7 @@ mod tests {
                 base: None,
                 diff_file: None,
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -1139,6 +1158,7 @@ mod tests {
                 base: None,
                 diff_file: None,
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -1269,6 +1289,7 @@ mod tests {
                 base: None,
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -1356,6 +1377,7 @@ mod tests {
                 base: None,
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -1385,6 +1407,7 @@ mod tests {
                 base: None,
                 diff_file: None,
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -1409,6 +1432,7 @@ mod tests {
             base: None,
             diff_file: None,
             mode: AnalysisMode::Draft,
+            resolved_subject_identity: None,
             include_unchanged_tests: false,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
@@ -1476,6 +1500,7 @@ mod tests {
                 base: None,
                 diff_file: None,
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -1516,6 +1541,7 @@ mod tests {
                 base: None,
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -1619,6 +1645,7 @@ mod tests {
                 base: None,
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: Some(facts),
@@ -1700,6 +1727,7 @@ index 0000000..1111111 100644
                 base: None,
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -1755,6 +1783,7 @@ index 0000000..1111111 100644
                 base: None,
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -1811,6 +1840,7 @@ index 0000000..1111111 100644
                 base: None,
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -1870,6 +1900,7 @@ index 0000000..1111111 100644
                 base: None,
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -1926,6 +1957,7 @@ index 0000000..1111111 100644
                 base: None,
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -1996,6 +2028,7 @@ index 0000000..1111111 100644
                 base: None,
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -2039,6 +2072,7 @@ index 0000000..1111111 100644
                 base: None,
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -2084,6 +2118,7 @@ index 0000000..1111111 100644
                 base: None,
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -2127,6 +2162,7 @@ index 0000000..1111111 100644
                 base: None,
                 diff_file: None,
                 mode: AnalysisMode::Deep,
+                resolved_subject_identity: None,
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,

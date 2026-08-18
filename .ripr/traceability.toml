@@ -8387,3 +8387,23 @@ metrics = [
   "unit_test_pass_rate",
   "golden_fixture_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0160"
+name = "Immutable Git candidate CLI and output surface"
+spec = "docs/specs/RIPR-SPEC-0160-immutable-candidate-surface.md"
+tests = [
+  "crates/ripr/src/cli/commands/check.rs::candidate_tree_tests",
+  "crates/ripr/src/analysis/git_candidate_execution.rs::tests",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/cli/commands/check.rs",
+  "crates/ripr/src/analysis/pipeline.rs",
+  "crates/ripr/src/analysis_outcome.rs",
+]
+outputs = []
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]

@@ -626,6 +626,15 @@ The evidence-first fields are additive in schema `0.2`:
 - `evidence_path` is an ordered, human-readable summary of reachability,
   infection, propagation, observation, discrimination, local flow, related test
   oracles, observed values, and missing discriminator evidence.
+- `identity.git_candidate_subject` (additive, no `schema_version` bump,
+  #3278) appears in the `analysis_outcome.outcome.identity` object
+  exactly when the run analyzed an immutable Git candidate
+  (`--candidate-tree`). It binds directly to the resolved producer
+  state — `subject_kind` (`tree_to_tree`), `base_tree` and
+  `candidate_tree` object IDs, and `diff_identity` (SHA-256 of the
+  derived base→candidate unified diff). A consumer compares the emitted
+  `candidate_tree` with its supplied OID without parsing prose;
+  ordinary runs leave the field `null`.
 - `assertion_texts` (added in schema `0.2`) is a finding-level JSON object
   mapping line-number strings to assertion source text.  Per-value objects in
   `observed_values` no longer carry a redundant `text` field; downstream

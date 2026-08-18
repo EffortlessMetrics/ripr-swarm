@@ -169,6 +169,7 @@ pub(crate) fn targeted_typescript_findings_for_scope(
         base: None,
         diff_file: None,
         mode: AnalysisMode::Draft,
+        resolved_subject_identity: None,
         include_unchanged_tests: config.analysis().include_unchanged_tests().unwrap_or(true),
         resolve_tsconfig_paths: config.typescript().resolve_tsconfig_paths(),
         perl_facts_path: None,
@@ -427,6 +428,12 @@ pub struct AnalysisOptions {
     /// no current analysis path executes it, and `run_check` rejects
     /// subject inputs before analysis begins.
     pub git_candidate: Option<crate::domain::GitCandidateSubject>,
+    /// Internal (#3278 R3): the R2 producer's resolved subject identity,
+    /// set only on the materialized-candidate options clone so the
+    /// outcome identity block projects machine-visible base/candidate/
+    /// diff identities. Never caller-settable.
+    pub(crate) resolved_subject_identity:
+        Option<crate::analysis_outcome::GitCandidateSubjectIdentity>,
 }
 
 /// Advisory record for one compiled preview-language adapter whose files are
@@ -848,6 +855,7 @@ index 0000000..1111111 100644
             perl_facts_path: None,
             git_timeout: None,
             git_candidate: None,
+            resolved_subject_identity: None,
             production_like_targets: Default::default(),
         })
         .unwrap();
@@ -869,6 +877,7 @@ index 0000000..1111111 100644
             perl_facts_path: None,
             git_timeout: None,
             git_candidate: None,
+            resolved_subject_identity: None,
             production_like_targets: Default::default(),
         })
         .unwrap();
@@ -921,6 +930,7 @@ fn premium_customer_gets_discount() {
             perl_facts_path: None,
             git_timeout: None,
             git_candidate: None,
+            resolved_subject_identity: None,
             production_like_targets: Default::default(),
         })?;
 
@@ -1068,6 +1078,7 @@ fn test_with_predicate() {
             perl_facts_path: None,
             git_timeout: None,
             git_candidate: None,
+            resolved_subject_identity: None,
             production_like_targets: Default::default(),
         })?;
 
@@ -1135,6 +1146,7 @@ index 0000000..1111111 100644
             perl_facts_path: None,
             git_timeout: None,
             git_candidate: None,
+            resolved_subject_identity: None,
             production_like_targets: Default::default(),
         })?;
 
@@ -1152,6 +1164,7 @@ index 0000000..1111111 100644
             perl_facts_path: None,
             git_timeout: None,
             git_candidate: None,
+            resolved_subject_identity: None,
             production_like_targets: Default::default(),
         })?;
 
@@ -1179,6 +1192,7 @@ mod git_candidate_entry_tests {
                 )
                 .map_err(|error| error.to_string())?,
             )),
+            resolved_subject_identity: None,
             ..default_options_for_entry_test()?
         })
     }
@@ -1194,6 +1208,7 @@ mod git_candidate_entry_tests {
             perl_facts_path: None,
             git_timeout: None,
             git_candidate: None,
+            resolved_subject_identity: None,
             production_like_targets: Default::default(),
         })
     }

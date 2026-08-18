@@ -128,6 +128,8 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // pair. No implicit cache: the user names the artifact path.
     let mut write_artifact: Option<PathBuf> = None;
     let mut git_timeout_explicitly_provided = false;
+    let mut candidate_tree: Option<String> = None;
+    let mut candidate_base: Option<String> = None;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
@@ -146,6 +148,18 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
                 i += 1;
                 input.diff_file = Some(PathBuf::from(expect_value(args, i, "--diff")?));
                 scope_explicitly_provided = true;
+            }
+            // #3237/#3278: immutable Git candidate input. The subject
+            // owns both identities; --diff/--base conflicts are
+            // rejected at binding (app::analysis_subject).
+            "--candidate-tree" => {
+                i += 1;
+                candidate_tree = Some(expect_value(args, i, "--candidate-tree")?.to_string());
+                scope_explicitly_provided = true;
+            }
+            "--candidate-base" => {
+                i += 1;
+                candidate_base = Some(expect_value(args, i, "--candidate-base")?.to_string());
             }
             "--worktree" => {
                 scope_explicitly_provided = true;
@@ -358,6 +372,26 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         )?;
         return Ok(());
     }
+    // #3237/#3278: bind the immutable subject before the analysis
+    // call. Construction runs #3276's typed validation (malformed OIDs,
+    // oversized treeishes) and the binding layer rejects --diff/--base
+    // combinations with named errors, so an invalid subject never
+    // reaches analysis.
+    if let Some(tree) = candidate_tree.as_deref() {
+        let base = match candidate_base.as_deref() {
+            Some(explicit) => crate::domain::GitCandidateBase::Treeish(
+                crate::domain::GitTreeish::new(explicit).map_err(|error| error.to_string())?,
+            ),
+            None => crate::domain::GitCandidateBase::EmptyTree,
+        };
+        let candidate =
+            crate::domain::GitObjectId::parse(tree).map_err(|error| error.to_string())?;
+        input.git_candidate = Some(crate::domain::GitCandidateSubject::new(
+            input.root.clone(),
+            base,
+            candidate,
+        ));
+    }
     // Capture root and diff_file before input is moved into the analysis call.
     // These are needed for the RIPR-SPEC-0112 disclosure check after the analysis.
     let input_root = input.root.clone();
@@ -521,6 +555,140 @@ fn render_check_gap_ledger_badge(
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod candidate_tree_tests {
+    use super::super::super::commands::check;
+
+    fn repo_with_candidate(name: &str) -> Result<(std::path::PathBuf, String, String), String> {
+        let root = std::env::temp_dir().join(format!("ripr-3278-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+        let run = |args: &[&str]| -> Result<String, String> {
+            let out = crate::git::run_git_output_with_deadline(
+                &root,
+                args,
+                Some(std::time::Duration::from_secs(30)),
+            )
+            .map_err(|e| e.to_string())?;
+            if !out.status.success() {
+                return Err(format!(
+                    "git {} failed: {}",
+                    args[0],
+                    String::from_utf8_lossy(&out.stderr)
+                ));
+            }
+            Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+        };
+        run(&["init", "--initial-branch=main"])?;
+        run(&["config", "user.email", "r@e.in"])?;
+        run(&["config", "user.name", "r"])?;
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "pub fn one() -> u8 { 1 }
+",
+        )
+        .map_err(|e| e.to_string())?;
+        run(&["add", "."])?;
+        run(&["commit", "-qm", "base"])?;
+        let base = run(&["rev-parse", "HEAD"])?;
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "pub fn one() -> u8 { 2 }
+",
+        )
+        .map_err(|e| e.to_string())?;
+        run(&["add", "."])?;
+        run(&["commit", "-qm", "candidate"])?;
+        let candidate = run(&["rev-parse", "HEAD"])?;
+        Ok((root, base, candidate))
+    }
+
+    struct Guard(std::path::PathBuf);
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn root_args(root: &std::path::Path, extra: &[&str]) -> Vec<String> {
+        let mut args = vec!["--root".to_string(), root.to_string_lossy().to_string()];
+        args.extend(extra.iter().map(|a| a.to_string()));
+        args
+    }
+
+    // #3278: a valid subject runs end to end and the run completes (the
+    // exact identity projection is pinned at the app layer and in the
+    // reproduction; here the CLI path must not fail).
+    #[test]
+    fn candidate_tree_cli_runs_the_subject() -> Result<(), String> {
+        let (root, base, candidate) = repo_with_candidate("cli-run")?;
+        let _guard = Guard(root.clone());
+        check(&root_args(
+            &root,
+            &["--candidate-tree", &candidate, "--candidate-base", &base],
+        ))?;
+        Ok(())
+    }
+
+    // #3278: the conflicting-input controls fail before analysis.
+    #[test]
+    fn candidate_tree_rejects_conflicting_inputs() -> Result<(), String> {
+        let (root, _base, candidate) = repo_with_candidate("cli-conflict")?;
+        let _guard = Guard(root.clone());
+        let cases: [Vec<&str>; 3] = [
+            vec!["--candidate-tree", &candidate, "--diff", "x.diff"],
+            vec!["--candidate-tree", &candidate, "--base", "main"],
+            vec!["--candidate-tree", "deadbeef"],
+        ];
+        for extra in cases {
+            let error = check(&root_args(&root, &extra)).err().unwrap_or_default();
+            assert!(
+                error.contains("git candidate subject"),
+                "must fail closed naming the subject: {error}"
+            );
+        }
+        Ok(())
+    }
+
+    // #3278: the app layer projects the exact resolved identity —
+    // subject_kind, both trees, and a sha256 diff identity — into the
+    // check JSON the CLI renders.
+    #[test]
+    fn candidate_tree_json_carries_exact_subject_identity() -> Result<(), String> {
+        let (root, base, candidate) = repo_with_candidate("cli-json")?;
+        let _guard = Guard(root.clone());
+        let subject = crate::domain::GitCandidateSubject::new(
+            &root,
+            crate::domain::GitCandidateBase::Treeish(
+                crate::domain::GitTreeish::new(&base).map_err(|e| e.to_string())?,
+            ),
+            crate::domain::GitObjectId::parse(&candidate).map_err(|e| e.to_string())?,
+        );
+        let input = crate::app::CheckInput {
+            root: root.clone(),
+            base: None,
+            diff_file: None,
+            git_candidate: Some(subject),
+            ..crate::app::CheckInput::default()
+        };
+        let output = crate::app::check_workspace(input)?;
+        let outcome = output
+            .analysis_outcome
+            .as_ref()
+            .ok_or("candidate run must carry an analysis outcome")?;
+        let identity = outcome
+            .identity
+            .git_candidate_subject
+            .as_ref()
+            .ok_or("git_candidate_subject missing from identity")?;
+        assert_eq!(identity.subject_kind, "tree_to_tree");
+        assert!(!identity.base_tree.is_empty());
+        assert!(!identity.candidate_tree.is_empty());
+        assert!(identity.diff_identity.starts_with("sha256:"));
+        Ok(())
+    }
+}
 
 #[cfg(test)]
 mod tests {
