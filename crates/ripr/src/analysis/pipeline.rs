@@ -53,6 +53,36 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_generated_file_patterns(
     languages: &[LanguageId],
     generated_file_patterns: &[String],
 ) -> Result<AnalysisResult, String> {
+    // Immutable Git candidate subject (#3237 / #3277): resolve the
+    // bound identity through object plumbing, derive the exact
+    // base→candidate diff, and analyze the materialized candidate root.
+    // The worktree, index, `--diff` file, and `base` are never consulted
+    // (the binding layer already rejects those combinations).
+    if let Some(subject) = options.git_candidate.as_ref() {
+        let resolved = super::git_candidate_execution::resolve(subject, options.git_timeout)
+            .map_err(|error| error.to_string())?;
+        if crate::is_verbose() {
+            eprintln!(
+                "ripr: immutable git candidate resolved: {}",
+                super::git_candidate_execution::subject_identity(&resolved)
+            );
+        }
+        let candidate_options = AnalysisOptions {
+            root: resolved.root.clone(),
+            base: None,
+            diff_file: None,
+            git_candidate: None,
+            ..options.clone()
+        };
+        cancellation::checkpoint()?;
+        return run_pipeline_for_diff_text(
+            &candidate_options,
+            oracle_policy,
+            languages,
+            generated_file_patterns,
+            &resolved.diff,
+        );
+    }
     let diff_text = diff::load_diff(
         &options.root,
         options.base.as_deref(),
@@ -77,6 +107,18 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_generated_file_patter
 ) -> Result<AnalysisResult, String> {
     if options.diff_file.is_some() {
         return Err("worktree diff mode cannot be combined with --diff".to_string());
+    }
+    // #3237/#3277: the immutable subject's contract is exact-tree diff
+    // semantics. Worktree mode analyzes the live tree by definition, so
+    // a subject input must fail closed here rather than silently fall
+    // back to worktree bytes (review blocker: the bound subject was
+    // previously ignored in this mode).
+    if options.git_candidate.is_some() {
+        return Err(crate::domain::GitCandidateSubjectError::ExecutionFailed {
+            detail: "git candidate subjects are diff-semantics inputs; worktree mode cannot execute them"
+                .to_string(),
+        }
+        .to_string());
     }
     let diff_text =
         diff::load_worktree_diff(&options.root, options.base.as_deref(), options.git_timeout)?;
@@ -575,6 +617,18 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy(
     oracle_policy: &OraclePolicy,
     languages: &[LanguageId],
 ) -> Result<AnalysisResult, String> {
+    // #3237/#3277: repo mode seeds probes from the live tree; a subject
+    // input is a diff-semantics contract and fails closed here.
+    if let Some(subject) = options.git_candidate.as_ref() {
+        return Err(crate::domain::GitCandidateSubjectError::ExecutionFailed {
+            detail: format!(
+                "git candidate subjects are diff-semantics inputs; repo mode cannot execute subject `{}`",
+                subject.candidate_tree.as_str()
+            ),
+        }
+        .to_string());
+    }
+
     run_repo_pipeline_with_oracle_policy_and_generated_file_patterns(
         options,
         oracle_policy,

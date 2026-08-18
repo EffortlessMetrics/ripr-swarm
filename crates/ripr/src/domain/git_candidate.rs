@@ -222,6 +222,11 @@ pub enum GitCandidateSubjectError {
     /// producer yet (#3277). Execution fails closed instead of falling
     /// back to worktree analysis.
     ExecutionUnsupported,
+    /// The object producer (#3277) resolved the subject's identity but a
+    /// Git plumbing or materialization step failed. The detail names the
+    /// exact step and identity; execution never falls back to worktree
+    /// analysis or an empty result.
+    ExecutionFailed { detail: String },
 }
 
 impl GitCandidateSubjectError {
@@ -233,6 +238,7 @@ impl GitCandidateSubjectError {
             Self::RepositoryRootInvalid { .. } => "repository_root_invalid",
             Self::DiffFileConflict { .. } => "diff_file_conflict",
             Self::BaseConflict { .. } => "base_conflict",
+            Self::ExecutionFailed { .. } => "execution_failed",
             Self::ExecutionUnsupported => "execution_unsupported",
         }
     }
@@ -268,6 +274,10 @@ impl fmt::Display for GitCandidateSubjectError {
                 "git candidate subject conflicts with the top-level base \
                  {base:?}: the subject names its own base; unset the \
                  top-level base"
+            ),
+            Self::ExecutionFailed { detail } => write!(
+                formatter,
+                "git candidate subject: object producer failed: {detail}"
             ),
             Self::ExecutionUnsupported => write!(
                 formatter,

@@ -6,7 +6,7 @@
 //! `CheckInput` boundary: the subject is mutually exclusive with the
 //! external-diff and top-level-base inputs, its repository root must name
 //! an existing directory, and — until the Git object producer lands
-//! (#3277) — a subject input fails closed here instead of ever reaching
+//! (#3277) — a subject input binds and defers execution to the object producer instead of ever reaching
 //! worktree diff analysis.
 
 use crate::app::CheckInput;
@@ -38,7 +38,9 @@ pub(crate) fn validate_input_subject(input: &CheckInput) -> Result<(), GitCandid
             root: subject.repository_root.to_string_lossy().to_string(),
         });
     }
-    Err(GitCandidateSubjectError::ExecutionUnsupported)
+    // #3277: binding is complete and the object producer now executes
+    // the subject in the diff pipeline; no rejection here.
+    Ok(())
 }
 
 #[cfg(test)]
@@ -118,12 +120,16 @@ mod tests {
     }
 
     #[test]
-    fn structurally_valid_subject_fails_closed_as_execution_unsupported() -> Result<(), String> {
+    fn structurally_valid_subject_binds_and_defers_to_the_object_producer() -> Result<(), String> {
+        // #3277: binding validates; execution moved to the object
+        // producer in the diff pipeline. A structurally valid subject
+        // passes validation here — the producer owns the identity
+        // checks (and their named failures) at run time.
         let current_dir =
             std::env::current_dir().map_err(|error| format!("current_dir failed: {error}"))?;
         assert_eq!(
             validate_input_subject(&input_with(Some(subject(current_dir)?))),
-            Err(GitCandidateSubjectError::ExecutionUnsupported)
+            Ok(())
         );
         Ok(())
     }
