@@ -8,6 +8,7 @@ mod owner_shape;
 mod reach;
 mod related_tests;
 mod reveal;
+mod scanner_transfer;
 mod text;
 mod transitive_reach;
 mod value_transfer;

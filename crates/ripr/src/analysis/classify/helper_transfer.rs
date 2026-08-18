@@ -296,6 +296,12 @@ pub(crate) fn helper_return_value(
     helper: &FunctionSummary,
     inputs: &super::value_transfer::ExactInputs,
 ) -> Option<super::value_transfer::TypedValue> {
+    // #3296: the scanner authority owns the literal-driven state-loop
+    // shape first; the let-chain evaluator below keeps every other body
+    // (and stays the authority for non-scanner tails).
+    if let Some(value) = super::scanner_transfer::scanner_return_value(helper, inputs) {
+        return Some(value);
+    }
     let masked = crate::analysis::language::mask_rust_comments_and_strings(&helper.body);
     let raw_lines: Vec<&str> = helper.body.lines().collect();
     let masked_lines: Vec<&str> = masked.lines().collect();
