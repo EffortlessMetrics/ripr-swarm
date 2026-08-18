@@ -140,7 +140,27 @@ pub(in crate::analysis) fn find_related_tests<'a>(
             .any(|token| token.len() > 2 && test_name.contains(&token.to_ascii_lowercase()));
         let same_file_or_named = file_path_matches || owner_name_in_test || token_in_test_name;
 
-        if !calls_owner && !assertions_reference_owner && !same_file_or_named {
+        // #3296 helper transfer: a test that calls a resolved hop's
+        // caller directly reaches the owner through the bounded chain
+        // (same authority the activation rows consume). The #2971
+        // uniqueness and workspace-completeness rules live inside the
+        // resolver; a chain that stops simply does not relate here.
+        let helper_chain_reaches = !calls_owner
+            && !assertions_reference_owner
+            && !same_file_or_named
+            && super::test_reaches_through_chain(
+                &test.calls,
+                owner_name,
+                index,
+                workspace_complete,
+            )
+            .is_some();
+
+        if !calls_owner
+            && !assertions_reference_owner
+            && !same_file_or_named
+            && !helper_chain_reaches
+        {
             continue;
         }
 
@@ -150,6 +170,10 @@ pub(in crate::analysis) fn find_related_tests<'a>(
         let reason = if calls_owner {
             // The test directly calls or mentions the changed owner function.
             RelationReason::DirectOwnerCall
+        } else if helper_chain_reaches {
+            // The test calls a function that reaches the owner through
+            // the bounded helper-transfer chain (#3296).
+            RelationReason::HelperOwnerCall
         } else if assertions_reference_owner {
             // Struct/field probe whose tokens appear in assertion observed_tokens.
             RelationReason::AssertionTargetAffinity

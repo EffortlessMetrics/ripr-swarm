@@ -18,7 +18,19 @@ pub fn classify_probe(probe: &Probe, index: &RustIndex, workspace_complete: bool
     // be reframed. The exposure class is never changed by this flag.
     let owner_assertion_shaped =
         owner_fn.is_some_and(|owner| is_assertion_shaped_owner(owner, index));
-    let context = ProbeContext::new(probe, owner_fn, related_tests, owner_assertion_shaped);
+    let helper_chain = owner_fn.and_then(|owner| {
+        let chain = super::classify::resolve_chain(&owner.name, index, workspace_complete, &[]);
+        (!chain.hops.is_empty()).then_some(chain)
+    });
+    let context = ProbeContext::new(
+        probe,
+        owner_fn,
+        related_tests,
+        owner_assertion_shaped,
+        index,
+        workspace_complete,
+    )
+    .with_helper_chain(helper_chain);
     let reveal_expression = parser_expression_for_probe(
         index,
         &probe.location.file,
