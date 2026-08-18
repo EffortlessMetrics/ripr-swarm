@@ -961,6 +961,66 @@ mod tests {
         );
     }
 
+    // #3317 follow-up (RIPR-SPEC-0162): the why-hint must not assert the
+    // propagation the class marks unknown, and unknown-class limitation
+    // prose renders under the Analyzer limit label — while a real
+    // missing discriminator keeps its own label.
+    #[test]
+    fn propagation_unknown_wording_is_honest() -> Result<(), String> {
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::PropagationUnknown;
+        finding.ripr.propagate = stage(
+            StageState::Unknown,
+            Confidence::Low,
+            "Propagation is not statically obvious from syntax-first analysis",
+        );
+        finding.missing = vec![
+            "No clear propagation path from changed behavior to an observable sink".to_string(),
+        ];
+        finding.activation.missing_discriminators = Vec::new();
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+        );
+        if !digest.contains(
+            "Why propagation_unknown: the path from the changed behavior to an observable sink is not statically clear",
+        ) {
+            return Err(format!("honest why-hint missing:
+{digest}"));
+        }
+        if digest.contains("the change propagates but") {
+            return Err(format!(
+                "the hint must not assert the propagation the class marks unknown:
+{digest}"
+            ));
+        }
+        if !digest.contains(
+            "  Analyzer limit: No clear propagation path from changed behavior to an observable sink",
+        ) {
+            return Err(format!("analyzer-limit label missing:
+{digest}"));
+        }
+        // A real missing discriminator keeps the discriminator label even
+        // on the unknown classes.
+        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "end == start".to_string(),
+            reason: "no related test call uses end equal to start".to_string(),
+            flow_sink: None,
+        }];
+        finding.missing = vec!["No strong discriminator was detected".to_string()];
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+        );
+        if !digest.contains("  Missing discriminator: No strong discriminator was detected") {
+            return Err(format!(
+                "a finding with a real missing discriminator keeps its label:
+{digest}"
+            ));
+        }
+        Ok(())
+    }
+
     #[test]
     fn digest_keeps_missing_discriminator_label_for_non_exposed_classes() {
         for class in [

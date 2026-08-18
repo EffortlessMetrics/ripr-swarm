@@ -8426,3 +8426,20 @@ metrics = [
   "unit_test_pass_rate",
   "golden_fixture_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0162"
+name = "Honest propagation_unknown human wording"
+spec = "docs/specs/RIPR-SPEC-0162-propagation-unknown-wording.md"
+tests = [
+  "crates/ripr/src/output/human.rs::tests::propagation_unknown_wording_is_honest",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/output/human/sections.rs",
+]
+outputs = []
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]

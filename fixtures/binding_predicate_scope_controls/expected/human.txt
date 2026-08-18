@@ -14,7 +14,7 @@ Start here:
   Static exposure: static_unknown (note, confidence 0.20)
   Why static_unknown: the analysis could not determine a static exposure state
   Changed behavior: let end = input.trim_end().len();
-  Missing discriminator: No relevant oracle was detected
+  Analyzer limit: No relevant oracle was detected
   Next step: Escalate to real mutation testing or deep static analysis for this probe.
   Evidence:
     - reach no: No static test path found for the changed owner
