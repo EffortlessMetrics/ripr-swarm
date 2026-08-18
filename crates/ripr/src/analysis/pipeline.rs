@@ -53,6 +53,30 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_generated_file_patterns(
     languages: &[LanguageId],
     generated_file_patterns: &[String],
 ) -> Result<AnalysisResult, String> {
+    // Immutable Git candidate subject (#3237 / #3277): resolve the
+    // bound identity through object plumbing, derive the exact
+    // base→candidate diff, and analyze the materialized candidate root.
+    // The worktree, index, `--diff` file, and `base` are never consulted
+    // (the binding layer already rejects those combinations).
+    if let Some(subject) = options.git_candidate.as_ref() {
+        let resolved =
+            super::git_candidate_execution::resolve(subject).map_err(|error| error.to_string())?;
+        let candidate_options = AnalysisOptions {
+            root: resolved.root.clone(),
+            base: None,
+            diff_file: None,
+            git_candidate: None,
+            ..options.clone()
+        };
+        cancellation::checkpoint()?;
+        return run_pipeline_for_diff_text(
+            &candidate_options,
+            oracle_policy,
+            languages,
+            generated_file_patterns,
+            &resolved.diff,
+        );
+    }
     let diff_text = diff::load_diff(
         &options.root,
         options.base.as_deref(),
