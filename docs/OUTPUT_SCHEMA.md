@@ -632,9 +632,10 @@ The evidence-first fields are additive in schema `0.2`:
   consumers recover the assertion source via
   `finding.assertion_texts[line.to_string()]`.  **Known limitation**: the map
   is keyed by line number only, so if two assertions in different source files
-  share the same line number within one finding, only one text is retained.
-  This is a low-probability edge case; a future schema could use `"file:line"`
-  composite keys.
+  share the same line number within one finding, only one text is retained
+  **in this map** — differing texts are retained per-value via the optional
+  `provenance` field described below. This is a low-probability edge case; a
+  future schema could use `"file:line"` composite keys.
 - Per-value objects in `observed_values` carry an **optional `provenance`**
   field (additive, no `schema_version` bump, #3295 follow-up). It carries
   the fact's retained source text **whenever it differs from the shared
