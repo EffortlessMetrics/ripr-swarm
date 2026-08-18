@@ -50,7 +50,8 @@
           {
             "line": 5,
             "value": "body == \"fix\"",
-            "context": "function_argument"
+            "context": "function_argument",
+            "provenance": "assert_eq!(body_of(\"pre-fix\"), \"matched\"); | body = \"fix\" via strip_prefix -> map_or over label = \"pre-fix\" (chain depth 2); literal operand \"fix\" = \"fix\""
           },
           {
             "line": 5,
@@ -80,7 +81,8 @@
         {
           "line": 5,
           "value": "body == \"fix\"",
-          "context": "function_argument"
+          "context": "function_argument",
+          "provenance": "assert_eq!(body_of(\"pre-fix\"), \"matched\"); | body = \"fix\" via strip_prefix -> map_or over label = \"pre-fix\" (chain depth 2); literal operand \"fix\" = \"fix\""
         },
         {
           "line": 5,
@@ -169,7 +171,8 @@
           {
             "line": 15,
             "value": "open == want",
-            "context": "function_argument"
+            "context": "function_argument",
+            "provenance": "assert!(gate(\"pre-fix\", true)); | open = true via starts_with over label = \"pre-fix\", want = true (chain depth 1); exact input want = true"
           },
           {
             "line": 15,
@@ -189,7 +192,8 @@
         {
           "line": 15,
           "value": "open == want",
-          "context": "function_argument"
+          "context": "function_argument",
+          "provenance": "assert!(gate(\"pre-fix\", true)); | open = true via starts_with over label = \"pre-fix\", want = true (chain depth 1); exact input want = true"
         },
         {
           "line": 15,
@@ -263,7 +267,8 @@
           {
             "line": 20,
             "value": "size == 3",
-            "context": "function_argument"
+            "context": "function_argument",
+            "provenance": "assert!(within(\"zz\", \"abc\")); | size = 3 via len over input = \"zz\", other = \"abc\" (chain depth 1); literal operand 3 = 3"
           }
         ],
         "missing_discriminators": [
@@ -283,7 +288,8 @@
         {
           "line": 20,
           "value": "size == 3",
-          "context": "function_argument"
+          "context": "function_argument",
+          "provenance": "assert!(within(\"zz\", \"abc\")); | size = 3 via len over input = \"zz\", other = \"abc\" (chain depth 1); literal operand 3 = 3"
         }
       ],
       "missing_discriminators": [
@@ -347,7 +353,8 @@
           {
             "line": 25,
             "value": "next == 4",
-            "context": "function_argument"
+            "context": "function_argument",
+            "provenance": "assert!(bump(3)); | next = 4 via checked_add -> map_or over base = 3 (chain depth 2); literal operand 4 = 4"
           }
         ],
         "missing_discriminators": [
@@ -362,7 +369,8 @@
         {
           "line": 25,
           "value": "next == 4",
-          "context": "function_argument"
+          "context": "function_argument",
+          "provenance": "assert!(bump(3)); | next = 4 via checked_add -> map_or over base = 3 (chain depth 2); literal operand 4 = 4"
         }
       ],
       "missing_discriminators": [

@@ -487,11 +487,13 @@ fn finding_json_with_config_and_counts(
     out.push_str(",\n");
     activation_json(out, finding, indent + 1);
     out.push_str(",\n");
+    let shared_text = shared_assertion_text_map(&finding.activation.observed_values);
     value_facts_array_json(
         out,
         "observed_values",
         &finding.activation.observed_values,
         indent + 1,
+        &shared_text,
     );
     out.push_str(",\n");
     missing_discriminators_array_json(
@@ -826,11 +828,13 @@ fn strongest_related_test(finding: &Finding) -> Option<&RelatedTest> {
 fn activation_json(out: &mut String, finding: &Finding, indent: usize) {
     let sp = "  ".repeat(indent);
     out.push_str(&format!("{sp}\"activation\": {{\n"));
+    let shared_text = shared_assertion_text_map(&finding.activation.observed_values);
     value_facts_array_json(
         out,
         "observed_values",
         &finding.activation.observed_values,
         indent + 1,
+        &shared_text,
     );
     out.push_str(",\n");
     missing_discriminators_array_json(
@@ -856,10 +860,16 @@ fn flow_sinks_json(out: &mut String, finding: &Finding, indent: usize) {
     out.push_str(&format!("{}]", "  ".repeat(indent)));
 }
 
-fn value_facts_array_json(out: &mut String, name: &str, facts: &[ValueFact], indent: usize) {
+fn value_facts_array_json(
+    out: &mut String,
+    name: &str,
+    facts: &[ValueFact],
+    indent: usize,
+    shared_text: &BTreeMap<usize, String>,
+) {
     out.push_str(&format!("{}\"{name}\": [\n", "  ".repeat(indent)));
     for (idx, value) in facts.iter().enumerate() {
-        value_fact_json(out, value, indent + 1);
+        value_fact_json(out, value, indent + 1, shared_text);
         if idx + 1 != facts.len() {
             out.push(',');
         }
@@ -885,12 +895,34 @@ fn missing_discriminators_array_json(
     out.push_str(&format!("{}]", "  ".repeat(indent)));
 }
 
-fn value_fact_json(out: &mut String, fact: &ValueFact, indent: usize) {
+fn value_fact_json(
+    out: &mut String,
+    fact: &ValueFact,
+    indent: usize,
+    shared_text: &BTreeMap<usize, String>,
+) {
     let sp = "  ".repeat(indent);
     out.push_str(&format!("{sp}{{\n"));
     number_field(out, indent + 1, "line", fact.line, true);
     field(out, indent + 1, "value", &fact.value, true);
-    field(out, indent + 1, "context", fact.context.as_str(), false);
+    // Additive (#3295 deferred follow-up): when this fact's retained
+    // text is NOT the shared assertion source for its line, it carries
+    // computed-value provenance (operation chain, source inputs, chain
+    // depth) that the line-keyed `assertion_texts` map cannot express.
+    // Surface it per-value; plain assertion-source facts stay deduped.
+    let provenance_differs = shared_text
+        .get(&fact.line)
+        .is_none_or(|shared| *shared != fact.text);
+    field(
+        out,
+        indent + 1,
+        "context",
+        fact.context.as_str(),
+        provenance_differs,
+    );
+    if provenance_differs {
+        field(out, indent + 1, "provenance", &fact.text, false);
+    }
     out.push_str(&format!("{sp}}}"));
 }
 
@@ -906,13 +938,10 @@ fn value_fact_json(out: &mut String, fact: &ValueFact, indent: usize) {
 /// finding, only one text is retained.  This is a low-probability edge case; a
 /// future schema could use `"file:line"` composite keys.
 fn assertion_texts_json(out: &mut String, facts: &[ValueFact], indent: usize) {
+    let map = shared_assertion_text_map(facts);
     let sp = "  ".repeat(indent);
     let isp = "  ".repeat(indent + 1);
     // BTreeMap gives deterministic (ascending) key order.
-    let mut map: BTreeMap<usize, &str> = BTreeMap::new();
-    for fact in facts {
-        map.entry(fact.line).or_insert(fact.text.as_str());
-    }
     out.push_str(&format!("{sp}\"assertion_texts\": {{\n"));
     let entries: Vec<_> = map.into_iter().collect();
     for (idx, (line, text)) in entries.iter().enumerate() {
@@ -923,6 +952,18 @@ fn assertion_texts_json(out: &mut String, facts: &[ValueFact], indent: usize) {
         ));
     }
     out.push_str(&format!("{sp}}}"));
+}
+
+/// The line -> first-retained-text map behind `assertion_texts`. The
+/// per-value `provenance` field uses the same map to decide whether a
+/// fact's text is the shared assertion source or a distinct
+/// provenance-bearing string.
+fn shared_assertion_text_map(facts: &[ValueFact]) -> BTreeMap<usize, String> {
+    let mut map: BTreeMap<usize, String> = BTreeMap::new();
+    for fact in facts {
+        map.entry(fact.line).or_insert_with(|| fact.text.clone());
+    }
+    map
 }
 
 fn missing_discriminator_json(out: &mut String, fact: &MissingDiscriminatorFact, indent: usize) {
@@ -1286,4 +1327,90 @@ pub(super) fn related_test_json(out: &mut String, test: &RelatedTest, indent: us
         );
     }
     out.push_str(&format!("{sp}}}"));
+}
+
+#[cfg(test)]
+mod provenance_tests {
+    use super::*;
+    use crate::domain::{ValueContext, ValueFact};
+
+    fn fact(line: usize, value: &str, text: &str) -> ValueFact {
+        ValueFact {
+            line,
+            text: text.to_string(),
+            value: value.to_string(),
+            context: ValueContext::FunctionArgument,
+        }
+    }
+
+    fn render(facts: &[ValueFact]) -> Vec<serde_json::Value> {
+        let shared = shared_assertion_text_map(facts);
+        let mut out = String::new();
+        value_facts_array_json(&mut out, "observed_values", facts, 0, &shared);
+        serde_json::from_str::<serde_json::Value>(&format!("{{{out}}}"))
+            .map_err(|error| error.to_string())
+            .and_then(|value| {
+                value
+                    .get("observed_values")
+                    .cloned()
+                    .ok_or_else(|| "missing observed_values key".to_string())
+            })
+            .and_then(|value| serde_json::from_value(value).map_err(|error| error.to_string()))
+            .unwrap_or_default()
+    }
+
+    // The deferred #3295 follow-up: a computed fact whose text differs
+    // from the line's shared assertion source carries per-value
+    // provenance; a plain assertion-source fact stays deduped.
+    #[test]
+    fn provenance_appears_only_for_non_shared_fact_text() -> Result<(), String> {
+        let facts = [
+            fact(
+                5,
+                "\"matched\"",
+                "assert_eq!(body_of(\"pre-fix\"), \"matched\");",
+            ),
+            fact(
+                5,
+                "body == \"fix\"",
+                "assert_eq!(body_of(\"pre-fix\"), \"matched\"); | body = \"fix\" via strip_prefix -> map_or",
+            ),
+        ];
+        let parsed = render(&facts);
+        if parsed.len() != 2 {
+            let shared = shared_assertion_text_map(&facts);
+            let mut raw = String::new();
+            value_facts_array_json(&mut raw, "observed_values", &facts, 0, &shared);
+            return Err(format!("expected 2 facts, got {}: {raw}", parsed.len()));
+        }
+        assert!(
+            parsed[0].get("provenance").is_none(),
+            "shared-source fact must stay deduped: {parsed:?}"
+        );
+        let provenance = parsed[1]
+            .get("provenance")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| format!("computed fact must carry provenance: {parsed:?}"))?;
+        assert!(
+            provenance.contains("via strip_prefix"),
+            "provenance must carry the evaluation chain: {provenance}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn all_shared_facts_omit_provenance() -> Result<(), String> {
+        let facts = [fact(9, "50", "assert_eq!(score(50), 50);")];
+        let parsed = render(&facts);
+        assert_eq!(
+            parsed.len(),
+            1,
+            "one fact in, one fact out (and the render must parse)"
+        );
+        assert!(
+            parsed[0].get("provenance").is_none(),
+            "deduped fact must not carry provenance: {parsed:?}"
+        );
+        Ok(())
+    }
 }

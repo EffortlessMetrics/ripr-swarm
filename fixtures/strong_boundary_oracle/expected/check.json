@@ -71,7 +71,8 @@
           {
             "line": 10,
             "value": "amount == discount_threshold",
-            "context": "function_argument"
+            "context": "function_argument",
+            "provenance": "assert_eq!(discounted_total(100, 100), 90); | exact input amount = 100; exact input discount_threshold = 100"
           },
           {
             "line": 10,
@@ -126,7 +127,8 @@
         {
           "line": 10,
           "value": "amount == discount_threshold",
-          "context": "function_argument"
+          "context": "function_argument",
+          "provenance": "assert_eq!(discounted_total(100, 100), 90); | exact input amount = 100; exact input discount_threshold = 100"
         },
         {
           "line": 10,
