@@ -1,6 +1,6 @@
 ripr static RIPR exposure analysis
 mode: fast
-root: fixtures/assertion_shaped_control_production_caller/input
+root: fixtures/helper_chain_one_hop/input
 
 Summary: 1 probe(s), 0 exposed, 0 weak, 0 unrevealed, 0 no path, 1 unknown
 
@@ -10,21 +10,21 @@ Analysis outcome: complete_with_findings (analysis complete).
 Start here:
   State: static_limited
   Safe next action: inspect the named static limitation before treating this as repair-ready.
-  File: fixtures/assertion_shaped_control_production_caller/input/src/lib.rs:8
+  File: fixtures/helper_chain_one_hop/input/src/lib.rs:2
   Static exposure: propagation_unknown (note, confidence 0.66)
   Why propagation_unknown: the change propagates but the downstream effect is unknown statically
-  Changed behavior: let clamped = if value >= 0 { value } else { 0 };
-  Missing discriminator: let clamped = if value == 0
-  Related test: tests/scores.rs:4 validate_score_accepts_in_range_values
+  Changed behavior: c == ' '
+  Missing discriminator: c == ' '
+  Related test: tests/classify.rs:4 leading_space_classifies_other
   Next step: Escalate to real mutation testing or deep static analysis for this probe.
   Evidence:
-    - reach yes: Related tests appear to reach check_score_invariants: validate_score_accepts_in_range_values
+    - reach yes: Related tests appear to reach is_word_start: leading_space_classifies_other, letter_classifies_word
     - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
-    - 5 more evidence line(s) hidden
+    - 9 more evidence line(s) hidden
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/assertion_shaped_control_production_caller/input --diff fixtures/assertion_shaped_control_production_caller/diff.patch --mode fast probe:src_lib.rs:predicate:a39d316d
-  ripr context --root fixtures/assertion_shaped_control_production_caller/input --diff fixtures/assertion_shaped_control_production_caller/diff.patch --mode fast --at probe:src_lib.rs:predicate:a39d316d
+  ripr explain --root fixtures/helper_chain_one_hop/input --diff fixtures/helper_chain_one_hop/diff.patch --mode fast probe:src_lib.rs:predicate:ac178c7f
+  ripr context --root fixtures/helper_chain_one_hop/input --diff fixtures/helper_chain_one_hop/diff.patch --mode fast --at probe:src_lib.rs:predicate:ac178c7f
 
 More:
   Full evidence: rerun with --format human-full

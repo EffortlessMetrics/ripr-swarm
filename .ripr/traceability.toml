@@ -8364,3 +8364,26 @@ metrics = [
   "unit_test_pass_rate",
   "golden_fixture_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0159"
+name = "Bounded helper-call transfer"
+spec = "docs/specs/RIPR-SPEC-0159-bounded-helper-transfer.md"
+tests = [
+  "crates/ripr/src/analysis/classify/helper_transfer.rs::tests",
+]
+fixtures = [
+  "fixtures/helper_chain_one_hop",
+  "fixtures/helper_chain_multi_hop",
+  "fixtures/helper_chain_controls",
+]
+code = [
+  "crates/ripr/src/analysis/classify/helper_transfer.rs",
+  "crates/ripr/src/analysis/classify/related_tests.rs",
+  "crates/ripr/src/analysis/classify/activation.rs",
+]
+outputs = []
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]

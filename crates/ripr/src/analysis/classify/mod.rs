@@ -2,6 +2,7 @@ mod activation;
 mod context;
 mod decision;
 mod flow;
+mod helper_transfer;
 mod infection;
 mod owner_shape;
 mod reach;
@@ -18,6 +19,7 @@ pub(in crate::analysis) use decision::{
     recommended_next_step, stop_reasons,
 };
 pub(in crate::analysis) use flow::{local_flow_sinks, propagation_evidence};
+pub(in crate::analysis) use helper_transfer::resolve_chain;
 pub(in crate::analysis) use infection::infection_evidence;
 pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
 pub(in crate::analysis) use reach::reach_evidence;

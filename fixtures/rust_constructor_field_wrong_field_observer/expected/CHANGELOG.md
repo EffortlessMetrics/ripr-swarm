@@ -127,3 +127,16 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending
+
+Reason:
+RIPR-SPEC-0159: the lower_ast->lower_body->lower_statement chain is genuinely resolvable under the typed transfer, so the probe relates its test and promotes past no_static_path; the 0114 lexical walk stays fail-closed
+
+Command:
+`cargo xtask goldens bless rust_constructor_field_wrong_field_observer --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

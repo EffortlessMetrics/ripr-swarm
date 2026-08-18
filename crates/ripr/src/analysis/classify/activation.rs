@@ -7,6 +7,9 @@ pub(in crate::analysis) fn activation_evidence(
     owner_fn: Option<&FunctionSummary>,
     related_tests: &[&TestSummary],
     flow_sinks: &[FlowSinkFact],
+    helper_chain: Option<&super::helper_transfer::HelperChain>,
+    index: &crate::analysis::rust_index::RustIndex,
+    workspace_complete: bool,
 ) -> ActivationEvidence {
     let mut observed_values = related_tests
         .iter()
@@ -16,11 +19,22 @@ pub(in crate::analysis) fn activation_evidence(
         probe,
         owner_fn,
         related_tests,
+        helper_chain,
+        index,
+        workspace_complete,
     ));
     sort_value_facts(&mut observed_values);
 
-    let mut missing_discriminators =
-        missing_discriminator_facts(probe, owner_fn, related_tests, flow_sinks, &observed_values);
+    let mut missing_discriminators = missing_discriminator_facts(
+        probe,
+        owner_fn,
+        related_tests,
+        flow_sinks,
+        &observed_values,
+        helper_chain,
+        index,
+        workspace_complete,
+    );
     missing_discriminators.sort_by(|left, right| {
         left.value
             .cmp(&right.value)
@@ -143,6 +157,9 @@ fn observed_discriminator_values(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
     related_tests: &[&TestSummary],
+    helper_chain: Option<&super::helper_transfer::HelperChain>,
+    index: &crate::analysis::rust_index::RustIndex,
+    workspace_complete: bool,
 ) -> Vec<ValueFact> {
     let Some((left, right)) = comparison_operands(&probe.expression) else {
         return Vec::new();
@@ -151,13 +168,27 @@ fn observed_discriminator_values(
         return Vec::new();
     };
     let parameters = function_parameters(owner);
-    let call_values = owner_call_parameter_values(related_tests, &owner.name, &parameters);
+    let call_values = call_values_for_owner(owner, &parameters, related_tests, helper_chain);
     let left_parameter = boundary_operand_parameter(owner, &parameters, &left);
     let right_parameter = boundary_operand_parameter(owner, &parameters, &right);
     // #3295: the operands resolve once per probe (initializer or
     // parameter); only the input row changes per call.
-    let left_resolved = resolve_boundary_operand(owner, &left, probe.location.line, &parameters);
-    let right_resolved = resolve_boundary_operand(owner, &right, probe.location.line, &parameters);
+    let left_resolved = resolve_boundary_operand(
+        owner,
+        &left,
+        probe.location.line,
+        &parameters,
+        index,
+        workspace_complete,
+    );
+    let right_resolved = resolve_boundary_operand(
+        owner,
+        &right,
+        probe.location.line,
+        &parameters,
+        index,
+        workspace_complete,
+    );
     let mut facts = Vec::new();
 
     for row in call_values {
@@ -233,6 +264,13 @@ fn observed_discriminator_values(
 enum ResolvedOperand {
     Parameter(String),
     Local(String, String),
+    /// A direct call to a unique helper (`is_word_start(input, 0)`)
+    /// whose return value is evaluated over the row's bound inputs
+    /// (#3296 boolean-predicate helper family).
+    Call {
+        callee: crate::analysis::facts::FunctionSummary,
+        arguments: Vec<String>,
+    },
 }
 
 fn resolve_boundary_operand(
@@ -240,14 +278,46 @@ fn resolve_boundary_operand(
     operand: &str,
     predicate_line: usize,
     parameters: &[String],
+    index: &crate::analysis::rust_index::RustIndex,
+    workspace_complete: bool,
 ) -> Option<ResolvedOperand> {
     if let Some(initializer) = live_local_initializer(owner, operand, predicate_line) {
         return Some(ResolvedOperand::Local(operand.to_string(), initializer));
     }
-    parameters
+    if let Some(parameter) = parameters
         .iter()
         .find(|parameter| parameter.as_str() == operand)
-        .map(|parameter| ResolvedOperand::Parameter(parameter.clone()))
+    {
+        return Some(ResolvedOperand::Parameter(parameter.clone()));
+    }
+    // A helper call operand: unique callee, statically splittable
+    // arguments. Everything else stays unresolved (fail closed).
+    let trimmed = operand.trim();
+    let callee_name = trimmed
+        .split('(')
+        .next()
+        .filter(|name| {
+            !name.is_empty()
+                && name
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        })?
+        .to_string();
+    if !trimmed.contains('(') || !trimmed.ends_with(')') {
+        return None;
+    }
+    if !workspace_complete || !super::helper_transfer::callee_is_unique(&callee_name, index) {
+        return None;
+    }
+    let callee = index
+        .functions
+        .iter()
+        .find(|function| function.name == callee_name)?;
+    let arguments = super::helper_transfer::split_call_arguments_text(trimmed, &callee_name)?;
+    Some(ResolvedOperand::Call {
+        callee: callee.clone(),
+        arguments,
+    })
 }
 
 /// Evaluate one resolved operand against one related-test call row.
@@ -275,7 +345,49 @@ fn exact_operand_for_row(
                 provenance: format!("exact input {parameter} = {}", cell.value),
             })
         }
+        ResolvedOperand::Call { callee, arguments } => {
+            // Bind the call-site arguments against the owner's row
+            // (literal or the owner's parameter), then evaluate the
+            // helper's return over the bound inputs. A computed
+            // argument stops the operand (no guessed value).
+            let owner_parameters = function_parameters_of_row(row);
+            let mut bound = super::value_transfer::ExactInputs::new();
+            for (index, argument) in arguments.iter().enumerate() {
+                let parameter = function_parameters(callee)
+                    .get(index)
+                    .cloned()
+                    .unwrap_or_else(|| format!("arg{index}"));
+                let value = if let Some(literal) = super::helper_transfer::strict_literal(argument)
+                {
+                    literal
+                } else if let Some(cell) = owner_parameters
+                    .iter()
+                    .position(|parameter| parameter.as_str() == argument.trim())
+                    .and_then(|position| row.get(position))
+                {
+                    cell.value.clone()
+                } else {
+                    return None;
+                };
+                bound.insert(parameter, value);
+            }
+            let value = super::helper_transfer::helper_return_value(callee, &bound)?;
+            Some(ExactOperand {
+                value: value.render(),
+                provenance: format!(
+                    "{} = {} via helper return of `{}` over bound inputs (1 hop)",
+                    callee.name,
+                    value.render(),
+                    callee.name
+                ),
+            })
+        }
     }
+}
+
+/// The parameter names implied by a row's cells, in binding order.
+fn function_parameters_of_row(row: &[ParameterValue]) -> Vec<String> {
+    row.iter().map(|cell| cell.parameter.clone()).collect()
 }
 
 /// Build the exact operand with its provenance chain: operation
@@ -373,17 +485,31 @@ fn live_local_initializer(
     None
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the shared evidence inputs flow through one authority"
+)]
 fn missing_discriminator_facts(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
     related_tests: &[&TestSummary],
     flow_sinks: &[FlowSinkFact],
     observed_values: &[ValueFact],
+    helper_chain: Option<&super::helper_transfer::HelperChain>,
+    index: &crate::analysis::rust_index::RustIndex,
+    workspace_complete: bool,
 ) -> Vec<MissingDiscriminatorFact> {
     let mut missing = Vec::new();
     if matches!(probe.family, ProbeFamily::Predicate)
-        && let Some(fact) =
-            missing_boundary_discriminator(probe, owner_fn, related_tests, flow_sinks)
+        && let Some(fact) = missing_boundary_discriminator(
+            probe,
+            owner_fn,
+            related_tests,
+            flow_sinks,
+            helper_chain,
+            index,
+            workspace_complete,
+        )
     {
         missing.push(fact);
     }
@@ -415,11 +541,14 @@ fn missing_boundary_discriminator(
     owner_fn: Option<&FunctionSummary>,
     related_tests: &[&TestSummary],
     flow_sinks: &[FlowSinkFact],
+    helper_chain: Option<&super::helper_transfer::HelperChain>,
+    index: &crate::analysis::rust_index::RustIndex,
+    workspace_complete: bool,
 ) -> Option<MissingDiscriminatorFact> {
     let (left, right) = comparison_operands(&probe.expression)?;
     let owner = owner_fn?;
     let parameters = function_parameters(owner);
-    let call_values = owner_call_parameter_values(related_tests, &owner.name, &parameters);
+    let call_values = call_values_for_owner(owner, &parameters, related_tests, helper_chain);
     if call_values.is_empty() {
         return None;
     }
@@ -430,8 +559,22 @@ fn missing_boundary_discriminator(
     // bounded evaluator resolves its value from the row's exact
     // inputs; the boundary is observed when both sides compare equal
     // under any row.
-    let left_resolved = resolve_boundary_operand(owner, &left, probe.location.line, &parameters);
-    let right_resolved = resolve_boundary_operand(owner, &right, probe.location.line, &parameters);
+    let left_resolved = resolve_boundary_operand(
+        owner,
+        &left,
+        probe.location.line,
+        &parameters,
+        index,
+        workspace_complete,
+    );
+    let right_resolved = resolve_boundary_operand(
+        owner,
+        &right,
+        probe.location.line,
+        &parameters,
+        index,
+        workspace_complete,
+    );
     let exact_rows: Vec<(Vec<ExactOperand>, Vec<ExactOperand>)> = call_values
         .iter()
         .map(|row| {
@@ -657,6 +800,117 @@ fn owner_call_parameter_values(
         }
     }
     rows
+}
+
+/// #3296: the owner's exact input rows. Direct test-call rows first
+/// (the pre-existing source); when the owner has none and the bounded
+/// helper chain resolves, the entry function's rows bind down the
+/// chain to the owner's parameters. A chain that stops, or a computed
+/// argument at any hop, yields no rows — the stop edge stays with the
+/// chain the classifier already recorded.
+fn call_values_for_owner(
+    owner: &FunctionSummary,
+    parameters: &[String],
+    related_tests: &[&TestSummary],
+    helper_chain: Option<&super::helper_transfer::HelperChain>,
+) -> Vec<Vec<ParameterValue>> {
+    let parameters = if parameters.is_empty() {
+        function_parameters(owner)
+    } else {
+        parameters.to_vec()
+    };
+    let direct = owner_call_parameter_values(related_tests, &owner.name, &parameters);
+    if !direct.is_empty() {
+        return direct;
+    }
+    let Some(chain) = helper_chain else {
+        return direct;
+    };
+    helper_transferred_rows(&parameters, chain, related_tests)
+}
+
+/// Bind the entry function's direct test rows down the resolved chain
+/// to the owner's parameters. Each hop's call-site arguments bind
+/// positionally: a literal binds directly, the caller's own parameter
+/// resolves through that caller's row, and anything else stops the row.
+fn helper_transferred_rows(
+    owner_parameters: &[String],
+    chain: &super::helper_transfer::HelperChain,
+    related_tests: &[&TestSummary],
+) -> Vec<Vec<ParameterValue>> {
+    let Some(entry) = chain.hops.last() else {
+        return Vec::new();
+    };
+    let entry_parameters = function_parameters(&entry.caller);
+    let mut rows =
+        owner_call_parameter_values(related_tests, &entry.caller.name, &entry_parameters);
+    if rows.is_empty() {
+        return Vec::new();
+    }
+    // hops[0] is the owner's direct caller; hops[len-1] is the entry a
+    // test can call. Bind from the entry downward.
+    for step in (0..chain.hops.len()).rev() {
+        let hop = &chain.hops[step];
+        let target_parameters: Vec<String> = if step == 0 {
+            owner_parameters.to_vec()
+        } else {
+            function_parameters(&chain.hops[step - 1].caller)
+        };
+        // The hop's call site lives in the hop's own caller: its
+        // arguments reference THAT function's parameters (#3296 review
+        // M3 — the previous off-by-one silently dropped every row when
+        // parameter names differed between hops).
+        let caller_parameters = function_parameters(&hop.caller);
+        let mut bound_rows = Vec::new();
+        for row in &rows {
+            let mut bound = Vec::new();
+            for (index, argument) in hop.arguments.iter().enumerate() {
+                let Some(parameter) = target_parameters.get(index) else {
+                    return Vec::new();
+                };
+                let Some(value) = bind_helper_argument(argument, &caller_parameters, row) else {
+                    return Vec::new();
+                };
+                bound.push(ParameterValue {
+                    parameter: parameter.clone(),
+                    value,
+                    line: row.first().map(|cell| cell.line).unwrap_or_default(),
+                    text: row
+                        .first()
+                        .map(|cell| cell.text.clone())
+                        .unwrap_or_default(),
+                });
+            }
+            bound_rows.push(bound);
+        }
+        rows = bound_rows;
+    }
+    rows
+}
+
+/// One bound argument: a literal, or the caller's own parameter
+/// resolved through the caller's row. A computed argument stops the
+/// transfer for that chain (#3296: named edge, no guessed value).
+fn bind_helper_argument(
+    argument: &str,
+    caller_parameters: &[String],
+    row: &[ParameterValue],
+) -> Option<String> {
+    // #3296 review B2: only a strict whole-token literal binds; the
+    // substring scanner must never fabricate a value from an
+    // identifier like `a2`.
+    if let Some(literal) = super::helper_transfer::strict_literal(argument) {
+        return Some(literal);
+    }
+    let trimmed = argument.trim();
+    caller_parameters
+        .iter()
+        .find(|parameter| parameter.as_str() == trimmed)
+        .and_then(|parameter| {
+            row.iter()
+                .find(|cell| cell.parameter == *parameter)
+                .map(|cell| cell.value.clone())
+        })
 }
 
 fn parameter_value(row: &[ParameterValue], parameter: &str) -> Option<ParameterValue> {
@@ -1073,7 +1327,15 @@ mod tests {
         let test = test_with_call("score_uses_boundary", "score(100, 100);");
         let probe = probe(ProbeFamily::Predicate, "amount >= threshold");
 
-        let activation = activation_evidence(&probe, Some(&owner), &[&test], &[]);
+        let activation = activation_evidence(
+            &probe,
+            Some(&owner),
+            &[&test],
+            &[],
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
 
         assert!(has_observed_boundary_equality(&activation));
         assert!(activation.missing_discriminators.is_empty());
@@ -1090,7 +1352,15 @@ mod tests {
         let test = test_with_call("score_uses_boundary", "score(100, 100);");
         let probe = probe(ProbeFamily::Predicate, "amount >= threshold");
 
-        let activation = activation_evidence(&probe, Some(&owner), &[&test], &[]);
+        let activation = activation_evidence(
+            &probe,
+            Some(&owner),
+            &[&test],
+            &[],
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
 
         assert!(has_observed_boundary_equality(&activation));
         assert!(activation.missing_discriminators.is_empty());
@@ -1128,7 +1398,15 @@ mod tests {
         let mut probe = probe(ProbeFamily::Predicate, "input == \"y\"");
         probe.location = SourceLocation::new("src/lib.rs", 3, 1);
 
-        let activation = activation_evidence(&probe, Some(&owner), &[&test], &[]);
+        let activation = activation_evidence(
+            &probe,
+            Some(&owner),
+            &[&test],
+            &[],
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
 
         // strip_prefix("x") over "xy" yields exactly "y": the boundary
         // is observed through the shadowing local, not the raw "xy".
@@ -1198,7 +1476,15 @@ mod tests {
             required_oracles: Vec::new(),
         };
 
-        let activation = activation_evidence(&probe, Some(&owner), &[&test], &[]);
+        let activation = activation_evidence(
+            &probe,
+            Some(&owner),
+            &[&test],
+            &[],
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
 
         assert!(
             has_observed_boundary_equality(&activation),
@@ -1279,7 +1565,15 @@ mod tests {
         let test = test_with_call("score_uses_boundary", "score(Some(100), Some(101), 100);");
         let probe = probe(ProbeFamily::Predicate, "amount >= threshold");
 
-        let activation = activation_evidence(&probe, Some(&owner), &[&test], &[]);
+        let activation = activation_evidence(
+            &probe,
+            Some(&owner),
+            &[&test],
+            &[],
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
 
         assert!(!has_observed_boundary_equality(&activation));
         assert_eq!(activation.missing_discriminators.len(), 1);
@@ -1300,7 +1594,15 @@ mod tests {
         let test = test_with_call("score_uses_boundary", "score(Some(100), 100);");
         let probe = probe(ProbeFamily::Predicate, "amount >= threshold");
 
-        let activation = activation_evidence(&probe, Some(&owner), &[&test], &[]);
+        let activation = activation_evidence(
+            &probe,
+            Some(&owner),
+            &[&test],
+            &[],
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
 
         assert!(!has_observed_boundary_equality(&activation));
         assert_eq!(activation.missing_discriminators.len(), 1);
@@ -1321,7 +1623,15 @@ mod tests {
         let test = test_with_call("score_uses_boundary", "score(Some(100), 100);");
         let probe = probe(ProbeFamily::Predicate, "amount >= threshold");
 
-        let activation = activation_evidence(&probe, Some(&owner), &[&test], &[]);
+        let activation = activation_evidence(
+            &probe,
+            Some(&owner),
+            &[&test],
+            &[],
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
 
         assert!(!has_observed_boundary_equality(&activation));
         assert_eq!(activation.missing_discriminators.len(), 1);
@@ -1342,7 +1652,15 @@ mod tests {
         let test = test_with_call("score_uses_boundary", "score(Some(100), 100);");
         let probe = probe(ProbeFamily::Predicate, "amount >= threshold");
 
-        let activation = activation_evidence(&probe, Some(&owner), &[&test], &[]);
+        let activation = activation_evidence(
+            &probe,
+            Some(&owner),
+            &[&test],
+            &[],
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
 
         assert!(!has_observed_boundary_equality(&activation));
         assert_eq!(activation.missing_discriminators.len(), 1);
@@ -1363,7 +1681,15 @@ mod tests {
         let test = test_with_call("score_uses_boundary", "score(Some(100), 100);");
         let probe = probe(ProbeFamily::Predicate, "amount >= threshold");
 
-        let activation = activation_evidence(&probe, Some(&owner), &[&test], &[]);
+        let activation = activation_evidence(
+            &probe,
+            Some(&owner),
+            &[&test],
+            &[],
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
 
         assert!(!has_observed_boundary_equality(&activation));
         assert_eq!(activation.missing_discriminators.len(), 1);
@@ -1384,7 +1710,15 @@ mod tests {
         let test = test_with_call("score_uses_boundary", "score(100, 100);");
         let probe = probe(ProbeFamily::Predicate, "amount >= threshold");
 
-        let activation = activation_evidence(&probe, Some(&owner), &[&test], &[]);
+        let activation = activation_evidence(
+            &probe,
+            Some(&owner),
+            &[&test],
+            &[],
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
 
         assert!(!has_observed_boundary_equality(&activation));
         assert_eq!(activation.missing_discriminators.len(), 1);
@@ -1411,7 +1745,15 @@ mod tests {
             owner: None,
         }];
 
-        let activation = activation_evidence(&probe, Some(&owner), &[&test], &flow_sinks);
+        let activation = activation_evidence(
+            &probe,
+            Some(&owner),
+            &[&test],
+            &flow_sinks,
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
 
         assert_eq!(activation.missing_discriminators.len(), 1);
         assert_eq!(activation.missing_discriminators[0].value, "amount == 10");
@@ -1447,7 +1789,15 @@ mod tests {
             owner: None,
         }];
 
-        let activation = activation_evidence(&probe, None, &[&test], &flow_sinks);
+        let activation = activation_evidence(
+            &probe,
+            None,
+            &[&test],
+            &flow_sinks,
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
 
         assert!(activation.missing_discriminators.is_empty());
     }
@@ -1466,7 +1816,15 @@ mod tests {
             owner: None,
         }];
 
-        let activation = activation_evidence(&probe, Some(&owner), &[&test], &flow_sinks);
+        let activation = activation_evidence(
+            &probe,
+            Some(&owner),
+            &[&test],
+            &flow_sinks,
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
         let values = activation
             .missing_discriminators
             .iter()
@@ -1569,7 +1927,15 @@ assert_eq!(input.amount, 100);"#
         let test = test_with_call("score_uses_other_value", "score(9);");
         let probe = probe(ProbeFamily::Predicate, "threshold > limit");
 
-        let activation = activation_evidence(&probe, Some(&owner), &[&test], &[]);
+        let activation = activation_evidence(
+            &probe,
+            Some(&owner),
+            &[&test],
+            &[],
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
 
         assert_eq!(activation.missing_discriminators.len(), 1);
         assert_eq!(
@@ -1626,10 +1992,27 @@ assert_eq!(input.amount, 100);"#
     fn text_helpers_handle_braces_escapes_negative_numbers_and_dedup_contexts() {
         let owner = function("pub fn score(amount: i32) -> bool {\n    amount > 10\n}");
         let non_comparison_probe = probe(ProbeFamily::ReturnValue, "amount");
-        assert!(observed_discriminator_values(&non_comparison_probe, Some(&owner), &[]).is_empty());
         assert!(
-            observed_discriminator_values(&probe(ProbeFamily::Predicate, "amount > 10"), None, &[])
-                .is_empty()
+            observed_discriminator_values(
+                &non_comparison_probe,
+                Some(&owner),
+                &[],
+                None,
+                &crate::analysis::rust_index::RustIndex::default(),
+                false,
+            )
+            .is_empty()
+        );
+        assert!(
+            observed_discriminator_values(
+                &probe(ProbeFamily::Predicate, "amount > 10"),
+                None,
+                &[],
+                None,
+                &crate::analysis::rust_index::RustIndex::default(),
+                false,
+            )
+            .is_empty()
         );
         assert_eq!(
             comparison_operands("if amount > 10 {"),

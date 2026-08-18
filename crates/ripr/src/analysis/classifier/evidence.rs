@@ -27,6 +27,9 @@ impl ClassifiedProbeEvidence {
             context.owner_fn,
             &test_summaries,
             &flow_sinks,
+            context.helper_chain.as_ref(),
+            context.index,
+            context.workspace_complete,
         );
         let infect = infection_evidence(context.probe, &test_summaries, &activation);
         let propagate = propagation_evidence(context.probe, &flow_sinks);
