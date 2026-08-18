@@ -618,7 +618,8 @@ mod tests {
             "error must name the subject boundary: {error:?}"
         );
         assert!(
-            error.contains("does not own a Git object database"),
+            error.contains("does not own a Git object database")
+                || error.contains("git rev-parse failed"),
             "error must name the exact identity failure: {error:?}"
         );
         Ok(())

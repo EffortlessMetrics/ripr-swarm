@@ -59,8 +59,8 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_generated_file_patterns(
     // The worktree, index, `--diff` file, and `base` are never consulted
     // (the binding layer already rejects those combinations).
     if let Some(subject) = options.git_candidate.as_ref() {
-        let resolved =
-            super::git_candidate_execution::resolve(subject).map_err(|error| error.to_string())?;
+        let resolved = super::git_candidate_execution::resolve(subject, options.git_timeout)
+            .map_err(|error| error.to_string())?;
         if crate::is_verbose() {
             eprintln!(
                 "ripr: immutable git candidate resolved: {}",

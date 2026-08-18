@@ -65,10 +65,9 @@ fn failed(detail: String) -> SubjectError {
     SubjectError::ExecutionFailed { detail }
 }
 
-fn git(root: &Path, args: &[&str]) -> Result<String, SubjectError> {
+fn git(root: &Path, args: &[&str], deadline: Option<Duration>) -> Result<String, SubjectError> {
     let named = |detail: String| SubjectError::ExecutionFailed { detail };
-    let output =
-        crate::git::run_git_output_with_deadline(root, args, GIT_DEADLINE).map_err(named)?;
+    let output = crate::git::run_git_output_with_deadline(root, args, deadline).map_err(named)?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let detail = stderr.lines().next().unwrap_or("unknown git error").trim();
@@ -83,7 +82,10 @@ fn git(root: &Path, args: &[&str]) -> Result<String, SubjectError> {
 
 /// Resolve the base side to one exact tree object ID, using the
 /// repository's real empty-tree semantics when no base is requested.
-fn resolve_base_tree(subject: &GitCandidateSubject) -> Result<String, SubjectError> {
+fn resolve_base_tree(
+    subject: &GitCandidateSubject,
+    deadline: Option<Duration>,
+) -> Result<String, SubjectError> {
     match &subject.base {
         GitCandidateBase::EmptyTree => {
             // The empty tree's object ID is fixed per hash format; ask
@@ -94,6 +96,7 @@ fn resolve_base_tree(subject: &GitCandidateSubject) -> Result<String, SubjectErr
             let format = git(
                 &subject.repository_root,
                 &["rev-parse", "--show-object-format"],
+                deadline,
             )?;
             let empty_tree_id = match format.trim() {
                 "sha256" => "6ef19b41225c5369f1c104d45d8d85efa9d058d53bc6434cd0f5d23e5dc71d12",
@@ -106,36 +109,46 @@ fn resolve_base_tree(subject: &GitCandidateSubject) -> Result<String, SubjectErr
                     "--verify",
                     &format!("{empty_tree_id}^{{tree}}"),
                 ],
+                deadline,
             )
         }
-        GitCandidateBase::Treeish(treeish) => {
-            let commit = git(
-                &subject.repository_root,
-                &["rev-parse", "--verify", &format!("{treeish}^{{commit}}")],
-            )?;
-            git(
-                &subject.repository_root,
-                &["rev-parse", "--verify", &format!("{commit}^{{tree}}")],
-            )
-        }
+        // One-step peel: a treeish may name a commit, tag, or tree;
+        // `^{tree}` resolves all three without rejecting the model's
+        // own documented tree-OID shape.
+        GitCandidateBase::Treeish(treeish) => git(
+            &subject.repository_root,
+            &[
+                "rev-parse",
+                "--verify",
+                &format!("{}^{{tree}}", treeish.as_str()),
+            ],
+            deadline,
+        ),
     }
 }
 
 /// Validate that the candidate names one existing tree object.
-fn resolve_candidate_tree(subject: &GitCandidateSubject) -> Result<String, SubjectError> {
+fn resolve_candidate_tree(
+    subject: &GitCandidateSubject,
+    deadline: Option<Duration>,
+) -> Result<String, SubjectError> {
     let treeish = subject.candidate_tree.as_str();
-    let commit = git(
-        &subject.repository_root,
-        &["rev-parse", "--verify", &format!("{treeish}^{{commit}}")],
-    )?;
+    // One-step peel: the model documents a tree object ID; `^{tree}`
+    // accepts a tree directly and still resolves commits and tags.
     git(
         &subject.repository_root,
-        &["rev-parse", "--verify", &format!("{commit}^{{tree}}")],
+        &["rev-parse", "--verify", &format!("{treeish}^{{tree}}")],
+        deadline,
     )
 }
 
 /// Derive the base→candidate unified diff from the trees alone.
-fn derive_diff(root: &Path, base: &str, candidate: &str) -> Result<String, SubjectError> {
+fn derive_diff(
+    root: &Path,
+    base: &str,
+    candidate: &str,
+    deadline: Option<Duration>,
+) -> Result<String, SubjectError> {
     // -M preserves rename information so the pipeline's pinned
     // rename semantics (pure-rename paths produce no probes) fire for
     // subject runs too (#3296 review: without -M a pure rename became
@@ -151,6 +164,7 @@ fn derive_diff(root: &Path, base: &str, candidate: &str) -> Result<String, Subje
             base,
             candidate,
         ],
+        deadline,
     )
 }
 
@@ -160,6 +174,7 @@ fn derive_diff(root: &Path, base: &str, candidate: &str) -> Result<String, Subje
 fn materialize(
     root: &Path,
     candidate_tree: &str,
+    deadline: Option<Duration>,
 ) -> Result<(PathBuf, TempRootGuard), SubjectError> {
     // Unique per invocation: concurrent runs (or racing tests) never
     // share a materialization directory, and a stale directory from a
@@ -195,7 +210,7 @@ fn materialize(
     let archive = crate::git::run_git_output_with_deadline_and_limit(
         root,
         &["archive", "--format=tar", candidate_tree],
-        GIT_DEADLINE.unwrap_or(Duration::from_mins(1)),
+        deadline.unwrap_or(Duration::from_mins(1)),
         MAX_ARCHIVE_BYTES,
     )
     .map_err(|error| failed(format!("git archive failed: {error}")))?;
@@ -209,7 +224,7 @@ fn materialize(
     let extracted = untar(&tar_path, &target)?;
     let _ = std::fs::remove_file(&tar_path);
     let _ = extracted;
-    Ok((target.clone(), TempRootGuard(target)))
+    Ok((target.clone(), TempRootGuard(base_dir)))
 }
 
 /// Minimal in-crate tar extraction for `git archive` output: only the
@@ -223,6 +238,11 @@ fn untar(tar_path: &Path, target: &Path) -> Result<usize, SubjectError> {
     let mut pending_path: Option<String> = None;
     while offset + 512 <= bytes.len() {
         let header = &bytes[offset..offset + 512];
+        // Two consecutive zero blocks are the end-of-archive marker;
+        // check before the empty-name skip so the marker terminates.
+        if header.iter().all(|byte| *byte == 0) {
+            break;
+        }
         // ustar long paths split across the prefix field (345..500) and
         // the name field: the real path is prefix + '/' + name. git
         // archive prefers this split and only emits a pax 'x' header
@@ -244,10 +264,6 @@ fn untar(tar_path: &Path, target: &Path) -> Result<usize, SubjectError> {
         offset = data_start + size.div_ceil(512) * 512;
         if name.is_empty() {
             continue;
-        }
-        // Two consecutive zero blocks end the archive.
-        if header.iter().all(|byte| *byte == 0) {
-            break;
         }
         match typeflag {
             // pax extended header: its records apply to the NEXT entry.
@@ -316,24 +332,43 @@ fn tar_octal(field: &[u8]) -> usize {
 
 /// Resolve and execute one subject: validate identities, derive the
 /// diff, and materialize the candidate root.
-pub(crate) fn resolve(subject: &GitCandidateSubject) -> Result<ResolvedGitCandidate, SubjectError> {
-    if !subject.repository_root.join(".git").exists()
-        && !subject.repository_root.join("HEAD").exists()
+pub(crate) fn resolve(
+    subject: &GitCandidateSubject,
+    git_timeout: Option<Duration>,
+) -> Result<ResolvedGitCandidate, SubjectError> {
+    // The caller's timeout wins; the internal default only covers
+    // library callers that pass None (#3294 review: the candidate path
+    // previously dropped the user's git_timeout).
+    let deadline = git_timeout.or(GIT_DEADLINE);
+    // Git owns the "is this a repository" decision; a hand-rolled
+    // `.git`/`HEAD` check both misses GIT_DIR setups and accepts
+    // lookalike directories (#3294 review).
+    if git(
+        &subject.repository_root,
+        &["rev-parse", "--absolute-git-dir"],
+        deadline,
+    )
+    .is_err()
     {
         return Err(failed(format!(
             "repository root `{}` does not own a Git object database",
             subject.repository_root.display()
         )));
     }
-    let base_tree = resolve_base_tree(subject)?;
-    let candidate_tree = resolve_candidate_tree(subject)?;
+    let base_tree = resolve_base_tree(subject, deadline)?;
+    let candidate_tree = resolve_candidate_tree(subject, deadline)?;
     if base_tree == candidate_tree {
         return Err(failed(
             "base tree and candidate tree are identical: no diff to analyze".to_string(),
         ));
     }
-    let diff = derive_diff(&subject.repository_root, &base_tree, &candidate_tree)?;
-    let (root, cleanup) = materialize(&subject.repository_root, &candidate_tree)?;
+    let diff = derive_diff(
+        &subject.repository_root,
+        &base_tree,
+        &candidate_tree,
+        deadline,
+    )?;
+    let (root, cleanup) = materialize(&subject.repository_root, &candidate_tree, deadline)?;
     Ok(ResolvedGitCandidate {
         base_tree,
         candidate_tree,
@@ -432,7 +467,7 @@ mod tests {
             GitCandidateBase::Treeish(GitTreeish::new(&base).map_err(|e| e.to_string())?),
             &candidate,
         )?;
-        let resolved = resolve(&s).map_err(|e| e.to_string())?;
+        let resolved = resolve(&s, None).map_err(|e| e.to_string())?;
         assert!(resolved.diff.contains("src/lib.rs"), "{}", resolved.diff);
         assert!(resolved.diff.contains("src/renamed.rs") || resolved.diff.contains("src/old.rs"));
         // Candidate bytes, not worktree bytes:
@@ -452,7 +487,7 @@ mod tests {
             GitCandidateBase::Treeish(GitTreeish::new(&base).map_err(|e| e.to_string())?),
             &candidate,
         )?;
-        let first = resolve(&s).map_err(|e| e.to_string())?;
+        let first = resolve(&s, None).map_err(|e| e.to_string())?;
         // The three mutations from the issue's reproduction.
         std::fs::write(guard.0.join("src/lib.rs"), "pub fn dirty() -> u8 { 9 }\n")
             .map_err(|e| e.to_string())?;
@@ -462,7 +497,7 @@ mod tests {
             .map_err(|e| e.to_string())?;
         crate::git::run_git_output_with_deadline(&guard.0, &["add", "."], GIT_DEADLINE)
             .map_err(|e| e.to_string())?;
-        let second = resolve(&s).map_err(|e| e.to_string())?;
+        let second = resolve(&s, None).map_err(|e| e.to_string())?;
         assert_eq!(
             first.diff, second.diff,
             "diff must follow objects, not the worktree"
@@ -489,7 +524,7 @@ mod tests {
             GitCandidateBase::Treeish(GitTreeish::new(&base).map_err(|e| e.to_string())?),
             &candidate,
         )?;
-        let resolved = resolve(&s).map_err(|e| e.to_string())?;
+        let resolved = resolve(&s, None).map_err(|e| e.to_string())?;
         assert!(
             resolved.diff.contains("rename from") || resolved.diff.contains("src/renamed.rs"),
             "rename must survive derivation: {}",
@@ -537,7 +572,7 @@ mod tests {
             GitCandidateBase::Treeish(GitTreeish::new(&base).map_err(|e| e.to_string())?),
             &candidate,
         )?;
-        let resolved = resolve(&s).map_err(|e| e.to_string())?;
+        let resolved = resolve(&s, None).map_err(|e| e.to_string())?;
         assert!(
             resolved.root.join(&deep).join(&long_name).exists(),
             "long path must materialize from the pax header"
@@ -664,7 +699,7 @@ mod tests {
             GitCandidateBase::Treeish(GitTreeish::new(&base).map_err(|e| e.to_string())?),
             "0123456789012345678901234567890123456789",
         )?;
-        let error = match resolve(&s) {
+        let error = match resolve(&s, None) {
             Err(error) => error,
             Ok(_) => return Err("unknown candidate unexpectedly resolved".to_string()),
         };
@@ -679,7 +714,7 @@ mod tests {
     fn empty_base_uses_real_empty_tree_semantics() -> Result<(), String> {
         let (guard, _base, candidate) = fixture_repo("empty")?;
         let s = subject(&guard.0, GitCandidateBase::EmptyTree, &candidate)?;
-        let resolved = resolve(&s).map_err(|e| e.to_string())?;
+        let resolved = resolve(&s, None).map_err(|e| e.to_string())?;
         assert!(
             resolved.diff.contains("src/lib.rs"),
             "empty→candidate must show the added files"
