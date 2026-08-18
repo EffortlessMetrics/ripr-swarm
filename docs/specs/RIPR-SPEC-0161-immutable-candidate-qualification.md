@@ -56,7 +56,7 @@ behaves as claimed.
 - The reproduction flip: before the config fix, a worktree `ripr.toml`
   changing `mode = "draft"` to `mode = "deep"` changed the subject
   run's rendered mode; before the path rebase, `probe.file` carried
-  `F:/Temp/ripr-git-candidate/<pid>-<nanos>/<tree>/src/lib.rs`. After
+  `the ephemeral materialization directory under the system temp root (ripr-git-candidate/<pid>-<nanos>/<tree>/src/lib.rs)`. After
   both, the four-mutation reproduction is byte-identical.
 - Corpus green across repeated runs; zero golden drift (no fixture
   output changes — the fixes only affect the new subject path and its
