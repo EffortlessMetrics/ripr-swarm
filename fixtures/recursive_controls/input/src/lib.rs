@@ -22,6 +22,7 @@ pub fn label_deep(kind: &str) -> &'static str {
         "b" => label_deep("a"),
         "c" => label_deep("b"),
         "d" => label_deep("c"),
+        _ => "other",
     }
 }
 

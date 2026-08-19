@@ -8,8 +8,9 @@ Four caller-side equality boundaries over recursive or nested-call
 helpers that each break one rule of the bounded evaluation: a true
 cycle (`_ => label_cycle(kind)` re-enters the same bound state), a
 chain beyond the hop bound (`d -> c -> b -> a` needs four evaluations;
-the explicit bound is three), a computed nested argument
-(`label_computed(fix(kind))`), and a non-unique nested callee
+the explicit bound is three — the exhaustive `_ => "other"` arm exists
+for compilation and no test row reaches it), a computed nested
+argument (`label_computed(fix(kind))`), and a non-unique nested callee
 (`resolve("x")` with `resolve` defined in two modules). The diff
 changes each comparison constant (`"alpha"` -> `"other"`).
 
