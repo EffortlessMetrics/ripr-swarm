@@ -196,12 +196,14 @@ fn observed_discriminator_values(
             .iter()
             .map(|cell| (cell.parameter.clone(), cell.value.clone()))
             .collect();
-        let left_exact = left_resolved
-            .as_ref()
-            .and_then(|resolved| exact_operand_for_row(resolved, &row, &inputs));
+        let left_exact = left_resolved.as_ref().and_then(|resolved| {
+            exact_operand_for_row(resolved, &row, &inputs, index, workspace_complete)
+        });
         let right_exact = right_resolved
             .as_ref()
-            .and_then(|resolved| exact_operand_for_row(resolved, &row, &inputs))
+            .and_then(|resolved| {
+                exact_operand_for_row(resolved, &row, &inputs, index, workspace_complete)
+            })
             .or_else(|| {
                 literal_operand_value(&right).map(|value| ExactOperand {
                     provenance: format!("literal operand {right} = {value}"),
@@ -261,7 +263,7 @@ fn observed_discriminator_values(
 /// One comparison operand resolved once per probe (#3295 review): a
 /// shadowing local's initializer (evaluated per row) or the raw
 /// parameter.
-enum ResolvedOperand {
+pub(crate) enum ResolvedOperand {
     Parameter(String),
     Local(String, String),
     /// A direct call to a unique helper (`is_word_start(input, 0)`)
@@ -305,7 +307,7 @@ fn resolve_boundary_operand(
 /// unique callee and its statically splittable arguments. Method or
 /// path-qualified call sites, non-unique callee names, and unsplittable
 /// argument lists stay unresolved (fail closed).
-fn resolve_direct_call(
+pub(crate) fn resolve_direct_call(
     text: &str,
     index: &crate::analysis::rust_index::RustIndex,
     workspace_complete: bool,
@@ -343,6 +345,8 @@ fn exact_operand_for_row(
     resolved: &ResolvedOperand,
     row: &[ParameterValue],
     inputs: &super::value_transfer::ExactInputs,
+    index: &crate::analysis::rust_index::RustIndex,
+    workspace_complete: bool,
 ) -> Option<ExactOperand> {
     match resolved {
         ResolvedOperand::Local(name, initializer) => {
@@ -389,7 +393,8 @@ fn exact_operand_for_row(
                 };
                 bound.insert(parameter, value);
             }
-            let value = super::helper_transfer::helper_return_value(callee, &bound)?;
+            let eval = super::helper_transfer::HelperEval::root(index, workspace_complete);
+            let value = super::helper_transfer::helper_return_value(callee, &bound, &eval)?;
             Some(ExactOperand {
                 value: value.render(),
                 provenance: format!(
@@ -602,12 +607,16 @@ fn missing_boundary_discriminator(
                 .collect();
             let lefts = left_resolved
                 .as_ref()
-                .and_then(|resolved| exact_operand_for_row(resolved, row, &inputs))
+                .and_then(|resolved| {
+                    exact_operand_for_row(resolved, row, &inputs, index, workspace_complete)
+                })
                 .into_iter()
                 .collect::<Vec<_>>();
             let rights = right_resolved
                 .as_ref()
-                .and_then(|resolved| exact_operand_for_row(resolved, row, &inputs))
+                .and_then(|resolved| {
+                    exact_operand_for_row(resolved, row, &inputs, index, workspace_complete)
+                })
                 .or_else(|| {
                     literal_operand_value(&right).map(|value| ExactOperand {
                         provenance: format!("literal operand {right} = {value}"),
@@ -962,7 +971,7 @@ fn observed_parameter_values(rows: &[Vec<ParameterValue>], parameter: &str) -> V
     values
 }
 
-fn function_parameters(function: &FunctionSummary) -> Vec<String> {
+pub(crate) fn function_parameters(function: &FunctionSummary) -> Vec<String> {
     let signature = function
         .body
         .lines()

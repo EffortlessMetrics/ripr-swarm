@@ -28,11 +28,98 @@
 //! alone never establishes propagation or discrimination — the oracle
 //! still has to observe the sink through the ordinary evidence stages.
 
+use super::value_transfer::ExactInputs;
 use crate::analysis::facts::{CallFact, FunctionSummary, RustIndex};
 
 /// The configured hop bound for helper transfer. Exceeding it yields a
 /// typed limitation naming the chain's stop, never a silent drop.
 pub(crate) const MAX_HELPER_HOPS: usize = 3;
+
+/// Bounded evaluation context for helper returns whose bodies call
+/// other helpers (#3296 recursive row). `depth` counts helper-return
+/// evaluations on the current path — the same explicit
+/// [`MAX_HELPER_HOPS`] bound the caller-side chain enforces — and
+/// `states` records each `(helper, bound inputs)` state already
+/// evaluated: a repeated state is a true cycle (the same inputs take
+/// the same arm), while distinct inputs unroll within the bound.
+pub(crate) struct HelperEval<'a> {
+    index: &'a RustIndex,
+    workspace_complete: bool,
+    depth: usize,
+    states: Vec<String>,
+}
+
+impl<'a> HelperEval<'a> {
+    pub(crate) fn root(index: &'a RustIndex, workspace_complete: bool) -> Self {
+        HelperEval {
+            index,
+            workspace_complete,
+            depth: 0,
+            states: Vec::new(),
+        }
+    }
+
+    /// Enter the evaluation of `helper` over `inputs`: refuse a state
+    /// already on the path (a cycle) or a path at the hop bound, and
+    /// return the advanced context for the body's evaluation.
+    fn enter(&self, helper: &FunctionSummary, inputs: &ExactInputs) -> Option<HelperEval<'a>> {
+        if self.depth >= MAX_HELPER_HOPS {
+            return None;
+        }
+        let key = format!(
+            "{}|{}",
+            helper.name,
+            inputs
+                .iter()
+                .map(|(parameter, value)| format!("{parameter}={value}"))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        if self.states.iter().any(|state| state == &key) {
+            return None;
+        }
+        let mut states = self.states.clone();
+        states.push(key);
+        Some(HelperEval {
+            index: self.index,
+            workspace_complete: self.workspace_complete,
+            depth: self.depth + 1,
+            states,
+        })
+    }
+}
+
+/// Resolve one nested direct call inside a helper body (`label_of("a")`
+/// as a match arm value) over the calling helper's bound inputs. The
+/// decomposition, uniqueness, and splittability checks are the shared
+/// direct-call authority; argument binding stays strict (a literal or
+/// a parameter bound in `inputs`). A cycle or the hop bound refuses
+/// (fail closed).
+pub(crate) fn nested_call_value(
+    call: &str,
+    inputs: &ExactInputs,
+    eval: &HelperEval<'_>,
+) -> Option<super::value_transfer::TypedValue> {
+    if !eval.workspace_complete {
+        return None;
+    }
+    let super::activation::ResolvedOperand::Call { callee, arguments } =
+        super::activation::resolve_direct_call(call, eval.index, eval.workspace_complete)?
+    else {
+        return None;
+    };
+    let mut bound = ExactInputs::new();
+    let parameters = super::activation::function_parameters(&callee);
+    for (index, argument) in arguments.iter().enumerate() {
+        let parameter = parameters
+            .get(index)
+            .cloned()
+            .unwrap_or_else(|| format!("arg{index}"));
+        let value = strict_literal(argument).or_else(|| inputs.get(argument.trim()).cloned())?;
+        bound.insert(parameter, value);
+    }
+    helper_return_value(&callee, &bound, eval)
+}
 
 /// One hop of a resolved helper chain: the caller, the call site, and
 /// the positional argument texts at that site.
@@ -294,16 +381,23 @@ pub(crate) fn test_reaches_through_chain(
 /// any other shape fails closed to `None`.
 pub(crate) fn helper_return_value(
     helper: &FunctionSummary,
-    inputs: &super::value_transfer::ExactInputs,
+    inputs: &ExactInputs,
+    eval: &HelperEval<'_>,
 ) -> Option<super::value_transfer::TypedValue> {
+    // The bounded context refuses a repeated (helper, inputs) state (a
+    // true cycle) and a path at the hop bound before any body shape is
+    // considered.
+    let eval = eval.enter(helper, inputs)?;
     // #3296: the scanner authority owns the literal-driven state-loop
     // shape first; the literal match-arm authority owns the string
-    // `match` tail expression; the let-chain evaluator below keeps
-    // every other body (and stays the authority for non-scanner tails).
+    // `match` tail expression (and may resolve nested direct calls in
+    // arm values through the same context); the let-chain evaluator
+    // below keeps every other body (and stays the authority for
+    // non-scanner tails).
     if let Some(value) = super::scanner_transfer::scanner_return_value(helper, inputs) {
         return Some(value);
     }
-    if let Some(value) = super::match_transfer::match_return_value(helper, inputs) {
+    if let Some(value) = super::match_transfer::match_return_value(helper, inputs, &eval) {
         return Some(value);
     }
     let masked = crate::analysis::language::mask_rust_comments_and_strings(&helper.body);
@@ -595,7 +689,9 @@ mod tests {
             start_line: 1,
             ..function("src/lib.rs", "first_char", &[])
         };
-        match helper_return_value(&evaluated, &inputs) {
+        let empty = RustIndex::default();
+        let eval = HelperEval::root(&empty, true);
+        match helper_return_value(&evaluated, &inputs, &eval) {
             Some(value) => assert_eq!(value.render(), "' '"),
             None => return Err("expected the identity tail to evaluate".to_string()),
         }
@@ -611,7 +707,7 @@ mod tests {
             start_line: 1,
             ..function("src/lib.rs", "is_word_start", &[])
         };
-        assert!(helper_return_value(&closed, &inputs).is_none());
+        assert!(helper_return_value(&closed, &inputs, &eval).is_none());
         Ok(())
     }
 }

@@ -773,6 +773,14 @@ owner = "product-swarm"
 standalone_reason = "Issue #3279 R4 slice for #3237: the qualification corpus breaks the isolation claim on purpose — post-bind mutations, committed parity, identity echo, delete/rename shapes, fail-closed invalid inputs, a substitution removal experiment, and temp-state cleanup — and the two real defects it found (worktree config leaking into subject runs; ephemeral temp roots leaking into finding paths) are repaired at the producer/config seams, not in renderers."
 
 [[artifact]]
+id = "RIPR-SPEC-0165"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0165-bounded-recursive-helper-evaluation.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #3296 recursive remainder: the caller-side chain named recursion as a stop edge and the return-value evaluator had no context, so a self-recursive match arm value refused the whole helper; this spec pins the shared bounded context (distinct states unroll within MAX_HELPER_HOPS, repeated states and the bound refuse) with the positive and four fail-closed fixtures."
+
+[[artifact]]
 id = "RIPR-SPEC-0164"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0164-literal-match-arm-transfer.md"

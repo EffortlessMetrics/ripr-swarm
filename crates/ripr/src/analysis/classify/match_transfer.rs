@@ -13,14 +13,19 @@
 //! as the whole helper body (a tail expression). When the scrutinee
 //! resolves exactly (#3295 facts) and every arm's pattern is a plain
 //! string literal or `_` and every arm's value is a plain string
-//! literal, the evaluator returns the first arm whose literal equals
-//! the scrutinee — source order is authoritative, exactly like the
-//! Rust match. Anything else — a guard, an alternative pattern, a
-//! computed value, a bare-identifier pattern, a non-string scrutinee,
-//! any statement after the closing brace — refuses the whole shape
-//! and returns `None`; the caller's existing limitation wording stays
-//! the disclosure.
+//! literal or one nested direct call to a unique helper, the
+//! evaluator returns the first arm whose literal equals the scrutinee
+//! — source order is authoritative, exactly like the Rust match. A
+//! nested call resolves through the shared bounded context (the
+//! #3296 recursive row): distinct `(helper, bound inputs)` states
+//! unroll within the explicit hop bound, while a repeated state (a
+//! true cycle) or the bound itself refuses. Anything else — a guard,
+//! an alternative pattern, a computed value, a bare-identifier
+//! pattern, a non-string scrutinee, any statement after the closing
+//! brace — refuses the whole shape and returns `None`; the caller's
+//! existing limitation wording stays the disclosure.
 
+use super::helper_transfer::HelperEval;
 use super::value_transfer::{EvalOutcome, ExactInputs, TypedValue, evaluate_initializer};
 use crate::analysis::language::mask_rust_comments_and_strings;
 
@@ -31,11 +36,19 @@ struct MatchShape {
     arms: Vec<MatchArm>,
 }
 
+/// An arm's value: a plain string literal, or one nested direct call
+/// to a unique helper (`label_of("a")`) resolved through the shared
+/// bounded context (#3296 recursive row).
+enum MatchValue {
+    Literal(String),
+    Call(String),
+}
+
 struct MatchArm {
     /// `None` is the `_` wildcard arm; `Some(literal)` is a plain
     /// string-literal pattern. A wildcard still respects source order.
     pattern: Option<String>,
-    value: String,
+    value: MatchValue,
 }
 
 /// Evaluate a match helper's return over its exact inputs, when the
@@ -43,6 +56,7 @@ struct MatchArm {
 pub(crate) fn match_return_value(
     helper: &crate::analysis::facts::FunctionSummary,
     inputs: &ExactInputs,
+    eval: &HelperEval<'_>,
 ) -> Option<TypedValue> {
     let shape = MatchShape::parse(&helper.body)?;
     let subject = match evaluate_initializer(&shape.scrutinee, inputs) {
@@ -53,9 +67,14 @@ pub(crate) fn match_return_value(
         _ => return None,
     };
     for arm in &shape.arms {
-        match &arm.pattern {
-            Some(literal) if literal != &subject => continue,
-            _ => return Some(TypedValue::Str(arm.value.clone())),
+        let selected = !matches!(&arm.pattern, Some(literal) if literal != &subject);
+        if selected {
+            return match &arm.value {
+                MatchValue::Literal(value) => Some(TypedValue::Str(value.clone())),
+                MatchValue::Call(call) => {
+                    super::helper_transfer::nested_call_value(call, inputs, eval)
+                }
+            };
         }
     }
     // No arm matched and no wildcard was reached.
@@ -133,10 +152,12 @@ impl MatchShape {
 }
 
 /// `"literal" => "value",` — the pattern is a plain string literal or
-/// `_`, the value a plain string literal. Guards, alternatives,
-/// bindings, paths, and escapes all refuse the arm (and with it the
-/// whole helper): an unresolved pattern could match anything, and a
-/// non-literal value is not an exact return.
+/// `_`; the value is a plain string literal or one nested direct call
+/// (`label_of("a")`) to a unique helper with literal or bound-parameter
+/// arguments. Guards, alternatives, bindings, paths, and escapes all
+/// refuse the arm (and with it the whole helper): an unresolved
+/// pattern could match anything, and any other value shape is not an
+/// exact return the shared authorities can evaluate.
 fn parse_arm(line: &str) -> Option<MatchArm> {
     let trimmed = line.trim().trim_end_matches(',').trim();
     let (pattern, value) = trimmed.split_once(" => ")?;
@@ -145,8 +166,32 @@ fn parse_arm(line: &str) -> Option<MatchArm> {
     } else {
         Some(literal_string(pattern)?)
     };
-    let value = literal_string(value)?;
+    let value = if let Some(literal) = literal_string(value) {
+        MatchValue::Literal(literal)
+    } else {
+        direct_call(value)?;
+        MatchValue::Call(value.to_string())
+    };
     Some(MatchArm { pattern, value })
+}
+
+/// A single direct-call shape: `name(args)` with an identifier callee
+/// and a balanced argument list. Full resolution (uniqueness,
+/// splittability, binding) happens in the shared nested-call
+/// authority, which refuses anything unsupported.
+fn direct_call(text: &str) -> Option<()> {
+    let trimmed = text.trim();
+    let name = trimmed.split('(').next()?;
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        || !trimmed.contains('(')
+        || !trimmed.ends_with(')')
+    {
+        return None;
+    }
+    Some(())
 }
 
 /// A plain string literal: non-empty, no quote, backslash, apostrophe,
@@ -164,7 +209,7 @@ fn literal_string(text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::facts::FunctionSummary;
+    use crate::analysis::facts::{FunctionSummary, RustIndex};
     use crate::domain::SymbolId;
     use std::path::PathBuf;
 
@@ -192,9 +237,15 @@ mod tests {
         inputs
     }
 
+    fn root_eval(index: &RustIndex) -> HelperEval<'_> {
+        HelperEval::root(index, true)
+    }
+
     fn returned(helper: &FunctionSummary, kind: &str) -> Result<String, String> {
+        let index = RustIndex::default();
+        let eval = root_eval(&index);
         let bound = inputs(&[("kind", kind)]);
-        match match_return_value(helper, &bound) {
+        match match_return_value(helper, &bound, &eval) {
             Some(value) => match value {
                 TypedValue::Str(text) => Ok(text),
                 other => Err(format!("expected a string value, got {}", other.render())),
@@ -244,9 +295,11 @@ mod tests {
             "the wildcard-removal substitution must apply"
         );
         let helper = match_fn("label", &no_wildcard);
+        let index = RustIndex::default();
+        let eval = root_eval(&index);
         let bound = inputs(&[("kind", "\"other\"")]);
         assert!(
-            match_return_value(&helper, &bound).is_none(),
+            match_return_value(&helper, &bound, &eval).is_none(),
             "a scrutinee no literal names and no wildcard catches must stop"
         );
         Ok(())
@@ -264,18 +317,23 @@ mod tests {
                 "        \"word\" | \"text\" => \"alpha\",",
             ),
             ("bare binding pattern", "        word => \"alpha\","),
-            ("computed arm value", "        \"word\" => pick(kind),"),
+            (
+                "computed argument in a call value",
+                "        \"word\" => pick(kind.trim()),",
+            ),
             (
                 "escaped literal pattern",
                 "        \"a\\\"b\" => \"alpha\",",
             ),
         ];
+        let index = RustIndex::default();
+        let eval = root_eval(&index);
         for (name, arm) in cases {
             let body = BODY.replace("        \"word\" => \"alpha\",", arm);
             assert_ne!(body, BODY, "the {name} substitution must apply");
             let helper = match_fn("label", &body);
             assert!(
-                match_return_value(&helper, &inputs(&[("kind", "\"word\"")])).is_none(),
+                match_return_value(&helper, &inputs(&[("kind", "\"word\"")]), &eval).is_none(),
                 "a {name} arm must refuse the match"
             );
         }
@@ -284,12 +342,14 @@ mod tests {
 
     #[test]
     fn non_string_scrutinee_and_non_tail_bodies_fail_closed() -> Result<(), String> {
+        let index = RustIndex::default();
+        let eval = root_eval(&index);
         // A char scrutinee is a named limitation, not a guessed match.
         let char_scrutinee = BODY.replace("match kind", "match c");
         let helper = match_fn("label", &char_scrutinee);
         let bound = inputs(&[("c", "'a'")]);
         assert!(
-            match_return_value(&helper, &bound).is_none(),
+            match_return_value(&helper, &bound, &eval).is_none(),
             "a non-string scrutinee must refuse the match"
         );
         // A statement after the closing brace is not the pinned shape.
@@ -300,15 +360,95 @@ mod tests {
         );
         let helper2 = match_fn("label", &with_tail);
         assert!(
-            match_return_value(&helper2, &inputs(&[("kind", "\"word\"")])).is_none(),
+            match_return_value(&helper2, &inputs(&[("kind", "\"word\"")]), &eval).is_none(),
             "a body with a statement after the match must refuse"
         );
         // An unresolvable scrutinee never guesses.
         let unknown = BODY.replace("match kind", "match unknown_var");
         let helper3 = match_fn("label", &unknown);
         assert!(
-            match_return_value(&helper3, &inputs(&[("kind", "\"word\"")])).is_none(),
+            match_return_value(&helper3, &inputs(&[("kind", "\"word\"")]), &eval).is_none(),
             "an unbound scrutinee must refuse the match"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn nested_call_values_resolve_within_the_hop_bound() -> Result<(), String> {
+        // One self-recursive helper: label_of("word") re-enters with
+        // "text" — two distinct (helper, inputs) states on one path,
+        // inside the hop bound. The real entry (helper_return_value)
+        // owns the depth accounting, so the test goes through it.
+        let body = BODY.replace(
+            "        \"word\" => \"alpha\",",
+            "        \"word\" => label_of(\"text\"),",
+        );
+        assert_ne!(body, BODY, "the nested-call substitution must apply");
+        let helper = match_fn("label_of", &body);
+        let index = RustIndex {
+            functions: vec![helper.clone()],
+            ..RustIndex::default()
+        };
+        let eval = root_eval(&index);
+        let bound = inputs(&[("kind", "\"word\"")]);
+        match super::super::helper_transfer::helper_return_value(&helper, &bound, &eval) {
+            Some(TypedValue::Str(text)) => assert_eq!(text, "beta"),
+            other => {
+                return Err(format!(
+                    "expected the nested call to resolve, got {other:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn repeated_states_and_beyond_bound_chains_refuse() -> Result<(), String> {
+        // `_ => label_of(kind)` re-enters the same (helper, inputs)
+        // state: a true cycle refuses.
+        let cyclic = BODY.replace("        _ => \"other\",", "        _ => label_of(kind),");
+        assert_ne!(cyclic, BODY, "the cycle substitution must apply");
+        let helper = match_fn("label_of", &cyclic);
+        let index = RustIndex {
+            functions: vec![helper.clone()],
+            ..RustIndex::default()
+        };
+        let eval = root_eval(&index);
+        let bound = inputs(&[("kind", "\"zz\"")]);
+        assert!(
+            super::super::helper_transfer::helper_return_value(&helper, &bound, &eval).is_none(),
+            "a repeated (helper, inputs) state must refuse"
+        );
+
+        // A self-chain: c -> b -> a is three evaluations (inside the
+        // bound); d -> c -> b -> a is four (beyond it).
+        let chain = "pub fn label_of(kind: &str) -> &'static str {
+    match kind {
+        \"a\" => \"alpha\",
+        \"b\" => label_of(\"a\"),
+        \"c\" => label_of(\"b\"),
+        \"d\" => label_of(\"c\"),
+    }
+}";
+        let chained = match_fn("label_of", chain);
+        let index = RustIndex {
+            functions: vec![chained.clone()],
+            ..RustIndex::default()
+        };
+        let eval = root_eval(&index);
+        let inside = inputs(&[("kind", "\"c\"")]);
+        match super::super::helper_transfer::helper_return_value(&chained, &inside, &eval) {
+            Some(TypedValue::Str(text)) => assert_eq!(text, "alpha"),
+            other => {
+                return Err(format!(
+                    "expected the in-bound chain to resolve, got {other:?}"
+                ));
+            }
+        }
+        let beyond = inputs(&[("kind", "\"d\"")]);
+        assert!(
+            super::super::helper_transfer::helper_return_value(&chained, &beyond, &eval).is_none(),
+            "a chain beyond the hop bound must refuse"
         );
         Ok(())
     }
