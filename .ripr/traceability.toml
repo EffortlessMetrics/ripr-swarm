@@ -8428,6 +8428,27 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0164"
+name = "Bounded literal match-arm transfer"
+spec = "docs/specs/RIPR-SPEC-0164-literal-match-arm-transfer.md"
+tests = [
+  "crates/ripr/src/analysis/classify/match_transfer.rs::tests",
+]
+fixtures = [
+  "fixtures/match_arm_positive",
+  "fixtures/match_arm_controls",
+]
+code = [
+  "crates/ripr/src/analysis/classify/match_transfer.rs",
+  "crates/ripr/src/analysis/classify/helper_transfer.rs",
+]
+outputs = []
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0163"
 name = "Bounded scanner-state transitions"
 spec = "docs/specs/RIPR-SPEC-0163-scanner-state-transitions.md"
