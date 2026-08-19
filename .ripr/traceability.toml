@@ -8428,6 +8428,29 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0163"
+name = "Bounded scanner-state transitions"
+spec = "docs/specs/RIPR-SPEC-0163-scanner-state-transitions.md"
+tests = [
+  "crates/ripr/src/analysis/classify/scanner_transfer.rs::tests",
+  "crates/ripr/src/analysis/classify/scanner_transfer.rs::string_state_tests",
+]
+fixtures = [
+  "fixtures/scanner_positive",
+  "fixtures/scanner_controls",
+]
+code = [
+  "crates/ripr/src/analysis/classify/scanner_transfer.rs",
+  "crates/ripr/src/analysis/classify/helper_transfer.rs",
+  "crates/ripr/src/analysis/classify/activation.rs",
+]
+outputs = []
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0162"
 name = "Honest propagation_unknown human wording"
 spec = "docs/specs/RIPR-SPEC-0162-propagation-unknown-wording.md"

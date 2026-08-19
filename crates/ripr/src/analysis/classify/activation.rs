@@ -282,6 +282,14 @@ fn resolve_boundary_operand(
     workspace_complete: bool,
 ) -> Option<ResolvedOperand> {
     if let Some(initializer) = live_local_initializer(owner, operand, predicate_line) {
+        // #3296 scanner/helper remainder: a local whose initializer is
+        // itself a direct call to a unique helper (`let final_state =
+        // scan_state(input)`) jumps to the helper authority — the value
+        // evaluator fails closed on call expressions, so without the
+        // jump the operand stays unknown whatever the callee's body.
+        if let Some(call) = resolve_direct_call(&initializer, index, workspace_complete) {
+            return Some(call);
+        }
         return Some(ResolvedOperand::Local(operand.to_string(), initializer));
     }
     if let Some(parameter) = parameters
@@ -290,9 +298,19 @@ fn resolve_boundary_operand(
     {
         return Some(ResolvedOperand::Parameter(parameter.clone()));
     }
-    // A helper call operand: unique callee, statically splittable
-    // arguments. Everything else stays unresolved (fail closed).
-    let trimmed = operand.trim();
+    resolve_direct_call(operand, index, workspace_complete)
+}
+
+/// Decompose a direct-call text (`is_word_start(input, 0)`) into the
+/// unique callee and its statically splittable arguments. Method or
+/// path-qualified call sites, non-unique callee names, and unsplittable
+/// argument lists stay unresolved (fail closed).
+fn resolve_direct_call(
+    text: &str,
+    index: &crate::analysis::rust_index::RustIndex,
+    workspace_complete: bool,
+) -> Option<ResolvedOperand> {
+    let trimmed = text.trim().trim_end_matches(';').trim();
     let callee_name = trimmed
         .split('(')
         .next()
