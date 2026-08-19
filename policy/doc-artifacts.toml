@@ -773,6 +773,14 @@ owner = "product-swarm"
 standalone_reason = "Issue #3279 R4 slice for #3237: the qualification corpus breaks the isolation claim on purpose — post-bind mutations, committed parity, identity echo, delete/rename shapes, fail-closed invalid inputs, a substitution removal experiment, and temp-state cleanup — and the two real defects it found (worktree config leaking into subject runs; ephemeral temp roots leaking into finding paths) are repaired at the producer/config seams, not in renderers."
 
 [[artifact]]
+id = "RIPR-SPEC-0164"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0164-literal-match-arm-transfer.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #3296 match-arm remainder: the helper-return evaluator failed closed on any match body, so a literal-driven string match helper kept the caller boundary unknown; this spec pins the strict tail-expression grammar with literal patterns/values and first-match order, with the positive and four fail-closed fixtures."
+
+[[artifact]]
 id = "RIPR-SPEC-0163"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0163-scanner-state-transitions.md"
