@@ -56,7 +56,10 @@ struct ScannerShape {
 
 struct TransitionArm {
     state: String,
-    symbol: String,
+    /// `None` is the `_` wildcard arm; `Some(ch)` is an exact char
+    /// literal. A quoted `'_'` is a literal underscore, never the
+    /// wildcard.
+    symbol: Option<char>,
     next: String,
 }
 
@@ -168,18 +171,22 @@ fn parse_arm(line: &str) -> Option<TransitionArm> {
     let (patterns, next) = stripped.split_once(") => ")?;
     let mut parts = patterns.splitn(2, ',');
     let state = normalize_state_token(parts.next()?)?;
-    let mut symbol = parts.next()?.trim().to_string();
-    let wildcard = symbol == "_";
-    if !wildcard {
-        symbol = symbol
-            .trim_start_matches('\'')
-            .trim_end_matches('\'')
-            .to_string();
-    }
+    let raw_symbol = parts.next()?.trim();
+    let symbol = if raw_symbol == "_" {
+        None
+    } else {
+        // A plain one-character literal only: an escape sequence
+        // (`'\n'`, `'\''`) fails closed instead of aliasing another
+        // symbol, and a quoted `'_'` stays a literal underscore.
+        let inner = raw_symbol.strip_prefix('\'')?.strip_suffix('\'')?;
+        let mut chars = inner.chars();
+        let ch = chars.next()?;
+        if ch == '\\' || chars.next().is_some() {
+            return None;
+        }
+        Some(ch)
+    };
     let next = normalize_state_token(next)?;
-    if !wildcard && symbol.chars().count() != 1 {
-        return None;
-    }
     Some(TransitionArm {
         state,
         symbol,
@@ -245,15 +252,15 @@ fn resolve_symbols(iterable: &str, inputs: &ExactInputs) -> Option<Vec<char>> {
 
 /// One exact transition, first-match-wins exactly like the Rust match:
 /// the first arm whose state pattern equals the current state and whose
-/// symbol is the literal or `_` produces the next state. `next` may be
-/// the state binding itself (already normalized away by substituting
-/// the current state).
+/// symbol is the wildcard or the exact literal produces the next state.
+/// `next` may be the state binding itself (already normalized away by
+/// substituting the current state).
 fn transition(arms: &[TransitionArm], state: &str, symbol: char) -> Option<String> {
     for arm in arms {
         if arm.state != state {
             continue;
         }
-        if arm.symbol == "_" || arm.symbol.starts_with(symbol) {
+        if arm.symbol.is_none_or(|expected| expected == symbol) {
             return Some(arm.next.clone());
         }
     }
@@ -384,13 +391,63 @@ mod tests {
             "            (State::Text, _) => State::Word,
             (State::Text, ' ') => State::Text,",
         );
-        if reordered != BODY {
-            let helper = scanner_fn("scan", &reordered);
-            assert_eq!(final_state(&helper, "\" \"")?, "State::Word");
-        }
+        assert_ne!(reordered, BODY, "the reordered-arm substitution must apply");
+        let reordered_helper = scanner_fn("scan", &reordered);
+        assert_eq!(final_state(&reordered_helper, "\" \"")?, "State::Word");
         let helper = scanner_fn("scan", BODY);
         assert_eq!(final_state(&helper, "\" \"")?, "State::Text");
         assert_eq!(final_state(&helper, "\"x\"")?, "State::Word");
+        Ok(())
+    }
+
+    #[test]
+    fn quoted_underscore_symbol_is_a_literal_not_a_wildcard() -> Result<(), String> {
+        // A quoted `'_'` is a literal underscore match; only a bare `_`
+        // is the wildcard. Under the old quote-trimming the quoted arm
+        // degraded to the wildcard and swallowed every symbol.
+        let underscore = BODY.replace(
+            "            (State::Text, ' ') => State::Text,
+            (State::Text, _) => State::Word,",
+            "            (State::Text, '_') => State::Word,
+            (State::Text, _) => State::Text,",
+        );
+        assert_ne!(
+            underscore, BODY,
+            "the underscore-arm substitution must apply"
+        );
+        let helper = scanner_fn("scan", &underscore);
+        // A non-underscore symbol reaches the wildcard and stays Text;
+        // the quoted '_' arm must not take it.
+        assert_eq!(final_state(&helper, "\"x\"")?, "State::Text");
+        // The literal underscore itself takes the quoted arm.
+        assert_eq!(final_state(&helper, "\"_\"")?, "State::Word");
+        Ok(())
+    }
+
+    #[test]
+    fn escaped_char_literals_fail_closed() -> Result<(), String> {
+        // `'\''` under naive quote-trimming degraded to a backslash
+        // match; the evaluator must refuse the whole scanner instead.
+        let quote = BODY.replace(
+            "(State::Text, ' ') => State::Text,",
+            "(State::Text, '\\'') => State::Word,",
+        );
+        assert_ne!(quote, BODY, "the escaped-quote substitution must apply");
+        let helper = scanner_fn("scan", &quote);
+        assert!(
+            scanner_return_value(&helper, &inputs(&[("input", "\"x\"")])).is_none(),
+            "an escaped char literal must refuse the scanner"
+        );
+        let newline = BODY.replace(
+            "(State::Text, ' ') => State::Text,",
+            "(State::Text, '\\n') => State::Word,",
+        );
+        assert_ne!(newline, BODY, "the escaped-newline substitution must apply");
+        let helper2 = scanner_fn("scan", &newline);
+        assert!(
+            scanner_return_value(&helper2, &inputs(&[("input", "\"x\"")])).is_none(),
+            "an escaped char literal must refuse the scanner"
+        );
         Ok(())
     }
 }

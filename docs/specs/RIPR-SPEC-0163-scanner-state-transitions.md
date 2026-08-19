@@ -47,8 +47,8 @@ even when every related test row pins the exact state.
 - On resolution the final state is an exact typed value; the boundary
   machinery compares it against the row's other operand exactly as
   #3295 does, and the observed-value provenance names the hop
-  (`scan_state = "text" via helper return of `scan_state` over bound
-  inputs (1 hop)`).
+  (``scan_state = "text" via helper return of `scan_state` over bound
+  inputs (1 hop)``).
 
 ## Required Evidence
 
