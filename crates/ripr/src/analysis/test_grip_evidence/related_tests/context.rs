@@ -1141,6 +1141,22 @@ pub(in crate::analysis::test_grip_evidence) fn module_import_aliases(
     aliases
 }
 
+fn insert_unambiguous_module_alias(
+    aliases: &mut BTreeMap<String, String>,
+    alias: String,
+    module_path: String,
+) {
+    match aliases.get(&alias) {
+        Some(existing) if existing != &module_path => {
+            aliases.remove(&alias);
+        }
+        None => {
+            aliases.insert(alias, module_path);
+        }
+        _ => {}
+    }
+}
+
 pub(in crate::analysis::test_grip_evidence) fn direct_helper_import_aliases(
     source: &str,
     allowed_module_paths: &BTreeSet<String>,
@@ -1330,12 +1346,16 @@ pub(in crate::analysis::test_grip_evidence) fn collect_module_import_aliases_fro
         for item in body.split(',').map(str::trim) {
             if item == "self" {
                 if let Some(alias) = module_path.rsplit("::").next() {
-                    aliases.insert(alias.to_string(), module_path.clone());
+                    insert_unambiguous_module_alias(
+                        aliases,
+                        alias.to_string(),
+                        module_path.clone(),
+                    );
                 }
             } else if let Some(alias) = item.strip_prefix("self as ").map(str::trim)
                 && !alias.is_empty()
             {
-                aliases.insert(alias.to_string(), module_path.clone());
+                insert_unambiguous_module_alias(aliases, alias.to_string(), module_path.clone());
             }
         }
         return;
@@ -1352,7 +1372,7 @@ pub(in crate::analysis::test_grip_evidence) fn collect_module_import_aliases_fro
         .filter(|alias| !alias.is_empty())
         .or_else(|| module_path.rsplit("::").next());
     if let Some(alias) = alias {
-        aliases.insert(alias.to_string(), module_path);
+        insert_unambiguous_module_alias(aliases, alias.to_string(), module_path);
     }
 }
 
@@ -1404,13 +1424,19 @@ pub(in crate::analysis::test_grip_evidence) fn collect_direct_function_import_al
         return;
     }
     let alias = alias.filter(|alias| !alias.is_empty()).unwrap_or(name);
-    aliases.insert(
-        alias.to_string(),
-        ImportedFunctionAlias {
-            module_path: module_path.to_string(),
-            name: name.to_string(),
-        },
-    );
+    let imported = ImportedFunctionAlias {
+        module_path: module_path.to_string(),
+        name: name.to_string(),
+    };
+    match aliases.get(alias) {
+        Some(existing) if existing != &imported => {
+            aliases.remove(alias);
+        }
+        None => {
+            aliases.insert(alias.to_string(), imported);
+        }
+        _ => {}
+    }
 }
 
 pub(in crate::analysis::test_grip_evidence) fn normalize_helper_module_import_path(
