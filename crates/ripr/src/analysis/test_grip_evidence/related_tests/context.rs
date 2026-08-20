@@ -19,6 +19,7 @@ pub(crate) struct CompactGripContext<'a> {
     /// a package-unique owner (#3214).
     pub(in crate::analysis::test_grip_evidence) tests_by_module_call:
         BTreeMap<(String, String), Vec<usize>>,
+    function_module_paths: BTreeMap<(PathBuf, String, usize), String>,
     unique_owner_names_by_package: ProductionOwnerNamesByPackage,
     owner_named_cache: RefCell<BTreeMap<String, Vec<usize>>>,
     same_module_cache: RefCell<BTreeMap<String, Vec<usize>>>,
@@ -51,6 +52,22 @@ impl<'a> CompactGripContext<'a> {
         let mut tests_by_file_stem: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut tests_by_import_token: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut tests_by_module_call: BTreeMap<(String, String), Vec<usize>> = BTreeMap::new();
+        let function_module_paths = index
+            .functions
+            .iter()
+            .filter_map(|function| {
+                function_module_path(function).map(|module| {
+                    (
+                        (
+                            function.file.clone(),
+                            function.name.clone(),
+                            function.start_line,
+                        ),
+                        module,
+                    )
+                })
+            })
+            .collect::<BTreeMap<_, _>>();
         let same_file_helper_owner_calls_by_file = helper_owner_calls_by_file(index);
         let helper_owner_calls_by_file = strict_helper_owner_calls_by_file(index);
         let unambiguous_test_helper_owner_calls_by_name =
@@ -224,7 +241,9 @@ impl<'a> CompactGripContext<'a> {
                         .or_default()
                         .push(test_index);
                 }
-                let test_module_path = function_module_path_for_test(test, index)
+                let test_module_path = function_module_paths
+                    .get(&(test.file.clone(), test.name.clone(), test.start_line))
+                    .cloned()
                     .or_else(|| module_path_for(&test.file).map(|path| path.replace('/', "::")));
                 if let Some(test_module_path) = test_module_path.as_deref() {
                     for call in &test.calls {
@@ -279,6 +298,7 @@ impl<'a> CompactGripContext<'a> {
             tests_by_file_stem,
             tests_by_import_token,
             tests_by_module_call,
+            function_module_paths,
             unique_owner_names_by_package: unambiguous_owner_names_by_package,
             owner_named_cache: RefCell::new(BTreeMap::new()),
             same_module_cache: RefCell::new(BTreeMap::new()),
