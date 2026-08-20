@@ -277,11 +277,21 @@ fn paths_are_compatible(
     sink_path: Option<&str>,
 ) -> bool {
     match (source_path, sink_path) {
-        (Some(source), Some(sink)) => source == sink,
+        (Some(source), Some(sink)) => {
+            source == sink
+                || qualified_payload_identity(sink).as_deref() == Some(source)
+                || qualified_payload_identity(source).as_deref() == Some(sink)
+        }
         (None, None) => true,
         (None, Some(path)) => is_variant_wrapper(source, path),
         (Some(path), None) => is_variant_wrapper(sink, path),
     }
+}
+
+fn qualified_payload_identity(text: &str) -> Option<String> {
+    let (_, payload) = text.split_once('(')?;
+    let payload = payload.trim().trim_end_matches(')').trim();
+    qualified_path_identity(payload)
 }
 
 fn is_variant_wrapper(text: &str, qualified_path: &str) -> bool {
@@ -303,7 +313,7 @@ fn receiver_identity(text: &str) -> Option<String> {
         .rsplit(|character: char| !character.is_ascii_alphanumeric() && character != '_')
         .next()?
         .trim();
-    (!receiver.is_empty()).then(|| receiver.to_ascii_lowercase())
+    (!receiver.is_empty()).then(|| receiver.to_string())
 }
 
 fn semantic_tokens(text: &str) -> Vec<String> {
@@ -345,8 +355,12 @@ fn semantic_tokens(text: &str) -> Vec<String> {
 
 fn push_semantic_token(tokens: &mut Vec<String>, characters: &[char]) {
     let token = characters.iter().collect::<String>();
-    if !is_keyword_or_noise(&token) {
-        tokens.push(token.to_ascii_lowercase());
+    if !is_keyword_or_noise(&token)
+        && token.chars().any(|character| {
+            character.is_ascii_alphabetic() || character == '_' || character == '#'
+        })
+    {
+        tokens.push(token);
     }
 }
 
@@ -593,6 +607,20 @@ mod tests {
         );
         assert!(
             current_path_witness(
+                &probe(ProbeFamily::ReturnValue, "amount"),
+                &[sink(FlowSinkKind::ReturnValue, "Ok(Amount)", 14)]
+            )
+            .is_none()
+        );
+        assert!(
+            current_path_witness(
+                &probe(ProbeFamily::Predicate, "amount > 0"),
+                &[sink(FlowSinkKind::ReturnValue, "Ok(0)", 14)]
+            )
+            .is_none()
+        );
+        assert!(
+            current_path_witness(
                 &probe(ProbeFamily::ReturnValue, "x"),
                 &[sink(FlowSinkKind::ReturnValue, "Ok(x)", 14)]
             )
@@ -637,6 +665,17 @@ mod tests {
             current_path_witness(
                 &probe(ProbeFamily::ErrorPath, "Result::Err(error)"),
                 &[sink(FlowSinkKind::ErrorVariant, "Result::Err(error)", 14)]
+            )
+            .is_some()
+        );
+        assert!(
+            current_path_witness(
+                &probe(ProbeFamily::ErrorPath, "AuthError::RevokedToken"),
+                &[sink(
+                    FlowSinkKind::ErrorVariant,
+                    "Result::Err(AuthError::RevokedToken)",
+                    14,
+                )]
             )
             .is_some()
         );
