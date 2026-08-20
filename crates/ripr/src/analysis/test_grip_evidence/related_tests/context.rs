@@ -996,19 +996,39 @@ pub(in crate::analysis::test_grip_evidence) fn direct_function_import_aliases(
     let mut imports = Vec::new();
     let mut line_depths_after = Vec::new();
     let mut scope_starts = vec![1usize];
+    let mut pending_use: Option<(usize, usize, String)> = None;
     let mut brace_depth = 0usize;
     for (line_index, line) in source.lines().enumerate() {
         let line = strip_comments_and_strings(line);
         let line_number = line_index + 1;
         let scope_start = scope_starts[brace_depth];
-        if let Some(import) = line.trim().strip_prefix("use ") {
+        let trimmed = line.trim();
+        let mut is_use_fragment = false;
+        if let Some((start_line, scope_depth, import)) = pending_use.as_mut() {
+            is_use_fragment = true;
+            import.push(' ');
+            import.push_str(trimmed);
+            if trimmed.contains(';') {
+                let mut parsed = BTreeMap::new();
+                collect_direct_function_import_aliases_from_use(import, &mut parsed);
+                if !parsed.is_empty() {
+                    imports.push((*start_line, *scope_depth, parsed));
+                }
+                pending_use = None;
+            }
+        } else if let Some(import) = trimmed.strip_prefix("use ") {
+            is_use_fragment = true;
             let mut parsed = BTreeMap::new();
-            collect_direct_function_import_aliases_from_use(import.trim(), &mut parsed);
-            if !parsed.is_empty() {
-                imports.push((scope_start, brace_depth, parsed));
+            if import.contains(';') {
+                collect_direct_function_import_aliases_from_use(import, &mut parsed);
+                if !parsed.is_empty() {
+                    imports.push((scope_start, brace_depth, parsed));
+                }
+            } else {
+                pending_use = Some((scope_start, brace_depth, import.to_string()));
             }
         }
-        if !line.trim().starts_with("use ") {
+        if !is_use_fragment {
             for ch in line.chars() {
                 match ch {
                     '{' => {

@@ -21,7 +21,10 @@ fn index_from_files(files: &[(PathBuf, &str)]) -> Result<RustIndex, String> {
 fn direct_function_import_aliases_follow_nested_lexical_scopes() -> Result<(), String> {
     let aliases = direct_function_import_aliases(
         r#"
-use crate::child::{compute as run, unique};
+use crate::child::{
+    compute as run,
+    unique,
+};
 
 fn outer_before() {
     run();
@@ -5139,11 +5142,11 @@ pub fn exercise_support() -> String {
     run("alpha")
 }
 
-use pipeline::calculate as run;
+use crate::pipeline::calculate as run;
 
 #[cfg(test)]
 mod nested_shadow {
-    use report::calculate as run;
+    use crate::report::calculate as run;
 
     pub fn nested_exercise() -> String {
         run("beta")
@@ -5177,6 +5180,24 @@ fn aliased_direct_imported_support_helper_reaches_pipeline() {
     assert_eq!(support_a::nested_shadow::nested_exercise(), "beta");
 }
 "#;
+    let scoped_aliases = direct_function_import_aliases(support_a_src);
+    let run = scoped_aliases
+        .get("run")
+        .ok_or_else(|| "support alias run should be indexed".to_string())?;
+    let binding_for = |needle: &str| -> Result<(&str, &str), String> {
+        let line = support_a_src
+            .lines()
+            .position(|line| line.contains(needle))
+            .map(|line| line + 1)
+            .ok_or_else(|| format!("missing support call {needle}"))?;
+        let binding = run
+            .binding_at(line)
+            .ok_or_else(|| format!("unresolved support alias at {needle}"))?;
+        Ok((binding.module_path.as_str(), binding.name.as_str()))
+    };
+    assert_eq!(binding_for("run(\"alpha\")")?, ("pipeline", "calculate"));
+    assert_eq!(binding_for("run(\"beta\")")?, ("report", "calculate"));
+    assert_eq!(binding_for("run(\"gamma\")")?, ("pipeline", "calculate"));
     let index = index_from_files(&[
         (pipeline, pipeline_src),
         (report, report_src),
@@ -5184,6 +5205,26 @@ fn aliased_direct_imported_support_helper_reaches_pipeline() {
         (support_b, support_b_src),
         (tests, tests_src),
     ])?;
+    for (helper, argument) in [
+        ("exercise_support", "alpha"),
+        ("nested_exercise", "beta"),
+        ("exercise_after", "gamma"),
+    ] {
+        let function = index
+            .functions
+            .iter()
+            .find(|function| {
+                function.name == helper && function.file == PathBuf::from("tests/support_a.rs")
+            })
+            .ok_or_else(|| format!("missing helper identity {helper}"))?;
+        assert!(
+            function
+                .calls
+                .iter()
+                .any(|call| call.name == "run" && call.text.contains(argument)),
+            "helper {helper} must retain its direct aliased call to {argument}"
+        );
+    }
     let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
     let call_presence = seams
         .iter()
