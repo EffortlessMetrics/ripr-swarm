@@ -19,7 +19,23 @@ pub(super) fn direct_import_modules_from_source(source: &str) -> BTreeMap<String
             continue;
         };
         let import = import.trim_end_matches(';').trim();
-        if import.contains("::{") {
+        if let Some((base, rest)) = import.split_once("::{") {
+            let Some(body) = rest.strip_suffix('}') else {
+                continue;
+            };
+            let module = base.trim().strip_prefix("crate::").unwrap_or(base.trim());
+            for item in body.split(',').map(str::trim) {
+                if item.is_empty() || item == "self" || item == "*" {
+                    continue;
+                }
+                let (name, alias) = item.split_once(" as ").map_or(
+                    (item, item.rsplit("::").next().unwrap_or(item)),
+                    |(name, alias)| (name.trim(), alias.trim()),
+                );
+                if !name.is_empty() && !alias.is_empty() {
+                    imports.insert(alias.to_string(), module.to_string());
+                }
+            }
             continue;
         }
         let (path, alias) = import.split_once(" as ").map_or(
