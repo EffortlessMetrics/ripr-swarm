@@ -9,9 +9,9 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     pub(in crate::analysis) ripr: RiprEvidence,
     pub(in crate::analysis) evidence: Vec<String>,
     pub(in crate::analysis) flow_sinks: Vec<FlowSinkFact>,
-    /// Retained diagnostic witness for the PR-A migration slice.  It is not
-    /// projected into `Finding` or used to strengthen a stage yet.
-    pub(in crate::analysis) propagation_witness: Option<PropagationWitnessV1>,
+    /// Retained diagnostic witness outcome for the PR-A migration slice.  It
+    /// is not projected into `Finding` or used to strengthen a stage yet.
+    pub(in crate::analysis) propagation_witness: Option<PropagationWitnessDiagnostic>,
     pub(in crate::analysis) activation: ActivationEvidence,
     pub(in crate::analysis) related_tests: Vec<RelatedTest>,
     pub(in crate::analysis) reach: StageEvidence,
@@ -27,7 +27,7 @@ impl ClassifiedProbeEvidence {
         let reach = reach_evidence(&test_summaries, context.owner_fn);
         let flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
         let propagation_witness = current_path_witness(context.probe, &flow_sinks)
-            .filter(|witness| witness.digest_matches());
+            .map(PropagationWitnessDiagnostic::from_witness);
         let activation = activation_evidence(
             context.probe,
             context.owner_fn,
@@ -93,8 +93,33 @@ impl ClassifiedProbeEvidence {
         )
     }
 
-    pub(in crate::analysis) fn propagation_witness(&self) -> Option<&PropagationWitnessV1> {
+    pub(in crate::analysis) fn propagation_witness(&self) -> Option<&PropagationWitnessDiagnostic> {
         self.propagation_witness.as_ref()
+    }
+}
+
+pub(in crate::analysis) enum PropagationWitnessDiagnostic {
+    Valid(PropagationWitnessV1),
+    InvalidDigest(PropagationWitnessV1),
+}
+
+impl PropagationWitnessDiagnostic {
+    fn from_witness(witness: PropagationWitnessV1) -> Self {
+        if witness.digest_matches() {
+            Self::Valid(witness)
+        } else {
+            Self::InvalidDigest(witness)
+        }
+    }
+
+    pub(in crate::analysis) fn witness(&self) -> &PropagationWitnessV1 {
+        match self {
+            Self::Valid(witness) | Self::InvalidDigest(witness) => witness,
+        }
+    }
+
+    pub(in crate::analysis) fn is_invalid(&self) -> bool {
+        matches!(self, Self::InvalidDigest(_))
     }
 }
 
@@ -111,7 +136,7 @@ fn evidence_summaries<'e>(stages: impl IntoIterator<Item = &'e StageEvidence>) -
 #[cfg(test)]
 mod tests {
     use super::evidence_summaries;
-    use super::{ClassifiedProbeEvidence, ProbeContext};
+    use super::{ClassifiedProbeEvidence, ProbeContext, PropagationWitnessDiagnostic};
     use crate::analysis::facts::{FunctionSummary, ReturnFact, RustIndex};
     use crate::domain::{
         Confidence, DeltaKind, Probe, ProbeFamily, ProbeId, SourceLocation, StageEvidence,
@@ -168,11 +193,57 @@ mod tests {
         let index = RustIndex::default();
         let context = ProbeContext::new(&probe, Some(&owner), Vec::new(), false, &index, true);
         let evidence = ClassifiedProbeEvidence::gather(&context, "amount");
-        let Some(witness) = evidence.propagation_witness() else {
+        let Some(diagnostic) = evidence.propagation_witness() else {
             return Err("gather discarded the producer witness".to_string());
         };
-        if !witness.digest_matches() {
+        if diagnostic.is_invalid() || !diagnostic.witness().digest_matches() {
             return Err("gather retained a stale witness digest".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn corrupt_digest_is_retained_as_rejected_diagnostic_outcome() -> Result<(), String> {
+        let probe = Probe {
+            id: ProbeId("probe:fixture:corrupt".to_string()),
+            location: SourceLocation::new("src/lib.rs", 10, 2),
+            owner: Some(SymbolId("owner:calculate".to_string())),
+            family: ProbeFamily::ReturnValue,
+            delta: DeltaKind::Value,
+            before: Some("amount".to_string()),
+            after: Some("amount + 1".to_string()),
+            expression: "amount".to_string(),
+            expected_sinks: Vec::new(),
+            required_oracles: Vec::new(),
+        };
+        let owner = FunctionSummary {
+            id: SymbolId("owner:calculate".to_string()),
+            name: "calculate".to_string(),
+            file: PathBuf::from("src/lib.rs"),
+            start_line: 1,
+            end_line: 20,
+            body: "fn calculate(amount: i32) -> Result<i32, Error> { Ok(amount) }".to_string(),
+            calls: Vec::new(),
+            returns: vec![ReturnFact {
+                line: 14,
+                text: "Ok(amount)".to_string(),
+            }],
+            literals: Vec::new(),
+            is_test: false,
+            attrs: Vec::new(),
+        };
+        let index = RustIndex::default();
+        let context = ProbeContext::new(&probe, Some(&owner), Vec::new(), false, &index, true);
+        let evidence = ClassifiedProbeEvidence::gather(&context, "amount");
+        let Some(PropagationWitnessDiagnostic::Valid(witness)) = evidence.propagation_witness
+        else {
+            return Err("expected a valid witness before corruption".to_string());
+        };
+        let mut corrupt = witness;
+        corrupt.semantic_digest = "sha256:corrupt".to_string();
+        let diagnostic = PropagationWitnessDiagnostic::from_witness(corrupt);
+        if !diagnostic.is_invalid() || diagnostic.witness().digest_matches() {
+            return Err("corrupt witness was not retained as rejected".to_string());
         }
         Ok(())
     }

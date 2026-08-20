@@ -23,9 +23,9 @@ pub(in crate::analysis) fn build_finding(
     let recommended_next_step =
         recommended_next_step(context.probe, &class, context.owner_assertion_shaped);
     let confidence = evidence.confidence(&class);
-    let invalid_propagation_witness = evidence
-        .propagation_witness()
-        .is_some_and(|witness| !witness.digest_matches());
+    let invalid_propagation_witness = evidence.propagation_witness().is_some_and(|diagnostic| {
+        diagnostic.is_invalid() || !diagnostic.witness().digest_matches()
+    });
     let mut evidence_lines = evidence.evidence;
     if invalid_propagation_witness {
         evidence_lines

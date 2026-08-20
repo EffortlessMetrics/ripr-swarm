@@ -245,11 +245,46 @@ fn has_closure_syntax(text: &str) -> bool {
 
 fn source_sink_tokens_overlap(source: &str, sink: &str) -> bool {
     let source_tokens = semantic_tokens(source);
+    let source_path = qualified_path_identity(source);
+    let sink_path = qualified_path_identity(sink);
     !source_tokens.is_empty()
         && receiver_identity(source) == receiver_identity(sink)
+        && paths_are_compatible(source, sink, source_path.as_deref(), sink_path.as_deref())
         && semantic_tokens(sink)
             .iter()
             .any(|token| source_tokens.iter().any(|source| source == token))
+}
+
+fn qualified_path_identity(text: &str) -> Option<String> {
+    let path = text
+        .split_once('(')
+        .map_or(text, |(callee, _)| callee)
+        .trim();
+    (path.contains('.') || path.contains("::")).then(|| normalize_semantic_text(path))
+}
+
+fn paths_are_compatible(
+    source: &str,
+    sink: &str,
+    source_path: Option<&str>,
+    sink_path: Option<&str>,
+) -> bool {
+    match (source_path, sink_path) {
+        (Some(source), Some(sink)) => source == sink,
+        (None, None) => true,
+        (None, Some(path)) => is_variant_wrapper(source, path),
+        (Some(path), None) => is_variant_wrapper(sink, path),
+    }
+}
+
+fn is_variant_wrapper(text: &str, qualified_path: &str) -> bool {
+    let Some((callee, _)) = text.split_once('(') else {
+        return false;
+    };
+    let Some(last_path_component) = qualified_path.rsplit("::").next() else {
+        return false;
+    };
+    normalize_semantic_text(callee) == last_path_component
 }
 
 fn receiver_identity(text: &str) -> Option<String> {
@@ -498,6 +533,20 @@ mod tests {
             current_path_witness(
                 &probe(ProbeFamily::SideEffect, "self.handle(value)"),
                 &[sink(FlowSinkKind::CallEffect, "other.handle(value)", 14)]
+            )
+            .is_none()
+        );
+        assert!(
+            current_path_witness(
+                &probe(ProbeFamily::FieldConstruction, "value"),
+                &[sink(FlowSinkKind::StructField, "Other::value", 14)]
+            )
+            .is_none()
+        );
+        assert!(
+            current_path_witness(
+                &probe(ProbeFamily::FieldConstruction, "self.status"),
+                &[sink(FlowSinkKind::StructField, "self.meta.status", 14)]
             )
             .is_none()
         );
