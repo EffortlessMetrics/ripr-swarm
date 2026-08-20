@@ -14,6 +14,12 @@ pub(crate) struct CompactGripContext<'a> {
         BTreeMap<String, Vec<usize>>,
     pub(in crate::analysis::test_grip_evidence) tests_by_file_stem: BTreeMap<String, Vec<usize>>,
     pub(in crate::analysis::test_grip_evidence) tests_by_import_token: BTreeMap<String, Vec<usize>>,
+    /// Direct calls indexed by their statically resolved same-crate module
+    /// path and leaf name. Name-only matching remains the fallback only for
+    /// a package-unique owner (#3214).
+    pub(in crate::analysis::test_grip_evidence) tests_by_module_call:
+        BTreeMap<(String, String), Vec<usize>>,
+    unique_owner_names_by_package: ProductionOwnerNamesByPackage,
     owner_named_cache: RefCell<BTreeMap<String, Vec<usize>>>,
     same_module_cache: RefCell<BTreeMap<String, Vec<usize>>>,
 }
@@ -41,6 +47,7 @@ impl<'a> CompactGripContext<'a> {
         let mut tests_by_assertion_token: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut tests_by_file_stem: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut tests_by_import_token: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        let mut tests_by_module_call: BTreeMap<(String, String), Vec<usize>> = BTreeMap::new();
         let same_file_helper_owner_calls_by_file = helper_owner_calls_by_file(index);
         let helper_owner_calls_by_file = strict_helper_owner_calls_by_file(index);
         let unambiguous_test_helper_owner_calls_by_name =
@@ -57,9 +64,11 @@ impl<'a> CompactGripContext<'a> {
             ambiguous_target_affinity_owner_calls_by_package(index);
         let target_affinity_production_owner_calls_by_module_path =
             target_affinity_production_owner_calls_by_module_path(index);
-        let unambiguous_production_owner_names_by_package =
+        let unambiguous_owner_names_by_package =
             unambiguous_production_owner_names_by_package(index);
         let module_import_aliases_by_file = module_import_aliases_by_file(index);
+        let direct_function_import_aliases_by_file = direct_function_import_aliases_by_file(index);
+        let reexport_aliases_by_module = reexport_aliases_by_module(index);
         let function_names_by_file = local_function_names_by_file(index);
         let test_scoped_function_names_by_file = test_scoped_function_names_by_file(index);
         let helper_owner_lookup = HelperOwnerCallLookup {
@@ -76,9 +85,8 @@ impl<'a> CompactGripContext<'a> {
             .enumerate()
             .map(|(test_index, test)| {
                 let test_scoped_function_names = test_scoped_function_names_by_file.get(&test.file);
-                let production_owner_names = package_scope(&test.file).and_then(|package| {
-                    unambiguous_production_owner_names_by_package.get(&package)
-                });
+                let production_owner_names = package_scope(&test.file)
+                    .and_then(|package| unambiguous_owner_names_by_package.get(&package));
                 let call_names = test
                     .calls
                     .iter()
@@ -97,6 +105,8 @@ impl<'a> CompactGripContext<'a> {
                     .map(strip_comments_and_strings)
                     .collect::<Vec<_>>();
                 let module_import_aliases = module_import_aliases_by_file.get(&test.file);
+                let direct_function_import_aliases =
+                    direct_function_import_aliases_by_file.get(&test.file);
                 let mut helper_owner_call_names = helper_owner_call_names_for_test(
                     test,
                     &call_names,
@@ -171,10 +181,28 @@ impl<'a> CompactGripContext<'a> {
                         .or_default()
                         .push(test_index);
                 }
+                let test_module_path = function_module_path_for_test(test, index)
+                    .or_else(|| module_path_for(&test.file).map(|path| path.replace('/', "::")));
+                if let Some(test_module_path) = test_module_path.as_deref() {
+                    for call in &test.calls {
+                        for module_path in resolved_call_module_paths(
+                            call,
+                            test_module_path,
+                            direct_function_import_aliases,
+                            &reexport_aliases_by_module,
+                            &code_lines,
+                        ) {
+                            tests_by_module_call
+                                .entry((module_path, call.name.clone()))
+                                .or_default()
+                                .push(test_index);
+                        }
+                    }
+                }
                 CompactTest {
                     test,
                     path_normalized: normalize_path(&test.file),
-                    module_path: module_path_for(&test.file),
+                    module_path: test_module_path,
                     name_lower: test.name.to_ascii_lowercase(),
                     call_names,
                     assertion_tokens,
@@ -194,6 +222,8 @@ impl<'a> CompactGripContext<'a> {
             tests_by_assertion_token,
             tests_by_file_stem,
             tests_by_import_token,
+            tests_by_module_call,
+            unique_owner_names_by_package: unambiguous_owner_names_by_package,
             owner_named_cache: RefCell::new(BTreeMap::new()),
             same_module_cache: RefCell::new(BTreeMap::new()),
         }
@@ -241,6 +271,19 @@ impl<'a> CompactGripContext<'a> {
             .insert(owner_module.to_string(), indices.clone());
         indices
     }
+
+    pub(super) fn module_call_indices(&self, module_path: &str, name: &str) -> Vec<usize> {
+        self.tests_by_module_call
+            .get(&(module_path.to_string(), name.to_string()))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub(super) fn owner_name_is_unique_for_package(&self, owner: &FunctionSummary) -> bool {
+        package_scope(&owner.file)
+            .and_then(|package| self.unique_owner_names_by_package.get(&package))
+            .is_some_and(|names| names.contains(&owner.name))
+    }
 }
 
 pub(in crate::analysis::test_grip_evidence) type HelperOwnerCallsByFile =
@@ -264,8 +307,8 @@ pub(in crate::analysis::test_grip_evidence) type OwnerNamesByPackageAndModulePat
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::analysis::test_grip_evidence) struct ImportedFunctionAlias {
-    module_path: String,
-    name: String,
+    pub(super) module_path: String,
+    pub(super) name: String,
 }
 
 pub(in crate::analysis::test_grip_evidence) struct HelperOwnerCallLookup<'a> {
