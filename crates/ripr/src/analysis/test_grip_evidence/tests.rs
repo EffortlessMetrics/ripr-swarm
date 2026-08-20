@@ -9178,6 +9178,41 @@ fn module_relation_rejects_external_import_shadowing_unique_owner_name() -> Resu
 }
 
 #[test]
+fn module_relation_rejects_grouped_external_import_shadowing_unique_owner_name()
+-> Result<(), String> {
+    let child = PathBuf::from("src/child.rs");
+    let test = PathBuf::from("tests/grouped_external_shadow.rs");
+    let files = vec![
+        (
+            child.clone(),
+            "pub fn compute(value: i32) -> i32 {\n    if value >= 10 { value - 1 } else { value }\n}\n",
+        ),
+        (
+            test,
+            "use foreign::{compute};\n#[test]\nfn grouped_foreign_value_is_not_child_value() {\n    assert_eq!(compute(10), 110);\n}\n",
+        ),
+    ];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[child], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected child predicate seam".to_string())?;
+    let evidence = evidence_for_seam(seam, &index);
+    if let Some(test) = evidence
+        .related_tests
+        .iter()
+        .find(|test| test.test_name == "grouped_foreign_value_is_not_child_value")
+    {
+        return Err(format!(
+            "grouped external shadow relation leaked via {:?}",
+            test.relation_reason
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn module_relation_rejects_local_shadow_of_unique_owner_name() -> Result<(), String> {
     let child = PathBuf::from("src/child.rs");
     let test = PathBuf::from("tests/local_shadow.rs");
