@@ -91,6 +91,52 @@ fn outer_after() {
         Some(("child", "compute")),
         "same-scope use bindings apply before their textual import line"
     );
+    let grouped_conflict = direct_function_import_aliases(
+        "use crate::child::{compute as run, unique as run};\nfn call() { run(); }",
+    );
+    assert!(
+        grouped_conflict
+            .get("run")
+            .and_then(|alias| alias.binding_at(2))
+            .is_none(),
+        "duplicate aliases in one grouped declaration must fail closed"
+    );
+    let one_line_block = direct_function_import_aliases(
+        "fn outer_before() { run(); }\nmod nested {\n    use crate::other::compute as run; }\nfn outer_after() { run(); }\nuse crate::child::compute as run;",
+    );
+    let inline_run = one_line_block
+        .get("run")
+        .ok_or_else(|| "one-line block run alias should be indexed".to_string())?;
+    assert_eq!(
+        inline_run
+            .binding_at(1)
+            .map(|binding| (binding.module_path.as_str(), binding.name.as_str())),
+        Some(("child", "compute"))
+    );
+    assert_eq!(
+        inline_run
+            .binding_at(3)
+            .map(|binding| (binding.module_path.as_str(), binding.name.as_str())),
+        Some(("other", "compute"))
+    );
+    assert_eq!(
+        inline_run
+            .binding_at(4)
+            .map(|binding| (binding.module_path.as_str(), binding.name.as_str())),
+        Some(("child", "compute")),
+        "one-line block closing brace must not leak nested alias"
+    );
+    let stale_use = direct_function_import_aliases(
+        "mod nested {\n    use crate::other::compute as run\n    fn nested() { run(); }\n}\nuse crate::child::compute as run;\nfn outer() { run(); }",
+    );
+    assert_eq!(
+        stale_use
+            .get("run")
+            .and_then(|alias| alias.binding_at(6))
+            .map(|binding| (binding.module_path.as_str(), binding.name.as_str())),
+        Some(("child", "compute")),
+        "unterminated use fragments must not consume later items"
+    );
     Ok(())
 }
 
@@ -5128,7 +5174,7 @@ fn format_output(input: &str) -> String {
 "#;
     let report = PathBuf::from("src/report.rs");
     let report_src = r#"
-pub fn calculate(input: &str) -> String {
+pub fn summarize(input: &str) -> String {
     format_report(input)
 }
 
@@ -5146,7 +5192,7 @@ use crate::pipeline::calculate as run;
 
 #[cfg(test)]
 mod nested_shadow {
-    use crate::report::calculate as run;
+use crate::report::summarize as run;
 
     pub fn nested_exercise() -> String {
         run("beta")
@@ -5159,10 +5205,10 @@ pub fn exercise_after() -> String {
 "#;
     let support_b = PathBuf::from("tests/support_b.rs");
     let support_b_src = r#"
-use report::calculate;
+use report::summarize;
 
 pub fn exercise() -> String {
-    calculate("beta")
+    summarize("beta")
 }
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
@@ -5176,6 +5222,7 @@ use support_a::{
 fn aliased_direct_imported_support_helper_reaches_pipeline() {
     let rendered = exercise();
     assert_eq!(rendered, "alpha");
+    assert_eq!(support_a::exercise_support(), "alpha");
     assert_eq!(after(), "gamma");
     assert_eq!(support_a::nested_shadow::nested_exercise(), "beta");
 }
@@ -5196,12 +5243,12 @@ fn aliased_direct_imported_support_helper_reaches_pipeline() {
         Ok((binding.module_path.as_str(), binding.name.as_str()))
     };
     assert_eq!(binding_for("run(\"alpha\")")?, ("pipeline", "calculate"));
-    assert_eq!(binding_for("run(\"beta\")")?, ("report", "calculate"));
+    assert_eq!(binding_for("run(\"beta\")")?, ("report", "summarize"));
     assert_eq!(binding_for("run(\"gamma\")")?, ("pipeline", "calculate"));
     let index = index_from_files(&[
         (pipeline, pipeline_src),
         (report, report_src),
-        (support_a, support_a_src),
+        (support_a.clone(), support_a_src),
         (support_b, support_b_src),
         (tests, tests_src),
     ])?;
@@ -5214,7 +5261,8 @@ fn aliased_direct_imported_support_helper_reaches_pipeline() {
             .functions
             .iter()
             .find(|function| {
-                function.name == helper && function.file == PathBuf::from("tests/support_a.rs")
+                function.name == helper
+                    && function.file.as_path() == Path::new("tests/support_a.rs")
             })
             .ok_or_else(|| format!("missing helper identity {helper}"))?;
         assert!(
@@ -5223,6 +5271,70 @@ fn aliased_direct_imported_support_helper_reaches_pipeline() {
                 .iter()
                 .any(|call| call.name == "run" && call.text.contains(argument)),
             "helper {helper} must retain its direct aliased call to {argument}"
+        );
+    }
+    let aliases_by_file = direct_function_import_aliases_by_file(&index);
+    let owner_names_by_module_path = production_owner_names_by_module_path(&index);
+    let owner_names = owner_names_by_module_path
+        .values()
+        .flat_map(|names| names.iter().cloned())
+        .collect::<std::collections::BTreeSet<_>>();
+    let unambiguous_owner_names = unambiguous_production_owner_names_by_package(&index)
+        .values()
+        .flat_map(|names| names.iter().cloned())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert!(unambiguous_owner_names.contains("calculate"));
+    assert!(unambiguous_owner_names.contains("summarize"));
+    assert!(
+        owner_names_by_module_path
+            .get("pipeline")
+            .is_some_and(|names| names.contains("calculate"))
+            && owner_names_by_module_path
+                .get("report")
+                .is_some_and(|names| names.contains("summarize")),
+        "pipeline/report fixture must expose distinct indexed owners"
+    );
+    assert_ne!(
+        owner_names_by_module_path.get("pipeline"),
+        owner_names_by_module_path.get("report")
+    );
+    for (helper, expected_owner, expected_module) in [
+        ("exercise_support", "calculate", "pipeline"),
+        ("nested_exercise", "summarize", "report"),
+        ("exercise_after", "calculate", "pipeline"),
+    ] {
+        let function = index
+            .functions
+            .iter()
+            .find(|function| {
+                function.name == helper
+                    && function.file.as_path() == Path::new("tests/support_a.rs")
+            })
+            .ok_or_else(|| format!("missing helper identity {helper}"))?;
+        let owners = direct_imported_owner_calls_for_function(
+            function,
+            aliases_by_file.get(&support_a),
+            Some(&owner_names),
+            &owner_names_by_module_path,
+        );
+        assert_eq!(
+            owners,
+            std::collections::BTreeSet::from([expected_owner.to_string()]),
+            "helper {helper} must resolve exactly to {expected_owner}"
+        );
+        let call = function
+            .calls
+            .iter()
+            .find(|call| call.name == "run")
+            .ok_or_else(|| format!("missing aliased call for {helper}"))?;
+        let binding = aliases_by_file
+            .get(&support_a)
+            .and_then(|aliases| aliases.get("run"))
+            .and_then(|alias| alias.binding_at(call.line))
+            .ok_or_else(|| format!("missing binding for {helper}"))?;
+        assert_eq!(
+            binding.module_path, expected_module,
+            "helper {helper} must resolve through the expected owner module"
         );
     }
     let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
@@ -5239,14 +5351,42 @@ fn aliased_direct_imported_support_helper_reaches_pipeline() {
 
     assert_eq!(evidence.reach.state, StageState::Yes);
     assert_eq!(evidence.activate.state, StageState::Yes);
-    assert!(
-        evidence
-            .related_tests
-            .iter()
-            .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
-        "expected aliased direct imported support helper owner-call relation, got {:?}",
-        evidence.related_tests
+    let pipeline_related = evidence
+        .related_tests
+        .iter()
+        .find(|test| test.relation_reason == RelationReason::HelperOwnerCall)
+        .ok_or_else(|| "expected pipeline helper owner-call relation".to_string())?;
+    assert_eq!(
+        pipeline_related.test_name,
+        "aliased_direct_imported_support_helper_reaches_pipeline"
     );
+    assert_eq!(
+        pipeline_related.file,
+        PathBuf::from("tests/pipeline_tests.rs")
+    );
+    assert!(
+        pipeline_related.test_target.is_some(),
+        "pipeline helper relation must retain exact indexed test identity"
+    );
+    let pipeline_target = pipeline_related.test_target.as_ref().ok_or_else(|| {
+        "pipeline helper relation lost its indexed test target after presence check".to_string()
+    })?;
+    let pipeline_function = index
+        .functions
+        .iter()
+        .find(|function| {
+            function.is_test
+                && function.name == pipeline_related.test_name
+                && function.file == pipeline_related.file
+        })
+        .ok_or_else(|| "missing indexed pipeline test target".to_string())?;
+    assert_eq!(
+        pipeline_target.symbol_id().0,
+        pipeline_function.id.0,
+        "pipeline evidence must retain the exact indexed test symbol"
+    );
+    assert_eq!(pipeline_target.file(), pipeline_function.file.as_path());
+    assert_eq!(pipeline_target.line(), pipeline_function.start_line);
     assert!(
         evidence.observed_values.is_empty(),
         "aliased direct imported support helper activation must not invent values: {:?}",
@@ -5258,18 +5398,103 @@ fn aliased_direct_imported_support_helper_reaches_pipeline() {
         .iter()
         .find(|s| {
             s.kind() == SeamKind::CallPresence
-                && s.owner().ends_with("::calculate")
+                && s.owner().ends_with("::summarize")
                 && s.expression().contains("format_report")
         })
-        .ok_or_else(|| "expected report calculate call_presence seam".to_string())?;
+        .ok_or_else(|| "expected report summarize call_presence seam".to_string())?;
     let report_evidence = evidence_for_seam(report_call_presence, &index);
+    let report_related = report_evidence
+        .related_tests
+        .iter()
+        .find(|test| test.relation_reason == RelationReason::HelperOwnerCall)
+        .ok_or_else(|| "expected report helper owner-call relation".to_string())?;
+    assert_eq!(
+        report_related.test_name,
+        "aliased_direct_imported_support_helper_reaches_pipeline"
+    );
+    assert_eq!(
+        report_related.file,
+        PathBuf::from("tests/pipeline_tests.rs")
+    );
     assert!(
-        report_evidence
+        report_related.test_target.is_some(),
+        "report helper relation must retain exact indexed test identity"
+    );
+    let report_target = report_related.test_target.as_ref().ok_or_else(|| {
+        "report helper relation lost its indexed test target after presence check".to_string()
+    })?;
+    let report_function = index
+        .functions
+        .iter()
+        .find(|function| {
+            function.is_test
+                && function.name == report_related.test_name
+                && function.file == report_related.file
+        })
+        .ok_or_else(|| "missing indexed report test target".to_string())?;
+    assert_eq!(
+        report_target.symbol_id().0,
+        report_function.id.0,
+        "report evidence must retain the exact indexed test symbol"
+    );
+    assert_eq!(report_target.file(), report_function.file.as_path());
+    assert_eq!(report_target.line(), report_function.start_line);
+    Ok(())
+}
+
+#[test]
+fn same_name_production_owner_is_excluded_from_unambiguous_candidates() -> Result<(), String> {
+    let index = index_from_files(&[
+        (
+            PathBuf::from("src/one.rs"),
+            "pub fn calculate(input: &str) -> String { input.to_string() }",
+        ),
+        (
+            PathBuf::from("src/two.rs"),
+            "pub fn calculate(input: &str) -> String { input.to_string() }",
+        ),
+    ])?;
+    let unambiguous = unambiguous_production_owner_names_by_package(&index);
+    assert!(
+        !unambiguous
+            .values()
+            .any(|names| names.contains("calculate"))
+    );
+    Ok(())
+}
+
+#[test]
+fn wrong_binding_mutation_is_exposed_by_full_production_evidence_path() -> Result<(), String> {
+    let index = index_from_files(&[
+        (
+            PathBuf::from("src/pipeline.rs"),
+            "pub fn calculate(input: &str) -> String { input.to_string() }",
+        ),
+        (
+            PathBuf::from("src/report.rs"),
+            "pub fn summarize(input: &str) -> String { input.to_string() }",
+        ),
+        (
+            PathBuf::from("tests/support_a.rs"),
+            "pub fn exercise() -> String { run(\"mutated\") }\nuse crate::report::summarize as run;",
+        ),
+        (
+            PathBuf::from("tests/pipeline_tests.rs"),
+            "use support_a::exercise;\n#[test] fn mutated_binding_is_not_pipeline_evidence() { assert_eq!(exercise(), \"mutated\"); }",
+        ),
+    ])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::CallPresence && seam.expression().contains("input"))
+        .ok_or_else(|| "missing mutated pipeline call seam".to_string())?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert_ne!(evidence.activate.state, StageState::Yes);
+    assert!(
+        !evidence
             .related_tests
             .iter()
-            .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
-        "expected nested direct imported support helper owner-call relation, got {:?}",
-        report_evidence.related_tests
+            .any(|test| test.relation_reason == RelationReason::HelperOwnerCall)
     );
     Ok(())
 }
@@ -5462,7 +5687,7 @@ fn sibling_without_import_mentions_pipeline() {
     let index = index_from_files(&[
         (pipeline, pipeline_src),
         (report, report_src),
-        (support_a, support_a_src),
+        (support_a.clone(), support_a_src),
         (support_b, support_b_src),
         (tests, tests_src),
     ])?;
@@ -5545,7 +5770,7 @@ fn qualified_support_helper_reaches_pipeline() {
     let index = index_from_files(&[
         (pipeline, pipeline_src),
         (report, report_src),
-        (support_a, support_a_src),
+        (support_a.clone(), support_a_src),
         (support_b, support_b_src),
         (tests, tests_src),
     ])?;
@@ -5629,7 +5854,7 @@ fn qualified_support_helper_reaches_report() {
     let index = index_from_files(&[
         (pipeline, pipeline_src),
         (report, report_src),
-        (support_a, support_a_src),
+        (support_a.clone(), support_a_src),
         (support_b, support_b_src),
         (tests, tests_src),
     ])?;
@@ -5711,7 +5936,7 @@ fn crate_qualified_support_helper_reaches_pipeline() {
     let index = index_from_files(&[
         (pipeline, pipeline_src),
         (report, report_src),
-        (support_a, support_a_src),
+        (support_a.clone(), support_a_src),
         (support_b, support_b_src),
         (tests, tests_src),
     ])?;
@@ -5797,7 +6022,7 @@ mod nested {
     let index = index_from_files(&[
         (pipeline, pipeline_src),
         (report, report_src),
-        (support_a, support_a_src),
+        (support_a.clone(), support_a_src),
         (support_b, support_b_src),
         (tests, tests_src),
     ])?;

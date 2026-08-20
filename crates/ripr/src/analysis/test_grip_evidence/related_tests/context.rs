@@ -1004,15 +1004,32 @@ pub(in crate::analysis::test_grip_evidence) fn direct_function_import_aliases(
         let scope_start = scope_starts[brace_depth];
         let trimmed = line.trim();
         let mut is_use_fragment = false;
+        if pending_use.is_some()
+            && [
+                "use ", "fn ", "pub ", "mod ", "impl ", "struct ", "enum ", "const ", "static ",
+                "type ", "#[",
+            ]
+            .iter()
+            .any(|prefix| trimmed.starts_with(prefix))
+        {
+            pending_use = None;
+        }
         if let Some((start_line, scope_depth, import)) = pending_use.as_mut() {
             is_use_fragment = true;
             import.push(' ');
             import.push_str(trimmed);
             if trimmed.contains(';') {
                 let mut parsed = BTreeMap::new();
-                collect_direct_function_import_aliases_from_use(import, &mut parsed);
+                let import_text = import
+                    .split_once(';')
+                    .map_or(import.as_str(), |(head, _)| head);
+                if let Some(parsed_imports) =
+                    collect_direct_function_import_aliases_from_use_unambiguous(import_text)
+                {
+                    parsed = parsed_imports;
+                }
                 if !parsed.is_empty() {
-                    imports.push((*start_line, *scope_depth, parsed));
+                    imports.push((*start_line, *scope_depth, line_number, parsed));
                 }
                 pending_use = None;
             }
@@ -1020,42 +1037,54 @@ pub(in crate::analysis::test_grip_evidence) fn direct_function_import_aliases(
             is_use_fragment = true;
             let mut parsed = BTreeMap::new();
             if import.contains(';') {
-                collect_direct_function_import_aliases_from_use(import, &mut parsed);
+                let import_text = import.split_once(';').map_or(import, |(head, _)| head);
+                if let Some(parsed_imports) =
+                    collect_direct_function_import_aliases_from_use_unambiguous(import_text)
+                {
+                    parsed = parsed_imports;
+                }
                 if !parsed.is_empty() {
-                    imports.push((scope_start, brace_depth, parsed));
+                    imports.push((scope_start, brace_depth, line_number, parsed));
                 }
             } else {
                 pending_use = Some((scope_start, brace_depth, import.to_string()));
             }
         }
-        if !is_use_fragment {
-            for ch in line.chars() {
-                match ch {
-                    '{' => {
-                        brace_depth = brace_depth.saturating_add(1);
-                        scope_starts.push(line_number);
-                    }
-                    '}' => {
-                        if brace_depth > 0 {
-                            brace_depth -= 1;
-                            scope_starts.pop();
-                        }
-                    }
-                    _ => {}
+        let lexical_suffix = if is_use_fragment {
+            line.split_once(';').map_or("", |(_, suffix)| suffix)
+        } else {
+            &line
+        };
+        for ch in lexical_suffix.chars() {
+            match ch {
+                '{' => {
+                    brace_depth = brace_depth.saturating_add(1);
+                    scope_starts.push(line_number);
                 }
+                '}' if brace_depth > 0 => {
+                    brace_depth -= 1;
+                    scope_starts.pop();
+                }
+                _ => {}
             }
         }
         line_depths_after.push(brace_depth);
     }
-    for (start_line, scope_depth, parsed) in imports {
+    for (start_line, scope_depth, use_line, parsed) in imports {
         let end_line = if scope_depth == 0 {
             usize::MAX
         } else {
             line_depths_after
                 .iter()
                 .enumerate()
-                .skip(start_line)
-                .find_map(|(index, depth)| (*depth < scope_depth).then_some(index))
+                .skip(use_line - 1)
+                .find_map(|(index, depth)| {
+                    (*depth < scope_depth).then_some(if index == use_line - 1 {
+                        use_line
+                    } else {
+                        index
+                    })
+                })
                 .unwrap_or(line_depths_after.len())
         };
         for (alias, imported) in parsed {
@@ -1074,6 +1103,31 @@ pub(in crate::analysis::test_grip_evidence) fn direct_function_import_aliases(
         }
     }
     aliases
+}
+
+fn collect_direct_function_import_aliases_from_use_unambiguous(
+    import: &str,
+) -> Option<BTreeMap<String, ImportedFunctionAlias>> {
+    let import = import.trim_end_matches(';').trim();
+    let mut aliases = BTreeMap::new();
+    if let Some((base, rest)) = import.split_once("::{") {
+        let module_path = normalize_module_import_path(base)?;
+        let body = rest.strip_suffix('}')?;
+        for item in body.split(',').map(str::trim) {
+            let mut candidate = BTreeMap::new();
+            collect_direct_function_import_alias(item, &module_path, &mut candidate);
+            for (alias, imported) in candidate {
+                if aliases.insert(alias, imported).is_some() {
+                    return None;
+                }
+            }
+        }
+        return Some(aliases);
+    }
+    let (module_path, item) = import.rsplit_once("::")?;
+    let module_path = normalize_module_import_path(module_path)?;
+    collect_direct_function_import_alias(item.trim(), &module_path, &mut aliases);
+    Some(aliases)
 }
 
 pub(in crate::analysis::test_grip_evidence) fn collect_module_import_aliases_from_use(
@@ -1141,32 +1195,6 @@ pub(in crate::analysis::test_grip_evidence) fn collect_direct_helper_import_alia
     };
     let Some(module_path) = normalize_helper_module_import_path(module_path, allowed_module_paths)
     else {
-        return;
-    };
-    collect_direct_function_import_alias(item.trim(), &module_path, aliases);
-}
-
-pub(in crate::analysis::test_grip_evidence) fn collect_direct_function_import_aliases_from_use(
-    import: &str,
-    aliases: &mut BTreeMap<String, ImportedFunctionAlias>,
-) {
-    let import = import.trim_end_matches(';').trim();
-    if let Some((base, rest)) = import.split_once("::{") {
-        let Some(module_path) = normalize_module_import_path(base) else {
-            return;
-        };
-        let Some(body) = rest.strip_suffix('}') else {
-            return;
-        };
-        for item in body.split(',').map(str::trim) {
-            collect_direct_function_import_alias(item, &module_path, aliases);
-        }
-        return;
-    }
-    let Some((module_path, item)) = import.rsplit_once("::") else {
-        return;
-    };
-    let Some(module_path) = normalize_module_import_path(module_path) else {
         return;
     };
     collect_direct_function_import_alias(item.trim(), &module_path, aliases);
