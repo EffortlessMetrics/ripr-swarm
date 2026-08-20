@@ -886,18 +886,6 @@ fn crate_module_path_for_file(file: &Path) -> Option<String> {
     Some(module.replace('/', "::"))
 }
 
-fn function_module_path_for_test(test: &TestSummary, index: &RustIndex) -> Option<String> {
-    index
-        .functions
-        .iter()
-        .find(|function| {
-            function.file == test.file
-                && function.name == test.name
-                && function.start_line == test.start_line
-        })
-        .and_then(function_module_path)
-}
-
 /// Resolve direct call spellings to a small set of crate-relative module
 /// paths. Qualified paths are the discriminating control for duplicate names;
 /// bare calls retain the package-unique fallback in `match_direct_owner_call`.
