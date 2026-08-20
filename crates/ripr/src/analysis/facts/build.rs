@@ -272,19 +272,21 @@ fn test_add() {
     #[test]
     fn insert_file_summary_normalizes_nested_fact_paths() {
         let file = PathBuf::from("tests/pricing.rs");
-        let mut summary = crate::analysis::facts::FileFacts::default();
-        summary.path = PathBuf::from("tests\\pricing.rs");
-        summary.tests.push(crate::analysis::facts::TestFact {
-            name: "pricing".to_string(),
-            file: PathBuf::from("tests\\pricing.rs"),
-            start_line: 1,
-            end_line: 2,
-            body: String::new(),
-            calls: Vec::new(),
-            assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-        });
+        let summary = crate::analysis::facts::FileFacts {
+            path: PathBuf::from("tests\\pricing.rs"),
+            tests: vec![crate::analysis::facts::TestFact {
+                name: "pricing".to_string(),
+                file: PathBuf::from("tests\\pricing.rs"),
+                start_line: 1,
+                end_line: 2,
+                body: String::new(),
+                calls: Vec::new(),
+                assertions: Vec::new(),
+                literals: Vec::new(),
+                attrs: Vec::new(),
+            }],
+            ..Default::default()
+        };
         let mut index = RustIndex::default();
         insert_file_summary(&mut index, file.clone(), summary);
         assert!(index.files.contains_key(&file));
