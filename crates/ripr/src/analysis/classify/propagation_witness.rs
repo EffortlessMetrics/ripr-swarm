@@ -314,46 +314,31 @@ impl PropagationWitnessV1 {
     }
 
     fn compute_semantic_digest(&self) -> String {
-        let mut canonical = String::new();
-        canonical.push_str("propagation-witness-v1\n");
-        canonical.push_str(&self.schema_version.to_string());
-        canonical.push('\n');
-        canonical.push_str(&self.behavior.owner.0);
-        canonical.push('\n');
-        canonical.push_str(&self.behavior.family);
-        canonical.push('\n');
-        canonical.push_str(&self.behavior.delta);
-        canonical.push('\n');
-        canonical.push_str(&self.behavior.expression);
-        canonical.push('\n');
-        canonical.push_str(&self.source.kind);
-        canonical.push('\n');
-        canonical.push_str(&self.source.identity);
-        canonical.push('\n');
+        let mut canonical = Vec::new();
+        append_canonical_field(&mut canonical, "propagation-witness-v1");
+        append_canonical_field(&mut canonical, &self.schema_version.to_string());
+        append_canonical_field(&mut canonical, &self.behavior.owner.0);
+        append_canonical_field(&mut canonical, &self.behavior.family);
+        append_canonical_field(&mut canonical, &self.behavior.delta);
+        append_canonical_field(&mut canonical, &self.behavior.expression);
+        append_canonical_field(&mut canonical, &self.source.kind);
+        append_canonical_field(&mut canonical, &self.source.identity);
         for edge in &self.edges {
-            canonical.push_str(edge.kind.as_str());
-            canonical.push('|');
-            canonical.push_str(edge.status.as_str());
-            canonical.push('|');
-            canonical.push_str(&edge.from);
-            canonical.push('|');
-            canonical.push_str(&edge.to);
-            canonical.push('\n');
+            append_canonical_field(&mut canonical, edge.kind.as_str());
+            append_canonical_field(&mut canonical, edge.status.as_str());
+            append_canonical_field(&mut canonical, &edge.from);
+            append_canonical_field(&mut canonical, &edge.to);
         }
-        canonical.push_str(&self.sink.kind);
-        canonical.push('\n');
-        canonical.push_str(&self.sink.identity);
-        canonical.push('\n');
-        canonical.push_str(self.completeness.as_str());
-        canonical.push('\n');
+        append_canonical_field(&mut canonical, &self.sink.kind);
+        append_canonical_field(&mut canonical, &self.sink.identity);
+        append_canonical_field(&mut canonical, self.completeness.as_str());
         let mut limitations = self.limitations.clone();
         limitations.sort();
         limitations.dedup();
         for limitation in limitations {
-            canonical.push_str(&limitation);
-            canonical.push('\n');
+            append_canonical_field(&mut canonical, &limitation);
         }
-        let digest = Sha256::digest(canonical.as_bytes());
+        let digest = Sha256::digest(canonical.as_slice());
         let mut hex = String::with_capacity(digest.len() * 2);
         for byte in digest {
             use std::fmt::Write;
@@ -361,6 +346,11 @@ impl PropagationWitnessV1 {
         }
         format!("sha256:{hex}")
     }
+}
+
+fn append_canonical_field(canonical: &mut Vec<u8>, value: &str) {
+    canonical.extend_from_slice(&(value.len() as u64).to_le_bytes());
+    canonical.extend_from_slice(value.as_bytes());
 }
 
 #[cfg(test)]
@@ -478,6 +468,20 @@ mod tests {
 
     #[test]
     fn sibling_orthogonal_dynamic_and_compatible_oracle_controls_fail_closed() {
+        assert!(
+            current_path_witness(
+                &probe(ProbeFamily::ReturnValue, "amount"),
+                &[sink(FlowSinkKind::ReturnValue, "Ok(amount)", 14)]
+            )
+            .is_some()
+        );
+        assert!(
+            current_path_witness(
+                &probe(ProbeFamily::SideEffect, "self.handle(value)"),
+                &[sink(FlowSinkKind::CallEffect, "self.handle(value)", 14)]
+            )
+            .is_some()
+        );
         let owner = probe(ProbeFamily::FieldConstruction, "amount");
         assert!(
             current_path_witness(

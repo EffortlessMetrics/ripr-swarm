@@ -137,6 +137,7 @@ fn evidence_summaries<'e>(stages: impl IntoIterator<Item = &'e StageEvidence>) -
 mod tests {
     use super::evidence_summaries;
     use super::{ClassifiedProbeEvidence, ProbeContext, PropagationWitnessDiagnostic};
+    use crate::analysis::classifier::finding::build_finding;
     use crate::analysis::facts::{FunctionSummary, ReturnFact, RustIndex};
     use crate::domain::{
         Confidence, DeltaKind, Probe, ProbeFamily, ProbeId, SourceLocation, StageEvidence,
@@ -234,16 +235,24 @@ mod tests {
         };
         let index = RustIndex::default();
         let context = ProbeContext::new(&probe, Some(&owner), Vec::new(), false, &index, true);
-        let evidence = ClassifiedProbeEvidence::gather(&context, "amount");
-        let Some(PropagationWitnessDiagnostic::Valid(witness)) = evidence.propagation_witness
+        let mut evidence = ClassifiedProbeEvidence::gather(&context, "amount");
+        let Some(PropagationWitnessDiagnostic::Valid(witness)) =
+            evidence.propagation_witness.as_mut()
         else {
             return Err("expected a valid witness before corruption".to_string());
         };
-        let mut corrupt = witness;
-        corrupt.semantic_digest = "sha256:corrupt".to_string();
-        let diagnostic = PropagationWitnessDiagnostic::from_witness(corrupt);
-        if !diagnostic.is_invalid() || diagnostic.witness().digest_matches() {
-            return Err("corrupt witness was not retained as rejected".to_string());
+        witness.semantic_digest = "sha256:corrupt".to_string();
+        let finding = build_finding(
+            &context,
+            crate::domain::ExposureClass::PropagationUnknown,
+            evidence,
+        );
+        if !finding
+            .evidence
+            .iter()
+            .any(|line| line == "propagation witness digest invalid; diagnostic witness withheld")
+        {
+            return Err("corrupt witness diagnostic was not emitted".to_string());
         }
         Ok(())
     }
