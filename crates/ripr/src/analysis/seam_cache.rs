@@ -83,9 +83,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// may carry pre-#3273 production roles and pre-#3286 relations and must
 /// not be reused.
 /// `0.7` -> `0.8`: Err-return guards now credit as assertion twins
+/// `0.8` -> `0.9`: relation classification now resolves package-root imports
 /// (#3284) and repo-mode probe seeding filters evidence-role owners,
 /// changing classified-seam content at package `0.10.0`.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "0.8";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "0.9";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.

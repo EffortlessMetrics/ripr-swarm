@@ -71,6 +71,21 @@ pub(super) fn find_related_tests_with_context<'context, 'index>(
 
     let mut candidates: BTreeMap<usize, RelationReason> = BTreeMap::new();
     match_direct_owner_call(&mut candidates, context, prefix, &owner);
+    if owner.function.as_ref().is_some_and(|function| {
+        function.file.file_name().and_then(|name| name.to_str()) == Some("lib.rs")
+    }) {
+        for (test_index, test) in context.tests.iter().enumerate() {
+            if test._root_import_names.contains(&owner.name)
+                && test
+                    .direct_import_modules
+                    .get(&owner.name)
+                    .is_some_and(|module| module.split("::").count() == 1)
+                && test.test.calls.iter().any(|call| call.name == owner.name)
+            {
+                candidates.insert(test_index, RelationReason::DirectOwnerCall);
+            }
+        }
+    }
     match_helper_owner_call(&mut candidates, context, prefix, &owner);
     match_target_affinity_owner_call(
         &mut candidates,
@@ -263,14 +278,41 @@ pub(super) fn match_direct_owner_call(
         .function
         .as_ref()
         .is_some_and(|function| context.owner_name_is_unique_for_package(function));
-    if package_unique {
+    let owner_is_crate_root = owner.function.as_ref().is_some_and(|function| {
+        function.file.file_name().and_then(|name| name.to_str()) == Some("lib.rs")
+    });
+    if package_unique || owner_is_crate_root {
         if let Some(name_indices) = context.tests_by_call_name.get(&owner.name) {
             indices.extend(name_indices.iter().copied().filter(|test_index| {
+                context.tests.get(*test_index).is_some_and(|indexed| {
+                    bare_owner_call_is_admissible(indexed, owner)
+                        || (owner_is_crate_root
+                            && indexed
+                                .direct_import_modules
+                                .get(&owner.name)
+                                .is_some_and(|module| module.split("::").count() == 1))
+                })
+            }));
+        }
+        if owner_is_crate_root {
+            indices.extend(
                 context
                     .tests
-                    .get(*test_index)
-                    .is_some_and(|indexed| bare_owner_call_is_admissible(indexed, owner))
-            }));
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, indexed)| {
+                        indexed
+                            .direct_import_modules
+                            .get(&owner.name)
+                            .is_some_and(|module| module.split("::").count() == 1)
+                            && indexed
+                                .test
+                                .calls
+                                .iter()
+                                .any(|call| call.name == owner.name)
+                    })
+                    .map(|(index, _)| index),
+            );
         }
     }
     indices.sort_unstable();
@@ -294,12 +336,19 @@ fn bare_owner_call_is_admissible(test: &CompactTest<'_>, owner: &OwnerContext) -
     let Some(function) = owner.function.as_ref() else {
         return false;
     };
-    if test
-        .direct_import_modules
-        .get(&owner.name)
-        .is_some_and(|imported| owner.module_path.as_deref() != Some(imported.as_str()))
+    if let Some(imported) = test.direct_import_modules.get(&owner.name)
+        && owner.module_path.as_deref() != Some(imported.as_str())
     {
-        return false;
+        // Integration tests spell a root item through the package crate name
+        // (`use package_name::item`). The compact index has no Cargo manifest
+        // identity, so retain the legacy root-item fallback for that bounded
+        // shape; non-root module imports remain fail-closed on mismatch.
+        let owner_is_crate_root = owner.function.as_ref().is_some_and(|function| {
+            function.file.file_name().and_then(|name| name.to_str()) == Some("lib.rs")
+        });
+        if !owner_is_crate_root {
+            return false;
+        }
     }
     if test
         .code_lines
@@ -377,6 +426,16 @@ pub(super) fn match_helper_owner_call(
         return;
     };
     for test_index in indices {
+        let test = &context.tests[*test_index];
+        let package_root_direct_import = test._root_import_names.contains(&owner.name)
+            && test
+                .direct_import_modules
+                .get(&owner.name)
+                .is_some_and(|module| module.split("::").count() == 1)
+            && test.test.calls.iter().any(|call| call.name == owner.name);
+        if package_root_direct_import {
+            continue;
+        }
         insert_related_candidate(
             candidates,
             context,
@@ -406,6 +465,12 @@ pub(super) fn match_target_affinity_owner_call(
             .target_affinity_owner_call_names
             .contains(owner.name.as_str())
             || !test_assertion_mentions_any_target_token(test, target_tokens)
+        {
+            continue;
+        }
+        if owner.function.as_ref().is_some_and(|function| {
+            function.file.file_name().and_then(|name| name.to_str()) == Some("lib.rs")
+        }) && test.direct_import_modules.contains_key(&owner.name)
         {
             continue;
         }
@@ -840,6 +905,7 @@ pub(super) fn resolved_call_module_paths(
     call: &CallFact,
     test_module: &str,
     direct_imports: Option<&BTreeMap<String, ImportedFunctionAlias>>,
+    root_import_names: Option<&BTreeSet<String>>,
     reexports: &ReexportAliasesByModule,
     code_lines: &[String],
 ) -> BTreeSet<(String, String)> {
@@ -864,6 +930,15 @@ pub(super) fn resolved_call_module_paths(
                 resolve_call_module_path(test_module, &imported.module_path),
                 imported.name.clone(),
             ));
+            // Integration tests import root items through the package crate
+            // name (`use package_name::item`). The grouped form is kept out
+            // of this compatibility bridge so grouped external imports
+            // remain fail-closed.
+            if imported.module_path.split("::").count() == 1
+                && root_import_names.is_some_and(|names| names.contains(&call.name))
+            {
+                paths.insert((String::new(), imported.name.clone()));
+            }
         }
         if code_lines.iter().any(|line| {
             let line = line.trim_start();
