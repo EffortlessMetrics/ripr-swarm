@@ -138,11 +138,28 @@ impl<'a> CompactGripContext<'a> {
                     .lines()
                     .map(strip_comments_and_strings)
                     .collect::<Vec<_>>();
-                let module_import_aliases =
-                    lookup_file_map(&module_import_aliases_by_file, &test.file);
-                let direct_function_import_aliases =
-                    lookup_file_map(&direct_function_import_aliases_by_file, &test.file);
                 let file_facts = lookup_file_map(&index.files, &test.file);
+                let scoped_source = file_facts.map(|facts| {
+                    facts
+                        .source
+                        .lines()
+                        .take(test.start_line)
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                });
+                let module_import_aliases = scoped_source
+                    .as_deref()
+                    .map(module_import_aliases)
+                    .or_else(|| {
+                        lookup_file_map(&module_import_aliases_by_file, &test.file).cloned()
+                    });
+                let direct_function_import_aliases = scoped_source
+                    .as_deref()
+                    .map(direct_function_import_aliases)
+                    .or_else(|| {
+                        lookup_file_map(&direct_function_import_aliases_by_file, &test.file)
+                            .cloned()
+                    });
                 let root_import_names = index
                     .files
                     .get(&test.file)
@@ -155,7 +172,7 @@ impl<'a> CompactGripContext<'a> {
                     .or(file_facts)
                     .map(|facts| direct_import_modules_from_source(&facts.source))
                     .unwrap_or_default();
-                if let Some(imports) = direct_function_import_aliases {
+                if let Some(ref imports) = direct_function_import_aliases {
                     direct_import_modules.extend(
                         imports
                             .iter()
@@ -166,7 +183,7 @@ impl<'a> CompactGripContext<'a> {
                     test,
                     &call_names,
                     &helper_owner_lookup,
-                    module_import_aliases,
+                    module_import_aliases.as_ref(),
                     test_scoped_function_names,
                     production_owner_names,
                 );
@@ -200,7 +217,7 @@ impl<'a> CompactGripContext<'a> {
                     helper_owner_call_names_from_qualified_calls(
                         &test.calls,
                         &target_affinity_production_owner_calls_by_module_path,
-                        module_import_aliases,
+                        module_import_aliases.as_ref(),
                     );
                 target_affinity_owner_call_names.extend(
                     helper_owner_call_names_from_production_helpers(
@@ -264,7 +281,7 @@ impl<'a> CompactGripContext<'a> {
                         for (module_path, call_name) in resolved_call_module_paths(
                             call,
                             test_module_path,
-                            direct_function_import_aliases,
+                            direct_function_import_aliases.as_ref(),
                             Some(&root_import_names),
                             &reexport_aliases_by_module,
                             &code_lines,
