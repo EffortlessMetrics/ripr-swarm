@@ -288,10 +288,17 @@ impl ScopedImportedFunctionAlias {
         &self,
         line: usize,
     ) -> Option<&ScopedImportedFunctionBinding> {
-        self.bindings
+        let candidates = self
+            .bindings
             .iter()
             .filter(|binding| binding.start_line <= line && line <= binding.end_line)
-            .max_by_key(|binding| binding.start_line)
+            .collect::<Vec<_>>();
+        let max_start = candidates.iter().map(|binding| binding.start_line).max()?;
+        let mut best = candidates
+            .into_iter()
+            .filter(|binding| binding.start_line == max_start);
+        let binding = best.next()?;
+        best.next().is_none().then_some(binding)
     }
 }
 
@@ -988,17 +995,36 @@ pub(in crate::analysis::test_grip_evidence) fn direct_function_import_aliases(
     let mut aliases = BTreeMap::new();
     let mut imports = Vec::new();
     let mut line_depths_after = Vec::new();
+    let mut scope_starts = vec![1usize];
     let mut brace_depth = 0usize;
     for (line_index, line) in source.lines().enumerate() {
         let line = strip_comments_and_strings(line);
+        let line_number = line_index + 1;
+        let scope_start = scope_starts[brace_depth];
         if let Some(import) = line.trim().strip_prefix("use ") {
             let mut parsed = BTreeMap::new();
             collect_direct_function_import_aliases_from_use(import.trim(), &mut parsed);
             if !parsed.is_empty() {
-                imports.push((line_index + 1, brace_depth, parsed));
+                imports.push((scope_start, brace_depth, parsed));
             }
         }
-        brace_depth = update_brace_depth(brace_depth, &line);
+        if !line.trim().starts_with("use ") {
+            for ch in line.chars() {
+                match ch {
+                    '{' => {
+                        brace_depth = brace_depth.saturating_add(1);
+                        scope_starts.push(line_number);
+                    }
+                    '}' => {
+                        if brace_depth > 0 {
+                            brace_depth -= 1;
+                            scope_starts.pop();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
         line_depths_after.push(brace_depth);
     }
     for (start_line, scope_depth, parsed) in imports {

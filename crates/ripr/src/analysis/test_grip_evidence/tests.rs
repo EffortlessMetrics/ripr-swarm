@@ -68,6 +68,26 @@ fn outer_after() {
         (after.module_path.as_str(), after.name.as_str()),
         ("child", "compute")
     );
+    let conflicts = direct_function_import_aliases(
+        "use crate::child::compute as run;\nuse crate::other::compute as run;\nfn call() { run(); }",
+    );
+    assert!(
+        conflicts
+            .get("run")
+            .and_then(|alias| alias.binding_at(3))
+            .is_none(),
+        "same-scope conflicting aliases must fail closed"
+    );
+    let before_import =
+        direct_function_import_aliases("fn before() { run(); }\nuse crate::child::compute as run;");
+    assert_eq!(
+        before_import
+            .get("run")
+            .and_then(|alias| alias.binding_at(1))
+            .map(|binding| (binding.module_path.as_str(), binding.name.as_str())),
+        Some(("child", "compute")),
+        "same-scope use bindings apply before their textual import line"
+    );
     Ok(())
 }
 
@@ -5115,15 +5135,23 @@ fn format_report(input: &str) -> String {
 "#;
     let support_a = PathBuf::from("tests/support_a.rs");
     let support_a_src = r#"
-use pipeline::calculate as run;
-
-pub fn exercise_calculation() -> String {
+pub fn exercise_support() -> String {
     run("alpha")
 }
+
+use pipeline::calculate as run;
 
 #[cfg(test)]
 mod nested_shadow {
     use report::calculate as run;
+
+    pub fn nested_exercise() -> String {
+        run("beta")
+    }
+}
+
+pub fn exercise_after() -> String {
+    run("gamma")
 }
 "#;
     let support_b = PathBuf::from("tests/support_b.rs");
@@ -5136,12 +5164,17 @@ pub fn exercise() -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
-use support_a::exercise_calculation as exercise;
+use support_a::{
+    exercise_support as exercise,
+    exercise_after as after,
+};
 
 #[test]
 fn aliased_direct_imported_support_helper_reaches_pipeline() {
     let rendered = exercise();
     assert_eq!(rendered, "alpha");
+    assert_eq!(after(), "gamma");
+    assert_eq!(support_a::nested_shadow::nested_exercise(), "beta");
 }
 "#;
     let index = index_from_files(&[
@@ -5177,6 +5210,25 @@ fn aliased_direct_imported_support_helper_reaches_pipeline() {
         evidence.observed_values.is_empty(),
         "aliased direct imported support helper activation must not invent values: {:?}",
         evidence.observed_values
+    );
+
+    let report_seams = inventory_seams_from_index(&[PathBuf::from("src/report.rs")], &index);
+    let report_call_presence = report_seams
+        .iter()
+        .find(|s| {
+            s.kind() == SeamKind::CallPresence
+                && s.owner().ends_with("::calculate")
+                && s.expression().contains("format_report")
+        })
+        .ok_or_else(|| "expected report calculate call_presence seam".to_string())?;
+    let report_evidence = evidence_for_seam(report_call_presence, &index);
+    assert!(
+        report_evidence
+            .related_tests
+            .iter()
+            .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+        "expected nested direct imported support helper owner-call relation, got {:?}",
+        report_evidence.related_tests
     );
     Ok(())
 }
