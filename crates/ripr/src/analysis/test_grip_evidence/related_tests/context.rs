@@ -1108,6 +1108,9 @@ fn collect_direct_function_import_aliases_from_use_unambiguous(
         let module_path = normalize_module_import_path(base)?;
         let body = rest.strip_suffix('}')?;
         for item in body.split(',').map(str::trim) {
+            if item.contains("::") || item.contains('{') || item.contains('}') {
+                continue;
+            }
             let mut candidate = BTreeMap::new();
             collect_direct_function_import_alias(item, &module_path, &mut candidate);
             for (alias, imported) in candidate {

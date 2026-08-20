@@ -131,6 +131,20 @@ fn outer_after() {
         "    let closing = ;",
         "braces in character literals must be ignored before scope tracking"
     );
+    assert_eq!(
+        strip_comments_and_strings("fn nested<'a>() { 'outer: loop {} }"),
+        "fn nested<'a>() { 'outer: loop {} }",
+        "lifetimes and loop labels must not be mistaken for character literals"
+    );
+    let nested_group =
+        direct_function_import_aliases("use crate::a::{b::compute as run};\nfn call() { run(); }");
+    assert!(
+        nested_group
+            .get("run")
+            .and_then(|alias| alias.binding_at(2))
+            .is_none(),
+        "nested grouped import paths must fail closed"
+    );
     let stale_use = direct_function_import_aliases(
         "mod nested {\n    use crate::other::compute as run\n    fn nested() { run(); }\n}\nuse crate::child::compute as run;\nfn outer() { run(); }",
     );

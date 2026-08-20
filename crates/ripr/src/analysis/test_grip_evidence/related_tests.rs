@@ -696,7 +696,8 @@ pub(super) fn strip_comments_and_strings(line: &str) -> String {
     let mut in_string = false;
     let mut in_char = false;
     let mut escaped = false;
-    for ch in without_comment.chars() {
+    let mut chars = without_comment.chars().peekable();
+    while let Some(ch) = chars.next() {
         if in_string || in_char {
             if escaped {
                 escaped = false;
@@ -712,7 +713,22 @@ pub(super) fn strip_comments_and_strings(line: &str) -> String {
         }
         match ch {
             '"' => in_string = true,
-            '\'' => in_char = true,
+            '\'' => {
+                let mut lookahead = chars.clone();
+                let is_char_literal = match lookahead.next() {
+                    Some('\\') => {
+                        lookahead.next();
+                        lookahead.next() == Some('\'')
+                    }
+                    Some(_) => lookahead.next() == Some('\''),
+                    None => false,
+                };
+                if is_char_literal {
+                    in_char = true;
+                } else {
+                    out.push(ch);
+                }
+            }
             _ => out.push(ch),
         }
     }
