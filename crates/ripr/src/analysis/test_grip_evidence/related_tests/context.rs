@@ -255,6 +255,8 @@ pub(in crate::analysis::test_grip_evidence) type ModuleImportAliasesByFile =
     BTreeMap<PathBuf, BTreeMap<String, String>>;
 pub(in crate::analysis::test_grip_evidence) type DirectFunctionImportAliasesByFile =
     BTreeMap<PathBuf, BTreeMap<String, ImportedFunctionAlias>>;
+pub(in crate::analysis::test_grip_evidence) type ScopedDirectFunctionImportAliasesByFile =
+    BTreeMap<PathBuf, BTreeMap<String, ScopedImportedFunctionAlias>>;
 pub(in crate::analysis::test_grip_evidence) type ProductionOwnerNamesByPackage =
     BTreeMap<String, BTreeSet<String>>;
 pub(in crate::analysis::test_grip_evidence) type OwnerNamesByModulePath =
@@ -266,6 +268,31 @@ pub(in crate::analysis::test_grip_evidence) type OwnerNamesByPackageAndModulePat
 pub(in crate::analysis::test_grip_evidence) struct ImportedFunctionAlias {
     module_path: String,
     name: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::analysis::test_grip_evidence) struct ScopedImportedFunctionAlias {
+    bindings: Vec<ScopedImportedFunctionBinding>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::analysis::test_grip_evidence) struct ScopedImportedFunctionBinding {
+    pub(in crate::analysis::test_grip_evidence) module_path: String,
+    pub(in crate::analysis::test_grip_evidence) name: String,
+    start_line: usize,
+    end_line: usize,
+}
+
+impl ScopedImportedFunctionAlias {
+    pub(in crate::analysis::test_grip_evidence) fn binding_at(
+        &self,
+        line: usize,
+    ) -> Option<&ScopedImportedFunctionBinding> {
+        self.bindings
+            .iter()
+            .filter(|binding| binding.start_line <= line && line <= binding.end_line)
+            .max_by_key(|binding| binding.start_line)
+    }
 }
 
 pub(in crate::analysis::test_grip_evidence) struct HelperOwnerCallLookup<'a> {
@@ -378,7 +405,7 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_file_with_f
 
 pub(in crate::analysis::test_grip_evidence) fn strict_direct_imported_owner_calls_for_helper(
     function: &FunctionSummary,
-    direct_function_import_aliases: Option<&BTreeMap<String, ImportedFunctionAlias>>,
+    direct_function_import_aliases: Option<&BTreeMap<String, ScopedImportedFunctionAlias>>,
     unambiguous_production_owner_names: Option<&BTreeSet<String>>,
     owner_names_by_module_path: &OwnerNamesByModulePath,
 ) -> BTreeSet<String> {
@@ -662,7 +689,7 @@ pub(in crate::analysis::test_grip_evidence) fn target_affinity_direct_owner_call
     function: &FunctionSummary,
     local_function_names: &BTreeSet<String>,
     imported_module_aliases: Option<&BTreeMap<String, String>>,
-    direct_function_import_aliases: Option<&BTreeMap<String, ImportedFunctionAlias>>,
+    direct_function_import_aliases: Option<&BTreeMap<String, ScopedImportedFunctionAlias>>,
     unambiguous_production_owner_names: Option<&BTreeSet<String>>,
     owner_names_by_module_path: &OwnerNamesByModulePath,
     crate_local_owner_names_by_module_path: Option<&OwnerNamesByModulePath>,
@@ -748,7 +775,7 @@ pub(in crate::analysis::test_grip_evidence) fn code_contains_crate_qualified_hel
 
 pub(in crate::analysis::test_grip_evidence) fn direct_imported_owner_calls_for_function(
     function: &FunctionSummary,
-    direct_function_import_aliases: Option<&BTreeMap<String, ImportedFunctionAlias>>,
+    direct_function_import_aliases: Option<&BTreeMap<String, ScopedImportedFunctionAlias>>,
     unambiguous_production_owner_names: Option<&BTreeSet<String>>,
     owner_names_by_module_path: &OwnerNamesByModulePath,
 ) -> BTreeSet<String> {
@@ -763,7 +790,11 @@ pub(in crate::analysis::test_grip_evidence) fn direct_imported_owner_calls_for_f
         .iter()
         .filter(|call| call.name != function.name)
         .filter(|call| call_text_contains_named_call(&call.text, &call.name))
-        .filter_map(|call| direct_function_import_aliases.get(&call.name))
+        .filter_map(|call| {
+            direct_function_import_aliases
+                .get(&call.name)
+                .and_then(|imported| imported.binding_at(call.line))
+        })
         .filter(|imported| unambiguous_production_owner_names.contains(&imported.name))
         .filter(|imported| {
             owner_names_by_module_path
@@ -875,7 +906,7 @@ pub(in crate::analysis::test_grip_evidence) fn module_import_aliases_by_file(
 
 pub(in crate::analysis::test_grip_evidence) fn direct_function_import_aliases_by_file(
     index: &RustIndex,
-) -> DirectFunctionImportAliasesByFile {
+) -> ScopedDirectFunctionImportAliasesByFile {
     index
         .files
         .iter()
@@ -953,17 +984,48 @@ pub(in crate::analysis::test_grip_evidence) fn update_brace_depth(
 
 pub(in crate::analysis::test_grip_evidence) fn direct_function_import_aliases(
     source: &str,
-) -> BTreeMap<String, ImportedFunctionAlias> {
+) -> BTreeMap<String, ScopedImportedFunctionAlias> {
     let mut aliases = BTreeMap::new();
+    let mut imports = Vec::new();
+    let mut line_depths_after = Vec::new();
     let mut brace_depth = 0usize;
-    for line in source.lines() {
+    for (line_index, line) in source.lines().enumerate() {
         let line = strip_comments_and_strings(line);
-        if brace_depth == 0
-            && let Some(import) = line.trim().strip_prefix("use ")
-        {
-            collect_direct_function_import_aliases_from_use(import.trim(), &mut aliases);
+        if let Some(import) = line.trim().strip_prefix("use ") {
+            let mut parsed = BTreeMap::new();
+            collect_direct_function_import_aliases_from_use(import.trim(), &mut parsed);
+            if !parsed.is_empty() {
+                imports.push((line_index + 1, brace_depth, parsed));
+            }
         }
         brace_depth = update_brace_depth(brace_depth, &line);
+        line_depths_after.push(brace_depth);
+    }
+    for (start_line, scope_depth, parsed) in imports {
+        let end_line = if scope_depth == 0 {
+            usize::MAX
+        } else {
+            line_depths_after
+                .iter()
+                .enumerate()
+                .skip(start_line)
+                .find_map(|(index, depth)| (*depth < scope_depth).then_some(index))
+                .unwrap_or(line_depths_after.len())
+        };
+        for (alias, imported) in parsed {
+            aliases
+                .entry(alias)
+                .or_insert_with(|| ScopedImportedFunctionAlias {
+                    bindings: Vec::new(),
+                })
+                .bindings
+                .push(ScopedImportedFunctionBinding {
+                    module_path: imported.module_path,
+                    name: imported.name,
+                    start_line,
+                    end_line,
+                });
+        }
     }
     aliases
 }

@@ -18,6 +18,60 @@ fn index_from_files(files: &[(PathBuf, &str)]) -> Result<RustIndex, String> {
 }
 
 #[test]
+fn direct_function_import_aliases_follow_nested_lexical_scopes() -> Result<(), String> {
+    let aliases = direct_function_import_aliases(
+        r#"
+use crate::child::{compute as run, unique};
+
+fn outer_before() {
+    run();
+}
+
+mod nested {
+    use crate::other::compute as run;
+
+    fn nested_call() {
+        run();
+    }
+}
+
+fn outer_after() {
+    run();
+}
+"#,
+    );
+    let run = aliases
+        .get("run")
+        .ok_or_else(|| "run alias should be indexed".to_string())?;
+    assert!(
+        aliases.contains_key("unique"),
+        "grouped direct import should retain unique alias"
+    );
+    let before = run
+        .binding_at(5)
+        .ok_or_else(|| "outer binding before nested module".to_string())?;
+    let nested = run
+        .binding_at(12)
+        .ok_or_else(|| "nested binding inside nested module".to_string())?;
+    let after = run
+        .binding_at(17)
+        .ok_or_else(|| "outer binding after nested module".to_string())?;
+    assert_eq!(
+        (before.module_path.as_str(), before.name.as_str()),
+        ("child", "compute")
+    );
+    assert_eq!(
+        (nested.module_path.as_str(), nested.name.as_str()),
+        ("other", "compute")
+    );
+    assert_eq!(
+        (after.module_path.as_str(), after.name.as_str()),
+        ("child", "compute")
+    );
+    Ok(())
+}
+
+#[test]
 fn call_arguments_uses_identifier_boundary_for_callee_name() {
     let text =
         "fn borrowed_amount_matches() { let amount = 100; let actual = amount_matches(&amount); }";
