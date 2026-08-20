@@ -193,9 +193,7 @@ fn family_accepts_sink(family: &ProbeFamily, kind: &FlowSinkKind) -> bool {
         }
         ProbeFamily::ErrorPath => matches!(kind, FlowSinkKind::ErrorVariant),
         ProbeFamily::FieldConstruction => matches!(kind, FlowSinkKind::StructField),
-        ProbeFamily::SideEffect | ProbeFamily::CallDeletion => {
-            !matches!(kind, FlowSinkKind::MatchArm | FlowSinkKind::Unknown)
-        }
+        ProbeFamily::SideEffect | ProbeFamily::CallDeletion => is_effect_sink_kind(kind),
         ProbeFamily::Predicate => matches!(
             kind,
             FlowSinkKind::ReturnValue
@@ -210,6 +208,18 @@ fn family_accepts_sink(family: &ProbeFamily, kind: &FlowSinkKind) -> bool {
         ),
         ProbeFamily::MatchArm | ProbeFamily::StaticUnknown => false,
     }
+}
+
+fn is_effect_sink_kind(kind: &FlowSinkKind) -> bool {
+    matches!(
+        kind,
+        FlowSinkKind::EventCall
+            | FlowSinkKind::StateWrite
+            | FlowSinkKind::Persistence
+            | FlowSinkKind::LogMessage
+            | FlowSinkKind::ConfigChange
+            | FlowSinkKind::CallEffect
+    )
 }
 
 fn opaque_path_text(text: &str) -> bool {
@@ -477,10 +487,31 @@ mod tests {
         );
         assert!(
             current_path_witness(
+                &probe(ProbeFamily::ErrorPath, "Result::Err(error)"),
+                &[sink(FlowSinkKind::ErrorVariant, "Result::Err(error)", 14)]
+            )
+            .is_some()
+        );
+        assert!(
+            current_path_witness(
                 &probe(ProbeFamily::SideEffect, "self.handle(value)"),
                 &[sink(FlowSinkKind::CallEffect, "self.handle(value)", 14)]
             )
             .is_some()
+        );
+        assert!(
+            current_path_witness(
+                &probe(ProbeFamily::SideEffect, "Ok(value)"),
+                &[sink(FlowSinkKind::ReturnValue, "Ok(value)", 14)]
+            )
+            .is_none()
+        );
+        assert!(
+            current_path_witness(
+                &probe(ProbeFamily::CallDeletion, "self.handle(value)"),
+                &[sink(FlowSinkKind::ErrorVariant, "self.handle(value)", 14)]
+            )
+            .is_none()
         );
         let owner = probe(ProbeFamily::FieldConstruction, "amount");
         assert!(
@@ -537,6 +568,15 @@ mod tests {
             current_path_witness(
                 &probe(ProbeFamily::SideEffect, "self.handle(value)"),
                 &[sink(FlowSinkKind::CallEffect, "other.handle(value)", 14)]
+            )
+            .is_none()
+        );
+        let mut cross_owner = sink(FlowSinkKind::CallEffect, "self.handle(value)", 14);
+        cross_owner.owner = Some(SymbolId("owner:other".to_string()));
+        assert!(
+            current_path_witness(
+                &probe(ProbeFamily::SideEffect, "self.handle(value)"),
+                &[cross_owner]
             )
             .is_none()
         );
