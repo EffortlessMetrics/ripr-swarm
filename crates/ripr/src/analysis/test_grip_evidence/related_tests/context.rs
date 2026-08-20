@@ -1168,11 +1168,18 @@ pub(in crate::analysis::test_grip_evidence) fn normalize_helper_module_import_pa
 pub(in crate::analysis::test_grip_evidence) fn normalize_module_import_path(
     path: &str,
 ) -> Option<String> {
-    let path = path.trim().strip_prefix("crate::")?.trim();
-    if path.is_empty() || path.starts_with("super::") || path.starts_with("self::") {
+    let path = path.trim();
+    if path.is_empty()
+        || path.starts_with("::")
+        || (!path.starts_with("crate::")
+            && !path.starts_with("self::")
+            && !path.starts_with("super::")
+            && path != "self"
+            && path != "super")
+    {
         return None;
     }
-    Some(path.to_string())
+    Some(path.strip_prefix("crate::").unwrap_or(path).to_string())
 }
 
 pub(in crate::analysis::test_grip_evidence) fn unambiguous_production_owner_names_by_package(

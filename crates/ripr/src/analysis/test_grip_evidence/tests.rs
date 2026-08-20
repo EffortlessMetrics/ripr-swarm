@@ -9282,6 +9282,82 @@ mod tests {
     Ok(())
 }
 
+#[test]
+fn single_line_inline_reexport_is_registered_under_inner_module_scope() -> Result<(), String> {
+    let file = PathBuf::from("src/lib.rs");
+    let source = r#"
+mod child { pub fn compute(value: i32) -> i32 { if value >= 10 { value - 1 } else { value } } }
+mod facade { pub use crate::child::compute; }
+#[cfg(test)] mod tests { #[test] fn facade_value_is_preserved() { assert_eq!(super::facade::compute(10), 9); } }
+"#;
+    let index = index_from_files(&[(file.clone(), source)])?;
+    let seam = inventory_seams_from_index(&[file], &index)
+        .into_iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected single-line child predicate seam".to_string())?;
+    let evidence = evidence_for_seam(&seam, &index);
+    evidence
+        .related_tests
+        .iter()
+        .find(|test| test.test_name == "facade_value_is_preserved")
+        .map(|_| ())
+        .ok_or_else(|| "single-line inline re-export must retain child relation".to_string())
+}
+
+#[test]
+fn crate_root_reexport_target_is_not_resolved_relative_to_facade() -> Result<(), String> {
+    let child = PathBuf::from("src/child.rs");
+    let facade = PathBuf::from("src/facade.rs");
+    let test = PathBuf::from("tests/facade.rs");
+    let files = vec![
+        (
+            child.clone(),
+            "pub fn compute(value: i32) -> i32 { if value >= 10 { value - 1 } else { value } }\n",
+        ),
+        (facade, "pub use crate::child::compute;\n"),
+        (
+            test,
+            "use crate::facade::compute;\n#[test]\nfn facade_value_is_preserved() { assert_eq!(compute(10), 9); }\n",
+        ),
+    ];
+    let index = index_from_files(&files)?;
+    let seam = inventory_seams_from_index(&[child], &index)
+        .into_iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected crate-root re-export predicate seam".to_string())?;
+    let evidence = evidence_for_seam(&seam, &index);
+    evidence
+        .related_tests
+        .iter()
+        .find(|test| test.test_name == "facade_value_is_preserved")
+        .map(|_| ())
+        .ok_or_else(|| "crate-root re-export must retain child relation".to_string())
+}
+
+#[test]
+fn standalone_super_import_is_normalized_to_the_resolved_call_module() -> Result<(), String> {
+    let file = PathBuf::from("src/lib.rs");
+    let source = r#"
+mod child { pub fn compute(value: i32) -> i32 { if value >= 10 { value - 1 } else { value } } }
+#[cfg(test)] mod tests {
+    use super::child::compute;
+    #[test] fn imported_child_value_is_preserved() { assert_eq!(compute(10), 9); }
+}
+"#;
+    let index = index_from_files(&[(file.clone(), source)])?;
+    let seam = inventory_seams_from_index(&[file], &index)
+        .into_iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected standalone-import predicate seam".to_string())?;
+    let evidence = evidence_for_seam(&seam, &index);
+    evidence
+        .related_tests
+        .iter()
+        .find(|test| test.test_name == "imported_child_value_is_preserved")
+        .map(|_| ())
+        .ok_or_else(|| "standalone super import must retain child relation".to_string())
+}
+
 // -- helper coverage ---------------------------------------------
 //
 // Targeted unit tests for the small private helpers introduced by
