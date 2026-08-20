@@ -717,7 +717,17 @@ pub(super) fn strip_comments_and_strings(line: &str) -> String {
                 let mut lookahead = chars.clone();
                 let is_char_literal = match lookahead.next() {
                     Some('\\') => {
-                        lookahead.next();
+                        if lookahead.next() == Some('u') {
+                            if lookahead.next() == Some('{') {
+                                for next in lookahead.by_ref() {
+                                    if next == '}' {
+                                        break;
+                                    }
+                                }
+                            }
+                        } else {
+                            lookahead.next();
+                        }
                         lookahead.next() == Some('\'')
                     }
                     Some(_) => lookahead.next() == Some('\''),

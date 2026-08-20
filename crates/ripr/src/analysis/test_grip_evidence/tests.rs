@@ -132,6 +132,11 @@ fn outer_after() {
         "braces in character literals must be ignored before scope tracking"
     );
     assert_eq!(
+        strip_comments_and_strings("    let smile = '\\u{1F600}';"),
+        "    let smile = ;",
+        "braces in Unicode character escapes must be ignored before scope tracking"
+    );
+    assert_eq!(
         strip_comments_and_strings("fn nested<'a>() { 'outer: loop {} }"),
         "fn nested<'a>() { 'outer: loop {} }",
         "lifetimes and loop labels must not be mistaken for character literals"
