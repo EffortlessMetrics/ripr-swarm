@@ -1,6 +1,7 @@
 use crate::analysis::classify::{
-    ProbeContext, activation_evidence, classify, confidence_score, infection_evidence,
-    local_flow_sinks, propagation_evidence, reach_evidence, reveal_evidence_with_expression,
+    ProbeContext, PropagationWitnessV1, activation_evidence, classify, confidence_score,
+    current_path_witness, infection_evidence, local_flow_sinks, propagation_evidence,
+    reach_evidence, reveal_evidence_with_expression,
 };
 use crate::domain::*;
 
@@ -8,6 +9,9 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     pub(in crate::analysis) ripr: RiprEvidence,
     pub(in crate::analysis) evidence: Vec<String>,
     pub(in crate::analysis) flow_sinks: Vec<FlowSinkFact>,
+    /// Retained diagnostic witness for the PR-A migration slice.  It is not
+    /// projected into `Finding` or used to strengthen a stage yet.
+    pub(in crate::analysis) propagation_witness: Option<PropagationWitnessV1>,
     pub(in crate::analysis) activation: ActivationEvidence,
     pub(in crate::analysis) related_tests: Vec<RelatedTest>,
     pub(in crate::analysis) reach: StageEvidence,
@@ -22,6 +26,8 @@ impl ClassifiedProbeEvidence {
         let test_summaries = context.related_test_summaries();
         let reach = reach_evidence(&test_summaries, context.owner_fn);
         let flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
+        let propagation_witness = current_path_witness(context.probe, &flow_sinks)
+            .filter(|witness| witness.digest_matches());
         let activation = activation_evidence(
             context.probe,
             context.owner_fn,
@@ -54,6 +60,7 @@ impl ClassifiedProbeEvidence {
             ripr,
             evidence,
             flow_sinks,
+            propagation_witness,
             activation,
             related_tests,
             reach,
@@ -85,6 +92,10 @@ impl ClassifiedProbeEvidence {
             class,
         )
     }
+
+    pub(in crate::analysis) fn propagation_witness(&self) -> Option<&PropagationWitnessV1> {
+        self.propagation_witness.as_ref()
+    }
 }
 
 fn evidence_summaries<'e>(stages: impl IntoIterator<Item = &'e StageEvidence>) -> Vec<String> {
@@ -100,7 +111,13 @@ fn evidence_summaries<'e>(stages: impl IntoIterator<Item = &'e StageEvidence>) -
 #[cfg(test)]
 mod tests {
     use super::evidence_summaries;
-    use crate::domain::{Confidence, StageEvidence, StageState};
+    use super::{ClassifiedProbeEvidence, ProbeContext};
+    use crate::analysis::facts::{FunctionSummary, ReturnFact, RustIndex};
+    use crate::domain::{
+        Confidence, DeltaKind, Probe, ProbeFamily, ProbeId, SourceLocation, StageEvidence,
+        StageState, SymbolId,
+    };
+    use std::path::PathBuf;
 
     #[test]
     fn evidence_summaries_drop_empty_and_deduplicate_in_sorted_order() {
@@ -115,5 +132,48 @@ mod tests {
             evidence_summaries(stages.iter()),
             vec!["a evidence".to_string(), "z evidence".to_string()]
         );
+    }
+
+    #[test]
+    fn gather_retains_digest_valid_propagation_witness_for_internal_consumer() -> Result<(), String>
+    {
+        let probe = Probe {
+            id: ProbeId("probe:fixture:1".to_string()),
+            location: SourceLocation::new("src/lib.rs", 10, 2),
+            owner: Some(SymbolId("owner:calculate".to_string())),
+            family: ProbeFamily::ReturnValue,
+            delta: DeltaKind::Value,
+            before: Some("amount".to_string()),
+            after: Some("amount + 1".to_string()),
+            expression: "amount".to_string(),
+            expected_sinks: Vec::new(),
+            required_oracles: Vec::new(),
+        };
+        let owner = FunctionSummary {
+            id: SymbolId("owner:calculate".to_string()),
+            name: "calculate".to_string(),
+            file: PathBuf::from("src/lib.rs"),
+            start_line: 1,
+            end_line: 20,
+            body: "fn calculate(amount: i32) -> Result<i32, Error> { Ok(amount) }".to_string(),
+            calls: Vec::new(),
+            returns: vec![ReturnFact {
+                line: 14,
+                text: "Ok(amount)".to_string(),
+            }],
+            literals: Vec::new(),
+            is_test: false,
+            attrs: Vec::new(),
+        };
+        let index = RustIndex::default();
+        let context = ProbeContext::new(&probe, Some(&owner), Vec::new(), false, &index, true);
+        let evidence = ClassifiedProbeEvidence::gather(&context, "amount");
+        let Some(witness) = evidence.propagation_witness() else {
+            return Err("gather discarded the producer witness".to_string());
+        };
+        if !witness.digest_matches() {
+            return Err("gather retained a stale witness digest".to_string());
+        }
+        Ok(())
     }
 }

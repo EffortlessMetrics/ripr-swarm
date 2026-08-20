@@ -143,7 +143,7 @@ pub(in crate::analysis) fn current_path_witness(
         },
         edges: vec![PropagationEdge {
             kind: edge_kind,
-            status: EdgeStatus::Established,
+            status: edge_status(&source_identity, &sink_identity),
             from: source_identity,
             to: sink_identity.clone(),
         }],
@@ -175,6 +175,14 @@ fn edge_kind_for_sink(kind: &FlowSinkKind) -> Option<PropagationEdgeKind> {
         | FlowSinkKind::ConfigChange
         | FlowSinkKind::CallEffect => Some(PropagationEdgeKind::EffectTarget),
         FlowSinkKind::MatchArm | FlowSinkKind::Unknown => None,
+    }
+}
+
+fn edge_status(source: &str, sink: &str) -> EdgeStatus {
+    if normalize_semantic_text(source) == normalize_semantic_text(sink) {
+        EdgeStatus::Established
+    } else {
+        EdgeStatus::Candidate
     }
 }
 
@@ -210,17 +218,49 @@ fn opaque_path_text(text: &str) -> bool {
         || lower.contains("box<dyn")
         || lower.contains("ffi")
         || lower.contains("extern ")
-        || lower.contains("macro!")
-        || lower.contains("||")
-        || lower.contains("closure")
+        || has_macro_invocation(&lower)
+        || has_closure_syntax(&lower)
+}
+
+fn has_macro_invocation(text: &str) -> bool {
+    text.char_indices().any(|(index, character)| {
+        character == '!'
+            && text[index + character.len_utf8()..]
+                .trim_start()
+                .chars()
+                .next()
+                .is_some_and(|next| matches!(next, '(' | '[' | '{'))
+    })
+}
+
+fn has_closure_syntax(text: &str) -> bool {
+    let mut pipes = text.match_indices('|').map(|(index, _)| index);
+    let Some(first) = pipes.next() else {
+        return false;
+    };
+    let Some(second) = pipes.next() else {
+        return false;
+    };
+    // Conservative: paired pipes are treated as an opaque closure boundary.
+    second > first + 1
 }
 
 fn source_sink_tokens_overlap(source: &str, sink: &str) -> bool {
     let source_tokens = semantic_tokens(source);
     !source_tokens.is_empty()
+        && receiver_identity(source) == receiver_identity(sink)
         && semantic_tokens(sink)
             .iter()
             .any(|token| source_tokens.iter().any(|source| source == token))
+}
+
+fn receiver_identity(text: &str) -> Option<String> {
+    let dot = text.find('.')?;
+    let receiver = text[..dot]
+        .rsplit(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+        .next()?
+        .trim();
+    (!receiver.is_empty()).then(|| receiver.to_ascii_lowercase())
 }
 
 fn semantic_tokens(text: &str) -> Vec<String> {
@@ -236,6 +276,10 @@ fn normalize_semantic_text(text: &str) -> String {
 }
 
 impl PropagationWitnessV1 {
+    pub(in crate::analysis) fn digest_matches(&self) -> bool {
+        self.semantic_digest == self.compute_semantic_digest()
+    }
+
     fn compute_semantic_digest(&self) -> String {
         let mut canonical = String::new();
         canonical.push_str("propagation-witness-v1\n");
@@ -354,27 +398,30 @@ mod tests {
                 "amount",
                 Some("Ok(amount)"),
                 PropagationEdgeKind::DirectReturn,
+                EdgeStatus::Candidate,
             ),
             (
                 ProbeFamily::ErrorPath,
                 "Err(Boundary)",
                 None,
                 PropagationEdgeKind::ErrorVariant,
+                EdgeStatus::Candidate,
             ),
             (
                 ProbeFamily::FieldConstruction,
                 "status: amount",
                 None,
                 PropagationEdgeKind::StructField,
+                EdgeStatus::Established,
             ),
         ];
 
-        for (family, expression, return_text, expected_edge) in cases {
+        for (family, expression, return_text, expected_edge, expected_status) in cases {
             let witness = production_witness(&probe(family, expression), return_text)
                 .ok_or_else(|| "exact owner and producer local-flow fact was absent".to_string())?;
             assert_eq!(witness.schema_version, SCHEMA_VERSION);
             assert_eq!(witness.edges[0].kind, expected_edge);
-            assert_eq!(witness.edges[0].status, EdgeStatus::Established);
+            assert_eq!(witness.edges[0].status, expected_status);
             assert_eq!(witness.completeness, PathCompleteness::Partial);
             assert_eq!(witness.semantic_digest, witness.compute_semantic_digest());
         }
@@ -421,6 +468,31 @@ mod tests {
                     "Box<dyn Handler>::value",
                     14
                 )]
+            )
+            .is_none()
+        );
+        assert!(
+            current_path_witness(
+                &probe(ProbeFamily::SideEffect, "notify!(value)"),
+                &[sink(FlowSinkKind::CallEffect, "notify!(value)", 14)]
+            )
+            .is_none()
+        );
+        assert!(
+            current_path_witness(
+                &probe(ProbeFamily::SideEffect, "register(|value| value)"),
+                &[sink(
+                    FlowSinkKind::CallEffect,
+                    "register(|value| value)",
+                    14
+                )]
+            )
+            .is_none()
+        );
+        assert!(
+            current_path_witness(
+                &probe(ProbeFamily::SideEffect, "self.handle(value)"),
+                &[sink(FlowSinkKind::CallEffect, "other.handle(value)", 14)]
             )
             .is_none()
         );
