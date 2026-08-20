@@ -1078,13 +1078,7 @@ pub(in crate::analysis::test_grip_evidence) fn direct_function_import_aliases(
                 .iter()
                 .enumerate()
                 .skip(use_line - 1)
-                .find_map(|(index, depth)| {
-                    (*depth < scope_depth).then_some(if index == use_line - 1 {
-                        use_line
-                    } else {
-                        index
-                    })
-                })
+                .find_map(|(index, depth)| (*depth < scope_depth).then_some(index + 1))
                 .unwrap_or(line_depths_after.len())
         };
         for (alias, imported) in parsed {

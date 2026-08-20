@@ -57,7 +57,7 @@ fn outer_after() {
         .binding_at(12)
         .ok_or_else(|| "nested binding inside nested module".to_string())?;
     let after = run
-        .binding_at(17)
+        .binding_at(21)
         .ok_or_else(|| "outer binding after nested module".to_string())?;
     assert_eq!(
         (before.module_path.as_str(), before.name.as_str()),
@@ -77,7 +77,7 @@ fn outer_after() {
     assert!(
         conflicts
             .get("run")
-            .and_then(|alias| alias.binding_at(3))
+            .and_then(|alias| alias.binding_at(2))
             .is_none(),
         "same-scope conflicting aliases must fail closed"
     );
@@ -102,7 +102,7 @@ fn outer_after() {
         "duplicate aliases in one grouped declaration must fail closed"
     );
     let one_line_block = direct_function_import_aliases(
-        "fn outer_before() { run(); }\nmod nested {\n    use crate::other::compute as run; }\nfn outer_after() { run(); }\nuse crate::child::compute as run;",
+        "fn outer_before() { run(); }\nmod nested {\n    use crate::other::compute as run; let closing = '}'; run(); }\nfn outer_after() { run(); }\nuse crate::child::compute as run;",
     );
     let inline_run = one_line_block
         .get("run")
@@ -125,6 +125,11 @@ fn outer_after() {
             .map(|binding| (binding.module_path.as_str(), binding.name.as_str())),
         Some(("child", "compute")),
         "one-line block closing brace must not leak nested alias"
+    );
+    assert_eq!(
+        strip_comments_and_strings("    let closing = '}';"),
+        "    let closing = ;",
+        "braces in character literals must be ignored before scope tracking"
     );
     let stale_use = direct_function_import_aliases(
         "mod nested {\n    use crate::other::compute as run\n    fn nested() { run(); }\n}\nuse crate::child::compute as run;\nfn outer() { run(); }",
