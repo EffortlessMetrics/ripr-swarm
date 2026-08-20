@@ -206,7 +206,14 @@ fn summarize_file_with_adapters(
     }
 }
 
-fn insert_file_summary(index: &mut RustIndex, file: PathBuf, summary: super::FileFacts) {
+fn insert_file_summary(index: &mut RustIndex, file: PathBuf, mut summary: super::FileFacts) {
+    summary.path = file.clone();
+    for function in &mut summary.functions {
+        function.file = file.clone();
+    }
+    for test in &mut summary.tests {
+        test.file = file.clone();
+    }
     index.tests.extend(summary.tests.clone());
     index.functions.extend(summary.functions.clone());
     index.files.insert(file, summary);
@@ -260,6 +267,28 @@ fn test_add() {
         assert!(!index.tests.is_empty());
         assert!(index.files.contains_key(&PathBuf::from("src/lib.rs")));
         Ok(())
+    }
+
+    #[test]
+    fn insert_file_summary_normalizes_nested_fact_paths() {
+        let file = PathBuf::from("tests/pricing.rs");
+        let mut summary = crate::analysis::facts::FileFacts::default();
+        summary.path = PathBuf::from("tests\\pricing.rs");
+        summary.tests.push(crate::analysis::facts::TestFact {
+            name: "pricing".to_string(),
+            file: PathBuf::from("tests\\pricing.rs"),
+            start_line: 1,
+            end_line: 2,
+            body: String::new(),
+            calls: Vec::new(),
+            assertions: Vec::new(),
+            literals: Vec::new(),
+            attrs: Vec::new(),
+        });
+        let mut index = RustIndex::default();
+        insert_file_summary(&mut index, file.clone(), summary);
+        assert!(index.files.contains_key(&file));
+        assert_eq!(index.tests[0].file, file);
     }
 
     #[test]

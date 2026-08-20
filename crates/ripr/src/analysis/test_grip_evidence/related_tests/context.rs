@@ -29,6 +29,7 @@ pub(in crate::analysis::test_grip_evidence) struct CompactTest<'a> {
     pub(in crate::analysis::test_grip_evidence) path_normalized: String,
     pub(in crate::analysis::test_grip_evidence) module_path: Option<String>,
     pub(in crate::analysis::test_grip_evidence) direct_import_modules: BTreeMap<String, String>,
+    pub(in crate::analysis::test_grip_evidence) _root_import_names: BTreeSet<String>,
     pub(in crate::analysis::test_grip_evidence) local_function_names: BTreeSet<String>,
     pub(in crate::analysis::test_grip_evidence) name_lower: String,
     pub(in crate::analysis::test_grip_evidence) call_names: BTreeSet<String>,
@@ -100,18 +101,27 @@ impl<'a> CompactGripContext<'a> {
                         assertion_tokens.insert(token);
                     }
                 }
-                let local_function_names = function_names_by_file.get(&test.file);
+                let local_function_names = lookup_file_map(&function_names_by_file, &test.file);
                 let code_lines = test
                     .body
                     .lines()
                     .map(strip_comments_and_strings)
                     .collect::<Vec<_>>();
-                let module_import_aliases = module_import_aliases_by_file.get(&test.file);
+                let module_import_aliases =
+                    lookup_file_map(&module_import_aliases_by_file, &test.file);
                 let direct_function_import_aliases =
-                    direct_function_import_aliases_by_file.get(&test.file);
+                    lookup_file_map(&direct_function_import_aliases_by_file, &test.file);
+                let file_facts = lookup_file_map(&index.files, &test.file);
+                let root_import_names = index
+                    .files
+                    .get(&test.file)
+                    .or_else(|| file_facts)
+                    .map(|facts| direct_root_import_names_from_source(&facts.source))
+                    .unwrap_or_default();
                 let mut direct_import_modules = index
                     .files
                     .get(&test.file)
+                    .or_else(|| file_facts)
                     .map(|facts| direct_import_modules_from_source(&facts.source))
                     .unwrap_or_default();
                 if let Some(imports) = direct_function_import_aliases {
@@ -136,6 +146,25 @@ impl<'a> CompactGripContext<'a> {
                     test_scoped_function_names,
                     production_owner_names,
                 ));
+                // A package-root import is a direct-owner identity, not a
+                // helper relation. Keep grouped/foreign imports fail-closed:
+                // `root_import_names` only contains the ungrouped package
+                // root grammar recognized by the production import parser.
+                helper_owner_call_names.retain(|name| {
+                    !(root_import_names.contains(name)
+                        && direct_import_modules
+                            .get(name)
+                            .is_some_and(|module| module.split("::").count() == 1)
+                        && test.calls.iter().any(|call| {
+                            let Some(start) = call.text.find(&call.name) else {
+                                return false;
+                            };
+                            call.name == *name
+                                && call_text_routes_directly_to_named_call(&call.text, &call.name)
+                                && !call.text[..start].trim_end().ends_with("::")
+                                && !call.text[..start].trim_end().ends_with('.')
+                        }))
+                });
                 let mut target_affinity_owner_call_names =
                     helper_owner_call_names_from_qualified_calls(
                         &test.calls,
@@ -203,11 +232,21 @@ impl<'a> CompactGripContext<'a> {
                             call,
                             test_module_path,
                             direct_function_import_aliases,
+                            Some(&root_import_names),
                             &reexport_aliases_by_module,
                             &code_lines,
                         ) {
                             tests_by_module_call
                                 .entry((module_path, call_name))
+                                .or_default()
+                                .push(test_index);
+                        }
+                        if direct_import_modules
+                            .get(&call.name)
+                            .is_some_and(|module| module.split("::").count() == 1)
+                        {
+                            tests_by_module_call
+                                .entry((String::new(), call.name.clone()))
                                 .or_default()
                                 .push(test_index);
                         }
@@ -218,6 +257,7 @@ impl<'a> CompactGripContext<'a> {
                     path_normalized: normalize_path(&test.file),
                     module_path: test_module_path,
                     direct_import_modules,
+                    _root_import_names: root_import_names,
                     local_function_names: local_function_names.cloned().unwrap_or_default(),
                     name_lower: test.name.to_ascii_lowercase(),
                     call_names,
@@ -300,6 +340,45 @@ impl<'a> CompactGripContext<'a> {
             .and_then(|package| self.unique_owner_names_by_package.get(&package))
             .is_some_and(|names| names.contains(&owner.name))
     }
+}
+
+fn direct_root_import_names_from_source(source: &str) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for raw in source.lines() {
+        let line = strip_comments_and_strings(raw).trim().to_string();
+        let Some(import) = line
+            .strip_prefix("use ")
+            .or_else(|| line.strip_prefix("pub use "))
+        else {
+            continue;
+        };
+        let import = import.trim_end_matches(';').trim();
+        if import.contains("::{") {
+            continue;
+        }
+        let (path, alias) = import.split_once(" as ").map_or(
+            (import, import.rsplit("::").next().unwrap_or(import)),
+            |(path, alias)| (path.trim(), alias.trim()),
+        );
+        if path.split("::").count() == 2
+            && path.split("::").next().is_some_and(|segment| {
+                segment != "crate" && segment != "self" && segment != "super"
+            })
+            && !alias.is_empty()
+        {
+            names.insert(alias.to_string());
+        }
+    }
+    names
+}
+
+fn lookup_file_map<'a, V>(map: &'a BTreeMap<PathBuf, V>, file: &Path) -> Option<&'a V> {
+    map.get(file).or_else(|| {
+        let normalized = normalize_path(file);
+        map.iter()
+            .find(|(candidate, _)| normalize_path(candidate) == normalized)
+            .map(|(_, value)| value)
+    })
 }
 
 pub(in crate::analysis::test_grip_evidence) type HelperOwnerCallsByFile =
