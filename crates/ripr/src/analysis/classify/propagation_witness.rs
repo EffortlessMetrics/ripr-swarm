@@ -325,26 +325,34 @@ impl PropagationWitnessV1 {
 
     fn compute_semantic_digest(&self) -> String {
         let mut canonical = Vec::new();
+        append_canonical_section_header(&mut canonical, "witness", 1);
         append_canonical_field(&mut canonical, "propagation-witness-v1");
+        append_canonical_section_header(&mut canonical, "behavior", 5);
         append_canonical_field(&mut canonical, &self.schema_version.to_string());
         append_canonical_field(&mut canonical, &self.behavior.owner.0);
         append_canonical_field(&mut canonical, &self.behavior.family);
         append_canonical_field(&mut canonical, &self.behavior.delta);
         append_canonical_field(&mut canonical, &self.behavior.expression);
+        append_canonical_section_header(&mut canonical, "source", 2);
         append_canonical_field(&mut canonical, &self.source.kind);
         append_canonical_field(&mut canonical, &self.source.identity);
+        append_canonical_section_header(&mut canonical, "edges", self.edges.len());
         for edge in &self.edges {
+            append_canonical_section_header(&mut canonical, "edge", 4);
             append_canonical_field(&mut canonical, edge.kind.as_str());
             append_canonical_field(&mut canonical, edge.status.as_str());
             append_canonical_field(&mut canonical, &edge.from);
             append_canonical_field(&mut canonical, &edge.to);
         }
+        append_canonical_section_header(&mut canonical, "sink", 2);
         append_canonical_field(&mut canonical, &self.sink.kind);
         append_canonical_field(&mut canonical, &self.sink.identity);
+        append_canonical_section_header(&mut canonical, "path", 1);
         append_canonical_field(&mut canonical, self.completeness.as_str());
         let mut limitations = self.limitations.clone();
         limitations.sort();
         limitations.dedup();
+        append_canonical_section_header(&mut canonical, "limitations", limitations.len());
         for limitation in limitations {
             append_canonical_field(&mut canonical, &limitation);
         }
@@ -361,6 +369,11 @@ impl PropagationWitnessV1 {
 fn append_canonical_field(canonical: &mut Vec<u8>, value: &str) {
     canonical.extend_from_slice(&(value.len() as u64).to_le_bytes());
     canonical.extend_from_slice(value.as_bytes());
+}
+
+fn append_canonical_section_header(canonical: &mut Vec<u8>, tag: &str, count: usize) {
+    append_canonical_field(canonical, tag);
+    append_canonical_field(canonical, &count.to_string());
 }
 
 #[cfg(test)]
@@ -631,6 +644,22 @@ mod tests {
         assert_ne!(
             without_edge.semantic_digest,
             without_edge.compute_semantic_digest()
+        );
+
+        let mut duplicated_edge = first.clone();
+        duplicated_edge.edges.push(first.edges[0].clone());
+        assert_ne!(
+            first.compute_semantic_digest(),
+            duplicated_edge.compute_semantic_digest()
+        );
+
+        let mut split_limitations = first.clone();
+        split_limitations.limitations = vec!["ab".to_string(), "c".to_string()];
+        let mut alternate_limitations = first.clone();
+        alternate_limitations.limitations = vec!["a".to_string(), "bc".to_string()];
+        assert_ne!(
+            split_limitations.compute_semantic_digest(),
+            alternate_limitations.compute_semantic_digest()
         );
         Ok(())
     }
