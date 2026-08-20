@@ -6,6 +6,10 @@ pub(in crate::analysis) fn propagation_evidence(
     probe: &Probe,
     flow_sinks: &[FlowSinkFact],
 ) -> StageEvidence {
+    // PR A of #3161 emits a typed diagnostic witness without changing the
+    // existing stage/classification authority.  A later slice may consume the
+    // witness once observer binding and complete-path proof are available.
+    let _current_path_witness = super::propagation_witness::current_path_witness(probe, flow_sinks);
     if matches!(probe.family, ProbeFamily::StaticUnknown) {
         return StageEvidence::new(
             StageState::Unknown,

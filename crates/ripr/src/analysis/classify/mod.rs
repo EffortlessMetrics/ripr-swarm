@@ -6,6 +6,7 @@ mod helper_transfer;
 mod infection;
 mod match_transfer;
 mod owner_shape;
+mod propagation_witness;
 mod reach;
 mod related_tests;
 mod reveal;
