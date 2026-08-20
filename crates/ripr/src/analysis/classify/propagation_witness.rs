@@ -234,15 +234,13 @@ fn has_macro_invocation(text: &str) -> bool {
 }
 
 fn has_closure_syntax(text: &str) -> bool {
-    let mut pipes = text.match_indices('|').map(|(index, _)| index);
-    let Some(first) = pipes.next() else {
+    let mut pipes = text.match_indices('|');
+    if pipes.next().is_none() {
         return false;
-    };
-    let Some(second) = pipes.next() else {
-        return false;
-    };
-    // Conservative: paired pipes are treated as an opaque closure boundary.
-    second > first + 1
+    }
+    // Conservative: any paired pipes, including `||`, are an opaque closure
+    // boundary.
+    pipes.next().is_some()
 }
 
 fn source_sink_tokens_overlap(source: &str, sink: &str) -> bool {
@@ -340,7 +338,7 @@ mod tests {
     fn probe(family: ProbeFamily, expression: &str) -> Probe {
         Probe {
             id: ProbeId("probe:fixture:1".to_string()),
-            location: SourceLocation::new("C:/one/src/lib.rs", 10, 2),
+            location: SourceLocation::new("fixture/one/src/lib.rs", 10, 2),
             owner: Some(SymbolId("owner:calculate".to_string())),
             family,
             delta: DeltaKind::Value,
@@ -491,6 +489,13 @@ mod tests {
         );
         assert!(
             current_path_witness(
+                &probe(ProbeFamily::SideEffect, "register(|| value)"),
+                &[sink(FlowSinkKind::CallEffect, "register(|| value)", 14)]
+            )
+            .is_none()
+        );
+        assert!(
+            current_path_witness(
                 &probe(ProbeFamily::SideEffect, "self.handle(value)"),
                 &[sink(FlowSinkKind::CallEffect, "other.handle(value)", 14)]
             )
@@ -511,7 +516,7 @@ mod tests {
     fn semantic_digest_ignores_root_and_line_movement_but_detects_edge_removal()
     -> Result<(), String> {
         let mut moved = probe(ProbeFamily::ReturnValue, "amount");
-        moved.location = SourceLocation::new("D:/two/src/lib.rs", 900, 17);
+        moved.location = SourceLocation::new("fixture/two/src/lib.rs", 900, 17);
         let first = current_path_witness(
             &probe(ProbeFamily::ReturnValue, "amount"),
             &[sink(FlowSinkKind::ReturnValue, "Ok(amount)", 14)],
