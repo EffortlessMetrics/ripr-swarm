@@ -3,7 +3,9 @@ use super::*;
 pub(super) mod context;
 
 pub(crate) use context::CompactGripContext;
-pub(super) use context::{CompactTest, call_text_contains_named_call};
+pub(super) use context::{CompactTest, ImportedFunctionAlias, call_text_contains_named_call};
+
+type ReexportAliasesByModule = BTreeMap<(String, String), String>;
 
 /// Walk `index.tests` and return tests that plausibly relate to `seam`,
 /// each tagged with the single highest-priority `RelationReason` it
@@ -46,6 +48,7 @@ pub(super) fn find_related_tests_with_context<'context, 'index>(
 /// strategy reads from. Resolved once per seam to avoid re-walking the
 /// index and re-deriving file stems / module paths per strategy.
 pub(super) struct OwnerContext {
+    function: Option<FunctionSummary>,
     name: String,
     name_lower: String,
     file_stem: String,
@@ -57,6 +60,7 @@ pub(super) struct OwnerContext {
 impl OwnerContext {
     fn resolve(seam: &RepoSeam, context: &CompactGripContext<'_>) -> Self {
         let owner_fn = find_owner_function(seam, context.index);
+        let function = owner_fn.cloned();
         let name = owner_fn.map(|f| f.name.as_str()).unwrap_or("").to_string();
         let name_lower = name.to_ascii_lowercase();
         let owner_file = owner_fn.map(|f| f.file.as_path());
@@ -65,13 +69,18 @@ impl OwnerContext {
             .and_then(|s| s.to_str())
             .unwrap_or("")
             .to_string();
-        let module_path = owner_file.and_then(module_path_for);
+        let module_path = owner_fn.and_then(function_module_path).or_else(|| {
+            owner_file
+                .and_then(module_path_for)
+                .map(|path| path.replace('/', "::"))
+        });
         let prefix = owner_fn.and_then(|f| package_prefix(&f.file));
         let fixture_names = owner_file
             .and_then(|file| context.index.files.get(file))
             .map(fixture_names_for_owner_file)
             .unwrap_or_default();
         Self {
+            function,
             name,
             name_lower,
             file_stem,
@@ -200,15 +209,27 @@ pub(super) fn match_direct_owner_call(
     if owner.name.is_empty() {
         return;
     }
-    let Some(indices) = context.tests_by_call_name.get(&owner.name) else {
-        return;
-    };
+    let mut indices = context.module_call_indices(
+        owner.module_path.as_deref().unwrap_or_default(),
+        &owner.name,
+    );
+    let package_unique = owner
+        .function
+        .as_ref()
+        .is_some_and(|function| context.owner_name_is_unique_for_package(function));
+    if package_unique {
+        if let Some(name_indices) = context.tests_by_call_name.get(&owner.name) {
+            indices.extend(name_indices.iter().copied());
+        }
+    }
+    indices.sort_unstable();
+    indices.dedup();
     for test_index in indices {
         insert_related_candidate(
             candidates,
             context,
             prefix,
-            *test_index,
+            test_index,
             RelationReason::DirectOwnerCall,
         );
     }
@@ -378,11 +399,24 @@ pub(super) fn match_import_path_affinity(
         return;
     };
     for test_index in indices {
-        if !context
-            .tests
-            .get(*test_index)
-            .is_some_and(|indexed| test_imports_owner_compact(indexed, &owner.name))
-        {
+        let Some(indexed) = context.tests.get(*test_index) else {
+            continue;
+        };
+        let exact_module_call = owner.module_path.as_deref().is_some_and(|module| {
+            context
+                .module_call_indices(module, &owner.name)
+                .contains(test_index)
+        });
+        let exact_module_import = owner
+            .module_path
+            .as_deref()
+            .is_some_and(|module| test_imports_owner_module_compact(indexed, module, &owner.name));
+        let package_unique = owner
+            .function
+            .as_ref()
+            .is_some_and(|function| context.owner_name_is_unique_for_package(function));
+        let name_only_import = package_unique && test_imports_owner_compact(indexed, &owner.name);
+        if !exact_module_call && !exact_module_import && !name_only_import {
             continue;
         }
         insert_related_candidate(
@@ -615,20 +649,237 @@ pub(super) fn module_path_for(file: &Path) -> Option<String> {
     }
 }
 
+/// Canonical crate-relative module path for a parsed function. The
+/// file-derived module path alone cannot distinguish inline modules, so
+/// recover those segments from the parser symbol id as well (#3214).
+pub(super) fn function_module_path(function: &FunctionSummary) -> Option<String> {
+    let file = normalize_path(&function.file);
+    let mut module = crate_module_path_for_file(&function.file)?;
+    let prefix = format!("{file}::");
+    let inline = function.id.0.strip_prefix(&prefix)?;
+    let mut segments = inline.split("::").collect::<Vec<_>>();
+    segments.pop();
+    segments.retain(|segment| !segment.starts_with("impl "));
+    if !segments.is_empty() {
+        if !module.is_empty() {
+            module.push_str("::");
+        }
+        module.push_str(&segments.join("::"));
+    }
+    Some(module)
+}
+
+fn crate_module_path_for_file(file: &Path) -> Option<String> {
+    let normalized = normalize_path(file);
+    let body = normalized
+        .rfind("/src/")
+        .map(|idx| &normalized[idx + "/src/".len()..])
+        .or_else(|| normalized.strip_prefix("src/"))
+        .or_else(|| {
+            normalized
+                .rfind("/tests/")
+                .map(|idx| &normalized[idx + "/tests/".len()..])
+        })
+        .or_else(|| normalized.strip_prefix("tests/"))?;
+    let trimmed = body.strip_suffix(".rs").unwrap_or(body);
+    let module = if matches!(trimmed, "lib" | "main") {
+        String::new()
+    } else if let Some(parent) = trimmed.strip_suffix("/mod") {
+        parent.to_string()
+    } else {
+        trimmed.to_string()
+    };
+    Some(module.replace('/', "::"))
+}
+
+fn function_module_path_for_test(test: &TestSummary, index: &RustIndex) -> Option<String> {
+    index
+        .functions
+        .iter()
+        .find(|function| {
+            function.file == test.file
+                && function.name == test.name
+                && function.start_line == test.start_line
+        })
+        .and_then(function_module_path)
+}
+
+/// Resolve direct call spellings to a small set of crate-relative module
+/// paths. Qualified paths are the discriminating control for duplicate names;
+/// bare calls retain the package-unique fallback in `match_direct_owner_call`.
+pub(super) fn resolved_call_module_paths(
+    call: &CallFact,
+    test_module: &str,
+    direct_imports: Option<&BTreeMap<String, ImportedFunctionAlias>>,
+    reexports: &ReexportAliasesByModule,
+    code_lines: &[String],
+) -> BTreeSet<String> {
+    let mut paths = BTreeSet::new();
+    let Some(start) = call.text.find(&call.name) else {
+        return paths;
+    };
+    let before = call.text[..start].trim_end();
+    let mut qualifier_start = before.len();
+    let bytes = before.as_bytes();
+    while qualifier_start > 0
+        && (bytes[qualifier_start - 1].is_ascii_alphanumeric()
+            || bytes[qualifier_start - 1] == b'_'
+            || bytes[qualifier_start - 1] == b':')
+    {
+        qualifier_start -= 1;
+    }
+    let qualifier = before[qualifier_start..].trim_end_matches("::");
+    if qualifier.is_empty() {
+        if let Some(imported) = direct_imports.and_then(|imports| imports.get(&call.name)) {
+            paths.insert(imported.module_path.clone());
+        }
+        if code_lines.iter().any(|line| {
+            let line = line.trim_start();
+            line.starts_with(&format!("use crate::{}", call.name))
+                || line.starts_with(&format!("pub use crate::{}", call.name))
+        }) {
+            paths.insert(String::new());
+        }
+        paths.insert(test_module.to_string());
+        let aliases = paths.clone();
+        for module_path in aliases {
+            if let Some(target) = reexports.get(&(module_path, call.name.clone())) {
+                paths.insert(target.clone());
+            }
+        }
+        return paths;
+    }
+    let qualifier = qualifier.trim_start_matches("::");
+    let mut segments = qualifier.split("::").filter(|segment| !segment.is_empty());
+    let Some(first) = segments.next() else {
+        return paths;
+    };
+    let mut base = match first {
+        "crate" => Vec::new(),
+        "self" => test_module
+            .split("::")
+            .filter(|segment| !segment.is_empty())
+            .collect::<Vec<_>>(),
+        "super" => {
+            let mut current = test_module
+                .split("::")
+                .filter(|segment| !segment.is_empty())
+                .collect::<Vec<_>>();
+            current.pop();
+            current
+        }
+        _ => test_module
+            .split("::")
+            .filter(|segment| !segment.is_empty())
+            .collect::<Vec<_>>(),
+    };
+    if !matches!(first, "crate" | "self" | "super") {
+        base.push(first);
+    }
+    base.extend(segments);
+    let module_path = base.join("::");
+    paths.insert(module_path.clone());
+    if let Some(target) = reexports.get(&(module_path, call.name.clone())) {
+        paths.insert(target.clone());
+    }
+    paths
+}
+
+fn reexport_aliases_by_module(index: &RustIndex) -> ReexportAliasesByModule {
+    let mut aliases = BTreeMap::new();
+    for (file, facts) in &index.files {
+        let Some(module_path) = crate_module_path_for_file(file) else {
+            continue;
+        };
+        for raw in facts.source.lines() {
+            let cleaned = strip_comments_and_strings(raw);
+            let line = cleaned.trim();
+            let Some(import) = line
+                .strip_prefix("pub use ")
+                .or_else(|| line.strip_prefix("pub(crate) use "))
+            else {
+                continue;
+            };
+            let import = import.trim_end_matches(';').trim();
+            if import.contains("::{") {
+                continue;
+            }
+            let (path, alias) = match import.split_once(" as ") {
+                Some((path, alias)) => (path.trim(), alias.trim()),
+                None => {
+                    let Some(name) = import.rsplit("::").next() else {
+                        continue;
+                    };
+                    (import, name.trim())
+                }
+            };
+            let Some((target_module, target_name)) = path.rsplit_once("::") else {
+                continue;
+            };
+            let target_module = resolve_reexport_module_path(&module_path, target_module);
+            if target_module.is_empty() || target_name.is_empty() || alias.is_empty() {
+                continue;
+            }
+            aliases.insert((module_path.clone(), alias.to_string()), target_module);
+        }
+    }
+    aliases
+}
+
+fn resolve_reexport_module_path(current: &str, target: &str) -> String {
+    let target = target.strip_prefix("crate::").unwrap_or(target);
+    if target.starts_with("self::") {
+        return format!(
+            "{}{}",
+            current,
+            target.strip_prefix("self").unwrap_or_default()
+        )
+        .trim_matches(':')
+        .to_string();
+    }
+    if target == "self" {
+        return current.to_string();
+    }
+    if target.starts_with("super::") {
+        let mut segments = current
+            .split("::")
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>();
+        let mut rest = target;
+        while let Some(next) = rest.strip_prefix("super::") {
+            segments.pop();
+            rest = next;
+        }
+        if !rest.is_empty() {
+            segments.extend(rest.split("::"));
+        }
+        return segments.join("::");
+    }
+    let mut segments = current
+        .split("::")
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>();
+    segments.extend(target.split("::"));
+    segments.join("::")
+}
+
 /// Two files share a module if any non-leaf segment of the owner's
 /// module path appears as a prefix of the test's module path. The leaf
 /// stem is excluded so this does not duplicate `same_test_file`.
 pub(super) fn same_module(owner_module: &str, test_module: &str) -> bool {
-    let parent = match owner_module.rsplit_once('/') {
-        Some((parent, _leaf)) => parent,
-        None => return false,
+    let (parent, separator) = match owner_module.rsplit_once("::") {
+        Some((parent, _leaf)) => (parent, "::"),
+        None => match owner_module.rsplit_once('/') {
+            Some((parent, _leaf)) => (parent, "/"),
+            None => return false,
+        },
     };
     if parent.is_empty() {
         return false;
     }
     test_module == parent
-        || test_module.starts_with(&format!("{parent}/"))
-        || test_module.starts_with(&format!("{}/", parent.replace('/', "_")))
+        || test_module.starts_with(&format!("{parent}{separator}"))
+        || (separator == "/" && test_module.starts_with(&format!("{}/", parent.replace('/', "_"))))
 }
 
 /// Body mentions the owner via an explicit qualified-path or `use`
@@ -667,6 +918,25 @@ pub(super) fn test_imports_owner_compact(test: &CompactTest<'_>, owner_name: &st
         }
     }
     false
+}
+
+fn test_imports_owner_module_compact(
+    test: &CompactTest<'_>,
+    owner_module: &str,
+    owner_name: &str,
+) -> bool {
+    let normalized = owner_module.replace('/', "::");
+    let target = if normalized.is_empty() {
+        format!("::{owner_name}")
+    } else {
+        format!("::{normalized}::{owner_name}")
+    };
+    test.code_lines.iter().any(|line| {
+        let trimmed = line.trim_start();
+        trimmed.starts_with("use ")
+            && (trimmed.contains(&target)
+                || (normalized.is_empty() && trimmed.contains(&format!("crate::{owner_name}"))))
+    })
 }
 
 pub(super) fn import_affinity_tokens(code_lines: &[String]) -> BTreeSet<String> {

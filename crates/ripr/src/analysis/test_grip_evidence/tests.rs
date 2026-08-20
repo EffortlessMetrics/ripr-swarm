@@ -9396,6 +9396,154 @@ fn given_same_module_test_without_direct_call_when_related_tests_are_ranked_then
     Ok(())
 }
 
+#[test]
+fn module_extraction_resolves_parent_cfg_test_to_unique_out_of_line_child() -> Result<(), String> {
+    let child = PathBuf::from("src/child.rs");
+    let other = PathBuf::from("src/other.rs");
+    let parent = PathBuf::from("src/lib.rs");
+    let files = vec![
+        (
+            child.clone(),
+            "pub(super) fn compute(value: i32) -> i32 {\n    if value >= 10 { value - 1 } else { value }\n}\n",
+        ),
+        (
+            other,
+            "pub(super) fn compute(value: i32) -> i32 {\n    value + 100\n}\n",
+        ),
+        (
+            parent,
+            "mod child;\nmod other;\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn child_value_is_preserved() {\n        assert_eq!(super::child::compute(10), 9);\n    }\n}\n",
+        ),
+    ];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[child], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected child predicate seam".to_string())?;
+    let evidence = evidence_for_seam(seam, &index);
+    let related = evidence
+        .related_tests
+        .iter()
+        .filter(|test| test.test_name == "child_value_is_preserved")
+        .collect::<Vec<_>>();
+    if related.len() != 1 {
+        return Err(format!(
+            "qualified parent test should resolve exactly once across duplicate child names: {related:?}"
+        ));
+    }
+    assert_eq!(related[0].relation_reason, RelationReason::DirectOwnerCall);
+    Ok(())
+}
+
+#[test]
+fn module_extraction_rejects_qualified_sibling_with_same_name() -> Result<(), String> {
+    let child = PathBuf::from("src/child.rs");
+    let other = PathBuf::from("src/other.rs");
+    let parent = PathBuf::from("src/lib.rs");
+    let files = vec![
+        (
+            child.clone(),
+            "pub(super) fn compute(value: i32) -> i32 {\n    if value >= 10 { value - 1 } else { value }\n}\n",
+        ),
+        (
+            other,
+            "pub(super) fn compute(value: i32) -> i32 {\n    value + 100\n}\n",
+        ),
+        (
+            parent,
+            "mod child;\nmod other;\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn sibling_value_is_not_child_value() {\n        assert_eq!(super::other::compute(10), 110);\n    }\n}\n",
+        ),
+    ];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[child], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected child predicate seam".to_string())?;
+    let evidence = evidence_for_seam(seam, &index);
+    if let Some(test) = evidence
+        .related_tests
+        .iter()
+        .find(|test| test.test_name == "sibling_value_is_not_child_value")
+    {
+        return Err(format!(
+            "sibling call must not relate to child owner: reason={:?}",
+            test.relation_reason
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn inline_and_out_of_line_child_calls_share_module_relation_identity() -> Result<(), String> {
+    let source = r#"
+mod child {
+    pub(super) fn compute(value: i32) -> i32 {
+        if value >= 10 { value - 1 } else { value }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn inline_child_value_is_preserved() {
+        assert_eq!(super::child::compute(10), 9);
+    }
+}
+"#;
+    let file = PathBuf::from("src/lib.rs");
+    let index = index_from_files(&[(file.clone(), source)])?;
+    let seams = inventory_seams_from_index(&[file], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected inline child predicate seam".to_string())?;
+    let evidence = evidence_for_seam(seam, &index);
+    let related = evidence
+        .related_tests
+        .iter()
+        .find(|test| test.test_name == "inline_child_value_is_preserved")
+        .ok_or_else(|| "inline child relation must be preserved".to_string())?;
+    assert_eq!(related.relation_reason, RelationReason::DirectOwnerCall);
+    Ok(())
+}
+
+#[test]
+fn unique_same_crate_reexport_resolves_to_its_child_owner() -> Result<(), String> {
+    let child = PathBuf::from("src/child.rs");
+    let other = PathBuf::from("src/other.rs");
+    let parent = PathBuf::from("src/lib.rs");
+    let files = vec![
+        (
+            child.clone(),
+            "pub fn compute(value: i32) -> i32 {\n    if value >= 10 { value - 1 } else { value }\n}\n",
+        ),
+        (
+            other,
+            "pub fn compute(value: i32) -> i32 {\n    value + 100\n}\n",
+        ),
+        (
+            parent,
+            "mod child;\nmod other;\npub use child::compute;\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn reexported_child_value_is_preserved() {\n        assert_eq!(super::compute(10), 9);\n    }\n}\n",
+        ),
+    ];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[child], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected reexport predicate seam".to_string())?;
+    let evidence = evidence_for_seam(seam, &index);
+    let related = evidence
+        .related_tests
+        .iter()
+        .find(|test| test.test_name == "reexported_child_value_is_preserved")
+        .ok_or_else(|| "unique re-export must retain child relation".to_string())?;
+    assert_eq!(related.relation_reason, RelationReason::DirectOwnerCall);
+    Ok(())
+}
+
 // -- helper coverage ---------------------------------------------
 //
 // Targeted unit tests for the small private helpers introduced by
