@@ -266,10 +266,7 @@ fn source_sink_tokens_overlap(source: &str, sink: &str) -> bool {
 }
 
 fn qualified_path_identity(text: &str) -> Option<String> {
-    let path = text
-        .split_once('(')
-        .map_or(text, |(callee, _)| callee)
-        .trim();
+    let path = text.trim();
     (path.contains('.') || path.contains("::")).then(|| normalize_semantic_text(path))
 }
 
@@ -291,7 +288,10 @@ fn is_variant_wrapper(text: &str, qualified_path: &str) -> bool {
     let Some((callee, _)) = text.split_once('(') else {
         return false;
     };
-    let Some(last_path_component) = qualified_path.rsplit("::").next() else {
+    let qualified_callee = qualified_path
+        .split_once('(')
+        .map_or(qualified_path, |(callee, _)| callee);
+    let Some(last_path_component) = qualified_callee.rsplit("::").next() else {
         return false;
     };
     normalize_semantic_text(callee) == last_path_component
@@ -559,6 +559,20 @@ mod tests {
             current_path_witness(
                 &probe(ProbeFamily::ReturnValue, "x"),
                 &[sink(FlowSinkKind::ReturnValue, "Ok(x)", 14)]
+            )
+            .is_some()
+        );
+        assert!(
+            current_path_witness(
+                &probe(ProbeFamily::FieldConstruction, "amount"),
+                &[sink(FlowSinkKind::StructField, "foo().amount", 14)]
+            )
+            .is_none()
+        );
+        assert!(
+            current_path_witness(
+                &probe(ProbeFamily::FieldConstruction, "foo().amount"),
+                &[sink(FlowSinkKind::StructField, "foo().amount", 14)]
             )
             .is_some()
         );
