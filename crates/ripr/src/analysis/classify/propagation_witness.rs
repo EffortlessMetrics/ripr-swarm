@@ -307,11 +307,47 @@ fn receiver_identity(text: &str) -> Option<String> {
 }
 
 fn semantic_tokens(text: &str) -> Vec<String> {
-    text.split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
-        .filter(|token| !token.is_empty())
-        .filter(|token| !is_keyword_or_noise(token))
-        .map(|token| token.to_ascii_lowercase())
-        .collect()
+    let characters = text.chars().collect::<Vec<_>>();
+    let mut tokens = Vec::new();
+    let mut index = 0;
+    while index < characters.len() {
+        if characters[index] == 'r'
+            && characters.get(index + 1) == Some(&'#')
+            && characters
+                .get(index + 2)
+                .is_some_and(|character| character.is_ascii_alphanumeric() || *character == '_')
+        {
+            let start = index;
+            index += 2;
+            while characters
+                .get(index)
+                .is_some_and(|character| character.is_ascii_alphanumeric() || *character == '_')
+            {
+                index += 1;
+            }
+            push_semantic_token(&mut tokens, &characters[start..index]);
+        } else if characters[index].is_ascii_alphanumeric() || characters[index] == '_' {
+            let start = index;
+            index += 1;
+            while characters
+                .get(index)
+                .is_some_and(|character| character.is_ascii_alphanumeric() || *character == '_')
+            {
+                index += 1;
+            }
+            push_semantic_token(&mut tokens, &characters[start..index]);
+        } else {
+            index += 1;
+        }
+    }
+    tokens
+}
+
+fn push_semantic_token(tokens: &mut Vec<String>, characters: &[char]) {
+    let token = characters.iter().collect::<String>();
+    if !is_keyword_or_noise(&token) {
+        tokens.push(token.to_ascii_lowercase());
+    }
 }
 
 fn is_keyword_or_noise(token: &str) -> bool {
@@ -561,6 +597,20 @@ mod tests {
                 &[sink(FlowSinkKind::ReturnValue, "Ok(x)", 14)]
             )
             .is_some()
+        );
+        assert!(
+            current_path_witness(
+                &probe(ProbeFamily::ReturnValue, "r#type"),
+                &[sink(FlowSinkKind::ReturnValue, "Ok(r#type)", 14)]
+            )
+            .is_some()
+        );
+        assert!(
+            current_path_witness(
+                &probe(ProbeFamily::ReturnValue, "r#type"),
+                &[sink(FlowSinkKind::ReturnValue, "Ok(r#match)", 14)]
+            )
+            .is_none()
         );
         assert!(
             current_path_witness(
