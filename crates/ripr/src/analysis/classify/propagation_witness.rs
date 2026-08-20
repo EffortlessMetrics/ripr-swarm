@@ -309,9 +309,66 @@ fn receiver_identity(text: &str) -> Option<String> {
 fn semantic_tokens(text: &str) -> Vec<String> {
     text.split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
         .filter(|token| !token.is_empty())
-        .filter(|token| token.len() > 1 || token.chars().all(|ch| ch.is_ascii_digit()))
+        .filter(|token| !is_keyword_or_noise(token))
         .map(|token| token.to_ascii_lowercase())
         .collect()
+}
+
+fn is_keyword_or_noise(token: &str) -> bool {
+    if token == "_" {
+        return true;
+    }
+    matches!(
+        token,
+        "as" | "async"
+            | "await"
+            | "become"
+            | "box"
+            | "break"
+            | "const"
+            | "continue"
+            | "crate"
+            | "do"
+            | "dyn"
+            | "else"
+            | "enum"
+            | "extern"
+            | "false"
+            | "fn"
+            | "for"
+            | "if"
+            | "impl"
+            | "in"
+            | "let"
+            | "loop"
+            | "macro"
+            | "match"
+            | "mod"
+            | "move"
+            | "mut"
+            | "override"
+            | "priv"
+            | "pub"
+            | "ref"
+            | "return"
+            | "self"
+            | "Self"
+            | "static"
+            | "struct"
+            | "super"
+            | "trait"
+            | "true"
+            | "try"
+            | "type"
+            | "typeof"
+            | "unsafe"
+            | "unsized"
+            | "use"
+            | "virtual"
+            | "where"
+            | "while"
+            | "yield"
+    )
 }
 
 fn normalize_semantic_text(text: &str) -> String {
@@ -497,6 +554,20 @@ mod tests {
                 &[sink(FlowSinkKind::ReturnValue, "Ok(amount)", 14)]
             )
             .is_some()
+        );
+        assert!(
+            current_path_witness(
+                &probe(ProbeFamily::ReturnValue, "x"),
+                &[sink(FlowSinkKind::ReturnValue, "Ok(x)", 14)]
+            )
+            .is_some()
+        );
+        assert!(
+            current_path_witness(
+                &probe(ProbeFamily::ReturnValue, "if"),
+                &[sink(FlowSinkKind::ReturnValue, "Ok(if)", 14)]
+            )
+            .is_none()
         );
         assert!(
             current_path_witness(
