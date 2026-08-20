@@ -860,7 +860,10 @@ pub(super) fn resolved_call_module_paths(
     let qualifier = before[qualifier_start..].trim_end_matches("::");
     if qualifier.is_empty() {
         if let Some(imported) = direct_imports.and_then(|imports| imports.get(&call.name)) {
-            paths.insert((imported.module_path.clone(), imported.name.clone()));
+            paths.insert((
+                resolve_call_module_path(test_module, &imported.module_path),
+                imported.name.clone(),
+            ));
         }
         if code_lines.iter().any(|line| {
             let line = line.trim_start();
@@ -937,6 +940,26 @@ fn reexport_aliases_by_module(index: &RustIndex) -> ReexportAliasesByModule {
                 }
                 path
             };
+            if let Some((module_header, inline_body)) = line.split_once('{')
+                && let Some(module_name) = module_header
+                    .trim()
+                    .strip_prefix("mod ")
+                    .and_then(|rest| rest.split_whitespace().next())
+                && let Some(use_start) = inline_body.find("pub use ")
+            {
+                let mut inline_module_path = module_path.clone();
+                if !inline_module_path.is_empty() {
+                    inline_module_path.push_str("::");
+                }
+                inline_module_path.push_str(module_name);
+                if let Some(inline_import) = inline_body[use_start..].split(';').next() {
+                    register_reexport_import(
+                        &mut aliases,
+                        &inline_module_path,
+                        inline_import.trim(),
+                    );
+                }
+            }
             let Some(import) = line
                 .strip_prefix("pub use ")
                 .or_else(|| line.strip_prefix("pub(crate) use "))
@@ -945,22 +968,29 @@ fn reexport_aliases_by_module(index: &RustIndex) -> ReexportAliasesByModule {
                 continue;
             };
             let import = import.trim_end_matches(';').trim();
-            if let Some((base, body)) = import.split_once("::{") {
-                let Some(body) = body.strip_suffix('}') else {
-                    update_inline_module_scope(line, &mut depth, &mut inline_modules);
-                    continue;
-                };
-                let target_module = resolve_reexport_module_path(&module_path, base.trim());
-                for item in body.split(',').map(str::trim) {
-                    register_reexport_item(&mut aliases, &module_path, &target_module, item);
-                }
-            } else {
-                register_reexport_item(&mut aliases, &module_path, "", import);
-            }
+            register_reexport_import(&mut aliases, &module_path, import);
             update_inline_module_scope(line, &mut depth, &mut inline_modules);
         }
     }
     aliases
+}
+
+fn register_reexport_import(
+    aliases: &mut ReexportAliasesByModule,
+    current_module: &str,
+    import: &str,
+) {
+    if let Some((base, body)) = import.split_once("::{") {
+        let Some(body) = body.strip_suffix('}') else {
+            return;
+        };
+        let target_module = resolve_reexport_module_path(current_module, base.trim());
+        for item in body.split(',').map(str::trim) {
+            register_reexport_item(aliases, current_module, &target_module, item);
+        }
+    } else {
+        register_reexport_item(aliases, current_module, "", import);
+    }
 }
 
 fn register_reexport_item(
@@ -1025,7 +1055,10 @@ fn update_inline_module_scope(
 }
 
 fn resolve_reexport_module_path(current: &str, target: &str) -> String {
-    let target = target.strip_prefix("crate::").unwrap_or(target);
+    if let Some(target) = target.strip_prefix("crate::") {
+        return target.to_string();
+    }
+    let target = target.trim();
     if target.starts_with("self::") {
         return format!(
             "{}{}",
@@ -1059,6 +1092,38 @@ fn resolve_reexport_module_path(current: &str, target: &str) -> String {
         .collect::<Vec<_>>();
     segments.extend(target.split("::"));
     segments.join("::")
+}
+
+fn resolve_call_module_path(current: &str, imported: &str) -> String {
+    if let Some(path) = imported.strip_prefix("crate::") {
+        return path.to_string();
+    }
+    if imported == "self" {
+        return current.to_string();
+    }
+    if let Some(path) = imported.strip_prefix("self::") {
+        return format!("{current}::{path}");
+    }
+    if imported.starts_with("super") {
+        let mut segments = current
+            .split("::")
+            .filter(|segment| !segment.is_empty())
+            .collect::<Vec<_>>();
+        let mut rest = imported;
+        while let Some(next) = rest.strip_prefix("super::") {
+            segments.pop();
+            rest = next;
+        }
+        if rest == "super" {
+            segments.pop();
+            rest = "";
+        }
+        if !rest.is_empty() {
+            segments.extend(rest.split("::"));
+        }
+        return segments.join("::");
+    }
+    imported.to_string()
 }
 
 /// Two files share a module if any non-leaf segment of the owner's
