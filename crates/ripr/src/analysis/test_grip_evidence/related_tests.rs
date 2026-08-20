@@ -5,7 +5,37 @@ pub(super) mod context;
 pub(crate) use context::CompactGripContext;
 pub(super) use context::{CompactTest, ImportedFunctionAlias, call_text_contains_named_call};
 
-type ReexportAliasesByModule = BTreeMap<(String, String), String>;
+type ReexportAliasesByModule = BTreeMap<(String, String), (String, String)>;
+
+pub(super) fn direct_import_modules_from_source(source: &str) -> BTreeMap<String, String> {
+    let mut imports = BTreeMap::new();
+    for raw in source.lines() {
+        let cleaned = strip_comments_and_strings(raw);
+        let Some(import) = cleaned
+            .trim()
+            .strip_prefix("use ")
+            .or_else(|| cleaned.trim().strip_prefix("pub use "))
+        else {
+            continue;
+        };
+        let import = import.trim_end_matches(';').trim();
+        if import.contains("::{") {
+            continue;
+        }
+        let (path, alias) = import.split_once(" as ").map_or(
+            (import, import.rsplit("::").next().unwrap_or(import)),
+            |(path, alias)| (path.trim(), alias.trim()),
+        );
+        let Some((module, _name)) = path.rsplit_once("::") else {
+            continue;
+        };
+        let module = module.strip_prefix("crate::").unwrap_or(module);
+        if !alias.is_empty() {
+            imports.insert(alias.to_string(), module.to_string());
+        }
+    }
+    imports
+}
 
 /// Walk `index.tests` and return tests that plausibly relate to `seam`,
 /// each tagged with the single highest-priority `RelationReason` it
@@ -219,7 +249,12 @@ pub(super) fn match_direct_owner_call(
         .is_some_and(|function| context.owner_name_is_unique_for_package(function));
     if package_unique {
         if let Some(name_indices) = context.tests_by_call_name.get(&owner.name) {
-            indices.extend(name_indices.iter().copied());
+            indices.extend(name_indices.iter().copied().filter(|test_index| {
+                context
+                    .tests
+                    .get(*test_index)
+                    .is_some_and(|indexed| bare_owner_call_is_admissible(indexed, owner))
+            }));
         }
     }
     indices.sort_unstable();
@@ -233,6 +268,84 @@ pub(super) fn match_direct_owner_call(
             RelationReason::DirectOwnerCall,
         );
     }
+}
+
+/// A bare leaf name is only a compatibility fallback for older integration
+/// fixtures that omit imports. Reject explicit imports from another module,
+/// local shadows, and method syntax; those shapes need a resolved path or
+/// remain unknown rather than being credited by coincidence (#3214).
+fn bare_owner_call_is_admissible(test: &CompactTest<'_>, owner: &OwnerContext) -> bool {
+    let Some(function) = owner.function.as_ref() else {
+        return false;
+    };
+    if test
+        .direct_import_modules
+        .get(&owner.name)
+        .is_some_and(|imported| owner.module_path.as_deref() != Some(imported.as_str()))
+    {
+        return false;
+    }
+    if test
+        .code_lines
+        .iter()
+        .any(|line| line_declares_name(line, &owner.name))
+        || test.local_function_names.contains(&owner.name)
+    {
+        return false;
+    }
+    if test
+        .test
+        .calls
+        .iter()
+        .any(|call| call.name == owner.name && call_is_method_or_macro(&call.text, &call.name))
+    {
+        return false;
+    }
+    // Root imports are intentionally handled here because the legacy import
+    // parser has no module segment to retain for `use crate::name;`.
+    let owner_module = owner.module_path.as_deref().unwrap_or_default();
+    !test.code_lines.iter().any(|line| {
+        let Some(import) = line
+            .trim_start()
+            .strip_prefix("use ")
+            .or_else(|| line.trim_start().strip_prefix("pub use "))
+        else {
+            return false;
+        };
+        let import = import.trim_end_matches(';').trim();
+        let (path, alias) = import.split_once(" as ").map_or(
+            (import, import.rsplit("::").next().unwrap_or(import)),
+            |(path, alias)| (path.trim(), alias.trim()),
+        );
+        if alias != owner.name {
+            return false;
+        }
+        let Some((module, _name)) = path.rsplit_once("::") else {
+            return false;
+        };
+        let module = module.strip_prefix("crate::").unwrap_or(module);
+        module != owner_module
+    }) && function.name == owner.name
+}
+
+fn line_declares_name(line: &str, name: &str) -> bool {
+    ["fn ", "let ", "const ", "static ", "struct ", "enum "]
+        .iter()
+        .any(|prefix| {
+            line.trim_start().strip_prefix(prefix).is_some_and(|rest| {
+                rest.trim_start().starts_with(&format!("{name}("))
+                    || rest.trim_start().starts_with(&format!("{name} "))
+                    || rest.trim_start().starts_with(&format!("{name}:"))
+            })
+        })
+}
+
+fn call_is_method_or_macro(text: &str, name: &str) -> bool {
+    let Some(start) = text.find(name) else {
+        return false;
+    };
+    let before = text[..start].trim_end();
+    before.ends_with('.') || before.ends_with('!')
 }
 
 pub(super) fn match_helper_owner_call(
@@ -713,7 +826,7 @@ pub(super) fn resolved_call_module_paths(
     direct_imports: Option<&BTreeMap<String, ImportedFunctionAlias>>,
     reexports: &ReexportAliasesByModule,
     code_lines: &[String],
-) -> BTreeSet<String> {
+) -> BTreeSet<(String, String)> {
     let mut paths = BTreeSet::new();
     let Some(start) = call.text.find(&call.name) else {
         return paths;
@@ -731,19 +844,19 @@ pub(super) fn resolved_call_module_paths(
     let qualifier = before[qualifier_start..].trim_end_matches("::");
     if qualifier.is_empty() {
         if let Some(imported) = direct_imports.and_then(|imports| imports.get(&call.name)) {
-            paths.insert(imported.module_path.clone());
+            paths.insert((imported.module_path.clone(), imported.name.clone()));
         }
         if code_lines.iter().any(|line| {
             let line = line.trim_start();
             line.starts_with(&format!("use crate::{}", call.name))
                 || line.starts_with(&format!("pub use crate::{}", call.name))
         }) {
-            paths.insert(String::new());
+            paths.insert((String::new(), call.name.clone()));
         }
-        paths.insert(test_module.to_string());
+        paths.insert((test_module.to_string(), call.name.clone()));
         let aliases = paths.clone();
-        for module_path in aliases {
-            if let Some(target) = reexports.get(&(module_path, call.name.clone())) {
+        for (module_path, name) in aliases {
+            if let Some(target) = reexports.get(&(module_path, name)) {
                 paths.insert(target.clone());
             }
         }
@@ -778,7 +891,7 @@ pub(super) fn resolved_call_module_paths(
     }
     base.extend(segments);
     let module_path = base.join("::");
-    paths.insert(module_path.clone());
+    paths.insert((module_path.clone(), call.name.clone()));
     if let Some(target) = reexports.get(&(module_path, call.name.clone())) {
         paths.insert(target.clone());
     }
@@ -788,42 +901,111 @@ pub(super) fn resolved_call_module_paths(
 fn reexport_aliases_by_module(index: &RustIndex) -> ReexportAliasesByModule {
     let mut aliases = BTreeMap::new();
     for (file, facts) in &index.files {
-        let Some(module_path) = crate_module_path_for_file(file) else {
+        let Some(file_module_path) = crate_module_path_for_file(file) else {
             continue;
         };
+        let mut depth = 0usize;
+        let mut inline_modules: Vec<(String, usize)> = Vec::new();
         for raw in facts.source.lines() {
             let cleaned = strip_comments_and_strings(raw);
             let line = cleaned.trim();
+            let module_path = if inline_modules.is_empty() {
+                file_module_path.clone()
+            } else {
+                let mut path = file_module_path.clone();
+                for (name, _) in &inline_modules {
+                    if !path.is_empty() {
+                        path.push_str("::");
+                    }
+                    path.push_str(name);
+                }
+                path
+            };
             let Some(import) = line
                 .strip_prefix("pub use ")
                 .or_else(|| line.strip_prefix("pub(crate) use "))
             else {
+                update_inline_module_scope(line, &mut depth, &mut inline_modules);
                 continue;
             };
             let import = import.trim_end_matches(';').trim();
-            if import.contains("::{") {
-                continue;
-            }
-            let (path, alias) = match import.split_once(" as ") {
-                Some((path, alias)) => (path.trim(), alias.trim()),
-                None => {
-                    let Some(name) = import.rsplit("::").next() else {
-                        continue;
-                    };
-                    (import, name.trim())
+            if let Some((base, body)) = import.split_once("::{") {
+                let Some(body) = body.strip_suffix('}') else {
+                    update_inline_module_scope(line, &mut depth, &mut inline_modules);
+                    continue;
+                };
+                let target_module = resolve_reexport_module_path(&module_path, base.trim());
+                for item in body.split(',').map(str::trim) {
+                    register_reexport_item(&mut aliases, &module_path, &target_module, item);
                 }
-            };
-            let Some((target_module, target_name)) = path.rsplit_once("::") else {
-                continue;
-            };
-            let target_module = resolve_reexport_module_path(&module_path, target_module);
-            if target_module.is_empty() || target_name.is_empty() || alias.is_empty() {
-                continue;
+            } else {
+                register_reexport_item(&mut aliases, &module_path, "", import);
             }
-            aliases.insert((module_path.clone(), alias.to_string()), target_module);
+            update_inline_module_scope(line, &mut depth, &mut inline_modules);
         }
     }
     aliases
+}
+
+fn register_reexport_item(
+    aliases: &mut ReexportAliasesByModule,
+    current_module: &str,
+    grouped_target_module: &str,
+    item: &str,
+) {
+    let item = item.trim();
+    if item.is_empty() || item == "self" || item == "*" {
+        return;
+    }
+    let (path, alias) = match item.split_once(" as ") {
+        Some((path, alias)) => (path.trim(), alias.trim()),
+        None => (item, item.rsplit("::").next().unwrap_or(item).trim()),
+    };
+    let (target_module, target_name) = if grouped_target_module.is_empty() {
+        let Some((target_module, target_name)) = path.rsplit_once("::") else {
+            return;
+        };
+        (
+            resolve_reexport_module_path(current_module, target_module),
+            target_name.trim(),
+        )
+    } else {
+        (grouped_target_module.to_string(), path.trim())
+    };
+    if target_module.is_empty() || target_name.is_empty() || alias.is_empty() {
+        return;
+    }
+    aliases.insert(
+        (current_module.to_string(), alias.to_string()),
+        (target_module, target_name.to_string()),
+    );
+}
+
+fn update_inline_module_scope(
+    line: &str,
+    depth: &mut usize,
+    inline_modules: &mut Vec<(String, usize)>,
+) {
+    let opens = line.chars().filter(|ch| *ch == '{').count();
+    let closes = line.chars().filter(|ch| *ch == '}').count();
+    if let Some(rest) = line.split_once("mod ").map(|(_, rest)| rest)
+        && opens > 0
+        && !rest.trim_start().starts_with('(')
+        && let Some(name) = rest
+            .trim_start()
+            .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+            .next()
+            .filter(|name| !name.is_empty())
+    {
+        inline_modules.push((name.to_string(), *depth + opens));
+    }
+    *depth = depth.saturating_add(opens).saturating_sub(closes);
+    while inline_modules
+        .last()
+        .is_some_and(|(_, module_depth)| *module_depth > *depth)
+    {
+        inline_modules.pop();
+    }
 }
 
 fn resolve_reexport_module_path(current: &str, target: &str) -> String {

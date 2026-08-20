@@ -9544,6 +9544,110 @@ fn unique_same_crate_reexport_resolves_to_its_child_owner() -> Result<(), String
     Ok(())
 }
 
+#[test]
+fn module_relation_rejects_external_import_shadowing_unique_owner_name() -> Result<(), String> {
+    let child = PathBuf::from("src/child.rs");
+    let test = PathBuf::from("tests/external_shadow.rs");
+    let files = vec![
+        (
+            child.clone(),
+            "pub fn compute(value: i32) -> i32 {\n    if value >= 10 { value - 1 } else { value }\n}\n",
+        ),
+        (
+            test,
+            "use foreign::compute;\n#[test]\nfn foreign_value_is_not_child_value() {\n    assert_eq!(compute(10), 110);\n}\n",
+        ),
+    ];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[child], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected child predicate seam".to_string())?;
+    let evidence = evidence_for_seam(seam, &index);
+    if let Some(test) = evidence
+        .related_tests
+        .iter()
+        .find(|test| test.test_name == "foreign_value_is_not_child_value")
+    {
+        return Err(format!(
+            "external shadow relation leaked via {:?}",
+            test.relation_reason
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn module_relation_rejects_local_shadow_of_unique_owner_name() -> Result<(), String> {
+    let child = PathBuf::from("src/child.rs");
+    let test = PathBuf::from("tests/local_shadow.rs");
+    let files = vec![
+        (
+            child.clone(),
+            "pub fn compute(value: i32) -> i32 {\n    if value >= 10 { value - 1 } else { value }\n}\n",
+        ),
+        (
+            test,
+            "fn compute(value: i32) -> i32 { value + 100 }\n#[test]\nfn local_value_is_not_child_value() {\n    assert_eq!(compute(10), 110);\n}\n",
+        ),
+    ];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[child], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected child predicate seam".to_string())?;
+    let evidence = evidence_for_seam(seam, &index);
+    if let Some(test) = evidence
+        .related_tests
+        .iter()
+        .find(|test| test.test_name == "local_value_is_not_child_value")
+    {
+        return Err(format!(
+            "local shadow relation leaked via {:?}",
+            test.relation_reason
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn grouped_inline_super_reexport_resolves_to_child_owner() -> Result<(), String> {
+    let file = PathBuf::from("src/lib.rs");
+    let source = r#"
+mod child {
+    pub(super) fn compute(value: i32) -> i32 {
+        if value >= 10 { value - 1 } else { value }
+    }
+}
+mod facade {
+    pub use super::child::{compute};
+}
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn grouped_facade_value_is_preserved() {
+        assert_eq!(super::facade::compute(10), 9);
+    }
+}
+"#;
+    let index = index_from_files(&[(file.clone(), source)])?;
+    let seams = inventory_seams_from_index(&[file], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected grouped child predicate seam".to_string())?;
+    let evidence = evidence_for_seam(seam, &index);
+    let related = evidence
+        .related_tests
+        .iter()
+        .find(|test| test.test_name == "grouped_facade_value_is_preserved")
+        .ok_or_else(|| "grouped inline re-export must retain child relation".to_string())?;
+    assert_eq!(related.relation_reason, RelationReason::DirectOwnerCall);
+    Ok(())
+}
+
 // -- helper coverage ---------------------------------------------
 //
 // Targeted unit tests for the small private helpers introduced by

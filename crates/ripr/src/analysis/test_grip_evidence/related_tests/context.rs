@@ -28,6 +28,8 @@ pub(in crate::analysis::test_grip_evidence) struct CompactTest<'a> {
     pub(in crate::analysis::test_grip_evidence) test: &'a TestSummary,
     pub(in crate::analysis::test_grip_evidence) path_normalized: String,
     pub(in crate::analysis::test_grip_evidence) module_path: Option<String>,
+    pub(in crate::analysis::test_grip_evidence) direct_import_modules: BTreeMap<String, String>,
+    pub(in crate::analysis::test_grip_evidence) local_function_names: BTreeSet<String>,
     pub(in crate::analysis::test_grip_evidence) name_lower: String,
     pub(in crate::analysis::test_grip_evidence) call_names: BTreeSet<String>,
     pub(in crate::analysis::test_grip_evidence) assertion_tokens: BTreeSet<String>,
@@ -107,6 +109,18 @@ impl<'a> CompactGripContext<'a> {
                 let module_import_aliases = module_import_aliases_by_file.get(&test.file);
                 let direct_function_import_aliases =
                     direct_function_import_aliases_by_file.get(&test.file);
+                let mut direct_import_modules = index
+                    .files
+                    .get(&test.file)
+                    .map(|facts| direct_import_modules_from_source(&facts.source))
+                    .unwrap_or_default();
+                if let Some(imports) = direct_function_import_aliases {
+                    direct_import_modules.extend(
+                        imports
+                            .iter()
+                            .map(|(alias, imported)| (alias.clone(), imported.module_path.clone())),
+                    );
+                }
                 let mut helper_owner_call_names = helper_owner_call_names_for_test(
                     test,
                     &call_names,
@@ -185,7 +199,7 @@ impl<'a> CompactGripContext<'a> {
                     .or_else(|| module_path_for(&test.file).map(|path| path.replace('/', "::")));
                 if let Some(test_module_path) = test_module_path.as_deref() {
                     for call in &test.calls {
-                        for module_path in resolved_call_module_paths(
+                        for (module_path, call_name) in resolved_call_module_paths(
                             call,
                             test_module_path,
                             direct_function_import_aliases,
@@ -193,7 +207,7 @@ impl<'a> CompactGripContext<'a> {
                             &code_lines,
                         ) {
                             tests_by_module_call
-                                .entry((module_path, call.name.clone()))
+                                .entry((module_path, call_name))
                                 .or_default()
                                 .push(test_index);
                         }
@@ -203,6 +217,8 @@ impl<'a> CompactGripContext<'a> {
                     test,
                     path_normalized: normalize_path(&test.file),
                     module_path: test_module_path,
+                    direct_import_modules,
+                    local_function_names: local_function_names.cloned().unwrap_or_default(),
                     name_lower: test.name.to_ascii_lowercase(),
                     call_names,
                     assertion_tokens,
