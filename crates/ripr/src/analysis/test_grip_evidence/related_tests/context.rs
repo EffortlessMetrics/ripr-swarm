@@ -955,12 +955,15 @@ pub(in crate::analysis::test_grip_evidence) fn direct_function_import_aliases(
     source: &str,
 ) -> BTreeMap<String, ImportedFunctionAlias> {
     let mut aliases = BTreeMap::new();
+    let mut brace_depth = 0usize;
     for line in source.lines() {
         let line = strip_comments_and_strings(line);
-        let Some(import) = line.trim().strip_prefix("use ") else {
-            continue;
-        };
-        collect_direct_function_import_aliases_from_use(import.trim(), &mut aliases);
+        if brace_depth == 0
+            && let Some(import) = line.trim().strip_prefix("use ")
+        {
+            collect_direct_function_import_aliases_from_use(import.trim(), &mut aliases);
+        }
+        brace_depth = update_brace_depth(brace_depth, &line);
     }
     aliases
 }

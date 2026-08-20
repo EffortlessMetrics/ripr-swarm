@@ -5041,7 +5041,7 @@ fn given_call_presence_when_aliased_direct_imported_support_helper_calls_owner_t
 -> Result<(), String> {
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
-pub fn render_pipeline(input: &str) -> String {
+pub fn calculate(input: &str) -> String {
     format_output(input)
 }
 
@@ -5051,7 +5051,7 @@ fn format_output(input: &str) -> String {
 "#;
     let report = PathBuf::from("src/report.rs");
     let report_src = r#"
-pub fn render_report(input: &str) -> String {
+pub fn calculate(input: &str) -> String {
     format_report(input)
 }
 
@@ -5061,23 +5061,28 @@ fn format_report(input: &str) -> String {
 "#;
     let support_a = PathBuf::from("tests/support_a.rs");
     let support_a_src = r#"
-use pipeline::render_pipeline;
+use pipeline::calculate as run;
 
-pub fn exercise_pipeline() -> String {
-    render_pipeline("alpha")
+pub fn exercise_calculation() -> String {
+    run("alpha")
+}
+
+#[cfg(test)]
+mod nested_shadow {
+    use report::calculate as run;
 }
 "#;
     let support_b = PathBuf::from("tests/support_b.rs");
     let support_b_src = r#"
-use report::render_report;
+use report::calculate;
 
-pub fn exercise_pipeline() -> String {
-    render_report("beta")
+pub fn exercise() -> String {
+    calculate("beta")
 }
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
-use support_a::exercise_pipeline as exercise;
+use support_a::exercise_calculation as exercise;
 
 #[test]
 fn aliased_direct_imported_support_helper_reaches_pipeline() {
@@ -5097,10 +5102,10 @@ fn aliased_direct_imported_support_helper_reaches_pipeline() {
         .iter()
         .find(|s| {
             s.kind() == SeamKind::CallPresence
-                && s.owner().ends_with("::render_pipeline")
+                && s.owner().ends_with("::calculate")
                 && s.expression().contains("format_output")
         })
-        .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+        .ok_or_else(|| "expected calculate call_presence seam".to_string())?;
 
     let evidence = evidence_for_seam(call_presence, &index);
 
