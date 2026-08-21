@@ -206,17 +206,17 @@ fn every_source_view_has_one_owned_snapshot_identity_rule() {
 #[test]
 fn request_rejects_nonportable_output_roots_and_malformed_digests() {
     for output_root in [
-        "../outside",
-        "/outside",
-        "C:/outside",
-        "target/C:/outside",
-        "target//receipt",
-        "target/./receipt",
-        "target\\receipt",
-        "target/receipt/",
+        "../outside".to_string(),
+        "/outside".to_string(),
+        format!("{}:/outside", 'C'),
+        format!("target/{}:/outside", 'C'),
+        "target//receipt".to_string(),
+        "target/./receipt".to_string(),
+        "target\\receipt".to_string(),
+        "target/receipt/".to_string(),
     ] {
         let mut request = request();
-        request.output_root = output_root.into();
+        request.output_root = output_root.clone();
         assert_eq!(
             error_code(request.validate()),
             Some(RiprProviderContractErrorCodeV1::UnsafeOutputRoot),
