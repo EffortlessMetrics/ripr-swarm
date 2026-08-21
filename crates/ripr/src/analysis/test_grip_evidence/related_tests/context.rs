@@ -272,10 +272,9 @@ impl<'a> CompactGripContext<'a> {
                         .or_default()
                         .push(test_index);
                 }
-                let test_module_path = function_module_paths
-                    .get(&(test.file.clone(), test.name.clone(), test.start_line))
-                    .and_then(Clone::clone)
-                    .or_else(|| module_path_for(&test.file).map(|path| path.replace('/', "::")));
+                let test_module_key = (test.file.clone(), test.name.clone(), test.start_line);
+                let test_module_path =
+                    indexed_test_module_path(&function_module_paths, &test_module_key);
                 if let Some(test_module_path) = test_module_path.as_deref() {
                     for call in &test.calls {
                         for (module_path, call_name) in resolved_call_module_paths(
@@ -283,6 +282,7 @@ impl<'a> CompactGripContext<'a> {
                             test_module_path,
                             direct_function_import_aliases.as_ref(),
                             Some(&root_import_names),
+                            crate_name_for_path(&test.file).as_deref(),
                             &reexport_aliases_by_module,
                             &code_lines,
                         ) {
@@ -291,10 +291,12 @@ impl<'a> CompactGripContext<'a> {
                                 .or_default()
                                 .push(test_index);
                         }
-                        if direct_import_modules
-                            .get(&call.name)
-                            .is_some_and(|module| module.split("::").count() == 1)
-                        {
+                        if direct_import_modules.get(&call.name).is_some_and(|module| {
+                            module.split("::").count() == 1
+                                && root_import_names.contains(&call.name)
+                                && crate_name_for_path(&test.file).as_deref()
+                                    == Some(module.as_str())
+                        }) {
                             tests_by_module_call
                                 .entry((String::new(), call.name.clone()))
                                 .or_default()
@@ -389,6 +391,20 @@ impl<'a> CompactGripContext<'a> {
         package_scope(&owner.file)
             .and_then(|package| self.unique_owner_names_by_package.get(&package))
             .is_some_and(|names| names.contains(&owner.name))
+    }
+}
+
+/// Resolve a test's indexed module path without turning an ambiguous key into
+/// a file-derived path. A duplicate `(file, name, start_line)` with differing
+/// parser module identities is unresolved and must remain fail-closed.
+pub(in crate::analysis::test_grip_evidence) fn indexed_test_module_path(
+    function_module_paths: &BTreeMap<(PathBuf, String, usize), Option<String>>,
+    key: &(PathBuf, String, usize),
+) -> Option<String> {
+    match function_module_paths.get(key) {
+        Some(Some(path)) => Some(path.clone()),
+        Some(None) => None,
+        None => module_path_for(&key.0).map(|path| path.replace('/', "::")),
     }
 }
 

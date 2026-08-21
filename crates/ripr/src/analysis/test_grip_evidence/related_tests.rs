@@ -74,12 +74,19 @@ pub(super) fn find_related_tests_with_context<'context, 'index>(
     if owner.function.as_ref().is_some_and(|function| {
         function.file.file_name().and_then(|name| name.to_str()) == Some("lib.rs")
     }) {
+        let owner_crate_name = owner
+            .function
+            .as_ref()
+            .and_then(|function| crate_name_for_path(&function.file));
         for (test_index, test) in context.tests.iter().enumerate() {
             if test._root_import_names.contains(&owner.name)
                 && test
                     .direct_import_modules
                     .get(&owner.name)
-                    .is_some_and(|module| module.split("::").count() == 1)
+                    .is_some_and(|module| {
+                        module.split("::").count() == 1
+                            && owner_crate_name.as_deref() == Some(module.as_str())
+                    })
                 && test.test.calls.iter().any(|call| call.name == owner.name)
             {
                 candidates.insert(test_index, RelationReason::DirectOwnerCall);
@@ -281,16 +288,22 @@ pub(super) fn match_direct_owner_call(
     let owner_is_crate_root = owner.function.as_ref().is_some_and(|function| {
         function.file.file_name().and_then(|name| name.to_str()) == Some("lib.rs")
     });
+    let owner_crate_name = owner
+        .function
+        .as_ref()
+        .and_then(|function| crate_name_for_path(&function.file));
     if package_unique || owner_is_crate_root {
         if let Some(name_indices) = context.tests_by_call_name.get(&owner.name) {
             indices.extend(name_indices.iter().copied().filter(|test_index| {
                 context.tests.get(*test_index).is_some_and(|indexed| {
                     bare_owner_call_is_admissible(indexed, owner)
                         || (owner_is_crate_root
-                            && indexed
-                                .direct_import_modules
-                                .get(&owner.name)
-                                .is_some_and(|module| module.split("::").count() == 1))
+                            && indexed.direct_import_modules.get(&owner.name).is_some_and(
+                                |module| {
+                                    module.split("::").count() == 1
+                                        && owner_crate_name.as_deref() == Some(module.as_str())
+                                },
+                            ))
                 })
             }));
         }
@@ -304,7 +317,10 @@ pub(super) fn match_direct_owner_call(
                         indexed
                             .direct_import_modules
                             .get(&owner.name)
-                            .is_some_and(|module| module.split("::").count() == 1)
+                            .is_some_and(|module| {
+                                module.split("::").count() == 1
+                                    && owner_crate_name.as_deref() == Some(module.as_str())
+                            })
                             && indexed
                                 .test
                                 .calls
@@ -347,6 +363,12 @@ fn bare_owner_call_is_admissible(test: &CompactTest<'_>, owner: &OwnerContext) -
             function.file.file_name().and_then(|name| name.to_str()) == Some("lib.rs")
         });
         if !owner_is_crate_root {
+            return false;
+        }
+        if imported.split("::").count() == 1
+            && crate_name_for_path(&function.file)
+                .is_some_and(|crate_name| crate_name != *imported)
+        {
             return false;
         }
     }
@@ -894,6 +916,7 @@ pub(super) fn resolved_call_module_paths(
     test_module: &str,
     direct_imports: Option<&BTreeMap<String, ScopedImportedFunctionAlias>>,
     root_import_names: Option<&BTreeSet<String>>,
+    package_name: Option<&str>,
     reexports: &ReexportAliasesByModule,
     code_lines: &[String],
 ) -> BTreeSet<(String, String)> {
@@ -927,6 +950,7 @@ pub(super) fn resolved_call_module_paths(
             // remain fail-closed.
             if imported.module_path.split("::").count() == 1
                 && root_import_names.is_some_and(|names| names.contains(&call.name))
+                && package_name == Some(imported.module_path.as_str())
             {
                 paths.insert((String::new(), imported.name.clone()));
             }
@@ -1019,11 +1043,12 @@ fn reexport_aliases_by_module(index: &RustIndex) -> ReexportAliasesByModule {
                 }
                 inline_module_path.push_str(module_name);
                 if let Some(inline_import) = inline_body[use_start..].split(';').next() {
-                    register_reexport_import(
-                        &mut aliases,
-                        &inline_module_path,
-                        inline_import.trim(),
-                    );
+                    let inline_import = inline_import
+                        .trim()
+                        .strip_prefix("pub use ")
+                        .or_else(|| inline_import.trim().strip_prefix("pub(crate) use "))
+                        .unwrap_or(inline_import.trim());
+                    register_reexport_import(&mut aliases, &inline_module_path, inline_import);
                 }
             }
             let Some(import) = line
@@ -1391,6 +1416,27 @@ pub(super) fn package_scope(path: &Path) -> Option<String> {
     }
     if normalized.starts_with("src/") || normalized.starts_with("tests/") {
         return Some(String::new());
+    }
+    None
+}
+
+/// Return the Rust crate name implied by a workspace package path.
+///
+/// A one-segment `use package::item` path is only a crate-root identity when
+/// `package` matches the owning package. Synthetic `src/` paths intentionally
+/// return `None` because they do not carry package identity and must fail
+/// closed.
+pub(super) fn crate_name_for_path(path: &Path) -> Option<String> {
+    let normalized = normalize_path(path);
+    for marker in ["/src/", "/tests/"] {
+        let Some(index) = normalized.rfind(marker) else {
+            continue;
+        };
+        let package_root = &normalized[..index];
+        let name = package_root.rsplit('/').next()?;
+        if !name.is_empty() {
+            return Some(name.replace('-', "_"));
+        }
     }
     None
 }

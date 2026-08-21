@@ -9579,6 +9579,38 @@ fn module_relation_rejects_external_import_shadowing_unique_owner_name() -> Resu
 }
 
 #[test]
+fn root_owner_does_not_credit_foreign_one_segment_import() -> Result<(), String> {
+    let root = PathBuf::from("src/lib.rs");
+    let test = PathBuf::from("tests/foreign_root.rs");
+    let files = vec![
+        (
+            root.clone(),
+            "pub fn compute(value: i32) -> i32 { if value >= 10 { value - 1 } else { value } }\n",
+        ),
+        (
+            test,
+            "use foreign::compute;\n#[test]\nfn foreign_root_value_is_not_local_value() { assert_eq!(compute(10), 110); }\n",
+        ),
+    ];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[root], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected root predicate seam".to_string())?;
+    let evidence = evidence_for_seam(seam, &index);
+    assert!(
+        evidence.related_tests.iter().all(|test| {
+            test.test_name != "foreign_root_value_is_not_local_value"
+                || test.relation_reason != RelationReason::DirectOwnerCall
+        }),
+        "foreign one-segment import must not receive root direct-owner credit: {:?}",
+        evidence.related_tests
+    );
+    Ok(())
+}
+
+#[test]
 fn module_relation_rejects_grouped_external_import_shadowing_unique_owner_name()
 -> Result<(), String> {
     let child = PathBuf::from("src/child.rs");
@@ -9701,7 +9733,9 @@ mod facade { pub use crate::child::compute; }
         .related_tests
         .iter()
         .find(|test| test.test_name == "facade_value_is_preserved")
-        .map(|_| ())
+        .map(|test| {
+            assert_eq!(test.relation_reason, RelationReason::DirectOwnerCall);
+        })
         .ok_or_else(|| "single-line inline re-export must retain child relation".to_string())
 }
 
@@ -9731,7 +9765,9 @@ fn crate_root_reexport_target_is_not_resolved_relative_to_facade() -> Result<(),
         .related_tests
         .iter()
         .find(|test| test.test_name == "facade_value_is_preserved")
-        .map(|_| ())
+        .map(|test| {
+            assert_eq!(test.relation_reason, RelationReason::DirectOwnerCall);
+        })
         .ok_or_else(|| "crate-root re-export must retain child relation".to_string())
 }
 
@@ -9755,8 +9791,19 @@ mod child { pub fn compute(value: i32) -> i32 { if value >= 10 { value - 1 } els
         .related_tests
         .iter()
         .find(|test| test.test_name == "imported_child_value_is_preserved")
-        .map(|_| ())
+        .map(|test| {
+            assert_eq!(test.relation_reason, RelationReason::DirectOwnerCall);
+        })
         .ok_or_else(|| "standalone super import must retain child relation".to_string())
+}
+
+#[test]
+fn ambiguous_function_module_identity_fails_closed_instead_of_using_file_fallback() {
+    let file = PathBuf::from("src/lib.rs");
+    let key = (file.clone(), "observe".to_string(), 7usize);
+    let mut paths = std::collections::BTreeMap::new();
+    paths.insert(key.clone(), None);
+    assert_eq!(indexed_test_module_path(&paths, &key), None);
 }
 
 // -- helper coverage ---------------------------------------------
