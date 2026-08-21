@@ -3,7 +3,7 @@ use super::*;
 pub(super) mod context;
 
 pub(crate) use context::CompactGripContext;
-pub(super) use context::{CompactTest, ImportedFunctionAlias, call_text_contains_named_call};
+pub(super) use context::{CompactTest, ScopedImportedFunctionAlias, call_text_contains_named_call};
 
 type ReexportAliasesByModule = BTreeMap<(String, String), (String, String)>;
 
@@ -892,7 +892,7 @@ fn crate_module_path_for_file(file: &Path) -> Option<String> {
 pub(super) fn resolved_call_module_paths(
     call: &CallFact,
     test_module: &str,
-    direct_imports: Option<&BTreeMap<String, ImportedFunctionAlias>>,
+    direct_imports: Option<&BTreeMap<String, ScopedImportedFunctionAlias>>,
     root_import_names: Option<&BTreeSet<String>>,
     reexports: &ReexportAliasesByModule,
     code_lines: &[String],
@@ -913,7 +913,10 @@ pub(super) fn resolved_call_module_paths(
     }
     let qualifier = before[qualifier_start..].trim_end_matches("::");
     if qualifier.is_empty() {
-        if let Some(imported) = direct_imports.and_then(|imports| imports.get(&call.name)) {
+        if let Some(imported) = direct_imports
+            .and_then(|imports| imports.get(&call.name))
+            .and_then(|imported| imported.binding_at(call.line))
+        {
             paths.insert((
                 resolve_call_module_path(test_module, &imported.module_path),
                 imported.name.clone(),

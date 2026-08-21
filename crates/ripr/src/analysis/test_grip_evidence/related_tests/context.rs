@@ -173,11 +173,11 @@ impl<'a> CompactGripContext<'a> {
                     .map(|facts| direct_import_modules_from_source(&facts.source))
                     .unwrap_or_default();
                 if let Some(ref imports) = direct_function_import_aliases {
-                    direct_import_modules.extend(
-                        imports
-                            .iter()
-                            .map(|(alias, imported)| (alias.clone(), imported.module_path.clone())),
-                    );
+                    direct_import_modules.extend(imports.iter().filter_map(|(alias, imported)| {
+                        imported
+                            .binding_at(test.start_line)
+                            .map(|binding| (alias.clone(), binding.module_path.clone()))
+                    }));
                 }
                 let mut helper_owner_call_names = helper_owner_call_names_for_test(
                     test,
