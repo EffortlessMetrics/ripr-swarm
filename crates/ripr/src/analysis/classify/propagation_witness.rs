@@ -200,6 +200,7 @@ pub(in crate::analysis) fn complete_direct_witness(
         && witness.schema_version == SCHEMA_VERSION
         && witness.behavior.owner == *owner
         && witness.behavior.family == probe.family.as_str()
+        && witness.behavior.delta == probe.delta.as_str()
         && witness.behavior.expression == normalize_semantic_text(&probe.expression)
         && witness.source.identity == normalize_semantic_text(&probe.expression)
         && witness.source.kind == "changed_behavior"
@@ -671,6 +672,12 @@ mod tests {
         witness.behavior.expression = "status: sibling".to_string();
         witness.semantic_digest = witness.compute_semantic_digest();
         assert!(!complete_direct_witness(&probe, Some(&witness)));
+
+        let mut forged_delta = current_path_witness(&probe, &sinks)
+            .ok_or_else(|| "established fixture witness was absent".to_string())?;
+        forged_delta.behavior.delta = "effect".to_string();
+        forged_delta.semantic_digest = forged_delta.compute_semantic_digest();
+        assert!(!complete_direct_witness(&probe, Some(&forged_delta)));
         Ok(())
     }
 

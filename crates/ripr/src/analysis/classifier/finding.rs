@@ -90,12 +90,11 @@ pub(in crate::analysis) fn build_finding(
 }
 
 fn exact_oracle_aligns_with_sink(probe: &Probe, evidence: &ClassifiedProbeEvidence) -> bool {
-    let Some(sink) = evidence.flow_sinks.iter().find(|sink| {
-        matches!(
-            sink.kind,
-            FlowSinkKind::ReturnValue | FlowSinkKind::ErrorVariant | FlowSinkKind::StructField
-        )
-    }) else {
+    let Some(sink) = evidence
+        .flow_sinks
+        .iter()
+        .find(|sink| sink_kind_corresponds(&probe.family, &sink.kind))
+    else {
         return false;
     };
     evidence.related_tests.iter().any(|related| {
@@ -104,6 +103,15 @@ fn exact_oracle_aligns_with_sink(probe: &Probe, evidence: &ClassifiedProbeEviden
         };
         oracle_text_aligns_with_sink(&probe.family, &probe.expression, &sink.text, oracle)
     })
+}
+
+fn sink_kind_corresponds(family: &ProbeFamily, kind: &FlowSinkKind) -> bool {
+    matches!(
+        (family, kind),
+        (ProbeFamily::ReturnValue, FlowSinkKind::ReturnValue)
+            | (ProbeFamily::ErrorPath, FlowSinkKind::ErrorVariant)
+            | (ProbeFamily::FieldConstruction, FlowSinkKind::StructField)
+    )
 }
 
 fn oracle_text_aligns_with_sink(
@@ -158,8 +166,28 @@ fn contains_token_sequence(text: &str, expected: &[String]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::oracle_text_aligns_with_sink;
-    use crate::domain::ProbeFamily;
+    use super::{oracle_text_aligns_with_sink, sink_kind_corresponds};
+    use crate::domain::{FlowSinkKind, ProbeFamily};
+
+    #[test]
+    fn family_selects_corresponding_sink_and_rejects_siblings() {
+        assert!(sink_kind_corresponds(
+            &ProbeFamily::ReturnValue,
+            &FlowSinkKind::ReturnValue
+        ));
+        assert!(!sink_kind_corresponds(
+            &ProbeFamily::ReturnValue,
+            &FlowSinkKind::ErrorVariant
+        ));
+        assert!(sink_kind_corresponds(
+            &ProbeFamily::ErrorPath,
+            &FlowSinkKind::ErrorVariant
+        ));
+        assert!(!sink_kind_corresponds(
+            &ProbeFamily::FieldConstruction,
+            &FlowSinkKind::ReturnValue
+        ));
+    }
 
     #[test]
     fn direct_value_and_field_alignment_rejects_embedded_tokens() {
