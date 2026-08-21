@@ -87,7 +87,7 @@ fn production_target_evidence_carries_portable_root_and_currentness_authority() 
         .ok_or_else(|| "current indexed target must be accepted".to_string())?;
     if target.workspace_identity.is_empty()
         || target.currentness != TestTargetCurrentness::Current
-        || target.file != PathBuf::from("src/lib.rs")
+        || target.file != Path::new("src/lib.rs")
     {
         return Err(format!("unexpected authority evidence: {target:?}"));
     }
