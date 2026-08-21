@@ -1946,12 +1946,6 @@ fn portable_manifest_dir_text(manifest_path: &Path) -> Option<String> {
     Some(dir.to_str()?.replace('\\', "/"))
 }
 
-/// Lexically resolve a `/`-separated declared path against a `/`-separated
-/// repo-relative directory, without touching the filesystem. `\` has already
-/// been normalized to `/` by the caller, matching the workspace-wide portable
-/// path convention. Returns the normalized identity; `escaped` is true when
-/// resolution climbs above the scan root, in which case the identity keeps
-/// its leading `..` segments.
 /// True when a declared Cargo path is absolute in either the POSIX or
 /// Windows drive-prefixed sense. Absolute paths are valid Cargo inputs, but
 /// they cannot be represented as repo-relative identities without observing
@@ -1960,6 +1954,12 @@ fn is_absolute_declared_path(declared: &str) -> bool {
     declared.starts_with('/') || declared.as_bytes().get(1).is_some_and(|byte| *byte == b':')
 }
 
+/// Lexically resolve a `/`-separated declared path against a `/`-separated
+/// repo-relative directory, without touching the filesystem. `\` has already
+/// been normalized to `/` by the caller, matching the workspace-wide portable
+/// path convention. Returns the normalized identity; `escaped` is true when
+/// resolution climbs above the scan root, in which case the identity keeps
+/// its leading `..` segments.
 fn resolve_repo_relative(base: &str, declared: &str) -> (String, bool) {
     let mut components: Vec<&str> = base
         .split('/')
