@@ -6,6 +6,7 @@ use std::cell::{OnceCell, RefCell};
 /// lines while classifying every seam in a workspace.
 pub(crate) struct CompactGripContext<'a> {
     pub(in crate::analysis::test_grip_evidence) index: &'a RustIndex,
+    workspace_root: Option<&'a Path>,
     pub(in crate::analysis::test_grip_evidence) tests: Vec<CompactTest<'a>>,
     pub(in crate::analysis::test_grip_evidence) tests_by_call_name: BTreeMap<String, Vec<usize>>,
     pub(in crate::analysis::test_grip_evidence) tests_by_helper_owner_call_name:
@@ -44,7 +45,12 @@ pub(in crate::analysis::test_grip_evidence) struct CompactTest<'a> {
 }
 
 impl<'a> CompactGripContext<'a> {
+    #[cfg(test)]
     pub(crate) fn new(index: &'a RustIndex) -> Self {
+        Self::new_with_root(index, None)
+    }
+
+    pub(crate) fn new_with_root(index: &'a RustIndex, workspace_root: Option<&'a Path>) -> Self {
         let mut tests_by_call_name: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut tests_by_helper_owner_call_name: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         let mut tests_by_assertion_token: BTreeMap<String, Vec<usize>> = BTreeMap::new();
@@ -282,7 +288,7 @@ impl<'a> CompactGripContext<'a> {
                             test_module_path,
                             direct_function_import_aliases.as_ref(),
                             Some(&root_import_names),
-                            crate_name_for_path(&test.file).as_deref(),
+                            crate_name_for_path_at_root(&test.file, workspace_root).as_deref(),
                             &reexport_aliases_by_module,
                             &code_lines,
                         ) {
@@ -294,7 +300,8 @@ impl<'a> CompactGripContext<'a> {
                         if direct_import_modules.get(&call.name).is_some_and(|module| {
                             module.split("::").count() == 1
                                 && root_import_names.contains(&call.name)
-                                && crate_name_for_path(&test.file).as_deref()
+                                && crate_name_for_path_at_root(&test.file, workspace_root)
+                                    .as_deref()
                                     == Some(module.as_str())
                         }) {
                             tests_by_module_call
@@ -324,6 +331,7 @@ impl<'a> CompactGripContext<'a> {
             .collect();
         Self {
             index,
+            workspace_root,
             tests,
             tests_by_call_name,
             tests_by_helper_owner_call_name,
@@ -392,6 +400,20 @@ impl<'a> CompactGripContext<'a> {
             .and_then(|package| self.unique_owner_names_by_package.get(&package))
             .is_some_and(|names| names.contains(&owner.name))
     }
+
+    pub(super) fn crate_name_for_path(&self, path: &Path) -> Option<String> {
+        crate_name_for_path_at_root(path, self.workspace_root)
+    }
+}
+
+fn crate_name_for_path_at_root(path: &Path, workspace_root: Option<&Path>) -> Option<String> {
+    if path.is_absolute() {
+        return crate_name_for_path(path);
+    }
+    workspace_root
+        .map(|root| root.join(path))
+        .and_then(|resolved| crate_name_for_path(&resolved))
+        .or_else(|| crate_name_for_path(path))
 }
 
 /// Resolve a test's indexed module path without turning an ambiguous key into

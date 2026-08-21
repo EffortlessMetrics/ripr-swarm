@@ -174,14 +174,23 @@ pub(crate) struct OracleSemantics {
 /// A cancellation checkpoint can stop this non-fallible helper early, so a
 /// caller that runs under a cancellation context must checkpoint immediately
 /// after this function returns before using or publishing the vector.
+#[cfg(test)]
 pub(crate) fn evidence_for_seams(seams: &[RepoSeam], index: &RustIndex) -> Vec<TestGripEvidence> {
+    evidence_for_seams_at(None, seams, index)
+}
+
+pub(crate) fn evidence_for_seams_at(
+    workspace_root: Option<&Path>,
+    seams: &[RepoSeam],
+    index: &RustIndex,
+) -> Vec<TestGripEvidence> {
     let context_started = Instant::now();
     trace_latency_phase(
         "evidence_context",
         &format!("start_seams_{}", seams.len()),
         Duration::ZERO,
     );
-    let context = CompactGripContext::new(index);
+    let context = CompactGripContext::new_with_root(index, workspace_root);
     trace_latency_phase(
         "evidence_context",
         &format!("tests_{}_seams_{}", context.tests.len(), seams.len()),

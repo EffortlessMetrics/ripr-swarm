@@ -77,7 +77,7 @@ pub(super) fn find_related_tests_with_context<'context, 'index>(
         let owner_crate_name = owner
             .function
             .as_ref()
-            .and_then(|function| crate_name_for_path(&function.file));
+            .and_then(|function| context.crate_name_for_path(&function.file));
         for (test_index, test) in context.tests.iter().enumerate() {
             if test._root_import_names.contains(&owner.name)
                 && test
@@ -291,7 +291,7 @@ pub(super) fn match_direct_owner_call(
     let owner_crate_name = owner
         .function
         .as_ref()
-        .and_then(|function| crate_name_for_path(&function.file));
+        .and_then(|function| context.crate_name_for_path(&function.file));
     if package_unique || owner_is_crate_root {
         if let Some(name_indices) = context.tests_by_call_name.get(&owner.name) {
             indices.extend(name_indices.iter().copied().filter(|test_index| {
@@ -1431,11 +1431,58 @@ pub(super) fn crate_name_for_path(path: &Path) -> Option<String> {
         let Some(index) = normalized.rfind(marker) else {
             continue;
         };
+        // Real fixture/workspace paths can carry a package name that differs
+        // from the directory containing `src/` (for example a fixture whose
+        // Cargo package is `boundary_gap_fixture` under an `input/` folder).
+        // Use the manifest as the authoritative crate-root identity whenever
+        // the path is materialized. Relative in-memory fixtures deliberately
+        // retain the fail-closed path-only behavior below.
+        if path.is_absolute()
+            && let Some(name) = cargo_package_name(path)
+        {
+            return Some(name);
+        }
         let package_root = &normalized[..index];
         let name = package_root.rsplit('/').next()?;
         if !name.is_empty() {
             return Some(name.replace('-', "_"));
         }
+    }
+    None
+}
+
+fn cargo_package_name(path: &Path) -> Option<String> {
+    let mut directory = path.parent();
+    while let Some(current) = directory {
+        let manifest = current.join("Cargo.toml");
+        if let Ok(source) = std::fs::read_to_string(manifest) {
+            let mut in_package = false;
+            for raw in source.lines() {
+                let line = raw.trim();
+                if line == "[package]" {
+                    in_package = true;
+                    continue;
+                }
+                if line.starts_with('[') {
+                    in_package = false;
+                }
+                if !in_package {
+                    continue;
+                }
+                let Some((key, value)) = line.split_once('=') else {
+                    continue;
+                };
+                if key.trim() != "name" {
+                    continue;
+                }
+                let name = value.trim().trim_matches('"');
+                if !name.is_empty() {
+                    return Some(name.replace('-', "_"));
+                }
+            }
+            return None;
+        }
+        directory = current.parent();
     }
     None
 }

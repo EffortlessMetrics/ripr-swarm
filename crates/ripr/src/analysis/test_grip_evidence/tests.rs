@@ -9724,7 +9724,7 @@ mod facade { pub use crate::child::compute; }
 #[cfg(test)] mod tests { #[test] fn facade_value_is_preserved() { assert_eq!(super::facade::compute(10), 9); } }
 "#;
     let index = index_from_files(&[(file.clone(), source)])?;
-    let seam = inventory_seams_from_index(&[file.clone()], &index)
+    let seam = inventory_seams_from_index(std::slice::from_ref(&file), &index)
         .into_iter()
         .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
         .ok_or_else(|| "expected single-line child predicate seam".to_string())?;
@@ -9812,7 +9812,7 @@ mod child { pub fn compute(value: i32) -> i32 { if value >= 10 { value - 1 } els
 }
 "#;
     let index = index_from_files(&[(file.clone(), source)])?;
-    let seam = inventory_seams_from_index(&[file.clone()], &index)
+    let seam = inventory_seams_from_index(std::slice::from_ref(&file), &index)
         .into_iter()
         .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
         .ok_or_else(|| "expected standalone-import predicate seam".to_string())?;

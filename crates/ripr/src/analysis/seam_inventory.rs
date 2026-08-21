@@ -412,7 +412,7 @@ pub(crate) fn inventory_classified_seams_uncached_with_config(
     let seams = inventory_seams_from_index(&production_files, &index);
     trace_latency_phase("inventory_seams", "ok", seams_started.elapsed());
     let evidence_started = Instant::now();
-    let evidence = test_grip_evidence::evidence_for_seams(&seams, &index);
+    let evidence = test_grip_evidence::evidence_for_seams_at(Some(root), &seams, &index);
     trace_latency_phase("evidence_for_seams", "ok", evidence_started.elapsed());
     let classify_started = Instant::now();
     let classified = seam_classification::classify_seams_owned(seams, evidence);
@@ -569,7 +569,7 @@ fn inventory_seam_grip_class_counts_uncached_with_config(
     rust_index::apply_oracle_policy(&mut index, config.oracles());
     let seams = inventory_seams_from_index(&production_files, &index);
     let mut counts = SeamGripClassCounts::new(seams.len());
-    let context = test_grip_evidence::CompactGripContext::new(&index);
+    let context = test_grip_evidence::CompactGripContext::new_with_root(&index, Some(root));
     for seam in &seams {
         let evidence = test_grip_evidence::compact_evidence_for_seam(seam, &context);
         let class = seam_classification::classify_seam(seam, &evidence);
@@ -604,7 +604,10 @@ fn inventory_compact_classified_seams_from_state_with_config(
     rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
     let lexical_fallback_files = rust_index::lexical_fallback_files(&cached.index);
     let seams = inventory_seams_from_index(&production_files, &cached.index);
-    let context = test_grip_evidence::CompactGripContext::new(&cached.index);
+    let context = test_grip_evidence::CompactGripContext::new_with_root(
+        &cached.index,
+        Some(&state.workspace_root),
+    );
     let mut classified = Vec::with_capacity(seams.len());
     for seam in seams {
         cancellation::checkpoint()?;
@@ -658,7 +661,11 @@ fn inventory_classified_seams_from_state_with_config(
         &format!("start_seams_{}", seams.len()),
         Duration::ZERO,
     );
-    let evidence = test_grip_evidence::evidence_for_seams(&seams, &cached.index);
+    let evidence = test_grip_evidence::evidence_for_seams_at(
+        Some(&state.workspace_root),
+        &seams,
+        &cached.index,
+    );
     cancellation::checkpoint()?;
     trace_latency_phase("evidence_for_seams", "ok", evidence_started.elapsed());
     let classify_started = Instant::now();
@@ -780,7 +787,7 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
                 .is_some_and(|name| matched_call_names.contains(name))
         })
         .collect::<Vec<_>>();
-    let evidence = test_grip_evidence::evidence_for_seams(&seams, &cached.index);
+    let evidence = test_grip_evidence::evidence_for_seams_at(Some(root), &seams, &cached.index);
     let classified = seam_classification::classify_seams_owned(seams, evidence);
 
     Ok(TargetedTestClassifiedSeamInventory {
@@ -870,7 +877,7 @@ pub(crate) fn inventory_diff_scoped_classified_seams_at_with_config(
         &format!("review_scope_start_seams_{}", seams.len()),
         Duration::ZERO,
     );
-    let evidence = test_grip_evidence::evidence_for_seams(&seams, &cached.index);
+    let evidence = test_grip_evidence::evidence_for_seams_at(Some(root), &seams, &cached.index);
     trace_latency_phase(
         "evidence_for_seams",
         "review_scope_ok",
@@ -1065,7 +1072,10 @@ fn inventory_seam_grip_class_counts_from_state_with_config(
     rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
     let seams = inventory_seams_from_index(&production_files, &cached.index);
     let mut counts = SeamGripClassCounts::new(seams.len());
-    let context = test_grip_evidence::CompactGripContext::new(&cached.index);
+    let context = test_grip_evidence::CompactGripContext::new_with_root(
+        &cached.index,
+        Some(&state.workspace_root),
+    );
     for seam in &seams {
         let evidence = test_grip_evidence::compact_evidence_for_seam(seam, &context);
         let class = seam_classification::classify_seam(seam, &evidence);
