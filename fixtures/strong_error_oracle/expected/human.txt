@@ -15,14 +15,15 @@ Start here:
   Why weakly_exposed: the evidence path is partially complete — see full form for details
   Changed behavior: return Err(AuthError::RevokedToken);
   Related test: tests/errors.rs:4 empty_token_rejects_with_revoked_token
+  Next step: Replace broad assertions with exact equality or a property that constrains the changed returned value.
   Evidence:
     - reach yes: Related tests appear to reach authenticate: empty_token_rejects_with_revoked_token
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 7 more evidence line(s) hidden
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/strong_error_oracle/input --diff fixtures/strong_error_oracle/diff.patch --mode fast probe:src_lib.rs:error_path:99b06ce7
-  ripr context --root fixtures/strong_error_oracle/input --diff fixtures/strong_error_oracle/diff.patch --mode fast --at probe:src_lib.rs:error_path:99b06ce7
+  ripr explain --root fixtures/strong_error_oracle/input --diff fixtures/strong_error_oracle/diff.patch --mode fast probe:src_lib.rs:return_value:e21dcccc
+  ripr context --root fixtures/strong_error_oracle/input --diff fixtures/strong_error_oracle/diff.patch --mode fast --at probe:src_lib.rs:return_value:e21dcccc
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

@@ -102,17 +102,24 @@ fn exact_oracle_aligns_with_sink(probe: &Probe, evidence: &ClassifiedProbeEviden
         let Some(oracle) = related.oracle.as_deref() else {
             return false;
         };
-        match probe.family {
-            ProbeFamily::ErrorPath => exact_error_variant(&probe.expression)
-                .is_some_and(|variant| oracle.contains(&variant)),
-            ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction => {
-                semantic_tokens(&sink.text)
-                    .iter()
-                    .any(|token| contains_identifier(oracle, token))
-            }
-            _ => false,
-        }
+        oracle_text_aligns_with_sink(&probe.family, &probe.expression, &sink.text, oracle)
     })
+}
+
+fn oracle_text_aligns_with_sink(
+    family: &ProbeFamily,
+    probe_expression: &str,
+    sink_text: &str,
+    oracle: &str,
+) -> bool {
+    match family {
+        ProbeFamily::ErrorPath => exact_error_variant(probe_expression)
+            .is_some_and(|variant| contains_token_sequence(oracle, &qualified_tokens(&variant))),
+        ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction => semantic_tokens(sink_text)
+            .iter()
+            .all(|token| contains_identifier(oracle, token)),
+        _ => false,
+    }
 }
 
 fn semantic_tokens(text: &str) -> Vec<String> {
@@ -130,4 +137,71 @@ fn semantic_tokens(text: &str) -> Vec<String> {
 fn contains_identifier(text: &str, token: &str) -> bool {
     text.split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
         .any(|candidate| candidate == token)
+}
+
+fn qualified_tokens(text: &str) -> Vec<String> {
+    text.split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+        .filter(|token| !token.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn contains_token_sequence(text: &str, expected: &[String]) -> bool {
+    if expected.is_empty() {
+        return false;
+    }
+    let actual = qualified_tokens(text);
+    actual
+        .windows(expected.len())
+        .any(|window| window == expected)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::oracle_text_aligns_with_sink;
+    use crate::domain::ProbeFamily;
+
+    #[test]
+    fn direct_value_and_field_alignment_rejects_embedded_tokens() {
+        assert!(oracle_text_aligns_with_sink(
+            &ProbeFamily::ReturnValue,
+            "amount",
+            "amount",
+            "assert_eq!(amount, 3)"
+        ));
+        assert!(!oracle_text_aligns_with_sink(
+            &ProbeFamily::ReturnValue,
+            "amount",
+            "amount",
+            "assert_eq!(amount_total, 3)"
+        ));
+        assert!(oracle_text_aligns_with_sink(
+            &ProbeFamily::FieldConstruction,
+            "status: amount,",
+            "status: amount",
+            "assert_eq!(cfg.status, amount)"
+        ));
+        assert!(!oracle_text_aligns_with_sink(
+            &ProbeFamily::FieldConstruction,
+            "status: amount,",
+            "status: amount",
+            "assert_eq!(cfg.status_code, amount)"
+        ));
+    }
+
+    #[test]
+    fn error_alignment_rejects_near_name_variant_tokens() {
+        assert!(oracle_text_aligns_with_sink(
+            &ProbeFamily::ErrorPath,
+            "return Err(CalcError::TooLarge);",
+            "Result::Err(CalcError::TooLarge)",
+            "assert_eq!(err, CalcError::TooLarge)"
+        ));
+        assert!(!oracle_text_aligns_with_sink(
+            &ProbeFamily::ErrorPath,
+            "return Err(CalcError::TooLarge);",
+            "Result::Err(CalcError::TooLarge)",
+            "assert_eq!(err, CalcError::TooLarger)"
+        ));
+    }
 }

@@ -114,7 +114,7 @@
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(AuthError::RevokedToken)","line":7}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Propagation witness is incomplete for error variant: Result::Err(AuthError::RevokedToken)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach authenticate: empty_token_rejects_with_revoked_token", "Strong oracle found: exact error variant assertion", "static limitation: exact oracle established; no assertion repair is indicated"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Propagation witness is incomplete for error variant: Result::Err(AuthError::RevokedToken)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach authenticate: empty_token_rejects_with_revoked_token", "Strong oracle found: exact error variant assertion"],
       "missing": [],
       "assertion_texts": {
         "5": "assert!(matches!(authenticate(\"\"), Err(AuthError::RevokedToken)));"
@@ -165,8 +165,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_error_variant",
       "oracle_strength": "strong",
-      "recommended_next_step": "",
-      "suggested_next_action": "",
+      "recommended_next_step": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
+      "suggested_next_action": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
       "language": "rust",
       "source_currentness": "candidate_current"
     }
