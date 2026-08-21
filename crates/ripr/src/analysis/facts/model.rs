@@ -1,6 +1,7 @@
 use crate::domain::{OracleKind, OracleStrength, SymbolId};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -22,18 +23,30 @@ impl WorkspaceRootAuthority {
         let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
         let mut authorities = BTreeMap::new();
         for (relative, facts) in files {
-            let valid = is_relative_without_parent(relative)
+            let path_valid = is_relative_without_parent(relative)
                 && canonical_root
                     .join(relative)
                     .canonicalize()
                     .map(|path| path.starts_with(&canonical_root))
                     .unwrap_or(false);
+            let (package_identity, package_valid) =
+                match resolve_package_identity(&canonical_root, relative) {
+                    PackageIdentity::Known(identity) => (identity, true),
+                    PackageIdentity::UnreadableManifest { manifest } => (
+                        format!(
+                            "manifest-unreadable:{}:{}",
+                            relative_path(&canonical_root, &manifest),
+                            relative_path(&canonical_root, &canonical_root.join(relative)),
+                        ),
+                        false,
+                    ),
+                };
             authorities.insert(
                 relative.clone(),
                 WorkspaceFileAuthority {
                     source_digest: source_digest(facts.source.as_bytes()),
-                    package_identity: package_identity(&canonical_root, relative),
-                    valid,
+                    package_identity,
+                    valid: path_valid && package_valid,
                 },
             );
         }
@@ -91,17 +104,37 @@ fn is_relative_without_parent(path: &Path) -> bool {
         })
 }
 
-fn package_identity(root: &Path, relative: &Path) -> String {
+#[derive(Debug, PartialEq, Eq)]
+enum PackageIdentity {
+    Known(String),
+    UnreadableManifest { manifest: PathBuf },
+}
+
+fn resolve_package_identity(root: &Path, relative: &Path) -> PackageIdentity {
+    resolve_package_identity_with_reader(root, relative, |path| std::fs::read(path))
+}
+
+fn resolve_package_identity_with_reader<F>(
+    root: &Path,
+    relative: &Path,
+    mut read_manifest: F,
+) -> PackageIdentity
+where
+    F: FnMut(&Path) -> std::io::Result<Vec<u8>>,
+{
     let mut cursor = root.join(relative).parent().map(Path::to_path_buf);
     while let Some(directory) = cursor {
         let manifest = directory.join("Cargo.toml");
-        if let Ok(bytes) = std::fs::read(&manifest) {
-            let relative_manifest = manifest
-                .strip_prefix(root)
-                .unwrap_or(manifest.as_path())
-                .to_string_lossy()
-                .replace('\\', "/");
-            return format!("{relative_manifest}:{}", source_digest(&bytes));
+        match read_manifest(&manifest) {
+            Ok(bytes) => {
+                let relative_manifest = relative_path(root, &manifest);
+                return PackageIdentity::Known(format!(
+                    "{relative_manifest}:{}",
+                    source_digest(&bytes)
+                ));
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(_) => return PackageIdentity::UnreadableManifest { manifest },
         }
         if directory == root {
             break;
@@ -109,10 +142,17 @@ fn package_identity(root: &Path, relative: &Path) -> String {
         cursor = directory.parent().map(Path::to_path_buf);
     }
     let containing = relative.parent().unwrap_or_else(|| Path::new("."));
-    format!(
+    PackageIdentity::Known(format!(
         "directory:{}",
         containing.to_string_lossy().replace('\\', "/")
-    )
+    ))
+}
+
+fn relative_path(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct RustIndex {
@@ -225,6 +265,7 @@ pub type TestSummary = TestFact;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::ErrorKind;
 
     #[test]
     fn rust_index_default_has_empty_fact_sets() {
@@ -286,5 +327,86 @@ mod tests {
         assert_eq!(shape.start_byte, 256);
         assert_eq!(shape.kind, "predicate");
         assert_eq!(shape.text, "x > 0");
+    }
+
+    #[test]
+    fn permission_denied_manifest_is_not_treated_as_absent() {
+        let root = Path::new("workspace");
+        let relative = Path::new("pkg/src/lib.rs");
+        let identity = resolve_package_identity_with_reader(root, relative, |manifest| {
+            if manifest.ends_with(Path::new("pkg/Cargo.toml")) {
+                Err(std::io::Error::from(ErrorKind::PermissionDenied))
+            } else {
+                Err(std::io::Error::from(ErrorKind::NotFound))
+            }
+        });
+
+        assert!(matches!(
+            identity,
+            PackageIdentity::UnreadableManifest { manifest }
+                if manifest.ends_with(Path::new("pkg/Cargo.toml"))
+        ));
+    }
+
+    #[test]
+    fn unreadable_manifest_invalidates_authority_entries() -> Result<(), Box<dyn std::error::Error>>
+    {
+        struct FixtureCleanup(PathBuf);
+        impl Drop for FixtureCleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let root = std::env::temp_dir().join(format!(
+            "ripr-authority-unreadable-manifest-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        let _cleanup = FixtureCleanup(root.clone());
+        std::fs::create_dir_all(root.join("pkg/src"))?;
+        std::fs::create_dir_all(root.join("pkg/tests"))?;
+        // Reading a directory as Cargo.toml is a deterministic non-NotFound
+        // manifest error on every supported platform.
+        std::fs::create_dir(root.join("pkg/Cargo.toml"))?;
+
+        let sources = [
+            (
+                PathBuf::from("pkg/src/lib.rs"),
+                "pub fn source() -> i32 { 1 }\n",
+            ),
+            (
+                PathBuf::from("pkg/tests/lib.rs"),
+                "#[test]\nfn source_test() { assert_eq!(1, 1); }\n",
+            ),
+        ];
+        let files = sources
+            .iter()
+            .map(|(path, source)| {
+                (
+                    path.clone(),
+                    FileFacts {
+                        path: path.clone(),
+                        source: (*source).to_string(),
+                        ..FileFacts::default()
+                    },
+                )
+            })
+            .collect();
+        let authority = WorkspaceRootAuthority::from_index(&root, &files);
+        let source = Path::new("pkg/src/lib.rs");
+        let test = Path::new("pkg/tests/lib.rs");
+        let source_authority = authority.files.get(source).ok_or("missing source")?;
+        let test_authority = authority.files.get(test).ok_or("missing test")?;
+
+        assert!(!source_authority.valid);
+        assert!(!test_authority.valid);
+        assert_ne!(
+            source_authority.package_identity,
+            test_authority.package_identity
+        );
+        assert!(!authority.validates_target(source, test, "pub fn source() -> i32 { 1 }\n"));
+        Ok(())
     }
 }

@@ -13,7 +13,7 @@ use std::os::windows::fs::symlink_file;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-fn index_from_files(files: &[(PathBuf, &str)]) -> Result<RustIndex, String> {
+fn index_from_files(files: &[(PathBuf, &str)]) -> Result<FixtureIndex, String> {
     let adapter = RaRustSyntaxAdapter;
     let mut index = RustIndex::default();
     for (path, source) in files {
@@ -30,20 +30,27 @@ fn index_from_files(files: &[(PathBuf, &str)]) -> Result<RustIndex, String> {
             .as_nanos()
     ));
     fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    let fixture_root = AuthorityFixtureRoot(root);
     fs::write(
-        root.join("Cargo.toml"),
+        fixture_root.join("Cargo.toml"),
         "[package]\nname = \"memory-fixture\"\nversion = \"0.1.0\"\n",
     )
     .map_err(|error| error.to_string())?;
     for (path, source) in files {
-        let full = root.join(path);
+        let full = fixture_root.join(path);
         if let Some(parent) = full.parent() {
             fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
         fs::write(full, source).map_err(|error| error.to_string())?;
     }
-    index.workspace_authority = Some(WorkspaceRootAuthority::from_index(&root, &index.files));
-    Ok(index)
+    index.workspace_authority = Some(WorkspaceRootAuthority::from_index(
+        &fixture_root,
+        &index.files,
+    ));
+    Ok(FixtureIndex {
+        index,
+        _fixture_root: fixture_root,
+    })
 }
 
 struct AuthorityFixtureRoot(PathBuf);
@@ -59,6 +66,25 @@ impl std::ops::Deref for AuthorityFixtureRoot {
 impl Drop for AuthorityFixtureRoot {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+struct FixtureIndex {
+    index: RustIndex,
+    _fixture_root: AuthorityFixtureRoot,
+}
+
+impl std::ops::Deref for FixtureIndex {
+    type Target = RustIndex;
+
+    fn deref(&self) -> &Self::Target {
+        &self.index
+    }
+}
+
+impl std::ops::DerefMut for FixtureIndex {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.index
     }
 }
 
