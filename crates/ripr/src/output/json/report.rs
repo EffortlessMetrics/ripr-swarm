@@ -9,7 +9,7 @@ use crate::output::agent_seam_packets::{
     gap_record_packet_do_not_do,
 };
 use crate::output::next_step::reconcile_next_step;
-use crate::output::perl_preview_card::{perl_preview_card, perl_preview_card_json_value};
+use crate::output::perl_preview_card::perl_preview_card_json;
 use crate::output::preview_actionability::{
     preview_actionability_for, preview_actionability_json_value,
     projected_preview_actionability_evidence, projected_preview_actionability_missing,
@@ -555,13 +555,8 @@ fn finding_json_with_config_and_counts(
             out.push_str(",\n");
         }
     }
-    if let Some(card) = perl_preview_card(finding) {
-        json_value_field(
-            out,
-            indent + 1,
-            "perl_preview_card",
-            &perl_preview_card_json_value(&card),
-        );
+    if let Some(card) = perl_preview_card_json(finding) {
+        json_value_field(out, indent + 1, "perl_preview_card", &card);
         out.push_str(",\n");
     }
     if let Some(actionability) = preview_actionability_for(finding) {
