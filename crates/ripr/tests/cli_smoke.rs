@@ -2746,12 +2746,15 @@ fn editor_agent_loop_fixture_outputs_match_expected() -> Result<(), Box<dyn std:
         serde_json::Value::String(malformed_path.to_string());
     malformed["provenance"]["verify_artifact"]["sha256"] =
         serde_json::Value::String(sha256_hex_bytes(b"{not json"));
-    assert_not_promoted(
-        "malformed",
-        "analysis outcome artifact is unavailable",
-        malformed,
-    )?;
+    assert_not_promoted("malformed", "cannot read verify artifact", malformed)?;
     std::fs::write(artifact_dir.join("agent-verify.json"), &original_verify)?;
+    std::fs::write(&analysis_outcome_path, b"{not json")?;
+    assert_not_promoted(
+        "malformed-analysis",
+        "analysis outcome artifact is unavailable",
+        original_receipt.clone(),
+    )?;
+    std::fs::write(&analysis_outcome_path, &analysis_outcome_bytes)?;
     let mut stale = original_receipt.clone();
     let stale_path = "target/ripr/test-agent-verify/3408-stale.json";
     let mut stale_verify: serde_json::Value = serde_json::from_str(&original_verify)?;
