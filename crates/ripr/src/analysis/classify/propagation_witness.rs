@@ -90,6 +90,9 @@ impl EdgeStatus {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(in crate::analysis) enum PathCompleteness {
+    /// The bounded direct source-to-sink path is fully established for one of
+    /// the sink families integrated by PR-B.
+    Complete,
     /// A local source-to-sink fact exists, but observer binding is not modeled
     /// by this PR.  It cannot by itself justify `propagate=yes`.
     Partial,
@@ -99,6 +102,7 @@ pub(in crate::analysis) enum PathCompleteness {
 impl PathCompleteness {
     fn as_str(&self) -> &'static str {
         match self {
+            Self::Complete => "complete",
             Self::Partial => "partial",
             Self::Unresolved => "unresolved",
         }
@@ -128,6 +132,8 @@ pub(in crate::analysis) fn current_path_witness(
     let edge_kind = edge_kind_for_sink(&sink.kind)?;
     let source_identity = normalize_semantic_text(&probe.expression);
     let sink_identity = normalize_semantic_text(&sink.text);
+    let edge_status = edge_status(&source_identity, &sink_identity);
+    let completeness = completeness_for_edge(&edge_kind, &edge_status);
     let mut witness = PropagationWitnessV1 {
         schema_version: SCHEMA_VERSION,
         behavior: BehaviorIdentity {
@@ -142,8 +148,8 @@ pub(in crate::analysis) fn current_path_witness(
             line: probe.location.line,
         },
         edges: vec![PropagationEdge {
-            kind: edge_kind,
-            status: edge_status(&source_identity, &sink_identity),
+            kind: edge_kind.clone(),
+            status: edge_status,
             from: source_identity,
             to: sink_identity.clone(),
         }],
@@ -152,7 +158,7 @@ pub(in crate::analysis) fn current_path_witness(
             identity: sink_identity,
             line: sink.line,
         },
-        completeness: PathCompleteness::Partial,
+        completeness,
         limitations: vec![
             "observer_binding_not_modeled".to_string(),
             "static_local_flow_only".to_string(),
@@ -161,6 +167,46 @@ pub(in crate::analysis) fn current_path_witness(
     };
     witness.semantic_digest = witness.compute_semantic_digest();
     Some(witness)
+}
+
+fn completeness_for_edge(kind: &PropagationEdgeKind, status: &EdgeStatus) -> PathCompleteness {
+    if matches!(
+        kind,
+        PropagationEdgeKind::DirectReturn
+            | PropagationEdgeKind::ErrorVariant
+            | PropagationEdgeKind::StructField
+    ) && *status == EdgeStatus::Established
+    {
+        PathCompleteness::Complete
+    } else {
+        PathCompleteness::Partial
+    }
+}
+
+pub(in crate::analysis) fn complete_direct_witness(
+    probe: &Probe,
+    witness: Option<&PropagationWitnessV1>,
+) -> bool {
+    let Some(witness) = witness else {
+        return false;
+    };
+    let Some(owner) = probe.owner.as_ref() else {
+        return false;
+    };
+    witness.digest_matches()
+        && witness.schema_version == SCHEMA_VERSION
+        && witness.behavior.owner == *owner
+        && witness.behavior.family == probe.family.as_str()
+        && witness.completeness == PathCompleteness::Complete
+        && witness.edges.len() == 1
+        && witness.edges[0].status == EdgeStatus::Established
+        && matches!(
+            witness.edges[0].kind,
+            PropagationEdgeKind::DirectReturn
+                | PropagationEdgeKind::ErrorVariant
+                | PropagationEdgeKind::StructField
+        )
+        && witness.sink.kind != FlowSinkKind::Unknown.as_str()
 }
 
 fn edge_kind_for_sink(kind: &FlowSinkKind) -> Option<PropagationEdgeKind> {
@@ -575,7 +621,12 @@ mod tests {
             assert_eq!(witness.schema_version, SCHEMA_VERSION);
             assert_eq!(witness.edges[0].kind, expected_edge);
             assert_eq!(witness.edges[0].status, expected_status);
-            assert_eq!(witness.completeness, PathCompleteness::Partial);
+            let expected_completeness = if expected_status == EdgeStatus::Established {
+                PathCompleteness::Complete
+            } else {
+                PathCompleteness::Partial
+            };
+            assert_eq!(witness.completeness, expected_completeness);
             assert_eq!(witness.semantic_digest, witness.compute_semantic_digest());
         }
         Ok(())
