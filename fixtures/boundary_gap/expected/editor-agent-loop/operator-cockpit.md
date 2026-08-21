@@ -18,7 +18,7 @@ Status: warn
 | before snapshot | present | present | before_snapshot_available | 1 seams; 1 weakly_gripped, 0 ungripped, 0 reachable_unrevealed. |
 | after snapshot | present | present | after_snapshot_available | 1 seams; 0 weakly_gripped, 0 ungripped, 0 reachable_unrevealed. |
 | agent verify | present | advisory | agent_verify_counts_available | 1 improved, 0 changed, 0 regressed, 0 unchanged seams. |
-| agent receipt | present | incomplete | agent_receipt_available | Receipt for seam 67fc764ba37d77bd: improved; before weakly_gripped, after strongly_gripped. No remaining static gap is named by this receipt; inspect the current seam packet if review needs final assertion detail. |
+| agent receipt | present | advisory | agent_receipt_available | Receipt for seam 67fc764ba37d77bd: improved; before weakly_gripped, after strongly_gripped. No remaining static gap is named by this receipt; inspect the current seam packet if review needs final assertion detail. |
 | SARIF policy | missing | missing | not_available | Report has not been generated yet. |
 | badge status | missing | missing | not_available | Report has not been generated yet. |
 | targeted-test outcome | present | advisory | targeted_outcome_artifact_present | 1 moved, 0 regressed, 0 unchanged seams. |
