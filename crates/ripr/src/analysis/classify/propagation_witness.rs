@@ -170,6 +170,9 @@ pub(in crate::analysis) fn current_path_witness(
 }
 
 fn completeness_for_edge(kind: &PropagationEdgeKind, status: &EdgeStatus) -> PathCompleteness {
+    // PR-B intentionally does not promote constructor-wrapped text such as
+    // `Ok(amount)` or `Err(error)`: those remain candidate/partial until a
+    // later bounded adapter can prove the wrapper payload relationship.
     if matches!(
         kind,
         PropagationEdgeKind::DirectReturn
@@ -197,9 +200,14 @@ pub(in crate::analysis) fn complete_direct_witness(
         && witness.schema_version == SCHEMA_VERSION
         && witness.behavior.owner == *owner
         && witness.behavior.family == probe.family.as_str()
+        && witness.behavior.expression == normalize_semantic_text(&probe.expression)
+        && witness.source.identity == normalize_semantic_text(&probe.expression)
+        && witness.source.kind == "changed_behavior"
         && witness.completeness == PathCompleteness::Complete
         && witness.edges.len() == 1
         && witness.edges[0].status == EdgeStatus::Established
+        && witness.edges[0].from == witness.source.identity
+        && witness.edges[0].to == witness.sink.identity
         && matches!(
             witness.edges[0].kind,
             PropagationEdgeKind::DirectReturn
@@ -645,6 +653,19 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn forged_same_owner_family_witness_fails_exact_identity_binding() {
+        let probe = probe(ProbeFamily::FieldConstruction, "status: amount");
+        let sinks = vec![sink(FlowSinkKind::StructField, "status: amount", 14)];
+        let mut witness =
+            current_path_witness(&probe, &sinks).expect("established fixture witness");
+        assert!(complete_direct_witness(&probe, Some(&witness)));
+
+        witness.behavior.expression = "status: sibling".to_string();
+        witness.semantic_digest = witness.compute_semantic_digest();
+        assert!(!complete_direct_witness(&probe, Some(&witness)));
     }
 
     #[test]

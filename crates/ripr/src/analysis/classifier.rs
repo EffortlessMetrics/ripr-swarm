@@ -575,7 +575,7 @@ mod tests {
         assert_eq!(finding.flow_sinks[0].line, 3);
         assert_eq!(
             finding.ripr.propagate.summary,
-            "Propagation witness is incomplete for returned value: amount - 10"
+            "Changed behavior appears to influence returned value: amount - 10"
         );
     }
 

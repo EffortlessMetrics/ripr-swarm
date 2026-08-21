@@ -61,7 +61,7 @@ pub(in crate::analysis) fn propagation_evidence_with_witness(
         sink.kind,
         FlowSinkKind::ReturnValue | FlowSinkKind::ErrorVariant | FlowSinkKind::StructField
     );
-    if direct_sink {
+    if direct_sink && integrated_direct_family(&probe.family) {
         if sink.owner.as_ref() == probe.owner.as_ref()
             && complete_direct_witness(probe, witness)
             && witness.is_some_and(|witness| {
@@ -92,6 +92,13 @@ pub(in crate::analysis) fn propagation_evidence_with_witness(
     }
 
     propagation_evidence(probe, flow_sinks)
+}
+
+fn integrated_direct_family(family: &ProbeFamily) -> bool {
+    matches!(
+        family,
+        ProbeFamily::ReturnValue | ProbeFamily::ErrorPath | ProbeFamily::FieldConstruction
+    )
 }
 
 pub(in crate::analysis) fn local_flow_sinks(
