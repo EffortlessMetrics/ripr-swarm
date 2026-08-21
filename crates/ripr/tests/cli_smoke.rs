@@ -2474,7 +2474,7 @@ fn editor_agent_loop_fixture_outputs_match_expected() -> Result<(), Box<dyn std:
     let verify_artifact_path = "target/ripr/test-agent-verify/agent-verify.json";
     std::fs::write(artifact_dir.join("agent-verify.json"), &verify.stdout)?;
     let analysis_outcome = run_ripr_in_workspace(&[
-        "check", "--root", ".", "--mode", "draft", "--format", "json",
+        "check", "--root", ".", "--mode", "draft", "--base", "HEAD", "--format", "json",
     ])?;
     assert_success(&analysis_outcome);
     std::fs::write(
@@ -2814,6 +2814,8 @@ fn resolved_receipt_promotes_through_first_action() -> Result<(), Box<dyn std::e
         &root.display().to_string(),
         "--mode",
         "draft",
+        "--base",
+        "HEAD",
         "--format",
         "json",
     ]);
