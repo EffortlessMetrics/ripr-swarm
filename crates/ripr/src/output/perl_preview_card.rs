@@ -212,9 +212,9 @@ pub(crate) fn perl_preview_card_json_value(card: &PerlPreviewCard) -> Value {
     })
 }
 
-/// Render the public Perl preview projection from the same authority used by
-/// every output surface.  Keeping construction and serialization behind one
-/// entry point prevents a renderer from accidentally exposing the internal
+/// Render the public Perl preview projection for the JSON report and SARIF
+/// output surfaces. Keeping construction and serialization behind one entry
+/// point prevents either serializer from accidentally exposing the internal
 /// receipt/edit-boundary evidence carried by a `Finding`.
 pub(crate) fn perl_preview_card_json(finding: &Finding) -> Option<Value> {
     perl_preview_card(finding).map(|card| perl_preview_card_json_value(&card))
