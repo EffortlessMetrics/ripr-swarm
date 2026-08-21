@@ -80,15 +80,24 @@ pub(in crate::analysis) fn propagation_evidence_with_witness(
                 ),
             );
         }
-        return StageEvidence::new(
-            StageState::Weak,
-            Confidence::Low,
+        let summary = if sink.owner.as_ref() != probe.owner.as_ref()
+            || witness.is_none()
+            || witness.is_some_and(|witness| {
+                !witness.digest_matches() || probe.owner.as_ref() != Some(&witness.behavior.owner)
+            }) {
+            format!(
+                "No complete owner-bound propagation witness found for {}: {}",
+                sink.kind.label(),
+                sink.text
+            )
+        } else {
             format!(
                 "Propagation witness is incomplete for {}: {}",
                 sink.kind.label(),
                 sink.text
-            ),
-        );
+            )
+        };
+        return StageEvidence::new(StageState::Weak, Confidence::Low, summary);
     }
 
     propagation_evidence(probe, flow_sinks)
