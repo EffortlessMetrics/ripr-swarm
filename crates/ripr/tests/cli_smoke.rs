@@ -2765,19 +2765,28 @@ fn editor_agent_loop_fixture_outputs_match_expected() -> Result<(), Box<dyn std:
         original_receipt.clone(),
     )?;
     std::fs::write(&analysis_outcome_path, &analysis_outcome_bytes)?;
-    let mut stale = original_receipt.clone();
-    let stale_path = "target/ripr/test-agent-verify/3408-stale.json";
-    let mut stale_verify: serde_json::Value = serde_json::from_str(&original_verify)?;
-    stale_verify["artifact_currentness"] =
+    let mut noncanonical_currentness = original_receipt.clone();
+    let noncanonical_currentness_path =
+        "target/ripr/test-agent-verify/3408-noncanonical-currentness.json";
+    let mut noncanonical_verify: serde_json::Value = serde_json::from_str(&original_verify)?;
+    noncanonical_verify["artifact_currentness"] =
         serde_json::Value::String("historical_noncurrent".to_string());
-    let stale_text = serde_json::to_string_pretty(&stale_verify)?;
-    std::fs::write(workspace_root().join(stale_path), &stale_text)?;
-    stale["inputs"]["agent_verify_json"] = serde_json::Value::String(stale_path.to_string());
-    stale["provenance"]["verify_artifact"]["path"] =
-        serde_json::Value::String(stale_path.to_string());
-    stale["provenance"]["verify_artifact"]["sha256"] =
-        serde_json::Value::String(sha256_hex_bytes(stale_text.as_bytes()));
-    assert_not_promoted("stale", "verify artifact is stale or unsupported", stale)?;
+    let noncanonical_text = serde_json::to_string_pretty(&noncanonical_verify)?;
+    std::fs::write(
+        workspace_root().join(noncanonical_currentness_path),
+        &noncanonical_text,
+    )?;
+    noncanonical_currentness["inputs"]["agent_verify_json"] =
+        serde_json::Value::String(noncanonical_currentness_path.to_string());
+    noncanonical_currentness["provenance"]["verify_artifact"]["path"] =
+        serde_json::Value::String(noncanonical_currentness_path.to_string());
+    noncanonical_currentness["provenance"]["verify_artifact"]["sha256"] =
+        serde_json::Value::String(sha256_hex_bytes(noncanonical_text.as_bytes()));
+    assert_not_promoted(
+        "noncanonical-currentness",
+        "[not_canonical]",
+        noncanonical_currentness,
+    )?;
     let mut swapped = original_receipt.clone();
     let after_path = swapped["provenance"]["after_artifact"]["path"]
         .as_str()
