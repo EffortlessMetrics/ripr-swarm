@@ -231,6 +231,20 @@ fn validate_receipt_projection(
     let provenance = receipt
         .get("provenance")
         .ok_or_else(|| "missing typed provenance".to_string())?;
+    if receipt.get("schema_version").and_then(Value::as_str)
+        != Some(crate::output::agent_receipt::AGENT_RECEIPT_SCHEMA_VERSION)
+    {
+        return Err("receipt has unsupported schema_version".to_string());
+    }
+    if receipt.get("status").and_then(Value::as_str) != Some("advisory")
+        || receipt
+            .get("analysis_outcome_status")
+            .and_then(Value::as_str)
+            != Some("complete")
+        || receipt.get("analysis_outcome").is_none_or(Value::is_null)
+    {
+        return Err("receipt does not contain a complete analysis outcome".to_string());
+    }
     let root = Path::new(&input.root);
     let declared_root = provenance
         .get("repo_root")
@@ -240,6 +254,12 @@ fn validate_receipt_projection(
         std::fs::canonicalize(root).map_err(|err| format!("cannot resolve report root: {err}"))?;
     let receipt_root = std::fs::canonicalize(if Path::new(declared_root).is_absolute() {
         Path::new(declared_root).to_path_buf()
+    } else if declared_root == "." || declared_root == input.root {
+        // The producer records the exact --root argument.  When the command
+        // was invoked from a parent directory (`--root repo`), joining that
+        // argument to the already-selected root would incorrectly produce
+        // `repo/repo`.
+        root.to_path_buf()
     } else {
         root.join(declared_root)
     })
@@ -273,6 +293,26 @@ fn validate_receipt_projection(
     }
     let validated =
         crate::app::agent_receipt::validate_agent_receipt_verify_json(root, &verify_raw)?;
+    let analysis_path =
+        crate::app::analysis_outcome_artifact::analysis_outcome_artifact_path_for_verify(
+            &verify_file,
+        )?;
+    let root_display = crate::output::outcome::display_path(root);
+    let analysis_outcome =
+        crate::app::analysis_outcome_artifact::read_analysis_outcome_artifact_at(
+            root,
+            &root_display,
+            &analysis_path,
+        )
+        .map_err(|error| format!("analysis outcome is not complete: {error}"))?;
+    if !analysis_outcome.kind.is_complete()
+        || receipt
+            .pointer("/analysis_outcome/analysis_complete")
+            .and_then(Value::as_bool)
+            != Some(true)
+    {
+        return Err("receipt analysis outcome is incomplete".to_string());
+    }
     let verify = &validated.verify;
     for (label, value) in [
         ("provenance.movement", provenance.get("movement")),
@@ -341,15 +381,25 @@ fn validate_receipt_projection(
                             == item.get("before").and_then(Value::as_str)
                         && receipt.pointer("/seam/after").and_then(Value::as_str)
                             == item.get("after").and_then(Value::as_str)
-                        && provenance.get("before_class").and_then(Value::as_str)
-                            == item.get("before").and_then(Value::as_str)
-                        && provenance.get("after_class").and_then(Value::as_str)
-                            == item.get("after").and_then(Value::as_str)
+                        && (movement != "resolved"
+                            || (provenance.get("before_class").and_then(Value::as_str)
+                                == item.get("grip_class").and_then(Value::as_str)
+                                && item.get("after").is_none()))
+                        && (movement == "resolved"
+                            || (provenance.get("before_class").and_then(Value::as_str)
+                                == item.get("before").and_then(Value::as_str)
+                                && provenance.get("after_class").and_then(Value::as_str)
+                                    == item.get("after").and_then(Value::as_str)))
                         && receipt
                             .pointer("/seam/grip_class")
                             .and_then(Value::as_str)
                             .is_none_or(|value| {
-                                Some(value) == item.get("after").and_then(Value::as_str)
+                                Some(value)
+                                    == if movement == "resolved" {
+                                        item.get("grip_class").and_then(Value::as_str)
+                                    } else {
+                                        item.get("after").and_then(Value::as_str)
+                                    }
                             })
                         && receipt
                             .get("current_evidence_strength")
@@ -380,6 +430,7 @@ fn validate_receipt_projection(
     };
     let array = match movement {
         "unchanged" => "unchanged_seams",
+        "resolved" => "resolved_gaps",
         _ => "changed_seams",
     };
     if !verify_seam(array) {
