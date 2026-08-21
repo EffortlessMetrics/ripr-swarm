@@ -9724,19 +9724,34 @@ mod facade { pub use crate::child::compute; }
 #[cfg(test)] mod tests { #[test] fn facade_value_is_preserved() { assert_eq!(super::facade::compute(10), 9); } }
 "#;
     let index = index_from_files(&[(file.clone(), source)])?;
-    let seam = inventory_seams_from_index(&[file], &index)
+    let seam = inventory_seams_from_index(&[file.clone()], &index)
         .into_iter()
         .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
         .ok_or_else(|| "expected single-line child predicate seam".to_string())?;
     let evidence = evidence_for_seam(&seam, &index);
-    evidence
+    let related = evidence
         .related_tests
         .iter()
         .find(|test| test.test_name == "facade_value_is_preserved")
-        .map(|test| {
-            assert_eq!(test.relation_reason, RelationReason::DirectOwnerCall);
+        .ok_or_else(|| "single-line inline re-export must retain child relation".to_string())?;
+    assert_eq!(related.relation_reason, RelationReason::DirectOwnerCall);
+    let expected_target = index
+        .files
+        .get(&file)
+        .and_then(|facts| {
+            facts
+                .functions
+                .iter()
+                .find(|function| function.name == "facade_value_is_preserved")
         })
-        .ok_or_else(|| "single-line inline re-export must retain child relation".to_string())
+        .ok_or_else(|| "expected indexed inline re-export test identity".to_string())?;
+    let target = related
+        .test_target
+        .as_ref()
+        .ok_or_else(|| "expected inline re-export test target".to_string())?;
+    assert_eq!(target.file(), file.as_path());
+    assert_eq!(target.symbol_id(), &expected_target.id);
+    Ok(())
 }
 
 #[test]
@@ -9751,7 +9766,7 @@ fn crate_root_reexport_target_is_not_resolved_relative_to_facade() -> Result<(),
         ),
         (facade, "pub use crate::child::compute;\n"),
         (
-            test,
+            test.clone(),
             "use crate::facade::compute;\n#[test]\nfn facade_value_is_preserved() { assert_eq!(compute(10), 9); }\n",
         ),
     ];
@@ -9761,14 +9776,29 @@ fn crate_root_reexport_target_is_not_resolved_relative_to_facade() -> Result<(),
         .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
         .ok_or_else(|| "expected crate-root re-export predicate seam".to_string())?;
     let evidence = evidence_for_seam(&seam, &index);
-    evidence
+    let related = evidence
         .related_tests
         .iter()
         .find(|test| test.test_name == "facade_value_is_preserved")
-        .map(|test| {
-            assert_eq!(test.relation_reason, RelationReason::DirectOwnerCall);
+        .ok_or_else(|| "crate-root re-export must retain child relation".to_string())?;
+    assert_eq!(related.relation_reason, RelationReason::DirectOwnerCall);
+    let expected_target = index
+        .files
+        .get(&test)
+        .and_then(|facts| {
+            facts
+                .functions
+                .iter()
+                .find(|function| function.name == "facade_value_is_preserved")
         })
-        .ok_or_else(|| "crate-root re-export must retain child relation".to_string())
+        .ok_or_else(|| "expected indexed integration re-export test identity".to_string())?;
+    let target = related
+        .test_target
+        .as_ref()
+        .ok_or_else(|| "expected integration re-export test target".to_string())?;
+    assert_eq!(target.file(), test.as_path());
+    assert_eq!(target.symbol_id(), &expected_target.id);
+    Ok(())
 }
 
 #[test]
@@ -9782,19 +9812,34 @@ mod child { pub fn compute(value: i32) -> i32 { if value >= 10 { value - 1 } els
 }
 "#;
     let index = index_from_files(&[(file.clone(), source)])?;
-    let seam = inventory_seams_from_index(&[file], &index)
+    let seam = inventory_seams_from_index(&[file.clone()], &index)
         .into_iter()
         .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
         .ok_or_else(|| "expected standalone-import predicate seam".to_string())?;
     let evidence = evidence_for_seam(&seam, &index);
-    evidence
+    let related = evidence
         .related_tests
         .iter()
         .find(|test| test.test_name == "imported_child_value_is_preserved")
-        .map(|test| {
-            assert_eq!(test.relation_reason, RelationReason::DirectOwnerCall);
+        .ok_or_else(|| "standalone super import must retain child relation".to_string())?;
+    assert_eq!(related.relation_reason, RelationReason::DirectOwnerCall);
+    let expected_target = index
+        .files
+        .get(&file)
+        .and_then(|facts| {
+            facts
+                .functions
+                .iter()
+                .find(|function| function.name == "imported_child_value_is_preserved")
         })
-        .ok_or_else(|| "standalone super import must retain child relation".to_string())
+        .ok_or_else(|| "expected indexed standalone-import test identity".to_string())?;
+    let target = related
+        .test_target
+        .as_ref()
+        .ok_or_else(|| "expected standalone-import test target".to_string())?;
+    assert_eq!(target.file(), file.as_path());
+    assert_eq!(target.symbol_id(), &expected_target.id);
+    Ok(())
 }
 
 #[test]
@@ -9804,6 +9849,31 @@ fn ambiguous_function_module_identity_fails_closed_instead_of_using_file_fallbac
     let mut paths = std::collections::BTreeMap::new();
     paths.insert(key.clone(), None);
     assert_eq!(indexed_test_module_path(&paths, &key), None);
+}
+
+#[test]
+fn context_keeps_duplicate_function_identity_ambiguous_without_file_fallback() -> Result<(), String>
+{
+    let file = PathBuf::from("src/lib.rs");
+    let source = r#"mod left { #[test] fn observe() { assert_eq!(1, 1); } } mod right { #[test] fn observe() { assert_eq!(2, 2); } }"#;
+    let index = index_from_files(&[(file.clone(), source)])?;
+    let context = CompactGripContext::new(&index);
+    if context.tests.len() != 2 {
+        return Err(format!(
+            "expected two duplicate test identities, got {}",
+            context.tests.len()
+        ));
+    }
+    assert!(
+        context.tests.iter().all(|test| test.module_path.is_none()),
+        "duplicate module identities must not fall back to file module path: {:?}",
+        context
+            .tests
+            .iter()
+            .map(|test| test.module_path.as_deref())
+            .collect::<Vec<_>>()
+    );
+    Ok(())
 }
 
 // -- helper coverage ---------------------------------------------

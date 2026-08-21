@@ -366,8 +366,7 @@ fn bare_owner_call_is_admissible(test: &CompactTest<'_>, owner: &OwnerContext) -
             return false;
         }
         if imported.split("::").count() == 1
-            && crate_name_for_path(&function.file)
-                .is_some_and(|crate_name| crate_name != *imported)
+            && crate_name_for_path(&function.file).is_none_or(|crate_name| crate_name != *imported)
         {
             return false;
         }
