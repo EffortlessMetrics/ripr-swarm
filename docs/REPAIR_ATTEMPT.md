@@ -70,7 +70,8 @@ The manifest separately retains:
 - the currently supported exact next command;
 - limitations and non-claims.
 
-After a successful after phase, `after` records the current repository HEAD,
+After a successful after phase, `after` records the durable `repair_attempt_id`,
+current repository HEAD,
 packet and delta SHA-256 commitments, currentness, and the edit-cage verdict.
 Terminal states are `ready_to_finish`, `failed`, `stale`, or `incomparable`;
 only `ready_to_finish` with a compliant verdict can authorize a receipt.
@@ -103,8 +104,12 @@ Schema `0.1` emits `awaiting_edit` before the edit and a terminal after-phase
 state after the edit-cage comparison. A receipt revalidates every retained
 artifact's path, byte count, and digest, requires the manifest root and
 baseline root to equal the selected repository, and rejects stale, tampered,
-replayed, wrong-seam, and incomparable attempts. The compatibility route is
-still seam-selected; a durable `--attempt` selector remains follow-up work.
+replayed, wrong-seam, and incomparable attempts. Receipt binding uses the
+durable attempt identity when the repair command creates the receipt, while
+the standalone compatibility route remains fail-closed when multiple terminal
+attempts exist for one seam. The compatibility route is still seam-selected
+when invoked directly; the repair after phase binds the receipt to the durable
+attempt that it just finished.
 
 ## Non-claims
 

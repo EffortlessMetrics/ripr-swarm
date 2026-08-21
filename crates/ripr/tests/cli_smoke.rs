@@ -3243,6 +3243,10 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
         attempts[0].path().join("attempt.json"),
     )?)?;
     assert_eq!(manifest["state"], "ready_to_finish");
+    assert_eq!(
+        receipt["repair_attempt"]["attempt_id"],
+        manifest["repair_attempt_id"]
+    );
     assert_eq!(manifest["after"]["current"], true);
     let wrong_seam = run_ripr(&[
         "agent",

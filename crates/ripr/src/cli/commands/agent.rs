@@ -251,6 +251,13 @@ fn run_agent_verify_execute(options: AgentVerifyExecuteOptions) -> Result<(), St
 }
 
 fn run_agent_receipt(options: AgentReceiptOptions) -> Result<(), String> {
+    run_agent_receipt_for_attempt(options, None)
+}
+
+fn run_agent_receipt_for_attempt(
+    options: AgentReceiptOptions,
+    attempt_id: Option<&str>,
+) -> Result<(), String> {
     ensure_command_root(&options.root, "agent receipt")?;
 
     let verify_path = validate_agent_receipt_verify_path(&options.root, &options.verify_json)?;
@@ -271,6 +278,7 @@ fn run_agent_receipt(options: AgentReceiptOptions) -> Result<(), String> {
             &options.root,
             &options.seam_id,
             &packet_path,
+            attempt_id,
         )?)
     } else {
         None
@@ -483,15 +491,18 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
                 cage_after.verdict.status
             );
 
-            run_agent_receipt(AgentReceiptOptions {
-                root: root.clone(),
-                verify_json: verify_json.clone(),
-                seam_id: seam_id.clone(),
-                test_changed: None,
-                commands_run: Vec::new(),
-                json: true,
-                out: Some(root.join("target/ripr/reports/agent-receipt.json")),
-            })?;
+            run_agent_receipt_for_attempt(
+                AgentReceiptOptions {
+                    root: root.clone(),
+                    verify_json: verify_json.clone(),
+                    seam_id: seam_id.clone(),
+                    test_changed: None,
+                    commands_run: Vec::new(),
+                    json: true,
+                    out: Some(root.join("target/ripr/reports/agent-receipt.json")),
+                },
+                Some(cage_after.attempt_id.as_str()),
+            )?;
 
             run_agent_status(AgentStatusOptions {
                 root: root.clone(),

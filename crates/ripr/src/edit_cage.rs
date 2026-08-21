@@ -960,6 +960,18 @@ pub(crate) struct EditCagePolicy {
     pub(crate) expected_operational_writes: Vec<CagePathRule>,
 }
 
+impl EditCagePolicy {
+    pub(crate) fn allows_path(&self, path: &str) -> bool {
+        self.allowed_edit_surface
+            .iter()
+            .any(|rule| rule.matches(path))
+            || self
+                .expected_operational_writes
+                .iter()
+                .any(|rule| rule.matches(path))
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum EditCageVerdictStatus {

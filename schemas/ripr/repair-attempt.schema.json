@@ -86,8 +86,9 @@
     "after": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["repository_head", "delta_sha256", "packet_sha256", "current", "verdict"],
+      "required": ["attempt_id", "repository_head", "delta_sha256", "packet_sha256", "current", "verdict"],
       "properties": {
+        "attempt_id": { "type": "string", "pattern": "^repair-attempt-[0-9a-f]{24}$" },
         "repository_head": { "type": "string", "pattern": "^[0-9a-fA-F]{40}$" },
         "delta_sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
         "packet_sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },

@@ -15,6 +15,7 @@ use std::collections::BTreeSet;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -100,6 +101,7 @@ pub(crate) struct RepairAttemptManifest {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RepairAttemptAfter {
+    pub(crate) attempt_id: RepairAttemptId,
     pub(crate) repository_head: String,
     pub(crate) delta_sha256: String,
     pub(crate) packet_sha256: String,
@@ -114,6 +116,7 @@ pub(crate) fn receipt_binding(
     root: &Path,
     seam_id: &str,
     packet_path: &Path,
+    attempt_id: Option<&str>,
 ) -> Result<serde_json::Value, String> {
     let root = root
         .canonicalize()
@@ -125,6 +128,12 @@ pub(crate) fn receipt_binding(
         )
     })?;
     let packet_sha256 = sha256_bytes(&packet);
+    let policy = edit_cage_policy_from_packet(
+        std::str::from_utf8(&packet)
+            .map_err(|error| format!("repair packet is not UTF-8: {error}"))?,
+        seam_id,
+    )?;
+    validate_trusted_head_surface(&root, &policy)?;
     let manifests_root = root.join(REPAIR_ATTEMPT_DIRECTORY);
     let mut matches = Vec::new();
     for entry in std::fs::read_dir(&manifests_root)
@@ -140,7 +149,9 @@ pub(crate) fn receipt_binding(
         let manifest: RepairAttemptManifest = serde_json::from_str(&raw)
             .map_err(|error| format!("decode {} failed: {error}", path.display()))?;
         validate_manifest_at(&root, &path, &manifest)?;
-        if manifest.seam_id == seam_id {
+        if manifest.seam_id == seam_id
+            && attempt_id.is_none_or(|id| manifest.repair_attempt_id.as_str() == id)
+        {
             matches.push((path, manifest));
         }
     }
@@ -203,7 +214,7 @@ pub(crate) fn receipt_binding(
     }
     let manifest_path = display_path(&manifest_path);
     Ok(serde_json::json!({
-        "attempt_id": manifest.repair_attempt_id.as_str(),
+        "attempt_id": after.attempt_id.as_str(),
         "manifest": manifest_path,
         "seam_id": manifest.seam_id,
         "before_head": manifest.repository_head,
@@ -562,6 +573,7 @@ pub(crate) fn finish_repair_attempt(
     let delta_bytes = serde_json::to_vec(&delta)
         .map_err(|error| format!("serialize repair delta failed: {error}"))?;
     let after = RepairAttemptAfter {
+        attempt_id: manifest.repair_attempt_id.clone(),
         repository_head: current_head,
         delta_sha256: sha256_bytes(&delta_bytes),
         packet_sha256,
@@ -814,6 +826,39 @@ fn validate_manifest_at(
     Ok(())
 }
 
+fn validate_trusted_head_surface(root: &Path, policy: &EditCagePolicy) -> Result<(), String> {
+    let tracked = git_paths(root, &["diff", "--name-only", "-z", "HEAD"])?;
+    let untracked = git_paths(root, &["ls-files", "--others", "--exclude-standard", "-z"])?;
+    for path in tracked.into_iter().chain(untracked) {
+        if !policy.allows_path(&path) {
+            return Err(format!(
+                "repair receipt observed repository path outside trusted edit surface: {path}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn git_paths(root: &Path, args: &[&str]) -> Result<Vec<String>, String> {
+    let output = Command::new("git")
+        .current_dir(root)
+        .args(args)
+        .output()
+        .map_err(|error| format!("run git {} failed: {error}", args.join(" ")))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned)
+        .collect())
+}
+
 /// Schema 0.1 artifact digest shape: `sha256:` plus 64 lowercase hex digits.
 fn is_sha256_digest(value: &str) -> bool {
     let Some(digest) = value.strip_prefix("sha256:") else {
@@ -1024,6 +1069,12 @@ mod tests {
         }
         if schema["$defs"]["after"].is_null() {
             return Err("schema omitted terminal after definition".to_string());
+        }
+        let required = schema["$defs"]["after"]["required"]
+            .as_array()
+            .ok_or_else(|| "schema after required list missing".to_string())?;
+        if !required.iter().any(|value| value == "attempt_id") {
+            return Err("schema after omitted durable attempt_id".to_string());
         }
         Ok(())
     }
