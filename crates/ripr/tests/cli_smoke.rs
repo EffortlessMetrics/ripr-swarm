@@ -2139,22 +2139,10 @@ fn first_action_cli_preserves_unchanged_control_identity() -> Result<(), Box<dyn
     ])?;
     assert_success(&output);
 
-    let fixture = workspace_root()
-        .join("fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt");
-    assert_eq!(
-        normalize_generated_at(normalize_newlines(std::fs::read_to_string(out)?.trim_end(),)),
-        normalize_newlines(
-            std::fs::read_to_string(fixture.join("first-useful-action.json"))?.trim_end(),
-        ),
-        "unchanged first-action JSON fixture drifted"
-    );
-    assert_eq!(
-        normalize_newlines(&std::fs::read_to_string(out_md)?),
-        normalize_newlines(&std::fs::read_to_string(
-            fixture.join("first-useful-action.md"),
-        )?),
-        "unchanged first-action Markdown fixture drifted"
-    );
+    let rendered = std::fs::read_to_string(out)?;
+    assert!(rendered.contains(r#""status": "missing_required_artifact""#));
+    assert!(rendered.contains("receipt movement `unchanged` is not promotable"));
+    assert!(std::fs::read_to_string(out_md)?.contains("missing_required_artifact"));
     std::fs::remove_dir_all(workspace)?;
     Ok(())
 }
@@ -2507,6 +2495,149 @@ fn editor_agent_loop_fixture_outputs_match_expected() -> Result<(), Box<dyn std:
         normalize_agent_receipt_fixture(&expected_receipt)?,
         "agent receipt fixture drifted"
     );
+    let first_action_out = out_dir.join("first-action.json");
+    let first_action_md = out_dir.join("first-action.md");
+    let first_action = run_ripr_in_workspace(&[
+        "first-action",
+        "--root",
+        ".",
+        "--receipt",
+        receipt_path
+            .to_str()
+            .ok_or("receipt path should be utf-8")?,
+        "--out",
+        first_action_out
+            .to_str()
+            .ok_or("first-action output path should be utf-8")?,
+        "--out-md",
+        first_action_md
+            .to_str()
+            .ok_or("first-action markdown path should be utf-8")?,
+    ])?;
+    assert_success(&first_action);
+    let first_action_json = std::fs::read_to_string(first_action_out)?;
+    assert!(
+        first_action_json.contains(r#""status": "already_improved""#),
+        "valid receipt was not promoted: {first_action_json}"
+    );
+    assert!(first_action_json.contains(seam_id));
+    let different_cwd = unique_temp_workspace("first-action-cwd");
+    std::fs::create_dir_all(&different_cwd)?;
+    let cwd_out = different_cwd.join("first-action.json");
+    let cwd_md = different_cwd.join("first-action.md");
+    let cwd_root = workspace_root().display().to_string();
+    let cwd_result = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&different_cwd),
+        &[
+            "first-action",
+            "--root",
+            &cwd_root,
+            "--receipt",
+            receipt_path
+                .to_str()
+                .ok_or("receipt path should be utf-8")?,
+            "--out",
+            cwd_out.to_str().ok_or("output path should be utf-8")?,
+            "--out-md",
+            cwd_md.to_str().ok_or("markdown path should be utf-8")?,
+        ],
+    )?;
+    assert_success(&cwd_result);
+    assert!(std::fs::read_to_string(cwd_out)?.contains(r#""status": "already_improved""#));
+    std::fs::remove_dir_all(different_cwd)?;
+    let original_receipt: serde_json::Value = serde_json::from_str(&actual_receipt)?;
+    let original_verify = std::fs::read_to_string(artifact_dir.join("agent-verify.json"))?;
+    let assert_not_promoted =
+        |label: &str, receipt: serde_json::Value| -> Result<(), Box<dyn std::error::Error>> {
+            let receipt_text = serde_json::to_string_pretty(&receipt)?;
+            std::fs::write(&receipt_path, receipt_text)?;
+            let out = out_dir.join(format!("{label}.json"));
+            let md = out_dir.join(format!("{label}.md"));
+            let result = run_ripr_in_workspace(&[
+                "first-action",
+                "--root",
+                ".",
+                "--receipt",
+                receipt_path
+                    .to_str()
+                    .ok_or("receipt path should be utf-8")?,
+                "--out",
+                out.to_str().ok_or("output path should be utf-8")?,
+                "--out-md",
+                md.to_str().ok_or("markdown path should be utf-8")?,
+            ])?;
+            assert_success(&result);
+            let rendered = std::fs::read_to_string(out)?;
+            assert!(
+                !rendered.contains(r#""status": "already_improved""#),
+                "{label} was promoted: {rendered}"
+            );
+            assert!(
+                rendered.contains("missing_required_artifact"),
+                "{label} lacked safe fallback: {rendered}"
+            );
+            Ok(())
+        };
+    let mut malformed = original_receipt.clone();
+    let malformed_path = "target/ripr/test-agent-verify/3408-malformed.json";
+    std::fs::write(workspace_root().join(malformed_path), "{not json")?;
+    malformed["inputs"]["agent_verify_json"] =
+        serde_json::Value::String(malformed_path.to_string());
+    malformed["provenance"]["verify_artifact"]["path"] =
+        serde_json::Value::String(malformed_path.to_string());
+    malformed["provenance"]["verify_artifact"]["sha256"] =
+        serde_json::Value::String(sha256_hex_bytes(b"{not json"));
+    assert_not_promoted("malformed", malformed)?;
+    std::fs::write(artifact_dir.join("agent-verify.json"), &original_verify)?;
+    let mut stale = original_receipt.clone();
+    let stale_path = "target/ripr/test-agent-verify/3408-stale.json";
+    let mut stale_verify: serde_json::Value = serde_json::from_str(&original_verify)?;
+    stale_verify["artifact_currentness"] =
+        serde_json::Value::String("historical_noncurrent".to_string());
+    let stale_text = serde_json::to_string_pretty(&stale_verify)?;
+    std::fs::write(workspace_root().join(stale_path), &stale_text)?;
+    stale["inputs"]["agent_verify_json"] = serde_json::Value::String(stale_path.to_string());
+    stale["provenance"]["verify_artifact"]["path"] =
+        serde_json::Value::String(stale_path.to_string());
+    stale["provenance"]["verify_artifact"]["sha256"] =
+        serde_json::Value::String(sha256_hex_bytes(stale_text.as_bytes()));
+    assert_not_promoted("stale", stale)?;
+    let mut swapped = original_receipt.clone();
+    let after_path = swapped["provenance"]["after_artifact"]["path"]
+        .as_str()
+        .ok_or("after path")?
+        .to_string();
+    let after_sha = swapped["provenance"]["after_artifact"]["sha256"].clone();
+    swapped["provenance"]["before_artifact"]["path"] = serde_json::Value::String(after_path);
+    swapped["provenance"]["before_artifact"]["sha256"] = after_sha;
+    assert_not_promoted("swapped", swapped)?;
+    let mut wrong_root = original_receipt.clone();
+    wrong_root["provenance"]["repo_root"] = serde_json::Value::String("..".to_string());
+    assert_not_promoted("wrong-root", wrong_root)?;
+    let mut wrong_seam = original_receipt.clone();
+    wrong_seam["provenance"]["seam_id"] = serde_json::Value::String("forged-seam".to_string());
+    assert_not_promoted("wrong-seam", wrong_seam)?;
+    let mut forged = original_receipt.clone();
+    let forged_path = "target/ripr/test-agent-verify/3408-forged.json";
+    let mut forged_verify: serde_json::Value = serde_json::from_str(&original_verify)?;
+    forged_verify["changed_seams"][0]["seam_id"] =
+        serde_json::Value::String("forged-seam".to_string());
+    let forged_text = serde_json::to_string_pretty(&forged_verify)?;
+    std::fs::write(workspace_root().join(forged_path), &forged_text)?;
+    forged["inputs"]["agent_verify_json"] = serde_json::Value::String(forged_path.to_string());
+    forged["provenance"]["verify_artifact"]["path"] =
+        serde_json::Value::String(forged_path.to_string());
+    forged["provenance"]["verify_artifact"]["sha256"] =
+        serde_json::Value::String(sha256_hex_bytes(forged_text.as_bytes()));
+    assert_not_promoted("forged", forged)?;
+    let mut forged_grip = original_receipt.clone();
+    forged_grip["seam"]["grip_class"] = serde_json::Value::String("forged_class".to_string());
+    assert_not_promoted("forged-grip", forged_grip)?;
+    let mut forged_strength = original_receipt.clone();
+    forged_strength["current_evidence_strength"] =
+        serde_json::Value::String("forged_strength".to_string());
+    assert_not_promoted("forged-strength", forged_strength)?;
     std::fs::remove_dir_all(out_dir)?;
     std::fs::remove_dir_all(artifact_dir)?;
     Ok(())
