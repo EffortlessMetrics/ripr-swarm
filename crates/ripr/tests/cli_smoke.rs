@@ -2737,12 +2737,23 @@ fn editor_agent_loop_fixture_outputs_match_expected() -> Result<(), Box<dyn std:
         ])?;
         assert_success(&result);
         let rendered = std::fs::read_to_string(out)?;
-        assert!(
-            !rendered.contains(r#""status": "already_improved""#),
-            "{label} was promoted: {rendered}"
+        let value: serde_json::Value = serde_json::from_str(&rendered)?;
+        assert_eq!(
+            value["status"], "missing_required_artifact",
+            "{label} changed status: {rendered}"
+        );
+        assert_eq!(
+            value["action_kind"], "generate_missing_artifact",
+            "{label} changed action: {rendered}"
         );
         assert!(
-            rendered.contains(expected_reason),
+            value["warnings"].as_array().is_some_and(|warnings| {
+                warnings.iter().any(|warning| {
+                    warning
+                        .as_str()
+                        .is_some_and(|warning| warning.contains(expected_reason))
+                })
+            }),
             "{label} lacked expected rejection `{expected_reason}`: {rendered}"
         );
         Ok(())
@@ -2814,7 +2825,7 @@ fn editor_agent_loop_fixture_outputs_match_expected() -> Result<(), Box<dyn std:
         serde_json::Value::String(forged_path.to_string());
     forged["provenance"]["verify_artifact"]["sha256"] =
         serde_json::Value::String(sha256_hex_bytes(forged_text.as_bytes()));
-    assert_not_promoted("forged", "verify artifact has no", forged)?;
+    assert_not_promoted("forged", "[not_canonical]", forged)?;
     let mut forged_grip = original_receipt.clone();
     forged_grip["seam"]["grip_class"] = serde_json::Value::String("forged_class".to_string());
     assert_not_promoted("forged-grip", "verify artifact has no", forged_grip)?;
