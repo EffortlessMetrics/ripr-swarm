@@ -2664,12 +2664,8 @@ fn editor_agent_loop_fixture_outputs_match_expected() -> Result<(), Box<dyn std:
 
     let original_analysis: serde_json::Value = serde_json::from_slice(&analysis_outcome_bytes)?;
     let mut swapped_analysis = original_analysis.clone();
-    let changed_files =
-        swapped_analysis["analysis_outcome"]["outcome"]["counts"]["changed_file_count"]
-            .as_u64()
-            .ok_or("analysis outcome changed_file_count")?;
-    swapped_analysis["analysis_outcome"]["outcome"]["counts"]["changed_file_count"] =
-        serde_json::Value::from(changed_files.saturating_add(1));
+    swapped_analysis["analysis_outcome"]["outcome"]["identity"]["repository_identity"] =
+        serde_json::Value::String("swapped-repository-identity".to_string());
     std::fs::write(
         &analysis_outcome_path,
         serde_json::to_vec_pretty(&swapped_analysis)?,
