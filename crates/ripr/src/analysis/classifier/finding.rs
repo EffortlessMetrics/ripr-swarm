@@ -1,6 +1,7 @@
 use super::evidence::ClassifiedProbeEvidence;
 use crate::analysis::classify::{
-    ProbeContext, ensure_unknown_stop_reason, missing_evidence, recommended_next_step, stop_reasons,
+    ProbeContext, ensure_unknown_stop_reason, exact_error_variant, missing_evidence,
+    recommended_next_step, stop_reasons,
 };
 use crate::domain::*;
 
@@ -24,7 +25,8 @@ pub(in crate::analysis) fn build_finding(
         && matches!(
             context.probe.family,
             ProbeFamily::ReturnValue | ProbeFamily::ErrorPath | ProbeFamily::FieldConstruction
-        );
+        )
+        && exact_oracle_aligns_with_sink(context.probe, &evidence);
     let recommended_next_step =
         if class == ExposureClass::WeaklyExposed && exact_oracle_covers_direct_sink {
             None
@@ -85,4 +87,47 @@ pub(in crate::analysis) fn build_finding(
         // explicit unknown (#3280).
         source_currentness: crate::domain::SourceCurrentness::UnresolvedSubject,
     }
+}
+
+fn exact_oracle_aligns_with_sink(probe: &Probe, evidence: &ClassifiedProbeEvidence) -> bool {
+    let Some(sink) = evidence.flow_sinks.iter().find(|sink| {
+        matches!(
+            sink.kind,
+            FlowSinkKind::ReturnValue | FlowSinkKind::ErrorVariant | FlowSinkKind::StructField
+        )
+    }) else {
+        return false;
+    };
+    evidence.related_tests.iter().any(|related| {
+        let Some(oracle) = related.oracle.as_deref() else {
+            return false;
+        };
+        match probe.family {
+            ProbeFamily::ErrorPath => exact_error_variant(&probe.expression)
+                .is_some_and(|variant| oracle.contains(&variant)),
+            ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction => {
+                semantic_tokens(&sink.text)
+                    .iter()
+                    .any(|token| contains_identifier(oracle, token))
+            }
+            _ => false,
+        }
+    })
+}
+
+fn semantic_tokens(text: &str) -> Vec<String> {
+    text.split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+        .filter(|token| !token.is_empty())
+        .filter(|token| {
+            token
+                .chars()
+                .any(|character| character.is_ascii_alphabetic())
+        })
+        .map(str::to_string)
+        .collect()
+}
+
+fn contains_identifier(text: &str, token: &str) -> bool {
+    text.split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+        .any(|candidate| candidate == token)
 }
