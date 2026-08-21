@@ -1,4 +1,5 @@
 use super::super::rust_index::FunctionSummary;
+use super::propagation_witness::{PropagationWitnessV1, complete_direct_witness};
 use super::text::exact_error_variant;
 use crate::domain::*;
 
@@ -34,6 +35,63 @@ pub(in crate::analysis) fn propagation_evidence(
             "Propagation is not statically obvious from syntax-first analysis",
         )
     }
+}
+
+/// Production propagation gate for PR-B's bounded direct sink slice.  The
+/// legacy helper above remains available to characterization tests and to
+/// effect-family callers; only this path can upgrade direct return/error/field
+/// sinks from syntax evidence to `Yes`.
+pub(in crate::analysis) fn propagation_evidence_with_witness(
+    probe: &Probe,
+    flow_sinks: &[FlowSinkFact],
+    witness: Option<&PropagationWitnessV1>,
+) -> StageEvidence {
+    if matches!(probe.family, ProbeFamily::StaticUnknown) {
+        return propagation_evidence(probe, flow_sinks);
+    }
+
+    let Some(sink) = flow_sinks
+        .iter()
+        .find(|sink| sink.kind != FlowSinkKind::Unknown)
+    else {
+        return propagation_evidence(probe, flow_sinks);
+    };
+
+    let direct_sink = matches!(
+        sink.kind,
+        FlowSinkKind::ReturnValue | FlowSinkKind::ErrorVariant | FlowSinkKind::StructField
+    );
+    if direct_sink {
+        if sink.owner.as_ref() == probe.owner.as_ref()
+            && complete_direct_witness(probe, witness)
+            && witness.is_some_and(|witness| {
+                witness.sink.kind == sink.kind.as_str()
+                    && witness.sink.identity
+                        == sink.text.split_whitespace().collect::<Vec<_>>().join(" ")
+            })
+        {
+            return StageEvidence::new(
+                StageState::Yes,
+                Confidence::High,
+                format!(
+                    "Complete propagation witness reaches {}: {}",
+                    sink.kind.label(),
+                    sink.text
+                ),
+            );
+        }
+        return StageEvidence::new(
+            StageState::Weak,
+            Confidence::Low,
+            format!(
+                "Propagation witness is incomplete for {}: {}",
+                sink.kind.label(),
+                sink.text
+            ),
+        );
+    }
+
+    propagation_evidence(probe, flow_sinks)
 }
 
 pub(in crate::analysis) fn local_flow_sinks(
@@ -770,6 +828,90 @@ mod tests {
         assert_eq!(
             evidence.summary,
             "Changed behavior appears to influence returned value: amount - 1"
+        );
+    }
+
+    #[test]
+    fn direct_sink_propagation_requires_complete_owner_bound_witness() {
+        for (family, expression, kind) in [
+            (
+                ProbeFamily::ReturnValue,
+                "amount",
+                FlowSinkKind::ReturnValue,
+            ),
+            (
+                ProbeFamily::ErrorPath,
+                "Result::Err(error)",
+                FlowSinkKind::ErrorVariant,
+            ),
+            (
+                ProbeFamily::FieldConstruction,
+                "status: amount",
+                FlowSinkKind::StructField,
+            ),
+        ] {
+            let probe = probe(family, expression, 2);
+            let sinks = vec![FlowSinkFact {
+                kind,
+                text: expression.to_string(),
+                line: 3,
+                owner: probe.owner.clone(),
+            }];
+            let witness = super::super::propagation_witness::current_path_witness(&probe, &sinks);
+            let evidence = propagation_evidence_with_witness(&probe, &sinks, witness.as_ref());
+            assert_eq!(evidence.state, StageState::Yes);
+        }
+
+        let probe = probe(ProbeFamily::FieldConstruction, "status: amount", 2);
+        let sinks = vec![FlowSinkFact {
+            kind: FlowSinkKind::StructField,
+            text: "status: amount".to_string(),
+            line: 3,
+            owner: probe.owner.clone(),
+        }];
+        let witness = super::super::propagation_witness::current_path_witness(&probe, &sinks);
+
+        let mut invalid = witness.clone();
+        if let Some(witness) = invalid.as_mut() {
+            witness.semantic_digest = "sha256:invalid".to_string();
+        }
+        assert_eq!(
+            propagation_evidence_with_witness(&probe, &sinks, invalid.as_ref()).state,
+            StageState::Weak
+        );
+
+        let mut sibling = sinks.clone();
+        sibling[0].owner = Some(SymbolId("src/lib.rs::sibling".to_string()));
+        assert_eq!(
+            propagation_evidence_with_witness(&probe, &sibling, witness.as_ref()).state,
+            StageState::Weak
+        );
+    }
+
+    #[test]
+    fn candidate_only_and_orthogonal_direct_sinks_do_not_propagate_yes() {
+        let probe = probe(ProbeFamily::ReturnValue, "amount", 2);
+        let sinks = vec![FlowSinkFact {
+            kind: FlowSinkKind::ReturnValue,
+            text: "Ok(amount)".to_string(),
+            line: 3,
+            owner: probe.owner.clone(),
+        }];
+        let witness = super::super::propagation_witness::current_path_witness(&probe, &sinks);
+        assert_eq!(
+            propagation_evidence_with_witness(&probe, &sinks, witness.as_ref()).state,
+            StageState::Weak
+        );
+
+        let opaque = vec![FlowSinkFact {
+            kind: FlowSinkKind::ReturnValue,
+            text: "Box<dyn Handler>::amount".to_string(),
+            line: 3,
+            owner: probe.owner.clone(),
+        }];
+        assert_eq!(
+            propagation_evidence_with_witness(&probe, &opaque, None).state,
+            StageState::Weak
         );
     }
 
