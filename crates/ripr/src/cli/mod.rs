@@ -98,7 +98,8 @@ fn persist_before_repair_attempt(options: &agent::AgentRepairOptions) -> Result<
     let agent_packet = root.join(WORKFLOW_AGENT_PACKET_ARTIFACT);
     let packet_text = std::fs::read_to_string(&agent_packet)
         .map_err(|error| format!("read {} failed: {error}", agent_packet.display()))?;
-    let policy = crate::app::repair_attempt::edit_cage_policy_from_packet(&packet_text)?;
+    let policy =
+        crate::app::repair_attempt::edit_cage_policy_from_packet(&packet_text, &options.seam_id)?;
     let edit_cage_baseline = root.join("target/ripr/workflow/attempt-baseline.json");
     crate::app::repair_attempt::write_edit_cage_baseline(root, &edit_cage_baseline, &policy)?;
     let result = crate::app::repair_attempt::begin_repair_attempt(

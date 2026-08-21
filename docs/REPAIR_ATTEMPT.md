@@ -17,6 +17,9 @@ current producer-owned seam
 -> attempt.json is published atomically in awaiting_edit state
 -> human or external agent edits one focused test
 -> existing seam-selected --phase after compatibility route
+-> repository delta and edit-cage verdict are persisted in attempt.json
+-> receipt admission revalidates the selected seam, packet, baseline, HEAD,
+   delta, and compliant verdict against the same attempt
 ```
 
 The next implementation slice will make the after phase consume
@@ -67,6 +70,11 @@ The manifest separately retains:
 - the currently supported exact next command;
 - limitations and non-claims.
 
+After a successful after phase, `after` records the current repository HEAD,
+packet and delta SHA-256 commitments, currentness, and the edit-cage verdict.
+Terminal states are `ready_to_finish`, `failed`, `stale`, or `incomparable`;
+only `ready_to_finish` with a compliant verdict can authorize a receipt.
+
 ## Publication law
 
 Artifact copies are staged in a sibling temporary directory inside the attempt
@@ -91,15 +99,12 @@ directory.
 
 ## Current state
 
-Schema `0.1` emits exactly:
-
-```text
-awaiting_edit
-```
-
-Later slices will add the operational and movement transitions required by
-#2927. They must not reinterpret `awaiting_edit` as verified, improved, closed,
-or safe to merge.
+Schema `0.1` emits `awaiting_edit` before the edit and a terminal after-phase
+state after the edit-cage comparison. A receipt revalidates every retained
+artifact's path, byte count, and digest, requires the manifest root and
+baseline root to equal the selected repository, and rejects stale, tampered,
+replayed, wrong-seam, and incomparable attempts. The compatibility route is
+still seam-selected; a durable `--attempt` selector remains follow-up work.
 
 ## Non-claims
 
@@ -111,6 +116,7 @@ A prepared attempt does not mean:
 - the static gap improved or closed;
 - mutation testing ran;
 - the repository is safe to merge;
-- the attempt is yet resumable through `--attempt`.
+- the attempt is yet resumable through `--attempt`;
+- a compliant edit-cage verdict proves test correctness or mutation behavior.
 
 The JSON contract is `schemas/ripr/repair-attempt.schema.json`.

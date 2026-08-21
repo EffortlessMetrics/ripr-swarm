@@ -117,6 +117,12 @@ pub(crate) struct AttemptBaseline {
     _expected_write_authorities: Vec<winsafe::guard::CloseHandleGuard<winsafe::HFILE>>,
 }
 
+impl AttemptBaseline {
+    pub(crate) fn root(&self) -> &Path {
+        &self.root
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 struct RepositoryPathState {
     index_entry: Option<String>,

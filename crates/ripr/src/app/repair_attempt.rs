@@ -138,6 +138,7 @@ pub(crate) fn receipt_binding(
             .map_err(|error| format!("read {} failed: {error}", path.display()))?;
         let manifest: RepairAttemptManifest = serde_json::from_str(&raw)
             .map_err(|error| format!("decode {} failed: {error}", path.display()))?;
+        validate_manifest_at(&root, &path, &manifest)?;
         if manifest.seam_id == seam_id {
             matches.push((path, manifest));
         }
@@ -366,7 +367,10 @@ pub(crate) fn write_repair_attempt_manifest(
     Ok(path)
 }
 
-pub(crate) fn edit_cage_policy_from_packet(packet: &str) -> Result<EditCagePolicy, String> {
+pub(crate) fn edit_cage_policy_from_packet(
+    packet: &str,
+    seam_id: &str,
+) -> Result<EditCagePolicy, String> {
     let value: serde_json::Value = serde_json::from_str(packet)
         .map_err(|error| format!("decode repair packet for edit cage failed: {error}"))?;
     // `agent packet` emits a repo packet containing a `packets` list, while
@@ -375,23 +379,37 @@ pub(crate) fn edit_cage_policy_from_packet(packet: &str) -> Result<EditCagePolic
     let value = value
         .get("packets")
         .and_then(serde_json::Value::as_array)
-        .and_then(|packets| {
+        .map(|packets| {
             packets
                 .iter()
-                .find(|packet| packet.get("allowed_edit_surface").is_some())
+                .filter(|packet| {
+                    packet.get("seam_id").and_then(serde_json::Value::as_str) == Some(seam_id)
+                })
+                .collect::<Vec<_>>()
         })
+        .map(|matches| {
+            if matches.len() != 1 {
+                return Err(format!(
+                    "repair packet must contain exactly one packet for seam `{seam_id}`, found {}",
+                    matches.len()
+                ));
+            }
+            Ok(matches[0])
+        })
+        .transpose()?
         .unwrap_or(&value);
-    let value = if value.get("allowed_edit_surface").is_none() {
-        let packets = value
-            .get("packets")
-            .and_then(serde_json::Value::as_array)
-            .ok_or_else(|| "repair packet is missing allowed_edit_surface".to_string())?;
-        packets
-            .first()
-            .ok_or_else(|| "repair packet contains no actionable packet".to_string())?
-    } else {
-        value
-    };
+    let value =
+        if value.get("allowed_edit_surface").is_none() && value.get("recommended_test").is_none() {
+            let packets = value
+                .get("packets")
+                .and_then(serde_json::Value::as_array)
+                .ok_or_else(|| "repair packet is missing allowed_edit_surface".to_string())?;
+            packets
+                .first()
+                .ok_or_else(|| "repair packet contains no actionable packet".to_string())?
+        } else {
+            value
+        };
     let paths = |name: &str| -> Result<Vec<crate::edit_cage::CagePathRule>, String> {
         let values = value
             .get(name)
@@ -473,6 +491,7 @@ pub(crate) fn finish_repair_attempt(
             .map_err(|error| format!("read {} failed: {error}", path.display()))?;
         let manifest: RepairAttemptManifest = serde_json::from_str(&raw)
             .map_err(|error| format!("decode {} failed: {error}", path.display()))?;
+        validate_manifest_at(&root, &path, &manifest)?;
         if manifest.seam_id == seam_id && manifest.state == RepairAttemptState::AwaitingEdit {
             matches.push((path, manifest));
         }
@@ -493,8 +512,22 @@ pub(crate) fn finish_repair_attempt(
         .ok_or_else(|| "repair attempt has no edit-cage baseline artifact".to_string())?;
     let baseline_bytes = std::fs::read(&baseline_path)
         .map_err(|error| format!("read {} failed: {error}", baseline_path.display()))?;
+    let baseline_artifact = manifest
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.role == "edit_cage_baseline")
+        .ok_or_else(|| "repair attempt has no edit-cage baseline artifact".to_string())?;
+    if u64::try_from(baseline_bytes.len()).map_err(|error| error.to_string())?
+        != baseline_artifact.bytes
+        || sha256_bytes(&baseline_bytes) != baseline_artifact.sha256
+    {
+        return Err("repair attempt edit-cage baseline binding failed".to_string());
+    }
     let baseline: AttemptBaseline = serde_json::from_slice(&baseline_bytes)
         .map_err(|error| format!("decode edit-cage baseline failed: {error}"))?;
+    if baseline.root() != root {
+        return Err("edit-cage baseline root does not match selected repository".to_string());
+    }
     let current_head = crate::agent::artifact::current_git_head(&root)?;
     let current = current_head == manifest.repository_head;
     let (delta, mut verdict) = evaluate_repository_edit_cage_with_delta(&baseline)?;
@@ -648,7 +681,6 @@ fn validate_manifest(manifest: &RepairAttemptManifest) -> Result<(), String> {
     }
     RepairAttemptId::parse(manifest.repair_attempt_id.as_str())?;
     if manifest.kind != "repair_attempt"
-        || manifest.state != RepairAttemptState::AwaitingEdit
         || manifest.root.is_empty()
         || manifest.repository_head.len() != 40
         || !manifest
@@ -671,6 +703,17 @@ fn validate_manifest(manifest: &RepairAttemptManifest) -> Result<(), String> {
     {
         return Err("repair attempt manifest is incomplete or malformed".to_string());
     }
+    let has_after = manifest.after.is_some();
+    let state_requires_after = matches!(
+        manifest.state,
+        RepairAttemptState::ReadyToFinish
+            | RepairAttemptState::Stale
+            | RepairAttemptState::Incomparable
+            | RepairAttemptState::Failed
+    );
+    if has_after != state_requires_after {
+        return Err("repair attempt state/after boundary is inconsistent".to_string());
+    }
     if manifest.artifacts.iter().any(|artifact| {
         artifact.role.is_empty() || artifact.path.is_empty() || !is_sha256_digest(&artifact.sha256)
     }) {
@@ -684,6 +727,57 @@ fn validate_manifest(manifest: &RepairAttemptManifest) -> Result<(), String> {
         .any(|artifact| !roles.insert(&artifact.role) || !paths.insert(&artifact.path))
     {
         return Err("repair attempt manifest contains duplicate artifact identity".to_string());
+    }
+    Ok(())
+}
+
+fn validate_manifest_at(
+    root: &Path,
+    manifest_path: &Path,
+    manifest: &RepairAttemptManifest,
+) -> Result<(), String> {
+    validate_manifest(manifest)?;
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("canonicalize manifest root failed: {error}"))?;
+    let declared_root = PathBuf::from(&manifest.root)
+        .canonicalize()
+        .map_err(|error| format!("canonicalize declared manifest root failed: {error}"))?;
+    if declared_root != root {
+        return Err("repair attempt manifest root does not match selected repository".to_string());
+    }
+    let expected_manifest =
+        repair_attempt_directory(&root, &manifest.repair_attempt_id).join(REPAIR_ATTEMPT_MANIFEST);
+    if manifest_path
+        .canonicalize()
+        .map_err(|error| format!("canonicalize manifest path failed: {error}"))?
+        != expected_manifest
+    {
+        return Err("repair attempt manifest path is not bound to its identity".to_string());
+    }
+    let artifacts_root = repair_attempt_directory(&root, &manifest.repair_attempt_id)
+        .join(REPAIR_ATTEMPT_ARTIFACTS_DIRECTORY);
+    for artifact in &manifest.artifacts {
+        let path = root.join(&artifact.path);
+        let canonical = path
+            .canonicalize()
+            .map_err(|error| format!("canonicalize artifact {} failed: {error}", artifact.path))?;
+        if !canonical.starts_with(&artifacts_root) {
+            return Err(format!(
+                "repair attempt artifact escapes its attempt: {}",
+                artifact.path
+            ));
+        }
+        let bytes = std::fs::read(&canonical)
+            .map_err(|error| format!("read artifact {} failed: {error}", artifact.path))?;
+        if u64::try_from(bytes.len()).map_err(|error| error.to_string())? != artifact.bytes
+            || sha256_bytes(&bytes) != artifact.sha256
+        {
+            return Err(format!(
+                "repair attempt artifact binding failed: {}",
+                artifact.path
+            ));
+        }
     }
     Ok(())
 }
@@ -855,6 +949,54 @@ mod tests {
     }
 
     #[test]
+    fn packet_policy_selects_exact_seam_and_rejects_wrong_selection() -> Result<(), String> {
+        let packet = serde_json::json!({
+            "packets": [
+                {"seam_id": "other", "allowed_edit_surface": ["tests/other.rs"], "forbidden_files": []},
+                {"seam_id": "seam:sample", "allowed_edit_surface": ["tests/target.rs"], "forbidden_files": []}
+            ]
+        });
+        let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+        let selected = edit_cage_policy_from_packet(&rendered, "seam:sample")?;
+        let selected = serde_json::to_value(selected).map_err(|error| error.to_string())?;
+        if !selected.to_string().contains("tests/target.rs") {
+            return Err("packet policy selected the wrong seam".to_string());
+        }
+        if edit_cage_policy_from_packet(&rendered, "missing-seam").is_ok() {
+            return Err("packet policy accepted a missing seam".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn repair_attempt_schema_carries_terminal_after_contract() -> Result<(), String> {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../schemas/ripr/repair-attempt.schema.json");
+        let schema: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(&path).map_err(|error| format!("read schema failed: {error}"))?,
+        )
+        .map_err(|error| format!("decode schema failed: {error}"))?;
+        let states = schema["properties"]["state"]["enum"]
+            .as_array()
+            .ok_or_else(|| "schema state enum missing".to_string())?;
+        for state in [
+            "awaiting_edit",
+            "ready_to_finish",
+            "stale",
+            "incomparable",
+            "failed",
+        ] {
+            if !states.iter().any(|value| value == state) {
+                return Err(format!("schema omitted state {state}"));
+            }
+        }
+        if schema["$defs"]["after"].is_null() {
+            return Err("schema omitted terminal after definition".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn manifest_write_is_atomic_and_round_trips() -> Result<(), String> {
         let root = test_root("manifest")?;
         let manifest = sample_manifest(&root)?;
@@ -974,8 +1116,8 @@ mod tests {
             ("repair_attempt_id has wrong length", |manifest| {
                 manifest.repair_attempt_id = RepairAttemptId("repair-attempt-0123".to_string());
             }),
-            ("state is not awaiting_edit", |manifest| {
-                manifest.state = RepairAttemptState::Prepared;
+            ("terminal state is missing after", |manifest| {
+                manifest.state = RepairAttemptState::ReadyToFinish;
             }),
             ("root is empty", |manifest| {
                 manifest.root.clear();

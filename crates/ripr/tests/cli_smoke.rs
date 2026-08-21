@@ -3282,6 +3282,68 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
         "after",
     ]);
     assert!(!replay.status.success());
+    let manifest_path = attempts[0].path().join("attempt.json");
+    let manifest_bytes = std::fs::read(&manifest_path)?;
+    let mut root_tampered: serde_json::Value = serde_json::from_slice(&manifest_bytes)?;
+    root_tampered["root"] = serde_json::Value::String(root.join("elsewhere").display().to_string());
+    std::fs::write(&manifest_path, serde_json::to_vec_pretty(&root_tampered)?)?;
+    let root_rejected = run_ripr(&[
+        "agent",
+        "receipt",
+        "--root",
+        &root_arg,
+        "--verify-json",
+        "target/ripr/workflow/agent-verify.json",
+        "--seam-id",
+        "67fc764ba37d77bd",
+        "--json",
+    ]);
+    assert!(!root_rejected.status.success());
+    std::fs::write(&manifest_path, &manifest_bytes)?;
+
+    let mut path_tampered: serde_json::Value = serde_json::from_slice(&manifest_bytes)?;
+    path_tampered["artifacts"][0]["path"] = serde_json::Value::String("../outside".to_string());
+    std::fs::write(&manifest_path, serde_json::to_vec_pretty(&path_tampered)?)?;
+    let path_rejected = run_ripr(&[
+        "agent",
+        "receipt",
+        "--root",
+        &root_arg,
+        "--verify-json",
+        "target/ripr/workflow/agent-verify.json",
+        "--seam-id",
+        "67fc764ba37d77bd",
+        "--json",
+    ]);
+    assert!(!path_rejected.status.success());
+    std::fs::write(&manifest_path, &manifest_bytes)?;
+
+    let manifest_value: serde_json::Value = serde_json::from_slice(&manifest_bytes)?;
+    let baseline_rel = manifest_value["artifacts"]
+        .as_array()
+        .and_then(|artifacts| {
+            artifacts
+                .iter()
+                .find(|artifact| artifact["role"] == "edit_cage_baseline")
+        })
+        .and_then(|artifact| artifact["path"].as_str())
+        .ok_or("baseline artifact missing")?;
+    let baseline_path = root.join(baseline_rel);
+    let baseline_bytes = std::fs::read(&baseline_path)?;
+    std::fs::write(&baseline_path, b"tampered baseline")?;
+    let baseline_rejected = run_ripr(&[
+        "agent",
+        "receipt",
+        "--root",
+        &root_arg,
+        "--verify-json",
+        "target/ripr/workflow/agent-verify.json",
+        "--seam-id",
+        "67fc764ba37d77bd",
+        "--json",
+    ]);
+    assert!(!baseline_rejected.status.success());
+    std::fs::write(&baseline_path, baseline_bytes)?;
     assert!(String::from_utf8_lossy(&after.stdout).contains("\"status\": \"complete\""));
     assert!(String::from_utf8_lossy(&after.stderr).contains("after phase complete"));
 
