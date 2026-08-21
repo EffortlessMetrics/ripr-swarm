@@ -3228,6 +3228,154 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
     let receipt_path = root.join("target/ripr/reports/agent-receipt.json");
     let receipt: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(receipt_path)?)?;
     assert_eq!(receipt["provenance"]["seam_id"], "67fc764ba37d77bd");
+    assert_eq!(receipt["repair_attempt"]["seam_id"], "67fc764ba37d77bd");
+    assert_eq!(receipt["repair_attempt"]["current"], true);
+    assert_eq!(
+        receipt["repair_attempt"]["edit_cage_verdict"]["status"],
+        "compliant"
+    );
+    let attempts = std::fs::read_dir(root.join("target/ripr/repair-attempts"))?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().is_dir())
+        .collect::<Vec<_>>();
+    assert_eq!(attempts.len(), 1);
+    let manifest: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        attempts[0].path().join("attempt.json"),
+    )?)?;
+    assert_eq!(manifest["state"], "ready_to_finish");
+    assert_eq!(
+        receipt["repair_attempt"]["attempt_id"],
+        manifest["repair_attempt_id"]
+    );
+    assert_eq!(manifest["after"]["current"], true);
+    let wrong_seam = run_ripr(&[
+        "agent",
+        "receipt",
+        "--root",
+        &root_arg,
+        "--verify-json",
+        "target/ripr/workflow/agent-verify.json",
+        "--seam-id",
+        "wrong-seam",
+        "--json",
+    ]);
+    assert!(!wrong_seam.status.success());
+    let packet_bytes = std::fs::read(&packet_path)?;
+    std::fs::write(&packet_path, b"tampered packet")?;
+    let tampered = run_ripr(&[
+        "agent",
+        "receipt",
+        "--root",
+        &root_arg,
+        "--verify-json",
+        "target/ripr/workflow/agent-verify.json",
+        "--seam-id",
+        "67fc764ba37d77bd",
+        "--json",
+    ]);
+    assert!(!tampered.status.success());
+    std::fs::write(&packet_path, packet_bytes)?;
+    let replay = run_ripr(&[
+        "agent",
+        "repair",
+        "--root",
+        &root_arg,
+        "--seam-id",
+        "67fc764ba37d77bd",
+        "--phase",
+        "after",
+    ]);
+    assert!(!replay.status.success());
+    let manifest_path = attempts[0].path().join("attempt.json");
+    let manifest_bytes = std::fs::read(&manifest_path)?;
+    let mut root_tampered: serde_json::Value = serde_json::from_slice(&manifest_bytes)?;
+    root_tampered["root"] = serde_json::Value::String(root.join("elsewhere").display().to_string());
+    std::fs::write(&manifest_path, serde_json::to_vec_pretty(&root_tampered)?)?;
+    let root_rejected = run_ripr(&[
+        "agent",
+        "receipt",
+        "--root",
+        &root_arg,
+        "--verify-json",
+        "target/ripr/workflow/agent-verify.json",
+        "--seam-id",
+        "67fc764ba37d77bd",
+        "--json",
+    ]);
+    assert!(!root_rejected.status.success());
+    std::fs::write(&manifest_path, &manifest_bytes)?;
+
+    let mut path_tampered: serde_json::Value = serde_json::from_slice(&manifest_bytes)?;
+    path_tampered["artifacts"][0]["path"] = serde_json::Value::String("../outside".to_string());
+    std::fs::write(&manifest_path, serde_json::to_vec_pretty(&path_tampered)?)?;
+    let path_rejected = run_ripr(&[
+        "agent",
+        "receipt",
+        "--root",
+        &root_arg,
+        "--verify-json",
+        "target/ripr/workflow/agent-verify.json",
+        "--seam-id",
+        "67fc764ba37d77bd",
+        "--json",
+    ]);
+    assert!(!path_rejected.status.success());
+    std::fs::write(&manifest_path, &manifest_bytes)?;
+
+    let manifest_value: serde_json::Value = serde_json::from_slice(&manifest_bytes)?;
+    let baseline_rel = manifest_value["artifacts"]
+        .as_array()
+        .and_then(|artifacts| {
+            artifacts
+                .iter()
+                .find(|artifact| artifact["role"] == "edit_cage_baseline")
+        })
+        .and_then(|artifact| artifact["path"].as_str())
+        .ok_or("baseline artifact missing")?;
+    let baseline_path = root.join(baseline_rel);
+    let baseline_bytes = std::fs::read(&baseline_path)?;
+    std::fs::write(&baseline_path, b"tampered baseline")?;
+    let baseline_rejected = run_ripr(&[
+        "agent",
+        "receipt",
+        "--root",
+        &root_arg,
+        "--verify-json",
+        "target/ripr/workflow/agent-verify.json",
+        "--seam-id",
+        "67fc764ba37d77bd",
+        "--json",
+    ]);
+    assert!(!baseline_rejected.status.success());
+    std::fs::write(&baseline_path, baseline_bytes.clone())?;
+    let mut coordinated: serde_json::Value = serde_json::from_slice(&manifest_bytes)?;
+    if let Some(artifact) = coordinated["artifacts"]
+        .as_array_mut()
+        .and_then(|artifacts| {
+            artifacts
+                .iter_mut()
+                .find(|artifact| artifact["role"] == "edit_cage_baseline")
+        })
+    {
+        artifact["sha256"] = serde_json::Value::String(format!("sha256:{}", "0".repeat(64)));
+        artifact["bytes"] = serde_json::Value::from(16_u64);
+    }
+    std::fs::write(&baseline_path, b"coordinated rewrite")?;
+    std::fs::write(&manifest_path, serde_json::to_vec_pretty(&coordinated)?)?;
+    let coordinated_rejected = run_ripr(&[
+        "agent",
+        "receipt",
+        "--root",
+        &root_arg,
+        "--verify-json",
+        "target/ripr/workflow/agent-verify.json",
+        "--seam-id",
+        "67fc764ba37d77bd",
+        "--json",
+    ]);
+    assert!(!coordinated_rejected.status.success());
+    std::fs::write(&baseline_path, baseline_bytes)?;
+    std::fs::write(&manifest_path, &manifest_bytes)?;
     assert!(String::from_utf8_lossy(&after.stdout).contains("\"status\": \"complete\""));
     assert!(String::from_utf8_lossy(&after.stderr).contains("after phase complete"));
 
