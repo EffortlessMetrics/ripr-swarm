@@ -1,6 +1,7 @@
 use super::super::rust_index::FunctionSummary;
 use super::propagation_witness::{
-    PropagationWitnessV1, complete_direct_witness, valid_owner_bound_partial_witness,
+    PropagationWitnessV1, complete_direct_witness, normalize_semantic_text,
+    valid_owner_bound_partial_witness,
 };
 use super::text::exact_error_variant;
 use crate::domain::*;
@@ -56,8 +57,8 @@ pub(in crate::analysis) fn propagation_evidence_with_witness(
         flow_sinks.iter().find(|sink| {
             sink.owner.as_ref() == Some(&witness.behavior.owner)
                 && sink.kind.as_str() == witness.sink.kind
-                && normalize_sink_identity(&sink.text)
-                    == normalize_sink_identity(&witness.sink.identity)
+                && normalize_semantic_text(&sink.text)
+                    == normalize_semantic_text(&witness.sink.identity)
         })
     } else {
         flow_sinks
@@ -88,8 +89,8 @@ pub(in crate::analysis) fn propagation_evidence_with_witness(
             && complete_direct_witness(probe, witness)
             && witness.is_some_and(|witness| {
                 witness.sink.kind == sink.kind.as_str()
-                    && witness.sink.identity
-                        == sink.text.split_whitespace().collect::<Vec<_>>().join(" ")
+                    && normalize_semantic_text(&witness.sink.identity)
+                        == normalize_semantic_text(&sink.text)
             })
         {
             return StageEvidence::new(
@@ -119,10 +120,6 @@ pub(in crate::analysis) fn propagation_evidence_with_witness(
     }
 
     propagation_evidence(probe, flow_sinks)
-}
-
-fn normalize_sink_identity(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn integrated_direct_family(family: &ProbeFamily) -> bool {
@@ -900,6 +897,20 @@ mod tests {
             let evidence = propagation_evidence_with_witness(&probe, &sinks, witness.as_ref());
             assert_eq!(evidence.state, StageState::Yes);
         }
+
+        let comma_probe = probe(ProbeFamily::FieldConstruction, "status: amount", 2);
+        let comma_sinks = vec![FlowSinkFact {
+            kind: FlowSinkKind::StructField,
+            text: "status: amount,".to_string(),
+            line: 3,
+            owner: comma_probe.owner.clone(),
+        }];
+        let comma_witness =
+            super::super::propagation_witness::current_path_witness(&comma_probe, &comma_sinks);
+        assert!(comma_witness.is_some());
+        let comma_evidence =
+            propagation_evidence_with_witness(&comma_probe, &comma_sinks, comma_witness.as_ref());
+        assert_eq!(comma_evidence.state, StageState::Yes);
 
         let field_probe = probe(ProbeFamily::FieldConstruction, "status: amount", 2);
         let sinks = vec![FlowSinkFact {
