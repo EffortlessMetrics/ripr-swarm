@@ -6,6 +6,9 @@
 //! #2927 slice will make `--attempt <id>` the finishing authority.
 
 use crate::agent::loop_commands::{display_path, shell_arg};
+use crate::edit_cage::{
+    AttemptBaseline, EditCagePolicy, EditCageVerdict, evaluate_repository_edit_cage_with_delta,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -89,6 +92,125 @@ pub(crate) struct RepairAttemptManifest {
     pub(crate) next_command: String,
     pub(crate) limitations: Vec<String>,
     pub(crate) non_claims: Vec<String>,
+    #[serde(default)]
+    pub(crate) after: Option<RepairAttemptAfter>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RepairAttemptAfter {
+    pub(crate) repository_head: String,
+    pub(crate) delta_sha256: String,
+    pub(crate) packet_sha256: String,
+    pub(crate) current: bool,
+    pub(crate) verdict: EditCageVerdict,
+}
+
+/// The only attempt state that may authorize a receipt.  This is deliberately
+/// derived from the durable manifest and its immutable before artifacts rather
+/// than from the workflow filenames, which are compatibility outputs.
+pub(crate) fn receipt_binding(
+    root: &Path,
+    seam_id: &str,
+    packet_path: &Path,
+) -> Result<serde_json::Value, String> {
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
+    let packet = std::fs::read(packet_path).map_err(|error| {
+        format!(
+            "read repair packet {} failed: {error}",
+            packet_path.display()
+        )
+    })?;
+    let packet_sha256 = sha256_bytes(&packet);
+    let manifests_root = root.join(REPAIR_ATTEMPT_DIRECTORY);
+    let mut matches = Vec::new();
+    for entry in std::fs::read_dir(&manifests_root)
+        .map_err(|error| format!("read {} failed: {error}", manifests_root.display()))?
+    {
+        let entry = entry.map_err(|error| format!("read repair attempt entry failed: {error}"))?;
+        let path = entry.path().join(REPAIR_ATTEMPT_MANIFEST);
+        if !path.is_file() {
+            continue;
+        }
+        let raw = std::fs::read_to_string(&path)
+            .map_err(|error| format!("read {} failed: {error}", path.display()))?;
+        let manifest: RepairAttemptManifest = serde_json::from_str(&raw)
+            .map_err(|error| format!("decode {} failed: {error}", path.display()))?;
+        if manifest.seam_id == seam_id {
+            matches.push((path, manifest));
+        }
+    }
+    if matches.len() != 1 {
+        return Err(format!(
+            "receipt requires exactly one repair attempt for seam `{seam_id}`, found {}",
+            matches.len()
+        ));
+    }
+    let (manifest_path, manifest) = matches.pop().ok_or_else(|| "missing attempt".to_string())?;
+    let after = manifest
+        .after
+        .as_ref()
+        .ok_or_else(|| "repair attempt has no after-phase verdict".to_string())?;
+    if manifest.state != RepairAttemptState::ReadyToFinish
+        || !after.current
+        || after.verdict.status != crate::edit_cage::EditCageVerdictStatus::Compliant
+    {
+        return Err(format!(
+            "repair attempt {} is not receipt-ready: state {:?}, current {}, verdict {:?}",
+            manifest.repair_attempt_id.as_str(),
+            manifest.state,
+            after.current,
+            after.verdict.status
+        ));
+    }
+    let current_head = crate::agent::artifact::current_git_head(&root)?;
+    if current_head != manifest.repository_head || current_head != after.repository_head {
+        return Err("repair attempt receipt is stale relative to repository HEAD".to_string());
+    }
+    let artifact = |role: &str| {
+        manifest
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.role == role)
+            .ok_or_else(|| format!("repair attempt is missing {role} artifact"))
+    };
+    let packet_artifact = artifact("agent_packet")?;
+    let packet_artifact_bytes = std::fs::read(root.join(&packet_artifact.path))
+        .map_err(|error| format!("read staged agent packet failed: {error}"))?;
+    if sha256_bytes(&packet_artifact_bytes) != packet_artifact.sha256
+        || packet_artifact.sha256 != packet_sha256
+        || after.packet_sha256 != packet_sha256
+    {
+        return Err("repair attempt packet binding is tampered or replayed".to_string());
+    }
+    let baseline_artifact = artifact("edit_cage_baseline")?;
+    let baseline_bytes = std::fs::read(root.join(&baseline_artifact.path))
+        .map_err(|error| format!("read staged edit-cage baseline failed: {error}"))?;
+    if sha256_bytes(&baseline_bytes) != baseline_artifact.sha256 {
+        return Err("repair attempt edit-cage baseline binding is tampered".to_string());
+    }
+    let baseline: AttemptBaseline = serde_json::from_slice(&baseline_bytes)
+        .map_err(|error| format!("decode edit-cage baseline failed: {error}"))?;
+    let (delta, verdict) = evaluate_repository_edit_cage_with_delta(&baseline)?;
+    let delta_bytes = serde_json::to_vec(&delta)
+        .map_err(|error| format!("serialize repair delta failed: {error}"))?;
+    if sha256_bytes(&delta_bytes) != after.delta_sha256 || verdict != after.verdict {
+        return Err("repair attempt after verdict binding is tampered or stale".to_string());
+    }
+    let manifest_path = display_path(&manifest_path);
+    Ok(serde_json::json!({
+        "attempt_id": manifest.repair_attempt_id.as_str(),
+        "manifest": manifest_path,
+        "seam_id": manifest.seam_id,
+        "before_head": manifest.repository_head,
+        "after_head": after.repository_head,
+        "packet_sha256": after.packet_sha256,
+        "delta_sha256": after.delta_sha256,
+        "current": after.current,
+        "edit_cage_verdict": after.verdict,
+    }))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -191,6 +313,7 @@ fn complete_repair_attempt(
                     "prepared evidence does not mean the gap is fixed or verified".to_string(),
                     "this manifest does not authorize mutation execution or merge".to_string(),
                 ],
+                after: None,
             };
             let manifest_path = write_repair_attempt_manifest(canonical_root, &manifest)?;
             Ok(BeginRepairAttemptResult {
@@ -241,6 +364,183 @@ pub(crate) fn write_repair_attempt_manifest(
     rendered.push(b'\n');
     write_bytes_atomic(&path, &rendered)?;
     Ok(path)
+}
+
+pub(crate) fn edit_cage_policy_from_packet(packet: &str) -> Result<EditCagePolicy, String> {
+    let value: serde_json::Value = serde_json::from_str(packet)
+        .map_err(|error| format!("decode repair packet for edit cage failed: {error}"))?;
+    // `agent packet` emits a repo packet containing a `packets` list, while
+    // language adapters may emit a single packet.  Select the only actionable
+    // packet without treating the report envelope as edit-cage authority.
+    let value = value
+        .get("packets")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|packets| {
+            packets
+                .iter()
+                .find(|packet| packet.get("allowed_edit_surface").is_some())
+        })
+        .unwrap_or(&value);
+    let value = if value.get("allowed_edit_surface").is_none() {
+        let packets = value
+            .get("packets")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| "repair packet is missing allowed_edit_surface".to_string())?;
+        packets
+            .first()
+            .ok_or_else(|| "repair packet contains no actionable packet".to_string())?
+    } else {
+        value
+    };
+    let paths = |name: &str| -> Result<Vec<crate::edit_cage::CagePathRule>, String> {
+        let values = value
+            .get(name)
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| format!("repair packet is missing {name}"))?;
+        values
+            .iter()
+            .map(|path| {
+                path.as_str()
+                    .ok_or_else(|| format!("repair packet {name} contains a non-string path"))
+                    .and_then(crate::edit_cage::CagePathRule::exact)
+            })
+            .collect()
+    };
+    let allowed = match value.get("allowed_edit_surface") {
+        Some(_) => paths("allowed_edit_surface")?,
+        None => {
+            let file = value
+                .get("recommended_test")
+                .and_then(|test| test.get("file"))
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| "repair packet is missing allowed edit target".to_string())?;
+            vec![crate::edit_cage::CagePathRule::exact(file)?]
+        }
+    };
+    let selected_target = allowed
+        .first()
+        .cloned()
+        .ok_or_else(|| "repair packet has no selected edit target".to_string())?;
+    Ok(EditCagePolicy {
+        selected_target,
+        allowed_edit_surface: allowed,
+        forbidden_paths: value
+            .get("forbidden_files")
+            .map(|_| paths("forbidden_files"))
+            .transpose()?
+            .unwrap_or_default(),
+        expected_operational_writes: vec![crate::edit_cage::CagePathRule::subtree("target/ripr")?],
+    })
+}
+
+pub(crate) fn write_edit_cage_baseline(
+    root: &Path,
+    path: &Path,
+    policy: &EditCagePolicy,
+) -> Result<(), String> {
+    let baseline = crate::edit_cage::capture_attempt_baseline(root, policy)?;
+    let bytes = serde_json::to_vec_pretty(&baseline)
+        .map_err(|error| format!("serialize edit-cage baseline failed: {error}"))?;
+    write_bytes_atomic(path, &bytes)
+}
+
+pub(crate) fn finish_repair_attempt(
+    root: &Path,
+    seam_id: &str,
+    packet_path: &Path,
+) -> Result<RepairAttemptAfter, String> {
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
+    let packet = std::fs::read(packet_path).map_err(|error| {
+        format!(
+            "read repair packet {} failed: {error}",
+            packet_path.display()
+        )
+    })?;
+    let packet_sha256 = sha256_bytes(&packet);
+    let manifests_root = root.join(REPAIR_ATTEMPT_DIRECTORY);
+    let mut matches = Vec::new();
+    for entry in std::fs::read_dir(&manifests_root)
+        .map_err(|error| format!("read {} failed: {error}", manifests_root.display()))?
+    {
+        let entry = entry.map_err(|error| format!("read repair attempt entry failed: {error}"))?;
+        let path = entry.path().join(REPAIR_ATTEMPT_MANIFEST);
+        if !path.is_file() {
+            continue;
+        }
+        let raw = std::fs::read_to_string(&path)
+            .map_err(|error| format!("read {} failed: {error}", path.display()))?;
+        let manifest: RepairAttemptManifest = serde_json::from_str(&raw)
+            .map_err(|error| format!("decode {} failed: {error}", path.display()))?;
+        if manifest.seam_id == seam_id && manifest.state == RepairAttemptState::AwaitingEdit {
+            matches.push((path, manifest));
+        }
+    }
+    if matches.len() != 1 {
+        return Err(format!(
+            "expected exactly one awaiting repair attempt for seam `{seam_id}`, found {}",
+            matches.len()
+        ));
+    }
+    let (manifest_path, mut manifest) =
+        matches.pop().ok_or_else(|| "missing attempt".to_string())?;
+    let baseline_path = manifest
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.role == "edit_cage_baseline")
+        .map(|artifact| root.join(&artifact.path))
+        .ok_or_else(|| "repair attempt has no edit-cage baseline artifact".to_string())?;
+    let baseline_bytes = std::fs::read(&baseline_path)
+        .map_err(|error| format!("read {} failed: {error}", baseline_path.display()))?;
+    let baseline: AttemptBaseline = serde_json::from_slice(&baseline_bytes)
+        .map_err(|error| format!("decode edit-cage baseline failed: {error}"))?;
+    let current_head = crate::agent::artifact::current_git_head(&root)?;
+    let current = current_head == manifest.repository_head;
+    let (delta, mut verdict) = evaluate_repository_edit_cage_with_delta(&baseline)?;
+    if !current {
+        verdict.status = crate::edit_cage::EditCageVerdictStatus::Incomparable;
+    }
+    let delta_bytes = serde_json::to_vec(&delta)
+        .map_err(|error| format!("serialize repair delta failed: {error}"))?;
+    let after = RepairAttemptAfter {
+        repository_head: current_head,
+        delta_sha256: sha256_bytes(&delta_bytes),
+        packet_sha256,
+        current,
+        verdict,
+    };
+    manifest.after = Some(after.clone());
+    manifest.state = if after.current {
+        match after.verdict.status {
+            crate::edit_cage::EditCageVerdictStatus::Compliant => RepairAttemptState::ReadyToFinish,
+            crate::edit_cage::EditCageVerdictStatus::Violated => RepairAttemptState::Failed,
+            crate::edit_cage::EditCageVerdictStatus::Incomparable => {
+                RepairAttemptState::Incomparable
+            }
+        }
+    } else {
+        RepairAttemptState::Stale
+    };
+    let mut bytes = serde_json::to_vec_pretty(&manifest)
+        .map_err(|error| format!("serialize completed repair attempt failed: {error}"))?;
+    bytes.push(b'\n');
+    replace_manifest_bytes(&manifest_path, &bytes)?;
+    Ok(after)
+}
+
+fn replace_manifest_bytes(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let temporary = path.with_extension(format!("after-tmp-{}", std::process::id()));
+    write_bytes_atomic(&temporary, bytes)?;
+    #[cfg(windows)]
+    if path.exists() {
+        std::fs::remove_file(path)
+            .map_err(|error| format!("replace {} failed: {error}", path.display()))?;
+    }
+    std::fs::rename(&temporary, path).map_err(|error| {
+        let _ = std::fs::remove_file(&temporary);
+        format!("replace {} failed: {error}", path.display())
+    })
 }
 
 fn stage_before_artifacts(
@@ -531,6 +831,7 @@ mod tests {
                 .to_string(),
             limitations: Vec::new(),
             non_claims: vec!["not merge authority".to_string()],
+            after: None,
         })
     }
 

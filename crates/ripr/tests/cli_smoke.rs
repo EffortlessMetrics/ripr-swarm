@@ -3228,6 +3228,60 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
     let receipt_path = root.join("target/ripr/reports/agent-receipt.json");
     let receipt: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(receipt_path)?)?;
     assert_eq!(receipt["provenance"]["seam_id"], "67fc764ba37d77bd");
+    assert_eq!(receipt["repair_attempt"]["seam_id"], "67fc764ba37d77bd");
+    assert_eq!(receipt["repair_attempt"]["current"], true);
+    assert_eq!(
+        receipt["repair_attempt"]["edit_cage_verdict"]["status"],
+        "compliant"
+    );
+    let attempts = std::fs::read_dir(root.join("target/ripr/repair-attempts"))?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().is_dir())
+        .collect::<Vec<_>>();
+    assert_eq!(attempts.len(), 1);
+    let manifest: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        attempts[0].path().join("attempt.json"),
+    )?)?;
+    assert_eq!(manifest["state"], "ready_to_finish");
+    assert_eq!(manifest["after"]["current"], true);
+    let wrong_seam = run_ripr(&[
+        "agent",
+        "receipt",
+        "--root",
+        &root_arg,
+        "--verify-json",
+        "target/ripr/workflow/agent-verify.json",
+        "--seam-id",
+        "wrong-seam",
+        "--json",
+    ]);
+    assert!(!wrong_seam.status.success());
+    let packet_bytes = std::fs::read(&packet_path)?;
+    std::fs::write(&packet_path, b"tampered packet")?;
+    let tampered = run_ripr(&[
+        "agent",
+        "receipt",
+        "--root",
+        &root_arg,
+        "--verify-json",
+        "target/ripr/workflow/agent-verify.json",
+        "--seam-id",
+        "67fc764ba37d77bd",
+        "--json",
+    ]);
+    assert!(!tampered.status.success());
+    std::fs::write(&packet_path, packet_bytes)?;
+    let replay = run_ripr(&[
+        "agent",
+        "repair",
+        "--root",
+        &root_arg,
+        "--seam-id",
+        "67fc764ba37d77bd",
+        "--phase",
+        "after",
+    ]);
+    assert!(!replay.status.success());
     assert!(String::from_utf8_lossy(&after.stdout).contains("\"status\": \"complete\""));
     assert!(String::from_utf8_lossy(&after.stderr).contains("after phase complete"));
 

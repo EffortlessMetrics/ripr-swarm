@@ -96,6 +96,11 @@ fn persist_before_repair_attempt(options: &agent::AgentRepairOptions) -> Result<
     let agent_brief = root.join(WORKFLOW_AGENT_BRIEF_ARTIFACT);
     let before_snapshot = root.join(WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT);
     let agent_packet = root.join(WORKFLOW_AGENT_PACKET_ARTIFACT);
+    let packet_text = std::fs::read_to_string(&agent_packet)
+        .map_err(|error| format!("read {} failed: {error}", agent_packet.display()))?;
+    let policy = crate::app::repair_attempt::edit_cage_policy_from_packet(&packet_text)?;
+    let edit_cage_baseline = root.join("target/ripr/workflow/attempt-baseline.json");
+    crate::app::repair_attempt::write_edit_cage_baseline(root, &edit_cage_baseline, &policy)?;
     let result = crate::app::repair_attempt::begin_repair_attempt(
         root,
         root,
@@ -120,6 +125,10 @@ fn persist_before_repair_attempt(options: &agent::AgentRepairOptions) -> Result<
             BeforeArtifactSource {
                 role: "agent_packet",
                 path: &agent_packet,
+            },
+            BeforeArtifactSource {
+                role: "edit_cage_baseline",
+                path: &edit_cage_baseline,
             },
         ],
     )?;
@@ -187,13 +196,12 @@ mod tests {
         let lock_path = root
             .join(crate::app::repair_attempt::REPAIR_ATTEMPT_DIRECTORY)
             .join(".before.lock");
-        std::fs::create_dir_all(&lock_path)
-            .map_err(|error| {
-                format!(
-                    "create lock collision {} failed: {error}",
-                    lock_path.display()
-                )
-            })?;
+        std::fs::create_dir_all(&lock_path).map_err(|error| {
+            format!(
+                "create lock collision {} failed: {error}",
+                lock_path.display()
+            )
+        })?;
         let result = lock_before_repair_attempt(&root);
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;

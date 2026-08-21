@@ -262,6 +262,11 @@ fn run_agent_receipt(options: AgentReceiptOptions) -> Result<(), String> {
     })?;
     let validated =
         app::agent_receipt::validate_agent_receipt_verify_json(&options.root, &verify_json)?;
+    let repair_attempt_binding = crate::app::repair_attempt::receipt_binding(
+        &options.root,
+        &options.seam_id,
+        &options.root.join("target/ripr/workflow/agent-packet.json"),
+    )?;
     let input_paths = &validated.input_paths;
     let provenance = build_agent_receipt_provenance(
         &options.root,
@@ -304,6 +309,12 @@ fn run_agent_receipt(options: AgentReceiptOptions) -> Result<(), String> {
         provenance,
         analysis_outcome,
     )?;
+    let mut receipt: serde_json::Value = serde_json::from_str(&rendered)
+        .map_err(|error| format!("parse rendered agent receipt failed: {error}"))?;
+    receipt["repair_attempt"] = repair_attempt_binding;
+    let rendered = serde_json::to_string_pretty(&receipt)
+        .map_err(|error| format!("serialize bound agent receipt failed: {error}"))?
+        + "\n";
 
     match options.out {
         Some(path) => {
@@ -433,6 +444,7 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
             // stale after artifact from an earlier run.
             write_agent_repo_exposure_snapshot(root, &after)?;
 
+            let packet_path = root.join("target/ripr/workflow/agent-packet.json");
             // Review summaries consume the canonical diff-scoped producer
             // outcome. Generate it from the same current root before issuing
             // the receipt so the built-in repair route cannot report a clean
@@ -450,6 +462,16 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
             let rendered_verify = render_agent_verify(&verify_options)?;
             write_text_file(&verify_json, &rendered_verify)?;
             print!("{rendered_verify}");
+
+            // Finish only after all command-owned after artifacts exist. This
+            // makes the durable delta the exact delta the receipt binds, while
+            // the receipt itself remains outside the measured edit window.
+            let cage_after =
+                crate::app::repair_attempt::finish_repair_attempt(root, seam_id, &packet_path)?;
+            eprintln!(
+                "ripr: edit-cage verdict for attempt `{seam_id}`: {:?}",
+                cage_after.verdict.status
+            );
 
             run_agent_receipt(AgentReceiptOptions {
                 root: root.clone(),
