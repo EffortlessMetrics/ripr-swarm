@@ -304,7 +304,17 @@ fn validate_receipt_projection(
             &root_display,
             &analysis_path,
         )
-        .map_err(|error| format!("analysis outcome is not complete: {error}"))?;
+        .map_err(|error| format!("analysis outcome artifact is unavailable: {error}"))?;
+    let receipt_analysis_digest = receipt
+        .pointer("/analysis_outcome/semantic_digest")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "receipt is missing analysis outcome semantic digest".to_string())?;
+    let analysis_digest = analysis_outcome.semantic_digest()?;
+    if receipt_analysis_digest != analysis_digest {
+        return Err(
+            "analysis outcome semantic digest commitment does not match receipt".to_string(),
+        );
+    }
     if !analysis_outcome.kind.is_complete()
         || receipt
             .pointer("/analysis_outcome/analysis_complete")
