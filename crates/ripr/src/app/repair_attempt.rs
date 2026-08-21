@@ -21,6 +21,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub(crate) const REPAIR_ATTEMPT_SCHEMA_VERSION: &str = "0.1";
 pub(crate) const REPAIR_ATTEMPT_DIRECTORY: &str = "target/ripr/repair-attempts";
 const REPAIR_ATTEMPT_MANIFEST: &str = "attempt.json";
+const REPAIR_ATTEMPT_COMMITMENT: &str = "before-commitment.sha256";
 const REPAIR_ATTEMPT_ARTIFACTS_DIRECTORY: &str = "artifacts";
 const REPAIR_ATTEMPT_ID_PREFIX: &str = "repair-attempt-";
 const REPAIR_ATTEMPT_ID_HEX_LEN: usize = 24;
@@ -364,7 +365,29 @@ pub(crate) fn write_repair_attempt_manifest(
         .map_err(|error| format!("serialize repair attempt manifest failed: {error}"))?;
     rendered.push(b'\n');
     write_bytes_atomic(&path, &rendered)?;
+    if manifest.state == RepairAttemptState::AwaitingEdit {
+        let commitment_path = repair_attempt_directory(root, &manifest.repair_attempt_id)
+            .join(REPAIR_ATTEMPT_COMMITMENT);
+        let commitment = sha256_bytes(&manifest_before_bytes(manifest)?);
+        if commitment_path.exists() {
+            let existing = std::fs::read_to_string(&commitment_path)
+                .map_err(|error| format!("read {} failed: {error}", commitment_path.display()))?;
+            if existing.trim() != commitment {
+                return Err("repair attempt before commitment mismatch".to_string());
+            }
+        } else {
+            write_bytes_atomic(&commitment_path, commitment.as_bytes())?;
+        }
+    }
     Ok(path)
+}
+
+fn manifest_before_bytes(manifest: &RepairAttemptManifest) -> Result<Vec<u8>, String> {
+    let mut before = manifest.clone();
+    before.state = RepairAttemptState::AwaitingEdit;
+    before.after = None;
+    serde_json::to_vec_pretty(&before)
+        .map_err(|error| format!("serialize repair attempt commitment failed: {error}"))
 }
 
 pub(crate) fn edit_cage_policy_from_packet(
@@ -373,6 +396,13 @@ pub(crate) fn edit_cage_policy_from_packet(
 ) -> Result<EditCagePolicy, String> {
     let value: serde_json::Value = serde_json::from_str(packet)
         .map_err(|error| format!("decode repair packet for edit cage failed: {error}"))?;
+    if value.get("packets").is_none()
+        && value.get("seam_id").and_then(serde_json::Value::as_str) != Some(seam_id)
+    {
+        return Err(format!(
+            "repair packet seam does not match requested seam `{seam_id}`"
+        ));
+    }
     // `agent packet` emits a repo packet containing a `packets` list, while
     // language adapters may emit a single packet.  Select the only actionable
     // packet without treating the report envelope as edit-cage authority.
@@ -525,6 +555,9 @@ pub(crate) fn finish_repair_attempt(
     }
     let baseline: AttemptBaseline = serde_json::from_slice(&baseline_bytes)
         .map_err(|error| format!("decode edit-cage baseline failed: {error}"))?;
+    if baseline.root() != root {
+        return Err("edit-cage baseline root does not match selected repository".to_string());
+    }
     if baseline.root() != root {
         return Err("edit-cage baseline root does not match selected repository".to_string());
     }
@@ -754,6 +787,13 @@ fn validate_manifest_at(
         != expected_manifest
     {
         return Err("repair attempt manifest path is not bound to its identity".to_string());
+    }
+    let commitment_path = repair_attempt_directory(&root, &manifest.repair_attempt_id)
+        .join(REPAIR_ATTEMPT_COMMITMENT);
+    let commitment = std::fs::read_to_string(&commitment_path)
+        .map_err(|error| format!("read before commitment failed: {error}"))?;
+    if commitment.trim() != sha256_bytes(&manifest_before_bytes(manifest)?) {
+        return Err("repair attempt before commitment failed".to_string());
     }
     let artifacts_root = repair_attempt_directory(&root, &manifest.repair_attempt_id)
         .join(REPAIR_ATTEMPT_ARTIFACTS_DIRECTORY);

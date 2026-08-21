@@ -3343,7 +3343,35 @@ fn agent_repair_phases_materialize_snapshots_and_verify_json()
         "--json",
     ]);
     assert!(!baseline_rejected.status.success());
+    std::fs::write(&baseline_path, baseline_bytes.clone())?;
+    let mut coordinated: serde_json::Value = serde_json::from_slice(&manifest_bytes)?;
+    if let Some(artifact) = coordinated["artifacts"]
+        .as_array_mut()
+        .and_then(|artifacts| {
+            artifacts
+                .iter_mut()
+                .find(|artifact| artifact["role"] == "edit_cage_baseline")
+        })
+    {
+        artifact["sha256"] = serde_json::Value::String(format!("sha256:{}", "0".repeat(64)));
+        artifact["bytes"] = serde_json::Value::from(16_u64);
+    }
+    std::fs::write(&baseline_path, b"coordinated rewrite")?;
+    std::fs::write(&manifest_path, serde_json::to_vec_pretty(&coordinated)?)?;
+    let coordinated_rejected = run_ripr(&[
+        "agent",
+        "receipt",
+        "--root",
+        &root_arg,
+        "--verify-json",
+        "target/ripr/workflow/agent-verify.json",
+        "--seam-id",
+        "67fc764ba37d77bd",
+        "--json",
+    ]);
+    assert!(!coordinated_rejected.status.success());
     std::fs::write(&baseline_path, baseline_bytes)?;
+    std::fs::write(&manifest_path, &manifest_bytes)?;
     assert!(String::from_utf8_lossy(&after.stdout).contains("\"status\": \"complete\""));
     assert!(String::from_utf8_lossy(&after.stderr).contains("after phase complete"));
 
