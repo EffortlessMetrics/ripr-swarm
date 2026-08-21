@@ -1,9 +1,17 @@
 use super::related_tests::context::*;
 use super::related_tests::*;
 use super::*;
+use crate::analysis::facts::{WorkspaceRootAuthority, build_index};
 use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
 use crate::analysis::seam_inventory::inventory_seams_from_index;
 use crate::analysis::seams::{ExpectedSink, RequiredDiscriminator, SeamGripClass};
+use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::symlink as symlink_file;
+#[cfg(windows)]
+use std::os::windows::fs::symlink_file;
+use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn index_from_files(files: &[(PathBuf, &str)]) -> Result<RustIndex, String> {
     let adapter = RaRustSyntaxAdapter;
@@ -14,7 +22,256 @@ fn index_from_files(files: &[(PathBuf, &str)]) -> Result<RustIndex, String> {
         index.functions.extend(facts.functions.iter().cloned());
         index.files.insert(path.clone(), facts);
     }
+    let root = std::env::temp_dir().join(format!(
+        "ripr-3410-memory-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos()
+    ));
+    for (path, source) in files {
+        let full = root.join(path);
+        if let Some(parent) = full.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        fs::write(full, source).map_err(|error| error.to_string())?;
+    }
+    index.workspace_authority = Some(WorkspaceRootAuthority::from_index(&root, &index.files));
     Ok(index)
+}
+
+fn authority_fixture_root(label: &str) -> Result<PathBuf, String> {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("ripr-3410-{label}-{stamp}"));
+    fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    fs::write(
+        root.join("src/lib.rs"),
+        "pub fn score(amount: i32, threshold: i32) -> i32 { if amount >= threshold { 1 } else { 0 } }\n#[cfg(test)]\nmod tests { #[test] fn score_boundary() { assert_eq!(super::score(1, 1), 1); } }\n",
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(root)
+}
+
+fn authority_fixture_target(root: &Path) -> Result<(RustIndex, RepoSeam, String), String> {
+    let file = PathBuf::from("src/lib.rs");
+    let index = build_index(root, std::slice::from_ref(&file))?;
+    let seam = inventory_seams_from_index(std::slice::from_ref(&file), &index)
+        .into_iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected fixture predicate seam".to_string())?;
+    Ok((
+        index,
+        seam,
+        fs::read_to_string(root.join(file)).map_err(|error| error.to_string())?,
+    ))
+}
+
+#[test]
+fn production_target_evidence_carries_portable_root_and_currentness_authority() -> Result<(), String>
+{
+    let root = authority_fixture_root("positive")?;
+    let (index, seam, _) = authority_fixture_target(&root)?;
+    let evidence = evidence_for_seam(&seam, &index);
+    let target = evidence
+        .related_tests
+        .iter()
+        .find_map(|related| related.test_target.as_ref())
+        .ok_or_else(|| "current indexed target must be accepted".to_string())?;
+    if target.workspace_identity.is_empty()
+        || target.currentness != TestTargetCurrentness::Current
+        || target.file != PathBuf::from("src/lib.rs")
+    {
+        return Err(format!("unexpected authority evidence: {target:?}"));
+    }
+
+    let relocated = authority_fixture_root("relocated")?;
+    fs::write(
+        relocated.join("src/lib.rs"),
+        fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    let (relocated_index, relocated_seam, _) = authority_fixture_target(&relocated)?;
+    let relocated_target = evidence_for_seam(&relocated_seam, &relocated_index)
+        .related_tests
+        .into_iter()
+        .find_map(|related| related.test_target)
+        .ok_or_else(|| "relocated fixture must remain accepted".to_string())?;
+    if relocated_target.workspace_identity != target.workspace_identity {
+        return Err("relocation changed portable workspace identity".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn production_target_evidence_rejects_authority_failures() -> Result<(), String> {
+    let root = authority_fixture_root("negative")?;
+    let (mut index, seam, source) = authority_fixture_target(&root)?;
+    let file = PathBuf::from("src/lib.rs");
+    let test = index
+        .files
+        .get(&file)
+        .and_then(|facts| facts.tests.first())
+        .cloned()
+        .ok_or_else(|| "missing fixture test".to_string())?;
+    if test_target_evidence(&index, &seam, &test, RelationReason::DirectOwnerCall).is_none() {
+        return Err("baseline authority target unexpectedly missing".to_string());
+    }
+
+    fs::write(root.join(&file), format!("{source}// stale\n"))
+        .map_err(|error| error.to_string())?;
+    if test_target_evidence(&index, &seam, &test, RelationReason::DirectOwnerCall).is_some() {
+        return Err("stale source was accepted".to_string());
+    }
+    fs::write(root.join(&file), &source).map_err(|error| error.to_string())?;
+    fs::remove_file(root.join(&file)).map_err(|error| error.to_string())?;
+    if test_target_evidence(&index, &seam, &test, RelationReason::DirectOwnerCall).is_some() {
+        return Err("missing source was accepted".to_string());
+    }
+    fs::write(root.join(&file), &source).map_err(|error| error.to_string())?;
+
+    index
+        .workspace_authority
+        .as_mut()
+        .ok_or_else(|| "missing authority".to_string())?
+        .root = root.join("wrong-root");
+    if test_target_evidence(&index, &seam, &test, RelationReason::DirectOwnerCall).is_some() {
+        return Err("wrong root authority was accepted".to_string());
+    }
+    index
+        .workspace_authority
+        .as_mut()
+        .ok_or_else(|| "missing authority".to_string())?
+        .root = root.clone();
+    let original_package = index
+        .workspace_authority
+        .as_ref()
+        .and_then(|authority| authority.files.get(&file))
+        .map(|file| file.package_identity.clone())
+        .ok_or_else(|| "missing file authority".to_string())?;
+    index
+        .workspace_authority
+        .as_mut()
+        .ok_or_else(|| "missing authority".to_string())?
+        .files
+        .insert(
+            PathBuf::from("src/other.rs"),
+            crate::analysis::facts::WorkspaceFileAuthority {
+                source_digest: "sha256:other".to_string(),
+                package_identity: "other-package".to_string(),
+                valid: true,
+            },
+        );
+    let mismatch_seam = RepoSeam::new(
+        "src/other.rs",
+        seam.owner(),
+        seam.kind(),
+        seam.byte_offset(),
+        seam.display_line(),
+        seam.expression(),
+        seam.required_discriminator().clone(),
+        seam.expected_sink(),
+    );
+    if test_target_evidence(
+        &index,
+        &mismatch_seam,
+        &test,
+        RelationReason::DirectOwnerCall,
+    )
+    .is_some()
+    {
+        return Err("package mismatch was accepted".to_string());
+    }
+    index
+        .workspace_authority
+        .as_mut()
+        .ok_or_else(|| "missing authority".to_string())?
+        .files
+        .remove(PathBuf::from("src/other.rs").as_path());
+    index
+        .workspace_authority
+        .as_mut()
+        .ok_or_else(|| "missing authority".to_string())?
+        .files
+        .get_mut(&file)
+        .ok_or_else(|| "missing file authority".to_string())?
+        .package_identity = original_package;
+    let duplicate = index
+        .files
+        .get(&file)
+        .and_then(|facts| {
+            facts
+                .functions
+                .iter()
+                .find(|function| function.is_test)
+                .cloned()
+        })
+        .ok_or_else(|| "missing test function".to_string())?;
+    index
+        .files
+        .get_mut(&file)
+        .ok_or_else(|| "missing file facts".to_string())?
+        .functions
+        .push(duplicate);
+    if test_target_evidence(&index, &seam, &test, RelationReason::DirectOwnerCall).is_some() {
+        return Err("duplicate target identity was accepted".to_string());
+    }
+
+    let mut traversal = test.clone();
+    traversal.file = PathBuf::from("../src/lib.rs");
+    let authority = index
+        .workspace_authority
+        .as_ref()
+        .ok_or_else(|| "missing authority".to_string())?;
+    if authority.validates_target(&traversal.file, seam.file(), &source) {
+        return Err("authority accepted traversal target".to_string());
+    }
+    if test_target_evidence(&index, &seam, &traversal, RelationReason::DirectOwnerCall).is_some() {
+        return Err("traversal target was accepted".to_string());
+    }
+    let mut absolute = test;
+    absolute.file = root.join("src/lib.rs");
+    if authority.validates_target(&absolute.file, seam.file(), &source) {
+        return Err("authority accepted absolute target".to_string());
+    }
+    if test_target_evidence(&index, &seam, &absolute, RelationReason::DirectOwnerCall).is_some() {
+        return Err("absolute target was accepted".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn production_target_evidence_rejects_symlink_escape() -> Result<(), String> {
+    let root = authority_fixture_root("symlink")?;
+    let outside = authority_fixture_root("symlink-outside")?;
+    let link = root.join("src/escaped.rs");
+    if let Err(error) = symlink_file(outside.join("src/lib.rs"), &link) {
+        return Err(format!(
+            "symlink containment fixture could not be created: {error}"
+        ));
+    }
+    let relative = PathBuf::from("src/escaped.rs");
+    let index = build_index(&root, std::slice::from_ref(&relative))?;
+    let seam = inventory_seams_from_index(std::slice::from_ref(&relative), &index)
+        .into_iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected symlink predicate seam".to_string())?;
+    let evidence = evidence_for_seam(&seam, &index);
+    if evidence
+        .related_tests
+        .iter()
+        .any(|related| related.test_target.is_some())
+    {
+        return Err("symlink escape target was accepted".to_string());
+    }
+    Ok(())
 }
 
 #[test]
