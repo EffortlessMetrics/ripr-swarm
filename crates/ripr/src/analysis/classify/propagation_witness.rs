@@ -238,6 +238,34 @@ pub(in crate::analysis) fn complete_direct_witness(
         && witness.sink.kind != FlowSinkKind::Unknown.as_str()
 }
 
+pub(in crate::analysis) fn valid_owner_bound_partial_witness(
+    probe: &Probe,
+    witness: Option<&PropagationWitnessV1>,
+) -> bool {
+    let Some(witness) = witness else {
+        return false;
+    };
+    let Some(owner) = probe.owner.as_ref() else {
+        return false;
+    };
+    let Some(edge) = witness.edges.first() else {
+        return false;
+    };
+    witness.digest_matches()
+        && witness.schema_version == SCHEMA_VERSION
+        && witness.behavior.owner == *owner
+        && witness.behavior.family == probe.family.as_str()
+        && witness.behavior.delta == probe.delta.as_str()
+        && witness.behavior.expression == normalize_semantic_text(&probe.expression)
+        && witness.source.kind == "changed_behavior"
+        && witness.source.identity == normalize_semantic_text(&probe.expression)
+        && witness.completeness == PathCompleteness::Partial
+        && witness.edges.len() == 1
+        && edge.status == EdgeStatus::Candidate
+        && edge.from == witness.source.identity
+        && edge.to == witness.sink.identity
+}
+
 fn edge_kind_for_sink(kind: &FlowSinkKind) -> Option<PropagationEdgeKind> {
     match kind {
         FlowSinkKind::ReturnValue => Some(PropagationEdgeKind::DirectReturn),
@@ -522,7 +550,7 @@ impl PropagationWitnessV1 {
         self.semantic_digest == self.compute_semantic_digest()
     }
 
-    fn compute_semantic_digest(&self) -> String {
+    pub(in crate::analysis) fn compute_semantic_digest(&self) -> String {
         let mut canonical = Vec::new();
         append_canonical_section_header(&mut canonical, "witness", 1);
         append_canonical_field(&mut canonical, "propagation-witness-v1");

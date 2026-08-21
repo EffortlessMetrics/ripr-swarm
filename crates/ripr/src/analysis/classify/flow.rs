@@ -1,5 +1,7 @@
 use super::super::rust_index::FunctionSummary;
-use super::propagation_witness::{PropagationWitnessV1, complete_direct_witness};
+use super::propagation_witness::{
+    PropagationWitnessV1, complete_direct_witness, valid_owner_bound_partial_witness,
+};
 use super::text::exact_error_variant;
 use crate::domain::*;
 
@@ -50,11 +52,31 @@ pub(in crate::analysis) fn propagation_evidence_with_witness(
         return propagation_evidence(probe, flow_sinks);
     }
 
-    let Some(sink) = flow_sinks
-        .iter()
-        .find(|sink| sink.kind != FlowSinkKind::Unknown)
-    else {
-        return propagation_evidence(probe, flow_sinks);
+    let sink = if let Some(witness) = witness {
+        flow_sinks.iter().find(|sink| {
+            sink.owner.as_ref() == Some(&witness.behavior.owner)
+                && sink.kind.as_str() == witness.sink.kind
+                && normalize_sink_identity(&sink.text)
+                    == normalize_sink_identity(&witness.sink.identity)
+        })
+    } else {
+        flow_sinks
+            .iter()
+            .find(|sink| sink.kind != FlowSinkKind::Unknown)
+    };
+
+    let Some(sink) = sink else {
+        if !flow_sinks
+            .iter()
+            .any(|sink| sink.kind != FlowSinkKind::Unknown)
+        {
+            return propagation_evidence(probe, flow_sinks);
+        }
+        return StageEvidence::new(
+            StageState::Weak,
+            Confidence::Low,
+            "No complete owner-bound propagation witness found for direct sink".to_string(),
+        );
     };
 
     let direct_sink = matches!(
@@ -80,11 +102,7 @@ pub(in crate::analysis) fn propagation_evidence_with_witness(
                 ),
             );
         }
-        let summary = if sink.owner.as_ref() != probe.owner.as_ref()
-            || witness.is_none()
-            || witness.is_some_and(|witness| {
-                !witness.digest_matches() || probe.owner.as_ref() != Some(&witness.behavior.owner)
-            }) {
+        let summary = if !valid_owner_bound_partial_witness(probe, witness) {
             format!(
                 "No complete owner-bound propagation witness found for {}: {}",
                 sink.kind.label(),
@@ -101,6 +119,10 @@ pub(in crate::analysis) fn propagation_evidence_with_witness(
     }
 
     propagation_evidence(probe, flow_sinks)
+}
+
+fn normalize_sink_identity(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn integrated_direct_family(family: &ProbeFamily) -> bool {
@@ -794,6 +816,7 @@ fn is_obvious_return_expression(text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::super::propagation_witness::PathCompleteness;
     use super::*;
     use crate::analysis::rust_index::ReturnFact;
     use std::path::PathBuf;
@@ -878,30 +901,83 @@ mod tests {
             assert_eq!(evidence.state, StageState::Yes);
         }
 
-        let probe = probe(ProbeFamily::FieldConstruction, "status: amount", 2);
+        let field_probe = probe(ProbeFamily::FieldConstruction, "status: amount", 2);
         let sinks = vec![FlowSinkFact {
             kind: FlowSinkKind::StructField,
             text: "status: amount".to_string(),
             line: 3,
-            owner: probe.owner.clone(),
+            owner: field_probe.owner.clone(),
         }];
-        let witness = super::super::propagation_witness::current_path_witness(&probe, &sinks);
+        let witness = super::super::propagation_witness::current_path_witness(&field_probe, &sinks);
 
         let mut invalid = witness.clone();
         if let Some(witness) = invalid.as_mut() {
             witness.semantic_digest = "sha256:invalid".to_string();
         }
         assert_eq!(
-            propagation_evidence_with_witness(&probe, &sinks, invalid.as_ref()).state,
+            propagation_evidence_with_witness(&field_probe, &sinks, invalid.as_ref()).state,
             StageState::Weak
         );
 
         let mut sibling = sinks.clone();
         sibling[0].owner = Some(SymbolId("src/lib.rs::sibling".to_string()));
         assert_eq!(
-            propagation_evidence_with_witness(&probe, &sibling, witness.as_ref()).state,
+            propagation_evidence_with_witness(&field_probe, &sibling, witness.as_ref()).state,
             StageState::Weak
         );
+
+        let probe = probe(ProbeFamily::ReturnValue, "amount", 2);
+        let sinks = vec![
+            FlowSinkFact {
+                kind: FlowSinkKind::ReturnValue,
+                text: "sibling".to_string(),
+                line: 3,
+                owner: probe.owner.clone(),
+            },
+            FlowSinkFact {
+                kind: FlowSinkKind::ReturnValue,
+                text: "amount".to_string(),
+                line: 4,
+                owner: probe.owner.clone(),
+            },
+        ];
+        let witness = super::super::propagation_witness::current_path_witness(&probe, &sinks);
+        assert_eq!(
+            propagation_evidence_with_witness(&probe, &sinks, witness.as_ref()).state,
+            StageState::Yes
+        );
+
+        let mut invalid_cases = Vec::new();
+        if let Some(witness) = witness {
+            let mut invalid_delta = witness.clone();
+            invalid_delta.behavior.delta = "effect".to_string();
+            invalid_delta.semantic_digest = invalid_delta.compute_semantic_digest();
+            invalid_cases.push(invalid_delta);
+
+            let mut invalid_schema = witness.clone();
+            invalid_schema.schema_version = 99;
+            invalid_schema.semantic_digest = invalid_schema.compute_semantic_digest();
+            invalid_cases.push(invalid_schema);
+
+            let mut invalid_family = witness.clone();
+            invalid_family.behavior.family = "error_path".to_string();
+            invalid_family.semantic_digest = invalid_family.compute_semantic_digest();
+            invalid_cases.push(invalid_family);
+
+            let mut invalid_completeness = witness;
+            invalid_completeness.completeness = PathCompleteness::Partial;
+            invalid_completeness.semantic_digest = invalid_completeness.compute_semantic_digest();
+            invalid_cases.push(invalid_completeness);
+        }
+        for invalid in invalid_cases {
+            let evidence = propagation_evidence_with_witness(&probe, &sinks, Some(&invalid));
+            assert_eq!(evidence.state, StageState::Weak);
+            assert!(
+                evidence
+                    .summary
+                    .starts_with("No complete owner-bound propagation witness")
+            );
+        }
     }
 
     #[test]
@@ -914,9 +990,12 @@ mod tests {
             owner: probe.owner.clone(),
         }];
         let witness = super::super::propagation_witness::current_path_witness(&probe, &sinks);
-        assert_eq!(
-            propagation_evidence_with_witness(&probe, &sinks, witness.as_ref()).state,
-            StageState::Weak
+        let evidence = propagation_evidence_with_witness(&probe, &sinks, witness.as_ref());
+        assert_eq!(evidence.state, StageState::Weak);
+        assert!(
+            evidence
+                .summary
+                .starts_with("Propagation witness is incomplete for")
         );
 
         let opaque = vec![FlowSinkFact {
