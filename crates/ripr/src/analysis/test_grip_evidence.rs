@@ -123,6 +123,16 @@ impl TestTargetEvidence {
     pub(crate) fn symbol_id(&self) -> &SymbolId {
         &self.symbol_id
     }
+
+    #[cfg(test)]
+    pub(crate) fn file(&self) -> &Path {
+        &self.file
+    }
+
+    #[cfg(test)]
+    pub(crate) fn line(&self) -> usize {
+        self.line
+    }
 }
 
 #[cfg(test)]
