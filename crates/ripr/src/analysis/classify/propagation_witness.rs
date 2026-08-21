@@ -132,7 +132,7 @@ pub(in crate::analysis) fn current_path_witness(
     let edge_kind = edge_kind_for_sink(&sink.kind)?;
     let source_identity = normalize_semantic_text(&probe.expression);
     let sink_identity = normalize_semantic_text(&sink.text);
-    let edge_status = edge_status(&source_identity, &sink_identity);
+    let edge_status = edge_status_for_kind(&edge_kind, &source_identity, &sink_identity);
     let completeness = completeness_for_edge(&edge_kind, &edge_status);
     let mut witness = PropagationWitnessV1 {
         schema_version: SCHEMA_VERSION,
@@ -183,6 +183,26 @@ fn completeness_for_edge(kind: &PropagationEdgeKind, status: &EdgeStatus) -> Pat
         PathCompleteness::Complete
     } else {
         PathCompleteness::Partial
+    }
+}
+
+fn edge_status_for_kind(kind: &PropagationEdgeKind, source: &str, sink: &str) -> EdgeStatus {
+    if *kind == PropagationEdgeKind::ErrorVariant
+        && canonical_error_identity(source) == canonical_error_identity(sink)
+    {
+        EdgeStatus::Established
+    } else {
+        edge_status(source, sink)
+    }
+}
+
+fn canonical_error_identity(text: &str) -> String {
+    let normalized_text = normalize_semantic_text(text);
+    let normalized = normalized_text.trim_start_matches("return ");
+    if normalized.starts_with("Err(") {
+        format!("Result::{normalized}")
+    } else {
+        normalized.to_string()
     }
 }
 
@@ -310,14 +330,27 @@ fn has_closure_syntax(text: &str) -> bool {
 
 fn source_sink_tokens_overlap(source: &str, sink: &str) -> bool {
     let source_tokens = semantic_tokens(source);
-    let source_path = qualified_path_identity(source);
-    let sink_path = qualified_path_identity(sink);
+    let source_path = qualified_path_identity(&path_identity_text(source));
+    let sink_path = qualified_path_identity(&path_identity_text(sink));
     !source_tokens.is_empty()
         && receiver_identity(source) == receiver_identity(sink)
         && paths_are_compatible(source, sink, source_path.as_deref(), sink_path.as_deref())
         && semantic_tokens(sink)
             .iter()
             .any(|token| source_tokens.iter().any(|source| source == token))
+}
+
+fn path_identity_text(text: &str) -> String {
+    let normalized_text = normalize_semantic_text(text);
+    let normalized = normalized_text.trim_start_matches("return ");
+    if let Some(payload) = normalized
+        .strip_prefix("Err(")
+        .and_then(|value| value.strip_suffix(')'))
+    {
+        payload.to_string()
+    } else {
+        normalized.to_string()
+    }
 }
 
 fn qualified_path_identity(text: &str) -> Option<String> {
@@ -617,7 +650,7 @@ mod tests {
                 "Err(Boundary)",
                 None,
                 PropagationEdgeKind::ErrorVariant,
-                EdgeStatus::Candidate,
+                EdgeStatus::Established,
             ),
             (
                 ProbeFamily::FieldConstruction,
@@ -756,6 +789,20 @@ mod tests {
         assert!(
             current_path_witness(
                 &probe(ProbeFamily::ErrorPath, "AuthError::RevokedToken"),
+                &[sink(
+                    FlowSinkKind::ErrorVariant,
+                    "Result::Err(AuthError::RevokedToken)",
+                    14,
+                )]
+            )
+            .is_some()
+        );
+        assert!(
+            current_path_witness(
+                &probe(
+                    ProbeFamily::ErrorPath,
+                    "return Err(AuthError::RevokedToken);"
+                ),
                 &[sink(
                     FlowSinkKind::ErrorVariant,
                     "Result::Err(AuthError::RevokedToken)",
