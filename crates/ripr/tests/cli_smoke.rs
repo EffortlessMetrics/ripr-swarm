@@ -2695,11 +2695,25 @@ fn editor_agent_loop_fixture_outputs_match_expected() -> Result<(), Box<dyn std:
     ])?;
     assert_success(&swapped_sidecar);
     let swapped_sidecar_rendered = std::fs::read_to_string(swapped_sidecar_out)?;
+    let swapped_sidecar_value: serde_json::Value = serde_json::from_str(&swapped_sidecar_rendered)?;
+    assert_eq!(
+        swapped_sidecar_value["status"], "missing_required_artifact",
+        "swapped analysis sidecar changed status: {swapped_sidecar_rendered}"
+    );
+    assert_eq!(
+        swapped_sidecar_value["action_kind"], "generate_missing_artifact",
+        "swapped analysis sidecar changed action: {swapped_sidecar_rendered}"
+    );
+    let swapped_warnings = swapped_sidecar_value["warnings"]
+        .as_array()
+        .ok_or("swapped sidecar warnings should be an array")?;
     assert!(
-        swapped_sidecar_rendered
-            .contains("analysis outcome semantic digest commitment does not match receipt")
-            && !swapped_sidecar_rendered.contains(r#""status": "already_improved""#),
-        "swapped analysis sidecar was promoted: {swapped_sidecar_rendered}"
+        swapped_warnings.iter().any(|warning| {
+            warning.as_str().is_some_and(|warning| {
+                warning.contains("analysis outcome semantic digest commitment")
+            })
+        }),
+        "swapped analysis sidecar warning lost: {swapped_sidecar_rendered}"
     );
     std::fs::write(&analysis_outcome_path, &analysis_outcome_bytes)?;
 
