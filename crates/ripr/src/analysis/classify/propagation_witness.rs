@@ -660,16 +660,18 @@ mod tests {
     }
 
     #[test]
-    fn forged_same_owner_family_witness_fails_exact_identity_binding() {
+    fn forged_same_owner_family_witness_fails_exact_identity_binding() -> Result<(), String> {
         let probe = probe(ProbeFamily::FieldConstruction, "status: amount");
         let sinks = vec![sink(FlowSinkKind::StructField, "status: amount", 14)];
-        let mut witness =
-            current_path_witness(&probe, &sinks).expect("established fixture witness");
+        let Some(mut witness) = current_path_witness(&probe, &sinks) else {
+            return Err("established fixture witness was absent".to_string());
+        };
         assert!(complete_direct_witness(&probe, Some(&witness)));
 
         witness.behavior.expression = "status: sibling".to_string();
         witness.semantic_digest = witness.compute_semantic_digest();
         assert!(!complete_direct_witness(&probe, Some(&witness)));
+        Ok(())
     }
 
     #[test]
