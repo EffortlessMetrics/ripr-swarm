@@ -534,19 +534,14 @@ pub(crate) fn finish_repair_attempt(
     }
     let (manifest_path, mut manifest) =
         matches.pop().ok_or_else(|| "missing attempt".to_string())?;
-    let baseline_path = manifest
-        .artifacts
-        .iter()
-        .find(|artifact| artifact.role == "edit_cage_baseline")
-        .map(|artifact| root.join(&artifact.path))
-        .ok_or_else(|| "repair attempt has no edit-cage baseline artifact".to_string())?;
-    let baseline_bytes = std::fs::read(&baseline_path)
-        .map_err(|error| format!("read {} failed: {error}", baseline_path.display()))?;
     let baseline_artifact = manifest
         .artifacts
         .iter()
         .find(|artifact| artifact.role == "edit_cage_baseline")
         .ok_or_else(|| "repair attempt has no edit-cage baseline artifact".to_string())?;
+    let baseline_path = root.join(&baseline_artifact.path);
+    let baseline_bytes = std::fs::read(&baseline_path)
+        .map_err(|error| format!("read {} failed: {error}", baseline_path.display()))?;
     if u64::try_from(baseline_bytes.len()).map_err(|error| error.to_string())?
         != baseline_artifact.bytes
         || sha256_bytes(&baseline_bytes) != baseline_artifact.sha256
@@ -555,9 +550,6 @@ pub(crate) fn finish_repair_attempt(
     }
     let baseline: AttemptBaseline = serde_json::from_slice(&baseline_bytes)
         .map_err(|error| format!("decode edit-cage baseline failed: {error}"))?;
-    if baseline.root() != root {
-        return Err("edit-cage baseline root does not match selected repository".to_string());
-    }
     if baseline.root() != root {
         return Err("edit-cage baseline root does not match selected repository".to_string());
     }
