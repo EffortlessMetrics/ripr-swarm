@@ -20,7 +20,6 @@ pub(crate) struct WorkspaceFileAuthority {
 impl WorkspaceRootAuthority {
     pub(crate) fn from_index(root: &Path, files: &BTreeMap<PathBuf, FileFacts>) -> Self {
         let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-        let fallback_package = common_containing_directory(files.keys());
         let mut authorities = BTreeMap::new();
         for (relative, facts) in files {
             let valid = is_relative_without_parent(relative)
@@ -33,11 +32,7 @@ impl WorkspaceRootAuthority {
                 relative.clone(),
                 WorkspaceFileAuthority {
                     source_digest: source_digest(facts.source.as_bytes()),
-                    package_identity: package_identity(
-                        &canonical_root,
-                        relative,
-                        &fallback_package,
-                    ),
+                    package_identity: package_identity(&canonical_root, relative),
                     valid,
                 },
             );
@@ -96,7 +91,7 @@ fn is_relative_without_parent(path: &Path) -> bool {
         })
 }
 
-fn package_identity(root: &Path, relative: &Path, fallback_package: &Path) -> String {
+fn package_identity(root: &Path, relative: &Path) -> String {
     let mut cursor = root.join(relative).parent().map(Path::to_path_buf);
     while let Some(directory) = cursor {
         let manifest = directory.join("Cargo.toml");
@@ -113,31 +108,11 @@ fn package_identity(root: &Path, relative: &Path, fallback_package: &Path) -> St
         }
         cursor = directory.parent().map(Path::to_path_buf);
     }
+    let containing = relative.parent().unwrap_or_else(|| Path::new("."));
     format!(
         "directory:{}",
-        fallback_package.to_string_lossy().replace('\\', "/")
+        containing.to_string_lossy().replace('\\', "/")
     )
-}
-
-fn common_containing_directory<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> PathBuf {
-    let mut paths = paths;
-    let mut common = paths
-        .next()
-        .and_then(|path| path.parent())
-        .unwrap_or_else(|| Path::new("."))
-        .to_path_buf();
-    for path in paths {
-        while !path.starts_with(&common) {
-            if !common.pop() {
-                return PathBuf::from(".");
-            }
-        }
-    }
-    if common.as_os_str().is_empty() {
-        PathBuf::from(".")
-    } else {
-        common
-    }
 }
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct RustIndex {

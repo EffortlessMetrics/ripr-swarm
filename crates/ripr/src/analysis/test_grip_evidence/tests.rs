@@ -46,7 +46,23 @@ fn index_from_files(files: &[(PathBuf, &str)]) -> Result<RustIndex, String> {
     Ok(index)
 }
 
-fn authority_fixture_root(label: &str) -> Result<PathBuf, String> {
+struct AuthorityFixtureRoot(PathBuf);
+
+impl std::ops::Deref for AuthorityFixtureRoot {
+    type Target = Path;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Drop for AuthorityFixtureRoot {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn authority_fixture_root(label: &str) -> Result<AuthorityFixtureRoot, String> {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| error.to_string())?
@@ -63,7 +79,7 @@ fn authority_fixture_root(label: &str) -> Result<PathBuf, String> {
         "pub fn score(amount: i32, threshold: i32) -> i32 { if amount >= threshold { 1 } else { 0 } }\n#[cfg(test)]\nmod tests { #[test] fn score_boundary() { assert_eq!(super::score(1, 1), 1); } }\n",
     )
     .map_err(|error| error.to_string())?;
-    Ok(root)
+    Ok(AuthorityFixtureRoot(root))
 }
 
 fn authority_fixture_target(root: &Path) -> Result<(RustIndex, RepoSeam, String), String> {
@@ -78,6 +94,65 @@ fn authority_fixture_target(root: &Path) -> Result<(RustIndex, RepoSeam, String)
         seam,
         fs::read_to_string(root.join(file)).map_err(|error| error.to_string())?,
     ))
+}
+
+#[test]
+fn production_manifestless_directories_keep_distinct_package_identity() -> Result<(), String> {
+    struct FixtureCleanup(PathBuf);
+    impl Drop for FixtureCleanup {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("ripr-3410-manifestless-{stamp}"));
+    let _cleanup = FixtureCleanup(root.clone());
+    let first = PathBuf::from("first/lib.rs");
+    let second = PathBuf::from("second/lib.rs");
+    for (path, source) in [
+        (&first, "pub fn first() -> i32 { 1 }\n"),
+        (&second, "pub fn second() -> i32 { 2 }\n"),
+    ] {
+        let full = root.join(path);
+        fs::create_dir_all(
+            full.parent()
+                .ok_or_else(|| "fixture parent missing".to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        fs::write(full, source).map_err(|error| error.to_string())?;
+    }
+    let index = build_index(&root, &[first.clone(), second.clone()])?;
+    let authority = index
+        .workspace_authority
+        .as_ref()
+        .ok_or_else(|| "missing workspace authority".to_string())?;
+    let first_identity = authority
+        .files
+        .get(&first)
+        .ok_or_else(|| "missing first authority".to_string())?
+        .package_identity
+        .clone();
+    let second_identity = authority
+        .files
+        .get(&second)
+        .ok_or_else(|| "missing second authority".to_string())?
+        .package_identity
+        .clone();
+    if first_identity == second_identity {
+        return Err(format!(
+            "unrelated manifest-less directories collapsed to {first_identity:?}"
+        ));
+    }
+    if authority.validates_target(&first, &second, "pub fn first() -> i32 { 1 }\n") {
+        return Err(
+            "manifest-less files in unrelated directories shared target identity".to_string(),
+        );
+    }
+    Ok(())
 }
 
 #[test]
@@ -155,7 +230,7 @@ fn production_target_evidence_rejects_authority_failures() -> Result<(), String>
         .workspace_authority
         .as_mut()
         .ok_or_else(|| "missing authority".to_string())?
-        .root = root.clone();
+        .root = root.to_path_buf();
     let original_package = index
         .workspace_authority
         .as_ref()
