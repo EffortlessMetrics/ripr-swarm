@@ -56,3 +56,6 @@ Evidence
   - related test tests/errors.rs:4 empty_token_rejects_with_revoked_token uses strong exact error variant oracle: assert!(matches!(authenticate(""), Err(AuthError::RevokedToken)));
   - observed enum variant value AuthError::RevokedToken at line 5
   - observed function argument value token = "" at line 5
+
+Next step
+  Replace broad assertions with exact equality or a property that constrains the changed returned value.

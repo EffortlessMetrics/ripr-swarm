@@ -644,7 +644,7 @@ mod tests {
                 "negative_error",
                 "compute(-1)",
                 oracle_fact(
-                    "assert_eq!(err, CalcError::Negative);",
+                    "assert_eq!(err, CalcError::TooLarger);",
                     OracleKind::ExactErrorVariant,
                     OracleStrength::Strong,
                 ),

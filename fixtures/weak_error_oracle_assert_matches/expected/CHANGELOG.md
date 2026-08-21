@@ -262,3 +262,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending
+
+Reason:
+RIPR-SPEC-0001: retain repair guidance for unaligned direct sink
+
+Command:
+`cargo xtask goldens bless weak_error_oracle_assert_matches --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

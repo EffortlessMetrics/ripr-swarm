@@ -190,3 +190,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending
+
+Reason:
+RIPR-SPEC-0001: retain repair guidance for unaligned direct sink
+
+Command:
+`cargo xtask goldens bless unwrap_err_variant_single_line --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

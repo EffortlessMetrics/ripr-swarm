@@ -56,3 +56,6 @@ Evidence
   - related test tests/errors.rs:4 negative_input_rejects_with_negative_error uses strong exact error variant oracle: assert_eq!(err, CalcError::Negative);
   - observed function argument value x = -1 at line 5
   - observed enum variant value CalcError::Negative at line 6
+
+Next step
+  Replace broad assertions with exact equality or a property that constrains the changed returned value.
