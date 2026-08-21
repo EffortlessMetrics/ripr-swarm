@@ -537,7 +537,7 @@ fn is_keyword_or_noise(token: &str) -> bool {
     )
 }
 
-fn normalize_semantic_text(text: &str) -> String {
+pub(in crate::analysis) fn normalize_semantic_text(text: &str) -> String {
     text.trim()
         .trim_end_matches([',', ';'])
         .split_whitespace()
