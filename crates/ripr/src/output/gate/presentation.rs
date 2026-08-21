@@ -157,8 +157,12 @@ pub(crate) fn gate_decision_status(report: &GateDecisionReport) -> &str {
 /// (#2599).
 ///
 /// For `config_error`: the first config error message. For `blocked`: the
-/// first blocking decision or, when exception policy is the blocker, the
-/// count and first blocking exception-policy violation.
+/// first blocking decision enriched with the exact seam location,
+/// classification, a concrete fix sketch, and the producer-owned
+/// inspection command (#1440) — so the point of failure names what to fix
+/// and how to inspect it instead of forcing artifact archaeology. When
+/// exception policy is the blocker: the count and first blocking
+/// exception-policy violation.
 /// Returns an empty string when no useful detail is available.
 pub(crate) fn gate_decision_inline_detail(report: &GateDecisionReport) -> String {
     if report.status == "config_error"
@@ -173,11 +177,40 @@ pub(crate) fn gate_decision_inline_detail(report: &GateDecisionReport) -> String
             .filter(|d| d.decision == "blocking")
             .collect();
         if let Some(first) = blocking.first() {
-            return format!(
+            let mut detail = format!(
                 ": {} blocking gap(s); first: {}",
                 blocking.len(),
                 first.gate_reason
             );
+            if let Some(path) = &first.placement.path {
+                match first.placement.line {
+                    Some(line) => detail.push_str(&format!(" [{path}:{line}]")),
+                    None => detail.push_str(&format!(" [{path}]")),
+                }
+            }
+            if let Some(class) = &first.static_class {
+                detail.push_str(&format!(" ({class})"));
+            }
+            match (
+                first.repair_route.repair_target.as_ref(),
+                first.repair_route.changed_behavior.as_deref(),
+            ) {
+                (Some(GateRepairTarget::ProductionCaller { owner, .. }), Some(behavior)) => {
+                    detail.push_str(&format!(
+                        "; add a test that drives `{owner}` so it observes {behavior}"
+                    ));
+                }
+                (_, Some(behavior)) => {
+                    detail.push_str(&format!(
+                        "; add a test that observes {behavior} at the flagged seam"
+                    ));
+                }
+                (_, None) => {}
+            }
+            if let Some(command) = first.repair_route.inspection_command.as_deref() {
+                detail.push_str(&format!("; inspect with `{command}`"));
+            }
+            return detail;
         }
         if let Some(exception_policy) = &report.exception_policy {
             let mut blocking_violations = exception_policy

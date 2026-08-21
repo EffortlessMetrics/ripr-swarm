@@ -43,6 +43,30 @@ fn gate_acknowledgeable_blocks_policy_candidate_without_label() -> Result<(), St
 }
 
 #[test]
+fn gate_inline_failure_detail_names_seam_location_and_inspection_command() -> Result<(), String> {
+    // #1440: at the point of failure the inline detail must name the exact
+    // seam location and the producer-owned inspection command so consumers
+    // do not need artifact archaeology to act on a correct signal.
+    let input = fixture_input(GateMode::Acknowledgeable);
+    let report = build_gate_decision_report(&input)?;
+    assert_eq!(report.status, "blocked");
+    let inline = gate_decision_inline_detail(&report);
+    assert!(
+        inline.contains("1 blocking gap(s); first:"),
+        "inline detail lost the blocking summary: {inline}"
+    );
+    assert!(
+        inline.contains("[src/pricing.rs:88]"),
+        "inline detail missing seam location: {inline}"
+    );
+    assert!(
+        inline.contains("`ripr agent brief --root . --seam-id 8f7fa8644fd12280"),
+        "inline detail missing inspection command: {inline}"
+    );
+    Ok(())
+}
+
+#[test]
 fn gate_acknowledgeable_keeps_waived_candidate_visible() -> Result<(), String> {
     let mut input = fixture_input(GateMode::Acknowledgeable);
     input.labels.push("ripr-waive".to_string());
