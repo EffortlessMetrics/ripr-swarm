@@ -15,7 +15,6 @@ Start here:
   Why weakly_exposed: the evidence path is partially complete — see full form for details
   Changed behavior: return Err(CalcError::Negative);
   Related test: tests/errors.rs:4 negative_input_rejects_with_negative_error
-  Next step: Assert the exact error variant or payload instead of only is_err().
   Evidence:
     - reach yes: Related tests appear to reach compute: negative_input_rejects_with_negative_error
     - infection yes: Reachable tests can plausibly activate this changed behavior

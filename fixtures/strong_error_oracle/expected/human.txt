@@ -15,7 +15,6 @@ Start here:
   Why weakly_exposed: the evidence path is partially complete — see full form for details
   Changed behavior: return Err(AuthError::RevokedToken);
   Related test: tests/errors.rs:4 empty_token_rejects_with_revoked_token
-  Next step: Assert the exact error variant or payload instead of only is_err().
   Evidence:
     - reach yes: Related tests appear to reach authenticate: empty_token_rejects_with_revoked_token
     - infection yes: Reachable tests can plausibly activate this changed behavior

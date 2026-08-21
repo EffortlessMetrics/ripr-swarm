@@ -476,7 +476,11 @@ fn is_keyword_or_noise(token: &str) -> bool {
 }
 
 fn normalize_semantic_text(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+    text.trim()
+        .trim_end_matches([',', ';'])
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 impl PropagationWitnessV1 {

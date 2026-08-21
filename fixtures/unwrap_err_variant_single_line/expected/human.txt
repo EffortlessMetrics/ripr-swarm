@@ -15,7 +15,6 @@ Start here:
   Why weakly_exposed: the evidence path is partially complete — see full form for details
   Changed behavior: return Err(ParseError::TooLong(name.len()))
   Related test: tests/errors.rs:4 too_long_name_rejected_with_exact_variant
-  Next step: Assert the exact error variant or payload instead of only is_err().
   Evidence:
     - reach yes: Related tests appear to reach validate: too_long_name_rejected_with_exact_variant
     - infection yes: Reachable tests can plausibly activate this changed behavior

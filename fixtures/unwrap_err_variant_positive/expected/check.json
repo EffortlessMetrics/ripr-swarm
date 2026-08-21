@@ -34,7 +34,7 @@
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(CalcError::Negative)","line":8}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Propagation witness is incomplete for error variant: Result::Err(CalcError::Negative)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach compute: negative_input_rejects_with_negative_error", "Strong oracle found: exact error variant assertion"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Propagation witness is incomplete for error variant: Result::Err(CalcError::Negative)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach compute: negative_input_rejects_with_negative_error", "Strong oracle found: exact error variant assertion", "static limitation: exact oracle established; no assertion repair is indicated"],
       "missing": [],
       "assertion_texts": {
         "5": "let err = compute(-1).unwrap_err();",
@@ -86,8 +86,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_error_variant",
       "oracle_strength": "strong",
-      "recommended_next_step": "Assert the exact error variant or payload instead of only is_err().",
-      "suggested_next_action": "Assert the exact error variant or payload instead of only is_err().",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
       "language": "rust",
       "source_currentness": "candidate_current"
     },
@@ -115,7 +115,7 @@
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(CalcError::Negative)","line":8}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Propagation witness is incomplete for error variant: Result::Err(CalcError::Negative)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach compute: negative_input_rejects_with_negative_error", "Strong oracle found: exact error variant assertion"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Propagation witness is incomplete for error variant: Result::Err(CalcError::Negative)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach compute: negative_input_rejects_with_negative_error", "Strong oracle found: exact error variant assertion", "static limitation: exact oracle established; no assertion repair is indicated"],
       "missing": [],
       "assertion_texts": {
         "5": "let err = compute(-1).unwrap_err();",
@@ -167,8 +167,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_error_variant",
       "oracle_strength": "strong",
-      "recommended_next_step": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
-      "suggested_next_action": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
       "language": "rust",
       "source_currentness": "candidate_current"
     }
