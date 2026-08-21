@@ -66,9 +66,10 @@ struct RevealAssertionAnalysis {
     /// - **Value** families (MatchArm, ReturnValue, FieldConstruction,
     ///   ErrorPath): the only static signal of specificity is a `token_match` —
     ///   an assertion whose text contains an identifier token from the probe
-    ///   expression. For `ErrorPath`, `assertion_matches_probe_detail`'s
-    ///   `ExactErrorVariant` fast-path returns `has_token_match=true` when the
-    ///   assertion text contains the probe's specific variant token (RIPR-SPEC-0106,
+    ///   expression. For probes whose changed expression constructs an exact
+    ///   error variant, `assertion_matches_probe_detail`'s
+    ///   `ExactErrorVariant` fast-path returns `has_token_match=true` only when
+    ///   the assertion text contains that specific variant token (RIPR-SPEC-0106,
     ///   Part B), so a genuine variant-pinning oracle clears this guard. A sibling
     ///   variant, a broad `is_err()`, or a non-variant exact-value oracle does not.
     /// - **Effect** families (SideEffect, CallDeletion): the canonical observer
@@ -83,15 +84,15 @@ struct RevealAssertionAnalysis {
 /// Returns true for families where an assertion must specifically reference the
 /// changed sub-expression to confirm observation. For **value** families
 /// (MatchArm, ReturnValue, FieldConstruction, ErrorPath) the only static
-/// confirmation signal is a `token_match`. For `ErrorPath`, a genuine
-/// variant-pinning oracle (`ExactErrorVariant` whose text contains the probe's
-/// specific variant token) sets `has_token_match=true` in
-/// `assertion_matches_probe_detail` (RIPR-SPEC-0106, Part B), clearing this
-/// guard. A broad `is_err()` or an exact-value oracle on a sibling result does
-/// not. For **effect** families (SideEffect, CallDeletion) the legitimate
-/// observer is often a mock/expectation that **kind-matches the seam** without
-/// sharing any probe token; for those, a seam-kind match also confirms
-/// observation (see `effect_observer_confirms`).
+/// confirmation signal is a `token_match`. For probes whose changed expression
+/// constructs an exact error variant, a genuine variant-pinning oracle
+/// (`ExactErrorVariant` whose text contains that specific variant token) sets
+/// `has_token_match=true` in `assertion_matches_probe_detail` (RIPR-SPEC-0106,
+/// Part B), clearing this guard. A broad `is_err()` or an exact-value oracle on
+/// a sibling result does not. For **effect** families (SideEffect,
+/// CallDeletion) the legitimate observer is often a mock/expectation that
+/// **kind-matches the seam** without sharing any probe token; for those, a
+/// seam-kind match also confirms observation (see `effect_observer_confirms`).
 fn needs_token_confirmation(family: &ProbeFamily) -> bool {
     matches!(
         family,
@@ -192,11 +193,18 @@ fn analyze_related_assertions(
     } else {
         Vec::new()
     };
-    // For ErrorPath: collect the variant-only token (the identifier after the
-    // last `::` in `Err(Type::Variant)`) so that a sibling-variant assertion
-    // that pins a different variant of the same error type cannot spuriously
-    // match this probe. RIPR-SPEC-0106 (Part B).
-    let error_path_variant = if matches!(probe.family, ProbeFamily::ErrorPath) {
+    // For probes whose changed expression constructs an exact error variant
+    // (`Err(Type::Variant)`): collect the variant-only token (the identifier
+    // after the last `::`) so that a sibling-variant assertion that pins a
+    // different variant of the same error type cannot confirm this probe.
+    // RIPR-SPEC-0106 (Part B). The guard keys on the changed expression, not
+    // the family label: a `return_value` probe on an `Err(...)` construction
+    // would otherwise credit a sibling-variant oracle through the shared enum
+    // qualifier token.
+    let error_construction_variant = if matches!(
+        probe.family,
+        ProbeFamily::ErrorPath | ProbeFamily::ReturnValue
+    ) {
         error_path_variant_token(&probe.expression)
             .or_else(|| error_path_variant_token(analysis_expression))
     } else {
@@ -232,7 +240,7 @@ fn analyze_related_assertions(
                 &probe_tokens,
                 &effect_literals,
                 &match_arm_variants,
-                error_path_variant.as_deref(),
+                error_construction_variant.as_deref(),
                 &probe.family,
                 assertion,
                 test.assertions.len(),
@@ -290,14 +298,15 @@ fn analyze_related_assertions(
     }
 }
 
-/// Extracts the variant identifier from an error-path probe expression.
+/// Extracts the variant identifier from a changed expression that constructs
+/// an exact error variant.
 ///
 /// For `return Err(CalcError::TooLarge);` → `Some("TooLarge")`.
 /// For `return Err(anyhow!("..."));` → `None` (no qualified variant).
 ///
 /// Used by RIPR-SPEC-0106 (Part B) to restrict `ExactErrorVariant` assertion
-/// matching to the probe's specific variant, preventing sibling-variant
-/// over-credit.
+/// matching to the changed expression's specific variant, preventing
+/// sibling-variant over-credit.
 fn error_path_variant_token(expression: &str) -> Option<String> {
     use super::text::exact_error_variant;
     let variant_path = exact_error_variant(expression)?;
@@ -331,19 +340,27 @@ fn error_path_variant_token(expression: &str) -> Option<String> {
 /// token list is empty and `has_token_match` is always false, reflecting that
 /// the probe has no arm-specific identifier.
 ///
-/// For `ErrorPath` probes with `ExactErrorVariant` assertions (RIPR-SPEC-0106,
-/// Part B): when `error_path_variant` is `Some`, an `ExactErrorVariant` oracle
-/// only `matched` when the assertion text contains the probe's specific variant
-/// token. This prevents a sibling-variant assertion (`CalcError::Negative`)
-/// from matching a `CalcError::TooLarge` probe — both share the `CalcError`
-/// qualifier token, but only the variant token (`TooLarge`) is specific.
-/// Without `error_path_variant` (probe has no qualified variant), falls back
-/// to the standard `token_match` behavior.
+/// For probes whose changed expression constructs an exact error variant,
+/// with `ExactErrorVariant` assertions (RIPR-SPEC-0106, Part B): when
+/// `error_construction_variant` is `Some`, the oracle is gated on the changed
+/// expression's specific variant token:
+/// - `ErrorPath` probes: the assertion must pin that variant to match at all.
+///   A sibling-variant assertion (`CalcError::Negative`) does not associate
+///   with a `CalcError::TooLarge` probe — both share the `CalcError`
+///   qualifier token, but only the variant token (`TooLarge`) is specific.
+/// - Other direct families (e.g. a `return_value` probe on an `Err(...)`
+///   construction): the assertion stays associated through the standard match
+///   rules, but only a variant-pinned text sets `has_token_match`, so a
+///   sibling-variant oracle leaves observation unverified instead of
+///   crediting discrimination for an unrelated seam.
+///
+/// Without `error_construction_variant` (probe has no parseable variant),
+/// falls back to the standard `token_match` behavior.
 fn assertion_matches_probe_detail_with_literals(
     probe_tokens: &[String],
     effect_literals: &[String],
     match_arm_variants: &[String],
-    error_path_variant: Option<&str>,
+    error_construction_variant: Option<&str>,
     family: &ProbeFamily,
     assertion: &OracleFact,
     assertion_count: usize,
@@ -365,17 +382,17 @@ fn assertion_matches_probe_detail_with_literals(
     } else {
         token_match || effect_literal_match
     };
-    // For ErrorPath probes with ExactErrorVariant assertions: restrict `matched`
-    // to require the probe's specific variant token, not just the qualifier.
-    // Fail-closed: if error_path_variant is None (no parseable variant in the
-    // probe), fall through to the standard token_match + family_match check.
-    if matches!(family, ProbeFamily::ErrorPath)
-        && matches!(assertion.kind, OracleKind::ExactErrorVariant)
-        && let Some(variant) = error_path_variant
+    // Fail-closed: if error_construction_variant is None (no parseable variant
+    // in the probe), fall through to the standard token_match + family_match
+    // check below.
+    if matches!(assertion.kind, OracleKind::ExactErrorVariant)
+        && let Some(variant) = error_construction_variant
     {
         let variant_matches = contains_as_whole_word(&assertion.text, variant);
-        return (variant_matches, variant_matches);
-        // Probe has no parseable variant: falls through to standard match below.
+        if matches!(family, ProbeFamily::ErrorPath) {
+            return (variant_matches, variant_matches);
+        }
+        return (token_match || effect_literal_match, variant_matches);
     }
     let family_match = oracle_matches_family(family, assertion);
     let matched = token_match || effect_literal_match || family_match || assertion_count == 1;
@@ -386,7 +403,7 @@ fn assertion_matches_probe_detail_with_literals(
 fn assertion_matches_probe_detail(
     probe_tokens: &[String],
     match_arm_variants: &[String],
-    error_path_variant: Option<&str>,
+    error_construction_variant: Option<&str>,
     family: &ProbeFamily,
     assertion: &OracleFact,
     assertion_count: usize,
@@ -395,7 +412,7 @@ fn assertion_matches_probe_detail(
         probe_tokens,
         &[],
         match_arm_variants,
-        error_path_variant,
+        error_construction_variant,
         family,
         assertion,
         assertion_count,
@@ -985,6 +1002,96 @@ mod tests {
             has_token,
             "matching variant assertion must set has_token_match"
         );
+    }
+
+    // RIPR-SPEC-0106 Part B extended to direct value families: a
+    // `return_value` probe on an `Err(...)` construction must not let a
+    // sibling-variant ExactErrorVariant oracle confirm observation through
+    // the shared enum qualifier token.
+    #[test]
+    fn sibling_variant_assertion_does_not_confirm_return_value_error_construction() {
+        let sibling_assertion = oracle(
+            "assert_eq!(err, CalcError::Negative);",
+            OracleKind::ExactErrorVariant,
+            OracleStrength::Strong,
+        );
+        let (matched, has_token) = assertion_matches_probe_detail(
+            &[
+                "return".to_string(),
+                "Err".to_string(),
+                "CalcError".to_string(),
+                "TooLarge".to_string(),
+            ],
+            &[],
+            Some("TooLarge"),
+            &ProbeFamily::ReturnValue,
+            &sibling_assertion,
+            2,
+        );
+        assert!(
+            matched,
+            "the sibling test still observes near the changed behavior and stays associated"
+        );
+        assert!(
+            !has_token,
+            "a Negative pin must not confirm observation of a TooLarge construction"
+        );
+    }
+
+    #[test]
+    fn aligned_variant_assertion_confirms_return_value_error_construction() {
+        let aligned_assertion = oracle(
+            "assert_eq!(result.unwrap_err(), CalcError::TooLarge);",
+            OracleKind::ExactErrorVariant,
+            OracleStrength::Strong,
+        );
+        let (matched, has_token) = assertion_matches_probe_detail(
+            &[
+                "return".to_string(),
+                "Err".to_string(),
+                "CalcError".to_string(),
+                "TooLarge".to_string(),
+            ],
+            &[],
+            Some("TooLarge"),
+            &ProbeFamily::ReturnValue,
+            &aligned_assertion,
+            2,
+        );
+        assert!(matched);
+        assert!(
+            has_token,
+            "an oracle pinning the constructed variant confirms observation"
+        );
+    }
+
+    // End-to-end: the sibling fixture shape (RIPR-SPEC-0106) keeps the
+    // return_value finding's discrimination unconfirmed instead of crediting
+    // the sibling oracle as a strong discriminator.
+    #[test]
+    fn sibling_variant_oracle_leaves_return_value_discrimination_unconfirmed() {
+        let probe = probe(ProbeFamily::ReturnValue, "return Err(CalcError::TooLarge);");
+        let test = test_with_assertions(
+            "negative_input_rejects_with_negative_error",
+            vec![oracle(
+                "assert_eq!(err, CalcError::Negative);",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+        let (observe, discriminate, related) =
+            reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+
+        assert_eq!(observe.state, StageState::Yes);
+        assert_eq!(discriminate.state, StageState::Weak);
+        assert!(
+            discriminate
+                .summary
+                .contains("Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"),
+            "sibling oracle must not credit strong discrimination; got: {}",
+            discriminate.summary
+        );
+        assert_eq!(related.len(), 1);
     }
 
     #[test]
