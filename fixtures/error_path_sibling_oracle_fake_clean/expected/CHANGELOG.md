@@ -162,3 +162,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending
+
+Reason:
+RIPR-SPEC-0001: #3161 PR-B production witness gate upgrades complete direct-flow propagate evidence and fails incomplete flows closed
+
+Command:
+`cargo xtask goldens bless error_path_sibling_oracle_fake_clean --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

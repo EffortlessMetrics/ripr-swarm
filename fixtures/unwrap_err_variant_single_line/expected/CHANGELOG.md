@@ -202,3 +202,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending
+
+Reason:
+RIPR-SPEC-0001: fail-closed witness summary wording for incomplete single-line error variant flow
+
+Command:
+`cargo xtask goldens bless unwrap_err_variant_single_line --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

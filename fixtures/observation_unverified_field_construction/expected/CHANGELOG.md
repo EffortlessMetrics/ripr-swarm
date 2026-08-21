@@ -203,3 +203,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending
+
+Reason:
+RIPR-SPEC-0001: #3161 PR-B production witness gate upgrades complete direct-flow propagate evidence and fails incomplete flows closed
+
+Command:
+`cargo xtask goldens bless observation_unverified_field_construction --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
