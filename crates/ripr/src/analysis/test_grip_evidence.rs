@@ -92,6 +92,8 @@ pub(crate) struct TestTargetEvidence {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum TestTargetCurrentness {
+    /// Only indexed, on-disk byte-current targets are emitted as evidence;
+    /// stale, missing, or invalid targets are rejected before serialization.
     Current,
 }
 

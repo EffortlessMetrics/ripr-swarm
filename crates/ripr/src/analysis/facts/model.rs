@@ -108,7 +108,11 @@ fn package_identity(root: &Path, relative: &Path) -> String {
         }
         cursor = directory.parent().map(Path::to_path_buf);
     }
-    "workspace-root".to_string()
+    let containing = relative.parent().unwrap_or_else(|| Path::new("."));
+    format!(
+        "directory:{}",
+        containing.to_string_lossy().replace('\\', "/")
+    )
 }
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct RustIndex {

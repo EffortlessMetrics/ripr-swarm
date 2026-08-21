@@ -29,6 +29,12 @@ fn index_from_files(files: &[(PathBuf, &str)]) -> Result<RustIndex, String> {
             .map_err(|error| error.to_string())?
             .as_nanos()
     ));
+    fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"memory-fixture\"\nversion = \"0.1.0\"\n",
+    )
+    .map_err(|error| error.to_string())?;
     for (path, source) in files {
         let full = root.join(path);
         if let Some(parent) = full.parent() {

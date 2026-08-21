@@ -85,13 +85,13 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `0.7` -> `0.8`: Err-return guards now credit as assertion twins
 /// (#3284) and repo-mode probe seeding filters evidence-role owners,
 /// changing classified-seam content at package `0.10.0`.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "0.8";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "0.9";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
 /// `0.3` → `0.4`: #3284 changes the facts sharded entries derive from
 /// (guard oracle twins, evidence-role repo probe filtering).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.4";
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.5";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -101,7 +101,7 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.4";
 /// cache — the #3273 source-role and #3286 helper-evidence changes
 /// invalidate prior compact entries at package `0.10.0`.
 /// `0.4` → `0.5`: #3284 changes guard oracle facts and repo probe seeding.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.5";
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.6";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
