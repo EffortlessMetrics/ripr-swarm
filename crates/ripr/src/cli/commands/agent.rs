@@ -262,11 +262,19 @@ fn run_agent_receipt(options: AgentReceiptOptions) -> Result<(), String> {
     })?;
     let validated =
         app::agent_receipt::validate_agent_receipt_verify_json(&options.root, &verify_json)?;
-    let repair_attempt_binding = crate::app::repair_attempt::receipt_binding(
-        &options.root,
-        &options.seam_id,
-        &options.root.join("target/ripr/workflow/agent-packet.json"),
-    )?;
+    let packet_path = options.root.join("target/ripr/workflow/agent-packet.json");
+    let attempts_root = options
+        .root
+        .join(crate::app::repair_attempt::REPAIR_ATTEMPT_DIRECTORY);
+    let repair_attempt_binding = if packet_path.exists() || attempts_root.exists() {
+        Some(crate::app::repair_attempt::receipt_binding(
+            &options.root,
+            &options.seam_id,
+            &packet_path,
+        )?)
+    } else {
+        None
+    };
     let input_paths = &validated.input_paths;
     let provenance = build_agent_receipt_provenance(
         &options.root,
@@ -311,7 +319,9 @@ fn run_agent_receipt(options: AgentReceiptOptions) -> Result<(), String> {
     )?;
     let mut receipt: serde_json::Value = serde_json::from_str(&rendered)
         .map_err(|error| format!("parse rendered agent receipt failed: {error}"))?;
-    receipt["repair_attempt"] = repair_attempt_binding;
+    if let Some(binding) = repair_attempt_binding {
+        receipt["repair_attempt"] = binding;
+    }
     let rendered = serde_json::to_string_pretty(&receipt)
         .map_err(|error| format!("serialize bound agent receipt failed: {error}"))?
         + "\n";
