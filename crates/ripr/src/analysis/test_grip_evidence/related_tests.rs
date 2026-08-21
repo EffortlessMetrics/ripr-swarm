@@ -1455,34 +1455,21 @@ fn cargo_package_name(path: &Path) -> Option<String> {
     let mut directory = path.parent();
     while let Some(current) = directory {
         let manifest = current.join("Cargo.toml");
-        if let Ok(source) = std::fs::read_to_string(manifest) {
-            let mut in_package = false;
-            for raw in source.lines() {
-                let line = raw.trim();
-                if line == "[package]" {
-                    in_package = true;
-                    continue;
-                }
-                if line.starts_with('[') {
-                    in_package = false;
-                }
-                if !in_package {
-                    continue;
-                }
-                let Some((key, value)) = line.split_once('=') else {
-                    continue;
-                };
-                if key.trim() != "name" {
-                    continue;
-                }
-                let name = value.trim().trim_matches('"');
-                if !name.is_empty() {
-                    return Some(name.replace('-', "_"));
-                }
-            }
+        let Ok(source) = std::fs::read_to_string(manifest) else {
+            directory = current.parent();
+            continue;
+        };
+        let Ok(document) = toml::from_str::<toml::Value>(&source) else {
             return None;
+        };
+        if let Some(name) = document
+            .get("package")
+            .and_then(|package| package.get("name"))
+            .and_then(toml::Value::as_str)
+        {
+            return Some(name.replace('-', "_"));
         }
-        directory = current.parent();
+        return None;
     }
     None
 }
