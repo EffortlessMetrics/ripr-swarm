@@ -619,6 +619,77 @@ mod tests {
     }
 
     #[test]
+    fn exact_error_guidance_requires_variant_alignment() {
+        let mut owner = function("src/lib.rs", "compute");
+        owner.returns = vec![ReturnFact {
+            line: 5,
+            text: "return Err(CalcError::TooLarge);".to_string(),
+        }];
+        let probe = Probe {
+            id: ProbeId("probe:src_lib_rs:5:error_path_alignment".to_string()),
+            location: SourceLocation::new("src/lib.rs", 5, 1),
+            owner: Some(SymbolId("src/lib.rs::compute".to_string())),
+            family: ProbeFamily::ErrorPath,
+            delta: DeltaKind::Value,
+            before: None,
+            after: Some("return Err(CalcError::TooLarge);".to_string()),
+            expression: "return Err(CalcError::TooLarge);".to_string(),
+            expected_sinks: Vec::new(),
+            required_oracles: Vec::new(),
+        };
+        let unrelated = RustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_oracle(
+                "tests/errors.rs",
+                "negative_error",
+                "compute(-1)",
+                oracle_fact(
+                    "assert_eq!(err, CalcError::Negative);",
+                    OracleKind::ExactErrorVariant,
+                    OracleStrength::Strong,
+                ),
+            )],
+            ..RustIndex::default()
+        };
+        let unrelated_finding = classify_probe(&probe, &unrelated, true);
+        assert_eq!(
+            unrelated_finding.recommended_next_step.as_deref(),
+            Some(
+                "Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect."
+            )
+        );
+        assert!(
+            !unrelated_finding
+                .evidence
+                .iter()
+                .any(|line| line.contains("no assertion repair is indicated"))
+        );
+
+        let aligned = RustIndex {
+            functions: vec![owner],
+            tests: vec![test_with_oracle(
+                "tests/errors.rs",
+                "large_error",
+                "compute(100)",
+                oracle_fact(
+                    "assert_eq!(err, CalcError::TooLarge);",
+                    OracleKind::ExactErrorVariant,
+                    OracleStrength::Strong,
+                ),
+            )],
+            ..RustIndex::default()
+        };
+        let aligned_finding = classify_probe(&probe, &aligned, true);
+        assert!(aligned_finding.recommended_next_step.is_none());
+        assert!(
+            aligned_finding
+                .evidence
+                .iter()
+                .any(|line| line.contains("no assertion repair is indicated"))
+        );
+    }
+
+    #[test]
     fn given_changed_side_effect_call_when_event_is_published_then_flow_sink_is_event_call() {
         let index = RustIndex {
             functions: vec![function("src/lib.rs", "score")],
