@@ -687,6 +687,15 @@ fn agent_brief_sample_workspace(
     label: &str,
 ) -> Result<(PathBuf, PathBuf), Box<dyn std::error::Error>> {
     let root = unique_temp_workspace(label);
+    // Keep the sample tree representative of a Cargo package.  The source
+    // and integration-test files intentionally live in different directories;
+    // without a manifest the authority model must treat them as distinct
+    // manifest-less packages, so the packet cannot recover the related test.
+    std::fs::create_dir_all(&root)?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"agent-brief-sample\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
     std::fs::create_dir_all(root.join("src"))?;
     std::fs::create_dir_all(root.join("tests"))?;
     std::fs::copy(

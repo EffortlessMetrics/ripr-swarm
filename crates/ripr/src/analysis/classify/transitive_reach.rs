@@ -865,6 +865,7 @@ mod tests {
             files,
             tests,
             functions: Vec::new(),
+            workspace_authority: None,
         }
     }
 
