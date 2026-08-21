@@ -187,3 +187,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending
+
+Reason:
+RIPR-SPEC-0001: suppress repair guidance when exact error oracle exists
+
+Command:
+`cargo xtask goldens bless unwrap_err_variant_positive --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

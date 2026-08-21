@@ -20,13 +20,28 @@ pub(in crate::analysis) fn build_finding(
     let test_summaries = context.related_test_summaries();
     let mut stop_reasons = stop_reasons(context.probe, context.owner_fn, &test_summaries);
     ensure_unknown_stop_reason(&class, &mut stop_reasons);
+    let exact_oracle_covers_direct_sink = evidence.discriminate.state == StageState::Yes
+        && matches!(
+            context.probe.family,
+            ProbeFamily::ReturnValue | ProbeFamily::ErrorPath | ProbeFamily::FieldConstruction
+        );
     let recommended_next_step =
-        recommended_next_step(context.probe, &class, context.owner_assertion_shaped);
+        if class == ExposureClass::WeaklyExposed && exact_oracle_covers_direct_sink {
+            None
+        } else {
+            recommended_next_step(context.probe, &class, context.owner_assertion_shaped)
+        };
     let confidence = evidence.confidence(&class);
     let invalid_propagation_witness = evidence.propagation_witness().is_some_and(|diagnostic| {
         diagnostic.is_invalid() || !diagnostic.witness().digest_matches()
     });
     let mut evidence_lines = evidence.evidence;
+    if class == ExposureClass::WeaklyExposed && exact_oracle_covers_direct_sink {
+        evidence_lines.push(
+            "static limitation: exact oracle established; no assertion repair is indicated"
+                .to_string(),
+        );
+    }
     if invalid_propagation_witness {
         evidence_lines
             .push("propagation witness digest invalid; diagnostic witness withheld".to_string());
