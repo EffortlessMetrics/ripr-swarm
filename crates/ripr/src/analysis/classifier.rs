@@ -680,9 +680,10 @@ mod tests {
             ..RustIndex::default()
         };
         let aligned_finding = classify_probe(&probe, &aligned, true);
+        assert_eq!(aligned_finding.class, ExposureClass::Exposed);
         assert!(aligned_finding.recommended_next_step.is_none());
         assert!(
-            aligned_finding
+            !aligned_finding
                 .evidence
                 .iter()
                 .any(|line| line.contains("no assertion repair is indicated"))
