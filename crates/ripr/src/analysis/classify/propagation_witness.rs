@@ -90,6 +90,9 @@ impl EdgeStatus {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(in crate::analysis) enum PathCompleteness {
+    /// The bounded direct source-to-sink path is fully established for one of
+    /// the sink families integrated by PR-B.
+    Complete,
     /// A local source-to-sink fact exists, but observer binding is not modeled
     /// by this PR.  It cannot by itself justify `propagate=yes`.
     Partial,
@@ -99,6 +102,7 @@ pub(in crate::analysis) enum PathCompleteness {
 impl PathCompleteness {
     fn as_str(&self) -> &'static str {
         match self {
+            Self::Complete => "complete",
             Self::Partial => "partial",
             Self::Unresolved => "unresolved",
         }
@@ -128,6 +132,8 @@ pub(in crate::analysis) fn current_path_witness(
     let edge_kind = edge_kind_for_sink(&sink.kind)?;
     let source_identity = normalize_semantic_text(&probe.expression);
     let sink_identity = normalize_semantic_text(&sink.text);
+    let edge_status = edge_status_for_kind(&edge_kind, &source_identity, &sink_identity);
+    let completeness = completeness_for_edge(&edge_kind, &edge_status);
     let mut witness = PropagationWitnessV1 {
         schema_version: SCHEMA_VERSION,
         behavior: BehaviorIdentity {
@@ -142,8 +148,8 @@ pub(in crate::analysis) fn current_path_witness(
             line: probe.location.line,
         },
         edges: vec![PropagationEdge {
-            kind: edge_kind,
-            status: edge_status(&source_identity, &sink_identity),
+            kind: edge_kind.clone(),
+            status: edge_status,
             from: source_identity,
             to: sink_identity.clone(),
         }],
@@ -152,7 +158,7 @@ pub(in crate::analysis) fn current_path_witness(
             identity: sink_identity,
             line: sink.line,
         },
-        completeness: PathCompleteness::Partial,
+        completeness,
         limitations: vec![
             "observer_binding_not_modeled".to_string(),
             "static_local_flow_only".to_string(),
@@ -161,6 +167,103 @@ pub(in crate::analysis) fn current_path_witness(
     };
     witness.semantic_digest = witness.compute_semantic_digest();
     Some(witness)
+}
+
+fn completeness_for_edge(kind: &PropagationEdgeKind, status: &EdgeStatus) -> PathCompleteness {
+    // PR-B intentionally does not promote constructor-wrapped text such as
+    // `Ok(amount)` or `Err(error)`: those remain candidate/partial until a
+    // later bounded adapter can prove the wrapper payload relationship.
+    if matches!(
+        kind,
+        PropagationEdgeKind::DirectReturn
+            | PropagationEdgeKind::ErrorVariant
+            | PropagationEdgeKind::StructField
+    ) && *status == EdgeStatus::Established
+    {
+        PathCompleteness::Complete
+    } else {
+        PathCompleteness::Partial
+    }
+}
+
+fn edge_status_for_kind(kind: &PropagationEdgeKind, source: &str, sink: &str) -> EdgeStatus {
+    if *kind == PropagationEdgeKind::ErrorVariant
+        && canonical_error_identity(source) == canonical_error_identity(sink)
+    {
+        EdgeStatus::Established
+    } else {
+        edge_status(source, sink)
+    }
+}
+
+fn canonical_error_identity(text: &str) -> String {
+    let normalized_text = normalize_semantic_text(text);
+    let normalized = normalized_text.trim_start_matches("return ");
+    if normalized.starts_with("Err(") {
+        format!("Result::{normalized}")
+    } else {
+        normalized.to_string()
+    }
+}
+
+pub(in crate::analysis) fn complete_direct_witness(
+    probe: &Probe,
+    witness: Option<&PropagationWitnessV1>,
+) -> bool {
+    let Some(witness) = witness else {
+        return false;
+    };
+    let Some(owner) = probe.owner.as_ref() else {
+        return false;
+    };
+    witness.digest_matches()
+        && witness.schema_version == SCHEMA_VERSION
+        && witness.behavior.owner == *owner
+        && witness.behavior.family == probe.family.as_str()
+        && witness.behavior.delta == probe.delta.as_str()
+        && witness.behavior.expression == normalize_semantic_text(&probe.expression)
+        && witness.source.identity == normalize_semantic_text(&probe.expression)
+        && witness.source.kind == "changed_behavior"
+        && witness.completeness == PathCompleteness::Complete
+        && witness.edges.len() == 1
+        && witness.edges[0].status == EdgeStatus::Established
+        && witness.edges[0].from == witness.source.identity
+        && witness.edges[0].to == witness.sink.identity
+        && matches!(
+            witness.edges[0].kind,
+            PropagationEdgeKind::DirectReturn
+                | PropagationEdgeKind::ErrorVariant
+                | PropagationEdgeKind::StructField
+        )
+        && witness.sink.kind != FlowSinkKind::Unknown.as_str()
+}
+
+pub(in crate::analysis) fn valid_owner_bound_partial_witness(
+    probe: &Probe,
+    witness: Option<&PropagationWitnessV1>,
+) -> bool {
+    let Some(witness) = witness else {
+        return false;
+    };
+    let Some(owner) = probe.owner.as_ref() else {
+        return false;
+    };
+    let Some(edge) = witness.edges.first() else {
+        return false;
+    };
+    witness.digest_matches()
+        && witness.schema_version == SCHEMA_VERSION
+        && witness.behavior.owner == *owner
+        && witness.behavior.family == probe.family.as_str()
+        && witness.behavior.delta == probe.delta.as_str()
+        && witness.behavior.expression == normalize_semantic_text(&probe.expression)
+        && witness.source.kind == "changed_behavior"
+        && witness.source.identity == normalize_semantic_text(&probe.expression)
+        && witness.completeness == PathCompleteness::Partial
+        && witness.edges.len() == 1
+        && edge.status == EdgeStatus::Candidate
+        && edge.from == witness.source.identity
+        && edge.to == witness.sink.identity
 }
 
 fn edge_kind_for_sink(kind: &FlowSinkKind) -> Option<PropagationEdgeKind> {
@@ -255,14 +358,27 @@ fn has_closure_syntax(text: &str) -> bool {
 
 fn source_sink_tokens_overlap(source: &str, sink: &str) -> bool {
     let source_tokens = semantic_tokens(source);
-    let source_path = qualified_path_identity(source);
-    let sink_path = qualified_path_identity(sink);
+    let source_path = qualified_path_identity(&path_identity_text(source));
+    let sink_path = qualified_path_identity(&path_identity_text(sink));
     !source_tokens.is_empty()
         && receiver_identity(source) == receiver_identity(sink)
         && paths_are_compatible(source, sink, source_path.as_deref(), sink_path.as_deref())
         && semantic_tokens(sink)
             .iter()
             .any(|token| source_tokens.iter().any(|source| source == token))
+}
+
+fn path_identity_text(text: &str) -> String {
+    let normalized_text = normalize_semantic_text(text);
+    let normalized = normalized_text.trim_start_matches("return ");
+    if let Some(payload) = normalized
+        .strip_prefix("Err(")
+        .and_then(|value| value.strip_suffix(')'))
+    {
+        payload.to_string()
+    } else {
+        normalized.to_string()
+    }
 }
 
 fn qualified_path_identity(text: &str) -> Option<String> {
@@ -421,8 +537,12 @@ fn is_keyword_or_noise(token: &str) -> bool {
     )
 }
 
-fn normalize_semantic_text(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+pub(in crate::analysis) fn normalize_semantic_text(text: &str) -> String {
+    text.trim()
+        .trim_end_matches([',', ';'])
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 impl PropagationWitnessV1 {
@@ -430,7 +550,7 @@ impl PropagationWitnessV1 {
         self.semantic_digest == self.compute_semantic_digest()
     }
 
-    fn compute_semantic_digest(&self) -> String {
+    pub(in crate::analysis) fn compute_semantic_digest(&self) -> String {
         let mut canonical = Vec::new();
         append_canonical_section_header(&mut canonical, "witness", 1);
         append_canonical_field(&mut canonical, "propagation-witness-v1");
@@ -558,7 +678,7 @@ mod tests {
                 "Err(Boundary)",
                 None,
                 PropagationEdgeKind::ErrorVariant,
-                EdgeStatus::Candidate,
+                EdgeStatus::Established,
             ),
             (
                 ProbeFamily::FieldConstruction,
@@ -575,7 +695,12 @@ mod tests {
             assert_eq!(witness.schema_version, SCHEMA_VERSION);
             assert_eq!(witness.edges[0].kind, expected_edge);
             assert_eq!(witness.edges[0].status, expected_status);
-            assert_eq!(witness.completeness, PathCompleteness::Partial);
+            let expected_completeness = if expected_status == EdgeStatus::Established {
+                PathCompleteness::Complete
+            } else {
+                PathCompleteness::Partial
+            };
+            assert_eq!(witness.completeness, expected_completeness);
             assert_eq!(witness.semantic_digest, witness.compute_semantic_digest());
         }
         Ok(())
@@ -594,6 +719,27 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn forged_same_owner_family_witness_fails_exact_identity_binding() -> Result<(), String> {
+        let probe = probe(ProbeFamily::FieldConstruction, "status: amount");
+        let sinks = vec![sink(FlowSinkKind::StructField, "status: amount", 14)];
+        let Some(mut witness) = current_path_witness(&probe, &sinks) else {
+            return Err("established fixture witness was absent".to_string());
+        };
+        assert!(complete_direct_witness(&probe, Some(&witness)));
+
+        witness.behavior.expression = "status: sibling".to_string();
+        witness.semantic_digest = witness.compute_semantic_digest();
+        assert!(!complete_direct_witness(&probe, Some(&witness)));
+
+        let mut forged_delta = current_path_witness(&probe, &sinks)
+            .ok_or_else(|| "established fixture witness was absent".to_string())?;
+        forged_delta.behavior.delta = "effect".to_string();
+        forged_delta.semantic_digest = forged_delta.compute_semantic_digest();
+        assert!(!complete_direct_witness(&probe, Some(&forged_delta)));
+        Ok(())
     }
 
     #[test]
@@ -671,6 +817,20 @@ mod tests {
         assert!(
             current_path_witness(
                 &probe(ProbeFamily::ErrorPath, "AuthError::RevokedToken"),
+                &[sink(
+                    FlowSinkKind::ErrorVariant,
+                    "Result::Err(AuthError::RevokedToken)",
+                    14,
+                )]
+            )
+            .is_some()
+        );
+        assert!(
+            current_path_witness(
+                &probe(
+                    ProbeFamily::ErrorPath,
+                    "return Err(AuthError::RevokedToken);"
+                ),
                 &[sink(
                     FlowSinkKind::ErrorVariant,
                     "Result::Err(AuthError::RevokedToken)",

@@ -1,6 +1,7 @@
 use super::evidence::ClassifiedProbeEvidence;
 use crate::analysis::classify::{
-    ProbeContext, ensure_unknown_stop_reason, missing_evidence, recommended_next_step, stop_reasons,
+    ProbeContext, ensure_unknown_stop_reason, exact_error_variant, missing_evidence,
+    recommended_next_step, stop_reasons,
 };
 use crate::domain::*;
 
@@ -20,13 +21,29 @@ pub(in crate::analysis) fn build_finding(
     let test_summaries = context.related_test_summaries();
     let mut stop_reasons = stop_reasons(context.probe, context.owner_fn, &test_summaries);
     ensure_unknown_stop_reason(&class, &mut stop_reasons);
+    let exact_oracle_covers_direct_sink = evidence.discriminate.state == StageState::Yes
+        && matches!(
+            context.probe.family,
+            ProbeFamily::ReturnValue | ProbeFamily::ErrorPath | ProbeFamily::FieldConstruction
+        )
+        && exact_oracle_aligns_with_sink(context.probe, &evidence);
     let recommended_next_step =
-        recommended_next_step(context.probe, &class, context.owner_assertion_shaped);
+        if class == ExposureClass::WeaklyExposed && exact_oracle_covers_direct_sink {
+            None
+        } else {
+            recommended_next_step(context.probe, &class, context.owner_assertion_shaped)
+        };
     let confidence = evidence.confidence(&class);
     let invalid_propagation_witness = evidence.propagation_witness().is_some_and(|diagnostic| {
         diagnostic.is_invalid() || !diagnostic.witness().digest_matches()
     });
     let mut evidence_lines = evidence.evidence;
+    if class == ExposureClass::WeaklyExposed && exact_oracle_covers_direct_sink {
+        evidence_lines.push(
+            "static limitation: exact oracle established; no assertion repair is indicated"
+                .to_string(),
+        );
+    }
     if invalid_propagation_witness {
         evidence_lines
             .push("propagation witness digest invalid; diagnostic witness withheld".to_string());
@@ -69,5 +86,150 @@ pub(in crate::analysis) fn build_finding(
         // evidence; this constructor has none, so the disposition stays the
         // explicit unknown (#3280).
         source_currentness: crate::domain::SourceCurrentness::UnresolvedSubject,
+    }
+}
+
+fn exact_oracle_aligns_with_sink(probe: &Probe, evidence: &ClassifiedProbeEvidence) -> bool {
+    let Some(sink) = evidence
+        .flow_sinks
+        .iter()
+        .find(|sink| sink_kind_corresponds(&probe.family, &sink.kind))
+    else {
+        return false;
+    };
+    evidence.related_tests.iter().any(|related| {
+        let Some(oracle) = related.oracle.as_deref() else {
+            return false;
+        };
+        oracle_text_aligns_with_sink(&probe.family, &probe.expression, &sink.text, oracle)
+    })
+}
+
+fn sink_kind_corresponds(family: &ProbeFamily, kind: &FlowSinkKind) -> bool {
+    matches!(
+        (family, kind),
+        (ProbeFamily::ReturnValue, FlowSinkKind::ReturnValue)
+            | (ProbeFamily::ErrorPath, FlowSinkKind::ErrorVariant)
+            | (ProbeFamily::FieldConstruction, FlowSinkKind::StructField)
+    )
+}
+
+fn oracle_text_aligns_with_sink(
+    family: &ProbeFamily,
+    probe_expression: &str,
+    sink_text: &str,
+    oracle: &str,
+) -> bool {
+    match family {
+        ProbeFamily::ErrorPath => exact_error_variant(probe_expression)
+            .is_some_and(|variant| contains_token_sequence(oracle, &qualified_tokens(&variant))),
+        ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction => semantic_tokens(sink_text)
+            .iter()
+            .all(|token| contains_identifier(oracle, token)),
+        _ => false,
+    }
+}
+
+fn semantic_tokens(text: &str) -> Vec<String> {
+    text.split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+        .filter(|token| !token.is_empty())
+        .filter(|token| {
+            token
+                .chars()
+                .any(|character| character.is_ascii_alphabetic())
+        })
+        .map(str::to_string)
+        .collect()
+}
+
+fn contains_identifier(text: &str, token: &str) -> bool {
+    text.split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+        .any(|candidate| candidate == token)
+}
+
+fn qualified_tokens(text: &str) -> Vec<String> {
+    text.split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+        .filter(|token| !token.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn contains_token_sequence(text: &str, expected: &[String]) -> bool {
+    if expected.is_empty() {
+        return false;
+    }
+    let actual = qualified_tokens(text);
+    actual
+        .windows(expected.len())
+        .any(|window| window == expected)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{oracle_text_aligns_with_sink, sink_kind_corresponds};
+    use crate::domain::{FlowSinkKind, ProbeFamily};
+
+    #[test]
+    fn family_selects_corresponding_sink_and_rejects_siblings() {
+        assert!(sink_kind_corresponds(
+            &ProbeFamily::ReturnValue,
+            &FlowSinkKind::ReturnValue
+        ));
+        assert!(!sink_kind_corresponds(
+            &ProbeFamily::ReturnValue,
+            &FlowSinkKind::ErrorVariant
+        ));
+        assert!(sink_kind_corresponds(
+            &ProbeFamily::ErrorPath,
+            &FlowSinkKind::ErrorVariant
+        ));
+        assert!(!sink_kind_corresponds(
+            &ProbeFamily::FieldConstruction,
+            &FlowSinkKind::ReturnValue
+        ));
+    }
+
+    #[test]
+    fn direct_value_and_field_alignment_rejects_embedded_tokens() {
+        assert!(oracle_text_aligns_with_sink(
+            &ProbeFamily::ReturnValue,
+            "amount",
+            "amount",
+            "assert_eq!(amount, 3)"
+        ));
+        assert!(!oracle_text_aligns_with_sink(
+            &ProbeFamily::ReturnValue,
+            "amount",
+            "amount",
+            "assert_eq!(amount_total, 3)"
+        ));
+        assert!(oracle_text_aligns_with_sink(
+            &ProbeFamily::FieldConstruction,
+            "status: amount,",
+            "status: amount",
+            "assert_eq!(cfg.status, amount)"
+        ));
+        assert!(!oracle_text_aligns_with_sink(
+            &ProbeFamily::FieldConstruction,
+            "status: amount,",
+            "status: amount",
+            "assert_eq!(cfg.status_code, amount)"
+        ));
+    }
+
+    #[test]
+    fn error_alignment_rejects_near_name_variant_tokens() {
+        assert!(oracle_text_aligns_with_sink(
+            &ProbeFamily::ErrorPath,
+            "return Err(CalcError::TooLarge);",
+            "Result::Err(CalcError::TooLarge)",
+            "assert_eq!(err, CalcError::TooLarge)"
+        ));
+        assert!(!oracle_text_aligns_with_sink(
+            &ProbeFamily::ErrorPath,
+            "return Err(CalcError::TooLarge);",
+            "Result::Err(CalcError::TooLarge)",
+            "assert_eq!(err, CalcError::TooLarger)"
+        ));
     }
 }

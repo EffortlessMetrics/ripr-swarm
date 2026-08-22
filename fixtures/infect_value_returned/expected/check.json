@@ -116,15 +116,15 @@
       "ripr": {
         "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach score: score_uses_multiplier"},
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
-        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: result + 1"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: result + 1"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach score: score_uses_multiplier", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence returned value: result + 1", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: result + 1 (line 5)", "related test tests/score_tests.rs:4 score_uses_multiplier uses strong exact value oracle: assert_eq!(score(10), 10 * MULTIPLIER / 10 + 1);", "observed assertion argument value 1 at line 5", "observed assertion argument value 10 at line 5", "observed function argument value amount = 10 at line 5"],
+      "evidence_path": ["reach yes: Related tests appear to reach score: score_uses_multiplier", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: result + 1", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: result + 1 (line 5)", "related test tests/score_tests.rs:4 score_uses_multiplier uses strong exact value oracle: assert_eq!(score(10), 10 * MULTIPLIER / 10 + 1);", "observed assertion argument value 1 at line 5", "observed assertion argument value 10 at line 5", "observed function argument value amount = 10 at line 5"],
       "flow_sinks": [
         {"kind":"return_value","text":"result + 1","line":5}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: result + 1", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach score: score_uses_multiplier"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: result + 1", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach score: score_uses_multiplier"],
       "missing": ["No strong discriminator was detected"],
       "assertion_texts": {
         "5": "assert_eq!(score(10), 10 * MULTIPLIER / 10 + 1);"
