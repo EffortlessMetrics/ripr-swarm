@@ -35,16 +35,17 @@ impl SeamId {
 /// until `analysis/test-grip-evidence-v1` adds detection — the model
 /// admits new variants additively.
 ///
-/// Rust-only boundary (#1937/#3039): `SeamKind` classifies behavior
+/// Rust-only boundary (#1937/#3039): [`SeamKind`] classifies behavior
 /// boundaries found in current Rust source by the Rust seam inventory;
-/// preview-language adapters emit domain `ProbeFamily` values instead.
-/// The vocabularies are not semantically dual — `ProbeFamily::CallDeletion`
+/// preview-language adapters emit domain [`crate::domain::ProbeFamily`] values
+/// instead. The vocabularies are not semantically dual —
+/// [`crate::domain::ProbeFamily::CallDeletion`]
 /// detects a call site *removed by the diff*, while
-/// `SeamKind::CallPresence` marks a *present* call-site boundary that
+/// [`SeamKind::CallPresence`] marks a *present* call-site boundary that
 /// needs a call-expectation oracle — so there is deliberately no canonical
 /// crosswalk between them. Preview-language limitations are expressed
-/// through `domain::StaticLimitKind`, never through lossy `SeamKind`
-/// conversion.
+/// through [`crate::domain::StaticLimitKind`], never through lossy
+/// [`SeamKind`] conversion.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub(crate) enum SeamKind {
     PredicateBoundary,
