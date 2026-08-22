@@ -338,3 +338,478 @@ fn public_wire_round_trips_and_rejects_unknown_fields() -> Result<(), serde_json
         Ok(_) => Err(json_error("unknown request field was accepted")),
     }
 }
+
+#[test]
+fn capability_set_rejects_identity_drift_and_descriptor_contract_drift() {
+    let mut foreign_provider = RiprProviderCapabilitySetV1::read_only("0.4.0");
+    foreign_provider.provider = "other".into();
+    assert_eq!(
+        error_code(foreign_provider.validate()),
+        Some(RiprProviderContractErrorCodeV1::IdentityMismatch)
+    );
+
+    let mut blank_version = RiprProviderCapabilitySetV1::read_only("0.4.0");
+    blank_version.provider_version = "  ".into();
+    assert_eq!(
+        error_code(blank_version.validate()),
+        Some(RiprProviderContractErrorCodeV1::MissingField)
+    );
+
+    let mut request_schema = RiprProviderCapabilitySetV1::read_only("0.4.0");
+    if let Some(first) = request_schema.capabilities.first_mut() {
+        first.supported_request_schema = "ripr_analysis_request.v2".into();
+    }
+    assert_eq!(
+        error_code(request_schema.validate()),
+        Some(RiprProviderContractErrorCodeV1::UnsupportedSchema)
+    );
+
+    let mut receipt_schema = RiprProviderCapabilitySetV1::read_only("0.4.0");
+    if let Some(first) = receipt_schema.capabilities.first_mut() {
+        first.supported_receipt_schema = "ripr_analysis_receipt.v2".into();
+    }
+    assert_eq!(
+        error_code(receipt_schema.validate()),
+        Some(RiprProviderContractErrorCodeV1::UnsupportedSchema)
+    );
+
+    let mut boundary = RiprProviderCapabilitySetV1::read_only("0.4.0");
+    if let Some(first) = boundary.capabilities.first_mut() {
+        first.claim_boundary = "custom boundary".into();
+    }
+    assert_eq!(
+        error_code(boundary.validate()),
+        Some(RiprProviderContractErrorCodeV1::AuthorityViolation)
+    );
+
+    let mut executing = RiprProviderCapabilitySetV1::read_only("0.4.0");
+    if let Some(first) = executing.capabilities.first_mut() {
+        first.executes_project_commands = true;
+    }
+    assert_eq!(
+        error_code(executing.validate()),
+        Some(RiprProviderContractErrorCodeV1::AuthorityViolation)
+    );
+
+    let mut online = RiprProviderCapabilitySetV1::read_only("0.4.0");
+    if let Some(first) = online.capabilities.first_mut() {
+        first.uses_network = true;
+    }
+    assert_eq!(
+        error_code(online.validate()),
+        Some(RiprProviderContractErrorCodeV1::AuthorityViolation)
+    );
+
+    let mut duplicate_claims = RiprProviderCapabilitySetV1::read_only("0.4.0");
+    if let Some(first) = duplicate_claims.capabilities.first_mut() {
+        first.excluded_claims.push("merge_readiness".into());
+    }
+    assert_eq!(
+        error_code(duplicate_claims.validate()),
+        Some(RiprProviderContractErrorCodeV1::MissingField)
+    );
+}
+
+#[test]
+fn contract_errors_display_the_variant_code_and_message() -> Result<(), String> {
+    let mut foreign_provider = RiprProviderCapabilitySetV1::read_only("0.4.0");
+    foreign_provider.provider = "other".into();
+    let error = foreign_provider
+        .validate()
+        .err()
+        .ok_or_else(|| "expected a contract error".to_string())?;
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("IdentityMismatch"),
+        "display must name the variant code: {rendered}"
+    );
+    assert!(
+        rendered.contains("provider identity must be ripr"),
+        "display must carry the message: {rendered}"
+    );
+    Ok(())
+}
+
+#[test]
+fn snapshots_require_the_prefix_hex_width_and_digest_shape() {
+    let mut unprefixed_tree = snapshot(RiprSourceViewV1::GitTree);
+    unprefixed_tree.snapshot_id = TREE_ID.trim_start_matches("git-tree:").into();
+    assert_eq!(
+        error_code(unprefixed_tree.validate()),
+        Some(RiprProviderContractErrorCodeV1::MalformedIdentity)
+    );
+
+    for width in [39usize, 41usize, 65usize] {
+        let mut wrong_width = snapshot(RiprSourceViewV1::GitTree);
+        wrong_width.snapshot_id = format!("git-tree:{}", "a".repeat(width));
+        assert_eq!(
+            error_code(wrong_width.validate()),
+            Some(RiprProviderContractErrorCodeV1::MalformedIdentity),
+            "width={width}"
+        );
+    }
+
+    let mut non_hex_tree = snapshot(RiprSourceViewV1::GitTree);
+    non_hex_tree.snapshot_id = format!("git-tree:{}", "g".repeat(40));
+    assert_eq!(
+        error_code(non_hex_tree.validate()),
+        Some(RiprProviderContractErrorCodeV1::MalformedIdentity)
+    );
+
+    let mut unnamed_repository = snapshot(RiprSourceViewV1::GitTree);
+    unnamed_repository.repository_id = "  ".into();
+    assert_eq!(
+        error_code(unnamed_repository.validate()),
+        Some(RiprProviderContractErrorCodeV1::MissingField)
+    );
+
+    for source_view in [
+        RiprSourceViewV1::GitTree,
+        RiprSourceViewV1::GitIndex,
+        RiprSourceViewV1::Worktree,
+        RiprSourceViewV1::CapturedSourceSet,
+    ] {
+        let mut unprefixed_digest = snapshot(source_view);
+        unprefixed_digest.source_digest = HASH.trim_start_matches("sha256:").to_string();
+        assert_eq!(
+            error_code(unprefixed_digest.validate()),
+            Some(RiprProviderContractErrorCodeV1::MalformedIdentity),
+            "view={source_view:?}"
+        );
+
+        let mut non_hex_digest = snapshot(source_view);
+        non_hex_digest.source_digest = format!("sha256:{}", "z".repeat(64));
+        assert_eq!(
+            error_code(non_hex_digest.validate()),
+            Some(RiprProviderContractErrorCodeV1::MalformedIdentity),
+            "view={source_view:?}"
+        );
+    }
+}
+
+#[test]
+fn requests_reject_unsupported_schemas_and_blank_required_fields() {
+    let mut unsupported = request();
+    unsupported.schema_version = RIPR_ANALYSIS_REQUEST_SCHEMA_VERSION.replace("v1", "v2");
+    assert_eq!(
+        error_code(unsupported.validate()),
+        Some(RiprProviderContractErrorCodeV1::UnsupportedSchema)
+    );
+
+    let mut blank_request_id = request();
+    blank_request_id.request_id = "".into();
+    assert_eq!(
+        error_code(blank_request_id.validate()),
+        Some(RiprProviderContractErrorCodeV1::MissingField)
+    );
+
+    let mut blank_seam = request();
+    blank_seam.subject.seam_id = " ".into();
+    assert_eq!(
+        error_code(blank_seam.validate()),
+        Some(RiprProviderContractErrorCodeV1::MissingField)
+    );
+
+    let mut blank_subject = request();
+    blank_subject.subject.subject_id = "".into();
+    assert_eq!(
+        error_code(blank_subject.validate()),
+        Some(RiprProviderContractErrorCodeV1::MissingField)
+    );
+
+    let mut blank_mode = request();
+    blank_mode.analysis_mode = "".into();
+    assert_eq!(
+        error_code(blank_mode.validate()),
+        Some(RiprProviderContractErrorCodeV1::MissingField)
+    );
+
+    let mut blank_profile = request();
+    blank_profile.profile = " ".into();
+    assert_eq!(
+        error_code(blank_profile.validate()),
+        Some(RiprProviderContractErrorCodeV1::MissingField)
+    );
+
+    let mut blank_generation = request();
+    blank_generation.analyzer_generation = "".into();
+    assert_eq!(
+        error_code(blank_generation.validate()),
+        Some(RiprProviderContractErrorCodeV1::MissingField)
+    );
+
+    let mut blank_claim = request();
+    blank_claim.requested_claim = "".into();
+    assert_eq!(
+        error_code(blank_claim.validate()),
+        Some(RiprProviderContractErrorCodeV1::MissingField)
+    );
+
+    let mut blank_requirement = request();
+    blank_requirement.subject.requirement_id = Some("".into());
+    assert_eq!(
+        error_code(blank_requirement.validate()),
+        Some(RiprProviderContractErrorCodeV1::MissingField)
+    );
+
+    let mut blank_purpose = request();
+    blank_purpose.subject.evidence_purpose = Some("   ".into());
+    assert_eq!(
+        error_code(blank_purpose.validate()),
+        Some(RiprProviderContractErrorCodeV1::MissingField)
+    );
+
+    let mut short_subject_digest = request();
+    short_subject_digest.subject.subject_body_digest = "sha256:tooshort".into();
+    assert_eq!(
+        error_code(short_subject_digest.validate()),
+        Some(RiprProviderContractErrorCodeV1::MalformedIdentity)
+    );
+
+    let mut unprefixed_config = request();
+    unprefixed_config.config_digest = HASH.trim_start_matches("sha256:").to_string();
+    assert_eq!(
+        error_code(unprefixed_config.validate()),
+        Some(RiprProviderContractErrorCodeV1::MalformedIdentity)
+    );
+}
+
+#[test]
+fn completed_results_require_a_complete_analysis_with_status_and_summary() {
+    let mut without_status = receipt();
+    without_status.native_status = None;
+    assert_eq!(
+        error_code(without_status.validate()),
+        Some(RiprProviderContractErrorCodeV1::MissingField)
+    );
+
+    let mut without_summary = receipt();
+    without_summary.summary = None;
+    assert_eq!(
+        error_code(without_summary.validate()),
+        Some(RiprProviderContractErrorCodeV1::MissingField)
+    );
+
+    let mut incomplete = receipt();
+    incomplete.analysis_complete = false;
+    assert_eq!(
+        error_code(incomplete.validate()),
+        Some(RiprProviderContractErrorCodeV1::CompletenessConflict)
+    );
+}
+
+#[test]
+fn every_non_authoritative_class_requires_incompleteness_and_disclosure() {
+    fn disclosed_failure(class: RiprProviderResultClassV1) -> RiprAnalysisReceiptV1 {
+        let mut failed = receipt();
+        failed.result_class = class;
+        failed.analysis_complete = false;
+        failed.native_status = None;
+        failed.summary = None;
+        failed.diagnostics = vec![RiprProviderDiagnosticV1 {
+            code: "analysis_deferred".into(),
+            message: "seams deferred".into(),
+            source_path: None,
+            start_line: None,
+            start_column: None,
+            next_action: None,
+        }];
+        failed.limitations = Vec::new();
+        failed
+    }
+
+    for class in [
+        RiprProviderResultClassV1::Partial,
+        RiprProviderResultClassV1::StaleInput,
+        RiprProviderResultClassV1::Unsupported,
+        RiprProviderResultClassV1::MalformedInput,
+        RiprProviderResultClassV1::InstrumentFailure,
+        RiprProviderResultClassV1::Cancelled,
+        RiprProviderResultClassV1::NotProven,
+    ] {
+        let mut failed = disclosed_failure(class);
+        assert_eq!(failed.validate(), Ok(()), "class={class:?}");
+
+        failed.analysis_complete = true;
+        assert_eq!(
+            error_code(failed.validate()),
+            Some(RiprProviderContractErrorCodeV1::CompletenessConflict),
+            "class={class:?}"
+        );
+    }
+
+    let mut silent = disclosed_failure(RiprProviderResultClassV1::Cancelled);
+    silent.diagnostics.clear();
+    assert_eq!(
+        error_code(silent.validate()),
+        Some(RiprProviderContractErrorCodeV1::MissingField)
+    );
+}
+
+#[test]
+fn summaries_validate_every_field_and_related_test_entry() {
+    let mut blank_oracle = receipt();
+    if let Some(summary) = blank_oracle.summary.as_mut() {
+        summary.strongest_oracle = "".into();
+    }
+    assert_eq!(
+        error_code(blank_oracle.validate()),
+        Some(RiprProviderContractErrorCodeV1::MissingField)
+    );
+
+    let mut blank_fingerprint = receipt();
+    if let Some(summary) = blank_fingerprint.summary.as_mut() {
+        summary.fingerprint = " ".into();
+    }
+    assert_eq!(
+        error_code(blank_fingerprint.validate()),
+        Some(RiprProviderContractErrorCodeV1::MissingField)
+    );
+
+    let mut blank_test_name = receipt();
+    if let Some(summary) = blank_test_name.summary.as_mut()
+        && let Some(entry) = summary.related_tests.first_mut()
+    {
+        entry.test_name = "".into();
+    }
+    assert_eq!(
+        error_code(blank_test_name.validate()),
+        Some(RiprProviderContractErrorCodeV1::MissingField)
+    );
+
+    let mut absolute_file = receipt();
+    if let Some(summary) = absolute_file.summary.as_mut()
+        && let Some(entry) = summary.related_tests.first_mut()
+    {
+        entry.file = "/abs/tests/grip.rs".into();
+    }
+    assert_eq!(
+        error_code(absolute_file.validate()),
+        Some(RiprProviderContractErrorCodeV1::UnsafeOutputRoot)
+    );
+
+    let mut zero_line = receipt();
+    if let Some(summary) = zero_line.summary.as_mut()
+        && let Some(entry) = summary.related_tests.first_mut()
+    {
+        entry.line = 0;
+    }
+    assert_eq!(
+        error_code(zero_line.validate()),
+        Some(RiprProviderContractErrorCodeV1::MalformedIdentity)
+    );
+
+    let mut blank_kind = receipt();
+    if let Some(summary) = blank_kind.summary.as_mut()
+        && let Some(entry) = summary.related_tests.first_mut()
+    {
+        entry.oracle_kind = "".into();
+    }
+    assert_eq!(
+        error_code(blank_kind.validate()),
+        Some(RiprProviderContractErrorCodeV1::MissingField)
+    );
+
+    let mut blank_strength = receipt();
+    if let Some(summary) = blank_strength.summary.as_mut()
+        && let Some(entry) = summary.related_tests.first_mut()
+    {
+        entry.oracle_strength = "".into();
+    }
+    assert_eq!(
+        error_code(blank_strength.validate()),
+        Some(RiprProviderContractErrorCodeV1::MissingField)
+    );
+
+    let mut blank_reason = receipt();
+    if let Some(summary) = blank_reason.summary.as_mut()
+        && let Some(entry) = summary.related_tests.first_mut()
+    {
+        entry.relation_reason = "".into();
+    }
+    assert_eq!(
+        error_code(blank_reason.validate()),
+        Some(RiprProviderContractErrorCodeV1::MissingField)
+    );
+}
+
+#[test]
+fn diagnostics_require_identity_and_a_coherent_source_position() {
+    fn diagnostic_with(
+        mutate: impl FnOnce(&mut RiprProviderDiagnosticV1),
+    ) -> RiprAnalysisReceiptV1 {
+        let mut receipt = receipt();
+        receipt.result_class = RiprProviderResultClassV1::Partial;
+        receipt.analysis_complete = false;
+        receipt.native_status = None;
+        receipt.summary = None;
+        receipt.diagnostics = vec![RiprProviderDiagnosticV1 {
+            code: "partial_scope".into(),
+            message: "bounded run".into(),
+            source_path: None,
+            start_line: None,
+            start_column: None,
+            next_action: None,
+        }];
+        if let Some(diagnostic) = receipt.diagnostics.first_mut() {
+            mutate(diagnostic);
+        }
+        receipt
+    }
+
+    let blank_code = diagnostic_with(|diagnostic| diagnostic.code = "".into());
+    assert_eq!(
+        error_code(blank_code.validate()),
+        Some(RiprProviderContractErrorCodeV1::MissingField)
+    );
+
+    let blank_message = diagnostic_with(|diagnostic| diagnostic.message = " ".into());
+    assert_eq!(
+        error_code(blank_message.validate()),
+        Some(RiprProviderContractErrorCodeV1::MissingField)
+    );
+
+    let blank_action = diagnostic_with(|diagnostic| diagnostic.next_action = Some("".into()));
+    assert_eq!(
+        error_code(blank_action.validate()),
+        Some(RiprProviderContractErrorCodeV1::MissingField)
+    );
+
+    let absolute_path =
+        diagnostic_with(|diagnostic| diagnostic.source_path = Some("/abs/src/lib.rs".into()));
+    assert_eq!(
+        error_code(absolute_path.validate()),
+        Some(RiprProviderContractErrorCodeV1::UnsafeOutputRoot)
+    );
+
+    for (line, column) in [
+        (Some(0), Some(1)),
+        (Some(1), Some(0)),
+        (Some(1), None),
+        (None, Some(1)),
+    ] {
+        let incoherent = diagnostic_with(|diagnostic| {
+            diagnostic.start_line = line;
+            diagnostic.start_column = column;
+        });
+        assert_eq!(
+            error_code(incoherent.validate()),
+            Some(RiprProviderContractErrorCodeV1::MalformedIdentity),
+            "line={line:?} column={column:?}"
+        );
+    }
+
+    let positioned = diagnostic_with(|diagnostic| {
+        diagnostic.source_path = Some("crates/ripr/src/lib.rs".into());
+        diagnostic.start_line = Some(3);
+        diagnostic.start_column = Some(7);
+    });
+    assert_eq!(positioned.validate(), Ok(()));
+
+    let mut blank_limitation = diagnostic_with(|_| ());
+    blank_limitation.limitations = vec!["   ".into()];
+    assert_eq!(
+        error_code(blank_limitation.validate()),
+        Some(RiprProviderContractErrorCodeV1::MissingField)
+    );
+}
