@@ -80,7 +80,7 @@ mod tests {
     "outcome": {
       "schema_version": "0.1",
       "kind": "no_scope",
-      "identity": {"base_revision": "origin/main"},
+      "identity": {"base_revision": "origin/main", "git_candidate_subject": null},
       "counts": {
         "changed_file_count": 0,
         "changed_line_count": 0,
@@ -337,7 +337,7 @@ mod tests {
     "outcome": {
       "schema_version": "0.1",
       "kind": "unsupported_input",
-      "identity": {"base_revision": "origin/main"},
+      "identity": {"base_revision": "origin/main", "git_candidate_subject": null},
       "counts": {
         "changed_file_count": 1,
         "changed_line_count": 2,
@@ -503,7 +503,7 @@ mod tests {
     "outcome": {
       "schema_version": "0.1",
       "kind": "complete_no_findings",
-      "identity": {"base_revision": "origin/main"},
+      "identity": {"base_revision": "origin/main", "git_candidate_subject": null},
       "counts": {
         "changed_file_count": 0,
         "changed_line_count": 0,

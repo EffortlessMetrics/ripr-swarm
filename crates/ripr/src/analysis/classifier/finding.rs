@@ -23,7 +23,14 @@ pub(in crate::analysis) fn build_finding(
     let recommended_next_step =
         recommended_next_step(context.probe, &class, context.owner_assertion_shaped);
     let confidence = evidence.confidence(&class);
+    let invalid_propagation_witness = evidence.propagation_witness().is_some_and(|diagnostic| {
+        diagnostic.is_invalid() || !diagnostic.witness().digest_matches()
+    });
     let mut evidence_lines = evidence.evidence;
+    if invalid_propagation_witness {
+        evidence_lines
+            .push("propagation witness digest invalid; diagnostic witness withheld".to_string());
+    }
     // RIPR-SPEC-0133: disclose the oracle reframe so JSON/human projections
     // show why the guidance is phrased for an assertion helper.
     if context.owner_assertion_shaped {

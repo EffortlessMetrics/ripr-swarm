@@ -53,6 +53,61 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_generated_file_patterns(
     languages: &[LanguageId],
     generated_file_patterns: &[String],
 ) -> Result<AnalysisResult, String> {
+    // Immutable Git candidate subject (#3237 / #3277): resolve the
+    // bound identity through object plumbing, derive the exact
+    // base→candidate diff, and analyze the materialized candidate root.
+    // The worktree, index, `--diff` file, and `base` are never consulted
+    // (the binding layer already rejects those combinations).
+    if let Some(subject) = options.git_candidate.as_ref() {
+        let resolved = super::git_candidate_execution::resolve(subject, options.git_timeout)
+            .map_err(|error| error.to_string())?;
+        if crate::is_verbose() {
+            eprintln!(
+                "ripr: immutable git candidate resolved: {}",
+                super::git_candidate_execution::subject_identity(&resolved)
+            );
+        }
+        let subject_identity_outcome = crate::analysis_outcome::GitCandidateSubjectIdentity {
+            subject_kind: "tree_to_tree".to_string(),
+            base_tree: resolved.base_tree.clone(),
+            candidate_tree: resolved.candidate_tree.clone(),
+            diff_identity: format!(
+                "sha256:{}",
+                Sha256::digest(resolved.diff.as_bytes()).iter().fold(
+                    String::new(),
+                    |mut acc, byte| {
+                        use std::fmt::Write as _;
+                        let _ = write!(acc, "{byte:02x}");
+                        acc
+                    }
+                )
+            ),
+        };
+        let candidate_options = AnalysisOptions {
+            root: resolved.root.clone(),
+            base: None,
+            diff_file: None,
+            git_candidate: None,
+            resolved_subject_identity: Some(subject_identity_outcome),
+            ..options.clone()
+        };
+        cancellation::checkpoint()?;
+        let mut result = run_pipeline_for_diff_text(
+            &candidate_options,
+            oracle_policy,
+            languages,
+            generated_file_patterns,
+            &resolved.diff,
+        )?;
+        // #3279 R4: finding locations name the user's repository, not
+        // the ephemeral materialization directory — the temp root is
+        // machine-local and unreplayable. The relative path inside the
+        // candidate tree is unchanged; only the prefix is rebased from
+        // the materialized root back to the named repository root at
+        // the same seam that set it.
+        rebase_finding_paths_to_repository(&mut result, &resolved.root, &options.root);
+        return Ok(result);
+    }
     let diff_text = diff::load_diff(
         &options.root,
         options.base.as_deref(),
@@ -77,6 +132,18 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_generated_file_patter
 ) -> Result<AnalysisResult, String> {
     if options.diff_file.is_some() {
         return Err("worktree diff mode cannot be combined with --diff".to_string());
+    }
+    // #3237/#3277: the immutable subject's contract is exact-tree diff
+    // semantics. Worktree mode analyzes the live tree by definition, so
+    // a subject input must fail closed here rather than silently fall
+    // back to worktree bytes (review blocker: the bound subject was
+    // previously ignored in this mode).
+    if options.git_candidate.is_some() {
+        return Err(crate::domain::GitCandidateSubjectError::ExecutionFailed {
+            detail: "git candidate subjects are diff-semantics inputs; worktree mode cannot execute them"
+                .to_string(),
+        }
+        .to_string());
     }
     let diff_text =
         diff::load_worktree_diff(&options.root, options.base.as_deref(), options.git_timeout)?;
@@ -490,6 +557,7 @@ fn run_pipeline_for_diff_text(
         AnalysisIdentity {
             base_revision: options.base.clone(),
             input_identity: Some(input_identity),
+            git_candidate_subject: options.resolved_subject_identity.clone(),
             ..AnalysisIdentity::default()
         },
         AnalysisOutcomeCounts {
@@ -575,6 +643,18 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy(
     oracle_policy: &OraclePolicy,
     languages: &[LanguageId],
 ) -> Result<AnalysisResult, String> {
+    // #3237/#3277: repo mode seeds probes from the live tree; a subject
+    // input is a diff-semantics contract and fails closed here.
+    if let Some(subject) = options.git_candidate.as_ref() {
+        return Err(crate::domain::GitCandidateSubjectError::ExecutionFailed {
+            detail: format!(
+                "git candidate subjects are diff-semantics inputs; repo mode cannot execute subject `{}`",
+                subject.candidate_tree.as_str()
+            ),
+        }
+        .to_string());
+    }
+
     run_repo_pipeline_with_oracle_policy_and_generated_file_patterns(
         options,
         oracle_policy,
@@ -905,6 +985,27 @@ fn unavailable_language<T>(language: LanguageId) -> Result<T, String> {
     ))
 }
 
+/// Rebase every finding/probe location prefix from the materialized
+/// candidate root onto the named repository root (#3279 R4). The
+/// relative path is preserved exactly; a path outside the materialized
+/// root is left untouched (fail-open on the rewrite is honest — the
+/// analyzer produced it from candidate bytes).
+fn rebase_finding_paths_to_repository(
+    result: &mut AnalysisResult,
+    materialized_root: &std::path::Path,
+    repository_root: &std::path::Path,
+) {
+    let rebase = |path: &std::path::Path| -> std::path::PathBuf {
+        path.strip_prefix(materialized_root).map_or_else(
+            |_| path.to_path_buf(),
+            |relative| repository_root.join(relative),
+        )
+    };
+    for finding in &mut result.findings {
+        finding.probe.location.file = rebase(&finding.probe.location.file);
+    }
+}
+
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
@@ -1034,6 +1135,7 @@ mod tests {
                 base: None,
                 diff_file: None,
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -1085,6 +1187,7 @@ mod tests {
                 base: None,
                 diff_file: None,
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -1215,6 +1318,7 @@ mod tests {
                 base: None,
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -1302,6 +1406,7 @@ mod tests {
                 base: None,
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -1331,6 +1436,7 @@ mod tests {
                 base: None,
                 diff_file: None,
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -1355,6 +1461,7 @@ mod tests {
             base: None,
             diff_file: None,
             mode: AnalysisMode::Draft,
+            resolved_subject_identity: None,
             include_unchanged_tests: false,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
@@ -1422,6 +1529,7 @@ mod tests {
                 base: None,
                 diff_file: None,
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -1462,6 +1570,7 @@ mod tests {
                 base: None,
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -1565,6 +1674,7 @@ mod tests {
                 base: None,
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: Some(facts),
@@ -1646,6 +1756,7 @@ index 0000000..1111111 100644
                 base: None,
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -1701,6 +1812,7 @@ index 0000000..1111111 100644
                 base: None,
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -1757,6 +1869,7 @@ index 0000000..1111111 100644
                 base: None,
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -1816,6 +1929,7 @@ index 0000000..1111111 100644
                 base: None,
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -1872,6 +1986,7 @@ index 0000000..1111111 100644
                 base: None,
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -1942,6 +2057,7 @@ index 0000000..1111111 100644
                 base: None,
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -1985,6 +2101,7 @@ index 0000000..1111111 100644
                 base: None,
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -2030,6 +2147,7 @@ index 0000000..1111111 100644
                 base: None,
                 diff_file: Some(diff_file),
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -2073,6 +2191,7 @@ index 0000000..1111111 100644
                 base: None,
                 diff_file: None,
                 mode: AnalysisMode::Deep,
+                resolved_subject_identity: None,
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,

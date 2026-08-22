@@ -207,3 +207,16 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending
+
+Reason:
+RIPR-SPEC-0160: the additive git_candidate_subject identity field (null for ordinary runs) in the check JSON identity block
+
+Command:
+`cargo xtask goldens bless rust_transitive_reach_test_helper_chain --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

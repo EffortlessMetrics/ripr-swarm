@@ -626,15 +626,38 @@ The evidence-first fields are additive in schema `0.2`:
 - `evidence_path` is an ordered, human-readable summary of reachability,
   infection, propagation, observation, discrimination, local flow, related test
   oracles, observed values, and missing discriminator evidence.
+- `identity.git_candidate_subject` (additive, no `schema_version` bump,
+  #3278) appears in the `analysis_outcome.outcome.identity` object
+  as a non-null object exactly when the run analyzed an immutable Git
+  candidate (`--candidate-tree`); the key itself is always present, and
+  ordinary runs leave it `null`. It binds directly to the resolved producer
+  state — `subject_kind` (`tree_to_tree`), `base_tree` and
+  `candidate_tree` object IDs, and `diff_identity` (SHA-256 of the
+  derived base→candidate unified diff). A consumer compares the emitted
+  `candidate_tree` with its supplied OID without parsing prose;
+  ordinary runs leave the field `null`.
 - `assertion_texts` (added in schema `0.2`) is a finding-level JSON object
   mapping line-number strings to assertion source text.  Per-value objects in
   `observed_values` no longer carry a redundant `text` field; downstream
   consumers recover the assertion source via
   `finding.assertion_texts[line.to_string()]`.  **Known limitation**: the map
   is keyed by line number only, so if two assertions in different source files
-  share the same line number within one finding, only one text is retained.
-  This is a low-probability edge case; a future schema could use `"file:line"`
-  composite keys.
+  share the same line number within one finding, only one text is retained
+  **in this map** — differing texts are retained per-value via the optional
+  `provenance` field described below. This is a low-probability edge case; a
+  future schema could use `"file:line"` composite keys.
+- Per-value objects in `observed_values` carry an **optional `provenance`**
+  field (additive, no `schema_version` bump, #3295 follow-up). It carries
+  the fact's retained source text **whenever it differs from the shared
+  assertion source for its line** — the exact texts the line-keyed
+  `assertion_texts` map drops. That includes call-source text for plain
+  `function_argument` facts and, for facts computed by the bounded
+  value-transfer evaluator (`#3295`) or the helper-transfer chain
+  (`#3296`), the full evaluation chain with bound inputs and chain depth
+  (e.g.
+  `assert_eq!(…); | body = "fix" via strip_prefix -> map_or over label = "pre-fix" (chain depth 2)`).
+  Facts whose text **is** the plain assertion source stay deduped and omit
+  the field, so `assertion_texts` remains the recovery path for them.
 - `flow_sinks`, `observed_values`, and `missing_discriminators` promote the
   nested activation evidence for consumers that want direct finding-level
   access.

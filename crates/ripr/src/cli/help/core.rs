@@ -108,6 +108,13 @@ Options:
   --diff PATH              Read a unified diff file instead of running git diff.
                            Use --diff - to read from stdin (e.g.
                            `git diff origin/main | ripr check --diff -`).
+  --candidate-tree TREE    Analyze exactly this immutable Git tree object.
+                           Derives the diff from Git objects alone; the
+                           worktree and index are never consulted. Mutually
+                           exclusive with --diff and --base (#3237).
+  --candidate-base BASE    Base treeish for --candidate-tree (a commit, tag,
+                           or tree OID). Defaults to the repository's empty
+                           tree.
   --worktree               Diff the base revision against the live working tree
                            instead of HEAD, including staged and unstaged
                            tracked edits. Cannot be combined with --diff.

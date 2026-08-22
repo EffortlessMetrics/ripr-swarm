@@ -7,7 +7,7 @@
   "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":2,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,
-    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":"origin/main","input_identity":"sha256:2738dd3c3b7c83a81c82896861deec7fe8f1d6eeeac62d61b664e0fd03e514ec","snapshot_identity":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":"origin/main","input_identity":"sha256:2738dd3c3b7c83a81c82896861deec7fe8f1d6eeeac62d61b664e0fd03e514ec","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
   },
   "findings": [
     {
@@ -49,12 +49,14 @@
           {
             "line": 4,
             "value": "\"aaaaaaaaaaaa\"",
-            "context": "builder_method"
+            "context": "builder_method",
+            "provenance": "fn too_long_name_rejected_with_exact_variant() { let err = validate(\"aaaaaaaaaaaa\").unwrap_err(); assert_eq!(err, ParseError::TooLong(12)); }"
           },
           {
             "line": 4,
             "value": "12",
-            "context": "builder_method"
+            "context": "builder_method",
+            "provenance": "fn too_long_name_rejected_with_exact_variant() { let err = validate(\"aaaaaaaaaaaa\").unwrap_err(); assert_eq!(err, ParseError::TooLong(12)); }"
           },
           {
             "line": 4,
@@ -64,7 +66,8 @@
           {
             "line": 4,
             "value": "name = \"aaaaaaaaaaaa\"",
-            "context": "function_argument"
+            "context": "function_argument",
+            "provenance": "fn too_long_name_rejected_with_exact_variant() { let err = validate(\"aaaaaaaaaaaa\").unwrap_err(); assert_eq!(err, ParseError::TooLong(12)); }"
           }
         ],
         "missing_discriminators": [
@@ -79,12 +82,14 @@
         {
           "line": 4,
           "value": "\"aaaaaaaaaaaa\"",
-          "context": "builder_method"
+          "context": "builder_method",
+          "provenance": "fn too_long_name_rejected_with_exact_variant() { let err = validate(\"aaaaaaaaaaaa\").unwrap_err(); assert_eq!(err, ParseError::TooLong(12)); }"
         },
         {
           "line": 4,
           "value": "12",
-          "context": "builder_method"
+          "context": "builder_method",
+          "provenance": "fn too_long_name_rejected_with_exact_variant() { let err = validate(\"aaaaaaaaaaaa\").unwrap_err(); assert_eq!(err, ParseError::TooLong(12)); }"
         },
         {
           "line": 4,
@@ -94,7 +99,8 @@
         {
           "line": 4,
           "value": "name = \"aaaaaaaaaaaa\"",
-          "context": "function_argument"
+          "context": "function_argument",
+          "provenance": "fn too_long_name_rejected_with_exact_variant() { let err = validate(\"aaaaaaaaaaaa\").unwrap_err(); assert_eq!(err, ParseError::TooLong(12)); }"
         }
       ],
       "missing_discriminators": [
@@ -159,12 +165,14 @@
           {
             "line": 4,
             "value": "\"aaaaaaaaaaaa\"",
-            "context": "builder_method"
+            "context": "builder_method",
+            "provenance": "fn too_long_name_rejected_with_exact_variant() { let err = validate(\"aaaaaaaaaaaa\").unwrap_err(); assert_eq!(err, ParseError::TooLong(12)); }"
           },
           {
             "line": 4,
             "value": "12",
-            "context": "builder_method"
+            "context": "builder_method",
+            "provenance": "fn too_long_name_rejected_with_exact_variant() { let err = validate(\"aaaaaaaaaaaa\").unwrap_err(); assert_eq!(err, ParseError::TooLong(12)); }"
           },
           {
             "line": 4,
@@ -174,7 +182,8 @@
           {
             "line": 4,
             "value": "name = \"aaaaaaaaaaaa\"",
-            "context": "function_argument"
+            "context": "function_argument",
+            "provenance": "fn too_long_name_rejected_with_exact_variant() { let err = validate(\"aaaaaaaaaaaa\").unwrap_err(); assert_eq!(err, ParseError::TooLong(12)); }"
           }
         ],
         "missing_discriminators": [
@@ -189,12 +198,14 @@
         {
           "line": 4,
           "value": "\"aaaaaaaaaaaa\"",
-          "context": "builder_method"
+          "context": "builder_method",
+          "provenance": "fn too_long_name_rejected_with_exact_variant() { let err = validate(\"aaaaaaaaaaaa\").unwrap_err(); assert_eq!(err, ParseError::TooLong(12)); }"
         },
         {
           "line": 4,
           "value": "12",
-          "context": "builder_method"
+          "context": "builder_method",
+          "provenance": "fn too_long_name_rejected_with_exact_variant() { let err = validate(\"aaaaaaaaaaaa\").unwrap_err(); assert_eq!(err, ParseError::TooLong(12)); }"
         },
         {
           "line": 4,
@@ -204,7 +215,8 @@
         {
           "line": 4,
           "value": "name = \"aaaaaaaaaaaa\"",
-          "context": "function_argument"
+          "context": "function_argument",
+          "provenance": "fn too_long_name_rejected_with_exact_variant() { let err = validate(\"aaaaaaaaaaaa\").unwrap_err(); assert_eq!(err, ParseError::TooLong(12)); }"
         }
       ],
       "missing_discriminators": [

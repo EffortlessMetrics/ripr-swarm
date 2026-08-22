@@ -731,3 +731,75 @@ path = "docs/specs/RIPR-SPEC-0156-currentness-editor-projection.md"
 status = "proposed"
 owner = "product-swarm"
 standalone_reason = "Issue #3282 C3 slice for #3212: the last editor projection without a currentness gate (code lenses) consumes the shared candidate-actionable authority so deleted-side evidence is never pinned at its projected coordinate, and a four-fixture corpus pins deleted-tail, reused-coordinate identity, movement-without-evidence, and whole-file-delete dispositions end to end as the downstream-consumable export."
+
+[[artifact]]
+id = "RIPR-SPEC-0157"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0157-changed-binding-predicate-relation.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #3294 P2 slice for #3215: a changed simple let initializer retargets its probe to the same-function predicate use it feeds through one internal typed relation, keeping the initializers as causal evidence, naming the earliest unresolved initializer operation, and failing closed for shadowing, reassignment, closure capture, macro invocation, sibling functions, comment/string text, and destructuring declarations."
+
+[[artifact]]
+id = "RIPR-SPEC-0158"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0158-bounded-value-transfer.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #3295 P3 slice for #3215: one typed value-transfer evaluator resolves changed and sibling local bindings from exact related-test inputs across the enumerated std families, feeding the #3294 predicate operands so the equality boundary is observed instead of unknown, with named fail-closed edges for everything unevaluated."
+
+[[artifact]]
+id = "RIPR-SPEC-0159"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0159-bounded-helper-transfer.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #3296 P4 slice for #3215: one typed helper-transfer authority resolves bounded unique-callee chains with positional argument binding so helper-owned probes relate their tests, connect exact oracles, and evaluate operands with transferred inputs, while every unsupported edge stops by name."
+
+[[artifact]]
+id = "RIPR-SPEC-0160"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0160-immutable-candidate-surface.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #3278 R3 slice for #3237: the immutable Git candidate becomes callable (two CLI flags, binding-layer conflict rejection) and machine-verifiable (an additive identity object bound to the resolved producer state), with fail-closed subject errors and no schema-version bump."
+
+[[artifact]]
+id = "RIPR-SPEC-0161"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0161-immutable-candidate-qualification.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #3279 R4 slice for #3237: the qualification corpus breaks the isolation claim on purpose — post-bind mutations, committed parity, identity echo, delete/rename shapes, fail-closed invalid inputs, a substitution removal experiment, and temp-state cleanup — and the two real defects it found (worktree config leaking into subject runs; ephemeral temp roots leaking into finding paths) are repaired at the producer/config seams, not in renderers."
+
+[[artifact]]
+id = "RIPR-SPEC-0165"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0165-bounded-recursive-helper-evaluation.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #3296 recursive remainder: the caller-side chain named recursion as a stop edge and the return-value evaluator had no context, so a self-recursive match arm value refused the whole helper; this spec pins the shared bounded context (distinct states unroll within MAX_HELPER_HOPS, repeated states and the bound refuse) with the positive and four fail-closed fixtures."
+
+[[artifact]]
+id = "RIPR-SPEC-0164"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0164-literal-match-arm-transfer.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #3296 match-arm remainder: the helper-return evaluator failed closed on any match body, so a literal-driven string match helper kept the caller boundary unknown; this spec pins the strict tail-expression grammar with literal patterns/values and first-match order, with the positive and four fail-closed fixtures."
+
+[[artifact]]
+id = "RIPR-SPEC-0163"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0163-scanner-state-transitions.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #3296 scanner remainder: RIPR-SPEC-0159 named scanner-state transitions as the deferred slice; this spec pins the strict scanner grammar, the local-with-call-initializer operand jump, the 32-step refusal bound, and the bare-identifier token-coincidence guard, with the positive and four fail-closed fixtures."
+
+[[artifact]]
+id = "RIPR-SPEC-0162"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0162-propagation-unknown-wording.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "PR #3317 review follow-up: the shared human template asserted the propagation the propagation_unknown class marks unknown and labeled class-limitation prose as a missing discriminator; this renderer-owned slice makes both honest without touching the shared decision-layer text."

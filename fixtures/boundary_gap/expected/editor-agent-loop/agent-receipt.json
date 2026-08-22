@@ -50,8 +50,8 @@
     "seam_id": "67fc764ba37d77bd",
     "seam_kind": "predicate_boundary"
   },
-  "status": "incomplete",
-  "analysis_outcome_status": "missing",
+  "status": "advisory",
+  "analysis_outcome_status": "complete",
   "analysis_outcome_error": "<analysis_outcome_error>",
   "analysis_outcome": null,
   "summary": {

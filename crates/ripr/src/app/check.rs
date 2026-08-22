@@ -591,12 +591,12 @@ mod tests {
     #[test]
     fn check_workspace_fails_closed_on_git_candidate_subject_before_any_git_run()
     -> Result<(), String> {
-        // #3276/#3277: this build binds and validates the subject but has
-        // no object producer. The run must fail with the named
-        // execution-unsupported error BEFORE diff acquisition — the root is
-        // a temp directory that is not a git repository, so any other
-        // failure text would mean the gate leaked past validation into
-        // worktree/diff loading.
+        // #3276/#3277: binding validates the subject, and the object
+        // producer resolves it BEFORE any worktree/diff loading — the
+        // root is a temp directory that is not a git repository, so the
+        // producer must fail with the named identity error; any other
+        // failure text would mean the run leaked past the object
+        // producer into worktree/diff loading.
         let temp = std::env::temp_dir().join("ripr-3276-not-a-repo");
         std::fs::create_dir_all(&temp)
             .map_err(|error| format!("create_dir_all failed: {error}"))?;
@@ -614,16 +614,18 @@ mod tests {
             return Err("a git candidate subject input must not produce a run".to_string());
         };
         assert!(
-            error.contains("git candidate subjects"),
+            error.contains("git candidate subject"),
             "error must name the subject boundary: {error:?}"
         );
+        // Both producer failures are valid here and which one fires is
+        // environment-dependent: the ambient temp dir may sit inside a
+        // git repository, in which case the repository gate passes and
+        // the nonexistent sample tree OID fails resolution instead.
+        // Either way the failure must stay inside the subject boundary
+        // (the producer prefix) — never leak into worktree loading.
         assert!(
-            error.contains("#3277"),
-            "error must name the pending producer: {error:?}"
-        );
-        assert!(
-            error.contains("refusing to fall back"),
-            "error must state the fail-closed rule: {error:?}"
+            error.contains("git candidate subject: object producer failed"),
+            "error must stay inside the subject boundary: {error:?}"
         );
         Ok(())
     }

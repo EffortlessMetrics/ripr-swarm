@@ -7,7 +7,7 @@
   "summary": {"changed_rust_files":2,"probes":7,"findings":7,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":6,"changed_files_by_language":[{"language":"rust","files":2}]},
   "analysis_outcome": {
     "analysis_complete": true,
-    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":"origin/main","input_identity":"sha256:eeba2e2b66d5c5edb1e9759ab6f7f5f89a594d94fcd284b9931e3896cf1412b4","snapshot_identity":null},"counts":{"changed_file_count":2,"changed_line_count":18,"candidate_line_count":7,"probe_count":7,"finding_count":7},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":"origin/main","input_identity":"sha256:eeba2e2b66d5c5edb1e9759ab6f7f5f89a594d94fcd284b9931e3896cf1412b4","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":2,"changed_line_count":18,"candidate_line_count":7,"probe_count":7,"finding_count":7},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
   },
   "findings": [
     {
@@ -141,7 +141,8 @@
           {
             "line": 5,
             "value": "amount == discount_threshold",
-            "context": "function_argument"
+            "context": "function_argument",
+            "provenance": "let actual = discounted_total(100, 100); | exact input amount = 100; exact input discount_threshold = 100"
           },
           {
             "line": 5,
@@ -166,7 +167,8 @@
         {
           "line": 5,
           "value": "amount == discount_threshold",
-          "context": "function_argument"
+          "context": "function_argument",
+          "provenance": "let actual = discounted_total(100, 100); | exact input amount = 100; exact input discount_threshold = 100"
         },
         {
           "line": 5,

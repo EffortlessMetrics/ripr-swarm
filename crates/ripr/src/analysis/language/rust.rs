@@ -803,6 +803,51 @@ fn apply_rust_value_propagation_limit(finding: &mut Finding, probe: &Probe, inde
     );
 }
 
+/// #3294: attach the changed-binding relation evidence to a retargeted
+/// probe's finding. The probe is predicate-shaped and classifies through
+/// the normal predicate path; this only discloses the causal link (which
+/// binding and initializer fed the predicate) and the operand-value
+/// limitation. It never changes the class, adds a stop reason, or
+/// prescribes a repair — the operand values stay unresolved until a
+/// later slice evaluates them.
+fn attach_changed_binding_predicate_evidence(
+    finding: &mut Finding,
+    relation: &Option<probes::ChangedBindingPredicateUse>,
+) {
+    let Some(relation) = relation else {
+        return;
+    };
+    // The relation names both causal values when the diff carries the
+    // old initializer; the probe's before/after already hold them, and
+    // the relation line states them together.
+    let initializer_range = match finding.probe.before.as_deref() {
+        Some(before) if before != relation.initializer => {
+            format!("`{before}` -> `{}`", relation.initializer)
+        }
+        _ => format!("`{}`", relation.initializer),
+    };
+    finding.evidence.push(format!(
+        "binding_predicate_relation: changed binding `{}` initializer {initializer_range} flows into predicate operand at line {}",
+        relation.binding, relation.predicate_line
+    ));
+    if let probes::BindingValueResolution::Unresolved { earliest_operation } =
+        &relation.value_resolution
+    {
+        // Neutral prefixes: this is a value disclosure on a
+        // predicate-shaped finding, not a `static_limit_kind` record,
+        // so it deliberately stays outside the structured
+        // `limitation_*` evidence contract (#3294 review).
+        finding.evidence.push(format!(
+            "binding_predicate_value_unresolved: operand value of `{}` unresolved at earliest initializer operation `{}`",
+            relation.binding, earliest_operation
+        ));
+        finding.evidence.push(
+            "binding_predicate_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"
+                .to_string(),
+        );
+    }
+}
+
 /// Find an equality predicate that refers to the established binding after
 /// its declaration. Comments, strings, member names, and later shadowing are
 /// intentionally excluded so this limitation remains fail-closed.
@@ -868,7 +913,10 @@ fn binding_equality_predicate(line: &str, binding: &str) -> bool {
     })
 }
 
-fn changed_let_binding(expression: &str) -> Option<(&str, &str)> {
+/// A simple `let <ident> = <rhs>;` line. Shared by the #3271 limitation
+/// and the #3294 binding-predicate relation so both agree on what a
+/// changed binding is.
+pub(crate) fn changed_let_binding(expression: &str) -> Option<(&str, &str)> {
     let text = expression.trim().trim_end_matches(';').trim();
     let rest = text.strip_prefix("let ")?;
     let (lhs, rhs) = rest.split_once('=')?;
@@ -964,7 +1012,7 @@ fn unresolved_assertion_macro_invocations(body: &str, start_line: usize) -> Vec<
     invocations
 }
 
-fn mask_rust_comments_and_strings(text: &str) -> String {
+pub(crate) fn mask_rust_comments_and_strings(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut masked = bytes.to_vec();
     let mut index = 0usize;
@@ -1552,8 +1600,8 @@ impl RustAdapter {
             // and once per probe so a superseded or deadline-expired refresh
             // exits the classify loop promptly.
             cancellation::checkpoint()?;
-            let probes = probes::probes_for_file(&options.root, changed, &index);
-            for probe in probes {
+            let probes = probes::probes_for_file_with_relations(&options.root, changed, &index);
+            for (probe, binding_relation) in probes {
                 candidate_lines.insert((probe.location.file.clone(), probe.location.line));
                 cancellation::checkpoint()?;
                 let mut finding =
@@ -1581,6 +1629,11 @@ impl RustAdapter {
                 // or promotion.
                 apply_rust_macro_wrapped_assertion_limit(&mut finding, &index);
                 apply_rust_value_propagation_limit(&mut finding, &probe, &index);
+                // #3294: a retargeted changed-binding probe keeps its
+                // predicate-shaped classification, but the finding still
+                // discloses the operand-value limitation it inherited from the
+                // changed initializer.
+                attach_changed_binding_predicate_evidence(&mut finding, &binding_relation);
                 // Fail closed on cross-language seams: when the probe owner
                 // carries an FFI/binding attribute, replace any Rust-gap
                 // static_limit_kind with the cross-language limitation so
@@ -1846,6 +1899,7 @@ mod tests {
                 base: None,
                 diff_file: None,
                 mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -1915,6 +1969,7 @@ mod tests {
                 base: None,
                 diff_file: None,
                 mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -1962,15 +2017,24 @@ mod tests {
         Ok(())
     }
 
-    fn value_propagation_fixture(
+    // Shared end-to-end shape for the #3271/#3294 binding-value family:
+    // a small crate whose changed `let` initializer feeds an equality
+    // predicate in the same function, with exact-value tests touching
+    // the boundary from both sides.
+    fn binding_value_crate(
         name: &str,
         changed_line_number: usize,
         old_line: &str,
         changed_line: &str,
-        expected_limit: bool,
-    ) -> Result<(), String> {
+        predicate_line: &str,
+    ) -> Result<
+        (
+            std::path::PathBuf,
+            super::super::adapter::LanguageDiffResult,
+        ),
+        String,
+    > {
         let root = temp_root(name)?;
-        let cleanup_root = root.clone();
         write(
             &root.join("Cargo.toml"),
             "[package]\nname='value-propagation'\nversion='0.1.0'\nedition='2024'\n",
@@ -1986,7 +2050,7 @@ mod tests {
             "    let end = input.rfind(delim).map_or(0, |idx| idx);"
         };
         let source = format!(
-            "pub fn split(input: &str, delim: &str) -> usize {{\n{start_line}\n{end_line}\n    if end == start {{ 1 }} else {{ 0 }}\n}}\n"
+            "pub fn split(input: &str, delim: &str) -> usize {{\n{start_line}\n{end_line}\n{predicate_line}\n    0\n}}\n"
         );
         write(&root.join("src/lib.rs"), &source)?;
         write(
@@ -1999,10 +2063,11 @@ mod tests {
         let changed_files = diff::parse_unified_diff(&diff_text);
         let result = RustAdapter.analyze_diff(
             &AnalysisOptions {
-                root,
+                root: root.clone(),
                 base: None,
                 diff_file: None,
                 mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -2013,80 +2078,250 @@ mod tests {
             &OraclePolicy::default(),
             &changed_files,
         )?;
-        let binding_name = changed_line
-            .trim()
-            .strip_prefix("let ")
-            .and_then(|rest| rest.split_whitespace().next())
-            .unwrap_or("end");
+        Ok((root, result))
+    }
+
+    // #3294: a changed binding that reaches its same-function equality
+    // predicate directly retargets the probe to the predicate. The
+    // finding is predicate-shaped, the generic changed-syntax limitation
+    // is gone, and the operand-value limitation names the earliest
+    // initializer operation.
+    #[test]
+    fn diff_analysis_retargets_changed_binding_to_predicate_use() -> Result<(), String> {
+        let (root, result) = binding_value_crate(
+            "rfind-binding-predicate",
+            3,
+            "    let end = input.rfind(delim).map_or(0, |idx| idx);",
+            "    let end = input.rfind(delim).map_or(1, |idx| idx);",
+            "    if end == start { return 1; }",
+        )?;
         let finding = result
             .findings
             .iter()
             .find(|finding| {
-                finding
-                    .probe
-                    .expression
-                    .contains(&format!("let {binding_name}"))
+                finding.probe.family == ProbeFamily::Predicate
+                    && finding.probe.expression.contains("end == start")
             })
+            .ok_or_else(|| format!("missing retargeted finding: {:?}", result.findings))?;
+        assert_eq!(finding.probe.location.line, 4, "probe sits on the use");
+        assert_ne!(finding.class, ExposureClass::StaticUnknown);
+        assert!(finding.static_limit_kind.is_none());
+        assert!(
+            finding.evidence.iter().any(|line| line
+                .contains("binding_predicate_relation: changed binding `end` initializer")),
+            "relation evidence missing: {:?}",
+            finding.evidence
+        );
+        assert!(
+            finding.evidence.iter().any(|line| line.contains(
+                "binding_predicate_value_unresolved: operand value of `end` unresolved at earliest initializer operation `.rfind(`"
+            )),
+            "earliest operation evidence missing: {:?}",
+            finding.evidence
+        );
+        assert!(
+            !result.findings.iter().any(|finding| finding
+                .evidence
+                .iter()
+                .any(|line| line.contains("not mapped to a high-confidence probe family"))),
+            "the generic changed-syntax limitation must be absent: {:?}",
+            result.findings
+        );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    // #3294: the same retarget for the `len_utf8` operand binding.
+    #[test]
+    fn diff_analysis_retargets_len_utf8_binding_to_predicate_use() -> Result<(), String> {
+        let (root, result) = binding_value_crate(
+            "len-utf8-binding-predicate",
+            2,
+            "    let start = delim.chars().next().map_or(0, |ch| ch.len_utf8());",
+            "    let start = delim.chars().next().map_or(1, |ch| ch.len_utf8());",
+            "    if end == start { return 1; }",
+        )?;
+        let finding = result
+            .findings
+            .iter()
+            .find(|finding| {
+                finding.probe.family == ProbeFamily::Predicate
+                    && finding.probe.expression.contains("end == start")
+            })
+            .ok_or_else(|| format!("missing retargeted finding: {:?}", result.findings))?;
+        assert!(
+            finding.evidence.iter().any(|line| line.contains(
+                "binding_predicate_value_unresolved: operand value of `start` unresolved at earliest initializer operation `.chars(`"
+            )),
+            "earliest operation evidence missing: {:?}",
+            finding.evidence
+        );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    // #3294: an initializer ripr cannot evaluate at all (`input.len()`)
+    // still retargets — the predicate is named, the operand value stays
+    // unresolved at the earliest call.
+    #[test]
+    fn diff_analysis_retargets_unbounded_initializer_naming_earliest_call() -> Result<(), String> {
+        let (root, result) = binding_value_crate(
+            "unbounded-binding-predicate",
+            3,
+            "    let end = input.rfind(delim).map_or(0, |idx| idx);",
+            "    let end = input.len();",
+            "    if end == start { return 1; }",
+        )?;
+        let finding = result
+            .findings
+            .iter()
+            .find(|finding| {
+                finding.probe.family == ProbeFamily::Predicate
+                    && finding.probe.expression.contains("end == start")
+            })
+            .ok_or_else(|| format!("missing retargeted finding: {:?}", result.findings))?;
+        assert!(
+            finding.evidence.iter().any(|line| line.contains(
+                "binding_predicate_value_unresolved: operand value of `end` unresolved at earliest initializer operation `input.len(`"
+            )),
+            "earliest call evidence missing: {:?}",
+            finding.evidence
+        );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    // #3295: the exact test inputs evaluate the changed and sibling
+    // bindings, so the equality boundary is observed (infection yes at
+    // the changed boundary) instead of `observed end values: unknown`.
+    #[test]
+    fn diff_analysis_evaluates_exact_boundary_from_test_inputs() -> Result<(), String> {
+        let root = temp_root("exact-boundary-evaluation")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]
+name='value-propagation'
+version='0.1.0'
+edition='2024'
+",
+        )?;
+        write(
+            &root.join("src/lib.rs"),
+            "pub fn split_after(input: &str, delim: char) -> &str {
+    let end = input.rfind(delim).map_or(1, |idx| idx);
+    let start = delim.len_utf8();
+    if end == start {
+        &input[..end]
+    } else {
+        input
+    }
+}
+",
+        )?;
+        write(
+            &root.join("tests/split.rs"),
+            "use value_propagation::split_after;
+#[test]
+fn absent_delimiter_boundary_returns_head() {
+    assert_eq!(split_after(\"ab\", 'x'), \"a\");
+}
+",
+        )?;
+        let diff_text = "diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -2,1 +2,1 @@
+-    let end = input.rfind(delim).map_or(0, |idx| idx);
++    let end = input.rfind(delim).map_or(1, |idx| idx);
+";
+        let changed_files = diff::parse_unified_diff(diff_text);
+        let result = RustAdapter.analyze_diff(
+            &AnalysisOptions {
+                root: root.clone(),
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+            },
+            &OraclePolicy::default(),
+            &changed_files,
+        )?;
+        let finding = result
+            .findings
+            .iter()
+            .find(|finding| {
+                finding.probe.family == ProbeFamily::Predicate
+                    && finding.probe.expression.contains("end == start")
+            })
+            .ok_or_else(|| format!("missing retargeted finding: {:?}", result.findings))?;
+        assert_eq!(
+            finding.ripr.infect.state,
+            StageState::Yes,
+            "the exact inputs end=1, start=1 observe the boundary: {finding:?}"
+        );
+        assert!(
+            finding
+                .activation
+                .observed_values
+                .iter()
+                .any(|fact| fact.value == "end == start"),
+            "the boundary equality must be an observed value: {:?}",
+            finding.activation.observed_values
+        );
+        assert!(
+            finding
+                .activation
+                .missing_discriminators
+                .iter()
+                .all(|fact| fact.value != "end == start"),
+            "the boundary discriminator is no longer missing: {:?}",
+            finding.activation.missing_discriminators
+        );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    // #3271 stays the fallback for shapes #3294 cannot relate: a
+    // predicate use behind a macro invocation is blocked by the
+    // relation, so the generic static-unknown finding keeps the
+    // value-propagation limitation.
+    #[test]
+    fn diff_analysis_keeps_value_propagation_limitation_for_macro_guarded_use() -> Result<(), String>
+    {
+        let (root, result) = binding_value_crate(
+            "macro-guarded-value-limit",
+            3,
+            "    let end = input.rfind(delim).map_or(0, |idx| idx);",
+            "    let end = input.rfind(delim).map_or(1, |idx| idx);",
+            "    ensure!(end == start);",
+        )?;
+        let finding = result
+            .findings
+            .iter()
+            .find(|finding| finding.probe.expression.contains("let end"))
             .ok_or_else(|| format!("missing changed binding finding: {:?}", result.findings))?;
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
         assert_eq!(
             finding
                 .static_limit_kind
                 .as_ref()
-                .map(StaticLimitKind::as_str)
-                == Some("rust_value_propagation_unresolved"),
-            expected_limit,
-            "unexpected value-propagation finding: {finding:?}"
+                .map(StaticLimitKind::as_str),
+            Some("rust_value_propagation_unresolved")
         );
-        if expected_limit {
-            assert_eq!(finding.class, ExposureClass::StaticUnknown);
-            assert!(
-                finding
-                    .evidence
-                    .iter()
-                    .any(|line| line.contains("limitation_first_unresolved_edge"))
-            );
-            assert!(
-                finding
-                    .evidence
-                    .iter()
-                    .any(|line| line.contains("analysis/rust-value-propagation"))
-            );
-        }
-        fs::remove_dir_all(cleanup_root).map_err(|error| format!("remove fixture: {error}"))?;
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .any(|line| line.contains("analysis/rust-value-propagation"))
+        );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())
-    }
-
-    #[test]
-    fn diff_analysis_names_rfind_value_propagation_limitation() -> Result<(), String> {
-        value_propagation_fixture(
-            "rfind-value-limit",
-            3,
-            "    let end = input.rfind(delim).map_or(0, |idx| idx);",
-            "    let end = input.rfind(delim).map_or(1, |idx| idx);",
-            true,
-        )
-    }
-
-    #[test]
-    fn diff_analysis_keeps_unbounded_value_shapes_fail_closed() -> Result<(), String> {
-        value_propagation_fixture(
-            "unbounded-value-limit",
-            3,
-            "    let end = input.rfind(delim).map_or(0, |idx| idx);",
-            "    let end = input.len();",
-            false,
-        )
-    }
-
-    #[test]
-    fn diff_analysis_names_len_utf8_value_propagation_limitation() -> Result<(), String> {
-        value_propagation_fixture(
-            "len-utf8-value-limit",
-            2,
-            "    let start = delim.chars().next().map_or(0, |ch| ch.len_utf8());",
-            "    let start = delim.chars().next().map_or(1, |ch| ch.len_utf8());",
-            true,
-        )
     }
 
     #[test]
@@ -2895,6 +3130,7 @@ mod tests {
                 base: None,
                 diff_file: None,
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -3493,6 +3729,7 @@ let _ = (result, note, raw);"##,
             base: None,
             diff_file: None,
             mode: AnalysisMode::Ready,
+            resolved_subject_identity: None,
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
@@ -3600,6 +3837,7 @@ let _ = (result, note, raw);"##,
                 base: None,
                 diff_file: None,
                 mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -3689,6 +3927,7 @@ let _ = (result, note, raw);"##,
                 base: None,
                 diff_file: None,
                 mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
@@ -3795,6 +4034,7 @@ let _ = (result, note, raw);"##,
                 base: None,
                 diff_file: None,
                 mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,

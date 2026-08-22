@@ -813,3 +813,32 @@ fn parse_relative_path(field: &str, value: &str) -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests;
+
+/// The config a bound immutable-subject run uses (#3279 R4): the
+/// candidate tree's own `ripr.toml` when the tree carries one, else the
+/// default config. The worktree file (already loaded as `worktree`)
+/// contributes nothing — `source_path`/`source_text` are cleared so the
+/// recorded identity cannot claim the worktree file as its source.
+pub(crate) fn config_for_candidate(
+    subject: &crate::domain::GitCandidateSubject,
+    worktree: &RiprConfig,
+) -> Result<RiprConfig, String> {
+    let bytes = crate::analysis::git_candidate_execution::candidate_config_bytes(
+        subject,
+        Some(std::time::Duration::from_secs(30)),
+    )
+    .map_err(|error| error.to_string())?;
+    let Some(text) = bytes else {
+        // Pure default: no worktree fact may enter a subject run
+        // (#3279 review B1 — the worktree's enabled-languages list is
+        // mutable state, and toggling it flipped subject completeness).
+        // Binary capability is already inside the default config.
+        let _ = worktree;
+        return Ok(RiprConfig::default());
+    };
+    let mut config =
+        parse_config(&text).map_err(|err| format!("candidate tree ripr.toml: {err}"))?;
+    config.source_path = None;
+    config.source_text = Some(text);
+    Ok(config)
+}

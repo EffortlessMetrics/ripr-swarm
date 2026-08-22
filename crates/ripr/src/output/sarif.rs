@@ -16,7 +16,7 @@ use crate::domain::{
 };
 use crate::output::next_step::reconcile_next_step;
 use crate::output::path::display_path_text;
-use crate::output::perl_preview_card::{perl_preview_card, perl_preview_card_json_value};
+use crate::output::perl_preview_card::perl_preview_card_json;
 use crate::output::preview_actionability::{
     preview_actionability_for, preview_actionability_json_value,
 };
@@ -383,11 +383,8 @@ fn finding_properties(finding: &Finding, severity: ConfigSeverity) -> Value {
             typescript_preview_card_json_value(&card),
         );
     }
-    if let Some(card) = perl_preview_card(finding) {
-        properties.insert(
-            "perl_preview_card".to_string(),
-            perl_preview_card_json_value(&card),
-        );
+    if let Some(card) = perl_preview_card_json(finding) {
+        properties.insert("perl_preview_card".to_string(), card);
     }
     properties.insert(
         "changed_expression".to_string(),

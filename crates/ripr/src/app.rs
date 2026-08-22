@@ -20,6 +20,7 @@ pub use pr_evidence::reject_pr_evidence_error_packet;
 /// compatibility `xtask` route.
 pub mod pr_summary;
 pub(crate) mod receipt;
+pub(crate) mod repair_attempt;
 pub(crate) mod ripr_plus;
 mod selector;
 pub(crate) mod temp_diff;
@@ -103,10 +104,9 @@ pub struct CheckInput {
     /// Immutable Git candidate subject (#3237 / #3276 R1). When `Some`, the
     /// run must consume base and candidate bytes from the named Git tree
     /// objects — never the worktree or live index. Mutually exclusive with
-    /// `diff_file` and `base`. This build binds and validates the subject
-    /// but has no object producer yet, so `check_workspace*` fails closed
-    /// with a named error rather than falling back to worktree analysis
-    /// (the producer lands with #3277).
+    /// `diff_file` and `base`. The object producer (#3277) executes the
+    /// subject in diff mode; worktree and repo modes fail closed with a
+    /// named error rather than falling back to worktree analysis.
     pub git_candidate: Option<crate::domain::GitCandidateSubject>,
 }
 

@@ -4068,6 +4068,7 @@ fn analyze_diff_returns_zero_findings_and_counts_accepted_files() -> Result<(), 
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
+        resolved_subject_identity: None,
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![
@@ -4100,6 +4101,7 @@ fn analyze_diff_splits_changed_files_into_typescript_and_javascript() -> Result<
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
+        resolved_subject_identity: None,
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![
@@ -4134,6 +4136,7 @@ fn analyze_repo_returns_empty_scaffold() -> Result<(), String> {
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
+        resolved_subject_identity: None,
     };
     let policy = OraclePolicy::default();
     let result = adapter.analyze_repo(&options, &policy)?;
@@ -7397,6 +7400,7 @@ fn delta5_verify_command_absent_from_missing_list_when_runner_resolved() -> Resu
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
+        resolved_subject_identity: None,
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![ChangedFile {
@@ -7491,6 +7495,7 @@ fn delta5_verify_command_stays_in_missing_list_when_runner_unresolved() -> Resul
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
+        resolved_subject_identity: None,
     };
     let policy = OraclePolicy::default();
     let changed_files = vec![ChangedFile {
