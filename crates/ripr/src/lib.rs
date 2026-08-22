@@ -107,6 +107,8 @@ pub mod lsp;
 // Kept public for compatibility with existing render integrations.
 #[doc(hidden)]
 pub mod output;
+/// Exact-snapshot, read-only provider DTOs for external proof orchestrators.
+pub mod provider_contract;
 
 pub use analysis::LanguageRun;
 pub use analysis::LanguageRunStatus;
@@ -124,7 +126,10 @@ pub use app::{
 /// pattern-match, or re-render a result.
 pub use app::{Mode, OutputFormat};
 /// Domain model types exposed as part of the stable public contract.
-pub use domain::{ExposureClass, Finding, Probe, ProbeFamily, RiprEvidence};
+pub use domain::{
+    ExposureClass, Finding, Probe, ProbeFamily, RiprEvidence, TestEvidenceEntry,
+    TestEvidenceSummary,
+};
 /// Immutable Git candidate subject family (#3237 / #3276): construction
 /// and validation types for naming an exact base/candidate tree pair as
 /// the analysis input.
@@ -135,6 +140,14 @@ pub use domain::{
 pub use domain::{LanguageFileCount, SourceCurrentness, Summary};
 pub use output::suppressions::CheckSuppressionOutcome;
 pub use output::suppressions::SuppressedCheckFinding;
+pub use provider_contract::{
+    RIPR_ANALYSIS_RECEIPT_SCHEMA_VERSION, RIPR_ANALYSIS_REQUEST_SCHEMA_VERSION,
+    RIPR_PROVIDER_CAPABILITY_SCHEMA_VERSION, RiprAnalysisReceiptV1, RiprAnalysisRequestV1,
+    RiprEvidenceSubjectV1, RiprProviderCapabilityDescriptorV1, RiprProviderCapabilitySetV1,
+    RiprProviderCapabilityV1, RiprProviderContractErrorCodeV1, RiprProviderContractErrorV1,
+    RiprProviderDiagnosticV1, RiprProviderNativeStatusV1, RiprProviderResultClassV1,
+    RiprRepositorySnapshotV1, RiprSourceViewV1,
+};
 
 // #2610: global verbose flag. Set by the binary entry point before dispatch.
 use std::sync::atomic::{AtomicBool, Ordering};

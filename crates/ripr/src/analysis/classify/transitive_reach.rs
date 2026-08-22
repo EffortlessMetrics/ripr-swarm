@@ -17,7 +17,7 @@
 //! - If no candidate transitive path is found the finding is left exactly as-is.
 
 use crate::analysis::facts::{CallFact, FunctionSummary, RustIndex, TestFact};
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 
 /// Maximum call-hop depth for the transitive walk.
@@ -125,6 +125,7 @@ pub(in crate::analysis) fn find_transitive_witness(
     // that test which reaches the owner. Collected as a sortable 4-tuple so the
     // named witness is stable across index iteration order (goldens depend on
     // this determinism).
+    let mut sweep = ReachSweep::new(&prod_fns);
     let mut witnesses: Vec<(PathBuf, usize, String, String)> = Vec::new();
     for test in &all_tests {
         let mut entry: Option<&str> = None;
@@ -139,7 +140,7 @@ pub(in crate::analysis) fn find_transitive_witness(
                 continue;
             }
             // BFS from this callee through the production call graph.
-            if bfs_reaches_owner(&callee.name, owner_name, &prod_fns) {
+            if sweep.reaches(&callee.name, owner_name) {
                 match entry {
                     Some(current) if current <= callee.name.as_str() => {}
                     _ => entry = Some(callee.name.as_str()),
@@ -193,12 +194,13 @@ pub(in crate::analysis) fn find_macro_reach_witness(
         .flat_map(|file| file.functions.iter().filter(|f| !f.is_test))
         .collect();
 
+    let mut sweep = ReachSweep::new(&prod_fns);
     let mut witnesses: Vec<MacroWitnessCandidate> = Vec::new();
     for test in &all_tests {
         let mut found: Vec<(String, MacroReachEdge)> = Vec::new();
 
         for macro_invocation in macro_invocations_in_text(&test.body, test.start_line) {
-            if let Some(edge) = macro_edge_for_invocation(
+            if let Some(edge) = sweep.macro_edge_for_invocation(
                 &macro_invocation,
                 &test.file,
                 MACRO_WITNESS_TEST_BODY_HOST,
@@ -213,7 +215,7 @@ pub(in crate::analysis) fn find_macro_reach_witness(
             if is_macro_call(&callee.name) || callee.name == owner_name {
                 continue;
             }
-            if let Some(edge) = bfs_hits_owner_macro(&callee.name, owner_name, &prod_fns, index) {
+            if let Some(edge) = sweep.macro_edge(&callee.name, owner_name, index) {
                 found.push((callee.name.clone(), edge));
             }
         }
@@ -441,110 +443,174 @@ fn collect_all_tests(index: &RustIndex) -> Vec<&TestFact> {
     v
 }
 
-/// Find a production function by name (first match; lexical, no resolution).
-fn find_prod_fn_by_name<'a>(
-    name: &str,
-    prod_fns: &[&'a FunctionSummary],
-) -> Option<&'a FunctionSummary> {
-    prod_fns.iter().find(|f| f.name == name).copied()
-}
-
-/// BFS from `start_name` through production function call facts to see if
-/// `owner_name` is reachable within `MAX_TRANSITIVE_DEPTH` hops.
+/// Per-call acceleration for one owner's reach sweeps.
 ///
-/// Stops early at any boundary:
-/// - Callee name is a macro invocation (`name!`).
-/// - Callee is not found in the production function set (external / unresolved).
-/// - Depth exceeds `MAX_TRANSITIVE_DEPTH`.
-fn bfs_reaches_owner(start_name: &str, owner_name: &str, prod_fns: &[&FunctionSummary]) -> bool {
-    let mut queue: VecDeque<(String, usize)> = VecDeque::new();
-    let mut visited: HashSet<String> = HashSet::new();
+/// The sweeps are pure functions of (start name, owner name, index), so a
+/// name-keyed function index plus per-start result memos collapse the repeated
+/// test × callee × BFS rescans that made large indexes quadratic without
+/// changing any traversal order, first-match resolution, or witness selection
+/// (goldens depend on all three).
+struct ReachSweep<'a> {
+    by_name: HashMap<&'a str, &'a FunctionSummary>,
+    reach_memo: HashMap<String, bool>,
+    macro_edge_memo: HashMap<String, Option<MacroReachEdge>>,
+    macro_mention_memo: HashMap<String, bool>,
+}
 
-    queue.push_back((start_name.to_string(), 1));
-    visited.insert(start_name.to_string());
-
-    while let Some((current_name, depth)) = queue.pop_front() {
-        if depth > MAX_TRANSITIVE_DEPTH {
-            continue;
+impl<'a> ReachSweep<'a> {
+    fn new(prod_fns: &[&'a FunctionSummary]) -> Self {
+        let mut by_name: HashMap<&str, &FunctionSummary> = HashMap::with_capacity(prod_fns.len());
+        for function in prod_fns {
+            by_name.entry(function.name.as_str()).or_insert(function);
         }
-        let Some(current_fn) = find_prod_fn_by_name(&current_name, prod_fns) else {
-            // Callee not found in-crate - stop this branch (fail closed).
-            continue;
-        };
-        for call in calls_of(current_fn) {
-            // Stop at macro invocations.
-            if is_macro_call(call.name.as_str()) {
-                continue;
-            }
-            if call.name == owner_name {
-                return true;
-            }
-            if !visited.contains(&call.name) {
-                visited.insert(call.name.clone());
-                queue.push_back((call.name.clone(), depth + 1));
-            }
+        Self {
+            by_name,
+            reach_memo: HashMap::new(),
+            macro_edge_memo: HashMap::new(),
+            macro_mention_memo: HashMap::new(),
         }
     }
 
-    false
-}
-
-fn bfs_hits_owner_macro(
-    start_name: &str,
-    owner_name: &str,
-    prod_fns: &[&FunctionSummary],
-    index: &RustIndex,
-) -> Option<MacroReachEdge> {
-    let mut queue: VecDeque<(String, usize)> = VecDeque::new();
-    let mut visited: HashSet<String> = HashSet::new();
-
-    queue.push_back((start_name.to_string(), 1));
-    visited.insert(start_name.to_string());
-
-    while let Some((current_name, depth)) = queue.pop_front() {
-        if depth > MAX_TRANSITIVE_DEPTH {
-            continue;
-        }
-        let Some(current_fn) = find_prod_fn_by_name(&current_name, prod_fns) else {
-            continue;
-        };
-        for macro_invocation in macro_invocations_in_text(&current_fn.body, current_fn.start_line) {
-            if let Some(edge) = macro_edge_for_invocation(
-                &macro_invocation,
-                &current_fn.file,
-                &current_fn.name,
-                owner_name,
-                index,
-            ) {
-                return Some(edge);
-            }
-        }
-        for call in calls_of(current_fn) {
-            if is_macro_call(call.name.as_str()) || call.name == owner_name {
-                continue;
-            }
-            if visited.insert(call.name.clone()) {
-                queue.push_back((call.name.clone(), depth + 1));
-            }
-        }
+    fn resolve(&self, name: &str) -> Option<&'a FunctionSummary> {
+        self.by_name.get(name).copied()
     }
 
-    None
-}
+    fn reaches(&mut self, start_name: &str, owner_name: &str) -> bool {
+        if let Some(cached) = self.reach_memo.get(start_name) {
+            return *cached;
+        }
+        let reached = self.bfs_reaches_owner_uncached(start_name, owner_name);
+        self.reach_memo.insert(start_name.to_string(), reached);
+        reached
+    }
 
-fn macro_edge_for_invocation(
-    invocation: &MacroInvocation,
-    invocation_file: &std::path::Path,
-    host: &str,
-    owner_name: &str,
-    index: &RustIndex,
-) -> Option<MacroReachEdge> {
-    macro_definition_mentions_owner(index, &invocation.name, owner_name).then(|| MacroReachEdge {
-        macro_name: invocation.name.clone(),
-        macro_file: invocation_file.to_path_buf(),
-        macro_line: invocation.line,
-        macro_host: host.to_string(),
-    })
+    /// BFS from `start_name` through production function call facts to see if
+    /// `owner_name` is reachable within `MAX_TRANSITIVE_DEPTH` hops.
+    ///
+    /// Stops early at any boundary:
+    /// - Callee name is a macro invocation (`name!`).
+    /// - Callee is not found in the production function set (external / unresolved).
+    /// - Depth exceeds `MAX_TRANSITIVE_DEPTH`.
+    fn bfs_reaches_owner_uncached(&self, start_name: &str, owner_name: &str) -> bool {
+        let mut queue: VecDeque<(&str, usize)> = VecDeque::new();
+        let mut visited: HashSet<&str> = HashSet::new();
+
+        queue.push_back((start_name, 1));
+        visited.insert(start_name);
+
+        while let Some((current_name, depth)) = queue.pop_front() {
+            if depth > MAX_TRANSITIVE_DEPTH {
+                continue;
+            }
+            let Some(current_fn) = self.resolve(current_name) else {
+                // Callee not found in-crate - stop this branch (fail closed).
+                continue;
+            };
+            for call in calls_of(current_fn) {
+                // Stop at macro invocations.
+                if is_macro_call(call.name.as_str()) {
+                    continue;
+                }
+                if call.name == owner_name {
+                    return true;
+                }
+                if !visited.contains(call.name.as_str()) {
+                    visited.insert(call.name.as_str());
+                    queue.push_back((call.name.as_str(), depth + 1));
+                }
+            }
+        }
+
+        false
+    }
+
+    fn macro_edge(
+        &mut self,
+        start_name: &str,
+        owner_name: &str,
+        index: &RustIndex,
+    ) -> Option<MacroReachEdge> {
+        if let Some(cached) = self.macro_edge_memo.get(start_name) {
+            return cached.clone();
+        }
+        let edge = self.bfs_hits_owner_macro_uncached(start_name, owner_name, index);
+        self.macro_edge_memo
+            .insert(start_name.to_string(), edge.clone());
+        edge
+    }
+
+    fn bfs_hits_owner_macro_uncached(
+        &mut self,
+        start_name: &str,
+        owner_name: &str,
+        index: &RustIndex,
+    ) -> Option<MacroReachEdge> {
+        let mut queue: VecDeque<(String, usize)> = VecDeque::new();
+        let mut visited: HashSet<String> = HashSet::new();
+
+        queue.push_back((start_name.to_string(), 1));
+        visited.insert(start_name.to_string());
+
+        while let Some((current_name, depth)) = queue.pop_front() {
+            if depth > MAX_TRANSITIVE_DEPTH {
+                continue;
+            }
+            let Some(current_fn) = self.resolve(&current_name) else {
+                continue;
+            };
+            for macro_invocation in
+                macro_invocations_in_text(&current_fn.body, current_fn.start_line)
+            {
+                if let Some(edge) = self.macro_edge_for_invocation(
+                    &macro_invocation,
+                    &current_fn.file,
+                    &current_fn.name,
+                    owner_name,
+                    index,
+                ) {
+                    return Some(edge);
+                }
+            }
+            for call in calls_of(current_fn) {
+                if is_macro_call(call.name.as_str()) || call.name == owner_name {
+                    continue;
+                }
+                if visited.insert(call.name.clone()) {
+                    queue.push_back((call.name.clone(), depth + 1));
+                }
+            }
+        }
+
+        None
+    }
+
+    fn macro_edge_for_invocation(
+        &mut self,
+        invocation: &MacroInvocation,
+        invocation_file: &std::path::Path,
+        host: &str,
+        owner_name: &str,
+        index: &RustIndex,
+    ) -> Option<MacroReachEdge> {
+        if let Some(cached) = self.macro_mention_memo.get(invocation.name.as_str()) {
+            if !*cached {
+                return None;
+            }
+        } else {
+            let mentions = macro_definition_mentions_owner(index, &invocation.name, owner_name);
+            self.macro_mention_memo
+                .insert(invocation.name.clone(), mentions);
+            if !mentions {
+                return None;
+            }
+        }
+        Some(MacroReachEdge {
+            macro_name: invocation.name.clone(),
+            macro_file: invocation_file.to_path_buf(),
+            macro_line: invocation.line,
+            macro_host: host.to_string(),
+        })
+    }
 }
 
 fn macro_invocations_in_text(text: &str, start_line: usize) -> Vec<MacroInvocation> {
