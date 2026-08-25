@@ -78,6 +78,7 @@ pub(crate) fn rust_include_directives(
 fn include_literal_path(expression: &str) -> Option<PathBuf> {
     let (_, arguments) = expression.split_once('!')?;
     let arguments = arguments.trim();
+    let arguments = arguments.strip_suffix(';').unwrap_or(arguments).trim();
     let inner = match (arguments.chars().next()?, arguments.chars().last()?) {
         ('(', ')') | ('{', '}') | ('[', ']') => arguments.get(1..arguments.len() - 1)?.trim(),
         _ => return None,
