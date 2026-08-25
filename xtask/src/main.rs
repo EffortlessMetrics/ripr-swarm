@@ -861,49 +861,106 @@ fn run_check_pr_gates(
 }
 
 fn compare_failure_with_origin_main(gate_name: &str) -> BaselineFailureComparison {
-    let divergence = match run_output("git", &["rev-list", "--left-right", "--count", "origin/main...HEAD"]) {
+    let divergence = match run_output(
+        "git",
+        &["rev-list", "--left-right", "--count", "origin/main...HEAD"],
+    ) {
         Ok(value) => value,
-        Err(err) => return BaselineFailureComparison { status: "NOT_PROVEN", detail: format!("origin/main is unavailable: {err}") },
+        Err(err) => {
+            return BaselineFailureComparison {
+                status: "NOT_PROVEN",
+                detail: format!("origin/main is unavailable: {err}"),
+            };
+        }
     };
     let mut counts = divergence.split_whitespace();
     let behind = counts.next().and_then(|value| value.parse::<u64>().ok());
     let ahead = counts.next().and_then(|value| value.parse::<u64>().ok());
     if matches!((behind, ahead), (Some(0), Some(_))) {
-        return BaselineFailureComparison { status: "NOT_PROVEN", detail: "the branch is not behind origin/main".to_string() };
+        return BaselineFailureComparison {
+            status: "NOT_PROVEN",
+            detail: "the branch is not behind origin/main".to_string(),
+        };
     }
     if !matches!((behind, ahead), (Some(_), Some(_))) {
-        return BaselineFailureComparison { status: "NOT_PROVEN", detail: format!("could not parse origin/main divergence: {divergence:?}") };
+        return BaselineFailureComparison {
+            status: "NOT_PROVEN",
+            detail: format!("could not parse origin/main divergence: {divergence:?}"),
+        };
     }
     let root = match std::env::current_dir() {
         Ok(root) => root,
-        Err(err) => return BaselineFailureComparison { status: "NOT_PROVEN", detail: format!("could not resolve the PR checkout: {err}") },
+        Err(err) => {
+            return BaselineFailureComparison {
+                status: "NOT_PROVEN",
+                detail: format!("could not resolve the PR checkout: {err}"),
+            };
+        }
     };
-    let worktree = root.join("target").join("tmp").join("check-pr").join("origin-main");
+    let worktree = root
+        .join("target")
+        .join("tmp")
+        .join("check-pr")
+        .join("origin-main");
     if let Err(err) = fs::create_dir_all(worktree.parent().unwrap_or(&worktree)) {
-        return BaselineFailureComparison { status: "NOT_PROVEN", detail: format!("could not create the comparison directory: {err}") };
+        return BaselineFailureComparison {
+            status: "NOT_PROVEN",
+            detail: format!("could not create the comparison directory: {err}"),
+        };
     }
     if worktree.exists() {
         if let Err(err) = fs::remove_dir_all(&worktree) {
-            return BaselineFailureComparison { status: "NOT_PROVEN", detail: format!("could not clear the previous comparison worktree: {err}") };
+            return BaselineFailureComparison {
+                status: "NOT_PROVEN",
+                detail: format!("could not clear the previous comparison worktree: {err}"),
+            };
         }
     }
     let worktree_text = worktree.to_string_lossy().into_owned();
-    if let Err(err) = run("git", &["worktree", "add", "--detach", "--quiet", &worktree_text, "origin/main"]) {
-        return BaselineFailureComparison { status: "NOT_PROVEN", detail: format!("could not create the origin/main comparison worktree: {err}") };
+    if let Err(err) = run(
+        "git",
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            "--quiet",
+            &worktree_text,
+            "origin/main",
+        ],
+    ) {
+        return BaselineFailureComparison {
+            status: "NOT_PROVEN",
+            detail: format!("could not create the origin/main comparison worktree: {err}"),
+        };
     }
     let result = run_origin_gate(gate_name, &worktree);
     let cleanup = run("git", &["worktree", "remove", "--force", &worktree_text]);
-    if let Err(err) = cleanup { eprintln!("warning: failed to remove comparison worktree: {err}"); }
+    if let Err(err) = cleanup {
+        eprintln!("warning: failed to remove comparison worktree: {err}");
+    }
     match result {
-        Ok(()) => BaselineFailureComparison { status: "PR_INTRODUCED", detail: "the gate passed on origin/main and failed on this branch".to_string() },
-        Err(err) => BaselineFailureComparison { status: "INHERITED", detail: format!("the same gate failed on origin/main: {err}") },
+        Ok(()) => BaselineFailureComparison {
+            status: "PR_INTRODUCED",
+            detail: "the gate passed on origin/main and failed on this branch".to_string(),
+        },
+        Err(err) => BaselineFailureComparison {
+            status: "INHERITED",
+            detail: format!("the same gate failed on origin/main: {err}"),
+        },
     }
 }
 
 fn run_origin_gate(gate_name: &str, worktree: &Path) -> Result<(), String> {
     let args: &[&str] = match gate_name {
         "ci-fast" => &["xtask", "ci-fast"],
-        "clippy" => &["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"],
+        "clippy" => &[
+            "clippy",
+            "--workspace",
+            "--all-targets",
+            "--",
+            "-D",
+            "warnings",
+        ],
         "doc" => &["doc", "--workspace", "--no-deps"],
         _ => return Err(format!("unsupported check-pr gate: {gate_name}")),
     };
@@ -19838,7 +19895,6 @@ synonym (e.g. {hint}). To intentionally allow this line, append \
     reason = "xtask test code uses unwrap/expect for fail-fast assertion. Production paths are receipted via policy/no-panic-allowlist.toml; the test scope is governed by this single module-level expect."
 )]
 mod tests;
-
 
 #[cfg(test)]
 mod inherited_failure_tests {
