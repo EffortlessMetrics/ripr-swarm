@@ -725,6 +725,7 @@ fn project_observed(
         .to_string();
     let static_limit_kind = finding
         .get("static_limit_kind")
+        .filter(|value| !value.is_null())
         .map(|value| {
             value.as_str().map(ToString::to_string).ok_or_else(|| {
                 format!(

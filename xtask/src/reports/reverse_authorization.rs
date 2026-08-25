@@ -191,16 +191,26 @@ mod tests {
     }
 
     #[test]
-    fn multiple_incomplete_predicates_are_all_reported() {
+    fn all_incomplete_evidence_states_block_and_are_reported() {
         let mut input = valid();
-        input.review_dimensions =
-            PredicateEvidence::missing("affected dimension review unavailable");
-        input.required_checks = PredicateEvidence::missing("required context set is partial");
+        input.review_dimensions = PredicateEvidence {
+            state: EvidenceState::Stale,
+            detail: "affected dimension review is stale".to_string(),
+        };
+        input.required_checks = PredicateEvidence {
+            state: EvidenceState::Partial,
+            detail: "required context set is partial".to_string(),
+        };
+        input.capability_boundary = PredicateEvidence {
+            state: EvidenceState::Contradictory,
+            detail: "capability observations contradict".to_string(),
+        };
         let receipt = evaluate_reverse_authorization(&input);
         assert_eq!(receipt.decision, AuthorizationDecision::Blocked);
-        assert_eq!(receipt.blockers.len(), 2);
-        assert!(receipt.blockers[0].starts_with("required_checks:"));
-        assert!(receipt.blockers[1].starts_with("review_dimensions:"));
+        assert_eq!(receipt.blockers.len(), 3);
+        assert!(receipt.blockers[0].starts_with("capability_boundary:"));
+        assert!(receipt.blockers[1].starts_with("required_checks:"));
+        assert!(receipt.blockers[2].starts_with("review_dimensions:"));
     }
 
     #[test]
