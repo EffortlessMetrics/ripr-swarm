@@ -677,18 +677,6 @@ fn apply_rust_no_static_path_limit(finding: &mut Finding, probe: &Probe, index: 
         return;
     };
 
-    if let Some(test) = find_subprocess_binary_test(index, &probe.location.file) {
-        finding.static_limit_kind = Some(StaticLimitKind::RustSubprocessBinaryReachUnresolved);
-        finding.evidence.push(
-            "An integration test invokes a Cargo-built binary, but ripr cannot yet map that binary back to the changed owner; no subprocess reach or receipt claim is made.".to_string(),
-        );
-        finding.evidence.push(format!(
-            "Where to inspect: {}:{} ({})",
-            test.file.display(), test.start_line, test.name
-        ));
-        return;
-    }
-
     if let Some(witness) = classify::find_transitive_witness(&owner_name, index) {
         replace_witnessed_no_path_infection_summary(finding);
         finding.static_limit_kind = Some(transitive_reach_limit_kind(&witness.test_file));
@@ -723,6 +711,15 @@ fn apply_rust_no_static_path_limit(finding: &mut Finding, probe: &Probe, index: 
                 &witness,
                 &owner_name,
             ));
+    } else if let Some(test) = find_subprocess_binary_test(index, &probe.location.file) {
+        finding.static_limit_kind = Some(StaticLimitKind::RustSubprocessBinaryReachUnresolved);
+        finding.evidence.push(
+            "An integration test invokes a Cargo-built binary, but ripr cannot yet map that binary back to the changed owner; no subprocess reach or receipt claim is made.".to_string(),
+        );
+        finding.evidence.push(format!(
+            "Where to inspect: {}:{} ({})",
+            test.file.display(), test.start_line, test.name
+        ));
     }
 }
 
@@ -756,11 +753,11 @@ fn is_binary_source_path(path: &Path) -> bool {
 }
 
 fn is_cargo_binary_invocation(body: &str) -> bool {
-    let has_cargo_bin_env = body.contains("CARGO_BIN_EXE_")
-        && body.contains("Command::new")
-        && (body.contains(".output(") || body.contains(".status("));
-    let has_assert_cmd_binary = body.contains("cargo_bin(")
-        && (body.contains(".assert(") || body.contains(".output(") || body.contains(".status("));
+    let compact: String = body.chars().filter(|character| !character.is_whitespace()).collect();
+    let has_cargo_bin_env = compact.contains("Command::new(env!(\"CARGO_BIN_EXE_")
+        && (compact.contains(".output(") || compact.contains(".status("));
+    let has_assert_cmd_binary = compact.contains("cargo_bin(\"")
+        && (compact.contains(".assert(") || compact.contains(".output(") || compact.contains(".status("));
     has_cargo_bin_env || has_assert_cmd_binary
 }
 
@@ -3289,6 +3286,10 @@ fn absent_delimiter_boundary_returns_head() {
         ));
         assert!(!is_cargo_binary_invocation(
             r#"Command::new("sh").arg("-c").output().unwrap();"#
+        ));
+        assert!(!is_cargo_binary_invocation(
+            r#"let _binary = env!("CARGO_BIN_EXE_worker");
+            Command::new("sh").status().unwrap();"#
         ));
         assert!(!is_cargo_binary_invocation(
             r#"assert!(output.stdout.contains("receipt:"));"#
