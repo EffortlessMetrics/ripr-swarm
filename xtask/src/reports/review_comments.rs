@@ -1055,8 +1055,15 @@ fn render_error_review_comments_markdown(packet: &Value) -> String {
             }
         }
         markdown.push_str("\n- source: `");
-        markdown.push_str(&md_escape(fallback.get("source").and_then(Value::as_str).unwrap_or("unknown")));
-        markdown.push_str("`\n- boundary: static seam location only; inspect the seam before writing a repair.\n");
+        markdown.push_str(&md_escape(
+            fallback
+                .get("source")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown"),
+        ));
+        markdown.push_str(
+            "`\n- boundary: static seam location only; inspect the seam before writing a repair.\n",
+        );
     }
     markdown.push_str(&format!(
         "\n## Warnings\n\n- tool_error: {}\n",
