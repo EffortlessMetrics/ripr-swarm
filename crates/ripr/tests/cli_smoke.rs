@@ -997,7 +997,8 @@ fn isolated_installed_binary_version_contract_is_side_effect_free() -> Result<()
     }
 }
 
-#[test]fn help_runs() {
+#[test]
+fn help_runs() {
     let output = run_ripr(&["--help"]);
     assert_success(&output);
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1996,7 +1997,8 @@ fn test_oracle_assistant_proof_cli_writes_unchanged_control()
         "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-receipt.json",
         "--out",
         &out.display().to_string(),
-        "--out-md",        &out_md.display().to_string(),
+        "--out-md",
+        &out_md.display().to_string(),
     ])?;
     assert_success(&output);
 
@@ -2995,7 +2997,8 @@ fn test_oracle_assistant_canonical_review_loop_fixture_pins_expected_surfaces()
     );
     assert!(
         json_pointer_str(&proof, "/recommendation/suggested_test")?
-            .contains("amount == discount_threshold")    );
+            .contains("amount == discount_threshold")
+    );
     assert_eq!(
         json_pointer_str(&proof, "/evidence_movement/state")?,
         "improved"
@@ -3995,7 +3998,8 @@ fn agent_verify_rejects_plausible_uncommitted_json() -> Result<(), Box<dyn std::
         &after_path,
         "--json",
     ]);
-    assert_failure(&output);    assert!(String::from_utf8_lossy(&output.stderr).contains("canonical repo-exposure artifact"));
+    assert_failure(&output);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("canonical repo-exposure artifact"));
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
@@ -4994,7 +4998,8 @@ fn agent_receipt_rejects_tampered_verify_json() -> Result<(), Box<dyn std::error
 }
 
 #[test]
-fn agent_receipt_rejects_rerendered_verify_json() -> Result<(), Box<dyn std::error::Error>> {    let root = unique_temp_workspace("agent-receipt-rerendered");
+fn agent_receipt_rejects_rerendered_verify_json() -> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("agent-receipt-rerendered");
     std::fs::create_dir_all(&root)?;
     init_git_fixture_repo(&root)?;
     let before = root.join("before.repo-exposure.json");
@@ -5993,6 +5998,7 @@ fn init_writes_conservative_config_and_doctor_loads_it() -> Result<(), String> {
     let root = workspace.display().to_string();
     let output = run_ripr(&["init", "--root", &root]);
     assert_success(&output);
+
     let config_path = workspace.join("ripr.toml");
     let config = std::fs::read_to_string(&config_path)
         .map_err(|e| format!("read generated ripr.toml: {e}"))?;
@@ -6992,7 +6998,8 @@ fn rerun_gap_before_receipt_names_selector_ledger_change() -> Result<(), String>
     let before_arg = before_path.to_string_lossy().into_owned();
     let after = run_ripr_in_workspace(&[
         "rerun",
-        "--root",        root_arg,
+        "--root",
+        root_arg,
         "--gap",
         canonical_gap_id,
         "--gap-ledger",
@@ -7992,6 +7999,7 @@ fn assert_calibration_fixture_matches_checked_reports(
 
     Ok(value)
 }
+
 fn calibration_match_confidence<'a>(
     value: &'a serde_json::Value,
     seam_id: &str,
@@ -8991,6 +8999,7 @@ fn check_worktree_write_artifact_then_explain_reuse_and_drift_fails_closed() -> 
     let _ = std::fs::remove_dir_all(&root);
     result
 }
+
 /// An artifact written with a CLI-only non-default `--mode` is consumable
 /// when the same flag is passed on the reuse side, and fails closed naming
 /// `mode` when it is not. Finding detail remains equivalent while navigation
@@ -9989,6 +9998,7 @@ fn receipt_check_orphan_exits_nonzero() -> Result<(), Box<dyn std::error::Error>
         "authority_boundary": "gate_decision_artifact_only"
     }]);
     std::fs::write(&ledger_path, ledger_json.to_string())?;
+
     let receipt_path_str = receipt_path.to_str().ok_or("receipt path not UTF-8")?;
     let ledger_path_str = ledger_path.to_str().ok_or("ledger path not UTF-8")?;
 
@@ -10988,7 +10998,8 @@ fn agent_verify_execute_runs_a_producer_owned_route_and_commits_a_result()
 -> Result<(), Box<dyn std::error::Error>> {
     let (root, _) = producer_verify_packet("verify-execute-pass")?;
     let canary = "ripr-canary-c0ffee-must-not-appear";
-    let output = run_command_with_env(        env!("CARGO_BIN_EXE_ripr"),
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
         &root,
         &[
             "agent",
@@ -11359,7 +11370,3 @@ fn plus_unknown_arg_fails_clearly() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("unknown plus argument") || stderr.contains("--bogus"),
-        "error must name the unknown arg:\n{stderr}"
-    );
-}
