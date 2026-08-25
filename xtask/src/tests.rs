@@ -6,6 +6,7 @@
 use std::io::Read;
 
 use crate::acquire_test_cwd_write_guard;
+use crate::scratch_gc_concurrency_violations;
 use ripr::output::receipt_lifecycle::{
     RECEIPT_MISSING, RECEIPT_MOVEMENT_IMPROVED, RECEIPT_NOT_APPLICABLE,
 };
