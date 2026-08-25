@@ -5611,6 +5611,10 @@ fn check_spec_format() -> Result<(), String> {
 }
 
 const PROPOSED_SPEC_REVIEW_MAX_AGE_SECS: u64 = 90 * 24 * 60 * 60;
+// #3035: when repository-backed aging replaced checkout mtimes, existing
+// proposed specs needed one real review window instead of becoming overdue on
+// the rollout commit. Later specs and edits retain their own Git timestamp.
+const PROPOSED_SPEC_GIT_AGE_ROLLOUT_UNIX_SECS: u64 = 1_787_623_597;
 
 #[derive(Debug, PartialEq, Eq)]
 enum ProposedSpecAge {
@@ -5665,6 +5669,10 @@ fn proposed_spec_age(path: &Path, repo_root: &Path, now: SystemTime) -> Proposed
             };
         }
     };
+    proposed_spec_age_from_timestamp(timestamp, now)
+}
+
+fn proposed_spec_age_from_timestamp(timestamp: u64, now: SystemTime) -> ProposedSpecAge {
     let now_secs = match now.duration_since(UNIX_EPOCH) {
         Ok(duration) => duration.as_secs(),
         Err(error) => {
@@ -5673,7 +5681,8 @@ fn proposed_spec_age(path: &Path, repo_root: &Path, now: SystemTime) -> Proposed
             };
         }
     };
-    let age_secs = now_secs.saturating_sub(timestamp);
+    let review_started_at = timestamp.max(PROPOSED_SPEC_GIT_AGE_ROLLOUT_UNIX_SECS);
+    let age_secs = now_secs.saturating_sub(review_started_at);
     let days = age_secs / (24 * 60 * 60);
     if age_secs > PROPOSED_SPEC_REVIEW_MAX_AGE_SECS {
         ProposedSpecAge::Stale { days }
@@ -20043,21 +20052,22 @@ mod tests;
 mod proposed_spec_age_tests {
     use super::*;
     use std::fs;
-    use std::process::Command;
     use std::time::Duration;
+
+    fn run_git(path: &Path, args: &[&str], envs: &[(&str, &str)]) -> Result<(), String> {
+        let command = CwdCommand {
+            program: PathBuf::from("git"),
+            args: args.iter().map(|arg| (*arg).to_string()).collect(),
+            cwd: path.to_path_buf(),
+        };
+        run_cwd_command_with_envs(&command, envs)
+    }
 
     #[test]
     fn untracked_spec_is_not_proven() -> Result<(), String> {
         let path = std::env::temp_dir().join(format!("ripr-spec-age-{}", std::process::id()));
         fs::create_dir_all(path.join("docs/specs")).map_err(|e| e.to_string())?;
-        let init = Command::new("git")
-            .args(["init", "-q"])
-            .current_dir(&path)
-            .output()
-            .map_err(|e| e.to_string())?;
-        if !init.status.success() {
-            return Err("git init failed".to_string());
-        }
+        run_git(&path, &["init", "-q"], &[])?;
         let spec = path.join("docs/specs/space name-é.md");
         fs::write(&spec, "Status: proposed\n").map_err(|e| e.to_string())?;
         assert!(matches!(
@@ -20080,27 +20090,14 @@ mod proposed_spec_age_tests {
         let path =
             std::env::temp_dir().join(format!("ripr-spec-age-{}-committed", std::process::id()));
         fs::create_dir_all(path.join("docs/specs")).map_err(|e| e.to_string())?;
-        let init = Command::new("git")
-            .args(["init", "-q"])
-            .current_dir(&path)
-            .output()
-            .map_err(|e| e.to_string())?;
-        if !init.status.success() {
-            return Err("git init failed".to_string());
-        }
+        run_git(&path, &["init", "-q"], &[])?;
         let relative = "docs/specs/space name-é.md";
         fs::write(path.join(relative), "Status: proposed\n").map_err(|e| e.to_string())?;
-        let add = Command::new("git")
-            .args(["add", "--", relative])
-            .current_dir(&path)
-            .output()
-            .map_err(|e| e.to_string())?;
-        if !add.status.success() {
-            return Err("git add failed".to_string());
-        }
+        run_git(&path, &["add", "--", relative], &[])?;
         let date = "2027-01-01T00:00:00Z";
-        let commit = Command::new("git")
-            .args([
+        run_git(
+            &path,
+            &[
                 "-c",
                 "user.name=fixture",
                 "-c",
@@ -20109,15 +20106,9 @@ mod proposed_spec_age_tests {
                 "-q",
                 "-m",
                 "fixture",
-            ])
-            .env("GIT_AUTHOR_DATE", date)
-            .env("GIT_COMMITTER_DATE", date)
-            .current_dir(&path)
-            .output()
-            .map_err(|e| e.to_string())?;
-        if !commit.status.success() {
-            return Err("git commit failed".to_string());
-        }
+            ],
+            &[("GIT_AUTHOR_DATE", date), ("GIT_COMMITTER_DATE", date)],
+        )?;
         let now = UNIX_EPOCH + Duration::from_hours(500_000);
         assert!(matches!(
             proposed_spec_age(&path.join(relative), &path, now),
@@ -20131,27 +20122,14 @@ mod proposed_spec_age_tests {
     fn old_commit_is_stale_after_checkout() -> Result<(), String> {
         let path = std::env::temp_dir().join(format!("ripr-spec-age-{}-old", std::process::id()));
         fs::create_dir_all(path.join("docs/specs")).map_err(|e| e.to_string())?;
-        let init = Command::new("git")
-            .args(["init", "-q"])
-            .current_dir(&path)
-            .output()
-            .map_err(|e| e.to_string())?;
-        if !init.status.success() {
-            return Err("git init failed".to_string());
-        }
+        run_git(&path, &["init", "-q"], &[])?;
         let relative = "docs/specs/space name-é.md";
         fs::write(path.join(relative), "Status: proposed\n").map_err(|e| e.to_string())?;
-        let add = Command::new("git")
-            .args(["add", "--", relative])
-            .current_dir(&path)
-            .output()
-            .map_err(|e| e.to_string())?;
-        if !add.status.success() {
-            return Err("git add failed".to_string());
-        }
+        run_git(&path, &["add", "--", relative], &[])?;
         let date = "2020-01-01T00:00:00Z";
-        let commit = Command::new("git")
-            .args([
+        run_git(
+            &path,
+            &[
                 "-c",
                 "user.name=fixture",
                 "-c",
@@ -20160,15 +20138,9 @@ mod proposed_spec_age_tests {
                 "-q",
                 "-m",
                 "fixture",
-            ])
-            .env("GIT_AUTHOR_DATE", date)
-            .env("GIT_COMMITTER_DATE", date)
-            .current_dir(&path)
-            .output()
-            .map_err(|e| e.to_string())?;
-        if !commit.status.success() {
-            return Err("git commit failed".to_string());
-        }
+            ],
+            &[("GIT_AUTHOR_DATE", date), ("GIT_COMMITTER_DATE", date)],
+        )?;
         let now = UNIX_EPOCH + Duration::from_hours(500_000);
         assert!(matches!(
             proposed_spec_age(&path.join(relative), &path, now),
@@ -20176,6 +20148,25 @@ mod proposed_spec_age_tests {
         ));
         fs::remove_dir_all(path).map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    #[test]
+    fn legacy_spec_receives_one_review_window_from_git_age_rollout() {
+        let deadline = PROPOSED_SPEC_GIT_AGE_ROLLOUT_UNIX_SECS + PROPOSED_SPEC_REVIEW_MAX_AGE_SECS;
+        assert_eq!(
+            proposed_spec_age_from_timestamp(
+                PROPOSED_SPEC_GIT_AGE_ROLLOUT_UNIX_SECS - 1,
+                UNIX_EPOCH + Duration::from_secs(deadline),
+            ),
+            ProposedSpecAge::Current
+        );
+        assert_eq!(
+            proposed_spec_age_from_timestamp(
+                PROPOSED_SPEC_GIT_AGE_ROLLOUT_UNIX_SECS - 1,
+                UNIX_EPOCH + Duration::from_secs(deadline + 24 * 60 * 60),
+            ),
+            ProposedSpecAge::Stale { days: 91 }
+        );
     }
 }
 #[cfg(test)]

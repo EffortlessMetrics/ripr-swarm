@@ -373,22 +373,26 @@ pub(super) fn write_test_host_run(
 
         let case_dir = attempt.join("cases").join(&subject.case_id);
         fs::create_dir_all(&case_dir).map_err(|error| error.to_string())?;
+        let mut finding = serde_json::json!({
+            "id": format!("fixture-{}", subject.case_id),
+            "classification": subject.expected_classification,
+            "probe": {
+                "family": if subject.behavior_family == "predicate_boundary" { "predicate" } else { "return_value" },
+                "file": format!("target/ripr/rust-judged-panel/.staging-{run_id}/subjects/{}/{}", subject.case_id, subject.anchor_file),
+                "line": subject.anchor_line,
+                "expression": subject.changed_behavior,
+            },
+            "missing": subject.expected_missing,
+            "recommended_next_step": subject.expected_recommendation,
+        });
+        if let Some(kind) = subject.expected_static_limit_kind.as_deref() {
+            finding["static_limit_kind"] = Value::String(kind.to_string());
+            finding["static_limitation"] = serde_json::json!({"kind": kind});
+        }
         let stdout = serde_json::json!({
             "root": format!("target/ripr/rust-judged-panel/.staging-{run_id}/subjects/{}", subject.case_id),
             "analysis_outcome": {"analysis_complete": true, "outcome": {"kind": "complete_with_findings", "limitations": []}},
-            "findings": [{
-                "id": format!("fixture-{}", subject.case_id),
-                "classification": subject.expected_classification,
-                "probe": {
-                    "family": if subject.behavior_family == "predicate_boundary" { "predicate" } else { "return_value" },
-                    "file": format!("target/ripr/rust-judged-panel/.staging-{run_id}/subjects/{}/{}", subject.case_id, subject.anchor_file),
-                    "line": subject.anchor_line,
-                    "expression": subject.changed_behavior,
-                },
-                "missing": subject.expected_missing,
-                "recommended_next_step": subject.expected_recommendation,
-                "static_limit_kind": subject.expected_static_limit_kind,
-            }]
+            "findings": [finding]
         });
         let stdout = serde_json::to_vec(&stdout).map_err(|error| error.to_string())?;
         let stderr = b"fixture stderr\n";
