@@ -1,0 +1,361 @@
+name: Internal apply spec-age semantic correction
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.head_ref == 'internal/3455-apply-semantic-correction'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout internal branch
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Apply semantic correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          main_path = Path("xtask/src/main.rs")
+          main = main_path.read_text(encoding="utf-8")
+          start_marker = "        // #2708: flag proposed specs older than 90 days without review.\n"
+          end_marker = "        for heading in required_spec_headings() {\n"
+          if main.count(start_marker) != 1:
+              raise SystemExit(f"expected one temporal spec-age block, found {main.count(start_marker)}")
+          start = main.index(start_marker)
+          end = main.index(end_marker, start)
+          main = main[:start] + main[end:]
+          if "has been `proposed` for {days} days without review" in main:
+              raise SystemExit("temporal spec-age diagnostic remains after edit")
+          main_path.write_text(main, encoding="utf-8")
+
+          Path("docs/SPEC_FORMAT.md").write_text(
+              """# Spec Format
+
+Specs are behavior contracts for humans, tests, tools, and future agents. They
+should be consistent enough to parse mechanically.
+
+## Status Values
+
+Allowed statuses:
+
+- `proposed`
+- `planned`
+- `accepted`
+- `deprecated`
+
+A spec status records the document's normative disposition. It does not claim
+that runtime behavior is implemented, evidence is current or sufficient,
+support is promoted, or work is active. Those states belong to implementation
+claims and slices, traceability and evidence, support authorities, and live
+GitHub/worktree state respectively.
+
+Specs do not expire because time passes or because their files remain
+unchanged. If a contract is wrong, replaced, or retired, update, supersede, or
+deprecate it explicitly. Review dates may be useful descriptive context, but
+they do not determine spec validity or merge eligibility.
+
+## Required Sections
+
+Every spec in `docs/specs/RIPR-SPEC-*.md` must include:
+
+- `Status: ...`
+- `## Problem`
+- `## Behavior`
+- `## Required Evidence`
+- `## Non-Goals`
+- `## Acceptance Examples`
+- `## Test Mapping`
+- `## Implementation Mapping`
+- `## Metrics`
+
+Accepted specs should have concrete acceptance examples and at least one current
+or planned test mapping. Planned specs may point at planned tests and planned
+modules, but they still need the same sections so agents can reason over the
+gap.
+
+## IDs
+
+Spec filenames and titles use stable IDs:
+
+```text
+docs/specs/RIPR-SPEC-0004-predicate-boundary-activation.md
+# RIPR-SPEC-0004: Predicate Boundary Activation
+```
+
+Use these IDs in tests, fixtures, traceability entries, metrics, and PR
+summaries when behavior changes.
+
+Before adding a new spec, ask the repo for the next live ID:
+
+```bash
+cargo xtask specs next
+```
+
+Spec IDs are source-of-truth identifiers, not generated runtime counts. The
+helper only prevents stale numbering assumptions; humans still author the spec
+contract.
+
+## Checks
+
+Run:
+
+```bash
+cargo xtask check-spec-format
+cargo xtask check-spec-numbering
+```
+
+The format check is a deterministic validation of the candidate repository
+state. It verifies required sections, status values, and title/filename ID
+consistency without consulting wall-clock time, file modification time, or Git
+history. The numbering guard verifies that every spec file appears in
+`docs/specs/README.md` and that traceability/capability surfaces do not
+reference missing spec IDs.
+""",
+              encoding="utf-8",
+          )
+
+          readme_path = Path("docs/specs/README.md")
+          readme = readme_path.read_text(encoding="utf-8")
+          anchor = (
+              "Use specs for behavior that users, integrations, or future agents need to rely\n"
+              "on. Keep implementation details in architecture docs or ADRs unless they affect\n"
+              "observable behavior.\n\n"
+          )
+          clarification = (
+              "A spec status records normative disposition only. It does not establish\n"
+              "implementation, proof, support, or live-work state; those are represented by\n"
+              "implementation claims and slices, traceability and evidence, support authorities,\n"
+              "and GitHub/worktree state. A spec remains valid until it is explicitly corrected,\n"
+              "superseded, or deprecated.\n\n"
+          )
+          if readme.count(anchor) != 1:
+              raise SystemExit("spec README insertion anchor is not unique")
+          if clarification not in readme:
+              readme = readme.replace(anchor, anchor + clarification, 1)
+          readme_path.write_text(readme, encoding="utf-8")
+
+          allowlist_path = Path("policy/process_allowlist.txt")
+          allowlist = allowlist_path.read_text(encoding="utf-8")
+          age_rows = (
+              "xtask/src/main.rs|Command::new|9|repository-gates|#2343/#3435: diff-aware gate reads changed files; proposed-spec age validation performs one bounded git log lookup, and its test fixtures create temporary Git repositories with pinned commit timestamps.\n"
+              "xtask/src/main.rs|use std::process::Command|1|spec-age-policy-tests|#3435: proposed-spec age tests import Command only for isolated temporary Git repository setup.\n"
+          )
+          gate_row = (
+              "xtask/src/main.rs|Command::new|1|gate-runner|#2343: diff-aware gate runner reads changed files via git diff\n"
+          )
+          if allowlist.count(age_rows) != 1:
+              raise SystemExit("expected one proposed-spec process-policy allowance pair")
+          allowlist_path.write_text(allowlist.replace(age_rows, gate_row, 1), encoding="utf-8")
+
+          test_path = Path("xtask/tests/spec_format_determinism.rs")
+          test_path.parent.mkdir(parents=True, exist_ok=True)
+          test_path.write_text(
+              r'''use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+const VALID_SPEC: &str = r#"# RIPR-SPEC-9999: Time-independent fixture
+
+Status: proposed
+
+## Problem
+
+Prove that structural spec validation does not depend on elapsed time.
+
+## Behavior
+
+The same candidate tree has the same format result whenever it is checked.
+
+## Required Evidence
+
+The format command succeeds for an old committed proposed spec.
+
+## Non-Goals
+
+This fixture does not establish implementation, evidence, or support state.
+
+## Acceptance Examples
+
+An unchanged old spec remains structurally valid.
+
+## Test Mapping
+
+- this integration test
+
+## Implementation Mapping
+
+- `xtask/src/main.rs`
+
+## Metrics
+
+- deterministic result for identical candidate bytes
+"#;
+
+fn temp_root(label: &str) -> Result<PathBuf, String> {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "ripr-spec-format-{label}-{}-{nonce}",
+        std::process::id()
+    ));
+    fs::create_dir_all(root.join("docs/specs")).map_err(|error| error.to_string())?;
+    Ok(root)
+}
+
+fn write_spec(root: &Path, text: &str) -> Result<(), String> {
+    fs::write(
+        root.join("docs/specs/RIPR-SPEC-9999-time-independent-fixture.md"),
+        text,
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn run_check(root: &Path) -> Result<Output, String> {
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .arg("check-spec-format")
+        .current_dir(root)
+        .output()
+        .map_err(|error| error.to_string())
+}
+
+fn output_text(output: &Output) -> String {
+    format!(
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
+fn run_git(root: &Path, args: &[&str]) -> Result<(), String> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .output()
+        .map_err(|error| error.to_string())?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!("git {args:?} failed: {}", output_text(&output)))
+    }
+}
+
+#[test]
+fn old_proposed_spec_remains_structurally_valid() -> Result<(), String> {
+    let root = temp_root("old-history")?;
+    write_spec(&root, VALID_SPEC)?;
+    run_git(&root, &["init", "-q"])?;
+    run_git(&root, &["add", "--", "docs/specs"])?;
+    let commit = Command::new("git")
+        .args([
+            "-c",
+            "user.name=fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-q",
+            "-m",
+            "old proposed spec",
+        ])
+        .env("GIT_AUTHOR_DATE", "2000-01-01T00:00:00Z")
+        .env("GIT_COMMITTER_DATE", "2000-01-01T00:00:00Z")
+        .current_dir(&root)
+        .output()
+        .map_err(|error| error.to_string())?;
+    if !commit.status.success() {
+        return Err(format!("old fixture commit failed: {}", output_text(&commit)));
+    }
+
+    let output = run_check(&root)?;
+    fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "old proposed spec should remain structurally valid: {}",
+            output_text(&output)
+        ))
+    }
+}
+
+#[test]
+fn spec_format_does_not_require_git_history() -> Result<(), String> {
+    let root = temp_root("no-git")?;
+    write_spec(&root, VALID_SPEC)?;
+    let output = run_check(&root)?;
+    fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "structural validation should not require Git history: {}",
+            output_text(&output)
+        ))
+    }
+}
+
+#[test]
+fn structural_spec_errors_remain_blocking() -> Result<(), String> {
+    let root = temp_root("missing-heading")?;
+    let invalid = VALID_SPEC.replace(
+        "## Metrics\n\n- deterministic result for identical candidate bytes\n",
+        "",
+    );
+    write_spec(&root, &invalid)?;
+    let output = run_check(&root)?;
+    fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+    let text = output_text(&output);
+    if output.status.success() {
+        return Err(format!("missing required heading passed unexpectedly: {text}"));
+    }
+    if !text.contains("missing `## Metrics`") {
+        return Err(format!("missing-heading diagnostic was not preserved: {text}"));
+    }
+    Ok(())
+}
+''',
+              encoding="utf-8",
+          )
+
+          Path(".github/workflows/internal-3455-apply.yml").unlink()
+          PY
+
+      - name: Verify focused correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo test -p xtask --test spec_format_determinism -- --nocapture
+          cargo xtask check-spec-format
+          cargo xtask check-process-policy
+          cargo xtask check-doc-index
+          cargo xtask check-static-language
+          git diff --check
+
+      - name: Commit verified result
+        shell: bash
+        env:
+          HEAD_BRANCH: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          git config user.name "EffortlessSteven"
+          git config user.email "git@effortlesssteven.com"
+          git add -A
+          git commit -m "fix(specs): remove wall-clock validity from spec format (#3455)"
+          git push origin "HEAD:${HEAD_BRANCH}"
