@@ -9265,6 +9265,12 @@ jobs:
     strategy:
       matrix:
         pool: [cx43, cpx42, cx53]
+    concurrency:
+      group: scratch-gc-${{ github.repository }}-${{ matrix.pool }}
+      cancel-in-progress: true
+  unrelated:
+    concurrency:
+      cancel-in-progress: false
 "#;
 
     let violations =
