@@ -1059,7 +1059,7 @@ fn render_error_review_comments_markdown(packet: &Value) -> String {
         markdown.push_str("\n- source: `");
         markdown.push_str(&md_escape(
             fallback
-                .get("source")
+.get("source")
                 .and_then(Value::as_str)
                 .unwrap_or("unknown"),
         ));
