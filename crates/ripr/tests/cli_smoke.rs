@@ -3541,7 +3541,7 @@ fn agent_start_writes_source_edit_free_workflow_packet() -> Result<(), Box<dyn s
 }
 
 #[test]
-fn agent_start_packet_discloses_that_generated_commands_assume_bash()
+fn agent_start_packet_discloses_supported_command_shells()
 -> Result<(), Box<dyn std::error::Error>> {
     let out_dir = unique_temp_workspace("agent-start-shell-disclosure");
     let out = out_dir
@@ -3566,8 +3566,8 @@ fn agent_start_packet_discloses_that_generated_commands_assume_bash()
     // The commands are already fenced as ```bash, so a bare `bash` substring is
     // not evidence. Require the prose disclosure ahead of the first fence.
     let disclosure = commands_md
-        .find("Generated commands are bash command lines.")
-        .ok_or_else(|| format!("commands.md must disclose the bash assumption:\n{commands_md}"))?;
+        .find("Each step includes Bash and PowerShell command variants.")
+        .ok_or_else(|| format!("commands.md must disclose both command shells:\n{commands_md}"))?;
     let first_fence = commands_md
         .find("```bash")
         .ok_or("commands.md must still fence commands as bash")?;
@@ -3577,7 +3577,7 @@ fn agent_start_packet_discloses_that_generated_commands_assume_bash()
     );
     assert!(
         commands_md.contains("PowerShell"),
-        "commands.md must name the shells that do not accept these commands:\n{commands_md}"
+        "commands.md must name the supported shells:\n{commands_md}"
     );
     assert!(
         workflow_json.contains(r#""command_shell": "bash""#),
