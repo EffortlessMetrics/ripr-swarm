@@ -184,10 +184,10 @@ fn might_contain_include_macro(source: &str) -> bool {
     while let Some(relative) = source[offset..].find("include") {
         let start = offset + relative;
         let end = start + "include".len();
-        let has_identifier_prefix = start > 0
-            && (bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_');
-        let has_identifier_suffix = end < bytes.len()
-            && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_');
+        let has_identifier_prefix =
+            start > 0 && (bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_');
+        let has_identifier_suffix =
+            end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_');
         if !has_identifier_prefix && !has_identifier_suffix {
             let mut cursor = end;
             loop {
@@ -369,7 +369,9 @@ mod tests {
     #[test]
     fn include_macro_prefilter_accepts_token_separating_trivia() {
         assert!(might_contain_include_macro("include!(\"fragment.rs\")"));
-        assert!(might_contain_include_macro("include \n ! (\"fragment.rs\")"));
+        assert!(might_contain_include_macro(
+            "include \n ! (\"fragment.rs\")"
+        ));
         assert!(might_contain_include_macro(
             "include /* outer /* nested */ comment */ ! (\"fragment.rs\")"
         ));
