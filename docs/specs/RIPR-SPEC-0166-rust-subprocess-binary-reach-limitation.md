@@ -52,6 +52,12 @@ nearby, is not accepted.
 - `crates/ripr/src/domain/language.rs` static-limit wire and description tests
 - `crates/ripr/src/lsp/gap_artifacts.rs` static-limit validation test
 
+## Metrics
+
+This slice records only the count of unresolved Cargo subprocess boundaries via
+the typed static-limit kind. It intentionally emits no subprocess reach,
+receipt-validity, coverage, or repair-success metric.
+
 ## Implementation Mapping
 
 - Rust adapter classification in `crates/ripr/src/analysis/language/rust.rs`
