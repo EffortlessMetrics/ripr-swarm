@@ -1446,7 +1446,8 @@ mod tests {
         )
         .map_err(|err| format!("write producer: {err}"))?;
 
-        let receipt = review_comments_receipt(&repo, &options, "limited_timeout", Some("timed out"));
+        let receipt =
+            review_comments_receipt(&repo, &options, "limited_timeout", Some("timed out"));
         let packet = error_review_comments_packet(&repo, &options, "timed out", &receipt);
         let fallback = packet
             .get("static_gap_fallback")
@@ -1455,15 +1456,20 @@ mod tests {
         assert_eq!(fallback["seams"].as_array().map(Vec::len), Some(2));
         assert_eq!(fallback["seams"][0]["file"], "src/auth.rs");
         assert_eq!(fallback["seams"][0]["line"], 42);
-        assert_eq!(fallback["seams"][1]["classification"], "reachable_unrevealed");
-        assert!(validate_packet_value(
-            &packet,
-            &repo,
-            &options,
-            false,
-            Path::new(REVIEW_COMMENTS_MD),
-        )
-        .is_empty());
+        assert_eq!(
+            fallback["seams"][1]["classification"],
+            "reachable_unrevealed"
+        );
+        assert!(
+            validate_packet_value(
+                &packet,
+                &repo,
+                &options,
+                false,
+                Path::new(REVIEW_COMMENTS_MD),
+            )
+            .is_empty()
+        );
 
         let markdown = render_error_review_comments_markdown(&packet);
         assert!(markdown.contains("Static seam fallback"));
