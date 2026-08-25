@@ -888,6 +888,13 @@ fn compare_failure_with_origin_main(gate_name: &str) -> BaselineFailureCompariso
             detail: format!("could not parse origin/main divergence: {divergence:?}"),
         };
     }
+    if gate_name == "ci-fast" {
+        return BaselineFailureComparison {
+            status: "NOT_PROVEN",
+            detail: "ci-fast has no stable inner-failure identity for an inherited comparison"
+                .to_string(),
+        };
+    }
     let root = match std::env::current_dir() {
         Ok(root) => root,
         Err(err) => {
@@ -908,7 +915,10 @@ fn compare_failure_with_origin_main(gate_name: &str) -> BaselineFailureCompariso
             detail: format!("could not create the comparison directory: {err}"),
         };
     }
+    let worktree_text = worktree.to_string_lossy().into_owned();
+    let _ = run("git", &["worktree", "prune", "--expire", "now"]);
     if worktree.exists() {
+        let _ = run("git", &["worktree", "remove", "--force", &worktree_text]);
         if let Err(err) = fs::remove_dir_all(&worktree) {
             return BaselineFailureComparison {
                 status: "NOT_PROVEN",
@@ -916,7 +926,6 @@ fn compare_failure_with_origin_main(gate_name: &str) -> BaselineFailureCompariso
             };
         }
     }
-    let worktree_text = worktree.to_string_lossy().into_owned();
     if let Err(err) = run(
         "git",
         &[
