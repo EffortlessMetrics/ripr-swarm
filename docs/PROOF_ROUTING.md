@@ -43,16 +43,15 @@ are forbidden by this model.
 2. **Proof packs are the routing unit.** A proof pack names the paths it
    covers, the required commands, the advisory commands, the CI lane that
    runs them, what passing demonstrates, and what passing does not
-   demonstrate. The pack manifest lives in `policy/proof-packs.toml`
-   (planned; see the sequence below).
+   demonstrate. The pack manifest lives in `policy/proof-packs.toml`, and its
+   structural validity is checked before routing evidence is consumed.
 3. **Unknown surfaces route conservatively.** A changed file that matches
    no pack routes to the full proof, not to the cheapest lane. Routing can
    only narrow proof for surfaces it explicitly understands.
-4. **Local preflight before CI.** The expectation is
-   `cargo xtask proof preflight` (planned) or the matched packs' required
-   commands locally before push. CI confirms proof; it does not discover
-   failures first. Using CI as the first execution of a gate you could run
-   locally is an anti-pattern.
+4. **Local preflight before CI.** Run `cargo xtask proof preflight` or the matched packs' required commands
+   locally before push. CI confirms proof; it does not discover failures
+   first. Using CI as the first execution of a gate you could run locally is
+   an anti-pattern.
 5. **Advisory stays visible, blocking stays earned.** Routed-away lanes are
    recorded as skipped-with-reason in the proof route report, never
    silently dropped. A lane becomes blocking for a surface only with
@@ -130,8 +129,8 @@ The historical commit receipts are P17 `05fd3ef0` and P18
 
 ## Initial proof-pack shape
 
-The first manifest should cover these packs. Paths and commands are pinned
-in `policy/proof-packs.toml` when it lands; this table states intent.
+The landed manifest covers these packs. Paths and commands are pinned in
+`policy/proof-packs.toml`; this table states the routing intent.
 
 | Pack | Covers | Required proof core | Build-heavy? |
 | --- | --- | --- | --- |
