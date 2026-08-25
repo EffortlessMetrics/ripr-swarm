@@ -5559,11 +5559,17 @@ enum ProposedSpecAge {
 }
 
 fn proposed_spec_age(path: &Path, repo_root: &Path, now: SystemTime) -> ProposedSpecAge {
-    let relative = match path.strip_prefix(repo_root) {
-        Ok(relative) if !relative.as_os_str().is_empty() => relative,
-        _ => return ProposedSpecAge::NotProven {
-            reason: format!("spec path `{}` is outside repository root", path.display()),
-        },
+    let relative = if repo_root == Path::new(".") && path.is_relative() {
+        path
+    } else {
+        match path.strip_prefix(repo_root) {
+            Ok(relative) if !relative.as_os_str().is_empty() => relative,
+            _ => {
+                return ProposedSpecAge::NotProven {
+                    reason: format!("spec path `{}` is outside repository root", path.display()),
+                };
+            }
+        }
     };
     let output = match std::process::Command::new("git")
         .args(["-C"])
@@ -19986,6 +19992,13 @@ mod proposed_spec_age_tests {
         let spec = path.join("docs/specs/space name-é.md");
         fs::write(&spec, "Status: proposed\n").map_err(|e| e.to_string())?;
         assert!(matches!(proposed_spec_age(&spec, &path, SystemTime::now()), ProposedSpecAge::NotProven { .. }));
+        let relative = Path::new("docs/specs/not-tracked.md");
+        let ProposedSpecAge::NotProven { reason } =
+            proposed_spec_age(relative, Path::new("."), SystemTime::now())
+        else {
+            return Err("relative production-shaped path did not fail closed".to_string());
+        };
+        assert!(reason.contains("Git age lookup"));
         fs::remove_dir_all(path).map_err(|e| e.to_string())?;
         Ok(())
     }
