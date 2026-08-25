@@ -3541,8 +3541,7 @@ fn agent_start_writes_source_edit_free_workflow_packet() -> Result<(), Box<dyn s
 }
 
 #[test]
-fn agent_start_packet_discloses_supported_command_shells()
--> Result<(), Box<dyn std::error::Error>> {
+fn agent_start_packet_discloses_supported_command_shells() -> Result<(), Box<dyn std::error::Error>> {
     let out_dir = unique_temp_workspace("agent-start-shell-disclosure");
     let out = out_dir
         .to_str()
