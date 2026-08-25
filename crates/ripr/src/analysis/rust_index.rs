@@ -1,6 +1,8 @@
 use crate::config::OraclePolicy;
 #[cfg(test)]
 use crate::domain::{OracleKind, OracleStrength};
+#[cfg(test)]
+use super::facts::RustIncludeLimitation;
 use std::path::{Path, PathBuf};
 
 #[cfg(test)]
@@ -831,7 +833,7 @@ fn feature_gated_test() {}
     #[test]
     fn include_resolution_disclosure_names_stable_reason_and_source() {
         let index = RustIndex {
-            include_limitations: vec![super::facts::RustIncludeLimitation {
+            include_limitations: vec![RustIncludeLimitation {
                 parent: PathBuf::from("src/lib.rs"),
                 line: 7,
                 expression: "include!(concat!(...))".to_string(),
