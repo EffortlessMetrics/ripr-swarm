@@ -20018,8 +20018,14 @@ mod proposed_spec_age_tests {
         let path =
             std::env::temp_dir().join(format!("ripr-spec-age-{}-committed", std::process::id()));
         fs::create_dir_all(path.join("docs/specs")).map_err(|e| e.to_string())?;
-        let init = Command::new("git").args(["init", "-q"]).current_dir(&path).output().map_err(|e| e.to_string())?;
-        if !init.status.success() { return Err("git init failed".to_string()); }
+        let init = Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&path)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !init.status.success() {
+            return Err("git init failed".to_string());
+        }
         let relative = "docs/specs/space name-é.md";
         fs::write(path.join(relative), "Status: proposed\n").map_err(|e| e.to_string())?;
         let add = Command::new("git")
@@ -20062,14 +20068,35 @@ mod proposed_spec_age_tests {
         let path =
             std::env::temp_dir().join(format!("ripr-spec-age-{}-old", std::process::id()));
         fs::create_dir_all(path.join("docs/specs")).map_err(|e| e.to_string())?;
-        let init = Command::new("git").args(["init", "-q"]).current_dir(&path).output().map_err(|e| e.to_string())?;
-        if !init.status.success() { return Err("git init failed".to_string()); }
+        let init = Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&path)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !init.status.success() {
+            return Err("git init failed".to_string());
+        }
         let relative = "docs/specs/space name-é.md";
         fs::write(path.join(relative), "Status: proposed\n").map_err(|e| e.to_string())?;
         let add = Command::new("git").args(["add", "--", relative]).current_dir(&path).output().map_err(|e| e.to_string())?;
         if !add.status.success() { return Err("git add failed".to_string()); }
         let date = "2020-01-01T00:00:00Z";
-        let commit = Command::new("git").args(["-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "-m", "fixture"]).env("GIT_AUTHOR_DATE", date).env("GIT_COMMITTER_DATE", date).current_dir(&path).output().map_err(|e| e.to_string())?;
+        let commit = Command::new("git")
+            .args([
+                "-c",
+                "user.name=fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "commit",
+                "-q",
+                "-m",
+                "fixture",
+            ])
+            .env("GIT_AUTHOR_DATE", date)
+            .env("GIT_COMMITTER_DATE", date)
+            .current_dir(&path)
+            .output()
+            .map_err(|e| e.to_string())?;
         if !commit.status.success() { return Err("git commit failed".to_string()); }
         let now = UNIX_EPOCH + Duration::from_secs(1_800_000_000);
         assert!(matches!(
