@@ -817,6 +817,12 @@ struct CheckPrGateFailure {
     reproduce: String,
     bounded_error: String,
     not_run: Vec<String>,
+    baseline: BaselineFailureComparison,
+}
+
+struct BaselineFailureComparison {
+    status: &'static str,
+    detail: String,
 }
 
 /// Run the gates in order and stop at the first failure (#3036). On failure,
@@ -840,6 +846,7 @@ fn run_check_pr_gates(
                     .iter()
                     .map(|later| later.name.to_string())
                     .collect(),
+                baseline: compare_failure_with_origin_main(gate.name),
             };
             write_failure_report(&failure).map_err(|write_err| {
                 format!(
@@ -851,6 +858,122 @@ fn run_check_pr_gates(
         }
     }
     Ok(())
+}
+
+fn compare_failure_with_origin_main(gate_name: &str) -> BaselineFailureComparison {
+    let divergence = match run_output(
+        "git",
+        &["rev-list", "--left-right", "--count", "origin/main...HEAD"],
+    ) {
+        Ok(value) => value,
+        Err(err) => {
+            return BaselineFailureComparison {
+                status: "NOT_PROVEN",
+                detail: format!("origin/main is unavailable: {err}"),
+            };
+        }
+    };
+    let mut counts = divergence.split_whitespace();
+    let behind = counts.next().and_then(|value| value.parse::<u64>().ok());
+    let ahead = counts.next().and_then(|value| value.parse::<u64>().ok());
+    if matches!((behind, ahead), (Some(0), Some(_))) {
+        return BaselineFailureComparison {
+            status: "NOT_PROVEN",
+            detail: "the branch is not behind origin/main".to_string(),
+        };
+    }
+    if !matches!((behind, ahead), (Some(_), Some(_))) {
+        return BaselineFailureComparison {
+            status: "NOT_PROVEN",
+            detail: format!("could not parse origin/main divergence: {divergence:?}"),
+        };
+    }
+    if gate_name == "ci-fast" {
+        return BaselineFailureComparison {
+            status: "NOT_PROVEN",
+            detail: "ci-fast has no stable inner-failure identity for an inherited comparison"
+                .to_string(),
+        };
+    }
+    let root = match std::env::current_dir() {
+        Ok(root) => root,
+        Err(err) => {
+            return BaselineFailureComparison {
+                status: "NOT_PROVEN",
+                detail: format!("could not resolve the PR checkout: {err}"),
+            };
+        }
+    };
+    let worktree = root
+        .join("target")
+        .join("tmp")
+        .join("check-pr")
+        .join("origin-main");
+    if let Err(err) = fs::create_dir_all(worktree.parent().unwrap_or(&worktree)) {
+        return BaselineFailureComparison {
+            status: "NOT_PROVEN",
+            detail: format!("could not create the comparison directory: {err}"),
+        };
+    }
+    let worktree_text = worktree.to_string_lossy().into_owned();
+    let _ = run("git", &["worktree", "prune", "--expire", "now"]);
+    if worktree.exists() {
+        let _ = run("git", &["worktree", "remove", "--force", &worktree_text]);
+        if let Err(err) = fs::remove_dir_all(&worktree) {
+            return BaselineFailureComparison {
+                status: "NOT_PROVEN",
+                detail: format!("could not clear the previous comparison worktree: {err}"),
+            };
+        }
+    }
+    if let Err(err) = run(
+        "git",
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            "--quiet",
+            &worktree_text,
+            "origin/main",
+        ],
+    ) {
+        return BaselineFailureComparison {
+            status: "NOT_PROVEN",
+            detail: format!("could not create the origin/main comparison worktree: {err}"),
+        };
+    }
+    let result = run_origin_gate(gate_name, &worktree);
+    let cleanup = run("git", &["worktree", "remove", "--force", &worktree_text]);
+    if let Err(err) = cleanup {
+        eprintln!("warning: failed to remove comparison worktree: {err}");
+    }
+    match result {
+        Ok(()) => BaselineFailureComparison {
+            status: "PR_INTRODUCED",
+            detail: "the gate passed on origin/main and failed on this branch".to_string(),
+        },
+        Err(err) => BaselineFailureComparison {
+            status: "INHERITED",
+            detail: format!("the same gate failed on origin/main: {err}"),
+        },
+    }
+}
+
+fn run_origin_gate(gate_name: &str, worktree: &Path) -> Result<(), String> {
+    let args: &[&str] = match gate_name {
+        "ci-fast" => &["xtask", "ci-fast"],
+        "clippy" => &[
+            "clippy",
+            "--workspace",
+            "--all-targets",
+            "--",
+            "-D",
+            "warnings",
+        ],
+        "doc" => &["doc", "--workspace", "--no-deps"],
+        _ => return Err(format!("unsupported check-pr gate: {gate_name}")),
+    };
+    run_in_dir(Path::new("cargo"), args, worktree).map(|_| ())
 }
 
 /// Bound the retained first-failure evidence to five lines with CRLF
@@ -4158,6 +4281,10 @@ fn check_pr_report(failure: Option<&CheckPrGateFailure>) -> String {
                 body.push_str(&format!("- `{name}`\n"));
             }
         }
+        body.push_str(&format!(
+            "\n## Inherited-failure comparison (advisory)\n\nStatus: {}\nDetail: {}\n",
+            failure.baseline.status, failure.baseline.detail
+        ));
     }
     let pr_summary_entry = if failure.is_some() {
         // The failure path returns before pr_summary() runs, so advertising
@@ -19777,3 +19904,23 @@ synonym (e.g. {hint}). To intentionally allow this line, append \
     reason = "xtask test code uses unwrap/expect for fail-fast assertion. Production paths are receipted via policy/no-panic-allowlist.toml; the test scope is governed by this single module-level expect."
 )]
 mod tests;
+
+#[cfg(test)]
+mod inherited_failure_tests {
+    use super::*;
+    #[test]
+    fn failure_report_preserves_not_proven_baseline_state() {
+        let report = check_pr_report(Some(&CheckPrGateFailure {
+            name: "clippy".to_string(),
+            reproduce: "cargo clippy".to_string(),
+            bounded_error: "error".to_string(),
+            not_run: vec![],
+            baseline: BaselineFailureComparison {
+                status: "NOT_PROVEN",
+                detail: "unavailable".to_string(),
+            },
+        }));
+        assert!(report.contains("Inherited-failure comparison"));
+        assert!(report.contains("Status: NOT_PROVEN"));
+    }
+}
