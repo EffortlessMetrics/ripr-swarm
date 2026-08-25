@@ -160,7 +160,7 @@ mod markdown {
         }
     }
 
-    fn powershell_command(command: &str) -> String {
+    pub(super) fn powershell_command(command: &str) -> String {
         // Preserve PowerShell single-quote escaping while writing redirected
         // output with BOM-free .NET UTF-8 for Windows PowerShell 5.1.
         let command = command.replace("'\\\\''", "''");
@@ -332,11 +332,11 @@ mod tests {
     #[test]
     fn powershell_command_handles_unredirected_quoted_and_unicode_commands() {
         assert_eq!(
-            powershell_command("ripr check --root 'a > b'"),
+            markdown::powershell_command("ripr check --root 'a > b'"),
             "ripr check --root 'a > b'"
         );
         assert_eq!(
-            powershell_command("ripr check --root 'café' > 'résumé.json'"),
+            markdown::powershell_command("ripr check --root 'café' > 'résumé.json'"),
             "[System.IO.File]::WriteAllText('résumé.json', ((ripr check --root 'café') | Out-String), [System.Text.UTF8Encoding]::new($false))"
         );
     }
