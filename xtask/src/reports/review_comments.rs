@@ -1021,9 +1021,7 @@ fn render_error_review_comments_markdown(packet: &Value) -> String {
     );
     if let Some(fallback) = packet.get("static_gap_fallback") {
         markdown.push_str("\n## Static seam fallback\n\n");
-        markdown.push_str(
-            "LLM review guidance failed, but the static check artifact still identified these gap locations:\n\n",
-        );
+        markdown.push_str("LLM review guidance failed, but the static check artifact still identified these gap locations:\n\n");
         if let Some(seams) = fallback.get("seams").and_then(Value::as_array) {
             if seams.is_empty() {
                 markdown.push_str(
@@ -1435,9 +1433,9 @@ mod tests {
         let producer = serde_json::json!({
             "schema_version": "0.1",
             "tool": "ripr",
-            "mode": "fast",
-            "root": normalize_path_text(&command_root_arg(&repo, &options.root)),
-            "base": options.base,
+            "mode": "deep",
+            "root": ".",
+            "base": "origin/main",
             "summary": {
                 "weakly_exposed": 1,
                 "reachable_unrevealed": 1,
