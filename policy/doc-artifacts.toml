@@ -803,3 +803,11 @@ path = "docs/specs/RIPR-SPEC-0162-propagation-unknown-wording.md"
 status = "proposed"
 owner = "product-swarm"
 standalone_reason = "PR #3317 review follow-up: the shared human template asserted the propagation the propagation_unknown class marks unknown and labeled class-limitation prose as a missing discriminator; this renderer-owned slice makes both honest without touching the shared decision-layer text."
+
+[[artifact]]
+id = "RIPR-SPEC-0166"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0166-rust-subprocess-binary-reach-limitation.md"
+status = "proposed"
+owner = "language-adapter-swarm"
+standalone_reason = "Names the fail-closed integration-test subprocess boundary without claiming binary ownership, static reach, receipt validity, or coverage."
