@@ -163,7 +163,7 @@ mod markdown {
     pub(super) fn powershell_command(command: &str) -> String {
         // Preserve PowerShell single-quote escaping while writing redirected
         // output with BOM-free .NET UTF-8 for Windows PowerShell 5.1.
-        let command = command.replace("'\\\\''", "''");
+        let command = command.replace("'\\''", "''");
         let mut chars = command.char_indices().peekable();
         let mut in_single_quote = false;
         let mut redirect = None;
