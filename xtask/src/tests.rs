@@ -1020,6 +1020,56 @@ fn evidence_promotion_semantic_assertions_accept_expected_changed_rust_files() {
 }
 
 #[test]
+fn evidence_promotion_semantic_assertions_pin_zero_findings() {
+    let assertions = vec![
+        super::EvidencePromotionSemanticAssertion::MustNotPromote,
+        super::EvidencePromotionSemanticAssertion::ExpectedFindingCount { count: 0 },
+    ];
+    let clean = serde_json::json!({
+        "schema_version": "0.2",
+        "tool": "ripr",
+        "mode": "fast",
+        "root": "fixtures/no_behavior/input",
+        "base": "origin/main",
+        "summary": {"findings": 0},
+        "findings": []
+    });
+    let violations = super::evidence_promotion_semantic_violations(
+        "zero_findings",
+        Some("fixtures/no_behavior"),
+        &assertions,
+        &clean,
+        None,
+        false,
+    );
+    assert!(
+        violations.is_empty(),
+        "an exact zero-finding no-behavior case should be non-vacuous: {violations:?}"
+    );
+
+    let regressed = serde_json::json!({
+        "schema_version": "0.2",
+        "tool": "ripr",
+        "mode": "fast",
+        "root": "fixtures/no_behavior/input",
+        "base": "origin/main",
+        "summary": {"findings": 1},
+        "findings": [{"id": "false-exposed", "classification": "exposed"}]
+    });
+    let report = super::evidence_promotion_semantic_violations(
+        "zero_findings",
+        Some("fixtures/no_behavior"),
+        &assertions,
+        &regressed,
+        None,
+        false,
+    )
+    .join("\n");
+    assert!(report.contains("expected_finding_count"), "{report}");
+    assert!(report.contains("promoted to exposed"), "{report}");
+}
+
+#[test]
 fn evidence_promotion_semantic_assertions_reject_human_missing_verify_command_projection() {
     let assertions = vec![super::EvidencePromotionSemanticAssertion::MustHaveVerifyCommand];
     let check_json = serde_json::json!({

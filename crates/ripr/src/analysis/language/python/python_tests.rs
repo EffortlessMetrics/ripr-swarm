@@ -1479,6 +1479,138 @@ fn analyze_diff_emits_finding_for_changed_python_file_on_disk() -> Result<(), St
 }
 
 #[test]
+fn analyze_diff_suppresses_multiline_docstring_interior_change() -> Result<(), String> {
+    let root = unique_tempdir("analyze-diff-docstring-interior")?;
+    let production_rel = PathBuf::from("src/pricing.py");
+    write_file(
+        &root.join(&production_rel),
+        "def apply_discount(amount):\n    \"\"\"Apply the standard discount.\n\n    Cuts the running total by exactly ten units.\n    \"\"\"\n    if amount >= 100:\n        return amount - 10\n    return amount\n",
+    )?;
+    write_file(
+        &root.join("tests/test_pricing.py"),
+        "from src.pricing import apply_discount\n\ndef test_apply_discount():\n    assert apply_discount(100) == 90\n",
+    )?;
+
+    let adapter = PythonAdapter;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        resolved_subject_identity: None,
+    };
+    let changed_files = vec![ChangedFile {
+        path: production_rel,
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 4,
+            new_side_line: 4,
+            text: "    Cuts the running total by exactly ten units.".to_string(),
+        }],
+        removed_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 4,
+            new_side_line: 4,
+            text: "    Cuts the running total by a flat ten units.".to_string(),
+        }],
+    }];
+
+    let result = adapter.analyze_diff(&options, &OraclePolicy::default(), &changed_files);
+    let cleanup = std::fs::remove_dir_all(&root);
+    let result = result?;
+    cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+
+    if !result.findings.is_empty() {
+        return Err(format!(
+            "a docstring-interior-only change must emit no probe, got {} findings",
+            result.findings.len()
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn analyze_diff_does_not_hide_code_replaced_by_multiline_docstring() -> Result<(), String> {
+    let root = unique_tempdir("analyze-diff-code-to-docstring")?;
+    let production_rel = PathBuf::from("src/pricing.py");
+    write_file(
+        &root.join(&production_rel),
+        "def apply_discount(amount):\n    \"\"\"Replacement prose.\n    More replacement prose.\n    \"\"\"\n    return amount\n",
+    )?;
+
+    let adapter = PythonAdapter;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        resolved_subject_identity: None,
+    };
+    let changed_files = vec![ChangedFile {
+        path: production_rel,
+        added_lines: vec![
+            crate::analysis::diff::ChangedLine {
+                line: 2,
+                new_side_line: 2,
+                text: "    \"\"\"Replacement prose.".to_string(),
+            },
+            crate::analysis::diff::ChangedLine {
+                line: 3,
+                new_side_line: 3,
+                text: "    More replacement prose.".to_string(),
+            },
+            crate::analysis::diff::ChangedLine {
+                line: 4,
+                new_side_line: 4,
+                text: "    \"\"\"".to_string(),
+            },
+        ],
+        removed_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 2,
+            new_side_line: 2,
+            text: "    return amount - 10".to_string(),
+        }],
+    }];
+
+    let result = adapter.analyze_diff(&options, &OraclePolicy::default(), &changed_files);
+    let cleanup = std::fs::remove_dir_all(&root);
+    let result = result?;
+    cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+
+    if result.findings.is_empty() {
+        return Err("replacing behavioral code with a docstring must remain analyzable".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn docstring_ranges_exclude_assigned_strings_and_fstrings() {
+    let source = "\
+\"\"\"Module docs.\nMore module docs.\n\"\"\"\n\
+MESSAGE = \"\"\"Assigned text.\nMore assigned text.\n\"\"\"\n\
+def render(value):\n\
+    f\"\"\"{side_effect(value)}\nformatted text\n\"\"\"\n\
+    return MESSAGE\n";
+    let facts = extract_source_facts(Path::new("src/messages.py"), source);
+
+    assert_eq!(
+        facts.docstring_line_ranges,
+        vec![1..=3],
+        "only the plain first string expression of a real scope is a docstring"
+    );
+}
+
+#[test]
 fn analyze_diff_skips_detectable_generated_python_files() -> Result<(), String> {
     let root = unique_tempdir("analyze-diff-generated-file")?;
     let generated_rel = PathBuf::from("src/schema_pb2.py");

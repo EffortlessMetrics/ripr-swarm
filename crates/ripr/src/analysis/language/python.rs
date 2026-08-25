@@ -36,7 +36,11 @@ use rustpython_parser::{
     parse,
     text_size::{TextRange, TextSize},
 };
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    ops::RangeInclusive,
+    path::{Path, PathBuf},
+};
 mod source_utils;
 #[cfg(test)]
 use source_utils::line_for_offset;
@@ -200,6 +204,7 @@ struct PythonSourceFacts {
     tests: Vec<PythonTest>,
     facts: Vec<PythonSourceFact>,
     limitations: Vec<PythonSourceLimitation>,
+    docstring_line_ranges: Vec<RangeInclusive<usize>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -373,6 +378,7 @@ fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFacts {
         tests: Vec::new(),
         facts: Vec::new(),
         limitations: Vec::new(),
+        docstring_line_ranges: Vec::new(),
     };
     let module = match parse_module_result(file, source) {
         Ok(Mod::Module(module)) => module,
@@ -437,13 +443,104 @@ fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFacts {
         None,
         &mut snapshot.facts,
     );
+    collect_docstring_line_ranges(source, &module.body, &mut snapshot.docstring_line_ranges);
     snapshot
+}
+
+/// Collects the line spans of real Python docstrings from parsed scope bodies.
+///
+/// A docstring is the first statement of a module, function, async function, or
+/// class body when that statement is a plain string constant. Assigned strings,
+/// f-strings, and string expressions inside control-flow blocks are deliberately
+/// excluded: they are not docstrings, even when they use triple quotes.
+fn collect_docstring_line_ranges(
+    source: &str,
+    scope_body: &[Stmt],
+    out: &mut Vec<RangeInclusive<usize>>,
+) {
+    if let Some(Stmt::Expr(expr_stmt)) = scope_body.first()
+        && matches!(
+            expr_stmt.value.as_ref(),
+            Expr::Constant(constant) if matches!(&constant.value, ast::Constant::Str(_))
+        )
+    {
+        let range = expr_stmt.value.range();
+        out.push(line_for_range_start(source, range)..=line_for_range_end(source, range));
+    }
+    collect_nested_docstring_scopes(source, scope_body, out);
+}
+
+fn collect_nested_docstring_scopes(
+    source: &str,
+    statements: &[Stmt],
+    out: &mut Vec<RangeInclusive<usize>>,
+) {
+    for statement in statements {
+        match statement {
+            Stmt::FunctionDef(function) => {
+                collect_docstring_line_ranges(source, &function.body, out);
+            }
+            Stmt::AsyncFunctionDef(function) => {
+                collect_docstring_line_ranges(source, &function.body, out);
+            }
+            Stmt::ClassDef(class) => {
+                collect_docstring_line_ranges(source, &class.body, out);
+            }
+            Stmt::If(statement) => {
+                collect_nested_docstring_scopes(source, &statement.body, out);
+                collect_nested_docstring_scopes(source, &statement.orelse, out);
+            }
+            Stmt::For(statement) => {
+                collect_nested_docstring_scopes(source, &statement.body, out);
+                collect_nested_docstring_scopes(source, &statement.orelse, out);
+            }
+            Stmt::AsyncFor(statement) => {
+                collect_nested_docstring_scopes(source, &statement.body, out);
+                collect_nested_docstring_scopes(source, &statement.orelse, out);
+            }
+            Stmt::While(statement) => {
+                collect_nested_docstring_scopes(source, &statement.body, out);
+                collect_nested_docstring_scopes(source, &statement.orelse, out);
+            }
+            Stmt::With(statement) => {
+                collect_nested_docstring_scopes(source, &statement.body, out);
+            }
+            Stmt::AsyncWith(statement) => {
+                collect_nested_docstring_scopes(source, &statement.body, out);
+            }
+            Stmt::Try(statement) => {
+                collect_nested_docstring_scopes(source, &statement.body, out);
+                for handler in &statement.handlers {
+                    let ast::ExceptHandler::ExceptHandler(handler) = handler;
+                    collect_nested_docstring_scopes(source, &handler.body, out);
+                }
+                collect_nested_docstring_scopes(source, &statement.orelse, out);
+                collect_nested_docstring_scopes(source, &statement.finalbody, out);
+            }
+            Stmt::TryStar(statement) => {
+                collect_nested_docstring_scopes(source, &statement.body, out);
+                for handler in &statement.handlers {
+                    let ast::ExceptHandler::ExceptHandler(handler) = handler;
+                    collect_nested_docstring_scopes(source, &handler.body, out);
+                }
+                collect_nested_docstring_scopes(source, &statement.orelse, out);
+                collect_nested_docstring_scopes(source, &statement.finalbody, out);
+            }
+            Stmt::Match(statement) => {
+                for case in &statement.cases {
+                    collect_nested_docstring_scopes(source, &case.body, out);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 fn source_fact_snapshot_observation(facts: &PythonSourceFacts) -> usize {
     let mut score = facts.file.components().count() + facts.language.len();
     score = score.saturating_add(facts.owners.len());
     score = score.saturating_add(facts.tests.len());
+    score = score.saturating_add(facts.docstring_line_ranges.len());
     for fact in &facts.facts {
         score = score.saturating_add(fact.kind.as_str().len());
         score = score.saturating_add(fact.file.components().count());
@@ -5240,8 +5337,9 @@ fn strong_oracle_observes_owner(
 /// Conservative by construction: only blank/comment lines and lines that are
 /// ENTIRELY a single non-f-string literal qualify. f-strings are excluded (a bare
 /// f-string statement can evaluate embedded calls), multi-line docstring interiors
-/// are not detected here (only one line is in scope), and annotation-only changes
-/// are handled by the dedicated `is_annotation_only_*_change` guards in
+/// are handled from AST-backed source context in [`classify_change_with_context`],
+/// and annotation-only changes are handled by the dedicated
+/// `is_annotation_only_*_change` guards in
 /// `classify_change_with_old` (def headers via #1294; module-scope bare variables
 /// via #1289 — class-body variable annotations remain out of scope because
 /// `@dataclass`/Pydantic make them runtime-meaningful).
@@ -5809,6 +5907,7 @@ fn classify_change(
     classify_change_with_old(file, line, line_text, None, owners, all_tests)
 }
 
+#[cfg(test)]
 fn classify_change_with_old(
     file: &Path,
     line: usize,
@@ -5817,14 +5916,42 @@ fn classify_change_with_old(
     owners: &[PythonOwner],
     all_tests: &[PythonTest],
 ) -> Option<Finding> {
+    classify_change_with_context(
+        file,
+        line,
+        line_text,
+        old_line_text,
+        owners,
+        all_tests,
+        PythonNoBehaviorContext::default(),
+    )
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct PythonNoBehaviorContext {
+    new_line_in_docstring: bool,
+    old_line_in_docstring: bool,
+}
+
+fn classify_change_with_context(
+    file: &Path,
+    line: usize,
+    line_text: &str,
+    old_line_text: Option<&str>,
+    owners: &[PythonOwner],
+    all_tests: &[PythonTest],
+    no_behavior: PythonNoBehaviorContext,
+) -> Option<Finding> {
     // No-op / no-behavior-delta guard (#1279): a docstring-only, comment-only, or
     // blank-line change has no runtime behavior, so there is nothing for a test to
     // discriminate. Emit no probe — crediting `exposed` here would falsely imply the
     // tests notice a behavior change that does not exist. The change is a no-op only
     // when BOTH sides are non-behavioral: if real code was replaced by a docstring
     // (old line behavioral), keep analyzing rather than silently dropping it.
-    let new_is_noop = is_python_no_behavior_line(line_text);
-    let old_is_noop = old_line_text.is_none_or(is_python_no_behavior_line);
+    let new_is_noop = no_behavior.new_line_in_docstring || is_python_no_behavior_line(line_text);
+    let old_is_noop = old_line_text.is_none_or(|old| {
+        no_behavior.old_line_in_docstring || is_python_no_behavior_line(old)
+    });
     if new_is_noop && old_is_noop {
         return None;
     }
@@ -6385,6 +6512,40 @@ fn is_detectable_generated_python_file(path: &Path) -> bool {
         || name.starts_with("generated_")
 }
 
+/// Reconstructs the old side of one changed file from the current source and
+/// the parsed unified-diff line coordinates. This keeps no-op classification
+/// fail-closed: an interior docstring line is suppressed only when both parsed
+/// source versions establish that it belongs to a docstring.
+fn reconstruct_old_source(new_source: &str, changed: &ChangedFile) -> Option<String> {
+    let mut lines = new_source.lines().map(str::to_string).collect::<Vec<_>>();
+
+    let mut added = changed.added_lines.iter().collect::<Vec<_>>();
+    added.sort_by_key(|line| std::cmp::Reverse(line.line));
+    for line in added {
+        let index = line.line.checked_sub(1)?;
+        if lines.get(index)? != &line.text {
+            return None;
+        }
+        lines.remove(index);
+    }
+
+    let mut removed = changed.removed_lines.iter().collect::<Vec<_>>();
+    removed.sort_by_key(|line| line.line);
+    for line in removed {
+        let index = line.line.checked_sub(1)?;
+        if index > lines.len() {
+            return None;
+        }
+        lines.insert(index, line.text.clone());
+    }
+
+    Some(lines.join("\n"))
+}
+
+fn line_is_in_ranges(line: usize, ranges: &[RangeInclusive<usize>]) -> bool {
+    ranges.iter().any(|range| range.contains(&line))
+}
+
 impl LanguageAdapter for PythonAdapter {
     fn accepts_path(&self, path: &Path) -> bool {
         matches!(route(path), Some(LanguageId::Python))
@@ -6399,6 +6560,8 @@ impl LanguageAdapter for PythonAdapter {
         let workspace_files = collect_workspace_python_files(&options.root);
         let mut all_owners: Vec<PythonOwner> = Vec::new();
         let mut all_tests: Vec<PythonTest> = Vec::new();
+        let mut docstring_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
+            BTreeMap::new();
         for relative in &workspace_files {
             let absolute = options.root.join(relative);
             let Ok(source) = std::fs::read_to_string(&absolute) else {
@@ -6406,6 +6569,8 @@ impl LanguageAdapter for PythonAdapter {
             };
             let facts = extract_source_facts(relative, &source);
             debug_assert!(source_fact_snapshot_observation(&facts) > 0);
+            docstring_ranges_by_file
+                .insert(relative.clone(), facts.docstring_line_ranges.clone());
             if is_test_file(relative) {
                 all_tests.extend(facts.tests);
             } else {
@@ -6425,21 +6590,40 @@ impl LanguageAdapter for PythonAdapter {
             if is_test_file(&changed.path) {
                 continue;
             }
+            let new_docstring_ranges = docstring_ranges_by_file
+                .get(&changed.path)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            let old_docstring_ranges =
+                std::fs::read_to_string(options.root.join(&changed.path))
+                    .ok()
+                    .and_then(|source| reconstruct_old_source(&source, changed))
+                    .map(|source| {
+                        extract_source_facts(&changed.path, &source).docstring_line_ranges
+                    })
+                    .unwrap_or_default();
             for added in &changed.added_lines {
                 // Pair the in-place removed line (same new-side position) so the
                 // classifier can credit the changed-sink token on the DELTA only.
-                let old_line_text = changed
+                let old_line = changed
                     .removed_lines
                     .iter()
-                    .find(|removed| removed.new_side_line == added.line)
-                    .map(|removed| removed.text.as_str());
-                if let Some(finding) = classify_change_with_old(
+                    .find(|removed| removed.new_side_line == added.line);
+                let old_line_text = old_line.map(|removed| removed.text.as_str());
+                let no_behavior = PythonNoBehaviorContext {
+                    new_line_in_docstring: line_is_in_ranges(added.line, new_docstring_ranges),
+                    old_line_in_docstring: old_line.is_some_and(|removed| {
+                        line_is_in_ranges(removed.line, &old_docstring_ranges)
+                    }),
+                };
+                if let Some(finding) = classify_change_with_context(
                     &changed.path,
                     added.line,
                     &added.text,
                     old_line_text,
                     &all_owners,
                     &all_tests,
+                    no_behavior,
                 ) {
                     findings.push(finding);
                 }

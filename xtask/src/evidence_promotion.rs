@@ -292,6 +292,9 @@ pub(crate) enum EvidencePromotionSemanticAssertion {
     ExpectedChangedRustFiles {
         count: u64,
     },
+    ExpectedFindingCount {
+        count: u64,
+    },
     MustDiscloseWitness,
     MustDiscloseLimitationDetail,
     ExpectedLimitationDetail {
@@ -684,6 +687,16 @@ fn evidence_promotion_parse_assertion(
             EvidencePromotionSemanticAssertion::ExpectedChangedRustFiles {
                 count: evidence_promotion_required_assertion_u64(
                     case_id, index, assertion, "count",
+                )?,
+            },
+        ),
+        "expected_finding_count" => Ok(
+            EvidencePromotionSemanticAssertion::ExpectedFindingCount {
+                count: evidence_promotion_required_assertion_u64(
+                    case_id,
+                    index,
+                    assertion,
+                    "count",
                 )?,
             },
         ),
@@ -1689,6 +1702,14 @@ pub(crate) fn evidence_promotion_semantic_violations(
                         observed
                             .map(|value| value.to_string())
                             .unwrap_or_else(|| "<missing>".to_string())
+                    ));
+                }
+            }
+            EvidencePromotionSemanticAssertion::ExpectedFindingCount { count } => {
+                let observed = u64::try_from(findings.len()).unwrap_or(u64::MAX);
+                if observed != *count {
+                    violations.push(format!(
+                        "{case_label}: `expected_finding_count` requires {count} finding(s), found {observed}"
                     ));
                 }
             }
@@ -3900,10 +3921,18 @@ pub(crate) fn validate_evidence_promotion_honesty_corpus_at(
                 EvidencePromotionSemanticAssertion::MustNotReportClean
             )
         });
-        if case.get("assertions").is_some() && must_not_promote && !must_not_report_clean {
+        let pins_zero_findings = assertions.iter().any(|assertion| {
+            matches!(
+                assertion,
+                EvidencePromotionSemanticAssertion::ExpectedFindingCount { count: 0 }
+            )
+        });
+        let pins_non_vacuous_outcome = must_not_report_clean || pins_zero_findings;
+        if case.get("assertions").is_some() && must_not_promote && !pins_non_vacuous_outcome {
             violations.push(format!(
                 "evidence promotion honesty case `{id}`: `must_not_promote` requires \
-                 `must_not_report_clean` so an empty findings re-bless cannot pass vacuously"
+                 `must_not_report_clean` or `expected_finding_count=0`, so an empty \
+                 findings re-bless cannot pass vacuously"
             ));
         }
 
