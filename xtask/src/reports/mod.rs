@@ -31,6 +31,7 @@ mod release_negative;
 mod release_scope;
 pub(crate) mod release_server;
 mod repo;
+#[cfg(test)]
 mod reverse_authorization;
 mod review_comments;
 mod rust_repair_trust;
@@ -120,6 +121,7 @@ pub(crate) use repo::{
     repo_exposure_latency_report, repo_exposure_report, repo_exposure_summary_report,
     repo_seam_inventory,
 };
+#[cfg(test)]
 pub(crate) use reverse_authorization::{
     AuthorizationDecision, EvidenceState, PredicateEvidence, ReverseAuthorizationInput,
     ReverseAuthorizationReceipt, evaluate_reverse_authorization,

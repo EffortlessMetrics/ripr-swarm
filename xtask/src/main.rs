@@ -20117,7 +20117,7 @@ mod proposed_spec_age_tests {
         if !commit.status.success() {
             return Err("git commit failed".to_string());
         }
-        let now = UNIX_EPOCH + Duration::from_secs(1_800_000_000);
+        let now = UNIX_EPOCH + Duration::from_hours(500_000);
         assert!(matches!(
             proposed_spec_age(&path.join(relative), &path, now),
             ProposedSpecAge::Current
@@ -20168,7 +20168,7 @@ mod proposed_spec_age_tests {
         if !commit.status.success() {
             return Err("git commit failed".to_string());
         }
-        let now = UNIX_EPOCH + Duration::from_secs(1_800_000_000);
+        let now = UNIX_EPOCH + Duration::from_hours(500_000);
         assert!(matches!(
             proposed_spec_age(&path.join(relative), &path, now),
             ProposedSpecAge::Stale { .. }
