@@ -1007,7 +1007,7 @@ fn blocked_gate_inline_detail_surfaces_first_seam_and_next_action() -> Result<()
     let inline = gate_decision_inline_detail(&report);
     for expected in [
         ": 1 blocking gap(s); first:",
-        "; seam 8f7fa8644fd12280 at src/pricing.rs:42 (weakly_gripped)",
+        "; seam 8f7fa8644fd12280 at src/pricing.rs:88 (weakly_gripped)",
         "; next: Write one focused Rust test",
         "; inspect: `ripr agent brief --root . --seam-id 8f7fa8644fd12280 --json > target/ripr/workflow/agent-brief.json`",
     ] {
