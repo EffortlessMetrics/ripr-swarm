@@ -191,13 +191,14 @@ mod tests {
     }
 
     #[test]
-    fn convergence_fixture_root_uses_manifest_only_contract() {
+    fn convergence_fixture_root_uses_manifest_only_contract() -> Result<(), String> {
         let path = std::path::Path::new("fixtures/convergence");
         assert!(crate::reports::is_manifest_only_fixture_dir(path));
         assert_eq!(
-            crate::reports::fixture_contract_violations(path).unwrap(),
+            crate::reports::fixture_contract_violations(path)?,
             Vec::<String>::new()
         );
+        Ok(())
     }
 
     #[test]
