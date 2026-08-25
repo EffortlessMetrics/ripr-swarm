@@ -1021,27 +1021,56 @@ fn render_error_review_comments_markdown(packet: &Value) -> String {
     );
     if let Some(fallback) = packet.get("static_gap_fallback") {
         markdown.push_str("\n## Static seam fallback\n\n");
-        markdown.push_str(\n            "LLM review guidance failed, but the static check artifact still identified these gap locations:\n\n",\n        );
+        markdown.push_str(
+            "LLM review guidance failed, but the static check artifact still identified these gap locations:\n\n",
+        );
         if let Some(seams) = fallback.get("seams").and_then(Value::as_array) {
             if seams.is_empty() {
-                markdown.push_str(\n                    "- No classified severe-gap seams were present in the fallback artifact.\n",\n                );
+                markdown.push_str(
+                    "- No classified severe-gap seams were present in the fallback artifact.\n",
+                );
             } else {
                 for seam in seams {
                     markdown.push_str(&format!(
                         "- `{}`: `{}`:{} ({})\n",
-                        md_escape(\n                            seam.get("classification")\n                                .and_then(Value::as_str)\n                                .unwrap_or("unknown")\n                        ),
-                        md_escape(\n                            seam.get("file")\n                                .and_then(Value::as_str)\n                                .unwrap_or("unknown")\n                        ),
-                        seam.get("line")\n                            .and_then(Value::as_u64)\n                            .map(|line| line.to_string())\n                            .unwrap_or_else(|| "?".to_string()),
-                        md_escape(\n                            seam.get("family")\n                                .and_then(Value::as_str)\n                                .unwrap_or("unknown")\n                        )
+                        md_escape(
+                            seam.get("classification")
+                                .and_then(Value::as_str)
+                                .unwrap_or("unknown")
+                        ),
+                        md_escape(
+                            seam.get("file")
+                                .and_then(Value::as_str)
+                                .unwrap_or("unknown")
+                        ),
+                        seam.get("line")
+                            .and_then(Value::as_u64)
+                            .map(|line| line.to_string())
+                            .unwrap_or_else(|| "?".to_string()),
+                        md_escape(
+                            seam.get("family")
+                                .and_then(Value::as_str)
+                                .unwrap_or("unknown")
+                        )
                     ));
                 }
             }
         }
         markdown.push_str("\n- source: `");
-        markdown.push_str(&md_escape(\n            fallback\n                .get("source")\n                .and_then(Value::as_str)\n                .unwrap_or("unknown"),\n        ));
-        markdown.push_str(\n            "`\n- boundary: static seam location only; inspect the seam before writing a repair.\n",\n        );
+        markdown.push_str(&md_escape(
+            fallback
+                .get("source")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown"),
+        ));
+        markdown.push_str(
+            "`\n- boundary: static seam location only; inspect the seam before writing a repair.\n",
+        );
     }
-    markdown.push_str(&format!(\n        "\n## Warnings\n\n- tool_error: {}\n",\n        md_escape(warning)\n    ));
+    markdown.push_str(&format!(
+        "\n## Warnings\n\n- tool_error: {}\n",
+        md_escape(warning)
+    ));
     markdown
 }
 
@@ -1446,7 +1475,8 @@ mod tests {
         )
         .map_err(|err| format!("write producer: {err}"))?;
 
-        let receipt =\n            review_comments_receipt(&repo, &options, "limited_timeout", Some("timed out"));
+        let receipt =
+            review_comments_receipt(&repo, &options, "limited_timeout", Some("timed out"));
         let packet = error_review_comments_packet(&repo, &options, "timed out", &receipt);
         let fallback = packet
             .get("static_gap_fallback")
@@ -1455,7 +1485,10 @@ mod tests {
         assert_eq!(fallback["seams"].as_array().map(Vec::len), Some(2));
         assert_eq!(fallback["seams"][0]["file"], "src/auth.rs");
         assert_eq!(fallback["seams"][0]["line"], 42);
-        assert_eq!(\n            fallback["seams"][1]["classification"],\n            "reachable_unrevealed"\n        );
+        assert_eq!(
+            fallback["seams"][1]["classification"],
+            "reachable_unrevealed"
+        );
         assert!(validate_packet_value(
             &packet,
             &repo,
