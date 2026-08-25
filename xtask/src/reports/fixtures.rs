@@ -352,6 +352,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                 "active-goal-authority-audit"
                     | "actionable-gap-outcomes-corpus"
                     | "bun-ub-cross-language-dogfood"
+                    | "convergence"
                     | "cross-language-oracle-graph-corpus"
                     | "editor_gap_cockpit"
                     | "editor_first_run_usability"

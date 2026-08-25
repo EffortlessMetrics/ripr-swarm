@@ -191,6 +191,16 @@ mod tests {
     }
 
     #[test]
+    fn convergence_fixture_root_uses_manifest_only_contract() {
+        let path = Path::new("fixtures/convergence");
+        assert!(crate::reports::is_manifest_only_fixture_dir(path));
+        assert_eq!(
+            crate::reports::fixture_contract_violations(path).unwrap(),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
     fn domain_process_access_is_rejected() {
         let violations = source_violations(
             "xtask/src/convergence/domain/projection.rs",
