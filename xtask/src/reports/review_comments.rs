@@ -1431,6 +1431,12 @@ mod tests {
         let mut options = options();
         options.check_output = Some("target/check-output.json".to_string());
         let producer = serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "mode": "fast",
+            "root": normalize_path_text(&command_root_arg(&repo, &options.root)),
+            "base": options.base,
+            "head": options.head,
             "summary": {
                 "weakly_exposed": 1,
                 "reachable_unrevealed": 1,
