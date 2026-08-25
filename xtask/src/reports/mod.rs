@@ -31,6 +31,7 @@ mod release_negative;
 mod release_scope;
 pub(crate) mod release_server;
 mod repo;
+mod reverse_authorization;
 mod review_comments;
 mod rust_repair_trust;
 mod sarif;
@@ -118,6 +119,10 @@ pub(crate) use repo::{
     evidence_quality_scorecard_report, evidence_quality_trend_report, lane1_evidence_audit_report,
     repo_exposure_latency_report, repo_exposure_report, repo_exposure_summary_report,
     repo_seam_inventory,
+};
+pub(crate) use reverse_authorization::{
+    AuthorizationDecision, EvidenceState, PredicateEvidence, ReverseAuthorizationInput,
+    ReverseAuthorizationReceipt, evaluate_reverse_authorization,
 };
 pub(crate) use review_comments::ripr_review_comments;
 pub(crate) use rust_repair_trust::{rust_repair_trust_report, rust_repair_trust_report_value_at};
