@@ -5566,28 +5566,43 @@ fn proposed_spec_age(path: &Path, repo_root: &Path, now: SystemTime) -> Proposed
         },
     };
     let output = match std::process::Command::new("git")
-        .args(["-C"]).arg(repo_root).args(["log", "-1", "--format=%ct", "--"]).arg(relative).output() {
+        .args(["-C"])
+        .arg(repo_root)
+        .args(["log", "-1", "--format=%ct", "--"])
+        .arg(relative)
+        .output() {
         Ok(output) => output,
-        Err(error) => return ProposedSpecAge::NotProven {
-            reason: format!("Git age lookup could not start: {error}"),
-        },
+        Err(error) => {
+            return ProposedSpecAge::NotProven {
+                reason: format!("Git age lookup could not start: {error}"),
+            };
+        }
     };
     if !output.status.success() {
-        return ProposedSpecAge::NotProven { reason: "Git age lookup failed for the spec path".to_string() };
+        return ProposedSpecAge::NotProven {
+            reason: "Git age lookup failed for the spec path".to_string(),
+        };
     }
-    let timestamp = match std::str::from_utf8(&output.stdout).ok()
-        .map(str::trim).filter(|value| !value.is_empty())
-        .and_then(|value| value.parse::<u64>().ok()) {
+    let timestamp = match std::str::from_utf8(&output.stdout)
+        .ok()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| value.parse::<u64>().ok())
+    {
         Some(timestamp) => timestamp,
-        None => return ProposedSpecAge::NotProven {
-            reason: "Git returned no parseable commit timestamp for the spec path".to_string(),
-        },
+        None => {
+            return ProposedSpecAge::NotProven {
+                reason: "Git returned no parseable commit timestamp for the spec path".to_string(),
+            };
+        }
     };
     let now_secs = match now.duration_since(UNIX_EPOCH) {
         Ok(duration) => duration.as_secs(),
-        Err(error) => return ProposedSpecAge::NotProven {
-            reason: format!("review clock predates Unix epoch: {error}"),
-        },
+        Err(error) => {
+            return ProposedSpecAge::NotProven {
+                reason: format!("review clock predates Unix epoch: {error}"),
+            };
+        }
     };
     let age_secs = now_secs.saturating_sub(timestamp);
     let days = age_secs / (24 * 60 * 60);
@@ -5597,6 +5612,7 @@ fn proposed_spec_age(path: &Path, repo_root: &Path, now: SystemTime) -> Proposed
         ProposedSpecAge::Current
     }
 }
+
 fn specs(args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
         Some("next") => {
