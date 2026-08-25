@@ -4969,10 +4969,34 @@ fn scratch_gc_concurrency_violations(path: &str, text: &str) -> Vec<String> {
     let has_top_level_concurrency = lines
         .iter()
         .any(|line| line.trim_start().len() == line.len() && line.trim() == "concurrency:");
-    let has_pool_group = lines.iter().any(|line| line.trim() == GROUP);
-    let has_non_cancelling_pool_queue = lines
-        .iter()
-        .any(|line| line.trim() == "cancel-in-progress: false");
+    let mut in_scratch_job = false;
+    let mut in_concurrency = false;
+    let mut concurrency_lines = Vec::new();
+    for line in &lines {
+        let indent = line.len() - line.trim_start().len();
+        if *line == "  scratch-gc:" {
+            in_scratch_job = true;
+            continue;
+        }
+        if in_scratch_job && indent == 2 && !line.trim().is_empty() {
+            in_scratch_job = false;
+            in_concurrency = false;
+        }
+        if in_scratch_job && indent == 4 && line.trim() == "concurrency:" {
+            in_concurrency = true;
+            continue;
+        }
+        if in_concurrency {
+            if indent <= 4 && !line.trim().is_empty() {
+                in_concurrency = false;
+            } else {
+                concurrency_lines.push(line.trim());
+            }
+        }
+    }
+    let has_pool_group = concurrency_lines.contains(&GROUP);
+    let has_non_cancelling_pool_queue =
+        concurrency_lines.contains(&"cancel-in-progress: false");
 
     let mut violations = Vec::new();
     if has_top_level_concurrency {
