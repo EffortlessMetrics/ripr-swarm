@@ -465,7 +465,7 @@ fn build_validated_host_run_fixture(
                 ["cargo_toml", &subject.cargo_toml], ["cargo_lock", &subject.cargo_lock],
                 ["config", &subject.config], ["source_before", &subject.source_before],
                 ["source_after", &subject.source_after], ["diff", &subject.diff]
-            ].into_iter().map(|(role, file)| serde_json::json!({"role": role, "source_path": &file.source_path, "repository_path": &file.repository_path, "sha256": &file.sha256})).chain(subject.tests.iter().map(|file| serde_json::json!({"role":"test", "source_path":&file.source_path, "repository_path":&file.repository_path, "sha256":&file.sha256}))).collect::<Vec<_>>()
+            ].into_iter().map(|(role, file)| serde_json::json!({"role": role, "source_path": file.source_path.clone(), "repository_path": file.repository_path.clone(), "sha256": file.sha256.clone()})).chain(subject.tests.iter().map(|file| serde_json::json!({"role":"test", "source_path":file.source_path.clone(), "repository_path":file.repository_path.clone(), "sha256":file.sha256.clone()}))).collect::<Vec<_>>()
         });
         let receipt = serde_json::json!({
             "schema_version":"0.1", "kind":"rust_judged_panel_host_run_receipt", "case_id":&subject.case_id,
@@ -1032,3 +1032,4 @@ fn rust_judged_panel_packet_reuse_validates_every_member_before_current() -> Res
     }
     Ok(())
 }
+
