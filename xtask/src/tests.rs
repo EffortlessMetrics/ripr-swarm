@@ -9237,6 +9237,51 @@ jobs:
 }
 
 #[test]
+fn scratch_gc_concurrency_policy_accepts_per_pool_matrix_queue() {
+    let workflow = r#"
+jobs:
+  scratch-gc:
+    strategy:
+      matrix:
+        pool: [cx43, cpx42, cx53]
+    concurrency:
+      group: scratch-gc-${{ github.repository }}-${{ matrix.pool }}
+      cancel-in-progress: false
+"#;
+
+    assert!(
+        scratch_gc_concurrency_violations(".github/workflows/scratch-gc.yml", workflow,).is_empty()
+    );
+}
+
+#[test]
+fn scratch_gc_concurrency_policy_rejects_workflow_queue() {
+    let workflow = r#"
+concurrency:
+  group: scratch-gc-${{ github.repository }}
+  cancel-in-progress: false
+jobs:
+  scratch-gc:
+    strategy:
+      matrix:
+        pool: [cx43, cpx42, cx53]
+    concurrency:
+      group: scratch-gc-${{ github.repository }}-${{ matrix.pool }}
+      cancel-in-progress: true
+  unrelated:
+    concurrency:
+      cancel-in-progress: false
+"#;
+
+    let violations =
+        scratch_gc_concurrency_violations(".github/workflows/scratch-gc.yml", workflow);
+
+    assert_eq!(violations.len(), 2);
+    assert!(violations[0].contains("workflow-level concurrency"));
+    assert!(violations[1].contains("matrix.pool"));
+}
+
+#[test]
 fn routed_rust_workflow_contract_accepts_swarm_shape() {
     let workflow = r#"
 jobs:

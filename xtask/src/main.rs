@@ -4899,6 +4899,7 @@ fn check_workflows_impl() -> Result<(), String> {
         ));
         violations.extend(workflow_bare_self_hosted_violations(&normalized, &text));
         violations.extend(workflow_plain_scalar_comment_violations(&normalized, &text));
+        violations.extend(scratch_gc_concurrency_violations(&normalized, &text));
         for block in extract_workflow_run_blocks(&text) {
             if block.non_empty_lines > budget.max_non_empty_lines {
                 violations.push(format!(
@@ -4948,6 +4949,66 @@ fn check_workflows_impl() -> Result<(), String> {
         },
         &violations,
     )
+}
+
+/// Keep the scratch-GC matrix isolated by pool.
+///
+/// A workflow-level concurrency group serializes the whole matrix behind the
+/// slowest or unavailable self-hosted pool. The resulting pending-run
+/// eviction is especially dangerous here because `cancelled` is not a failed
+/// workflow and therefore produces no useful CI signal.
+fn scratch_gc_concurrency_violations(path: &str, text: &str) -> Vec<String> {
+    const WORKFLOW: &str = ".github/workflows/scratch-gc.yml";
+    const GROUP: &str = "group: scratch-gc-${{ github.repository }}-${{ matrix.pool }}";
+
+    if path != WORKFLOW {
+        return Vec::new();
+    }
+
+    let lines: Vec<&str> = text.lines().collect();
+    let has_top_level_concurrency = lines
+        .iter()
+        .any(|line| line.trim_start().len() == line.len() && line.trim() == "concurrency:");
+    let mut in_scratch_job = false;
+    let mut in_concurrency = false;
+    let mut concurrency_lines = Vec::new();
+    for line in &lines {
+        let indent = line.len() - line.trim_start().len();
+        if *line == "  scratch-gc:" {
+            in_scratch_job = true;
+            continue;
+        }
+        if in_scratch_job && indent == 2 && !line.trim().is_empty() {
+            in_scratch_job = false;
+            in_concurrency = false;
+        }
+        if in_scratch_job && indent == 4 && line.trim() == "concurrency:" {
+            in_concurrency = true;
+            continue;
+        }
+        if in_concurrency {
+            if indent <= 4 && !line.trim().is_empty() {
+                in_concurrency = false;
+            } else {
+                concurrency_lines.push(line.trim());
+            }
+        }
+    }
+    let has_pool_group = concurrency_lines.contains(&GROUP);
+    let has_non_cancelling_pool_queue = concurrency_lines.contains(&"cancel-in-progress: false");
+
+    let mut violations = Vec::new();
+    if has_top_level_concurrency {
+        violations.push(format!(
+            "{WORKFLOW}: scratch-GC concurrency must be job-level and keyed by matrix.pool; workflow-level concurrency starves the matrix when one pool is unavailable"
+        ));
+    }
+    if !has_pool_group || !has_non_cancelling_pool_queue {
+        violations.push(format!(
+            "{WORKFLOW}: scratch-GC must preserve a non-cancelling per-pool concurrency group ({GROUP})"
+        ));
+    }
+    violations
 }
 
 /// Workflow automation must not perform review-thread resolution without adjudication.
