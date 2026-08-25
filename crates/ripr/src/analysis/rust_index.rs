@@ -6,12 +6,13 @@ use std::path::{Path, PathBuf};
 #[cfg(test)]
 pub(crate) use super::extract::contains_macro_invocation;
 pub(crate) use super::extract::{
-    PROBE_SHAPE_CALL_DELETION, PROBE_SHAPE_ERROR_PATH, PROBE_SHAPE_FIELD_CONSTRUCTION,
-    PROBE_SHAPE_MATCH_ARM, PROBE_SHAPE_PREDICATE, PROBE_SHAPE_RETURN_VALUE,
-    PROBE_SHAPE_SIDE_EFFECT, classify_assertion, err_return_guard_oracles, extract_assertions,
-    extract_call_facts, extract_identifier_tokens, extract_line_scanned_oracles,
-    extract_literal_facts, extract_literals, extract_return_facts, is_known_probe_shape,
-    is_unwrap_err_bound_error_assertion, unwrap_err_bound_variables,
+    OracleTextShape, PROBE_SHAPE_CALL_DELETION, PROBE_SHAPE_ERROR_PATH,
+    PROBE_SHAPE_FIELD_CONSTRUCTION, PROBE_SHAPE_MATCH_ARM, PROBE_SHAPE_PREDICATE,
+    PROBE_SHAPE_RETURN_VALUE, PROBE_SHAPE_SIDE_EFFECT, classify_assertion,
+    err_return_guard_oracles, extract_assertions, extract_call_facts, extract_identifier_tokens,
+    extract_line_scanned_oracles, extract_literal_facts, extract_literals, extract_return_facts,
+    has_oracle_text_shape, is_known_probe_shape, is_unwrap_err_bound_error_assertion,
+    unwrap_err_bound_variables,
 };
 pub(crate) use super::facts::build_index_from_loaded_files_with_cache;
 #[cfg(test)]
