@@ -14,7 +14,8 @@
 | **Preview languages** | [Language adapter preview](LANGUAGE_ADAPTER_PREVIEW.md) |
 | **Verification & badges** | [Verification contract](VERIFICATION.md) |
 | **Triage a finding** | [Finding triage guide](how-to/triage-a-finding.md) |
-| **Support tiers** | [Support tiers](status/SUPPORT_TIERS.md) |
+| **Support tiers** | [Support tiers](status/SUPPORT_TIERS.md) |\n| **Sibling-tool contracts** | [Interop and learning ledger](interop/sibling-tools.md) |
+| **Sibling-tool contracts** | [Interop and learning ledger](interop/sibling-tools.md) |
 
 ## Reference
 
