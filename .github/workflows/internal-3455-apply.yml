@@ -13,16 +13,16 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.head_ref == 'internal/3455-apply-semantic-correction'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
-      - name: Checkout child branch
+      - name: Checkout correction branch
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
-      - name: Remove temporal spec validity
+      - name: Apply semantic correction
         shell: bash
         run: |
           set -euo pipefail
@@ -42,18 +42,43 @@ jobs:
               raise SystemExit("temporal spec-age diagnostic remains after edit")
           main_path.write_text(main, encoding="utf-8")
 
+          readme_path = Path("docs/specs/README.md")
+          readme = readme_path.read_text(encoding="utf-8")
+          anchor = (
+              "Use specs for behavior that users, integrations, or future agents need to rely\n"
+              "on. Keep implementation details in architecture docs or ADRs unless they affect\n"
+              "observable behavior.\n\n"
+          )
+          clarification = (
+              "A spec status records normative disposition only. It does not establish\n"
+              "implementation, proof, support, or live-work state; those are represented by\n"
+              "implementation claims and PR-local slices, traceability and evidence, support\n"
+              "authorities, and GitHub/worktree state. A spec remains valid until it is\n"
+              "explicitly corrected, superseded, or deprecated.\n\n"
+          )
+          if readme.count(anchor) != 1:
+              raise SystemExit("spec README insertion anchor is not unique")
+          if clarification not in readme:
+              readme = readme.replace(anchor, anchor + clarification, 1)
+          readme_path.write_text(readme, encoding="utf-8")
+
           allowlist_path = Path("policy/process_allowlist.txt")
           allowlist = allowlist_path.read_text(encoding="utf-8")
           age_rows = (
               "xtask/src/main.rs|Command::new|9|repository-gates|#2343/#3435: diff-aware gate reads changed files; proposed-spec age validation performs one bounded git log lookup, and its test fixtures create temporary Git repositories with pinned commit timestamps.\n"
               "xtask/src/main.rs|use std::process::Command|1|spec-age-policy-tests|#3435: proposed-spec age tests import Command only for isolated temporary Git repository setup.\n"
           )
-          gate_row = (
+          replacement_rows = (
               "xtask/src/main.rs|Command::new|1|gate-runner|#2343: diff-aware gate runner reads changed files via git diff\n"
+              "xtask/tests/spec_format_determinism.rs|Command::new|3|spec-format-determinism|#3455: the integration harness runs the built xtask command and creates one bounded temporary Git fixture with a pinned historical commit; no user repository is mutated.\n"
+              "xtask/tests/spec_format_determinism.rs|use std::process::Command|1|spec-format-determinism|#3455: the deterministic spec-format integration harness imports Command only for the bounded xtask and temporary-Git probes described above.\n"
           )
           if allowlist.count(age_rows) != 1:
               raise SystemExit("expected one proposed-spec process-policy allowance pair")
-          allowlist_path.write_text(allowlist.replace(age_rows, gate_row, 1), encoding="utf-8")
+          allowlist_path.write_text(
+              allowlist.replace(age_rows, replacement_rows, 1),
+              encoding="utf-8",
+          )
 
           Path(".github/workflows/internal-3455-apply.yml").unlink()
           PY
@@ -63,8 +88,11 @@ jobs:
         run: |
           set -euo pipefail
           cargo fmt --all -- --check
+          cargo test -p xtask --test spec_format_determinism -- --nocapture
           cargo xtask check-spec-format
           cargo xtask check-process-policy
+          cargo xtask check-doc-index
+          cargo xtask check-static-language
           git diff --check
 
       - name: Commit verified result
@@ -76,7 +104,5 @@ jobs:
           git config user.name "EffortlessSteven"
           git config user.email "git@effortlesssteven.com"
           git add -A
-          git commit -m "fix(specs): remove temporal validity from spec format (#3455)"
+          git commit -m "fix(specs): remove wall-clock validity from spec format (#3455)"
           git push origin "HEAD:${HEAD_BRANCH}"
-
-# default-base retarget trigger
