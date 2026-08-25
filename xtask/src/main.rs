@@ -20053,7 +20053,9 @@ mod proposed_spec_age_tests {
             .current_dir(&path)
             .output()
             .map_err(|e| e.to_string())?;
-        if !commit.status.success() { return Err("git commit failed".to_string()); }
+        if !commit.status.success() {
+            return Err("git commit failed".to_string());
+        }
         let now = UNIX_EPOCH + Duration::from_secs(1_800_000_000);
         assert!(matches!(
             proposed_spec_age(&path.join(relative), &path, now),
@@ -20065,8 +20067,7 @@ mod proposed_spec_age_tests {
 
     #[test]
     fn old_commit_is_stale_after_checkout() -> Result<(), String> {
-        let path =
-            std::env::temp_dir().join(format!("ripr-spec-age-{}-old", std::process::id()));
+        let path = std::env::temp_dir().join(format!("ripr-spec-age-{}-old", std::process::id()));
         fs::create_dir_all(path.join("docs/specs")).map_err(|e| e.to_string())?;
         let init = Command::new("git")
             .args(["init", "-q"])
