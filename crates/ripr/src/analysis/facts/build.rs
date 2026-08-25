@@ -792,7 +792,13 @@ mod nested { include!("nested.rs"); }
         let changed = build_index_from_loaded_files_with_cache(&root, &changed_files)?;
         assert_eq!(changed.file_fact_cache.hits, 1);
         assert_eq!(changed.file_fact_cache.misses, 1);
-        assert_eq!(changed.index.include_parents.get(&fragment), Some(&parent));
+        assert_eq!(
+            changed.index.include_parents.get(&fragment),
+            Some(&parent),
+            "limitations={:?}; parent_facts={:?}",
+            changed.index.include_limitations,
+            changed.index.files.get(&parent)
+        );
         assert!(
             changed
                 .index
@@ -837,7 +843,10 @@ mod nested { include!("nested.rs"); }
             index
                 .include_limitations
                 .iter()
-                .any(|limitation| { limitation.reason_code == "rust_include_symlink_escape" })
+                .any(|limitation| { limitation.reason_code == "rust_include_symlink_escape" }),
+            "limitations={:?}; parent_facts={:?}",
+            index.include_limitations,
+            index.files.get(Path::new("src/lib.rs"))
         );
         Ok(())
     }
