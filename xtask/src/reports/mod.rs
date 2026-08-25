@@ -121,11 +121,6 @@ pub(crate) use repo::{
     repo_exposure_latency_report, repo_exposure_report, repo_exposure_summary_report,
     repo_seam_inventory,
 };
-#[cfg(test)]
-pub(crate) use reverse_authorization::{
-    AuthorizationDecision, EvidenceState, PredicateEvidence, ReverseAuthorizationInput,
-    ReverseAuthorizationReceipt, evaluate_reverse_authorization,
-};
 pub(crate) use review_comments::ripr_review_comments;
 pub(crate) use rust_repair_trust::{rust_repair_trust_report, rust_repair_trust_report_value_at};
 pub(crate) use sarif::sarif_policy;
