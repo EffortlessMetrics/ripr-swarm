@@ -1534,6 +1534,56 @@ fn analyze_diff_suppresses_multiline_docstring_interior_change() -> Result<(), S
 }
 
 #[test]
+fn analyze_diff_does_not_hide_behavior_after_same_line_docstring() -> Result<(), String> {
+    let root = unique_tempdir("analyze-diff-docstring-semicolon")?;
+    let production_rel = PathBuf::from("src/value.py");
+    write_file(
+        &root.join(&production_rel),
+        "def value():\n    \"\"\"Documentation.\"\"\"; return 2\n",
+    )?;
+
+    let adapter = PythonAdapter;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        resolved_subject_identity: None,
+    };
+    let changed_files = vec![ChangedFile {
+        path: production_rel,
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 2,
+            new_side_line: 2,
+            text: "    \"\"\"Documentation.\"\"\"; return 2".to_string(),
+        }],
+        removed_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 2,
+            new_side_line: 2,
+            text: "    \"\"\"Documentation.\"\"\"; return 1".to_string(),
+        }],
+    }];
+
+    let result = adapter.analyze_diff(&options, &OraclePolicy::default(), &changed_files);
+    let cleanup = std::fs::remove_dir_all(&root);
+    let result = result?;
+    cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+
+    if result.findings.is_empty() {
+        return Err(
+            "behavior after a same-line docstring must remain analyzable".to_string(),
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn analyze_diff_does_not_hide_code_replaced_by_multiline_docstring() -> Result<(), String> {
     let root = unique_tempdir("analyze-diff-code-to-docstring")?;
     let production_rel = PathBuf::from("src/pricing.py");

@@ -464,10 +464,52 @@ fn collect_docstring_line_ranges(
             Expr::Constant(constant) if matches!(&constant.value, ast::Constant::Str(_))
         )
     {
-        let range = expr_stmt.value.range();
-        out.push(line_for_range_start(source, range)..=line_for_range_end(source, range));
+        push_docstring_only_line_ranges(source, expr_stmt.value.range(), out);
     }
     collect_nested_docstring_scopes(source, scope_body, out);
+}
+
+/// Adds only physical lines whose non-whitespace content is wholly inside the
+/// docstring token. A docstring may share a line with behavioral code through a
+/// semicolon; such boundary lines must remain analyzable.
+fn push_docstring_only_line_ranges(
+    source: &str,
+    range: TextRange,
+    out: &mut Vec<RangeInclusive<usize>>,
+) {
+    let start_offset = usize::from(range.start());
+    let end_offset = usize::from(range.end());
+    let start_line = line_for_range_start(source, range);
+    let end_line = line_for_range_end(source, range);
+    let start_line_offset = source[..start_offset]
+        .rfind('\n')
+        .map_or(0, |offset| offset + 1);
+    let end_line_offset = source[end_offset..]
+        .find('\n')
+        .map_or(source.len(), |offset| end_offset + offset);
+    let prefix_is_whitespace = source[start_line_offset..start_offset].trim().is_empty();
+    let suffix_is_whitespace = source[end_offset..end_line_offset].trim().is_empty();
+
+    if start_line == end_line {
+        if prefix_is_whitespace && suffix_is_whitespace {
+            out.push(start_line..=end_line);
+        }
+        return;
+    }
+
+    let first_safe_line = if prefix_is_whitespace {
+        start_line
+    } else {
+        start_line + 1
+    };
+    let last_safe_line = if suffix_is_whitespace {
+        end_line
+    } else {
+        end_line.saturating_sub(1)
+    };
+    if first_safe_line <= last_safe_line {
+        out.push(first_safe_line..=last_safe_line);
+    }
 }
 
 fn collect_nested_docstring_scopes(
