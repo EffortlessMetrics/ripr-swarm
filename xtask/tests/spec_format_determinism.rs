@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const VALID_SPEC: &str = r#"# RIPR-SPEC-9999: Time-independent fixture
@@ -61,7 +61,7 @@ fn write_spec(root: &Path, text: &str) -> Result<(), String> {
     .map_err(|error| error.to_string())
 }
 
-fn run_check(root: &Path) -> Result<Output, String> {
+fn run_check(root: &Path) -> Result<std::process::Output, String> {
     Command::new(env!("CARGO_BIN_EXE_xtask"))
         .arg("check-spec-format")
         .current_dir(root)
@@ -69,7 +69,7 @@ fn run_check(root: &Path) -> Result<Output, String> {
         .map_err(|error| error.to_string())
 }
 
-fn output_text(output: &Output) -> String {
+fn output_text(output: &std::process::Output) -> String {
     format!(
         "stdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
@@ -113,7 +113,10 @@ fn old_proposed_spec_remains_structurally_valid() -> Result<(), String> {
         .output()
         .map_err(|error| error.to_string())?;
     if !commit.status.success() {
-        return Err(format!("old fixture commit failed: {}", output_text(&commit)));
+        return Err(format!(
+            "old fixture commit failed: {}",
+            output_text(&commit)
+        ));
     }
 
     let output = run_check(&root)?;
@@ -156,10 +159,14 @@ fn structural_spec_errors_remain_blocking() -> Result<(), String> {
     fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
     let text = output_text(&output);
     if output.status.success() {
-        return Err(format!("missing required heading passed unexpectedly: {text}"));
+        return Err(format!(
+            "missing required heading passed unexpectedly: {text}"
+        ));
     }
     if !text.contains("missing `## Metrics`") {
-        return Err(format!("missing-heading diagnostic was not preserved: {text}"));
+        return Err(format!(
+            "missing-heading diagnostic was not preserved: {text}"
+        ));
     }
     Ok(())
 }
