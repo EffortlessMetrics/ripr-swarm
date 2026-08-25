@@ -507,8 +507,8 @@ fn build_validated_host_run_fixture(
         let tree = subject.tree.clone();
         let config_path = subject.config.repository_path.clone();
         let config_sha256 = subject.config.sha256.clone();
-        let diff_path = subject.diff.repository_path.clone();
-        let diff_sha256 = subject.diff.sha256.clone();
+        let diff_path = packet_subject.diff.repository_path.clone();
+        let diff_sha256 = packet_subject.diff.sha256.clone();
         let plan = serde_json::json!({
             "argv": ["check", "--root", "<materialized-subject>", "--base", base, "--mode", "draft", "--json"],
             "root": "<materialized-subject>", "base": base, "head": head, "tree": tree,
