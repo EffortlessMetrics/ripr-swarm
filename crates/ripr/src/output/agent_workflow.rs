@@ -187,8 +187,8 @@ mod markdown {
             index += 1;
         }
         if let Some(index) = redirect {
-            let command = command[..index].trim_end();
             let output = command[index + 1..].trim();
+            let command = command[..index].trim_end();
             return format!(
                 "[System.IO.File]::WriteAllText({output}, (({command}) | Out-String), [System.Text.UTF8Encoding]::new($false))"
             );
