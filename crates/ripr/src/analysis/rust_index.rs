@@ -17,8 +17,8 @@ pub(crate) use super::facts::build_index_from_loaded_files_with_cache;
 #[cfg(test)]
 pub use super::facts::{CallFact, LiteralFact, ReturnFact};
 pub use super::facts::{
-    FileFacts, FunctionFact, FunctionSummary, OracleFact, ProbeShapeFact, RustIncludeLimitation,
-    RustIndex, TestFact, TestSummary, build_index,
+    FileFacts, FunctionFact, FunctionSummary, OracleFact, ProbeShapeFact, RustIndex, TestFact,
+    TestSummary, build_index,
 };
 #[cfg(test)]
 use super::syntax::LexicalRustSyntaxAdapter;
@@ -831,7 +831,7 @@ fn feature_gated_test() {}
     #[test]
     fn include_resolution_disclosure_names_stable_reason_and_source() {
         let index = RustIndex {
-            include_limitations: vec![RustIncludeLimitation {
+            include_limitations: vec![super::facts::RustIncludeLimitation {
                 parent: PathBuf::from("src/lib.rs"),
                 line: 7,
                 expression: "include!(concat!(...))".to_string(),

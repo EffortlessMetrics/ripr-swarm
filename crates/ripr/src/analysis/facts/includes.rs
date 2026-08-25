@@ -14,8 +14,7 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
     let mut edge_limit_exceeded = false;
     let canonical_root = std::fs::canonicalize(root).ok();
 
-    'files:
-    for (parent, facts) in &index.files {
+    'files: for (parent, facts) in &index.files {
         if facts.used_lexical_fallback {
             continue;
         }
@@ -102,7 +101,12 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
                 ));
                 continue;
             }
-            edges.push((candidate, parent.clone(), directive.line, directive.expression));
+            edges.push((
+                candidate,
+                parent.clone(),
+                directive.line,
+                directive.expression,
+            ));
         }
     }
 
@@ -218,9 +222,10 @@ fn cycle_or_depth_limited_children(parents: &BTreeMap<PathBuf, PathBuf>) -> BTre
     for child in parents.keys() {
         let mut seen = BTreeSet::new();
         let mut cursor = child;
+        let mut cycle_detected = false;
         for _ in 0..=MAX_INCLUDE_DEPTH {
             if !seen.insert(cursor.clone()) {
-                unsafe_children.extend(seen);
+                cycle_detected = true;
                 break;
             }
             let Some(parent) = parents.get(cursor) else {
@@ -228,7 +233,7 @@ fn cycle_or_depth_limited_children(parents: &BTreeMap<PathBuf, PathBuf>) -> BTre
             };
             cursor = parent;
         }
-        if seen.len() > MAX_INCLUDE_DEPTH {
+        if cycle_detected || seen.len() > MAX_INCLUDE_DEPTH {
             unsafe_children.extend(seen);
         }
     }

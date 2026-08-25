@@ -45,9 +45,9 @@ pub(crate) fn rust_include_directives(
         .descendants()
         .filter_map(ast::MacroCall::cast)
         .filter(|macro_call| {
-            macro_call.path().is_some_and(|path| {
-                path.syntax().text().to_string().replace(' ', "") == "include"
-            })
+            macro_call
+                .path()
+                .is_some_and(|path| path.syntax().text().to_string().replace(' ', "") == "include")
         })
         .take(max_directives.saturating_add(1))
     {
@@ -83,7 +83,10 @@ fn include_literal_path(expression: &str) -> Option<PathBuf> {
 }
 
 fn parse_rust_string_literal(literal: &str) -> Option<String> {
-    if let Some(body) = literal.strip_prefix('"').and_then(|body| body.strip_suffix('"')) {
+    if let Some(body) = literal
+        .strip_prefix('"')
+        .and_then(|body| body.strip_suffix('"'))
+    {
         let mut decoded = String::new();
         let mut chars = body.chars();
         while let Some(ch) = chars.next() {
@@ -104,7 +107,11 @@ fn parse_rust_string_literal(literal: &str) -> Option<String> {
         return Some(decoded);
     }
 
-    let hash_count = literal.strip_prefix('r')?.chars().take_while(|ch| *ch == '#').count();
+    let hash_count = literal
+        .strip_prefix('r')?
+        .chars()
+        .take_while(|ch| *ch == '#')
+        .count();
     let prefix_len = 1 + hash_count;
     let suffix = format!("\"{}", "#".repeat(hash_count));
     let body = literal.get(prefix_len..)?.strip_prefix('"')?;

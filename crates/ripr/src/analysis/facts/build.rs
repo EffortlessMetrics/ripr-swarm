@@ -613,8 +613,8 @@ pub fn check(x: i32) -> bool {
     }
 
     #[test]
-    fn literal_include_preserves_parent_unit_and_fragment_source_location(
-    ) -> Result<(), Box<dyn Error>> {
+    fn literal_include_preserves_parent_unit_and_fragment_source_location()
+    -> Result<(), Box<dyn Error>> {
         let root = temp_dir("literal_include_parent_unit")?;
         fs::create_dir_all(root.join("src"))?;
         write_manifest(&root)?;
@@ -652,16 +652,15 @@ pub fn check(x: i32) -> bool {
     }
 
     #[test]
-    fn inline_and_literal_include_inventories_match_apart_from_location(
-    ) -> Result<(), Box<dyn Error>> {
+    fn inline_and_literal_include_inventories_match_apart_from_location()
+    -> Result<(), Box<dyn Error>> {
         let included_root = temp_dir("include_inventory")?;
         let inline_root = temp_dir("inline_inventory")?;
         fs::create_dir_all(included_root.join("src"))?;
         fs::create_dir_all(inline_root.join("src"))?;
         write_manifest(&included_root)?;
         write_manifest(&inline_root)?;
-        let implementation =
-            "impl Parser { fn clamp(&self, value: i32) -> i32 { if value > self.limit { self.limit } else { value } } }\n";
+        let implementation = "impl Parser { fn clamp(&self, value: i32) -> i32 { if value > self.limit { self.limit } else { value } } }\n";
         fs::write(
             included_root.join("src/lib.rs"),
             "struct Parser { limit: i32 }\ninclude!(\"parser_fragment.rs\");\n",
@@ -702,8 +701,8 @@ pub fn check(x: i32) -> bool {
     }
 
     #[test]
-    fn include_parser_ignores_comments_and_strings_and_limits_dynamic_forms(
-    ) -> Result<(), Box<dyn Error>> {
+    fn include_parser_ignores_comments_and_strings_and_limits_dynamic_forms()
+    -> Result<(), Box<dyn Error>> {
         let root = temp_dir("include_syntax_boundaries")?;
         fs::create_dir_all(root.join("src"))?;
         write_manifest(&root)?;
@@ -736,15 +735,11 @@ mod nested { include!("nested.rs"); }
     }
 
     #[test]
-    fn missing_and_cyclic_includes_fail_closed_with_stable_reasons(
-    ) -> Result<(), Box<dyn Error>> {
+    fn missing_and_cyclic_includes_fail_closed_with_stable_reasons() -> Result<(), Box<dyn Error>> {
         let root = temp_dir("include_fail_closed")?;
         fs::create_dir_all(root.join("src"))?;
         write_manifest(&root)?;
-        fs::write(
-            root.join("src/lib.rs"),
-            "include!(\"missing.rs\");\n",
-        )?;
+        fs::write(root.join("src/lib.rs"), "include!(\"missing.rs\");\n")?;
         fs::write(root.join("src/a.rs"), "include!(\"b.rs\");\nfn a() {}\n")?;
         fs::write(root.join("src/b.rs"), "include!(\"a.rs\");\nfn b() {}\n")?;
 
@@ -770,8 +765,8 @@ mod nested { include!("nested.rs"); }
     }
 
     #[test]
-    fn include_relations_are_recomputed_across_warm_cache_and_source_changes(
-    ) -> Result<(), Box<dyn Error>> {
+    fn include_relations_are_recomputed_across_warm_cache_and_source_changes()
+    -> Result<(), Box<dyn Error>> {
         let root = temp_dir("include_cache_currentness")?;
         fs::create_dir_all(root.join("src"))?;
         write_manifest(&root)?;
@@ -793,10 +788,7 @@ mod nested { include!("nested.rs"); }
 
         let fragment_v2 = b"fn value() -> i32 { 2 }\n".to_vec();
         fs::write(root.join(&fragment), &fragment_v2)?;
-        let changed_files = [
-            (parent.clone(), parent_v1),
-            (fragment.clone(), fragment_v2),
-        ];
+        let changed_files = [(parent.clone(), parent_v1), (fragment.clone(), fragment_v2)];
         let changed = build_index_from_loaded_files_with_cache(&root, &changed_files)?;
         assert_eq!(changed.file_fact_cache.hits, 1);
         assert_eq!(changed.file_fact_cache.misses, 1);
@@ -838,15 +830,15 @@ mod nested { include!("nested.rs"); }
 
         let index = build_index(
             &root,
-            &[
-                PathBuf::from("src/lib.rs"),
-                PathBuf::from("src/escaped.rs"),
-            ],
+            &[PathBuf::from("src/lib.rs"), PathBuf::from("src/escaped.rs")],
         )?;
         assert!(index.include_parents.is_empty());
-        assert!(index.include_limitations.iter().any(|limitation| {
-            limitation.reason_code == "rust_include_symlink_escape"
-        }));
+        assert!(
+            index
+                .include_limitations
+                .iter()
+                .any(|limitation| { limitation.reason_code == "rust_include_symlink_escape" })
+        );
         Ok(())
     }
 }

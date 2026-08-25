@@ -5,4 +5,4 @@ mod ra;
 pub use adapter::{
     LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RustSyntaxAdapter, SyntaxNodeFact, TextRange,
 };
-pub(crate) use ra::{RustIncludeDirective, rust_include_directives};
+pub(crate) use ra::rust_include_directives;

@@ -80,8 +80,8 @@ fn semantic_inventory(
 }
 
 #[test]
-fn public_repo_analysis_preserves_literal_include_compilation_unit_and_attribution(
-) -> Result<(), Box<dyn Error>> {
+fn public_repo_analysis_preserves_literal_include_compilation_unit_and_attribution()
+-> Result<(), Box<dyn Error>> {
     let included = TempRepo::new("public-include")?;
     let inline = TempRepo::new("public-inline")?;
     fs::write(included.path().join("src/lib.rs"), parent_source(true))?;
