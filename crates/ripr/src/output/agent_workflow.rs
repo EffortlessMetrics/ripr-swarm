@@ -164,33 +164,30 @@ mod markdown {
         // Preserve PowerShell single-quote escaping while writing redirected
         // output with BOM-free .NET UTF-8 for Windows PowerShell 5.1.
         let command = command.replace("'\\\\''", "''");
-        let chars = command.chars().collect::<Vec<_>>();
+        let mut chars = command.char_indices().peekable();
         let mut in_single_quote = false;
         let mut redirect = None;
-        let mut index = 0;
-        while index < chars.len() {
-            let ch = chars[index];
+        while let Some((index, ch)) = chars.next() {
             if ch == '\'' {
-                if in_single_quote && chars.get(index + 1) == Some(&'\'') {
-                    index += 2;
+                if in_single_quote && chars.peek().is_some_and(|(_, next)| *next == '\'') {
+                    chars.next();
                     continue;
                 }
                 in_single_quote = !in_single_quote;
             } else if !in_single_quote
                 && ch == '>'
-                && chars.get(index.saturating_sub(1)) == Some(&' ')
-                && chars.get(index + 1) == Some(&' ')
+                && command[..index].ends_with(' ')
+                && command[index + ch.len_utf8()..].starts_with(' ')
             {
                 redirect = Some(index);
                 break;
             }
-            index += 1;
         }
         if let Some(index) = redirect {
+            let invocation = command[..index].trim_end();
             let output = command[index + 1..].trim();
-            let command = command[..index].trim_end();
             return format!(
-                "[System.IO.File]::WriteAllText({output}, (({command}) | Out-String), [System.Text.UTF8Encoding]::new($false))"
+                "[System.IO.File]::WriteAllText({output}, (({invocation}) | Out-String), [System.Text.UTF8Encoding]::new($false))"
             );
         }
         command
@@ -329,6 +326,18 @@ mod tests {
         let rendered = render_agent_workflow_commands_md(&value);
         assert!(
             rendered.contains("[System.IO.File]::WriteAllText('out', ((ripr agent start --root 'it''s') | Out-String), [System.Text.UTF8Encoding]::new($false))")
+        );
+    }
+
+    #[test]
+    fn powershell_command_handles_unredirected_quoted_and_unicode_commands() {
+        assert_eq!(
+            powershell_command("ripr check --root 'a > b'"),
+            "ripr check --root 'a > b'"
+        );
+        assert_eq!(
+            powershell_command("ripr check --root 'café' > 'résumé.json'"),
+            "[System.IO.File]::WriteAllText('résumé.json', ((ripr check --root 'café') | Out-String), [System.Text.UTF8Encoding]::new($false))"
         );
     }
 
