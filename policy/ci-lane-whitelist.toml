@@ -89,21 +89,6 @@ estimated_lem = 4
 artifact_families = []
 description = "Mechanical repository policy checks."
 
-# This is a semantic manifest category, not an independently executing
-# workflow lane. P18 wires the output-contract proof into the required
-# `routed-rust-small` result, alongside the other six contract/traceability
-# commands. Keep the category for proof-pack ownership, but do not imply that
-# `.github/workflows/ci.yml` runs a separate output-contracts job.
-[[lane]]
-id = "output-contracts"
-posture = "required"
-workflow = "manifest-only"
-jobs = []
-commands = ["cargo xtask check-output-contracts", "cargo xtask goldens check", "cargo xtask fixtures"]
-estimated_lem = 4
-artifact_families = ["ripr-evidence"]
-description = "Semantic output-contract proof category owned by routed-rust-small; not an independent CI execution lane."
-
 [[lane]]
 id = "traceability"
 posture = "required"
