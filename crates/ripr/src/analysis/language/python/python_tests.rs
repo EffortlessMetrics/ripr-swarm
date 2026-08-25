@@ -1576,9 +1576,7 @@ fn analyze_diff_does_not_hide_behavior_after_same_line_docstring() -> Result<(),
     cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
 
     if result.findings.is_empty() {
-        return Err(
-            "behavior after a same-line docstring must remain analyzable".to_string(),
-        );
+        return Err("behavior after a same-line docstring must remain analyzable".to_string());
     }
     Ok(())
 }
