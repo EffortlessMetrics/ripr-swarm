@@ -19902,7 +19902,14 @@ mod inherited_failure_tests {
     #[test]
     fn failure_report_preserves_not_proven_baseline_state() {
         let report = check_pr_report(Some(&CheckPrGateFailure {
-            name: "clippy".to_string(), reproduce: "cargo clippy".to_string(), bounded_error: "error".to_string(), not_run: vec![], baseline: BaselineFailureComparison { status: "NOT_PROVEN", detail: "unavailable".to_string() },
+            name: "clippy".to_string(),
+            reproduce: "cargo clippy".to_string(),
+            bounded_error: "error".to_string(),
+            not_run: vec![],
+            baseline: BaselineFailureComparison {
+                status: "NOT_PROVEN",
+                detail: "unavailable".to_string(),
+            },
         }));
         assert!(report.contains("Inherited-failure comparison"));
         assert!(report.contains("Status: NOT_PROVEN"));
