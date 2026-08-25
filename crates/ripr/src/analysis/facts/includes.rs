@@ -15,9 +15,12 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
     let canonical_root = std::fs::canonicalize(root).ok();
 
     'files: for (parent, facts) in &index.files {
-        if facts.used_lexical_fallback {
+        if facts.used_lexical_fallback || !facts.source.contains("include") {
             continue;
         }
+        // The substring check is only a cheap negative prefilter. Parser-backed
+        // macro nodes remain the semantic authority, so comments and strings
+        // cannot create include relationships.
         let directives = match rust_include_directives(parent, &facts.source, MAX_INCLUDE_EDGES) {
             Ok(directives) => directives,
             Err(reason_code) => {
