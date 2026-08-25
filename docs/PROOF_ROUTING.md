@@ -86,7 +86,7 @@ test, policy, and product failures remain hard failures.
 
 ## The delivery sequence
 
-This model lands in slices, each with its own evidence:
+This model landed in slices, each with its own evidence:
 
 ```text
 1. this operating model            (docs)
@@ -97,34 +97,36 @@ This model lands in slices, each with its own evidence:
 4. cargo xtask proof preflight     (runs matched required commands,
                                     writes a proof receipt)
 5. PR summary integration          (route visible to reviewers)
-6. CI dry-run artifact             (all lanes still run; artifact shows
-                                    what would have run; divergence is
-                                    reviewable evidence)
-7. low-risk routing                (docs/specs, handoffs, doc-artifact
-                                    policy, markdown-only changes)
-8. report/schema pack routing      (output contracts, traceability,
-                                    capabilities, focused xtask tests)
-9. release-proof protection        (release surfaces pinned to full
+6. CI dry-run artifact             (routed-vs-actual evidence)
+7. low-risk routing                (P17: docs/spec/markdown-only PRs
+                                    use the docs gate)
+8. report/schema proof             (P18: required routed result is stricter,
+                                    not a broad skip gate)
+9. release-proof protection        (release surfaces remain pinned to full
                                     proof in the manifest and workflow
                                     contract checks)
 ```
 
-Nothing skips a real CI lane before step 6 produces comparison evidence,
-and step 9's protection is in place before routing touches anything near
-the release path.
+The route is now enforced only where the evidence supports it. P17 landed
+the lowest-risk real skip: a pull request whose changed files are all
+docs/spec/markdown and that touches no release surface skips the heavy Rust
+implementation jobs and runs the docs gate instead. The required
+`Ripr Rust Small Result` context remains the single merge check and is
+green only when the selected path passes. Mixed, unknown, and release
+surfaces remain on the full path.
 
-Slices 1–6 have landed. Slice 6 wires the route into CI as a pure
-evidence artifact: on every pull request, each routed-Rust implementation
-job (the three self-hosted runners and the GitHub-hosted fallback) runs
-`cargo xtask proof route --base "$BASE_SHA" --head "$HEAD_SHA" || true` on
-its PR-evidence path, appends `proof-route.md` to the run's step summary,
-and uploads `proof-route.{json,md}` with the existing ripr reports. The
-step is advisory (`|| true`) and adds no `if:` path filter, lane skip, or
-gate — every lane that ran before still runs. The artifact records only
-what routing *would* select, so divergence between routed proof and the
-proof CI actually ran is reviewable before any real routing (slices 7–9).
-The `check-workflows` contract asserts the advisory step is present on all
-four PR-evidence paths so the artifact cannot silently regress.
+P18 landed as a stricter required gate, not as report/schema lane skipping.
+The four routed Rust jobs now run the six additional contract, golden,
+fixture, traceability, and capability commands. `docs/OUTPUT_SCHEMA.md`
+is explicitly a release-like surface, so changing it cannot take the
+docs-only path. The route artifact remains advisory evidence; it does not
+itself change job selection or branch protection.
+
+The landed routing decisions are bounded by the same fail-closed rules:
+unknown surfaces route to full proof, release proof is never routed away,
+and detector or route failures cannot silently produce a green result.
+The historical commit receipts are P17 `05fd3ef0` and P18
+`73b58f50`.
 
 ## Initial proof-pack shape
 
