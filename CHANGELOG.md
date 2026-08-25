@@ -11,6 +11,15 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Rust repository analysis now recognizes parser-backed, file-level,
+  repository-local literal `include!` fragments as part of their parent
+  compilation unit.
+  Included functions keep their real fragment path and line in findings while
+  owner identity and related-test evidence use the parent file. Unsafe,
+  ambiguous, dynamic, missing, cyclic, oversized, or out-of-scope include
+  boundaries stay fail-closed and emit stable limitation reason codes
+  ([#3211](https://github.com/EffortlessMetrics/ripr-swarm/issues/3211)).
+
 - The README's example output was missing two lines the renderer has been
   emitting: the `Why <class>:` classification hint, and the whole
   `Next: drill into the top finding:` block naming the `explain` and `context`
