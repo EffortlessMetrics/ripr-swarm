@@ -20079,8 +20079,14 @@ mod proposed_spec_age_tests {
         }
         let relative = "docs/specs/space name-é.md";
         fs::write(path.join(relative), "Status: proposed\n").map_err(|e| e.to_string())?;
-        let add = Command::new("git").args(["add", "--", relative]).current_dir(&path).output().map_err(|e| e.to_string())?;
-        if !add.status.success() { return Err("git add failed".to_string()); }
+        let add = Command::new("git")
+            .args(["add", "--", relative])
+            .current_dir(&path)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !add.status.success() {
+            return Err("git add failed".to_string());
+        }
         let date = "2020-01-01T00:00:00Z";
         let commit = Command::new("git")
             .args([
