@@ -1489,14 +1489,16 @@ mod tests {
             fallback["seams"][1]["classification"],
             "reachable_unrevealed"
         );
-        assert!(validate_packet_value(
-            &packet,
-            &repo,
-            &options,
-            false,
-            Path::new(REVIEW_COMMENTS_MD),
-        )
-        .is_empty());
+        assert!(
+            validate_packet_value(
+                &packet,
+                &repo,
+                &options,
+                false,
+                Path::new(REVIEW_COMMENTS_MD),
+            )
+            .is_empty()
+        );
 
         let markdown = render_error_review_comments_markdown(&packet);
         assert!(markdown.contains("Static seam fallback"));
