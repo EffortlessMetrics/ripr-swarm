@@ -412,6 +412,7 @@ fn build_validated_host_run_fixture(
     let scratch_root = root.join("target/test-subjects");
     let subjects =
         crate::rust_judged_panel::subject::materialize_for_replay(root, &scratch_root, manifest)?;
+    let packet_subjects = crate::rust_judged_panel::subject::load_for_packet(root, manifest)?;
     let output_root = root.join("target/ripr/rust-judged-panel");
     let run_id = "fixture-run";
     let run_root = output_root.join("runs").join(run_id);
@@ -444,6 +445,10 @@ fn build_validated_host_run_fixture(
     });
     let mut entries = Vec::new();
     for subject in subjects {
+        let packet_subject = packet_subjects
+            .iter()
+            .find(|candidate| candidate.case_id == subject.case_id)
+            .ok_or_else(|| format!("missing packet subject `{}`", subject.case_id))?;
         let executed_diff_identity = crate::rust_judged_panel::subject::executed_diff_identity(
             &subject.root,
             &subject.base,
@@ -453,11 +458,11 @@ fn build_validated_host_run_fixture(
             "analysis_outcome": {"analysis_complete": true, "outcome": {"kind": "complete_with_findings", "limitations": []}},
             "findings": [{
                 "id": format!("finding-{}", subject.case_id),
-                "classification": &subject.expected_classification,
-                "probe": {"family": &subject.behavior_family, "file": "src/lib.rs", "line": subject.anchor_line, "expression": &subject.changed_behavior},
-                "missing": &subject.expected_missing,
-                "recommended_next_step": &subject.expected_recommendation,
-                "static_limit_kind": &subject.expected_static_limit_kind
+                "classification": &packet_subject.expected_classification,
+                "probe": {"family": &packet_subject.behavior_family, "file": "src/lib.rs", "line": packet_subject.anchor_line, "expression": &packet_subject.changed_behavior},
+                "missing": &packet_subject.expected_missing,
+                "recommended_next_step": &packet_subject.expected_recommendation,
+                "static_limit_kind": &packet_subject.expected_static_limit_kind
             }]
         });
         let stdout = serde_json::to_vec(&report).map_err(|error| error.to_string())?;
