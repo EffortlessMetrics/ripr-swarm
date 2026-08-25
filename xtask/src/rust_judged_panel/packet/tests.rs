@@ -19,6 +19,25 @@ fn scratch(name: &str) -> Result<PathBuf, String> {
     Ok(root)
 }
 
+fn repository_git_dir(repository: &Path) -> Result<PathBuf, String> {
+    let dot_git = repository.join(".git");
+    if dot_git.is_dir() {
+        return Ok(dot_git);
+    }
+    let pointer = fs::read_to_string(&dot_git)
+        .map_err(|error| format!("read linked-worktree Git pointer: {error}"))?;
+    let git_dir = pointer
+        .trim()
+        .strip_prefix("gitdir: ")
+        .ok_or_else(|| "linked-worktree Git pointer lacks `gitdir:`".to_string())?;
+    let git_dir = PathBuf::from(git_dir);
+    Ok(if git_dir.is_absolute() {
+        git_dir
+    } else {
+        repository.join(git_dir)
+    })
+}
+
 #[test]
 fn rust_judged_panel_packet_replaces_existing_current_on_second_publication() -> Result<(), String>
 {
@@ -152,7 +171,7 @@ fn rust_judged_panel_packet_public_publish_validates_disposable_host_run() -> Re
     )?;
     fs::write(
         root.0.join(".git"),
-        format!("gitdir: {}\n", repository.join(".git").display()),
+        format!("gitdir: {}\n", repository_git_dir(repository)?.display()),
     )
     .map_err(|error| format!("bind disposable fixture to repository git data: {error}"))?;
     let state = crate::rust_judged_panel::subject::repository_state(repository)?;
