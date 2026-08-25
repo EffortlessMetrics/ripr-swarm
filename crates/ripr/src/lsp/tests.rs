@@ -12890,17 +12890,25 @@ fn execute_command_collect_workspace_status_with_snapshot_returns_diagnostics_co
         .build()
         .map_err(|err| format!("failed to start test runtime: {err}"))?;
     runtime.block_on(async {
+        let root = unique_lsp_test_root("workspace-status-with-snapshot")?;
         let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
         let backend = service.inner();
         let finding = sample_finding();
-        let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-        let uri = test_uri("file:///workspace/src/pricing.rs")?;
+        let diagnostic = diagnostic_for_finding(root.path(), &finding);
+        let uri = file_uri_for_path(&root.path().join("src/pricing.rs"))?;
         let mut diagnostics = sample_workspace_diagnostics(
-            PathBuf::from("/workspace"),
+            root.path().to_path_buf(),
             uri,
             vec![diagnostic],
             vec![finding],
         );
+        let mut input_config = LspAnalysisConfig::default();
+        input_config.base_ref = Some("ripr-lsp-test-missing-base".to_string());
+        diagnostics.snapshot.input_identity = Some(LspAnalysisInputIdentity::from_refresh_inputs(
+            root.path().to_path_buf(),
+            1,
+            &input_config,
+        ));
         diagnostics
             .snapshot
             .refresh
@@ -13010,7 +13018,10 @@ fn execute_command_collect_workspace_status_with_snapshot_returns_diagnostics_co
                 .is_some_and(|identity| identity.starts_with("root:")),
             "status must expose a bounded root identity: {status}"
         );
-        assert_eq!(current_input["effective_root"], "/workspace");
+        assert_eq!(
+            current_input["effective_root"],
+            root.path().to_string_lossy().as_ref()
+        );
         assert_eq!(current_input["saved_workspace_revision"], 1);
         assert_eq!(
             current_input["repository_config_identity"],
@@ -13020,7 +13031,7 @@ fn execute_command_collect_workspace_status_with_snapshot_returns_diagnostics_co
             current_input["session_options_identity"],
             serde_json::Value::Null
         );
-        assert_eq!(current_input["requested_base"], "origin/main");
+        assert_eq!(current_input["requested_base"], "ripr-lsp-test-missing-base");
         assert_eq!(current_input["resolved_base"], serde_json::Value::Null);
         assert_eq!(current_input["mode"], "draft");
         assert_eq!(current_input["profile"], "actionable");

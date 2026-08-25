@@ -174,12 +174,22 @@ mod tests {
     }
 
     #[test]
-    fn missing_evidence_blocks_without_authorizing() {
-        let mut input = valid();
-        input.live_protection = PredicateEvidence::missing("ruleset observation is unavailable");
-        let receipt = evaluate_reverse_authorization(&input);
-        assert_eq!(receipt.decision, AuthorizationDecision::Blocked);
-        assert_eq!(receipt.blockers.len(), 1);
+    fn incomplete_evidence_blocks_without_authorizing() {
+        for state in [
+            EvidenceState::Missing,
+            EvidenceState::Stale,
+            EvidenceState::Partial,
+            EvidenceState::Contradictory,
+        ] {
+            let mut input = valid();
+            input.live_protection = PredicateEvidence {
+                state,
+                detail: "ruleset observation is incomplete".to_string(),
+            };
+            let receipt = evaluate_reverse_authorization(&input);
+            assert_eq!(receipt.decision, AuthorizationDecision::Blocked);
+            assert_eq!(receipt.blockers.len(), 1);
+        }
     }
 
     #[test]
