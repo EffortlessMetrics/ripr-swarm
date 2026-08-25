@@ -22,6 +22,7 @@ mod agent_skills;
 mod branch_inventory;
 mod cache;
 mod command;
+pub mod convergence;
 mod dispatch;
 mod dogfood;
 mod evidence_audit;
@@ -11796,6 +11797,18 @@ fn check_architecture() -> Result<(), String> {
         }
     }
 
+    for file in files
+        .iter()
+        .filter(|file| convergence::architecture::is_source_candidate(file))
+    {
+        let text = read_text_lossy(Path::new(file))?;
+        violations.extend(convergence::architecture::source_violations(file, &text));
+    }
+
+    violations.extend(convergence::architecture::required_surface_violations(
+        &files,
+    ));
+
     // RIPR-SPEC-0087 §8 (issue #2028): repair-packet authority coupling guard.
     for file in &files {
         if !file.starts_with("crates/ripr/src/") || !file.ends_with(".rs") {
@@ -11824,6 +11837,8 @@ fn check_architecture() -> Result<(), String> {
                 "Move rendering logic into output modules.",
                 "Keep domain model types independent from CLI, LSP, output, and JSON adapters.",
                 "Keep analysis logic out of CLI, LSP, and output adapters.",
+                "Keep convergence types and domain code independent from infrastructure adapters.",
+                "Route convergence command I/O and mutation through the bounded convergence ports.",
                 "Update policy/architecture.txt only when the architecture rule itself changes.",
             ],
             rerun_command: "cargo xtask check-architecture",

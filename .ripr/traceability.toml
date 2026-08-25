@@ -8452,6 +8452,32 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0167"
+name = "Hexagonal source-to-swarm convergence architecture"
+spec = "docs/specs/RIPR-SPEC-0167-convergence-architecture.md"
+tests = [
+  "xtask/src/convergence/architecture.rs::tests",
+]
+fixtures = [
+  "fixtures/convergence",
+]
+code = [
+  "xtask/src/convergence/mod.rs",
+  "xtask/src/convergence/types/mod.rs",
+  "xtask/src/convergence/ports.rs",
+  "xtask/src/convergence/domain/mod.rs",
+  "xtask/src/convergence/adapters/mod.rs",
+  "xtask/src/convergence/commands/mod.rs",
+  "xtask/src/convergence/architecture.rs",
+  "xtask/src/main.rs",
+]
+outputs = []
+metrics = [
+  "architecture_gate_pass_rate",
+  "convergence_port_compile_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0165"
 name = "Bounded recursive helper evaluation"
 spec = "docs/specs/RIPR-SPEC-0165-bounded-recursive-helper-evaluation.md"
