@@ -5176,11 +5176,17 @@ fn routed_rust_workflow_contract_violations_for_repo() -> Result<Vec<String>, St
     }
 
     let workflow = read_text_lossy(workflow_path)?;
+    let reusable_workflow = if workflow.contains(ROUTED_RUST_REUSABLE_WORKFLOW_REF) {
+        optional_policy_text(ROUTED_RUST_REUSABLE_WORKFLOW_PATH)?
+    } else {
+        None
+    };
     let settings = optional_policy_text(".github/settings.yml")?;
     let lane_whitelist = optional_policy_text("policy/ci-lane-whitelist.toml")?;
 
-    Ok(routed_rust_workflow_contract_violations(
+    Ok(routed_rust_workflow_contract_violations_with_reusable(
         &workflow,
+        reusable_workflow.as_deref(),
         settings.as_deref(),
         lane_whitelist.as_deref(),
     ))
@@ -5208,10 +5214,19 @@ const ROUTED_RUST_DEADLINE_JOBS: [&str; 8] = [
     "result",
 ];
 
-/// Whether the named job block in a workflow text sets `timeout-minutes`.
+const ROUTED_RUST_IMPLEMENTATION_JOBS: [&str; 4] =
+    ["rust-cx43", "rust-cpx42", "rust-cx53", "rust-github"];
+const ROUTED_RUST_REUSABLE_WORKFLOW_PATH: &str = ".github/workflows/rust-gates.yml";
+const ROUTED_RUST_REUSABLE_WORKFLOW_REF: &str = "uses: ./.github/workflows/rust-gates.yml";
+
+/// Whether any line in the named job block satisfies `predicate`.
 /// Job keys are exactly two-space-indented `name:` lines under `jobs:`;
 /// anything deeper belongs to the current block.
-fn routed_rust_job_block_has_deadline(workflow: &str, job: &str) -> bool {
+fn routed_rust_job_block_any(
+    workflow: &str,
+    job: &str,
+    mut predicate: impl FnMut(&str) -> bool,
+) -> bool {
     let job_header = format!("{job}:");
     let mut in_block = false;
     for line in workflow.lines() {
@@ -5223,19 +5238,109 @@ fn routed_rust_job_block_has_deadline(workflow: &str, job: &str) -> bool {
             in_block = line.trim() == job_header;
             continue;
         }
-        if in_block && !line.trim_start().starts_with('#') && line.contains("timeout-minutes:") {
+        if in_block && !line.is_empty() && !line.starts_with(' ') {
+            break;
+        }
+        if in_block && predicate(line) {
             return true;
         }
     }
     false
 }
 
+fn routed_rust_job_block_has_deadline(workflow: &str, job: &str) -> bool {
+    routed_rust_job_block_any(workflow, job, |line| {
+        !line.trim_start().starts_with('#') && line.contains("timeout-minutes:")
+    })
+}
+
+fn routed_rust_job_uses_reusable_workflow(workflow: &str, job: &str) -> bool {
+    routed_rust_job_block_any(workflow, job, |line| {
+        line.strip_prefix("    ") == Some(ROUTED_RUST_REUSABLE_WORKFLOW_REF)
+    })
+}
+
+fn routed_rust_job_block_has_with_value(workflow: &str, job: &str, value: &str) -> bool {
+    let mut in_with = false;
+    routed_rust_job_block_any(workflow, job, |line| {
+        if line == "    with:" {
+            in_with = true;
+            return false;
+        }
+        if in_with && line.starts_with("    ") && !line.starts_with("     ") {
+            in_with = false;
+        }
+        in_with && line.strip_prefix("      ") == Some(value)
+    })
+}
+
+fn reusable_workflow_jobs(workflow: &str) -> Vec<String> {
+    let mut jobs = Vec::new();
+    let mut in_jobs = false;
+    for line in workflow.lines() {
+        if line.trim_end() == "jobs:" {
+            in_jobs = true;
+            continue;
+        }
+        if in_jobs && !line.is_empty() && !line.starts_with(' ') {
+            break;
+        }
+        if in_jobs
+            && line.starts_with("  ")
+            && !line.starts_with("   ")
+            && line.trim_end().ends_with(':')
+            && !line.trim_start().starts_with('-')
+        {
+            jobs.push(line.trim().trim_end_matches(':').to_string());
+        }
+    }
+    jobs
+}
+
+#[cfg(test)]
 fn routed_rust_workflow_contract_violations(
     workflow: &str,
     settings: Option<&str>,
     lane_whitelist: Option<&str>,
 ) -> Vec<String> {
+    routed_rust_workflow_contract_violations_with_reusable(workflow, None, settings, lane_whitelist)
+}
+
+fn routed_rust_workflow_contract_violations_with_reusable(
+    workflow: &str,
+    reusable_workflow: Option<&str>,
+    settings: Option<&str>,
+    lane_whitelist: Option<&str>,
+) -> Vec<String> {
     let mut violations = Vec::new();
+    let delegated_jobs: Vec<&str> = ROUTED_RUST_IMPLEMENTATION_JOBS
+        .iter()
+        .copied()
+        .filter(|job| routed_rust_job_uses_reusable_workflow(workflow, job))
+        .collect();
+    let delegated = !delegated_jobs.is_empty();
+
+    if !delegated_jobs.is_empty() && delegated_jobs.len() != ROUTED_RUST_IMPLEMENTATION_JOBS.len() {
+        violations.push(format!(
+            ".github/workflows/routed-rust.yml must keep all four implementation jobs inline or delegate all four to `{ROUTED_RUST_REUSABLE_WORKFLOW_PATH}`; delegated {} of 4",
+            delegated_jobs.len()
+        ));
+    }
+
+    let implementation_workflow = if delegated {
+        match reusable_workflow {
+            Some(reusable) => reusable,
+            None => {
+                violations.push(format!(
+                    ".github/workflows/routed-rust.yml delegates implementation jobs to missing `{ROUTED_RUST_REUSABLE_WORKFLOW_PATH}`"
+                ));
+                ""
+            }
+        }
+    } else {
+        workflow
+    };
+    let implementation_copies = if delegated { 1 } else { 3 };
     let required_workflow_snippets = [
         (
             "org runner discovery",
@@ -5281,10 +5386,6 @@ fn routed_rust_workflow_contract_violations(
             "needs.detect-docs-only.result == 'success'",
         ),
         (
-            "self-hosted scratch tempfail output",
-            "scratch_status: ${{ steps.scratch.outputs.status }}",
-        ),
-        (
             "CX43 tempfail fallback predicate",
             "needs.rust-cx43.outputs.scratch_status == 'tempfail'",
         ),
@@ -5304,18 +5405,6 @@ fn routed_rust_workflow_contract_violations(
             "normalized docs detection failure",
             "docs-surface detection result was $DOCS_DETECT_RESULT",
         ),
-        (
-            "CX43 scratch free-space floor",
-            "ci-disk-guard /mnt/ci-scratch 35",
-        ),
-        (
-            "CPX42 scratch free-space floor",
-            "ci-disk-guard /mnt/ci-scratch 35",
-        ),
-        (
-            "CX53 scratch free-space floor",
-            "ci-disk-guard /mnt/ci-scratch 50",
-        ),
     ];
 
     for (label, snippet) in required_workflow_snippets {
@@ -5326,23 +5415,83 @@ fn routed_rust_workflow_contract_violations(
         }
     }
 
-    let toolchain_temp_steps = workflow.matches("name: Prepare toolchain temp").count();
-    let toolchain_temp_mkdirs = workflow.matches("run: mkdir -p \"$TMPDIR\"").count();
-    if toolchain_temp_steps < 3 || toolchain_temp_mkdirs < 3 {
+    let scratch_tempfail_output = "scratch_status: ${{ steps.scratch.outputs.status }}";
+    if !implementation_workflow.contains(scratch_tempfail_output) {
         violations.push(format!(
-            ".github/workflows/routed-rust.yml must include `Prepare toolchain temp` before setup for all three self-hosted implementation jobs; found {toolchain_temp_steps} step(s) and {toolchain_temp_mkdirs} mkdir command(s)"
+            "routed Rust implementation authority is missing self-hosted scratch tempfail output: `{scratch_tempfail_output}`"
+        ));
+    }
+
+    if delegated {
+        for (label, snippet) in [
+            ("workflow_call trigger", "workflow_call:"),
+            (
+                "workflow_call scratch-status output",
+                "      scratch_status:\n        value: ${{ jobs.rust-gates.outputs.scratch_status }}",
+            ),
+            ("disk-guard threshold input", "disk-guard-threshold:"),
+            (
+                "parameterized scratch free-space floor",
+                "ci-disk-guard /mnt/ci-scratch \"${{ inputs.disk-guard-threshold }}\"",
+            ),
+        ] {
+            if !implementation_workflow.contains(snippet) {
+                violations.push(format!(
+                    "{ROUTED_RUST_REUSABLE_WORKFLOW_PATH} is missing {label}: `{snippet}`"
+                ));
+            }
+        }
+        for (job, threshold) in [("rust-cx43", 35), ("rust-cpx42", 35), ("rust-cx53", 50)] {
+            let value = format!("disk-guard-threshold: {threshold}");
+            if !routed_rust_job_block_has_with_value(workflow, job, &value) {
+                violations.push(format!(
+                    ".github/workflows/routed-rust.yml delegated job `{job}` must pass `with.{value}`"
+                ));
+            }
+        }
+    } else {
+        for (label, snippet) in [
+            (
+                "CX43/CPX42 scratch free-space floor",
+                "ci-disk-guard /mnt/ci-scratch 35",
+            ),
+            (
+                "CX53 scratch free-space floor",
+                "ci-disk-guard /mnt/ci-scratch 50",
+            ),
+        ] {
+            if !workflow.contains(snippet) {
+                violations.push(format!(
+                    ".github/workflows/routed-rust.yml is missing {label}: `{snippet}`"
+                ));
+            }
+        }
+    }
+
+    let toolchain_temp_steps = implementation_workflow
+        .matches("name: Prepare toolchain temp")
+        .count();
+    let toolchain_temp_mkdirs = implementation_workflow
+        .matches("run: mkdir -p \"$TMPDIR\"")
+        .count();
+    if toolchain_temp_steps < implementation_copies || toolchain_temp_mkdirs < implementation_copies
+    {
+        violations.push(format!(
+            "routed Rust implementation authority must include `Prepare toolchain temp` before setup; expected {implementation_copies} copy/copies, found {toolchain_temp_steps} step(s) and {toolchain_temp_mkdirs} mkdir command(s)"
         ));
     }
 
     let scratch_cargo_home =
         "CARGO_HOME: /mnt/ci-scratch/cargo-home/${{ github.run_id }}-${{ github.run_attempt }}";
-    let scratch_cargo_homes = workflow.matches(scratch_cargo_home).count();
-    let scratch_cargo_home_cleanups = workflow
+    let scratch_cargo_homes = implementation_workflow.matches(scratch_cargo_home).count();
+    let scratch_cargo_home_cleanups = implementation_workflow
         .matches("rm -rf \"$CARGO_HOME\" \"$CARGO_TARGET_DIR\" \"$TMPDIR\"")
         .count();
-    if scratch_cargo_homes < 3 || scratch_cargo_home_cleanups < 3 {
+    if scratch_cargo_homes < implementation_copies
+        || scratch_cargo_home_cleanups < implementation_copies
+    {
         violations.push(format!(
-            ".github/workflows/routed-rust.yml must use scratch CARGO_HOME and clean it for all three self-hosted implementation jobs; found {scratch_cargo_homes} scratch home(s) and {scratch_cargo_home_cleanups} cleanup command(s)"
+            "routed Rust implementation authority must use scratch CARGO_HOME and clean it; expected {implementation_copies} copy/copies, found {scratch_cargo_homes} scratch home(s) and {scratch_cargo_home_cleanups} cleanup command(s)"
         ));
     }
 
@@ -5351,12 +5500,13 @@ fn routed_rust_workflow_contract_violations(
     // appended with `|| true` so a route-computation failure never fails the
     // lane, and it runs on all three self-hosted jobs and the hosted fallback so
     // the artifact cannot silently regress. No lane is skipped or gated by it.
-    let proof_route_dry_runs = workflow
+    let proof_route_dry_runs = implementation_workflow
         .matches("cargo xtask proof route --base \"$BASE_SHA\" --head \"$HEAD_SHA\" || true")
         .count();
-    if proof_route_dry_runs < 4 {
+    let expected_proof_route_dry_runs = if delegated { 1 } else { 4 };
+    if proof_route_dry_runs < expected_proof_route_dry_runs {
         violations.push(format!(
-            ".github/workflows/routed-rust.yml must emit the advisory proof-route dry-run artifact (`cargo xtask proof route --base \"$BASE_SHA\" --head \"$HEAD_SHA\" || true`) on the PR-evidence path of all three self-hosted jobs and the hosted fallback; found {proof_route_dry_runs} occurrence(s)"
+            "routed Rust implementation authority must emit the advisory proof-route dry-run artifact (`cargo xtask proof route --base \"$BASE_SHA\" --head \"$HEAD_SHA\" || true`); expected {expected_proof_route_dry_runs} copy/copies, found {proof_route_dry_runs}"
         ));
     }
 
@@ -5367,9 +5517,28 @@ fn routed_rust_workflow_contract_violations(
     // duplicate or stray `timeout-minutes:` token elsewhere cannot stand in
     // for a job that lost its deadline.
     for job in ROUTED_RUST_DEADLINE_JOBS {
+        if delegated_jobs.contains(&job) {
+            continue;
+        }
         if !routed_rust_job_block_has_deadline(workflow, job) {
             violations.push(format!(
                 ".github/workflows/routed-rust.yml job `{job}` must set an explicit `timeout-minutes` job deadline so a hung step fails in bounded time"
+            ));
+        }
+    }
+    if delegated {
+        let reusable_jobs = reusable_workflow_jobs(implementation_workflow);
+        if reusable_jobs.is_empty() {
+            violations.push(format!(
+                "{ROUTED_RUST_REUSABLE_WORKFLOW_PATH} deadline check analyzed zero `jobs:` entries"
+            ));
+        }
+        for job in reusable_jobs
+            .into_iter()
+            .filter(|job| !routed_rust_job_block_has_deadline(implementation_workflow, job))
+        {
+            violations.push(format!(
+                "{ROUTED_RUST_REUSABLE_WORKFLOW_PATH} job `{job}` must set an explicit `timeout-minutes` deadline"
             ));
         }
     }
