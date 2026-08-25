@@ -48,11 +48,11 @@ uniformly instead of special-casing each one:
 
 | Direction | Contract | Evidence / owner | Status |
 |---|---|---|---|
-| ripr teaches the family | Canonical `new_unsuppressed` counter for threshold consumers | [ripr-swarm #1038](https://github.com/EffortlessMetrics/ripr-swarm/issues/1038) | open |
-| ripr adopts | Versioned gate manifest and baseline-debt-delta shape | [unsafe-review-swarm #1522](https://github.com/EffortlessMetrics/unsafe-review-swarm/issues/1522) | open |
-| ripr adopts | Machine-checked spec-status dashboard and wording verifier | [ripr-swarm #1040](https://github.com/EffortlessMetrics/ripr-swarm/issues/1040) | open |
+| ripr teaches the family | Canonical `new_unsuppressed` counter for threshold consumers | [ripr-swarm #1038](https://github.com/EffortlessMetrics/ripr-swarm/issues/1038) | landed |
+| ripr adopts | Versioned gate manifest and baseline-debt-delta shape | [unsafe-review-swarm #1522](https://github.com/EffortlessMetrics/unsafe-review-swarm/issues/1522) | landed |
+| ripr adopts | Machine-checked spec-status dashboard and wording verifier | [ripr-swarm #1040](https://github.com/EffortlessMetrics/ripr-swarm/issues/1040) | landed |
 | ripr adopts | Diff-first downstream consumer contract | [ripr-swarm #1041](https://github.com/EffortlessMetrics/ripr-swarm/issues/1041) | open |
-| ripr adopts | Pre-guard scratch garbage collection for shared CI runners | [unsafe-review-swarm #1519](https://github.com/EffortlessMetrics/unsafe-review-swarm/issues/1519) | open |
+| ripr adopts | Pre-guard scratch garbage collection for shared CI runners | [unsafe-review-swarm #1519](https://github.com/EffortlessMetrics/unsafe-review-swarm/issues/1519) | landed |
 
 These rows are the ripr-facing projection of the shared ledger. When a
 cross-repository item lands, update this mirror and the canonical sibling table
