@@ -1,5 +1,7 @@
 # Sibling tools and bidirectional learning
 
+This mirror follows the [canonical sibling-tools document](https://github.com/EffortlessMetrics/unsafe-review-swarm/blob/main/docs/interop/sibling-tools.md); the canonical document owns the family-wide contract, while this copy records ripr's local adoption and teaching boundary.
+
 `unsafe-review` is one of a series of **deterministic, fast, useful static PR
 tools** that share interfaces, are composed by the same CI gate, and
 deliberately learn from each other. Each is cheap, runs on a diff, and emits
