@@ -171,7 +171,8 @@ use super::{
     ripr_swarm_plan_packet_is_high_confidence, ripr_swarm_plan_ready_packets,
     ripr_swarm_read_optional_json, ripr_swarm_readiness_from_values, ripr_swarm_readiness_json,
     ripr_swarm_readiness_markdown, ripr_swarm_readiness_next_actions, ripr_swarm_readiness_summary,
-    routed_rust_workflow_contract_violations, run_ci_full_evidence_gates,
+    routed_rust_workflow_contract_violations,
+    routed_rust_workflow_contract_violations_with_reusable, run_ci_full_evidence_gates,
     run_repo_badge_artifact_command, sarif_policy_report_json, sarif_policy_report_markdown,
     select_vscode_test_server, should_scan_static_language_path, should_skip_path,
     sorted_allowlist_content, sorted_capability_blocks_content, sorted_command_catalog_content,
@@ -1018,6 +1019,56 @@ fn evidence_promotion_semantic_assertions_accept_expected_changed_rust_files() {
 
     assert!(report.contains("expected_changed_rust_files"), "{report}");
     assert!(report.contains("<missing>"), "{report}");
+}
+
+#[test]
+fn evidence_promotion_semantic_assertions_pin_zero_findings() {
+    let assertions = vec![
+        super::EvidencePromotionSemanticAssertion::MustNotPromote,
+        super::EvidencePromotionSemanticAssertion::ExpectedFindingCount { count: 0 },
+    ];
+    let clean = serde_json::json!({
+        "schema_version": "0.2",
+        "tool": "ripr",
+        "mode": "fast",
+        "root": "fixtures/no_behavior/input",
+        "base": "origin/main",
+        "summary": {"findings": 0},
+        "findings": []
+    });
+    let violations = super::evidence_promotion_semantic_violations(
+        "zero_findings",
+        Some("fixtures/no_behavior"),
+        &assertions,
+        &clean,
+        None,
+        false,
+    );
+    assert!(
+        violations.is_empty(),
+        "an exact zero-finding no-behavior case should be non-vacuous: {violations:?}"
+    );
+
+    let regressed = serde_json::json!({
+        "schema_version": "0.2",
+        "tool": "ripr",
+        "mode": "fast",
+        "root": "fixtures/no_behavior/input",
+        "base": "origin/main",
+        "summary": {"findings": 1},
+        "findings": [{"id": "false-exposed", "classification": "exposed"}]
+    });
+    let report = super::evidence_promotion_semantic_violations(
+        "zero_findings",
+        Some("fixtures/no_behavior"),
+        &assertions,
+        &regressed,
+        None,
+        false,
+    )
+    .join("\n");
+    assert!(report.contains("expected_finding_count"), "{report}");
+    assert!(report.contains("promoted to exposed"), "{report}");
 }
 
 #[test]
@@ -9400,6 +9451,229 @@ jobs = ["Ripr Rust Small Result"]
 
     assert!(
         routed_rust_workflow_contract_violations(workflow, Some(settings), Some(lane),).is_empty()
+    );
+}
+
+#[test]
+fn routed_rust_workflow_contract_accepts_reusable_implementation_authority() {
+    let workflow = r#"
+jobs:
+  route:
+    name: Route Ripr Rust Small
+    timeout-minutes: 10
+    steps:
+      - name: Select runner
+        env:
+          GH_TOKEN: ${{ secrets.EM_RUNNER_READ_TOKEN || github.token }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ] && [ "$HEAD_REPO" != "$REPOSITORY" ]; then
+            reason=fork_or_untrusted_pr
+          fi
+          idle() { printf '%s' "$runners" | jq -s -e --arg model "$1" --arg cap "$2" '[.[].runners[]?] | length > 0'; }
+          gh api --paginate orgs/EffortlessMetrics/actions/runners
+          reason=runner_api_failed
+          reason=no_idle_runner
+          reason=runner_capacity_unavailable
+          reason=cx43_idle
+          reason=cpx42_idle
+          reason=cx53_idle
+          echo rust-medium rust-16gb rust-large
+  detect-docs-only:
+    name: Detect Docs-Only Surface
+    timeout-minutes: 10
+  rust-cx43:
+    if: needs.route.outputs.router_target == 'cx43'
+    uses: ./.github/workflows/rust-gates.yml
+    with:
+      disk-guard-threshold: 35
+  rust-cpx42:
+    if: needs.route.outputs.router_target == 'cpx42'
+    uses: ./.github/workflows/rust-gates.yml
+    with:
+      disk-guard-threshold: 35
+  rust-cx53:
+    if: needs.route.outputs.router_target == 'cx53'
+    uses: ./.github/workflows/rust-gates.yml
+    with:
+      disk-guard-threshold: 50
+  rust-github:
+    if: >-
+      needs.detect-docs-only.result == 'success' &&
+      needs.route.outputs.router_target == 'github' ||
+      needs.rust-cx43.outputs.scratch_status == 'tempfail' ||
+      needs.rust-cpx42.outputs.scratch_status == 'tempfail' ||
+      needs.rust-cx53.outputs.scratch_status == 'tempfail'
+    uses: ./.github/workflows/rust-gates.yml
+  docs-gate:
+    name: Ripr Docs Gate
+    timeout-minutes: 20
+  result:
+    name: Ripr Rust Small Result
+    timeout-minutes: 10
+    env:
+      DOCS_DETECT_RESULT: ${{ needs.detect-docs-only.result }}
+    steps:
+      - run: echo "disk-guard tempfailed; GitHub-hosted fallback succeeded"
+      - run: echo "docs-surface detection result was $DOCS_DETECT_RESULT"
+"#;
+    let reusable = r#"
+on:
+  workflow_call:
+    inputs:
+      disk-guard-threshold:
+        type: number
+        required: false
+    outputs:
+      scratch_status:
+        value: ${{ jobs.rust-gates.outputs.scratch_status }}
+jobs:
+  rust-gates:
+    timeout-minutes: 90
+    outputs:
+      scratch_status: ${{ steps.scratch.outputs.status }}
+    env:
+      CARGO_HOME: /mnt/ci-scratch/cargo-home/${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Prepare toolchain temp
+        run: mkdir -p "$TMPDIR"
+      - name: Prepare scratch
+        run: ci-disk-guard /mnt/ci-scratch "${{ inputs.disk-guard-threshold }}"
+      - name: Proof route dry-run (advisory)
+        run: cargo xtask proof route --base "$BASE_SHA" --head "$HEAD_SHA" || true
+      - name: Clean scratch
+        run: rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
+defaults:
+  run:
+    shell: bash
+"#;
+    let settings = r#"
+repository:
+  name: ripr-swarm
+branches:
+  - name: main
+    protection:
+      required_status_checks:
+        contexts:
+          - Ripr Rust Small Result
+"#;
+    let lane = r#"
+[[lane]]
+id = "routed-rust-small"
+workflow = ".github/workflows/routed-rust.yml"
+jobs = ["Ripr Rust Small Result"]
+"#;
+
+    let violations = routed_rust_workflow_contract_violations_with_reusable(
+        workflow,
+        Some(reusable),
+        Some(settings),
+        Some(lane),
+    );
+    assert!(violations.is_empty(), "{violations:#?}");
+
+    let missing = routed_rust_workflow_contract_violations_with_reusable(
+        workflow,
+        None,
+        Some(settings),
+        Some(lane),
+    );
+    assert!(
+        missing
+            .iter()
+            .any(|violation| violation.contains("delegates implementation jobs to missing"))
+    );
+
+    let no_jobs = reusable.replacen("jobs:\n", "missing-jobs:\n", 1);
+    let no_jobs_violations = routed_rust_workflow_contract_violations_with_reusable(
+        workflow,
+        Some(&no_jobs),
+        Some(settings),
+        Some(lane),
+    );
+    assert!(
+        no_jobs_violations
+            .iter()
+            .any(|violation| violation.contains("analyzed zero `jobs:` entries"))
+    );
+
+    let no_deadline = reusable.replace("    timeout-minutes: 90\n", "");
+    let deadline_violations = routed_rust_workflow_contract_violations_with_reusable(
+        workflow,
+        Some(&no_deadline),
+        Some(settings),
+        Some(lane),
+    );
+    assert!(deadline_violations.iter().any(|violation| {
+        violation.contains("rust-gates.yml job `rust-gates` must set an explicit `timeout-minutes`")
+    }));
+
+    let no_output = reusable.replace(
+        "    outputs:\n      scratch_status:\n        value: ${{ jobs.rust-gates.outputs.scratch_status }}\n",
+        "",
+    );
+    let output_violations = routed_rust_workflow_contract_violations_with_reusable(
+        workflow,
+        Some(&no_output),
+        Some(settings),
+        Some(lane),
+    );
+    assert!(
+        output_violations
+            .iter()
+            .any(|violation| { violation.contains("workflow_call scratch-status output") })
+    );
+
+    let wrong_output_key = reusable.replacen(
+        "      scratch_status:\n        value: ${{ jobs.rust-gates.outputs.scratch_status }}\n",
+        "      renamed_status:\n        value: ${{ jobs.rust-gates.outputs.scratch_status }}\n",
+        1,
+    );
+    let output_key_violations = routed_rust_workflow_contract_violations_with_reusable(
+        workflow,
+        Some(&wrong_output_key),
+        Some(settings),
+        Some(lane),
+    );
+    assert!(
+        output_key_violations
+            .iter()
+            .any(|violation| violation.contains("workflow_call scratch-status output"))
+    );
+
+    let partial = workflow.replacen(
+        "    uses: ./.github/workflows/rust-gates.yml\n",
+        "    runs-on: ubuntu-latest\n",
+        1,
+    );
+    let partial_violations = routed_rust_workflow_contract_violations_with_reusable(
+        &partial,
+        Some(reusable),
+        Some(settings),
+        Some(lane),
+    );
+    assert!(partial_violations.iter().any(|violation| {
+        violation.contains("must keep all four implementation jobs inline or delegate all four")
+    }));
+
+    let wrong_threshold = workflow
+        .replacen("disk-guard-threshold: 35", "disk-guard-threshold: swap", 1)
+        .replacen("disk-guard-threshold: 50", "disk-guard-threshold: 35", 1)
+        .replacen("disk-guard-threshold: swap", "disk-guard-threshold: 50", 1);
+    let threshold_violations = routed_rust_workflow_contract_violations_with_reusable(
+        &wrong_threshold,
+        Some(reusable),
+        Some(settings),
+        Some(lane),
+    );
+    assert!(
+        threshold_violations
+            .iter()
+            .any(|violation| violation.contains("job `rust-cx43` must pass"))
+    );
+    assert!(
+        threshold_violations
+            .iter()
+            .any(|violation| violation.contains("job `rust-cx53` must pass"))
     );
 }
 
