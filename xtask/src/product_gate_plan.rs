@@ -124,11 +124,11 @@ impl ProductGateParity {
             .into_iter()
             .map(ProductGateId::as_str)
             .collect();
-        let missing_from_producer = plan_gate_ids
+        let missing_from_producer: BTreeSet<&'static str> = plan_gate_ids
             .difference(&producer_gate_ids)
             .copied()
             .collect();
-        let unrepresented_producer_gates = producer_gate_ids
+        let unrepresented_producer_gates: BTreeSet<&'static str> = producer_gate_ids
             .difference(&plan_gate_ids)
             .copied()
             .collect();
