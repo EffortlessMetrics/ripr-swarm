@@ -1,4 +1,5 @@
 use super::super::syntax::{LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RustSyntaxAdapter};
+use super::includes::resolve_repository_local_includes;
 use super::model::RustIndex;
 use crate::analysis::cancellation;
 use crate::analysis::seam_cache::{
@@ -134,6 +135,7 @@ fn build_index_from_loaded_files_with_cache_and_adapters(
         insert_file_summary(&mut index, file.clone(), summary);
         cancellation::checkpoint()?;
     }
+    resolve_repository_local_includes(root, &mut index);
     Ok(CachedRustIndex {
         index,
         file_fact_cache: stats,
@@ -173,6 +175,7 @@ fn build_index_with_adapters(
             cancellation::checkpoint()?;
         }
     }
+    resolve_repository_local_includes(root, &mut index);
     Ok(index)
 }
 
@@ -606,6 +609,244 @@ pub fn check(x: i32) -> bool {
         assert_eq!(cached.index.tests, uncached.tests);
         assert_eq!(cached.index.functions, uncached.functions);
         assert_eq!(cached.index.files.len(), uncached.files.len());
+        Ok(())
+    }
+
+    #[test]
+    fn literal_include_preserves_parent_unit_and_fragment_source_location(
+    ) -> Result<(), Box<dyn Error>> {
+        let root = temp_dir("literal_include_parent_unit")?;
+        fs::create_dir_all(root.join("src"))?;
+        write_manifest(&root)?;
+        let parent = PathBuf::from("src/lib.rs");
+        let fragment = PathBuf::from("src/parser_fragment.rs");
+        fs::write(
+            root.join(&parent),
+            "struct Parser { limit: i32 }\ninclude!(\"parser_fragment.rs\");\n",
+        )?;
+        fs::write(
+            root.join(&fragment),
+            "impl Parser { fn clamp(&self, value: i32) -> i32 { if value > self.limit { self.limit } else { value } } }\n",
+        )?;
+
+        let index = build_index(&root, &[parent.clone(), fragment.clone()])?;
+
+        assert_eq!(index.include_parents.get(&fragment), Some(&parent));
+        assert!(index.include_limitations.is_empty());
+        let clamp = index
+            .functions
+            .iter()
+            .find(|function| function.name == "clamp")
+            .ok_or("missing included clamp function")?;
+        assert_eq!(clamp.file, fragment);
+        assert_eq!(clamp.start_line, 1);
+        assert!(clamp.id.0.starts_with("src/lib.rs::impl Parser::clamp"));
+        assert!(
+            index
+                .files
+                .get(Path::new("src/parser_fragment.rs"))
+                .is_some_and(|facts| !facts.probe_shapes.is_empty()),
+            "included branch must remain selectable at the fragment path"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn inline_and_literal_include_inventories_match_apart_from_location(
+    ) -> Result<(), Box<dyn Error>> {
+        let included_root = temp_dir("include_inventory")?;
+        let inline_root = temp_dir("inline_inventory")?;
+        fs::create_dir_all(included_root.join("src"))?;
+        fs::create_dir_all(inline_root.join("src"))?;
+        write_manifest(&included_root)?;
+        write_manifest(&inline_root)?;
+        let implementation =
+            "impl Parser { fn clamp(&self, value: i32) -> i32 { if value > self.limit { self.limit } else { value } } }\n";
+        fs::write(
+            included_root.join("src/lib.rs"),
+            "struct Parser { limit: i32 }\ninclude!(\"parser_fragment.rs\");\n",
+        )?;
+        fs::write(included_root.join("src/parser_fragment.rs"), implementation)?;
+        fs::write(
+            inline_root.join("src/lib.rs"),
+            format!("struct Parser {{ limit: i32 }}\n{implementation}"),
+        )?;
+
+        let included = build_index(
+            &included_root,
+            &[
+                PathBuf::from("src/lib.rs"),
+                PathBuf::from("src/parser_fragment.rs"),
+            ],
+        )?;
+        let inline = build_index(&inline_root, &[PathBuf::from("src/lib.rs")])?;
+        let included_fn = included
+            .functions
+            .iter()
+            .find(|function| function.name == "clamp")
+            .ok_or("missing included function")?;
+        let inline_fn = inline
+            .functions
+            .iter()
+            .find(|function| function.name == "clamp")
+            .ok_or("missing inline function")?;
+
+        assert_eq!(included_fn.id, inline_fn.id);
+        assert_eq!(included_fn.name, inline_fn.name);
+        assert_eq!(included_fn.body, inline_fn.body);
+        assert_eq!(included_fn.calls, inline_fn.calls);
+        assert_eq!(included_fn.returns, inline_fn.returns);
+        assert_eq!(included_fn.literals, inline_fn.literals);
+        assert_ne!(included_fn.file, inline_fn.file);
+        Ok(())
+    }
+
+    #[test]
+    fn include_parser_ignores_comments_and_strings_and_limits_dynamic_forms(
+    ) -> Result<(), Box<dyn Error>> {
+        let root = temp_dir("include_syntax_boundaries")?;
+        fs::create_dir_all(root.join("src"))?;
+        write_manifest(&root)?;
+        fs::write(
+            root.join("src/lib.rs"),
+            r#"
+// include!("comment.rs");
+const EXAMPLE: &str = "include!(\"string.rs\")";
+include!(concat!(env!("OUT_DIR"), "/generated.rs"));
+mod nested { include!("nested.rs"); }
+"#,
+        )?;
+
+        let index = build_index(&root, &[PathBuf::from("src/lib.rs")])?;
+
+        assert!(index.include_parents.is_empty());
+        let reasons = index
+            .include_limitations
+            .iter()
+            .map(|limitation| limitation.reason_code.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            reasons,
+            vec![
+                "rust_include_dynamic_expression",
+                "rust_include_nested_module_context"
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn missing_and_cyclic_includes_fail_closed_with_stable_reasons(
+    ) -> Result<(), Box<dyn Error>> {
+        let root = temp_dir("include_fail_closed")?;
+        fs::create_dir_all(root.join("src"))?;
+        write_manifest(&root)?;
+        fs::write(
+            root.join("src/lib.rs"),
+            "include!(\"missing.rs\");\n",
+        )?;
+        fs::write(root.join("src/a.rs"), "include!(\"b.rs\");\nfn a() {}\n")?;
+        fs::write(root.join("src/b.rs"), "include!(\"a.rs\");\nfn b() {}\n")?;
+
+        let index = build_index(
+            &root,
+            &[
+                PathBuf::from("src/lib.rs"),
+                PathBuf::from("src/a.rs"),
+                PathBuf::from("src/b.rs"),
+            ],
+        )?;
+        let reasons = index
+            .include_limitations
+            .iter()
+            .map(|limitation| limitation.reason_code.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(reasons.contains(&"rust_include_target_missing"));
+        assert!(reasons.contains(&"rust_include_cycle_or_depth_limit"));
+        assert!(!index.include_parents.contains_key(Path::new("src/a.rs")));
+        assert!(!index.include_parents.contains_key(Path::new("src/b.rs")));
+        Ok(())
+    }
+
+    #[test]
+    fn include_relations_are_recomputed_across_warm_cache_and_source_changes(
+    ) -> Result<(), Box<dyn Error>> {
+        let root = temp_dir("include_cache_currentness")?;
+        fs::create_dir_all(root.join("src"))?;
+        write_manifest(&root)?;
+        let parent = PathBuf::from("src/lib.rs");
+        let fragment = PathBuf::from("src/fragment.rs");
+        let parent_v1 = b"include!(\"fragment.rs\");\n".to_vec();
+        let fragment_v1 = b"fn value() -> i32 { 1 }\n".to_vec();
+        fs::write(root.join(&parent), &parent_v1)?;
+        fs::write(root.join(&fragment), &fragment_v1)?;
+        let first_files = [
+            (parent.clone(), parent_v1.clone()),
+            (fragment.clone(), fragment_v1.clone()),
+        ];
+
+        let cold = build_index_from_loaded_files_with_cache(&root, &first_files)?;
+        let warm = build_index_from_loaded_files_with_cache(&root, &first_files)?;
+        assert_eq!(cold.index.include_parents, warm.index.include_parents);
+        assert_eq!(warm.file_fact_cache.hits, 2);
+
+        let fragment_v2 = b"fn value() -> i32 { 2 }\n".to_vec();
+        fs::write(root.join(&fragment), &fragment_v2)?;
+        let changed_files = [
+            (parent.clone(), parent_v1),
+            (fragment.clone(), fragment_v2),
+        ];
+        let changed = build_index_from_loaded_files_with_cache(&root, &changed_files)?;
+        assert_eq!(changed.file_fact_cache.hits, 1);
+        assert_eq!(changed.file_fact_cache.misses, 1);
+        assert_eq!(changed.index.include_parents.get(&fragment), Some(&parent));
+        assert!(
+            changed
+                .index
+                .files
+                .get(&fragment)
+                .is_some_and(|facts| facts.source.contains("{ 2 }"))
+        );
+
+        let parent_v2 = b"pub fn standalone() {}\n".to_vec();
+        fs::write(root.join(&parent), &parent_v2)?;
+        let removed_files = [
+            (parent.clone(), parent_v2),
+            (fragment.clone(), fs::read(root.join(&fragment))?),
+        ];
+        let removed = build_index_from_loaded_files_with_cache(&root, &removed_files)?;
+        assert!(!removed.index.include_parents.contains_key(&fragment));
+        assert!(removed.index.functions.iter().any(|function| {
+            function.name == "value" && function.id.0.starts_with("src/fragment.rs::value")
+        }));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn include_symlink_escape_is_rejected() -> Result<(), Box<dyn Error>> {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_dir("include_symlink_root")?;
+        let outside = temp_dir("include_symlink_outside")?;
+        fs::create_dir_all(root.join("src"))?;
+        write_manifest(&root)?;
+        fs::write(outside.join("escaped.rs"), "fn escaped() {}\n")?;
+        symlink(outside.join("escaped.rs"), root.join("src/escaped.rs"))?;
+        fs::write(root.join("src/lib.rs"), "include!(\"escaped.rs\");\n")?;
+
+        let index = build_index(
+            &root,
+            &[
+                PathBuf::from("src/lib.rs"),
+                PathBuf::from("src/escaped.rs"),
+            ],
+        )?;
+        assert!(index.include_parents.is_empty());
+        assert!(index.include_limitations.iter().any(|limitation| {
+            limitation.reason_code == "rust_include_symlink_escape"
+        }));
         Ok(())
     }
 }

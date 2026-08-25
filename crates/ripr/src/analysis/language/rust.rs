@@ -1545,6 +1545,9 @@ impl RustAdapter {
         let cached =
             rust_index::build_index_from_loaded_files_with_cache(&options.root, &loaded_files)?;
         let mut index = cached.index;
+        if let Some(disclosure) = rust_index::include_resolution_disclosure(&index) {
+            eprintln!("{disclosure}");
+        }
         rust_index::apply_oracle_policy(&mut index, oracle_policy);
 
         let mut findings = Vec::new();
@@ -1766,6 +1769,9 @@ impl RustAdapter {
         )?;
         let mut index = cached.index;
         if let Some(disclosure) = rust_index::lexical_fallback_disclosure(&index) {
+            eprintln!("{disclosure}");
+        }
+        if let Some(disclosure) = rust_index::include_resolution_disclosure(&index) {
             eprintln!("{disclosure}");
         }
         rust_index::apply_oracle_policy(&mut index, oracle_policy);

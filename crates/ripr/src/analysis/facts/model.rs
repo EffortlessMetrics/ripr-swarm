@@ -7,6 +7,23 @@ pub struct RustIndex {
     pub files: BTreeMap<PathBuf, FileFacts>,
     pub tests: Vec<TestFact>,
     pub functions: Vec<FunctionFact>,
+    /// Repository-local literal `include!` children keyed to the source file
+    /// whose compilation unit owns them. Only uniquely resolved, bounded,
+    /// repository-confined edges appear here.
+    #[serde(default)]
+    pub include_parents: BTreeMap<PathBuf, PathBuf>,
+    /// Fail-closed include boundaries retained by the producer. An omitted or
+    /// unsafe include never silently becomes an ordinary standalone module.
+    #[serde(default)]
+    pub include_limitations: Vec<RustIncludeLimitation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RustIncludeLimitation {
+    pub parent: PathBuf,
+    pub line: usize,
+    pub expression: String,
+    pub reason_code: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -118,6 +135,8 @@ mod tests {
         assert!(index.files.is_empty());
         assert!(index.tests.is_empty());
         assert!(index.functions.is_empty());
+        assert!(index.include_parents.is_empty());
+        assert!(index.include_limitations.is_empty());
     }
 
     #[test]

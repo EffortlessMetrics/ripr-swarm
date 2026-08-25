@@ -4,7 +4,7 @@ use ra_ap_syntax::{
     ast::{self, HasAttrs, HasName},
 };
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::super::facts::FileFacts;
 use super::{RaRustSyntaxAdapter, RustSyntaxAdapter, SyntaxNodeFact, TextRange};
@@ -16,6 +16,100 @@ use crate::analysis::rust_index::{
     extract_line_scanned_oracles, extract_literal_facts, extract_return_facts,
     is_unwrap_err_bound_error_assertion, unwrap_err_bound_variables,
 };
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RustIncludeDirective {
+    pub(crate) line: usize,
+    pub(crate) expression: String,
+    pub(crate) literal_path: Option<PathBuf>,
+    pub(crate) is_file_level: bool,
+}
+
+/// Extract actual `include!` macro nodes from parser-backed Rust syntax.
+/// Comments, string contents, and similarly named macros never enter this
+/// producer. Non-literal token trees remain explicit unsupported directives.
+pub(crate) fn rust_include_directives(
+    _path: &Path,
+    text: &str,
+    max_directives: usize,
+) -> Result<Vec<RustIncludeDirective>, String> {
+    let parse = SourceFile::parse(text, Edition::CURRENT);
+    if !parse.errors().is_empty() {
+        return Err("rust_include_parent_parse_unavailable".to_string());
+    }
+    let line_index = LineIndex::new(text);
+    let mut directives = Vec::new();
+    for macro_call in parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::MacroCall::cast)
+        .filter(|macro_call| {
+            macro_call.path().is_some_and(|path| {
+                path.syntax().text().to_string().replace(' ', "") == "include"
+            })
+        })
+        .take(max_directives.saturating_add(1))
+    {
+        let range = macro_call.syntax().text_range();
+        let expression = slice_text(text, range.start(), range.end());
+        directives.push(RustIncludeDirective {
+            line: line_index.line(range.start()),
+            literal_path: include_literal_path(&expression),
+            is_file_level: !macro_call
+                .syntax()
+                .ancestors()
+                .skip(1)
+                .any(|node| ast::Module::can_cast(node.kind())),
+            expression,
+        });
+    }
+    directives.sort_by(|left, right| {
+        left.line
+            .cmp(&right.line)
+            .then(left.expression.cmp(&right.expression))
+    });
+    Ok(directives)
+}
+
+fn include_literal_path(expression: &str) -> Option<PathBuf> {
+    let (_, arguments) = expression.split_once('!')?;
+    let arguments = arguments.trim();
+    let inner = match (arguments.chars().next()?, arguments.chars().last()?) {
+        ('(', ')') | ('{', '}') | ('[', ']') => arguments.get(1..arguments.len() - 1)?.trim(),
+        _ => return None,
+    };
+    parse_rust_string_literal(inner).map(PathBuf::from)
+}
+
+fn parse_rust_string_literal(literal: &str) -> Option<String> {
+    if let Some(body) = literal.strip_prefix('"').and_then(|body| body.strip_suffix('"')) {
+        let mut decoded = String::new();
+        let mut chars = body.chars();
+        while let Some(ch) = chars.next() {
+            if ch != '\\' {
+                decoded.push(ch);
+                continue;
+            }
+            match chars.next()? {
+                '\\' => decoded.push('\\'),
+                '"' => decoded.push('"'),
+                'n' => decoded.push('\n'),
+                'r' => decoded.push('\r'),
+                't' => decoded.push('\t'),
+                '0' => decoded.push('\0'),
+                _ => return None,
+            }
+        }
+        return Some(decoded);
+    }
+
+    let hash_count = literal.strip_prefix('r')?.chars().take_while(|ch| *ch == '#').count();
+    let prefix_len = 1 + hash_count;
+    let suffix = format!("\"{}", "#".repeat(hash_count));
+    let body = literal.get(prefix_len..)?.strip_prefix('"')?;
+    body.strip_suffix(&suffix).map(ToString::to_string)
+}
 
 impl RustSyntaxAdapter for RaRustSyntaxAdapter {
     fn summarize_file(&self, path: &Path, text: &str) -> Result<FileFacts, String> {
@@ -1251,6 +1345,47 @@ mod guard_pipeline_debug_tests {
             "guard must credit through the parser path: {:?}",
             test.assertions
         );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod include_directive_tests {
+    use super::rust_include_directives;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn parser_extracts_only_real_include_macros_and_decodes_literals() -> Result<(), String> {
+        let source = r###"
+// include!("comment.rs");
+const SAMPLE: &str = "include!(\"string.rs\")";
+include!("plain.rs");
+include!(r#"raw.rs"#);
+include!("escaped\\path.rs");
+include!("quoted\"file.rs");
+include!(concat!(env!("OUT_DIR"), "/generated.rs"));
+mod nested { include!("nested.rs"); }
+"###;
+
+        let directives = rust_include_directives(Path::new("src/lib.rs"), source, 16)?;
+        let literals = directives
+            .iter()
+            .filter_map(|directive| directive.literal_path.clone())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            literals,
+            vec![
+                PathBuf::from("plain.rs"),
+                PathBuf::from("raw.rs"),
+                PathBuf::from("escaped\\path.rs"),
+                PathBuf::from("quoted\"file.rs"),
+                PathBuf::from("nested.rs")
+            ]
+        );
+        assert_eq!(directives.len(), 6);
+        assert!(directives[4].literal_path.is_none());
+        assert!(!directives[5].is_file_level);
         Ok(())
     }
 }

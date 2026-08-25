@@ -1561,6 +1561,8 @@ mod tests {
         let path = PathBuf::from("src/gate_watchdog.rs");
         let assertion = r#"ensure!(reason.kind == "run-missing");"#;
         let index = RustIndex {
+            include_parents: std::collections::BTreeMap::new(),
+            include_limitations: Vec::new(),
             functions: vec![owner],
             tests: vec![test_with_oracle(
                 "src/tests/gate_watchdog_tests.rs",
@@ -1620,6 +1622,8 @@ mod tests {
         let path = PathBuf::from("src/gate_watchdog.rs");
         let assertion = "ensure!(reason.receipt == receipt);";
         let index = RustIndex {
+            include_parents: std::collections::BTreeMap::new(),
+            include_limitations: Vec::new(),
             functions: vec![owner],
             tests: vec![test_with_oracle(
                 "src/tests/gate_watchdog_tests.rs",
