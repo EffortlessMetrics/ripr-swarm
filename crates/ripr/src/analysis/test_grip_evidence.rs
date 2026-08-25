@@ -27,6 +27,7 @@ use super::rust_index::{
     extract_identifier_tokens,
 };
 use super::seams::{ExpectedSink, RepoSeam, SeamId, SeamKind};
+use super::test_target_authority::{self, TestTargetAuthority};
 use crate::analysis::cancellation;
 use crate::domain::{
     Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence, StageState,
@@ -85,6 +86,7 @@ pub(crate) struct TestTargetEvidence {
     test_kind: TestKind,
     relation: RelationReason,
     provenance: TestTargetProvenance,
+    authority: TestTargetAuthority,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,6 +111,7 @@ impl TestTargetEvidence {
         line: usize,
         test_kind: TestKind,
         relation: RelationReason,
+        authority: TestTargetAuthority,
     ) -> Self {
         Self {
             symbol_id,
@@ -117,6 +120,7 @@ impl TestTargetEvidence {
             test_kind,
             relation,
             provenance: TestTargetProvenance::RustIndexFunction,
+            authority,
         }
     }
 
@@ -132,6 +136,11 @@ impl TestTargetEvidence {
     #[cfg(test)]
     pub(crate) fn line(&self) -> usize {
         self.line
+    }
+
+    #[cfg(test)]
+    pub(crate) fn authority(&self) -> &TestTargetAuthority {
+        &self.authority
     }
 }
 
@@ -157,6 +166,10 @@ impl TestTargetEvidence {
             },
             relation: RelationReason::DirectOwnerCall,
             provenance: TestTargetProvenance::FixtureOnly,
+            authority: TestTargetAuthority {
+                workspace_root_identity: "sha256:fixture".to_string(),
+                source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
+            },
         }
     }
 }
@@ -1975,6 +1988,13 @@ fn test_target_evidence(
     let function = file.functions.iter().find(|function| {
         function.is_test && function.name == test.name && function.start_line == test.start_line
     })?;
+    let authority = test_target_authority::validate_target(
+        index,
+        &function.file,
+        &function.id,
+        function.start_line,
+        &function.body,
+    )?;
     Some(TestTargetEvidence::from_index(
         function.id.clone(),
         function.file.clone(),
@@ -1985,6 +2005,7 @@ fn test_target_evidence(
             TestKind::Integration
         },
         relation,
+        authority,
     ))
 }
 

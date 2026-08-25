@@ -18,6 +18,7 @@ mod sort;
 mod summary;
 mod syntax;
 pub(crate) mod test_grip_evidence;
+mod test_target_authority;
 mod value_resolution;
 mod workspace;
 
