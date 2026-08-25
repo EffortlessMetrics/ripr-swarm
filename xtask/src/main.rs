@@ -5637,7 +5637,8 @@ fn proposed_spec_age(path: &Path, repo_root: &Path, now: SystemTime) -> Proposed
         .arg(repo_root)
         .args(["log", "-1", "--format=%ct", "--"])
         .arg(relative)
-        .output() {
+        .output()
+    {
         Ok(output) => output,
         Err(error) => {
             return ProposedSpecAge::NotProven {
@@ -20049,7 +20050,9 @@ mod proposed_spec_age_tests {
         let path = std::env::temp_dir().join(format!("ripr-spec-age-{}", std::process::id()));
         fs::create_dir_all(path.join("docs/specs")).map_err(|e| e.to_string())?;
         let init = Command::new("git").args(["init", "-q"]).current_dir(&path).output().map_err(|e| e.to_string())?;
-        if !init.status.success() { return Err("git init failed".to_string()); }
+        if !init.status.success() {
+            return Err("git init failed".to_string());
+        }
         let spec = path.join("docs/specs/space name-é.md");
         fs::write(&spec, "Status: proposed\n").map_err(|e| e.to_string())?;
         assert!(matches!(proposed_spec_age(&spec, &path, SystemTime::now()), ProposedSpecAge::NotProven { .. }));
@@ -20069,14 +20072,20 @@ mod proposed_spec_age_tests {
         let path = std::env::temp_dir().join(format!("ripr-spec-age-{}-committed", std::process::id()));
         fs::create_dir_all(path.join("docs/specs")).map_err(|e| e.to_string())?;
         let init = Command::new("git").args(["init", "-q"]).current_dir(&path).output().map_err(|e| e.to_string())?;
-        if !init.status.success() { return Err("git init failed".to_string()); }
+        if !init.status.success() {
+            return Err("git init failed".to_string());
+        }
         let relative = "docs/specs/space name-é.md";
         fs::write(path.join(relative), "Status: proposed\n").map_err(|e| e.to_string())?;
         let add = Command::new("git").args(["add", "--", relative]).current_dir(&path).output().map_err(|e| e.to_string())?;
-        if !add.status.success() { return Err("git add failed".to_string()); }
+        if !add.status.success() {
+            return Err("git add failed".to_string());
+        } }
         let date = "2027-01-01T00:00:00Z";
         let commit = Command::new("git").args(["-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "-m", "fixture"]).env("GIT_AUTHOR_DATE", date).env("GIT_COMMITTER_DATE", date).current_dir(&path).output().map_err(|e| e.to_string())?;
-        if !commit.status.success() { return Err("git commit failed".to_string()); }
+        if !commit.status.success() {
+            return Err("git commit failed".to_string());
+        }
         let now = UNIX_EPOCH + Duration::from_secs(1_800_000_000);
         assert!(matches!(proposed_spec_age(&path.join(relative), &path, now), ProposedSpecAge::Current));
         fs::remove_dir_all(path).map_err(|e| e.to_string())?;
@@ -20088,14 +20097,20 @@ mod proposed_spec_age_tests {
         let path = std::env::temp_dir().join(format!("ripr-spec-age-{}-old", std::process::id()));
         fs::create_dir_all(path.join("docs/specs")).map_err(|e| e.to_string())?;
         let init = Command::new("git").args(["init", "-q"]).current_dir(&path).output().map_err(|e| e.to_string())?;
-        if !init.status.success() { return Err("git init failed".to_string()); }
+        if !init.status.success() {
+            return Err("git init failed".to_string());
+        }
         let relative = "docs/specs/space name-é.md";
         fs::write(path.join(relative), "Status: proposed\n").map_err(|e| e.to_string())?;
         let add = Command::new("git").args(["add", "--", relative]).current_dir(&path).output().map_err(|e| e.to_string())?;
-        if !add.status.success() { return Err("git add failed".to_string()); }
+        if !add.status.success() {
+            return Err("git add failed".to_string());
+        } }
         let date = "2020-01-01T00:00:00Z";
         let commit = Command::new("git").args(["-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "-m", "fixture"]).env("GIT_AUTHOR_DATE", date).env("GIT_COMMITTER_DATE", date).current_dir(&path).output().map_err(|e| e.to_string())?;
-        if !commit.status.success() { return Err("git commit failed".to_string()); }
+        if !commit.status.success() {
+            return Err("git commit failed".to_string());
+        }
         let now = UNIX_EPOCH + Duration::from_secs(1_800_000_000);
         assert!(matches!(proposed_spec_age(&path.join(relative), &path, now), ProposedSpecAge::Stale { .. }));
         fs::remove_dir_all(path).map_err(|e| e.to_string())?;
