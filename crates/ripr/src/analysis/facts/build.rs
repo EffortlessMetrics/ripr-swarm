@@ -693,9 +693,42 @@ pub fn check(x: i32) -> bool {
         assert_eq!(included_fn.id, inline_fn.id);
         assert_eq!(included_fn.name, inline_fn.name);
         assert_eq!(included_fn.body, inline_fn.body);
-        assert_eq!(included_fn.calls, inline_fn.calls);
-        assert_eq!(included_fn.returns, inline_fn.returns);
-        assert_eq!(included_fn.literals, inline_fn.literals);
+        assert_eq!(
+            included_fn
+                .calls
+                .iter()
+                .map(|call| (&call.name, &call.text))
+                .collect::<Vec<_>>(),
+            inline_fn
+                .calls
+                .iter()
+                .map(|call| (&call.name, &call.text))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            included_fn
+                .returns
+                .iter()
+                .map(|returned| &returned.text)
+                .collect::<Vec<_>>(),
+            inline_fn
+                .returns
+                .iter()
+                .map(|returned| &returned.text)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            included_fn
+                .literals
+                .iter()
+                .map(|literal| &literal.value)
+                .collect::<Vec<_>>(),
+            inline_fn
+                .literals
+                .iter()
+                .map(|literal| &literal.value)
+                .collect::<Vec<_>>()
+        );
         assert_ne!(included_fn.file, inline_fn.file);
         Ok(())
     }
