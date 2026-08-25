@@ -470,17 +470,34 @@ fn build_validated_host_run_fixture(
         )?;
         fs::write(case_root.join("stdout.bin"), &stdout).map_err(|error| error.to_string())?;
         fs::write(case_root.join("stderr.bin"), &stderr).map_err(|error| error.to_string())?;
+        let mut subject_inputs = vec![
+            fixture_input_value("cargo_toml", &subject.cargo_toml),
+            fixture_input_value("cargo_lock", &subject.cargo_lock),
+            fixture_input_value("config", &subject.config),
+            fixture_input_value("source_before", &subject.source_before),
+            fixture_input_value("source_after", &subject.source_after),
+            fixture_input_value("diff", &subject.diff),
+        ];
+        subject_inputs.extend(
+            subject
+                .tests
+                .iter()
+                .map(|file| fixture_input_value("test", file)),
+        );
+        let base = subject.base.clone();
+        let head = subject.head.clone();
+        let tree = subject.tree.clone();
+        let config_path = subject.config.repository_path.clone();
+        let config_sha256 = subject.config.sha256.clone();
+        let diff_path = subject.diff.repository_path.clone();
+        let diff_sha256 = subject.diff.sha256.clone();
         let plan = serde_json::json!({
-            "argv": ["check", "--root", "<materialized-subject>", "--base", &subject.base, "--mode", "draft", "--json"],
-            "root": "<materialized-subject>", "base": &subject.base, "head": &subject.head, "tree": &subject.tree,
-            "mode": "draft", "format": "json", "config_path": &subject.config.repository_path,
-            "config_sha256": &subject.config.sha256, "diff_path": &subject.diff.repository_path,
-            "diff_sha256": &subject.diff.sha256, "executed_diff_identity": &executed_diff_identity,
-            "subject_inputs": [
-                ["cargo_toml", &subject.cargo_toml], ["cargo_lock", &subject.cargo_lock],
-                ["config", &subject.config], ["source_before", &subject.source_before],
-                ["source_after", &subject.source_after], ["diff", &subject.diff]
-            ].into_iter().map(|(role, file)| fixture_input_value(role, file)).chain(subject.tests.iter().map(|file| fixture_input_value("test", file))).collect::<Vec<_>>()
+            "argv": ["check", "--root", "<materialized-subject>", "--base", base, "--mode", "draft", "--json"],
+            "root": "<materialized-subject>", "base": base, "head": head, "tree": tree,
+            "mode": "draft", "format": "json", "config_path": config_path,
+            "config_sha256": config_sha256, "diff_path": diff_path,
+            "diff_sha256": diff_sha256, "executed_diff_identity": executed_diff_identity,
+            "subject_inputs": subject_inputs
         });
         let receipt = serde_json::json!({
             "schema_version":"0.1", "kind":"rust_judged_panel_host_run_receipt", "case_id":&subject.case_id,
