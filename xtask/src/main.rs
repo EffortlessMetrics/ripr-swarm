@@ -5660,8 +5660,7 @@ fn proposed_spec_age(path: &Path, repo_root: &Path, now: SystemTime) -> Proposed
         Some(timestamp) => timestamp,
         None => {
             return ProposedSpecAge::NotProven {
-                reason: "Git age lookup returned no parseable commit timestamp for the spec path"
-                    .to_string(),
+                reason: "Git returned no parseable commit timestamp for the spec path".to_string(),
             };
         }
     };
@@ -20118,7 +20117,7 @@ mod proposed_spec_age_tests {
         if !commit.status.success() {
             return Err("git commit failed".to_string());
         }
-        let now = UNIX_EPOCH + Duration::from_hours(500_000);
+        let now = UNIX_EPOCH + Duration::from_secs(1_800_000_000);
         assert!(matches!(
             proposed_spec_age(&path.join(relative), &path, now),
             ProposedSpecAge::Current
@@ -20169,7 +20168,7 @@ mod proposed_spec_age_tests {
         if !commit.status.success() {
             return Err("git commit failed".to_string());
         }
-        let now = UNIX_EPOCH + Duration::from_hours(500_000);
+        let now = UNIX_EPOCH + Duration::from_secs(1_800_000_000);
         assert!(matches!(
             proposed_spec_age(&path.join(relative), &path, now),
             ProposedSpecAge::Stale { .. }
