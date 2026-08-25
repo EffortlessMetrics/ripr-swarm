@@ -4899,6 +4899,7 @@ fn check_workflows_impl() -> Result<(), String> {
         ));
         violations.extend(workflow_bare_self_hosted_violations(&normalized, &text));
         violations.extend(workflow_plain_scalar_comment_violations(&normalized, &text));
+        violations.extend(scratch_gc_concurrency_violations(&normalized, &text));
         for block in extract_workflow_run_blocks(&text) {
             if block.non_empty_lines > budget.max_non_empty_lines {
                 violations.push(format!(
@@ -4948,6 +4949,66 @@ fn check_workflows_impl() -> Result<(), String> {
         },
         &violations,
     )
+}
+
+/// Keep the scratch-GC matrix isolated by pool.
+///
+/// A workflow-level concurrency group serializes the whole matrix behind the
+/// slowest or unavailable self-hosted pool. The resulting pending-run
+/// eviction is especially dangerous here because `cancelled` is not a failed
+/// workflow and therefore produces no useful CI signal.
+fn scratch_gc_concurrency_violations(path: &str, text: &str) -> Vec<String> {
+    const WORKFLOW: &str = ".github/workflows/scratch-gc.yml";
+    const GROUP: &str = "group: scratch-gc-${{ github.repository }}-${{ matrix.pool }}";
+
+    if path != WORKFLOW {
+        return Vec::new();
+    }
+
+    let lines: Vec<&str> = text.lines().collect();
+    let has_top_level_concurrency = lines
+        .iter()
+        .any(|line| line.trim_start().len() == line.len() && line.trim() == "concurrency:");
+    let mut in_scratch_job = false;
+    let mut in_concurrency = false;
+    let mut concurrency_lines = Vec::new();
+    for line in &lines {
+        let indent = line.len() - line.trim_start().len();
+        if *line == "  scratch-gc:" {
+            in_scratch_job = true;
+            continue;
+        }
+        if in_scratch_job && indent == 2 && !line.trim().is_empty() {
+            in_scratch_job = false;
+            in_concurrency = false;
+        }
+        if in_scratch_job && indent == 4 && line.trim() == "concurrency:" {
+            in_concurrency = true;
+            continue;
+        }
+        if in_concurrency {
+            if indent <= 4 && !line.trim().is_empty() {
+                in_concurrency = false;
+            } else {
+                concurrency_lines.push(line.trim());
+            }
+        }
+    }
+    let has_pool_group = concurrency_lines.contains(&GROUP);
+    let has_non_cancelling_pool_queue = concurrency_lines.contains(&"cancel-in-progress: false");
+
+    let mut violations = Vec::new();
+    if has_top_level_concurrency {
+        violations.push(format!(
+            "{WORKFLOW}: scratch-GC concurrency must be job-level and keyed by matrix.pool; workflow-level concurrency starves the matrix when one pool is unavailable"
+        ));
+    }
+    if !has_pool_group || !has_non_cancelling_pool_queue {
+        violations.push(format!(
+            "{WORKFLOW}: scratch-GC must preserve a non-cancelling per-pool concurrency group ({GROUP})"
+        ));
+    }
+    violations
 }
 
 /// Workflow automation must not perform review-thread resolution without adjudication.
@@ -5504,19 +5565,20 @@ fn check_spec_format() -> Result<(), String> {
             Some(value) => violations.push(format!("{normalized} has invalid status `{value}`")),
             None => violations.push(format!("{normalized} is missing `Status: ...`")),
         }
-        // #2708: flag proposed specs older than 90 days without review.
+        // #2708/#3035: proposed age is repository-backed, never checkout mtime.
         // Accepted/deprecated specs are exempt — they have been reviewed.
-        if status.as_deref() == Some("proposed")
-            && let Ok(metadata) = std::fs::metadata(&path)
-            && let Ok(modified) = metadata.modified()
-            && let Ok(elapsed) = modified.elapsed()
-            && elapsed.as_secs() > 90 * 24 * 60 * 60
-        {
-            let days = elapsed.as_secs() / (24 * 60 * 60);
-            violations.push(format!(
-                "{normalized} has been `proposed` for {days} days without review; \
-                 promote to `accepted`, re-scope, or add evidence to justify the status"
-            ));
+        if status.as_deref() == Some("proposed") {
+            match proposed_spec_age(&path, Path::new("."), SystemTime::now()) {
+                ProposedSpecAge::Stale { days } => violations.push(format!(
+                    "{normalized} has been `proposed` for {days} days without review; \
+                     promote to `accepted`, re-scope, or add evidence to justify the status"
+                )),
+                ProposedSpecAge::Current => {}
+                ProposedSpecAge::NotProven { reason } => violations.push(format!(
+                    "{normalized} proposed-age review is `not_proven`: {reason}; \
+                     lifecycle status cannot pass without repository-backed age evidence"
+                )),
+            }
         }
         for heading in required_spec_headings() {
             if !has_markdown_heading(&text, heading) {
@@ -5546,6 +5608,76 @@ fn check_spec_format() -> Result<(), String> {
         },
         &violations,
     )
+}
+
+const PROPOSED_SPEC_REVIEW_MAX_AGE_SECS: u64 = 90 * 24 * 60 * 60;
+
+#[derive(Debug, PartialEq, Eq)]
+enum ProposedSpecAge {
+    Current,
+    Stale { days: u64 },
+    NotProven { reason: String },
+}
+
+fn proposed_spec_age(path: &Path, repo_root: &Path, now: SystemTime) -> ProposedSpecAge {
+    let relative = if repo_root == Path::new(".") && path.is_relative() {
+        path
+    } else {
+        match path.strip_prefix(repo_root) {
+            Ok(relative) if !relative.as_os_str().is_empty() => relative,
+            _ => {
+                return ProposedSpecAge::NotProven {
+                    reason: format!("spec path `{}` is outside repository root", path.display()),
+                };
+            }
+        }
+    };
+    let output = match std::process::Command::new("git")
+        .args(["-C"])
+        .arg(repo_root)
+        .args(["log", "-1", "--format=%ct", "--"])
+        .arg(relative)
+        .output() {
+        Ok(output) => output,
+        Err(error) => {
+            return ProposedSpecAge::NotProven {
+                reason: format!("Git age lookup could not start: {error}"),
+            };
+        }
+    };
+    if !output.status.success() {
+        return ProposedSpecAge::NotProven {
+            reason: "Git age lookup failed for the spec path".to_string(),
+        };
+    }
+    let timestamp = match std::str::from_utf8(&output.stdout)
+        .ok()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        Some(timestamp) => timestamp,
+        None => {
+            return ProposedSpecAge::NotProven {
+                reason: "Git returned no parseable commit timestamp for the spec path".to_string(),
+            };
+        }
+    };
+    let now_secs = match now.duration_since(UNIX_EPOCH) {
+        Ok(duration) => duration.as_secs(),
+        Err(error) => {
+            return ProposedSpecAge::NotProven {
+                reason: format!("review clock predates Unix epoch: {error}"),
+            };
+        }
+    };
+    let age_secs = now_secs.saturating_sub(timestamp);
+    let days = age_secs / (24 * 60 * 60);
+    if age_secs > PROPOSED_SPEC_REVIEW_MAX_AGE_SECS {
+        ProposedSpecAge::Stale { days }
+    } else {
+        ProposedSpecAge::Current
+    }
 }
 
 fn specs(args: &[String]) -> Result<(), String> {
@@ -19905,6 +20037,71 @@ synonym (e.g. {hint}). To intentionally allow this line, append \
 )]
 mod tests;
 
+#[cfg(test)]
+mod proposed_spec_age_tests {
+    use super::*;
+    use std::fs;
+    use std::process::Command;
+    use std::time::Duration;
+
+    #[test]
+    fn untracked_spec_is_not_proven() -> Result<(), String> {
+        let path = std::env::temp_dir().join(format!("ripr-spec-age-{}", std::process::id()));
+        fs::create_dir_all(path.join("docs/specs")).map_err(|e| e.to_string())?;
+        let init = Command::new("git").args(["init", "-q"]).current_dir(&path).output().map_err(|e| e.to_string())?;
+        if !init.status.success() { return Err("git init failed".to_string()); }
+        let spec = path.join("docs/specs/space name-é.md");
+        fs::write(&spec, "Status: proposed\n").map_err(|e| e.to_string())?;
+        assert!(matches!(proposed_spec_age(&spec, &path, SystemTime::now()), ProposedSpecAge::NotProven { .. }));
+        let relative = Path::new("docs/specs/not-tracked.md");
+        let ProposedSpecAge::NotProven { reason } =
+            proposed_spec_age(relative, Path::new("."), SystemTime::now())
+        else {
+            return Err("relative production-shaped path did not fail closed".to_string());
+        };
+        assert!(reason.contains("Git age lookup"));
+        fs::remove_dir_all(path).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn committed_age_is_read_from_git_not_filesystem_mtime() -> Result<(), String> {
+        let path = std::env::temp_dir().join(format!("ripr-spec-age-{}-committed", std::process::id()));
+        fs::create_dir_all(path.join("docs/specs")).map_err(|e| e.to_string())?;
+        let init = Command::new("git").args(["init", "-q"]).current_dir(&path).output().map_err(|e| e.to_string())?;
+        if !init.status.success() { return Err("git init failed".to_string()); }
+        let relative = "docs/specs/space name-é.md";
+        fs::write(path.join(relative), "Status: proposed\n").map_err(|e| e.to_string())?;
+        let add = Command::new("git").args(["add", "--", relative]).current_dir(&path).output().map_err(|e| e.to_string())?;
+        if !add.status.success() { return Err("git add failed".to_string()); }
+        let date = "2027-01-01T00:00:00Z";
+        let commit = Command::new("git").args(["-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "-m", "fixture"]).env("GIT_AUTHOR_DATE", date).env("GIT_COMMITTER_DATE", date).current_dir(&path).output().map_err(|e| e.to_string())?;
+        if !commit.status.success() { return Err("git commit failed".to_string()); }
+        let now = UNIX_EPOCH + Duration::from_secs(1_800_000_000);
+        assert!(matches!(proposed_spec_age(&path.join(relative), &path, now), ProposedSpecAge::Current));
+        fs::remove_dir_all(path).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn old_commit_is_stale_after_checkout() -> Result<(), String> {
+        let path = std::env::temp_dir().join(format!("ripr-spec-age-{}-old", std::process::id()));
+        fs::create_dir_all(path.join("docs/specs")).map_err(|e| e.to_string())?;
+        let init = Command::new("git").args(["init", "-q"]).current_dir(&path).output().map_err(|e| e.to_string())?;
+        if !init.status.success() { return Err("git init failed".to_string()); }
+        let relative = "docs/specs/space name-é.md";
+        fs::write(path.join(relative), "Status: proposed\n").map_err(|e| e.to_string())?;
+        let add = Command::new("git").args(["add", "--", relative]).current_dir(&path).output().map_err(|e| e.to_string())?;
+        if !add.status.success() { return Err("git add failed".to_string()); }
+        let date = "2020-01-01T00:00:00Z";
+        let commit = Command::new("git").args(["-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "-m", "fixture"]).env("GIT_AUTHOR_DATE", date).env("GIT_COMMITTER_DATE", date).current_dir(&path).output().map_err(|e| e.to_string())?;
+        if !commit.status.success() { return Err("git commit failed".to_string()); }
+        let now = UNIX_EPOCH + Duration::from_secs(1_800_000_000);
+        assert!(matches!(proposed_spec_age(&path.join(relative), &path, now), ProposedSpecAge::Stale { .. }));
+        fs::remove_dir_all(path).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+}
 #[cfg(test)]
 mod inherited_failure_tests {
     use super::*;
