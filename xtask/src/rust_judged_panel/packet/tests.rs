@@ -390,6 +390,21 @@ fn projected(
     Ok((packet, attestation, entry))
 }
 
+fn fixture_input_value(role: &str, file: &ReplaySubjectFile) -> Value {
+    let mut value = serde_json::Map::new();
+    value.insert("role".to_string(), Value::String(role.to_string()));
+    value.insert(
+        "source_path".to_string(),
+        Value::String(file.source_path.clone()),
+    );
+    value.insert(
+        "repository_path".to_string(),
+        Value::String(file.repository_path.clone()),
+    );
+    value.insert("sha256".to_string(), Value::String(file.sha256.clone()));
+    Value::Object(value)
+}
+
 fn build_validated_host_run_fixture(
     root: &Path,
     manifest: &RustJudgedPanelManifest,
@@ -465,7 +480,7 @@ fn build_validated_host_run_fixture(
                 ["cargo_toml", &subject.cargo_toml], ["cargo_lock", &subject.cargo_lock],
                 ["config", &subject.config], ["source_before", &subject.source_before],
                 ["source_after", &subject.source_after], ["diff", &subject.diff]
-            ].into_iter().map(|(role, file)| serde_json::json!({"role": role, "source_path": (file.source_path.clone()), "repository_path": (file.repository_path.clone()), "sha256": (file.sha256.clone())})).chain(subject.tests.iter().map(|file| serde_json::json!({"role":"test", "source_path":(file.source_path.clone()), "repository_path":(file.repository_path.clone()), "sha256":(file.sha256.clone())}))).collect::<Vec<_>>()
+            ].into_iter().map(|(role, file)| fixture_input_value(role, file)).chain(subject.tests.iter().map(|file| fixture_input_value("test", file))).collect::<Vec<_>>()
         });
         let receipt = serde_json::json!({
             "schema_version":"0.1", "kind":"rust_judged_panel_host_run_receipt", "case_id":&subject.case_id,
