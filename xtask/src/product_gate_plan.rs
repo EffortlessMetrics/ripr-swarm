@@ -149,7 +149,9 @@ impl ProductGatePlan {
         let full_route_reason = if !subject.selectors_authoritative {
             Some("selector authority is missing; the complete product route is required")
         } else if subject.trust_class == ProductGateTrustClass::ExternalTree {
-            Some("external-tree applicability is not yet proven; the complete product route is required")
+            Some(
+                "external-tree applicability is not yet proven; the complete product route is required",
+            )
         } else {
             None
         };
@@ -195,18 +197,102 @@ fn product_gate_definitions() -> Vec<ProductGateDefinition> {
     evidence.insert(ProductSurface::Evidence);
 
     vec![
-        gate(ProductGateId::Formatting, ProductGateRole::Required, rust.clone(), "cargo fmt --check", "formatting is accepted as repository product input", "does not prove runtime behavior"),
-        gate(ProductGateId::WorkspaceCheck, ProductGateRole::Required, rust.clone(), "cargo check --workspace --all-targets", "the workspace type-checks", "does not prove tests observe changed behavior"),
-        gate(ProductGateId::Clippy, ProductGateRole::Required, rust.clone(), "cargo clippy --workspace --all-targets -- -D warnings", "the configured lint contract holds", "does not prove runtime behavior"),
-        gate(ProductGateId::WorkspaceTests, ProductGateRole::Required, rust.clone(), "cargo nextest run --workspace", "the workspace test suite passes", "does not prove mutation resistance"),
-        gate(ProductGateId::Precommit, ProductGateRole::Required, policy.clone(), "cargo xtask precommit", "repository precommit invariants hold", "does not replace product tests"),
-        gate(ProductGateId::EvidencePromotionHonesty, ProductGateRole::Required, evidence.clone(), "cargo xtask check-evidence-promotion-honesty", "evidence promotion claims obey their contract", "does not establish the underlying evidence itself"),
-        gate(ProductGateId::AgentSkills, ProductGateRole::Required, policy.clone(), "cargo xtask check-agent-skills", "checked-in agent skills obey repository policy", "does not validate provider execution"),
-        gate(ProductGateId::Dependencies, ProductGateRole::Required, policy.clone(), "cargo xtask check-dependencies", "dependency policy holds", "does not prove dependency behavior"),
-        gate(ProductGateId::ProcessPolicy, ProductGateRole::Required, policy.clone(), "cargo xtask check-process-policy", "process policy holds", "does not authorize arbitrary processes"),
-        gate(ProductGateId::NetworkPolicy, ProductGateRole::Required, policy.clone(), "cargo xtask check-network-policy", "network policy holds", "does not prove network availability"),
-        gate(ProductGateId::Goldens, ProductGateRole::Required, evidence.clone(), "cargo xtask goldens check", "golden output contracts hold", "does not prove unrepresented behavior"),
-        gate(ProductGateId::Fixtures, ProductGateRole::Required, evidence, "cargo xtask fixtures", "fixture contracts hold", "does not prove live-repository behavior"),
+        gate(
+            ProductGateId::Formatting,
+            ProductGateRole::Required,
+            rust.clone(),
+            "cargo fmt --check",
+            "formatting is accepted as repository product input",
+            "does not prove runtime behavior",
+        ),
+        gate(
+            ProductGateId::WorkspaceCheck,
+            ProductGateRole::Required,
+            rust.clone(),
+            "cargo check --workspace --all-targets",
+            "the workspace type-checks",
+            "does not prove tests observe changed behavior",
+        ),
+        gate(
+            ProductGateId::Clippy,
+            ProductGateRole::Required,
+            rust.clone(),
+            "cargo clippy --workspace --all-targets -- -D warnings",
+            "the configured lint contract holds",
+            "does not prove runtime behavior",
+        ),
+        gate(
+            ProductGateId::WorkspaceTests,
+            ProductGateRole::Required,
+            rust.clone(),
+            "cargo nextest run --workspace",
+            "the workspace test suite passes",
+            "does not prove mutation resistance",
+        ),
+        gate(
+            ProductGateId::Precommit,
+            ProductGateRole::Required,
+            policy.clone(),
+            "cargo xtask precommit",
+            "repository precommit invariants hold",
+            "does not replace product tests",
+        ),
+        gate(
+            ProductGateId::EvidencePromotionHonesty,
+            ProductGateRole::Required,
+            evidence.clone(),
+            "cargo xtask check-evidence-promotion-honesty",
+            "evidence promotion claims obey their contract",
+            "does not establish the underlying evidence itself",
+        ),
+        gate(
+            ProductGateId::AgentSkills,
+            ProductGateRole::Required,
+            policy.clone(),
+            "cargo xtask check-agent-skills",
+            "checked-in agent skills obey repository policy",
+            "does not validate provider execution",
+        ),
+        gate(
+            ProductGateId::Dependencies,
+            ProductGateRole::Required,
+            policy.clone(),
+            "cargo xtask check-dependencies",
+            "dependency policy holds",
+            "does not prove dependency behavior",
+        ),
+        gate(
+            ProductGateId::ProcessPolicy,
+            ProductGateRole::Required,
+            policy.clone(),
+            "cargo xtask check-process-policy",
+            "process policy holds",
+            "does not authorize arbitrary processes",
+        ),
+        gate(
+            ProductGateId::NetworkPolicy,
+            ProductGateRole::Required,
+            policy.clone(),
+            "cargo xtask check-network-policy",
+            "network policy holds",
+            "does not prove network availability",
+        ),
+        gate(
+            ProductGateId::Goldens,
+            ProductGateRole::Required,
+            evidence.clone(),
+            "cargo xtask goldens check",
+            "golden output contracts hold",
+            "does not prove unrepresented behavior",
+        ),
+        gate(
+            ProductGateId::Fixtures,
+            ProductGateRole::Required,
+            evidence,
+            "cargo xtask fixtures",
+            "fixture contracts hold",
+            "does not prove live-repository behavior",
+        ),
     ]
 }
 
