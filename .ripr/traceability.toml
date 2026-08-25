@@ -7228,6 +7228,30 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0166"
+name = "rust subprocess binary reach limitation"
+spec = "docs/specs/RIPR-SPEC-0166-rust-subprocess-binary-reach-limitation.md"
+tests = [
+  "crates/ripr/src/analysis/language/rust.rs::tests::cargo_binary_invocation_shape_is_conservative_and_deterministic",
+  "crates/ripr/src/analysis/language/rust.rs::tests::subprocess_limit_only_applies_to_binary_source_paths_and_integration_tests",
+  "crates/ripr/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable",
+  "crates/ripr/src/domain/language.rs::tests::static_limit_kind_describe_is_present_and_distinct",
+  "crates/ripr/src/lsp/gap_artifacts.rs::tests::validation_accepts_rust_subprocess_binary_static_limit_kind",
+]
+fixtures = ["fixtures/benches_harness_evidence"]
+code = [
+  "crates/ripr/src/domain/language.rs",
+  "crates/ripr/src/analysis/language/rust.rs",
+  "crates/ripr/src/lsp/gap_artifacts.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0166-rust-subprocess-binary-reach-limitation.md",
+  "docs/OUTPUT_SCHEMA.md",
+  "docs/STATIC_LIMITS.md",
+]
+metrics = ["unit_test_pass_rate", "golden_fixture_pass_rate"]
+
+[[behavior]]
 id = "RIPR-SPEC-0118"
 name = "rust integration public-API path limitation"
 spec = "docs/specs/RIPR-SPEC-0118-rust-integration-public-api-path-limitation.md"

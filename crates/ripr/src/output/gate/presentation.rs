@@ -173,11 +173,13 @@ pub(crate) fn gate_decision_inline_detail(report: &GateDecisionReport) -> String
             .filter(|d| d.decision == "blocking")
             .collect();
         if let Some(first) = blocking.first() {
-            return format!(
+            let mut detail = format!(
                 ": {} blocking gap(s); first: {}",
                 blocking.len(),
                 first.gate_reason
             );
+            append_inline_repair_route(&mut detail, first);
+            return detail;
         }
         if let Some(exception_policy) = &report.exception_policy {
             let mut blocking_violations = exception_policy
@@ -194,6 +196,36 @@ pub(crate) fn gate_decision_inline_detail(report: &GateDecisionReport) -> String
         }
     }
     String::new()
+}
+
+/// Add the smallest useful repair route to a failing CLI diagnostic.
+///
+/// The Markdown and JSON reports remain the complete receipts. This inline
+/// projection only exposes the first blocking decision so CI logs give a
+/// consumer an exact next action without duplicating route derivation.
+fn append_inline_repair_route(detail: &mut String, decision: &GateDecision) {
+    let route = &decision.repair_route;
+    let location = match (decision.placement.path.as_deref(), decision.placement.line) {
+        (Some(path), Some(line)) => format!("{path}:{line}"),
+        (Some(path), None) => format!("{path} (no line anchor)"),
+        (None, Some(line)) => format!("line {line}"),
+        (None, None) => "no source location".to_string(),
+    };
+    let classification = route
+        .classification
+        .as_deref()
+        .or(decision.static_class.as_deref())
+        .unwrap_or("unknown");
+    detail.push_str(&format!(
+        "; seam {} at {location} ({classification})",
+        route.seam_id.as_deref().unwrap_or("unknown")
+    ));
+    if let Some(test_intent) = route.test_intent.as_deref() {
+        detail.push_str(&format!("; next: {test_intent}"));
+    }
+    if let Some(inspection_command) = route.inspection_command.as_deref() {
+        detail.push_str(&format!("; inspect: `{inspection_command}`"));
+    }
 }
 
 pub(crate) fn markdown_path_for(out: &Path) -> PathBuf {

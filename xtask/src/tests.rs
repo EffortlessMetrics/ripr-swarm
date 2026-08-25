@@ -34,6 +34,7 @@ use super::run::{
     TimedFileOutput, TimedOutput, capture_output, command_success_owned, run, run_output,
     run_output_optional, run_output_owned,
 };
+use super::scratch_gc_concurrency_violations;
 use super::validate_bless_reason;
 use super::{
     BUN_UB_CROSS_LANGUAGE_DOGFOOD_REQUIRED_CASES, BadgeArtifactJob, BadgeBasisReport,
@@ -9284,6 +9285,51 @@ jobs:
         workflow_bare_self_hosted_violations(".github/workflows/routed-rust.yml", workflow);
 
     assert!(violations.is_empty());
+}
+
+#[test]
+fn scratch_gc_concurrency_policy_accepts_per_pool_matrix_queue() {
+    let workflow = r#"
+jobs:
+  scratch-gc:
+    strategy:
+      matrix:
+        pool: [cx43, cpx42, cx53]
+    concurrency:
+      group: scratch-gc-${{ github.repository }}-${{ matrix.pool }}
+      cancel-in-progress: false
+"#;
+
+    assert!(
+        scratch_gc_concurrency_violations(".github/workflows/scratch-gc.yml", workflow,).is_empty()
+    );
+}
+
+#[test]
+fn scratch_gc_concurrency_policy_rejects_workflow_queue() {
+    let workflow = r#"
+concurrency:
+  group: scratch-gc-${{ github.repository }}
+  cancel-in-progress: false
+jobs:
+  scratch-gc:
+    strategy:
+      matrix:
+        pool: [cx43, cpx42, cx53]
+    concurrency:
+      group: scratch-gc-${{ github.repository }}-${{ matrix.pool }}
+      cancel-in-progress: true
+  unrelated:
+    concurrency:
+      cancel-in-progress: false
+"#;
+
+    let violations =
+        scratch_gc_concurrency_violations(".github/workflows/scratch-gc.yml", workflow);
+
+    assert_eq!(violations.len(), 2);
+    assert!(violations[0].contains("workflow-level concurrency"));
+    assert!(violations[1].contains("matrix.pool"));
 }
 
 #[test]

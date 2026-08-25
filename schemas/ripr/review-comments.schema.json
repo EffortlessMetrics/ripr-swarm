@@ -68,6 +68,9 @@
     "analysis_outcome": {
       "$ref": "#/$defs/analysis_outcome_projection"
     },
+    "static_gap_fallback": {
+      "$ref": "#/$defs/static_gap_fallback"
+    },
     "causal_comparison": {
       "type": "object",
       "additionalProperties": false,
@@ -289,6 +292,32 @@
     }
   ],
   "$defs": {
+    "static_gap_fallback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "seams", "claim_boundary"],
+      "properties": {
+        "source": { "type": "string", "minLength": 1 },
+        "seams": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "classification", "family", "file", "line"],
+            "properties": {
+              "id": { "type": ["string", "null"] },
+              "classification": {
+                "enum": ["weakly_exposed", "reachable_unrevealed", "no_static_path"]
+              },
+              "family": { "type": ["string", "null"] },
+              "file": { "type": ["string", "null"] },
+              "line": { "type": ["integer", "null"], "minimum": 1 }
+            }
+          }
+        },
+        "claim_boundary": { "type": "string", "minLength": 1 }
+      }
+    },
     "analysis_outcome_projection": {
       "type": "object",
       "additionalProperties": false,

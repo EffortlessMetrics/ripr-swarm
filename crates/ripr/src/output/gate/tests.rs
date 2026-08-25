@@ -999,6 +999,24 @@ fn gate_exception_policy_expired_entry_blocks() -> Result<(), String> {
 }
 
 #[test]
+fn blocked_gate_inline_detail_surfaces_first_seam_and_next_action() -> Result<(), String> {
+    let input = fixture_input(GateMode::Acknowledgeable);
+    let report = build_gate_decision_report(&input)?;
+
+    assert_eq!(report.status, "blocked");
+    let inline = gate_decision_inline_detail(&report);
+    for expected in [
+        ": 1 blocking gap(s); first:",
+        "; seam 8f7fa8644fd12280 at src/pricing.rs:88 (weakly_gripped)",
+        "; next: Write one focused Rust test",
+        "; inspect: `ripr agent brief --root . --seam-id 8f7fa8644fd12280 --json > target/ripr/workflow/agent-brief.json`",
+    ] {
+        assert!(inline.contains(expected), "missing {expected:?}: {inline}");
+    }
+    Ok(())
+}
+
+#[test]
 fn gate_exception_policy_review_due_warn_surfaces_warning_not_block() -> Result<(), String> {
     let dir = temp_dir("gate-exception-review-warn")?;
     // review_after in the past, expires far in the future, due_review=warn.
