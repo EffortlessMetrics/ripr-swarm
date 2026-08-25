@@ -44,15 +44,15 @@ pub(crate) fn rust_include_directives(
         .syntax()
         .descendants()
         .filter_map(ast::MacroCall::cast)
-        .filter(|macro_call| {
-            macro_call
-                .path()
-                .is_some_and(|path| path.syntax().text().to_string().replace(' ', "") == "include")
-        })
-        .take(max_directives.saturating_add(1))
     {
         let range = macro_call.syntax().text_range();
         let expression = slice_text(text, range.start(), range.end());
+        let Some((callee, _)) = expression.split_once('!') else {
+            continue;
+        };
+        if callee.trim() != "include" {
+            continue;
+        }
         directives.push(RustIncludeDirective {
             line: line_index.line(range.start()),
             literal_path: include_literal_path(&expression),
@@ -63,6 +63,9 @@ pub(crate) fn rust_include_directives(
                 .any(|node| ast::Module::can_cast(node.kind())),
             expression,
         });
+        if directives.len() > max_directives {
+            break;
+        }
     }
     directives.sort_by(|left, right| {
         left.line
