@@ -15,12 +15,12 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
     let canonical_root = std::fs::canonicalize(root).ok();
 
     'files: for (parent, facts) in &index.files {
-        if facts.used_lexical_fallback || !facts.source.contains("include") {
+        if facts.used_lexical_fallback || !might_contain_include_macro(&facts.source) {
             continue;
         }
-        // The substring check is only a cheap negative prefilter. Parser-backed
-        // macro nodes remain the semantic authority, so comments and strings
-        // cannot create include relationships.
+        // This token-shaped check is only a cheap negative prefilter.
+        // Parser-backed macro nodes remain the semantic authority, so comments
+        // and strings cannot create include relationships.
         let directives = match rust_include_directives(parent, &facts.source, MAX_INCLUDE_EDGES) {
             Ok(directives) => directives,
             Err(reason_code) => {
@@ -178,6 +178,64 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
     rebase_function_identities(index);
 }
 
+fn might_contain_include_macro(source: &str) -> bool {
+    let bytes = source.as_bytes();
+    let mut offset = 0;
+    while let Some(relative) = source[offset..].find("include") {
+        let start = offset + relative;
+        let end = start + "include".len();
+        let has_identifier_prefix = start > 0
+            && (bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_');
+        let has_identifier_suffix = end < bytes.len()
+            && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_');
+        if !has_identifier_prefix && !has_identifier_suffix {
+            let mut cursor = end;
+            loop {
+                while bytes
+                    .get(cursor)
+                    .is_some_and(|byte| byte.is_ascii_whitespace())
+                {
+                    cursor += 1;
+                }
+                if bytes.get(cursor..cursor + 2) == Some(b"//") {
+                    cursor += 2;
+                    while bytes.get(cursor).is_some_and(|byte| *byte != b'\n') {
+                        cursor += 1;
+                    }
+                    continue;
+                }
+                if bytes.get(cursor..cursor + 2) == Some(b"/*") {
+                    cursor += 2;
+                    let mut depth = 1usize;
+                    while depth > 0 {
+                        match bytes.get(cursor..cursor + 2) {
+                            Some(b"/*") => {
+                                depth += 1;
+                                cursor += 2;
+                            }
+                            Some(b"*/") => {
+                                depth -= 1;
+                                cursor += 2;
+                            }
+                            Some(_) => cursor += 1,
+                            None => break,
+                        }
+                    }
+                    if depth == 0 {
+                        continue;
+                    }
+                }
+                break;
+            }
+            if bytes.get(cursor) == Some(&b'!') {
+                return true;
+            }
+        }
+        offset = end;
+    }
+    false
+}
+
 fn sort_limitations(limitations: &mut Vec<RustIncludeLimitation>) {
     limitations.sort_by(|left, right| {
         left.parent
@@ -300,6 +358,25 @@ fn limitation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn include_macro_prefilter_rejects_common_identifier_mentions() {
+        assert!(!might_contain_include_macro("include_str!(\"data\")"));
+        assert!(!might_contain_include_macro("let included = true;"));
+        assert!(!might_contain_include_macro("preinclude!(\"fragment.rs\")"));
+    }
+
+    #[test]
+    fn include_macro_prefilter_accepts_token_separating_trivia() {
+        assert!(might_contain_include_macro("include!(\"fragment.rs\")"));
+        assert!(might_contain_include_macro("include \n ! (\"fragment.rs\")"));
+        assert!(might_contain_include_macro(
+            "include /* outer /* nested */ comment */ ! (\"fragment.rs\")"
+        ));
+        assert!(might_contain_include_macro(
+            "include // why this fragment\n ! (\"fragment.rs\")"
+        ));
+    }
 
     #[test]
     fn traversal_above_repository_root_is_rejected() {
