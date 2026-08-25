@@ -54,6 +54,7 @@ Current how-to docs:
 - [CI strategy](CI.md)
 - [Proof routing](PROOF_ROUTING.md)
 - [Source-of-truth control plane](source-of-truth/README.md)
+- [Sibling-tool interop and learning ledger](interop/sibling-tools.md)
 - [Security policy](../SECURITY.md)
 - [Repository settings](REPO_SETTINGS.md)
 - [Swarm development](swarm-development.md)
