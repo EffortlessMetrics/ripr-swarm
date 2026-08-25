@@ -79,4 +79,4 @@ jobs:
           git commit -m "fix(specs): remove temporal validity from spec format (#3455)"
           git push origin "HEAD:${HEAD_BRANCH}"
 
-# child trigger
+# default-base retarget trigger
