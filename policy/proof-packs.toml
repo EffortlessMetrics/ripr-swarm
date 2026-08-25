@@ -53,7 +53,7 @@ id = "output-contracts"
 paths = ["crates/ripr/src/output/**", "docs/OUTPUT_SCHEMA.md", "policy/output_contracts.txt", "fixtures/**/expected/**"]
 required_commands = ["cargo xtask check-output-contracts", "cargo xtask goldens check", "cargo xtask fixtures"]
 advisory_commands = ["cargo xtask golden-drift"]
-ci_lane = "output-contracts"
+ci_lane = "routed-rust-small"
 proves = "Rendered output still matches the versioned JSON shape, golden expectations, and fixture contracts."
 does_not_prove = "It does not demonstrate that the analysis findings feeding the renderers are correct."
 
