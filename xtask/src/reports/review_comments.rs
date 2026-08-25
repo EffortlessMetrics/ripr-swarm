@@ -1059,7 +1059,7 @@ fn render_error_review_comments_markdown(packet: &Value) -> String {
         markdown.push_str("\n- source: `");
         markdown.push_str(&md_escape(
             fallback
-.get("source")
+                .get("source")
                 .and_then(Value::as_str)
                 .unwrap_or("unknown"),
         ));
@@ -1433,6 +1433,11 @@ mod tests {
         let mut options = options();
         options.check_output = Some("target/check-output.json".to_string());
         let producer = serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "mode": "fast",
+            "root": normalize_path_text(&command_root_arg(&repo, &options.root)),
+            "base": options.base,
             "summary": {
                 "weakly_exposed": 1,
                 "reachable_unrevealed": 1,
