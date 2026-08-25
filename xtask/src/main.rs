@@ -4995,8 +4995,7 @@ fn scratch_gc_concurrency_violations(path: &str, text: &str) -> Vec<String> {
         }
     }
     let has_pool_group = concurrency_lines.contains(&GROUP);
-    let has_non_cancelling_pool_queue =
-        concurrency_lines.contains(&"cancel-in-progress: false");
+    let has_non_cancelling_pool_queue = concurrency_lines.contains(&"cancel-in-progress: false");
 
     let mut violations = Vec::new();
     if has_top_level_concurrency {
