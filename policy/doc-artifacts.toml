@@ -811,3 +811,11 @@ path = "docs/specs/RIPR-SPEC-0166-rust-subprocess-binary-reach-limitation.md"
 status = "proposed"
 owner = "language-adapter-swarm"
 standalone_reason = "Names the fail-closed integration-test subprocess boundary without claiming binary ownership, static reach, receipt validity, or coverage."
+
+[[artifact]]
+id = "RIPR-SPEC-0167"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0167-convergence-architecture.md"
+status = "accepted"
+owner = "product-swarm"
+standalone_reason = "Issue #3323 establishes the internal convergence hexagon, bounded ports, canonical ownership, and mechanical dependency controls without implementing convergence decisions or repository-administration and publication authority."
