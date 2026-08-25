@@ -362,7 +362,9 @@ mod tests {
 
         assert_eq!(
             plan.full_route_reason,
-            Some("external-tree applicability is not yet proven; the complete product route is required")
+            Some(
+                "external-tree applicability is not yet proven; the complete product route is required",
+            )
         );
         assert!(plan
             .rows
