@@ -16,6 +16,8 @@ mod metrics;
 mod module_health;
 mod mutation;
 mod operator;
+#[path = "../product_gate_plan.rs"]
+pub(crate) mod product_gate_plan;
 mod pr;
 mod pr_causal_delta;
 mod pr_evidence;
