@@ -1588,7 +1588,9 @@ fn analyze_diff_does_not_hide_code_replaced_by_multiline_docstring() -> Result<(
     cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
 
     if result.findings.is_empty() {
-        return Err("replacing behavioral code with a docstring must remain analyzable".to_string());
+        return Err(
+            "replacing behavioral code with a docstring must remain analyzable".to_string(),
+        );
     }
     Ok(())
 }

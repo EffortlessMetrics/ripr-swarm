@@ -690,16 +690,9 @@ fn evidence_promotion_parse_assertion(
                 )?,
             },
         ),
-        "expected_finding_count" => Ok(
-            EvidencePromotionSemanticAssertion::ExpectedFindingCount {
-                count: evidence_promotion_required_assertion_u64(
-                    case_id,
-                    index,
-                    assertion,
-                    "count",
-                )?,
-            },
-        ),
+        "expected_finding_count" => Ok(EvidencePromotionSemanticAssertion::ExpectedFindingCount {
+            count: evidence_promotion_required_assertion_u64(case_id, index, assertion, "count")?,
+        }),
         "must_disclose_witness" => Ok(EvidencePromotionSemanticAssertion::MustDiscloseWitness),
         "must_disclose_limitation_detail" => {
             Ok(EvidencePromotionSemanticAssertion::MustDiscloseLimitationDetail)

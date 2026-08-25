@@ -5949,9 +5949,8 @@ fn classify_change_with_context(
     // when BOTH sides are non-behavioral: if real code was replaced by a docstring
     // (old line behavioral), keep analyzing rather than silently dropping it.
     let new_is_noop = no_behavior.new_line_in_docstring || is_python_no_behavior_line(line_text);
-    let old_is_noop = old_line_text.is_none_or(|old| {
-        no_behavior.old_line_in_docstring || is_python_no_behavior_line(old)
-    });
+    let old_is_noop = old_line_text
+        .is_none_or(|old| no_behavior.old_line_in_docstring || is_python_no_behavior_line(old));
     if new_is_noop && old_is_noop {
         return None;
     }
@@ -6569,8 +6568,7 @@ impl LanguageAdapter for PythonAdapter {
             };
             let facts = extract_source_facts(relative, &source);
             debug_assert!(source_fact_snapshot_observation(&facts) > 0);
-            docstring_ranges_by_file
-                .insert(relative.clone(), facts.docstring_line_ranges.clone());
+            docstring_ranges_by_file.insert(relative.clone(), facts.docstring_line_ranges.clone());
             if is_test_file(relative) {
                 all_tests.extend(facts.tests);
             } else {
@@ -6594,14 +6592,11 @@ impl LanguageAdapter for PythonAdapter {
                 .get(&changed.path)
                 .map(Vec::as_slice)
                 .unwrap_or_default();
-            let old_docstring_ranges =
-                std::fs::read_to_string(options.root.join(&changed.path))
-                    .ok()
-                    .and_then(|source| reconstruct_old_source(&source, changed))
-                    .map(|source| {
-                        extract_source_facts(&changed.path, &source).docstring_line_ranges
-                    })
-                    .unwrap_or_default();
+            let old_docstring_ranges = std::fs::read_to_string(options.root.join(&changed.path))
+                .ok()
+                .and_then(|source| reconstruct_old_source(&source, changed))
+                .map(|source| extract_source_facts(&changed.path, &source).docstring_line_ranges)
+                .unwrap_or_default();
             for added in &changed.added_lines {
                 // Pair the in-place removed line (same new-side position) so the
                 // classifier can credit the changed-sink token on the DELTA only.
