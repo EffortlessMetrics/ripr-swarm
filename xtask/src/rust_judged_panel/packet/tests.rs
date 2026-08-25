@@ -140,6 +140,89 @@ fn rust_judged_panel_packet_retained_validator_reaches_committed_generation() ->
     super::validate_at(root, &manifest)
 }
 
+#[test]
+fn rust_judged_panel_packet_public_publish_validates_disposable_host_run() -> Result<(), String> {
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "xtask manifest lacks repository parent".to_string())?;
+    let root = TestRoot(scratch("public-publish")?);
+    copy_tree(
+        &repository.join("metrics/rust-judged-behavior-panel"),
+        &root.0.join("metrics/rust-judged-behavior-panel"),
+    )?;
+    fs::write(
+        root.0.join(".git"),
+        format!("gitdir: {}\n", repository.join(".git").display()),
+    )
+    .map_err(|error| format!("bind disposable fixture to repository git data: {error}"))?;
+    let state = crate::rust_judged_panel::subject::repository_state(repository)?;
+    let subjects_path = root.0.join(SUBJECTS_PATH);
+    let mut authority: serde_json::Value = read_strict_json(&subjects_path, "subject authority")?;
+    for case in authority
+        .get_mut("cases")
+        .and_then(serde_json::Value::as_array_mut)
+        .ok_or_else(|| "subject authority cases are not an array".to_string())?
+    {
+        case["expected_base"] = serde_json::Value::String(state.head.clone());
+        case["expected_head"] = serde_json::Value::String(state.head.clone());
+        case["expected_tree"] = serde_json::Value::String(state.tree.clone());
+    }
+    fs::write(
+        subjects_path,
+        serde_json::to_vec_pretty(&authority).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("write disposable subject identities: {error}"))?;
+    let manifest =
+        crate::rust_judged_panel::load_and_validate_at(&root.0, Path::new(MANIFEST_PATH))?;
+    let subjects = crate::rust_judged_panel::subject::load_for_packet(&root.0, &manifest)?;
+    if subjects.len() != 3
+        || subjects
+            .iter()
+            .map(|subject| subject.expected_direction.as_str())
+            .collect::<std::collections::BTreeSet<_>>()
+            != ["should_gap", "should_stay_quiet", "should_limit"]
+                .into_iter()
+                .collect()
+    {
+        return Err("fixture does not cover all three governed directions".to_string());
+    }
+    let host_current = crate::rust_judged_panel::host_run::write_test_host_run(&root.0, &subjects)?;
+    super::publish(&root.0, &manifest, &host_current)?;
+
+    let current: PortableCurrent =
+        read_strict_json(&root.0.join(CURRENT_PATH), "public publish current")?;
+    let index: PortableIndex =
+        read_strict_json(&root.0.join(&current.index_path), "public publish index")?;
+    if index.generation_id.is_empty()
+        || index.packets.len() != 3
+        || index
+            .packets
+            .iter()
+            .any(|entry| entry.packet_path.split('/').nth(4) != Some(index.generation_id.as_str()))
+    {
+        return Err(
+            "public publication did not bind every packet to its final generation".to_string(),
+        );
+    }
+    for entry in &index.packets {
+        let packet: PortablePacket =
+            read_strict_json(&root.0.join(&entry.packet_path), "public packet")?;
+        let attestation: RetainedAttestation =
+            read_strict_json(&root.0.join(&entry.attestation_path), "public attestation")?;
+        if packet.case_id != entry.case_id
+            || attestation.case_id != entry.case_id
+            || packet.host_evidence.run_id != "run-fixture"
+            || packet.judgment.disposition != "unjudged"
+        {
+            return Err(format!(
+                "public publication lost generation or unjudged identity for `{}`",
+                entry.case_id
+            ));
+        }
+    }
+    Ok(())
+}
+
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 struct TestRoot(PathBuf);
@@ -388,172 +471,6 @@ fn projected(
         attestation_sha256: sha256_serialized(&attestation)?,
     };
     Ok((packet, attestation, entry))
-}
-
-fn fixture_input_value(role: &str, file: &ReplaySubjectFile) -> Value {
-    let mut value = serde_json::Map::new();
-    value.insert("role".to_string(), Value::String(role.to_string()));
-    value.insert(
-        "source_path".to_string(),
-        Value::String(file.source_path.clone()),
-    );
-    value.insert(
-        "repository_path".to_string(),
-        Value::String(file.repository_path.clone()),
-    );
-    value.insert("sha256".to_string(), Value::String(file.sha256.clone()));
-    Value::Object(value)
-}
-
-fn build_validated_host_run_fixture(
-    root: &Path,
-    manifest: &RustJudgedPanelManifest,
-) -> Result<String, String> {
-    let scratch_root = root.join("target/test-subjects");
-    let subjects =
-        crate::rust_judged_panel::subject::materialize_for_replay(root, &scratch_root, manifest)?;
-    let packet_subjects = crate::rust_judged_panel::subject::load_for_packet(root, manifest)?;
-    let output_root = root.join("target/ripr/rust-judged-panel");
-    let run_id = "fixture-run";
-    let run_root = output_root.join("runs").join(run_id);
-    fs::create_dir_all(run_root.join("cases")).map_err(|error| error.to_string())?;
-    fs::create_dir_all(run_root.join("build")).map_err(|error| error.to_string())?;
-    fs::write(run_root.join("build/ripr"), b"fixture binary").map_err(|error| error.to_string())?;
-    fs::write(run_root.join("build/stdout.bin"), b"build stdout")
-        .map_err(|error| error.to_string())?;
-    fs::write(run_root.join("build/stderr.bin"), b"build stderr")
-        .map_err(|error| error.to_string())?;
-    let binary_sha256 = sha256_bytes(b"fixture binary");
-    let build = serde_json::json!({
-        "command": ["cargo", "build", "-p", "ripr", "--locked", "--offline", "--target-dir", "build/target"],
-        "package": "ripr",
-        "profile": "dev",
-        "features": ["default"],
-        "locked": true,
-        "offline": true,
-        "cargo_version": "cargo 1.90",
-        "rustc_verbose_version": "rustc 1.90",
-        "host_target": "fixture-target",
-        "cargo_home": null,
-        "executed_binary_path": "build/target/debug/ripr",
-        "retained_binary_path": "build/ripr",
-        "binary_sha256": binary_sha256,
-        "binary_bytes": 14,
-        "binary_version": "ripr 0.12.0",
-        "build_stdout_sha256": sha256_bytes(b"build stdout"),
-        "build_stderr_sha256": sha256_bytes(b"build stderr")
-    });
-    let mut entries = Vec::new();
-    for subject in subjects {
-        let packet_subject = packet_subjects
-            .iter()
-            .find(|candidate| candidate.case_id == subject.case_id)
-            .ok_or_else(|| format!("missing packet subject `{}`", subject.case_id))?;
-        let executed_diff_identity = crate::rust_judged_panel::subject::executed_diff_identity(
-            &subject.root,
-            &subject.base,
-        )?;
-        let reported_root = format!(
-            "target/ripr/rust-judged-panel/.staging-{run_id}/subjects/{}",
-            subject.case_id
-        );
-        let producer_family = match packet_subject.behavior_family.as_str() {
-            "predicate_boundary" => "predicate",
-            "return_value" => "return_value",
-            other => return Err(format!("unsupported behavior family `{other}`")),
-        };
-        let mut finding = serde_json::json!({
-            "id": format!("finding-{}", subject.case_id),
-            "classification": &packet_subject.expected_classification,
-            "probe": {"family": producer_family, "file": format!("{reported_root}/src/lib.rs"), "line": packet_subject.anchor_line, "expression": &packet_subject.changed_behavior},
-            "missing": &packet_subject.expected_missing,
-            "recommended_next_step": &packet_subject.expected_recommendation
-        });
-        if let Some(kind) = packet_subject.expected_static_limit_kind.as_deref() {
-            finding["static_limit_kind"] = Value::String(kind.to_string());
-            finding["static_limitation"] = serde_json::json!({"kind": kind});
-        }
-        let report = serde_json::json!({
-            "root": reported_root,
-            "analysis_outcome": {"analysis_complete": true, "outcome": {"kind": "complete_with_findings", "limitations": []}},
-            "findings": [finding]
-        });
-        let stdout = serde_json::to_vec(&report).map_err(|error| error.to_string())?;
-        let stderr = Vec::new();
-        let case_root = run_root.join("cases").join(&subject.case_id);
-        fs::create_dir_all(&case_root).map_err(|error| error.to_string())?;
-        copy_tree(
-            &subject.root,
-            &run_root.join("subjects").join(&subject.case_id),
-        )?;
-        fs::write(case_root.join("stdout.bin"), &stdout).map_err(|error| error.to_string())?;
-        fs::write(case_root.join("stderr.bin"), &stderr).map_err(|error| error.to_string())?;
-        let mut subject_inputs = vec![
-            fixture_input_value("cargo_toml", &packet_subject.cargo_toml),
-            fixture_input_value("cargo_lock", &packet_subject.cargo_lock),
-            fixture_input_value("config", &packet_subject.config),
-            fixture_input_value("source_before", &packet_subject.source_before),
-            fixture_input_value("source_after", &packet_subject.source_after),
-            fixture_input_value("diff", &packet_subject.diff),
-        ];
-        subject_inputs.extend(
-            packet_subject
-                .tests
-                .iter()
-                .map(|file| fixture_input_value("test", file)),
-        );
-        let base = subject.base.clone();
-        let head = subject.head.clone();
-        let tree = subject.tree.clone();
-        let config_path = subject.config.repository_path.clone();
-        let config_sha256 = subject.config.sha256.clone();
-        let diff_path = packet_subject.diff.repository_path.clone();
-        let diff_sha256 = packet_subject.diff.sha256.clone();
-        let plan = serde_json::json!({
-            "argv": ["check", "--root", "<materialized-subject>", "--base", base, "--mode", "draft", "--json"],
-            "root": "<materialized-subject>", "base": base, "head": head, "tree": tree,
-            "mode": "draft", "format": "json", "config_path": config_path,
-            "config_sha256": config_sha256, "diff_path": diff_path,
-            "diff_sha256": diff_sha256, "executed_diff_identity": executed_diff_identity,
-            "subject_inputs": subject_inputs
-        });
-        let receipt = serde_json::json!({
-            "schema_version":"0.1", "kind":"rust_judged_panel_host_run_receipt", "case_id":&subject.case_id,
-            "subject_id":&subject.subject_id, "expected_direction":&subject.expected_direction,
-            "source_head":"producer-head", "source_tree":"producer-tree", "binary_sha256":&binary_sha256,
-            "repository_base":&subject.base, "repository_head":&subject.head, "repository_tree":&subject.tree,
-            "plan":plan, "disposition":"complete", "exit_code":0, "timed_out":false, "duration_ms":1,
-            "analyzer_input_identity":executed_diff_identity,
-            "raw":{"stdout_path":format!("cases/{}/stdout.bin", subject.case_id), "stdout_sha256":sha256_bytes(&stdout), "stdout_bytes":stdout.len(), "stderr_path":format!("cases/{}/stderr.bin", subject.case_id), "stderr_sha256":sha256_bytes(&stderr), "stderr_bytes":0}, "error":null
-        });
-        let receipt_bytes = pretty_json(&receipt)?;
-        fs::write(case_root.join("receipt.json"), &receipt_bytes)
-            .map_err(|error| error.to_string())?;
-        entries.push(serde_json::json!({"case_id":&subject.case_id, "expected_direction":&subject.expected_direction, "receipt_path":format!("cases/{}/receipt.json", subject.case_id), "receipt_sha256":sha256_bytes(&receipt_bytes), "stdout_sha256":sha256_bytes(&stdout), "stderr_sha256":sha256_bytes(&stderr)}));
-    }
-    let index = serde_json::json!({"schema_version":"0.1", "kind":"rust_judged_panel_host_run_index", "publication_state":"complete", "run_id":run_id, "source":{"head":"producer-head","tree":"producer-tree","cargo_lock_sha256":"sha256:lock","cargo_toml_sha256":"sha256:toml","dirty":false}, "build":build, "cases":entries, "non_claims":[]});
-    let index_bytes = pretty_json(&index)?;
-    fs::write(run_root.join("run-index.json"), &index_bytes).map_err(|error| error.to_string())?;
-    let current = serde_json::json!({"schema_version":"0.1", "kind":"rust_judged_panel_current_host_run", "run_id":run_id, "index_path":format!("runs/{run_id}/run-index.json"), "index_sha256":sha256_bytes(&index_bytes)});
-    fs::write(output_root.join("current.json"), pretty_json(&current)?)
-        .map_err(|error| error.to_string())?;
-    Ok("target/ripr/rust-judged-panel/current.json".to_string())
-}
-
-#[test]
-fn judgment_sidecar_public_publish_uses_validated_host_run_fixture() -> Result<(), String> {
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .ok_or_else(|| "xtask manifest lacks workspace parent".to_string())?;
-    let root = TestRoot(scratch("public-publish")?);
-    copy_tree(
-        &repository.join("metrics/rust-judged-behavior-panel"),
-        &root.0.join("metrics/rust-judged-behavior-panel"),
-    )?;
-    let manifest = super::super::load_and_validate_at(&root.0, Path::new(MANIFEST_PATH))?;
-    let current = build_validated_host_run_fixture(&root.0, &manifest)?;
-    super::publish(&root.0, &manifest, &current)?;
-    validate_at(&root.0, &manifest)
 }
 
 fn rejects_reseal(fixture: &Fixture, mutate: fn(&mut PortablePacket)) -> Result<(), String> {

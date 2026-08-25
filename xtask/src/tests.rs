@@ -6,7 +6,6 @@
 use std::io::Read;
 
 use crate::acquire_test_cwd_write_guard;
-use crate::scratch_gc_concurrency_violations;
 use ripr::output::receipt_lifecycle::{
     RECEIPT_MISSING, RECEIPT_MOVEMENT_IMPROVED, RECEIPT_NOT_APPLICABLE,
 };
@@ -35,6 +34,7 @@ use super::run::{
     TimedFileOutput, TimedOutput, capture_output, command_success_owned, run, run_output,
     run_output_optional, run_output_owned,
 };
+use super::scratch_gc_concurrency_violations;
 use super::validate_bless_reason;
 use super::{
     BUN_UB_CROSS_LANGUAGE_DOGFOOD_REQUIRED_CASES, BadgeArtifactJob, BadgeBasisReport,

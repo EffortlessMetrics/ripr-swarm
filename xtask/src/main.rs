@@ -5660,7 +5660,8 @@ fn proposed_spec_age(path: &Path, repo_root: &Path, now: SystemTime) -> Proposed
         Some(timestamp) => timestamp,
         None => {
             return ProposedSpecAge::NotProven {
-                reason: "Git returned no parseable commit timestamp for the spec path".to_string(),
+                reason: "Git age lookup returned no parseable commit timestamp for the spec path"
+                    .to_string(),
             };
         }
     };
