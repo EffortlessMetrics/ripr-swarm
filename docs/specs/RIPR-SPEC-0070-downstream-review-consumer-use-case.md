@@ -1,6 +1,6 @@
 # RIPR-SPEC-0070: Downstream Review Consumer Use Case
 
-Status: proposed
+Status: accepted
 
 Owner: product / swarm
 
@@ -25,7 +25,7 @@ Linked issues:
 
 Linked PRs:
 
-- None yet
+- [unsafe-review-swarm#1521](https://github.com/EffortlessMetrics/unsafe-review-swarm/pull/1521) — consumer-side rail review and field-mapping confirmation.
 
 Support-tier impact:
 
@@ -232,11 +232,12 @@ Downstream surfaces that render ripr evidence must pair these:
 - No default blocking policy for any downstream tool.
 - No support-tier promotion for TypeScript/JavaScript, Bun routes, or
   any preview surface.
-- No guarantee that every rail requirement is already satisfied; the
-  named gaps in the rail table (preflight-skip structured counts,
-  cache-persistence contract, per-seam `source_route`, per-seam
-  `stable_byte_family`, report-level diff-first `mode`) stay visible
-  until closed by their own slices.
+- No guarantee that every rail requirement is already implemented; the
+  remaining named gaps in the rail table (preflight-skip structured counts,
+  cache-persistence contract, and report-level diff-first encoding) stay
+  visible until closed by their own slices. The consumer-owned
+  `source_route` and `stable_byte_family` classifications are confirmed
+  downstream responsibilities, not missing ripr fields.
 
 ## Required Evidence
 
@@ -352,10 +353,10 @@ prefix.
 - Reject-list coverage: count of reject-list states pinned by a
   fixture (target: all nine).
 - Rail alignment: count of rail requirements mapped to a ripr field
-  versus named gaps (currently five named gaps: preflight-skip
-  structured counts, cache-persistence contract, per-seam
-  `source_route`, per-seam `stable_byte_family`, report-level
-  diff-first `mode`).
+  versus named gaps (currently three named gaps: preflight-skip
+  structured counts, cache-persistence contract, and report-level
+  diff-first encoding; `source_route` and `stable_byte_family` are
+  consumer-owned classifications).
 - Limited-run honesty: count of artifacts with `run_status =
   "limited_*"` that carry a limitation category and repair route
   (target: all of them).
@@ -387,10 +388,11 @@ prefix.
 - Cache-persistence gap: the rail wants reuse keyed by file hash, tool
   version, and scan mode as visible contract; ripr makes no such
   public claim yet, and downstream docs must not assert it.
-- Unmapped rail fields: per-seam `source_route` and
-  `stable_byte_family` and the report-level diff-first `mode` labels
-  have no ripr field today; consumers must not synthesize them from
-  grip fields or scope labels until their slices land.
+- Remaining unmapped rail field: the illustrative report-level diff-first
+  `mode` label has no literal ripr field today; `analysis_scope` is the
+  stable encoding. The per-seam `source_route` and `stable_byte_family`
+  labels are consumer-owned and may be synthesized only under the
+  confirmed rules in the unsafe-review rail.
 - Consumer parses `findings[]` directly: out of contract; the fix is a
   contract change request, not a parser.
 - A limited run's counts quoted as repo totals: rejected by the
