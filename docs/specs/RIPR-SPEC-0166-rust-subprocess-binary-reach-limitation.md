@@ -2,15 +2,16 @@
 
 Status: proposed
 
-## Purpose
+## Problem
 
-Name the boundary where an integration test invokes a Cargo-built binary but
-RIPR cannot yet map that executable back to the changed Rust owner.
+An integration test can invoke a Cargo-built binary without ripr being able to
+map that executable back to the changed Rust owner. Treating that subprocess as
+proof of reach, receipt validity, or coverage would overstate static evidence.
 
-## Contract
+## Behavior
 
-For a `no_static_path` finding whose owner is in `src/main.rs` or `src/bin/**`,
-RIPR may emit:
+For a `no_static_path` finding whose owner is in `src/main.rs` or
+`src/bin/**`, ripr may emit:
 
 ```text
 static_limit_kind = rust_subprocess_binary_reach_unresolved
@@ -21,17 +22,45 @@ when an integration test contains either a `Command::new` invocation using
 `cargo_bin(...)` invocation with an assertion/output/status observation.
 
 The recognizer is source-only and deterministic. It does not spawn a process,
-parse arbitrary shell commands, infer a binary target map, or credit the test
-as reaching any owner.
+parse arbitrary shell commands, infer a binary target map, or credit the test as
+reaching any owner.
 
-## Safety
+## Required Evidence
 
-Classification remains `no_static_path`. The limitation must not create a
-related test, promote exposure, claim receipt validity, or emit a repair
-packet. Direct unit-test and existing transitive/macro limitation behavior is
-unchanged.
+The emitted limitation must identify the changed owner and the deterministic
+integration-test location. Its evidence must state that the executable-to-owner
+mapping is unresolved and that no subprocess reach, receipt, coverage, or repair
+claim is made.
 
-## Follow-up boundary
+## Non-Goals
+
+This limitation does not count a subprocess test as related coverage, validate a
+receipt, infer Cargo binary targets, resolve arbitrary shell execution, or
+replace existing transitive/macro witness behavior.
+
+## Acceptance Examples
+
+Accepted shapes include `Command::new(env!("CARGO_BIN_EXE_worker")).output()`
+and `Command::cargo_bin("worker").unwrap().assert().success()`. A shell command
+such as `Command::new("sh")`, even when a Cargo executable token is mentioned
+nearby, is not accepted.
+
+## Test Mapping
+
+- `crates/ripr/src/analysis/language/rust.rs::tests::cargo_binary_invocation_shape_is_conservative_and_deterministic`
+- `crates/ripr/src/analysis/language/rust.rs::tests::subprocess_limit_only_applies_to_binary_source_paths_and_integration_tests`
+- `crates/ripr/src/domain/language.rs` static-limit wire and description tests
+- `crates/ripr/src/lsp/gap_artifacts.rs` static-limit validation test
+
+## Implementation Mapping
+
+- Rust adapter classification in `crates/ripr/src/analysis/language/rust.rs`
+- Wire value and description in `crates/ripr/src/domain/language.rs`
+- LSP known-kind validation in `crates/ripr/src/lsp/gap_artifacts.rs`
+- Contract registration in `.ripr/traceability.toml`, `docs/STATIC_LIMITS.md`,
+  and `policy/doc-artifacts.toml`
+
+## Follow-up Boundary
 
 Counting a subprocess test as evidence requires a separate Cargo binary-target
 map and a bounded owner relation. That work is intentionally not part of this
