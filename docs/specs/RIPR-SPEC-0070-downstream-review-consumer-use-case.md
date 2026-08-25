@@ -1,6 +1,6 @@
 # RIPR-SPEC-0070: Downstream Review Consumer Use Case
 
-Status: accepted
+Status: proposed
 
 Owner: product / swarm
 
