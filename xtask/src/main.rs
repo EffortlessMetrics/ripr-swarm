@@ -4215,8 +4215,10 @@ fn check_pr_report(failure: Option<&CheckPrGateFailure>) -> String {
                 body.push_str(&format!("- `{name}`\n"));
             }
         }
-    }
-        body.push_str(&format!("\n## Inherited-failure comparison (advisory)\n\nStatus: {}\nDetail: {}\n", failure.baseline.status, failure.baseline.detail));
+        body.push_str(&format!(
+            "\n## Inherited-failure comparison (advisory)\n\nStatus: {}\nDetail: {}\n",
+            failure.baseline.status, failure.baseline.detail
+        ));
     }
     let pr_summary_entry = if failure.is_some() {
         // The failure path returns before pr_summary() runs, so advertising
