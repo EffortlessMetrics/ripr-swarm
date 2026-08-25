@@ -711,7 +711,62 @@ fn apply_rust_no_static_path_limit(finding: &mut Finding, probe: &Probe, index: 
                 &witness,
                 &owner_name,
             ));
+    } else if let Some(test) = find_subprocess_binary_test(index, &probe.location.file) {
+        finding.static_limit_kind = Some(StaticLimitKind::RustSubprocessBinaryReachUnresolved);
+        finding.evidence.push(
+            "An integration test invokes a Cargo-built binary, but ripr cannot yet map that binary back to the changed owner; no subprocess reach or receipt claim is made.".to_string(),
+        );
+        finding.evidence.push(format!(
+            "Where to inspect: {}:{} ({})",
+            test.file.display(),
+            test.start_line,
+            test.name
+        ));
     }
+}
+
+fn find_subprocess_binary_test<'a>(
+    index: &'a RustIndex,
+    owner_file: &Path,
+) -> Option<&'a crate::analysis::facts::TestFact> {
+    if !is_binary_source_path(owner_file) {
+        return None;
+    }
+    index
+        .tests
+        .iter()
+        .filter(|test| rust_index::is_test_file(&test.file))
+        .filter(|test| is_cargo_binary_invocation(&test.body))
+        .min_by(|left, right| {
+            left.file
+                .cmp(&right.file)
+                .then(left.start_line.cmp(&right.start_line))
+                .then(left.name.cmp(&right.name))
+        })
+}
+
+fn is_binary_source_path(path: &Path) -> bool {
+    let components: Vec<_> = path.components().collect();
+    components
+        .windows(2)
+        .any(|window| window[0].as_os_str() == "src" && window[1].as_os_str() == "main.rs")
+        || components
+            .windows(2)
+            .any(|window| window[0].as_os_str() == "src" && window[1].as_os_str() == "bin")
+}
+
+fn is_cargo_binary_invocation(body: &str) -> bool {
+    let compact: String = body
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    let has_cargo_bin_env = compact.contains("Command::new(env!(\"CARGO_BIN_EXE_")
+        && (compact.contains(".output(") || compact.contains(".status("));
+    let has_assert_cmd_binary = compact.contains("cargo_bin(\"")
+        && (compact.contains(".assert(")
+            || compact.contains(".output(")
+            || compact.contains(".status("));
+    has_cargo_bin_env || has_assert_cmd_binary
 }
 
 fn apply_rust_macro_wrapped_assertion_limit(finding: &mut Finding, index: &RustIndex) {
@@ -1820,16 +1875,18 @@ mod tests {
         apply_rust_macro_wrapped_assertion_limit, changed_rust_line_count,
         cross_language_limit_kind, diff_changed_rust_line_limit_from_env,
         diff_identity_from_changed_files, diff_index_file_limit_from_env,
-        enforce_changed_rust_line_limit, enforce_repo_index_file_limit, is_generated_rust_file,
-        is_generated_rust_file_with_patterns, macro_reach_limit_kind, owner_has_ffi_attr,
-        partial_diff_budgets_from_env, partition_canonical_form,
-        replace_witnessed_no_path_infection_summary, repo_index_file_limit_from_env,
-        select_partial_diff_partition, select_partial_diff_partition_with_identity, sha256_hex,
-        transitive_reach_limit_kind,
+        enforce_changed_rust_line_limit, enforce_repo_index_file_limit, is_binary_source_path,
+        is_cargo_binary_invocation, is_generated_rust_file, is_generated_rust_file_with_patterns,
+        macro_reach_limit_kind, owner_has_ffi_attr, partial_diff_budgets_from_env,
+        partition_canonical_form, replace_witnessed_no_path_infection_summary,
+        repo_index_file_limit_from_env, select_partial_diff_partition,
+        select_partial_diff_partition_with_identity, sha256_hex, transitive_reach_limit_kind,
     };
     use crate::analysis::cancellation;
     use crate::analysis::diff::{ChangedFile, ChangedLine};
-    use crate::analysis::facts::{CallFact, FunctionSummary, LiteralFact, RustIndex, TestSummary};
+    use crate::analysis::facts::{
+        CallFact, FunctionSummary, LiteralFact, RustIndex, TestFact, TestSummary,
+    };
     use crate::analysis::language::{LanguageAdapter, LanguageId};
     use crate::analysis::{AnalysisMode, AnalysisOptions, diff};
     use crate::config::OraclePolicy;
@@ -3230,6 +3287,49 @@ fn absent_delimiter_boundary_returns_head() {
             transitive_reach_limit_kind(Path::new("src/lib.rs")),
             StaticLimitKind::RustTransitiveReachUnresolved
         );
+    }
+
+    #[test]
+    fn cargo_binary_invocation_shape_is_conservative_and_deterministic() {
+        assert!(is_cargo_binary_invocation(
+            r#"let output = Command::new(env!("CARGO_BIN_EXE_worker"))
+                .output().expect("binary output");
+            assert!(output.status.success());"#
+        ));
+        assert!(is_cargo_binary_invocation(
+            r#"Command::cargo_bin("worker").unwrap().assert().success();"#
+        ));
+        assert!(!is_cargo_binary_invocation(
+            r#"Command::new("sh").arg("-c").output().unwrap();"#
+        ));
+        assert!(!is_cargo_binary_invocation(
+            r#"let _binary = env!("CARGO_BIN_EXE_worker");
+            Command::new("sh").status().unwrap();"#
+        ));
+        assert!(!is_cargo_binary_invocation(
+            r#"assert!(output.stdout.contains("receipt:"));"#
+        ));
+    }
+
+    #[test]
+    fn subprocess_limit_only_applies_to_binary_source_paths_and_integration_tests() {
+        let mut index = RustIndex::default();
+        index.tests.push(TestFact {
+            name: "cli_receipt".to_string(),
+            file: PathBuf::from("tests/cli.rs"),
+            start_line: 12,
+            end_line: 18,
+            body: r#"Command::new(env!("CARGO_BIN_EXE_worker")).output().unwrap();"#.to_string(),
+            calls: Vec::new(),
+            assertions: Vec::new(),
+            literals: Vec::new(),
+            attrs: Vec::new(),
+        });
+        assert!(is_binary_source_path(Path::new("src/main.rs")));
+        assert!(super::find_subprocess_binary_test(&index, Path::new("src/main.rs")).is_some());
+        assert!(super::find_subprocess_binary_test(&index, Path::new("src/lib.rs")).is_none());
+        index.tests[0].file = PathBuf::from("src/lib.rs");
+        assert!(super::find_subprocess_binary_test(&index, Path::new("src/main.rs")).is_none());
     }
 
     #[test]

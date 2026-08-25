@@ -304,6 +304,178 @@ pub(super) fn run(
     Ok(())
 }
 
+#[cfg(test)]
+pub(super) fn write_test_host_run(
+    root: &Path,
+    subjects: &[super::subject::PacketSubject],
+) -> Result<String, String> {
+    let output_root = root.join("target/ripr/rust-judged-panel");
+    let attempt = output_root.join(".staging-run-fixture");
+    fs::create_dir_all(&attempt).map_err(|error| error.to_string())?;
+
+    let source = SourceIdentity {
+        head: "1".repeat(40),
+        tree: "2".repeat(40),
+        cargo_lock_sha256: format!("sha256:{}", "3".repeat(64)),
+        cargo_toml_sha256: format!("sha256:{}", "4".repeat(64)),
+        dirty: false,
+    };
+    let binary = b"fixture ripr binary\n";
+    let build_stdout = b"fixture build stdout\n";
+    let build_stderr = b"fixture build stderr\n";
+    fs::create_dir_all(attempt.join("build-target/debug")).map_err(|error| error.to_string())?;
+    fs::write(attempt.join("build-target/debug/ripr"), binary)
+        .map_err(|error| error.to_string())?;
+    fs::create_dir_all(attempt.join("build")).map_err(|error| error.to_string())?;
+    fs::write(attempt.join("build/stdout.bin"), build_stdout).map_err(|error| error.to_string())?;
+    fs::write(attempt.join("build/stderr.bin"), build_stderr).map_err(|error| error.to_string())?;
+    let build = BuildIdentity {
+        command: vec![
+            "cargo".to_string(),
+            "build".to_string(),
+            "-p".to_string(),
+            "ripr".to_string(),
+            "--locked".to_string(),
+            "--offline".to_string(),
+            "--target-dir".to_string(),
+            "build-target".to_string(),
+        ],
+        package: "ripr".to_string(),
+        profile: "dev".to_string(),
+        features: vec!["default".to_string()],
+        locked: true,
+        offline: true,
+        cargo_version: "cargo fixture".to_string(),
+        rustc_verbose_version: "rustc fixture".to_string(),
+        host_target: "fixture-host".to_string(),
+        cargo_home: None,
+        executed_binary_path: "build-target/debug/ripr".to_string(),
+        retained_binary_path: "build-target/debug/ripr".to_string(),
+        binary_sha256: sha256_bytes(binary),
+        binary_bytes: binary.len() as u64,
+        binary_version: "ripr 0.12.0-fixture".to_string(),
+        build_stdout_sha256: sha256_bytes(build_stdout),
+        build_stderr_sha256: sha256_bytes(build_stderr),
+    };
+    let run_id = "run-fixture";
+    let mut receipts = Vec::with_capacity(subjects.len());
+    for subject in subjects {
+        let case_root = attempt.join("subjects").join(&subject.case_id);
+        fs::create_dir_all(case_root.join("src")).map_err(|error| error.to_string())?;
+        fs::write(
+            case_root.join("src/lib.rs"),
+            format!(
+                "\nfn {}() {{ {} ; }}\n",
+                subject.owner, subject.changed_behavior
+            ),
+        )
+        .map_err(|error| error.to_string())?;
+
+        let case_dir = attempt.join("cases").join(&subject.case_id);
+        fs::create_dir_all(&case_dir).map_err(|error| error.to_string())?;
+        let stdout = serde_json::json!({
+            "root": format!("target/ripr/rust-judged-panel/.staging-{run_id}/subjects/{}", subject.case_id),
+            "analysis_outcome": {"analysis_complete": true, "outcome": {"kind": "complete_with_findings", "limitations": []}},
+            "findings": [{
+                "id": format!("fixture-{}", subject.case_id),
+                "classification": subject.expected_classification,
+                "probe": {
+                    "family": if subject.behavior_family == "predicate_boundary" { "predicate" } else { "return_value" },
+                    "file": format!("target/ripr/rust-judged-panel/.staging-{run_id}/subjects/{}/{}", subject.case_id, subject.anchor_file),
+                    "line": subject.anchor_line,
+                    "expression": subject.changed_behavior,
+                },
+                "missing": subject.expected_missing,
+                "recommended_next_step": subject.expected_recommendation,
+                "static_limit_kind": subject.expected_static_limit_kind,
+            }]
+        });
+        let stdout = serde_json::to_vec(&stdout).map_err(|error| error.to_string())?;
+        let stderr = b"fixture stderr\n";
+        fs::write(case_dir.join("stdout.bin"), &stdout).map_err(|error| error.to_string())?;
+        fs::write(case_dir.join("stderr.bin"), stderr).map_err(|error| error.to_string())?;
+        let subject_inputs = [
+            ("cargo_toml", &subject.cargo_toml),
+            ("cargo_lock", &subject.cargo_lock),
+            ("config", &subject.config),
+            ("source_before", &subject.source_before),
+            ("source_after", &subject.source_after),
+            ("diff", &subject.diff),
+        ]
+        .into_iter()
+        .map(|(role, file)| InputDigest {
+            role: role.to_string(),
+            source_path: file.source_path.clone(),
+            repository_path: file.repository_path.clone(),
+            sha256: file.sha256.clone(),
+        })
+        .chain(subject.tests.iter().map(|file| InputDigest {
+            role: "test".to_string(),
+            source_path: file.source_path.clone(),
+            repository_path: file.repository_path.clone(),
+            sha256: file.sha256.clone(),
+        }))
+        .collect::<Vec<_>>();
+        let executed_diff_identity =
+            super::subject::executed_diff_identity(&case_root, &subject.expected_base)?;
+        let receipt = CaseReceipt {
+            schema_version: "0.1".to_string(),
+            kind: "rust_judged_panel_host_run_receipt".to_string(),
+            case_id: subject.case_id.clone(),
+            subject_id: subject.subject_id.clone(),
+            expected_direction: subject.expected_direction.clone(),
+            source_head: source.head.clone(),
+            source_tree: source.tree.clone(),
+            binary_sha256: build.binary_sha256.clone(),
+            repository_base: subject.expected_base.clone(),
+            repository_head: subject.expected_head.clone(),
+            repository_tree: subject.expected_tree.clone(),
+            plan: ExecutionPlan {
+                argv: vec![
+                    "check".to_string(),
+                    "--root".to_string(),
+                    "<materialized-subject>".to_string(),
+                    "--base".to_string(),
+                    subject.expected_base.clone(),
+                    "--mode".to_string(),
+                    "draft".to_string(),
+                    "--json".to_string(),
+                ],
+                root: "<materialized-subject>".to_string(),
+                base: subject.expected_base.clone(),
+                head: subject.expected_head.clone(),
+                tree: subject.expected_tree.clone(),
+                mode: "draft".to_string(),
+                format: "json".to_string(),
+                config_path: subject.config.repository_path.clone(),
+                config_sha256: subject.config.sha256.clone(),
+                diff_path: subject.diff.source_path.clone(),
+                diff_sha256: subject.diff.sha256.clone(),
+                executed_diff_identity: executed_diff_identity.clone(),
+                subject_inputs,
+            },
+            disposition: "complete".to_string(),
+            exit_code: Some(0),
+            timed_out: false,
+            duration_ms: 1,
+            analyzer_input_identity: Some(executed_diff_identity),
+            raw: RawEvidence {
+                stdout_path: format!("cases/{}/stdout.bin", subject.case_id),
+                stdout_sha256: sha256_bytes(&stdout),
+                stdout_bytes: stdout.len() as u64,
+                stderr_path: format!("cases/{}/stderr.bin", subject.case_id),
+                stderr_sha256: sha256_bytes(stderr),
+                stderr_bytes: stderr.len() as u64,
+            },
+            error: None,
+        };
+        atomic_write(&case_dir.join("receipt.json"), &pretty_json(&receipt)?)?;
+        receipts.push(receipt);
+    }
+    publish_complete_generation(&output_root, &attempt, run_id, source, build, &receipts)?;
+    Ok("target/ripr/rust-judged-panel/current.json".to_string())
+}
+
 fn source_identity(root: &Path, state: &RepositoryState) -> Result<SourceIdentity, String> {
     Ok(SourceIdentity {
         head: state.head.clone(),

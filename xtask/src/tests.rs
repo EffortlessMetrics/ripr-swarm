@@ -34,6 +34,7 @@ use super::run::{
     TimedFileOutput, TimedOutput, capture_output, command_success_owned, run, run_output,
     run_output_optional, run_output_owned,
 };
+use super::scratch_gc_concurrency_violations;
 use super::validate_bless_reason;
 use super::{
     BUN_UB_CROSS_LANGUAGE_DOGFOOD_REQUIRED_CASES, BadgeArtifactJob, BadgeBasisReport,
