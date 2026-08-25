@@ -9249,11 +9249,9 @@ jobs:
       cancel-in-progress: false
 "#;
 
-    assert!(scratch_gc_concurrency_violations(
-        ".github/workflows/scratch-gc.yml",
-        workflow,
-    )
-    .is_empty());
+    assert!(
+        scratch_gc_concurrency_violations(".github/workflows/scratch-gc.yml", workflow,).is_empty()
+    );
 }
 
 #[test]
@@ -9269,10 +9267,8 @@ jobs:
         pool: [cx43, cpx42, cx53]
 "#;
 
-    let violations = scratch_gc_concurrency_violations(
-        ".github/workflows/scratch-gc.yml",
-        workflow,
-    );
+    let violations =
+        scratch_gc_concurrency_violations(".github/workflows/scratch-gc.yml", workflow);
 
     assert_eq!(violations.len(), 2);
     assert!(violations[0].contains("workflow-level concurrency"));
