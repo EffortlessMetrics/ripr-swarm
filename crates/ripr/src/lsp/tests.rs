@@ -12902,8 +12902,10 @@ fn execute_command_collect_workspace_status_with_snapshot_returns_diagnostics_co
             vec![diagnostic],
             vec![finding],
         );
-        let mut input_config = LspAnalysisConfig::default();
-        input_config.base_ref = Some("ripr-lsp-test-missing-base".to_string());
+        let input_config = LspAnalysisConfig {
+            base_ref: Some("ripr-lsp-test-missing-base".to_string()),
+            ..LspAnalysisConfig::default()
+        };
         diagnostics.snapshot.input_identity = Some(LspAnalysisInputIdentity::from_refresh_inputs(
             root.path().to_path_buf(),
             1,
