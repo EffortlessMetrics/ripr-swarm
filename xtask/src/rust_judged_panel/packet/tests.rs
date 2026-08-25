@@ -453,17 +453,30 @@ fn build_validated_host_run_fixture(
             &subject.root,
             &subject.base,
         )?;
+        let reported_root = format!(
+            "target/ripr/rust-judged-panel/.staging-{run_id}/subjects/{}",
+            subject.case_id
+        );
+        let producer_family = match packet_subject.behavior_family.as_str() {
+            "predicate_boundary" => "predicate",
+            "return_value" => "return_value",
+            other => return Err(format!("unsupported behavior family `{other}`")),
+        };
+        let mut finding = serde_json::json!({
+            "id": format!("finding-{}", subject.case_id),
+            "classification": &packet_subject.expected_classification,
+            "probe": {"family": producer_family, "file": format!("{reported_root}/src/lib.rs"), "line": packet_subject.anchor_line, "expression": &packet_subject.changed_behavior},
+            "missing": &packet_subject.expected_missing,
+            "recommended_next_step": &packet_subject.expected_recommendation
+        });
+        if let Some(kind) = packet_subject.expected_static_limit_kind.as_deref() {
+            finding["static_limit_kind"] = Value::String(kind.to_string());
+            finding["static_limitation"] = serde_json::json!({"kind": kind});
+        }
         let report = serde_json::json!({
-            "root": &subject.root,
+            "root": reported_root,
             "analysis_outcome": {"analysis_complete": true, "outcome": {"kind": "complete_with_findings", "limitations": []}},
-            "findings": [{
-                "id": format!("finding-{}", subject.case_id),
-                "classification": &packet_subject.expected_classification,
-                "probe": {"family": &packet_subject.behavior_family, "file": "src/lib.rs", "line": packet_subject.anchor_line, "expression": &packet_subject.changed_behavior},
-                "missing": &packet_subject.expected_missing,
-                "recommended_next_step": &packet_subject.expected_recommendation,
-                "static_limit_kind": &packet_subject.expected_static_limit_kind
-            }]
+            "findings": [finding]
         });
         let stdout = serde_json::to_vec(&report).map_err(|error| error.to_string())?;
         let stderr = Vec::new();
@@ -1069,4 +1082,3 @@ fn rust_judged_panel_packet_reuse_validates_every_member_before_current() -> Res
     }
     Ok(())
 }
-
