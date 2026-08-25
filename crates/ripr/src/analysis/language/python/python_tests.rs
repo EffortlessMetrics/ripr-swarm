@@ -1597,12 +1597,19 @@ fn analyze_diff_does_not_hide_code_replaced_by_multiline_docstring() -> Result<(
 
 #[test]
 fn docstring_ranges_exclude_assigned_strings_and_fstrings() {
-    let source = "\
-\"\"\"Module docs.\nMore module docs.\n\"\"\"\n\
-MESSAGE = \"\"\"Assigned text.\nMore assigned text.\n\"\"\"\n\
-def render(value):\n\
-    f\"\"\"{side_effect(value)}\nformatted text\n\"\"\"\n\
-    return MESSAGE\n";
+    let source = concat!(
+        "\"\"\"Module docs.\n",
+        "More module docs.\n",
+        "\"\"\"\n",
+        "MESSAGE = \"\"\"Assigned text.\n",
+        "More assigned text.\n",
+        "\"\"\"\n",
+        "def render(value):\n",
+        "    f\"\"\"{side_effect(value)}\n",
+        "formatted text\n",
+        "\"\"\"\n",
+        "    return MESSAGE\n",
+    );
     let facts = extract_source_facts(Path::new("src/messages.py"), source);
 
     assert_eq!(
