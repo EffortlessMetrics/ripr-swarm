@@ -1,8 +1,8 @@
+#[cfg(test)]
+use super::facts::RustIncludeLimitation;
 use crate::config::OraclePolicy;
 #[cfg(test)]
 use crate::domain::{OracleKind, OracleStrength};
-#[cfg(test)]
-use super::facts::RustIncludeLimitation;
 use std::path::{Path, PathBuf};
 
 #[cfg(test)]
