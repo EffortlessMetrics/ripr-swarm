@@ -11370,3 +11370,7 @@ fn plus_unknown_arg_fails_clearly() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
+        stderr.contains("unknown plus argument") || stderr.contains("--bogus"),
+        "error must name the unknown arg:\n{stderr}"
+    );
+}
