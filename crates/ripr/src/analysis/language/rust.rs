@@ -718,7 +718,9 @@ fn apply_rust_no_static_path_limit(finding: &mut Finding, probe: &Probe, index: 
         );
         finding.evidence.push(format!(
             "Where to inspect: {}:{} ({})",
-            test.file.display(), test.start_line, test.name
+            test.file.display(),
+            test.start_line,
+            test.name
         ));
     }
 }
@@ -745,19 +747,25 @@ fn find_subprocess_binary_test<'a>(
 
 fn is_binary_source_path(path: &Path) -> bool {
     let components: Vec<_> = path.components().collect();
-    components.windows(2).any(|window| {
-        window[0].as_os_str() == "src" && window[1].as_os_str() == "main.rs"
-    }) || components
+    components
         .windows(2)
-        .any(|window| window[0].as_os_str() == "src" && window[1].as_os_str() == "bin")
+        .any(|window| window[0].as_os_str() == "src" && window[1].as_os_str() == "main.rs")
+        || components
+            .windows(2)
+            .any(|window| window[0].as_os_str() == "src" && window[1].as_os_str() == "bin")
 }
 
 fn is_cargo_binary_invocation(body: &str) -> bool {
-    let compact: String = body.chars().filter(|character| !character.is_whitespace()).collect();
+    let compact: String = body
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
     let has_cargo_bin_env = compact.contains("Command::new(env!(\"CARGO_BIN_EXE_")
         && (compact.contains(".output(") || compact.contains(".status("));
     let has_assert_cmd_binary = compact.contains("cargo_bin(\"")
-        && (compact.contains(".assert(") || compact.contains(".output(") || compact.contains(".status("));
+        && (compact.contains(".assert(")
+            || compact.contains(".output(")
+            || compact.contains(".status("));
     has_cargo_bin_env || has_assert_cmd_binary
 }
 
@@ -1871,7 +1879,9 @@ mod tests {
     };
     use crate::analysis::cancellation;
     use crate::analysis::diff::{ChangedFile, ChangedLine};
-    use crate::analysis::facts::{CallFact, FunctionSummary, LiteralFact, RustIndex, TestFact, TestSummary};
+    use crate::analysis::facts::{
+        CallFact, FunctionSummary, LiteralFact, RustIndex, TestFact, TestSummary,
+    };
     use crate::analysis::language::{LanguageAdapter, LanguageId};
     use crate::analysis::{AnalysisMode, AnalysisOptions, diff};
     use crate::config::OraclePolicy;
