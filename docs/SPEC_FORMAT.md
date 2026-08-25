@@ -12,6 +12,17 @@ Allowed statuses:
 - `accepted`
 - `deprecated`
 
+A spec status records the document's normative disposition. It does not claim
+that runtime behavior is implemented, evidence is current or sufficient,
+support is promoted, or work is active. Those states belong to implementation
+claims and PR-local slices, traceability and evidence, support authorities, and
+live GitHub/worktree state respectively.
+
+Specs do not expire because time passes or because their files remain
+unchanged. If a contract is wrong, replaced, or retired, update, supersede, or
+deprecate it explicitly. Review dates may be useful descriptive context, but
+they do not determine spec validity or merge eligibility.
+
 ## Required Sections
 
 Every spec in `docs/specs/RIPR-SPEC-*.md` must include:
@@ -62,7 +73,9 @@ cargo xtask check-spec-format
 cargo xtask check-spec-numbering
 ```
 
-The check verifies required sections, status values, and title/filename ID
-consistency. The numbering guard verifies that every spec file appears in
+The format check is a deterministic validation of the candidate repository
+state. It verifies required sections, status values, and title/filename ID
+consistency without consulting wall-clock time, filesystem modification time,
+or Git history. The numbering guard verifies that every spec file appears in
 `docs/specs/README.md` and that traceability/capability surfaces do not
 reference missing spec IDs.
