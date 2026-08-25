@@ -106,7 +106,7 @@ mod markdown {
         lines.push(String::new());
         lines.push("This workflow packet is advisory and source-edit-free. It gives a human or agent the static context and commands for one focused test loop.".to_string());
         lines.push(String::new());
-        lines.push("Generated commands are bash command lines. They use POSIX single-quote quoting and `>` redirection, so run them from bash — on Windows, Git Bash. cmd.exe and PowerShell do not interpret this quoting the same way and will mis-pass or reject the quoted arguments. WSL bash is not a drop-in substitute: paths here keep their Windows drive-letter prefix, which WSL resolves as a relative path, so running them there requires rewriting each path under `/mnt/` and having ripr available inside WSL.".to_string());
+        lines.push("Each step includes Bash and PowerShell command variants. The Bash form uses POSIX single-quote quoting and `>` redirection; the PowerShell form uses PowerShell's doubled-quote equivalent and UTF-8 `Out-File` redirection. cmd.exe is not supported. On Windows, use either Git Bash or PowerShell. WSL bash is not a drop-in substitute: paths here keep their Windows drive-letter prefix, which WSL resolves as a relative path, so running them there requires rewriting each path under `/mnt/` and having ripr available inside WSL.".to_string());
         lines.push(String::new());
     }
 
@@ -153,7 +153,47 @@ mod markdown {
             lines.push(command.command.clone());
             lines.push("```".to_string());
             lines.push(String::new());
+            lines.push("```powershell".to_string());
+            lines.push(powershell_command(&command.command));
+            lines.push("```".to_string());
+            lines.push(String::new());
         }
+    }
+
+    fn powershell_command(command: &str) -> String {
+        // Preserve PowerShell single-quote escaping while writing redirected
+        // output with BOM-free .NET UTF-8 for Windows PowerShell 5.1.
+        let command = command.replace("'\\\\''", "''");
+        let chars = command.chars().collect::<Vec<_>>();
+        let mut in_single_quote = false;
+        let mut redirect = None;
+        let mut index = 0;
+        while index < chars.len() {
+            let ch = chars[index];
+            if ch == '\'' {
+                if in_single_quote && chars.get(index + 1) == Some(&'\'') {
+                    index += 2;
+                    continue;
+                }
+                in_single_quote = !in_single_quote;
+            } else if !in_single_quote
+                && ch == '>'
+                && chars.get(index.saturating_sub(1)) == Some(&' ')
+                && chars.get(index + 1) == Some(&' ')
+            {
+                redirect = Some(index);
+                break;
+            }
+            index += 1;
+        }
+        if let Some(index) = redirect {
+            let command = command[..index].trim_end();
+            let output = command[index + 1..].trim();
+            return format!(
+                "[System.IO.File]::WriteAllText({output}, (({command}) | Out-String), [System.Text.UTF8Encoding]::new($false))"
+            );
+        }
+        command
     }
 
     fn push_missing_inputs_section(lines: &mut Vec<String>, manifest: &AgentWorkflowManifest) {
@@ -255,8 +295,7 @@ mod tests {
     }
 
     #[test]
-    fn workflow_markdown_discloses_the_bash_assumption_before_the_first_command_fence()
-    -> Result<(), String> {
+    fn workflow_markdown_discloses_both_supported_command_shells() -> Result<(), String> {
         let rendered = render_agent_workflow_commands_md(&manifest());
 
         // A bare `bash` substring proves nothing here: every command block is
@@ -266,20 +305,31 @@ mod tests {
         // imported from production would make this test agree with whatever the
         // renderer happens to emit.
         let disclosure = rendered
-            .find("Generated commands are bash command lines.")
-            .ok_or_else(|| format!("commands.md must disclose the bash assumption: {rendered}"))?;
+            .find("Each step includes Bash and PowerShell command variants.")
+            .ok_or_else(|| format!("commands.md must disclose both command shells: {rendered}"))?;
         let first_fence = rendered
             .find("```bash")
             .ok_or_else(|| "commands.md must still fence commands as bash".to_string())?;
         assert!(
             disclosure < first_fence,
-            "bash disclosure at {disclosure} must precede the first command fence at {first_fence}"
+            "shell disclosure at {disclosure} must precede the first command fence at {first_fence}"
         );
         assert!(
             rendered.contains("PowerShell"),
-            "disclosure must name the shells that do not accept these commands: {rendered}"
+            "disclosure must name PowerShell: {rendered}"
         );
+        assert!(rendered.contains("```powershell"));
         Ok(())
+    }
+
+    #[test]
+    fn workflow_markdown_translates_bash_apostrophe_escaping_for_powershell() {
+        let mut value = manifest();
+        value.commands[0].command = "ripr agent start --root 'it'\\''s' > 'out'".to_string();
+        let rendered = render_agent_workflow_commands_md(&value);
+        assert!(
+            rendered.contains("[System.IO.File]::WriteAllText('out', ((ripr agent start --root 'it''s') | Out-String), [System.Text.UTF8Encoding]::new($false))")
+        );
     }
 
     /// `display_path` (`agent::loop_commands`) only swaps `\` for `/`, so an
