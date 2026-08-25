@@ -489,15 +489,15 @@ fn build_validated_host_run_fixture(
         fs::write(case_root.join("stdout.bin"), &stdout).map_err(|error| error.to_string())?;
         fs::write(case_root.join("stderr.bin"), &stderr).map_err(|error| error.to_string())?;
         let mut subject_inputs = vec![
-            fixture_input_value("cargo_toml", &subject.cargo_toml),
-            fixture_input_value("cargo_lock", &subject.cargo_lock),
-            fixture_input_value("config", &subject.config),
-            fixture_input_value("source_before", &subject.source_before),
-            fixture_input_value("source_after", &subject.source_after),
-            fixture_input_value("diff", &subject.diff),
+            fixture_input_value("cargo_toml", &packet_subject.cargo_toml),
+            fixture_input_value("cargo_lock", &packet_subject.cargo_lock),
+            fixture_input_value("config", &packet_subject.config),
+            fixture_input_value("source_before", &packet_subject.source_before),
+            fixture_input_value("source_after", &packet_subject.source_after),
+            fixture_input_value("diff", &packet_subject.diff),
         ];
         subject_inputs.extend(
-            subject
+            packet_subject
                 .tests
                 .iter()
                 .map(|file| fixture_input_value("test", file)),
