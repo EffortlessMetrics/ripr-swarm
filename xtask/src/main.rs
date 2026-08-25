@@ -20104,7 +20104,9 @@ mod proposed_spec_age_tests {
             .current_dir(&path)
             .output()
             .map_err(|e| e.to_string())?;
-        if !commit.status.success() { return Err("git commit failed".to_string()); }
+        if !commit.status.success() {
+            return Err("git commit failed".to_string());
+        }
         let now = UNIX_EPOCH + Duration::from_secs(1_800_000_000);
         assert!(matches!(
             proposed_spec_age(&path.join(relative), &path, now),
