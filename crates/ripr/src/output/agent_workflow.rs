@@ -161,41 +161,39 @@ mod markdown {
     }
 
     fn powershell_command(command: &str) -> String {
-        // `shell_arg` emits `'<literal>'` and represents an embedded apostrophe
-        // as `'<prefix>'\\''<suffix>'`. PowerShell keeps the same outer single
-        // quotes, but escapes an apostrophe by doubling it instead. PowerShell
-        // 5.1's `>` writes UTF-16, so convert redirects to explicit UTF-8
-        // `Out-File` calls while preserving `>` characters inside arguments.
-        let command = command.replace("'\\''", "''");
-        let mut rendered = String::with_capacity(command.len() + 24);
-        let mut in_single_quote = false;
+        // Preserve PowerShell single-quote escaping while writing redirected
+        // output with BOM-free .NET UTF-8 for Windows PowerShell 5.1.
+        let command = command.replace("'\\\\''", "''");
         let chars = command.chars().collect::<Vec<_>>();
+        let mut in_single_quote = false;
+        let mut redirect = None;
         let mut index = 0;
         while index < chars.len() {
             let ch = chars[index];
             if ch == '\'' {
-                rendered.push(ch);
                 if in_single_quote && chars.get(index + 1) == Some(&'\'') {
-                    rendered.push('\'');
                     index += 2;
                     continue;
                 }
                 in_single_quote = !in_single_quote;
-                index += 1;
-                continue;
-            }
-            if !in_single_quote
+            } else if !in_single_quote
                 && ch == '>'
                 && chars.get(index.saturating_sub(1)) == Some(&' ')
                 && chars.get(index + 1) == Some(&' ')
             {
-                rendered.push_str("| Out-File -Encoding utf8");
-            } else {
-                rendered.push(ch);
+                redirect = Some(index);
+                break;
             }
             index += 1;
         }
-        rendered
+        if let Some(index) = redirect {
+            let command = command[..index].trim_end();
+            let output = command[index + 1..].trim();
+            return format!(
+                "[System.IO.File]::WriteAllText({output}, (({command}) | Out-String), [System.Text.UTF8Encoding]::new($false))"
+            );
+        }
+        command
     }
 
     fn push_missing_inputs_section(lines: &mut Vec<String>, manifest: &AgentWorkflowManifest) {
@@ -330,7 +328,7 @@ mod tests {
         value.commands[0].command = "ripr agent start --root 'it'\\''s' > 'out'".to_string();
         let rendered = render_agent_workflow_commands_md(&value);
         assert!(
-            rendered.contains("ripr agent start --root 'it''s' | Out-File -Encoding utf8 'out'")
+            rendered.contains("[System.IO.File]::WriteAllText('out', ((ripr agent start --root 'it''s') | Out-String), [System.Text.UTF8Encoding]::new($false))")
         );
     }
 
