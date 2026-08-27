@@ -840,13 +840,9 @@ fn summary_rejects_noncanonical_taxonomy_and_counter_contradictions() {
     );
 
     let mut invalid_count = receipt();
-    invalid_count
-        .summary
-        .as_mut()
-        .and_then(|summary| {
-            summary.missing_discriminator_count = 2;
-            Some(())
-        });
+    if let Some(summary) = invalid_count.summary.as_mut() {
+        summary.missing_discriminator_count = 2;
+    }
     assert_eq!(
         error_code(invalid_count.validate()),
         Some(RiprProviderContractErrorCodeV1::CompletenessConflict)
