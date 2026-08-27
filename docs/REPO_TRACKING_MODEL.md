@@ -111,7 +111,7 @@ To prevent overloading individual docs:
 - A campaign ledger entry sequences PRs. It must not redefine specs or
   duplicate proposal reasoning.
 - A campaign-specific plan adds operational detail for one campaign slice. It
-  must not redefine specs, ADRs, or active manifest state.
+  must not redefine specs or ADRs.
 - Live execution is selected from GitHub issues, pull requests, checks, reviews,
   and the local worktree. No tracked singleton manifest selects, authorizes, or
   schedules the repository-wide current issue, lane, branch, writer, or wave.
