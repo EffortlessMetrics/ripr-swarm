@@ -68,7 +68,7 @@ and hallucinated commands or policies.
 With the system, the repo itself provides the execution graph:
 
 ```text
-.ripr/goals/active.toml (retired; see #1701)
+GitHub issue / PR and local worktree
   -> linked implementation plan
     -> live GitHub issue/PR and local worktree
       -> linked spec
