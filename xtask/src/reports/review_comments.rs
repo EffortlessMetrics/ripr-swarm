@@ -1036,12 +1036,12 @@ fn render_error_review_comments_markdown(packet: &Value) -> String {
                         md_escape(
                             seam.get("classification")
                                 .and_then(Value::as_str)
-                                .unwrap_or("unknown")
+                                .unwrap_or("unknown"),
                         ),
                         md_escape(
                             seam.get("file")
                                 .and_then(Value::as_str)
-                                .unwrap_or("unknown")
+                                .unwrap_or("unknown"),
                         ),
                         seam.get("line")
                             .and_then(Value::as_u64)
@@ -1069,7 +1069,7 @@ fn render_error_review_comments_markdown(packet: &Value) -> String {
     }
     markdown.push_str(&format!(
         "\n## Warnings\n\n- tool_error: {}\n",
-        md_escape(warning)
+        md_escape(warning),
     ));
     markdown
 }
@@ -1492,7 +1492,7 @@ mod tests {
         assert_eq!(fallback["seams"][0]["line"], 42);
         assert_eq!(
             fallback["seams"][1]["classification"],
-            "reachable_unrevealed"
+            "reachable_unrevealed",
         );
         assert!(
             validate_packet_value(
@@ -1502,7 +1502,7 @@ mod tests {
                 false,
                 Path::new(REVIEW_COMMENTS_MD),
             )
-            .is_empty()
+            .is_empty(),
         );
 
         let markdown = render_error_review_comments_markdown(&packet);
