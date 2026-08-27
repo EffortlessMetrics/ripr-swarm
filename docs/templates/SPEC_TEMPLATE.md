@@ -32,6 +32,10 @@ What should `ripr` do?
 
 What is intentionally out of scope?
 
+## Non-Goals
+
+Describe what is intentionally out of scope.
+
 ## Required Evidence
 
 What data, output, or diagnostics must be present?
