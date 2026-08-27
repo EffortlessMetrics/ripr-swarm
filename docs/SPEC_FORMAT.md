@@ -53,15 +53,18 @@ Spec IDs are source-of-truth identifiers, not generated runtime counts. The
 helper only prevents stale numbering assumptions; humans still author the spec
 contract.
 
-## Proposed-spec review age
+## Lifecycle and evidence separation
 
-A spec with `Status: proposed` is subject to the 90-day review-age check.
-The check uses the Unix timestamp of the most recent Git commit that changed
-the exact spec path, passed as a separate path argument after `--`. It never
-uses filesystem modification time. If Git cannot prove a tracked path and a
-parseable timestamp, the result is `not_proven` and the check fails closed.
+`Status:` records the document's normative disposition only. It does not claim
+that the requirement is implemented, that evidence is current, that a support
+tier is earned, or that work is active. Those claims belong to the implementation
+slice, traceability and evidence receipts, support-tier authority, and live
+GitHub/worktree state respectively.
 
-Accepted and deprecated specs are outside this proposed-age check.
+A spec does not expire because it has not changed recently. Correctness,
+implementation, evidence, support, supersession, and maintenance attention are
+separate questions with separate authorities. A document changes disposition
+through an explicit semantic decision, not an elapsed-time threshold.
 ## Checks
 
 Run:

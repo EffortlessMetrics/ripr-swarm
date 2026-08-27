@@ -7,6 +7,11 @@ Use specs for behavior that users, integrations, or future agents need to rely
 on. Keep implementation details in architecture docs or ADRs unless they affect
 observable behavior.
 
+A spec's status is document disposition only. Implementation claims, evidence
+currentness, support posture, live work, and maintenance attention are separate
+authorities. Specs remain valid until an explicit semantic change corrects,
+supersedes, accepts, or deprecates them; inactivity is not a validity failure.
+
 ## Index
 
 | Spec | Status | Topic |
