@@ -155,7 +155,7 @@ fn old_proposed_spec_remains_structurally_valid() -> Result<(), String> {
         ])
         .env("GIT_AUTHOR_DATE", "2000-01-01T00:00:00Z")
         .env("GIT_COMMITTER_DATE", "2000-01-01T00:00:00Z")
-         .current_dir(root.as_path())
+        .current_dir(root.as_path())
         .output()
         .map_err(|error| error.to_string())?;
     if !commit.status.success() {
