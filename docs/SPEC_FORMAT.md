@@ -53,15 +53,11 @@ Spec IDs are source-of-truth identifiers, not generated runtime counts. The
 helper only prevents stale numbering assumptions; humans still author the spec
 contract.
 
-## Proposed-spec review age
-
-A spec with `Status: proposed` is subject to the 90-day review-age check.
-The check uses the Unix timestamp of the most recent Git commit that changed
-the exact spec path, passed as a separate path argument after `--`. It never
-uses filesystem modification time. If Git cannot prove a tracked path and a
-parseable timestamp, the result is `not_proven` and the check fails closed.
-
-Accepted and deprecated specs are outside this proposed-age check.
+Maintenance review is advisory evidence about whether a document deserves
+attention. It is not part of spec validity and never changes a document's
+status. The maintenance report and content-bound review receipts own that
+queue; a receipt may record `current_no_source_change` without modifying the
+spec or resetting its Git history.
 ## Checks
 
 Run:
