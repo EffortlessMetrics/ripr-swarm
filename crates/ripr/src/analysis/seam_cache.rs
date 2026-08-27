@@ -1951,7 +1951,10 @@ fn portable_manifest_dir_text(manifest_path: &Path) -> Option<String> {
 /// they cannot be represented as repo-relative identities without observing
 /// the host filesystem root.
 fn is_absolute_declared_path(declared: &str) -> bool {
-    declared.starts_with('/') || declared.as_bytes().get(1).is_some_and(|byte| *byte == b':')
+    // Apply host path semantics before portable display normalization. On
+    // Unix, `\\` is a legal filename character and `a:b` is relative; on
+    // Windows, the platform path implementation handles drive and UNC roots.
+    Path::new(declared).is_absolute()
 }
 
 /// Lexically resolve a `/`-separated declared path against a `/`-separated
@@ -1961,6 +1964,8 @@ fn is_absolute_declared_path(declared: &str) -> bool {
 /// resolution climbs above the scan root, in which case the identity keeps
 /// its leading `..` segments.
 fn resolve_repo_relative(base: &str, declared: &str) -> (String, bool) {
+    #[cfg(windows)]
+    let declared = declared.to_string();
     let mut components: Vec<&str> = base
         .split('/')
         .filter(|component| !component.is_empty() && *component != ".")
@@ -3261,12 +3266,27 @@ mod tests {
         assert_eq!(edges.len(), 2, "{edges:?}");
         for edge in edges {
             assert_eq!(edge.from_manifest, "crates/mý äpp/Cargo.toml");
+        }
+        // Cargo uses host path semantics: a backslash is a separator on
+        // Windows but a legal filename character on Unix.
+        #[cfg(windows)]
+        for edge in edges {
             assert_eq!(edge.resolved_path.as_deref(), Some("crates/shared"));
             assert_eq!(edge.resolution, PathDependencyResolution::Resolved);
         }
+        #[cfg(not(windows))]
+        {
+            assert_eq!(edges[0].resolved_path.as_deref(), Some("crates/shared"));
+            assert_eq!(edges[0].resolution, PathDependencyResolution::Resolved);
+            assert_eq!(
+                edges[1].resolved_path.as_deref(),
+                Some("crates/mý äpp/..\\\\shared")
+            );
+            assert_eq!(edges[1].resolution, PathDependencyResolution::TargetMissing);
+        }
         // Sorted by dependency_name: "plain" < "winstyle".
         assert_eq!(edges[0].declared_path.as_deref(), Some("../shared"));
-        assert_eq!(edges[1].declared_path.as_deref(), Some("../shared"));
+        assert_eq!(edges[1].declared_path.as_deref(), Some("..\\shared"));
 
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
