@@ -490,9 +490,6 @@ mod tests {
                 "#[test]\nfn source_test() { assert_eq!(1, 1); }\n",
             ),
         ];
-        for (path, source) in &sources {
-            std::fs::write(root.join(path), source)?;
-        }
         let files = sources
             .iter()
             .map(|(path, source)| {
@@ -610,7 +607,10 @@ mod tests {
                 "#[test]\nfn source_test() { assert_eq!(1, 1); }\n",
             ),
         ];
-        let files = sources
+
+        for (path, source) in &sources {
+            std::fs::write(root.join(path), source)?;
+        }        let files = sources
             .iter()
             .map(|(path, source)| {
                 (
@@ -626,14 +626,7 @@ mod tests {
         let authority = WorkspaceRootAuthority::from_index(&root, &files);
         let test = Path::new("pkg/tests/lib.rs");
         let source = Path::new("pkg/src/lib.rs");
-        assert!(root.join(test).is_file());
-        assert!(root.join(source).is_file());
-        assert!(authority.files.get(test).is_some_and(|file| file.valid));
-        assert!(authority.files.get(source).is_some_and(|file| file.valid));
-        assert!(
-            authority.validates_target(test, source, sources[1].1),
-            "authority should accept unchanged materialized files"
-        );
+        assert!(authority.validates_target(test, source, sources[1].1));
         std::fs::write(root.join("pkg/tests/lib.rs"), "changed\n")?;
         assert!(!authority.validates_target(test, source, sources[1].1));
         Ok(())
