@@ -96,6 +96,7 @@ impl ReviewCommentsRunReceipt {
         self.non_claims.push("no all-clear".to_string());
     }
 
+    #[allow(dead_code)]
     pub(crate) fn failed(&mut self, active_phase: &str, error: &str) {
         self.status = "failed";
         self.active_phase = Some(active_phase.to_string());
