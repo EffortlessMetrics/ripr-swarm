@@ -69,6 +69,12 @@ impl std::ops::Deref for TempRoot {
     }
 }
 
+impl AsRef<Path> for TempRoot {
+    fn as_ref(&self) -> &Path {
+        self.as_path()
+    }
+}
+
 impl Drop for TempRoot {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
