@@ -78,7 +78,9 @@ fn gate_inline_failure_detail_names_seam_location_and_inspection_command() -> Re
         "inline detail missing seam location: {inline}"
     );
     assert!(
-        inline.contains("`ripr agent brief --root . --seam-id 8f7fa8644fd12280 --json ...`"),
+        inline.contains(
+            "`ripr agent brief --root . --seam-id 8f7fa8644fd12280 --json > target/ripr/workflow/agent-brief.json`",
+        ),
         "inline detail missing inspection command: {inline}"
     );
     Ok(())

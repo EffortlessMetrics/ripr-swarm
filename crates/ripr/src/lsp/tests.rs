@@ -1,13622 +1,2008 @@
-use super::actions::{SERVER_EXECUTED_COMMANDS, code_action_response, resolve_action};
-use super::backend::{
-    Backend, RefreshLogSummary, refresh_completed_log_message, refresh_failed_log_message,
-    workspace_input_path_is_relevant,
-};
-use super::capabilities::{
-    ADVERTISED_CODE_ACTION_KINDS, WorkspaceRootResolution, initialize_result,
-    root_from_initialize_params,
-};
-use super::client_features::ClientFeatureProfile;
-use super::config::LspAnalysisConfig;
-use super::diagnostics::{
-    DiagnosticBatch, WorkspaceDiagnostics, add_canonical_group_data, canonical_finding_groups,
-    canonical_group_has_mixed_classes, diagnostic_for_classified_seam, diagnostic_for_finding,
-    diagnostic_refresh_plan, diagnostic_severity_for_class, finding_diagnostics_by_uri,
-    take_all_uris, workspace_diagnostic_batches, workspace_diagnostic_batches_with_config,
-    workspace_diagnostics_with_config,
-};
-use super::gap_artifacts::{
-    GapArtifactIdentity, GapArtifactKind, GapArtifactRejection, ValidatedGapArtifact,
-};
-use super::hover::{classified_seam_hover_response, hover_response, hover_with_snapshot_status};
-use super::input_identity::LspAnalysisInputIdentity;
-use super::lens::{code_lens_response, lens_title_is_static_language_clean, lens_view_identity};
-use super::progress::ProgressEvent;
-use super::refresh_scheduler::{
-    RefreshAttemptOutcome, RefreshDecision, RefreshReason, RefreshRequest, RefreshScope,
-};
-use super::state::{
-    AnalysisAttemptState, AnalysisFailureKind, AnalysisSnapshot, DocumentStore, RefreshMetadata,
-    content_digest, format_duration,
-};
-use super::uri::{encode_uri_path, file_uri_for_path, file_uris_match, path_from_file_uri};
-use super::{
-    COLLECT_CONTEXT_COMMAND, COLLECT_EVIDENCE_CONTEXT_COMMAND, COLLECT_RECEIPT_STATUS_COMMAND,
-    COLLECT_REPAIR_PACKET_COMMAND, COLLECT_TOP_LIMITATION_COMMAND,
-    COLLECT_WORKSPACE_STATUS_COMMAND, COPY_AFTER_SNAPSHOT_COMMAND, COPY_AGENT_BRIEF_COMMAND,
-    COPY_AGENT_PACKET_COMMAND, COPY_AGENT_RECEIPT_COMMAND, COPY_AGENT_VERIFY_COMMAND,
-    COPY_CONTEXT_COMMAND, COPY_SUGGESTED_ASSERTION_COMMAND, COPY_TARGETED_TEST_BRIEF_COMMAND,
-    HOVER_TEXT, OPEN_RELATED_TEST_COMMAND, REFRESH_COMMAND, build_service,
-};
-use crate::analysis::cancellation::AnalysisCancellationToken;
-use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
-use crate::app::Mode;
-use crate::domain::{
-    Confidence, DeltaKind, ExposureClass, Finding, FindingCanonicalGap, LanguageId, LanguageStatus,
-    MissingDiscriminatorFact, OracleKind, OracleStrength, OwnerKind, Probe, ProbeFamily, ProbeId,
-    RelatedTest, RevealEvidence, RiprEvidence, SourceLocation, StageEvidence, StageState,
-    StaticLimitKind, ValueContext, ValueFact,
-};
-use serial_test::serial;
-use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tower_lsp_server::LanguageServer;
-use tower_lsp_server::ls_types::{
-    CodeAction, CodeActionContext, CodeActionKind, CodeActionOrCommand, CodeActionParams,
-    CodeLensOptions, Diagnostic, DiagnosticSeverity, DidChangeConfigurationParams,
-    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DidSaveTextDocumentParams, DocumentDiagnosticParams, ExecuteCommandParams, FileChangeType,
-    FileEvent, HoverContents, HoverParams, HoverProviderCapability, InitializeParams, MarkedString,
-    NumberOrString, PartialResultParams, Position, PositionEncodingKind, PreviousResultId, Range,
-    TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
-    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind, TraceValue,
-    VersionedTextDocumentIdentifier, WindowClientCapabilities, WorkspaceDiagnosticParams,
-    WorkspaceFolder,
-};
-use tower_lsp_server::{LspService, Server};
-
-/// Render a fixture path the way the LSP surface renders paths.
-///
-/// The server normalizes every emitted path to forward slashes on all
-/// platforms, so a harness that compares against `Path::display()` matches on
-/// Unix and fails on Windows only â€” where `display()` yields backslashes. Every
-/// expectation built from a fixture root must go through this helper, otherwise
-/// the test is asserting on a host-specific separator rather than on server
-/// behavior.
-fn server_path_text(path: &Path) -> String {
-    path.display().to_string().replace('\\', "/")
-}
-
-#[test]
-fn initialize_result_exposes_existing_lsp_capabilities() -> Result<(), String> {
-    let result = initialize_result();
-
-    assert_eq!(
-        result.capabilities.text_document_sync,
-        Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL))
-    );
-    assert_eq!(
-        result.capabilities.hover_provider,
-        Some(HoverProviderCapability::Simple(true))
-    );
-    assert_eq!(
-        result.capabilities.position_encoding,
-        Some(PositionEncodingKind::UTF16),
-        "diagnostic ranges use UTF-16 code-unit offsets"
-    );
-    let Some(workspace) = result.capabilities.workspace else {
-        return Err("expected workspace capability".to_string());
-    };
-    let Some(workspace_folders) = workspace.workspace_folders else {
-        return Err("expected workspace-folder capability".to_string());
-    };
-    assert_eq!(workspace_folders.supported, Some(true));
-    let Some(provider) = result.capabilities.execute_command_provider else {
-        return Err("expected execute command provider".to_string());
-    };
-    let commands = provider.commands;
-    assert_eq!(
-        commands,
-        vec![
-            REFRESH_COMMAND,
-            COLLECT_CONTEXT_COMMAND,
-            COLLECT_EVIDENCE_CONTEXT_COMMAND,
-            COLLECT_WORKSPACE_STATUS_COMMAND,
-            COLLECT_REPAIR_PACKET_COMMAND,
-            COLLECT_TOP_LIMITATION_COMMAND,
-            COLLECT_RECEIPT_STATUS_COMMAND,
-        ]
-    );
-    Ok(())
-}
-
-#[test]
-fn workspace_input_watch_requires_contained_cargo_manifest_or_lockfile() {
-    let root =
-        std::env::temp_dir().join(format!("ripr-workspace-input-watch-{}", std::process::id()));
-    let root = root.as_path();
-    assert!(workspace_input_path_is_relevant(
-        root,
-        &root.join("Cargo.toml")
-    ));
-    assert!(workspace_input_path_is_relevant(
-        root,
-        &root.join("crates/app/Cargo.lock")
-    ));
-    assert!(!workspace_input_path_is_relevant(
-        root,
-        &root
-            .with_file_name("ripr-workspace-input-watch-sibling")
-            .join("Cargo.toml")
-    ));
-    assert!(!workspace_input_path_is_relevant(
-        root,
-        &root.join("Cargo.toml.bak")
-    ));
-}
-
-#[cfg(windows)]
-#[test]
-fn workspace_input_watch_uses_case_insensitive_windows_containment() {
-    let root = std::env::temp_dir().join(format!(
-        "ripr-workspace-input-watch-case-{}",
-        std::process::id()
-    ));
-    let differently_cased_root = PathBuf::from(root.to_string_lossy().to_ascii_uppercase());
-    assert!(workspace_input_path_is_relevant(
-        &root,
-        &differently_cased_root.join("Cargo.toml")
-    ));
-    assert!(!workspace_input_path_is_relevant(
-        &root,
-        &differently_cased_root
-            .with_file_name("RIPR-WORKSPACE-INPUT-WATCH-CASE-SIBLING")
-            .join("Cargo.toml")
-    ));
-}
-
-#[test]
-fn watched_file_batch_preserves_config_and_workspace_graph_signals() -> Result<(), String> {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let backend_root = root.clone();
-    let (service, _socket) =
-        LspService::new(move |client| Backend::new(client, backend_root.clone()));
-    let backend = service.inner();
-    backend.initialize_test_workspace_root();
-    let config_uri = file_uri_for_path(&root.join(crate::config::CONFIG_FILE_NAME))
-        .map_err(|err| format!("config URI failed: {err}"))?;
-    let manifest_uri = file_uri_for_path(&root.join("Cargo.toml"))
-        .map_err(|err| format!("manifest URI failed: {err}"))?;
-    let changes = vec![
-        FileEvent {
-            uri: config_uri,
-            typ: FileChangeType::CHANGED,
-        },
-        FileEvent {
-            uri: manifest_uri,
-            typ: FileChangeType::CHANGED,
-        },
-    ];
-
-    assert_eq!(backend.watched_file_change_kinds(&changes), (true, true));
-    Ok(())
-}
-
-#[test]
-fn capabilities_advertise_code_lens_provider() -> Result<(), String> {
-    let result = initialize_result();
-    let provider = result
-        .capabilities
-        .code_lens_provider
-        .ok_or("expected code_lens_provider to be Some")?;
-    assert_eq!(
-        provider,
-        CodeLensOptions {
-            resolve_provider: Some(false),
-        },
-        "code_lens_provider must advertise resolve_provider: false (advisory text-only; no resolve round-trip)"
-    );
-    Ok(())
-}
-
-#[test]
-fn document_pull_reuses_result_id_as_unchanged_report() -> Result<(), String> {
-    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-    let backend = service.inner();
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let finding = sample_finding();
-    backend
-        .refresh_plan(sample_workspace_diagnostics(
-            PathBuf::from("/workspace"),
-            uri.clone(),
-            vec![diagnostic_for_finding(Path::new("/workspace"), &finding)],
-            vec![finding],
-        ))
-        .ok_or_else(|| "expected committed snapshot".to_string())?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    let request = |previous_result_id| DocumentDiagnosticParams {
-        text_document: TextDocumentIdentifier { uri: uri.clone() },
-        identifier: None,
-        previous_result_id,
-        work_done_progress_params: Default::default(),
-        partial_result_params: PartialResultParams::default(),
-    };
-    let first = runtime
-        .block_on(backend.diagnostic(request(None)))
-        .map_err(|err| format!("first pull failed: {err}"))?;
-    let first_json = serde_json::to_value(first)
-        .map_err(|err| format!("serialize first report failed: {err}"))?;
-    if first_json.get("kind").and_then(serde_json::Value::as_str) != Some("full") {
-        return Err(format!("expected full first report: {first_json}"));
-    }
-    let result_id = first_json
-        .get("resultId")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| "full report did not carry resultId".to_string())?
-        .to_string();
-    let second = runtime
-        .block_on(backend.diagnostic(request(Some(result_id))))
-        .map_err(|err| format!("second pull failed: {err}"))?;
-    let second_json = serde_json::to_value(second)
-        .map_err(|err| format!("serialize second report failed: {err}"))?;
-    if second_json.get("kind").and_then(serde_json::Value::as_str) != Some("unchanged") {
-        return Err(format!("expected unchanged second report: {second_json}"));
-    }
-    if second_json.get("items").is_some() {
-        return Err("unchanged report unexpectedly carried items".to_string());
-    }
-    Ok(())
-}
-
-#[test]
-fn workspace_pull_reuses_each_document_result_id() -> Result<(), String> {
-    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-    let backend = service.inner();
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let finding = sample_finding();
-    backend
-        .refresh_plan(sample_workspace_diagnostics(
-            PathBuf::from("/workspace"),
-            uri.clone(),
-            vec![diagnostic_for_finding(Path::new("/workspace"), &finding)],
-            vec![finding],
-        ))
-        .ok_or_else(|| "expected committed snapshot".to_string())?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    let first = runtime
-        .block_on(backend.workspace_diagnostic(WorkspaceDiagnosticParams {
-            identifier: None,
-            previous_result_ids: Vec::new(),
-            work_done_progress_params: Default::default(),
-            partial_result_params: PartialResultParams::default(),
-        }))
-        .map_err(|err| format!("first workspace pull failed: {err}"))?;
-    let first_json = serde_json::to_value(first)
-        .map_err(|err| format!("serialize first workspace report failed: {err}"))?;
-    let result_id = first_json
-        .get("items")
-        .and_then(serde_json::Value::as_array)
-        .and_then(|items| items.first())
-        .and_then(|item| item.get("resultId"))
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| "workspace full report did not carry resultId".to_string())?
-        .to_string();
-    let second = runtime
-        .block_on(backend.workspace_diagnostic(WorkspaceDiagnosticParams {
-            identifier: None,
-            previous_result_ids: vec![PreviousResultId {
-                uri,
-                value: result_id,
-            }],
-            work_done_progress_params: Default::default(),
-            partial_result_params: PartialResultParams::default(),
-        }))
-        .map_err(|err| format!("second workspace pull failed: {err}"))?;
-    let second_json = serde_json::to_value(second)
-        .map_err(|err| format!("serialize second workspace report failed: {err}"))?;
-    let kind = second_json
-        .get("items")
-        .and_then(serde_json::Value::as_array)
-        .and_then(|items| items.first())
-        .and_then(|item| item.get("kind"))
-        .and_then(serde_json::Value::as_str);
-    if kind != Some("unchanged") {
-        return Err(format!(
-            "expected unchanged workspace report: {second_json}"
-        ));
-    }
-    Ok(())
-}
-
-#[test]
-fn pull_diagnostics_before_first_snapshot_return_empty_full_reports() -> Result<(), String> {
-    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-    let backend = service.inner();
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-
-    let document = runtime
-        .block_on(backend.diagnostic(DocumentDiagnosticParams {
-            text_document: TextDocumentIdentifier { uri },
-            identifier: None,
-            previous_result_id: None,
-            work_done_progress_params: Default::default(),
-            partial_result_params: PartialResultParams::default(),
-        }))
-        .map_err(|err| format!("cold-start document pull failed: {err}"))?;
-    let document_json = serde_json::to_value(document)
-        .map_err(|err| format!("serialize cold-start document report failed: {err}"))?;
-    if document_json
-        .get("kind")
-        .and_then(serde_json::Value::as_str)
-        != Some("full")
-        || document_json
-            .get("items")
-            .and_then(serde_json::Value::as_array)
-            .is_none_or(|items| !items.is_empty())
-    {
-        return Err(format!(
-            "expected an empty full document report before the first snapshot: {document_json}"
-        ));
-    }
-
-    let workspace = runtime
-        .block_on(backend.workspace_diagnostic(WorkspaceDiagnosticParams {
-            identifier: None,
-            previous_result_ids: Vec::new(),
-            work_done_progress_params: Default::default(),
-            partial_result_params: PartialResultParams::default(),
-        }))
-        .map_err(|err| format!("cold-start workspace pull failed: {err}"))?;
-    let workspace_json = serde_json::to_value(workspace)
-        .map_err(|err| format!("serialize cold-start workspace report failed: {err}"))?;
-    if workspace_json
-        .get("items")
-        .and_then(serde_json::Value::as_array)
-        .is_none_or(|items| !items.is_empty())
-    {
-        return Err(format!(
-            "expected an empty workspace report before the first snapshot: {workspace_json}"
-        ));
-    }
-    Ok(())
-}
-
-#[test]
-fn workspace_pull_marks_only_changed_document_full() -> Result<(), String> {
-    // Selection-authority contract (#1973): pull serves the stored selected
-    // set and derives result IDs from it, so the changed document must be a
-    // served (budget-actionable) item for its message change to be
-    // selection-relevant. `headline_eligible` is the producer-owned
-    // eligibility signal the budget reads.
-    fn served_diagnostic(root: &Path, finding: &Finding) -> tower_lsp_server::ls_types::Diagnostic {
-        let mut diagnostic = diagnostic_for_finding(root, finding);
-        if let Some(data) = diagnostic
-            .data
-            .as_mut()
-            .and_then(serde_json::Value::as_object_mut)
-        {
-            data.insert("headline_eligible".to_string(), serde_json::json!(true));
-        }
-        diagnostic
-    }
-    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-    let backend = service.inner();
-    let first_uri = test_uri("file:///workspace/src/first.rs")?;
-    let second_uri = test_uri("file:///workspace/src/second.rs")?;
-    let first_finding = sample_finding();
-    let mut second_finding = sample_finding();
-    second_finding.id = "probe:second:88:predicate".to_string();
-    second_finding.probe.id = ProbeId("probe:second:88:predicate".to_string());
-    second_finding.probe.location.file = PathBuf::from("src/second.rs");
-    let first_diagnostic = served_diagnostic(Path::new("/workspace"), &first_finding);
-    let initial_second_diagnostic = served_diagnostic(Path::new("/workspace"), &second_finding);
-    let mut snapshot = sample_analysis_snapshot(
-        PathBuf::from("/workspace"),
-        first_uri.clone(),
-        vec![first_diagnostic.clone()],
-        vec![first_finding.clone(), second_finding.clone()],
-    );
-    snapshot
-        .diagnostics_by_uri
-        .insert(second_uri.clone(), vec![initial_second_diagnostic.clone()]);
-    let diagnostics = WorkspaceDiagnostics {
-        snapshot,
-        batches: vec![
-            DiagnosticBatch {
-                uri: first_uri.clone(),
-                diagnostics: vec![first_diagnostic],
-            },
-            DiagnosticBatch {
-                uri: second_uri.clone(),
-                diagnostics: vec![initial_second_diagnostic],
-            },
-        ],
-    };
-    backend
-        .refresh_plan(diagnostics)
-        .ok_or_else(|| "expected committed multi-document snapshot".to_string())?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    let first = runtime
-        .block_on(backend.workspace_diagnostic(WorkspaceDiagnosticParams {
-            identifier: None,
-            previous_result_ids: Vec::new(),
-            work_done_progress_params: Default::default(),
-            partial_result_params: PartialResultParams::default(),
-        }))
-        .map_err(|err| format!("first multi-document pull failed: {err}"))?;
-    let first_json = serde_json::to_value(first)
-        .map_err(|err| format!("serialize first multi-document report failed: {err}"))?;
-    let previous_result_ids = first_json
-        .get("items")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| "first multi-document report had no items".to_string())?
-        .iter()
-        .map(|item| {
-            let uri = item
-                .get("uri")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| "multi-document item had no URI".to_string())?
-                .parse()
-                .map_err(|err| format!("parse returned URI failed: {err}"))?;
-            let result_id = item
-                .get("resultId")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| "multi-document item had no result ID".to_string())?;
-            Ok(PreviousResultId {
-                uri,
-                value: result_id.to_string(),
-            })
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-
-    let mut changed_second_diagnostic =
-        served_diagnostic(Path::new("/workspace"), &sample_finding());
-    changed_second_diagnostic.message.push_str(" changed");
-    let mut changed_snapshot = sample_analysis_snapshot(
-        PathBuf::from("/workspace"),
-        first_uri.clone(),
-        vec![served_diagnostic(
-            Path::new("/workspace"),
-            &sample_finding(),
-        )],
-        vec![first_finding, second_finding],
-    );
-    changed_snapshot
-        .diagnostics_by_uri
-        .insert(second_uri.clone(), vec![changed_second_diagnostic.clone()]);
-    backend
-        .refresh_plan(WorkspaceDiagnostics {
-            snapshot: changed_snapshot,
-            batches: vec![
-                DiagnosticBatch {
-                    uri: first_uri,
-                    diagnostics: vec![served_diagnostic(
-                        Path::new("/workspace"),
-                        &sample_finding(),
-                    )],
-                },
-                DiagnosticBatch {
-                    uri: second_uri,
-                    diagnostics: vec![changed_second_diagnostic],
-                },
-            ],
-        })
-        .ok_or_else(|| "expected changed multi-document snapshot".to_string())?;
-
-    let second = runtime
-        .block_on(backend.workspace_diagnostic(WorkspaceDiagnosticParams {
-            identifier: None,
-            previous_result_ids,
-            work_done_progress_params: Default::default(),
-            partial_result_params: PartialResultParams::default(),
-        }))
-        .map_err(|err| format!("second multi-document pull failed: {err}"))?;
-    let second_json = serde_json::to_value(second)
-        .map_err(|err| format!("serialize second multi-document report failed: {err}"))?;
-    let kinds = second_json
-        .get("items")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| "second multi-document report had no items".to_string())?
-        .iter()
-        .filter_map(|item| {
-            item.get("uri")
-                .and_then(serde_json::Value::as_str)
-                .zip(item.get("kind").and_then(serde_json::Value::as_str))
-        })
-        .collect::<BTreeMap<_, _>>();
-    if kinds.get("file:///workspace/src/first.rs") != Some(&"unchanged")
-        || kinds.get("file:///workspace/src/second.rs") != Some(&"full")
-    {
-        return Err(format!(
-            "expected only the changed document to be full: {second_json}"
-        ));
-    }
-    Ok(())
-}
-
-/// Drives the real async `code_lens` handler path (Backend â†’ code_lens_response)
-/// using the tokio runtime, matching the pattern of `framed_lsp_protocol_smoke_exercises_tower_server`.
-/// Constructs a `Backend` with a populated `latest_analysis` snapshot, calls
-/// `code_lens` with a `CodeLensParams` for the file, and asserts lenses returned.
-/// This exercises the handlerâ†’helper wiring, not just the pure fn.
-#[test]
-fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
-    // Build a minimal snapshot with one finding that belongs to a specific file.
-    let root = "/workspace";
-    let file = "src/lib.rs";
-    let uri_str = "file:///workspace/src/lib.rs";
-
-    // Reuse the same Finding construction as the pure-fn tests via the imported helper.
-    // We call code_lens_response directly (the pure fn) to verify the handler wiring.
-    let uri = uri_str
-        .parse::<tower_lsp_server::ls_types::Uri>()
-        .map_err(|e| format!("test URI parse failed: {e}"))?;
-
-    // Build finding and snapshot manually (same as lens::tests helpers).
-    use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, ExposureClass, OracleKind, OracleStrength,
-        Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation,
-        StageEvidence, StageState, SymbolId,
-    };
-    let finding = crate::domain::Finding {
-        id: format!("probe:{file}:10:predicate:aabbccdd"),
-        canonical_gap: None,
-        probe: Probe {
-            id: ProbeId(format!("probe:{file}:10:predicate:aabbccdd")),
-            location: SourceLocation::new(file, 10, 1),
-            owner: Some(SymbolId("owner::fn".to_string())),
-            family: ProbeFamily::Predicate,
-            delta: DeltaKind::Value,
-            before: None,
-            after: Some("true".to_string()),
-            expression: "x > 0".to_string(),
-            expected_sinks: Vec::new(),
-            required_oracles: Vec::new(),
-        },
-        class: ExposureClass::Exposed,
-        ripr: RiprEvidence {
-            reach: StageEvidence::new(StageState::Yes, Confidence::High, "reachable"),
-            infect: StageEvidence::new(StageState::Yes, Confidence::High, "infectable"),
-            propagate: StageEvidence::new(StageState::Yes, Confidence::Medium, "propagatable"),
-            reveal: RevealEvidence {
-                observe: StageEvidence::new(StageState::Weak, Confidence::Medium, "observed"),
-                discriminate: StageEvidence::new(
-                    StageState::Weak,
-                    Confidence::Medium,
-                    "discriminated",
-                ),
-            },
-        },
-        confidence: 1.0,
-        evidence: Vec::new(),
-        missing: Vec::new(),
-        flow_sinks: Vec::new(),
-        activation: ActivationEvidence::default(),
-        stop_reasons: Vec::new(),
-        related_tests: vec![RelatedTest {
-            name: "test_discounts".to_string(),
-            file: std::path::PathBuf::from("tests/lib.rs"),
-            line: 42,
-            oracle: None,
-            oracle_kind: OracleKind::Unknown,
-            oracle_strength: OracleStrength::Weak,
-            relation_reason: None,
-            relation_confidence: None,
-        }],
-        recommended_next_step: None,
-        language: None,
-        language_status: None,
-        owner_kind: None,
-        static_limit_kind: None,
-        changed_sink: None,
-        observed_sink: None,
-        oracle_alignment: None,
-        alignment_reason: None,
-        source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
-    };
-
-    // Build snapshot satisfying is_consistent().
-    let diag_uri = file_uri_for_path(&std::path::PathBuf::from(root).join(file))
-        .map_err(|e| format!("uri build failed: {e}"))?;
-    let diag = tower_lsp_server::ls_types::Diagnostic {
-        range: Range {
-            start: Position {
-                line: 9,
-                character: 0,
-            },
-            end: Position {
-                line: 9,
-                character: 120,
-            },
-        },
-        severity: None,
-        code: None,
-        code_description: None,
-        source: Some("ripr".to_string()),
-        message: "test".to_string(),
-        related_information: None,
-        tags: None,
-        data: Some(serde_json::json!({ "finding_id": finding.id })),
-    };
-    let mut diagnostics_by_uri = std::collections::BTreeMap::new();
-    diagnostics_by_uri.insert(diag_uri, vec![diag]);
-
-    let snapshot = AnalysisSnapshot {
-        root: std::path::PathBuf::from(root),
-        input_identity: None,
-        base: None,
-        mode: crate::app::Mode::Draft,
-        refresh: RefreshMetadata::default(),
-        findings: vec![finding],
-        analysis_outcome: None,
-        diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
-        classified_seams: Vec::new(),
-        gap_artifacts: Vec::new(),
-        gap_artifact_rejections: Vec::new(),
-        diagnostics_by_uri,
-        delivery_selection: None,
-        seams_deferred: false,
-        partial_scope: None,
-        component_outcomes: Vec::new(),
-        out_of_scope_test_file_findings: 0,
-    };
-
-    // Call the pure code_lens_response directly to verify the handlerâ†’helper path.
-    // (The async Backend test would require spinning up an LspService, which is covered
-    // by framed_lsp_protocol_smoke_exercises_tower_server; this test verifies the wiring
-    // at the handler boundary with a real snapshot.)
-    let lenses = code_lens_response(&uri, Some(&snapshot));
-
-    if lenses.is_empty() {
-        return Err(
-            "handler must return lenses for a snapshot with a matching finding".to_string(),
-        );
-    }
-    let title = lenses[0]
-        .command
-        .as_ref()
-        .ok_or("expected command in lens from handler")?
-        .title
-        .clone();
-    if !title.contains("1") {
-        return Err(format!(
-            "handler lens must cite 1 related test, got: {title}"
-        ));
-    }
-    if !lens_title_is_static_language_clean(&title) {
-        return Err(format!(
-            "handler lens title contains forbidden vocabulary: {title}"
-        ));
-    }
-    Ok(())
-}
-
-#[test]
-fn code_lens_refresh_is_not_attempted_for_unsupported_clients() -> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        let root = unique_lsp_test_root("code-lens-refresh-unsupported")?;
-        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let backend = service.inner();
-        // Initialize WITHOUT workspace.codeLens.refreshSupport: the server
-        // must not record or attempt any refresh for this client (#2032).
-        backend
-            .initialize(initialize_params(
-                None,
-                Some(file_uri_for_path(root.path())?),
-            ))
-            .await
-            .map_err(|err| format!("initialize failed: {err}"))?;
-
-        let uri = test_uri("file:///workspace/src/pricing.rs")?;
-        let finding = sample_finding();
-        let diagnostics = sample_workspace_diagnostics(
-            PathBuf::from("/workspace"),
-            uri.clone(),
-            vec![diagnostic_for_finding(Path::new("/workspace"), &finding)],
-            vec![finding],
-        );
-        let identity = lens_view_identity(&diagnostics.snapshot);
-        if backend.note_lens_view_for_refresh(identity) {
-            return Err("an unsupported client must not attempt a code lens refresh".to_string());
-        }
-        if backend.last_requested_lens_view_identity().is_some() {
-            return Err(
-                "an unsupported client must not record or attempt a code lens refresh".to_string(),
-            );
-        }
-        Ok(())
-    })
-}
-
-#[test]
-fn code_lens_refresh_tracks_semantic_view_changes_for_supported_clients() -> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        let root = unique_lsp_test_root("code-lens-refresh-supported")?;
-        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let backend = service.inner();
-        let mut params = initialize_params(None, Some(file_uri_for_path(root.path())?));
-        params.capabilities.workspace =
-            Some(tower_lsp_server::ls_types::WorkspaceClientCapabilities {
-                code_lens: Some(
-                    tower_lsp_server::ls_types::CodeLensWorkspaceClientCapabilities {
-                        refresh_support: Some(true),
-                    },
-                ),
-                ..tower_lsp_server::ls_types::WorkspaceClientCapabilities::default()
-            });
-        backend
-            .initialize(params)
-            .await
-            .map_err(|err| format!("initialize failed: {err}"))?;
-
-        let uri = test_uri("file:///workspace/src/pricing.rs")?;
-        let identity_for = |finding: Finding| {
-            lens_view_identity(
-                &sample_workspace_diagnostics(
-                    PathBuf::from("/workspace"),
-                    uri.clone(),
-                    vec![diagnostic_for_finding(Path::new("/workspace"), &finding)],
-                    vec![finding],
-                )
-                .snapshot,
-            )
-        };
-        let identity_a = identity_for(sample_finding());
-        if !backend.note_lens_view_for_refresh(identity_a.clone()) {
-            return Err("a supported client's first lens view must read as changed".to_string());
-        }
-        if backend.last_requested_lens_view_identity() != Some(identity_a.clone()) {
-            return Err(
-                "a supported client's first lens view must be recorded as requested".to_string(),
-            );
-        }
-        // A byte-identical re-commit reports no change and sends nothing.
-        if backend.note_lens_view_for_refresh(identity_a) {
-            return Err("a byte-identical lens view must not read as changed".to_string());
-        }
-
-        // A semantic change (classification flip) advances the recorded view.
-        let mut changed = sample_finding();
-        changed.class = ExposureClass::Exposed;
-        let identity_b = identity_for(changed);
-        if !backend.note_lens_view_for_refresh(identity_b.clone()) {
-            return Err("a classification change must read as a lens-view change".to_string());
-        }
-        if backend.last_requested_lens_view_identity() != Some(identity_b) {
-            return Err("a classification change must advance the recorded lens view".to_string());
-        }
-        Ok(())
-    })
-}
-
-#[test]
-fn serve_stdio_call_presence_observer() -> Result<(), String> {
-    let source = include_str!("../lsp.rs");
-    let serve_stdio = source
-        .split("async fn serve_stdio()")
-        .nth(1)
-        .ok_or_else(|| "expected serve_stdio implementation in lsp module".to_string())?;
-    let serve_streams = source
-        .split("async fn serve_streams")
-        .nth(1)
-        .ok_or_else(|| "expected serve_streams implementation in lsp module".to_string())?;
-
-    assert!(
-        serve_stdio.contains("transport_bounds::TransportBounds::default()"),
-        "serve_stdio should serve the stdio transport with the reviewed default transport bounds (#2034)"
-    );
-    assert!(
-        serve_streams.contains("build_service(root.clone())"),
-        "serve_streams should construct the LSP service with the resolved workspace root through the shared constructor"
-    );
-    assert!(
-        source.contains(".custom_method(\"$/setTrace\", Backend::set_trace)"),
-        "build_service should register the standard $/setTrace trace lifecycle notification (#2035, RIPR-SPEC-0137)"
-    );
-    assert!(
-        serve_streams.contains("bounds.wrap(stdin, stdout)"),
-        "serve_streams should wrap stdin/stdout in the bounded transport adapters (#2034)"
-    );
-    assert!(
-        serve_streams.contains(".concurrency_level(bounds.request_concurrency)"),
-        "serve_streams should set the explicit in-flight request concurrency bound (#2034)"
-    );
-    assert!(
-        serve_streams.contains(".serve(service)"),
-        "serve_streams should hand the bounded transport, the socket, and the service to the tower LSP server"
-    );
-
-    Ok(())
-}
-
-#[test]
-#[serial]
-fn framed_lsp_protocol_smoke_exercises_tower_server() -> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-
-    runtime.block_on(async {
-        let invalid_root_parent = unique_lsp_test_root("framed-invalid-root")?;
-        let invalid_root = invalid_root_parent.path().join("not-a-directory");
-        std::fs::write(&invalid_root, b"not a workspace directory")
-            .map_err(|err| format!("write invalid LSP root failed: {err}"))?;
-        let invalid_root_uri = file_uri_for_path(&invalid_root)?;
-        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
-        let (client_read, mut client_write) = tokio::io::split(client_io);
-        let (server_read, server_write) = tokio::io::split(server_io);
-        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let mut server_task = tokio::spawn(async move {
-            Server::new(server_read, server_write, socket)
-                .serve(service)
-                .await;
-        });
-        let mut client_read = client_read;
-        let text_uri = "file:///workspace/src/lib.rs";
-
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "processId": null,
-                    "rootUri": invalid_root_uri.as_str(),
-                    "initializationOptions": {
-                        "baseRef": "ripr-lsp-protocol-smoke-missing-base"
-                    },
-                    "capabilities": {}
-                }
-            }),
-        )
-        .await?;
-        let initialize = read_lsp_response(&mut client_read, 1).await?;
-        assert_eq!(
-            initialize["result"]["capabilities"]["executeCommandProvider"]["commands"][0],
-            REFRESH_COMMAND
-        );
-        assert_eq!(
-            initialize["result"]["capabilities"]["executeCommandProvider"]["commands"][1],
-            COLLECT_CONTEXT_COMMAND
-        );
-        assert_eq!(
-            initialize["result"]["capabilities"]["executeCommandProvider"]["commands"][2],
-            COLLECT_EVIDENCE_CONTEXT_COMMAND
-        );
-        assert_eq!(
-            initialize["result"]["capabilities"]["executeCommandProvider"]["commands"][3],
-            COLLECT_WORKSPACE_STATUS_COMMAND
-        );
-        assert_eq!(
-            initialize["result"]["capabilities"]["executeCommandProvider"]["commands"][4],
-            COLLECT_REPAIR_PACKET_COMMAND
-        );
-        assert_eq!(
-            initialize["result"]["capabilities"]["executeCommandProvider"]["commands"][5],
-            COLLECT_TOP_LIMITATION_COMMAND
-        );
-        assert_eq!(
-            initialize["result"]["capabilities"]["hoverProvider"],
-            serde_json::Value::Bool(true)
-        );
-
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "initialized",
-                "params": {}
-            }),
-        )
-        .await?;
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "textDocument/didOpen",
-                "params": {
-                    "textDocument": {
-                        "uri": text_uri,
-                        "languageId": "rust",
-                        "version": 1,
-                        "text": "pub fn demo() -> bool { true }\n"
-                    }
-                }
-            }),
-        )
-        .await?;
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "workspace/executeCommand",
-                "params": {
-                    "command": COLLECT_WORKSPACE_STATUS_COMMAND,
-                    "arguments": []
-                }
-            }),
-        )
-        .await?;
-        let status = read_lsp_response(&mut client_read, 2).await?;
-        assert_eq!(
-            status["result"]["analysis_status"]["root_state"],
-            "root_unavailable"
-        );
-        assert_eq!(
-            status["result"]["analysis_status"]["repair_actions_available"],
-            false
-        );
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 3,
-                "method": "workspace/executeCommand",
-                "params": {
-                    "command": REFRESH_COMMAND,
-                    "arguments": []
-                }
-            }),
-        )
-        .await?;
-        let (refresh, notifications) =
-            read_lsp_response_with_notifications(&mut client_read, 3).await?;
-        assert!(refresh.get("error").is_none());
-        assert_eq!(refresh["result"], serde_json::Value::Null);
-        assert!(log_notification_messages(&notifications).is_empty());
-
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 4,
-                "method": "textDocument/hover",
-                "params": {
-                    "textDocument": { "uri": text_uri },
-                    "position": { "line": 0, "character": 4 }
-                }
-            }),
-        )
-        .await?;
-        let hover = read_lsp_response(&mut client_read, 4).await?;
-        let hover_value = hover["result"]["contents"]["value"]
-            .as_str()
-            .ok_or_else(|| "expected hover markdown value".to_string())?;
-        assert!(hover_value.contains("ripr estimates static RIPR exposure"));
-
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 5,
-                "method": "textDocument/codeAction",
-                "params": {
-                    "textDocument": { "uri": text_uri },
-                    "range": {
-                        "start": { "line": 0, "character": 0 },
-                        "end": { "line": 0, "character": 4 }
-                    },
-                    "context": { "diagnostics": [] }
-                }
-            }),
-        )
-        .await?;
-        let actions = read_lsp_response(&mut client_read, 5).await?;
-        assert_eq!(
-            actions["result"][0]["title"],
-            "Refresh Analysis - Saved Workspace Check"
-        );
-        assert_eq!(actions["result"][0]["command"]["command"], REFRESH_COMMAND);
-
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 6,
-                "method": "shutdown",
-                "params": null
-            }),
-        )
-        .await?;
-        let shutdown = read_lsp_response(&mut client_read, 6).await?;
-        assert!(shutdown.get("error").is_none());
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "exit",
-                "params": null
-            }),
-        )
-        .await?;
-        client_write
-            .shutdown()
-            .await
-            .map_err(|err| format!("failed to close test client: {err}"))?;
-        match tokio::time::timeout(std::time::Duration::from_secs(2), &mut server_task).await {
-            Ok(join_result) => {
-                join_result.map_err(|err| format!("LSP server task failed: {err}"))?;
-            }
-            Err(_) => {
-                server_task.abort();
-                return Err("LSP server did not stop after exit notification".to_string());
-            }
-        }
-        Ok(())
-    })
-}
-
-#[test]
-#[serial]
-fn framed_lsp_protocol_smoke_logs_successful_refresh_completion() -> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-
-    runtime.block_on(async {
-        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
-        let (client_read, mut client_write) = tokio::io::split(client_io);
-        let (server_read, server_write) = tokio::io::split(server_io);
-        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let mut server_task = tokio::spawn(async move {
-            Server::new(server_read, server_write, socket)
-                .serve(service)
-                .await;
-        });
-        let mut client_read = client_read;
-        // Keep this protocol smoke bounded now that seam diagnostics default on;
-        // whole-repo inventory behavior is covered by fixture and report tests.
-        let fixture = boundary_gap_git_fixture_root("framed-protocol-smoke")?;
-        let repo_root = fixture.path().to_path_buf();
-        let root_uri = file_uri_for_path(&repo_root)?;
-
-        // Advertise the riprEditor block exactly as the VS Code extension
-        // does (#1776, RIPR-SPEC-0129) so the session negotiates the
-        // client-command code actions asserted below.
-        let advertised_commands = vscode_advertised_client_commands()?;
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "processId": null,
-                    "rootUri": root_uri.as_str(),
-                    "initializationOptions": {
-                        "baseRef": "HEAD",
-                        "checkMode": "instant",
-                        "diagnosticProfile": "full"
-                    },
-                    "capabilities": {
-                        "experimental": {
-                            "riprEditor": {
-                                "version": "0.10.0",
-                                "commands": advertised_commands,
-                                "guardedTestEdit": false
-                            }
-                        }
-                    }
-                }
-            }),
-        )
-        .await?;
-        let initialize = read_lsp_response(&mut client_read, 1).await?;
-        assert!(initialize.get("error").is_none());
-
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "workspace/executeCommand",
-                "params": {
-                    "command": REFRESH_COMMAND,
-                    "arguments": []
-                }
-            }),
-        )
-        .await?;
-        let (refresh, notifications) =
-            read_lsp_response_with_notifications(&mut client_read, 2).await?;
-        assert!(refresh.get("error").is_none());
-        assert_eq!(refresh["result"], serde_json::Value::Null);
-        let notification_messages = log_notification_messages(&notifications);
-        assert!(
-            notification_messages
-                .iter()
-                .any(|message| message.contains("ripr analysis refresh started"))
-        );
-        assert!(
-            notification_messages
-                .iter()
-                .any(|message| message.contains("ripr analysis refresh completed in"))
-        );
-
-        let (text_uri, seam_diagnostic) =
-            published_seam_diagnostic(&notifications, "67fc764ba37d77bd")?;
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 3,
-                "method": "textDocument/hover",
-                "params": {
-                    "textDocument": { "uri": text_uri },
-                    "position": { "line": 1, "character": 1 }
-                }
-            }),
-        )
-        .await?;
-        let hover = read_lsp_response(&mut client_read, 3).await?;
-        let hover_value = hover["result"]["contents"]["value"]
-            .as_str()
-            .ok_or_else(|| "expected seam hover markdown value".to_string())?;
-        assert!(
-            hover_value.contains("## Missing discriminator"),
-            "expected seam hover to name missing discriminator, got {hover_value}"
-        );
-        assert!(
-            hover_value.contains("## Related tests"),
-            "expected seam hover to name related tests, got {hover_value}"
-        );
-        assert!(
-            hover_value.contains("## Next step"),
-            "expected seam hover to name next step, got {hover_value}"
-        );
-        assert!(
-            hover_value.contains("## Suggested test shape"),
-            "expected seam hover to name suggested test shape, got {hover_value}"
-        );
-        assert!(
-            hover_value.contains("## Handoff, verify, and receipt commands"),
-            "expected seam hover to name handoff, verify, and receipt commands, got {hover_value}"
-        );
-        assert!(
-            hover_value.contains("## Limits"),
-            "expected seam hover to name static limits, got {hover_value}"
-        );
-
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 4,
-                "method": "textDocument/codeAction",
-                "params": {
-                    "textDocument": { "uri": text_uri },
-                    "range": seam_diagnostic["range"].clone(),
-                    "context": { "diagnostics": [seam_diagnostic] }
-                }
-            }),
-        )
-        .await?;
-        let code_actions = read_lsp_response(&mut client_read, 4).await?;
-        let titles = code_actions["result"]
-            .as_array()
-            .ok_or_else(|| "expected codeAction result array".to_string())?
-            .iter()
-            .filter_map(|action| action.get("title").and_then(serde_json::Value::as_str))
-            .collect::<Vec<_>>();
-        for expected in [
-            "Inspect Test Gap - Copy Context",
-            "Write targeted test: copy brief",
-            "Verify after test: copy verify command",
-            "Review result: copy receipt command",
-        ] {
-            assert!(
-                titles.contains(&expected),
-                "expected protocol code actions to contain {expected}, got {titles:?}"
-            );
-        }
-
-        let seam_id = seam_diagnostic["data"]["seam_id"]
-            .as_str()
-            .ok_or_else(|| "expected seam diagnostic data.seam_id".to_string())?;
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 5,
-                "method": "workspace/executeCommand",
-                "params": {
-                    "command": COLLECT_EVIDENCE_CONTEXT_COMMAND,
-                    "arguments": [{
-                        "seam_id": seam_id,
-                        "evidence_identity": seam_diagnostic["data"]["evidence_identity"],
-                        "uri": text_uri,
-                        "line": 2
-                    }]
-                }
-            }),
-        )
-        .await?;
-        let context_packet = read_lsp_response(&mut client_read, 5).await?;
-        assert_eq!(
-            context_packet["result"]["schema_version"],
-            serde_json::Value::String("0.1".to_string())
-        );
-        assert_eq!(context_packet["result"]["seam_id"], seam_id);
-        assert_eq!(
-            context_packet["result"]["evidence_path"]["discriminate"],
-            "present"
-        );
-        assert_eq!(
-            context_packet["result"]["missing_discriminator"],
-            "discount_threshold (equality boundary)"
-        );
-        assert!(
-            context_packet["result"]["related_test"]
-                .as_str()
-                .is_some_and(|value| value.contains("tests/pricing.rs"))
-        );
-        assert!(
-            context_packet["result"]["agent_brief_command"]
-                .as_str()
-                .is_some_and(|value| value.starts_with("ripr agent brief --root . --seam-id "))
-        );
-        assert!(
-            context_packet["result"]["verify_command"]
-                .as_str()
-                .is_some_and(|value| value.contains("ripr agent verify --root ."))
-        );
-        assert!(
-            context_packet["result"]["receipt_command"]
-                .as_str()
-                .is_some_and(|value| value.contains("ripr agent receipt --root ."))
-        );
-        assert_eq!(
-            context_packet["result"]["limits_note"],
-            "Static evidence only; no runtime mutation execution."
-        );
-
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 6,
-                "method": "shutdown",
-                "params": null
-            }),
-        )
-        .await?;
-        let shutdown = read_lsp_response(&mut client_read, 6).await?;
-        assert!(shutdown.get("error").is_none());
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "exit",
-                "params": null
-            }),
-        )
-        .await?;
-        client_write
-            .shutdown()
-            .await
-            .map_err(|err| format!("failed to close test client: {err}"))?;
-        match tokio::time::timeout(std::time::Duration::from_secs(2), &mut server_task).await {
-            Ok(join_result) => {
-                join_result.map_err(|err| format!("LSP server task failed: {err}"))?;
-            }
-            Err(_) => {
-                server_task.abort();
-                return Err("LSP server did not stop after exit notification".to_string());
-            }
-        }
-        Ok(())
-    })
-}
-
-#[test]
-#[serial]
-fn framed_lsp_refresh_resolves_git_inputs_once_and_projects_the_record() -> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-
-    runtime.block_on(async {
-        // A real temp git repo so the refresh resolves the requested base
-        // through the one typed record (#2000, RIPR-SPEC-0142).
-        let root = unique_lsp_test_root("framed-git-input-authority")?;
-        init_lsp_test_scope_repo(root.path())?;
-        std::fs::write(
-            root.path().join("src/lib.rs"),
-            "pub fn gate_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
-        )
-        .map_err(|err| format!("write changed production fixture failed: {err}"))?;
-        commit_lsp_test_scope_change(root.path(), "change production")?;
-        let expected_base = crate::analysis::resolve_base_commit(root.path(), Some("HEAD~1"), None)
-            .ok_or_else(|| "fixture HEAD~1 must resolve".to_string())?;
-        let root_uri = file_uri_for_path(root.path())?;
-
-        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
-        let (client_read, mut client_write) = tokio::io::split(client_io);
-        let (server_read, server_write) = tokio::io::split(server_io);
-        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let mut server_task = tokio::spawn(async move {
-            Server::new(server_read, server_write, socket)
-                .serve(service)
-                .await;
-        });
-        let mut client_read = client_read;
-
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "processId": null,
-                    "rootUri": root_uri.as_str(),
-                    "initializationOptions": {
-                        "baseRef": "HEAD~1",
-                        "checkMode": "instant"
-                    },
-                    "capabilities": {}
-                }
-            }),
-        )
-        .await?;
-        let initialize = read_lsp_response(&mut client_read, 1).await?;
-        assert!(initialize.get("error").is_none());
-
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "workspace/executeCommand",
-                "params": {
-                    "command": REFRESH_COMMAND,
-                    "arguments": []
-                }
-            }),
-        )
-        .await?;
-        let (refresh, notifications) =
-            read_lsp_response_with_notifications(&mut client_read, 2).await?;
-        assert!(refresh.get("error").is_none());
-        let notification_messages = log_notification_messages(&notifications);
-        // The one accepted refresh resolved the requested base once and the
-        // phase-boundary log names the typed record the attempt consumes.
-        let expected_log = format!(
-            "git_input_resolution=resolved, requested_base=Some(\"HEAD~1\"), resolved_base=Some(\"{expected_base}\")"
-        );
-        assert!(
-            notification_messages
-                .iter()
-                .any(|message| message.contains(&expected_log)),
-            "expected refresh-start log to name the resolved record, got {notification_messages:?}"
-        );
-        // Exactly one refresh started: no consumer re-resolved and spawned a
-        // second attempt for the same request.
-        let started_count = notification_messages
-            .iter()
-            .filter(|message| message.contains("ripr analysis refresh started"))
-            .count();
-        assert_eq!(started_count, 1, "one accepted refresh, one resolution");
-
-        // The workspace status projects the same resolved inputs from the
-        // committed snapshot identity.
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 3,
-                "method": "workspace/executeCommand",
-                "params": {
-                    "command": COLLECT_WORKSPACE_STATUS_COMMAND,
-                    "arguments": []
-                }
-            }),
-        )
-        .await?;
-        let status = read_lsp_response(&mut client_read, 3).await?;
-        assert!(status.get("error").is_none());
-        let current = &status["result"]["analysis_status"]["input_authority"]["current"];
-        assert_eq!(
-            current["requested_base"].as_str(),
-            Some("HEAD~1"),
-            "status must project the requested base: {current}"
-        );
-        assert_eq!(
-            current["resolved_base"].as_str(),
-            Some(expected_base.as_str()),
-            "status must project the one resolved base: {current}"
-        );
-        assert_eq!(
-            current["git_input_resolution"].as_str(),
-            Some("resolved"),
-            "status must project the typed resolution: {current}"
-        );
-
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 4,
-                "method": "shutdown",
-                "params": null
-            }),
-        )
-        .await?;
-        let shutdown = read_lsp_response(&mut client_read, 4).await?;
-        assert!(shutdown.get("error").is_none());
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "exit",
-                "params": null
-            }),
-        )
-        .await?;
-        client_write
-            .shutdown()
-            .await
-            .map_err(|err| format!("failed to close test client: {err}"))?;
-        match tokio::time::timeout(std::time::Duration::from_secs(2), &mut server_task).await {
-            Ok(join_result) => {
-                join_result.map_err(|err| format!("LSP server task failed: {err}"))?;
-            }
-            Err(_) => {
-                server_task.abort();
-                return Err("LSP server did not stop after exit notification".to_string());
-            }
-        }
-        Ok(())
-    })
-}
-
-#[test]
-fn framed_code_lens_refresh_follows_semantic_lens_view_changes() -> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-
-    runtime.block_on(async {
-        // Temp git repo: a committed base plus a committed production
-        // change, so the saved-workspace analysis (base..HEAD) produces
-        // findings.
-        let root = unique_lsp_test_root("framed-code-lens-refresh")?;
-        write_lsp_scope_fixture(&root.path)?;
-        run_lsp_scope_git(&root.path, &["init"])?;
-        run_lsp_scope_git(
-            &root.path,
-            &["config", "user.email", "ripr@example.invalid"],
-        )?;
-        run_lsp_scope_git(&root.path, &["config", "user.name", "RIPR Test"])?;
-        run_lsp_scope_git(
-            &root.path,
-            &["add", "Cargo.toml", "src/lib.rs", "tests/end_to_end.rs"],
-        )?;
-        run_lsp_scope_git(&root.path, &["commit", "-m", "base"])?;
-        fs::write(
-            root.path.join("src/lib.rs"),
-            "pub fn gate_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
-        )
-        .map_err(|err| format!("write changed production fixture failed: {err}"))?;
-        run_lsp_scope_git(&root.path, &["add", "src/lib.rs"])?;
-        run_lsp_scope_git(&root.path, &["commit", "-m", "change production"])?;
-        let root_uri = file_uri_for_path(root.path())?;
-
-        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
-        let (client_read, mut client_write) = tokio::io::split(client_io);
-        let (server_read, server_write) = tokio::io::split(server_io);
-        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let mut server_task = tokio::spawn(async move {
-            Server::new(server_read, server_write, socket)
-                .serve(service)
-                .await;
-        });
-        let mut client_read = client_read;
-
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "processId": null,
-                    "rootUri": root_uri.as_str(),
-                    "initializationOptions": {
-                        "baseRef": "HEAD~1",
-                        "checkMode": "instant",
-                        "diagnosticProfile": "full"
-                    },
-                    "capabilities": {
-                        "workspace": {
-                            "codeLens": { "refreshSupport": true }
-                        }
-                    }
-                }
-            }),
-        )
-        .await?;
-        let initialize = read_lsp_response(&mut client_read, 1).await?;
-        assert!(initialize.get("error").is_none());
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "initialized",
-                "params": {}
-            }),
-        )
-        .await?;
-
-        // Refresh 1: the first snapshot commits with findings, so exactly one
-        // workspace/codeLens/refresh request must arrive (#2032).
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "workspace/executeCommand",
-                "params": {
-                    "command": REFRESH_COMMAND,
-                    "arguments": []
-                }
-            }),
-        )
-        .await?;
-        let (refresh, refresh_requests) =
-            read_response_answering_code_lens_refresh(&mut client_read, &mut client_write, 2)
-                .await?;
-        assert!(refresh.get("error").is_none());
-        assert_eq!(
-            refresh_requests, 1,
-            "the first snapshot commit must send exactly one workspace/codeLens/refresh"
-        );
-
-        // Vacuous-pass guard (tests-red-green review): the fixture must
-        // actually produce lenses, or the request counts in this test could
-        // pass on an empty view (an empty first view also changes the
-        // recorded identity from None).
-        let changed_file_uri = file_uri_for_path(&root.path.join("src/lib.rs"))?;
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 20,
-                "method": "textDocument/codeLens",
-                "params": {
-                    "textDocument": { "uri": changed_file_uri.as_str() }
-                }
-            }),
-        )
-        .await?;
-        let lenses = read_lsp_response(&mut client_read, 20).await?;
-        let lens_count = lenses["result"].as_array().map_or(0, Vec::len);
-        if lens_count == 0 {
-            return Err(format!(
-                "fixture must produce at least one code lens, or the refresh counts pass vacuously: {lenses}"
-            ));
-        }
-
-        // Refresh 2: byte-identical inputs. A new snapshot commits with a
-        // fresh wall-clock age (the rendered title suffix changes), but the
-        // semantic lens view is unchanged, so no request may be sent.
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 3,
-                "method": "workspace/executeCommand",
-                "params": {
-                    "command": REFRESH_COMMAND,
-                    "arguments": []
-                }
-            }),
-        )
-        .await?;
-        let (refresh, refresh_requests) =
-            read_response_answering_code_lens_refresh(&mut client_read, &mut client_write, 3)
-                .await?;
-        assert!(refresh.get("error").is_none());
-        assert_eq!(
-            refresh_requests, 0,
-            "a byte-identical re-commit must not send workspace/codeLens/refresh"
-        );
-
-        // Refresh 3 (#3183): the saved workspace changes semantically through
-        // a tracked on-disk edit that has not been committed. The editor is a
-        // draft-time surface, so the canonical worktree diff must include the
-        // new predicate and change the visible lens set without requiring a
-        // commit.
-        fs::write(
-            root.path.join("src/lib.rs"),
-            "pub fn gate_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n\npub fn second_gate(level: u8) -> bool {\n    level > 3\n}\n",
-        )
-        .map_err(|err| format!("write second production change failed: {err}"))?;
-        let worktree = lsp_scope_git_output(
-            &root.path,
-            &["diff", "--name-only", "HEAD", "--"],
-        )?;
-        if !worktree.status.success()
-            || String::from_utf8_lossy(&worktree.stdout).trim() != "src/lib.rs"
-        {
-            return Err(format!(
-                "fixture must contain exactly the saved tracked source edit before refresh: status={} stdout={:?} stderr={:?}",
-                worktree.status,
-                String::from_utf8_lossy(&worktree.stdout),
-                String::from_utf8_lossy(&worktree.stderr)
-            ));
-        }
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 4,
-                "method": "workspace/executeCommand",
-                "params": {
-                    "command": REFRESH_COMMAND,
-                    "arguments": []
-                }
-            }),
-        )
-        .await?;
-        let (refresh, refresh_requests) =
-            read_response_answering_code_lens_refresh(&mut client_read, &mut client_write, 4)
-                .await?;
-        assert!(refresh.get("error").is_none());
-        assert_eq!(
-            refresh_requests, 1,
-            "a saved tracked worktree edit must change the lens view without requiring a commit"
-        );
-
-        // Refresh 4: the explicit full refresh must consume the same worktree
-        // diff authority. It still owns the full seam inventory, but the
-        // unchanged saved-worktree lens view must not emit a duplicate refresh.
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 5,
-                "method": "workspace/executeCommand",
-                "params": {
-                    "command": REFRESH_COMMAND,
-                    "arguments": []
-                }
-            }),
-        )
-        .await?;
-        let (refresh, refresh_requests) =
-            read_response_answering_code_lens_refresh(&mut client_read, &mut client_write, 5)
-                .await?;
-        assert!(refresh.get("error").is_none());
-        assert_eq!(
-            refresh_requests, 0,
-            "an unchanged explicit full refresh must preserve the worktree-derived lens view"
-        );
-
-        // Refresh 5 (RIPR-SPEC-0138, review): removing the workspace root
-        // clears analysis state â€” every lens is now stale â€” so the server
-        // must send one more refresh for the cleared view.
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "workspace/didChangeWorkspaceFolders",
-                "params": {"event": {"added": [], "removed": [{"uri": root_uri.as_str(), "name": "fixture"}]}}
-            }),
-        )
-        .await?;
-        let folders_request =
-            read_lsp_request(&mut client_read, "workspace/workspaceFolders").await?;
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": folders_request["id"].clone(),
-                "result": []
-            }),
-        )
-        .await?;
-        let cleared_refresh =
-            read_lsp_request(&mut client_read, "workspace/codeLens/refresh").await?;
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": cleared_refresh["id"].clone(),
-                "result": null
-            }),
-        )
-        .await?;
-
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 6,
-                "method": "shutdown",
-                "params": null
-            }),
-        )
-        .await?;
-        let shutdown = read_lsp_response(&mut client_read, 6).await?;
-        assert!(shutdown.get("error").is_none());
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "exit",
-                "params": null
-            }),
-        )
-        .await?;
-        client_write
-            .shutdown()
-            .await
-            .map_err(|err| format!("failed to close test client: {err}"))?;
-        match tokio::time::timeout(std::time::Duration::from_secs(2), &mut server_task).await {
-            Ok(join_result) => {
-                join_result.map_err(|err| format!("LSP server task failed: {err}"))?;
-            }
-            Err(_) => {
-                server_task.abort();
-                return Err("LSP server did not stop after exit notification".to_string());
-            }
-        }
-        Ok(())
-    })
-}
-
-#[test]
-fn lsp_saved_worktree_refresh_analyzes_uncommitted_tracked_edit() -> Result<(), String> {
-    let root = unique_lsp_test_root("saved-worktree-diff-authority")?;
-    write_lsp_scope_fixture(root.path())?;
-    run_lsp_scope_git(root.path(), &["init"])?;
-    run_lsp_scope_git(
-        root.path(),
-        &["config", "user.email", "ripr@example.invalid"],
-    )?;
-    run_lsp_scope_git(root.path(), &["config", "user.name", "RIPR Test"])?;
-    run_lsp_scope_git(
-        root.path(),
-        &["add", "Cargo.toml", "src/lib.rs", "tests/end_to_end.rs"],
-    )?;
-    run_lsp_scope_git(root.path(), &["commit", "-m", "base"])?;
-
-    fs::write(
-        root.path().join("src/lib.rs"),
-        "pub fn gate_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
-    )
-    .map_err(|err| format!("persist saved tracked source edit failed: {err}"))?;
-
-    // Discriminating setup: committed-history mode has no subject, while the
-    // canonical worktree diff has exactly one tracked source file. A nearby
-    // fix that only changes status or seam inventory cannot satisfy this.
-    let committed =
-        lsp_scope_git_output(root.path(), &["diff", "--name-only", "HEAD...HEAD", "--"])?;
-    if !committed.status.success() || !committed.stdout.is_empty() {
-        return Err(format!(
-            "fixture committed diff must be empty: status={} stdout={:?} stderr={:?}",
-            committed.status,
-            String::from_utf8_lossy(&committed.stdout),
-            String::from_utf8_lossy(&committed.stderr)
-        ));
-    }
-    let worktree = lsp_scope_git_output(root.path(), &["diff", "--name-only", "HEAD", "--"])?;
-    if !worktree.status.success()
-        || String::from_utf8_lossy(&worktree.stdout).trim() != "src/lib.rs"
-    {
-        return Err(format!(
-            "fixture worktree diff must contain exactly src/lib.rs: status={} stdout={:?} stderr={:?}",
-            worktree.status,
-            String::from_utf8_lossy(&worktree.stdout),
-            String::from_utf8_lossy(&worktree.stderr)
-        ));
-    }
-
-    let config = LspAnalysisConfig {
-        base_ref: Some("HEAD".to_string()),
-        mode: Mode::Instant,
-        diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
-        ..LspAnalysisConfig::default()
-    };
-    let diagnostics = workspace_diagnostics_with_config(root.path(), &config, true)?;
-    if !diagnostics.snapshot.seams_deferred {
-        return Err("interactive saved-worktree proof must defer seam inventory".to_string());
-    }
-    if diagnostics.snapshot.findings.is_empty() {
-        return Err(
-            "saved tracked edit produced no diff-scoped findings; the LSP refresh still appears to analyze HEAD instead of the worktree"
-                .to_string(),
-        );
-    }
-    let source_uri = file_uri_for_path(&root.path().join("src/lib.rs"))?;
-    if !diagnostics
-        .batches
-        .iter()
-        .any(|batch| batch.uri == source_uri && !batch.diagnostics.is_empty())
-    {
-        return Err("saved tracked source edit did not reach the LSP diagnostic batch".to_string());
-    }
-    Ok(())
-}
-
-fn published_seam_diagnostic(
-    notifications: &[serde_json::Value],
-    seam_id: &str,
-) -> Result<(String, serde_json::Value), String> {
-    for notification in notifications {
-        if notification
-            .get("method")
-            .and_then(serde_json::Value::as_str)
-            != Some("textDocument/publishDiagnostics")
-        {
-            continue;
-        }
-        let Some(uri) = notification
-            .get("params")
-            .and_then(|params| params.get("uri"))
-            .and_then(serde_json::Value::as_str)
-        else {
-            continue;
-        };
-        let Some(diagnostics) = notification
-            .get("params")
-            .and_then(|params| params.get("diagnostics"))
-            .and_then(serde_json::Value::as_array)
-        else {
-            continue;
-        };
-        for diagnostic in diagnostics {
-            if diagnostic
-                .get("data")
-                .and_then(|data| data.get("seam_id"))
-                .and_then(serde_json::Value::as_str)
-                == Some(seam_id)
-            {
-                return Ok((uri.to_string(), diagnostic.clone()));
-            }
-        }
-    }
-    Err(format!(
-        "expected published seam diagnostic with seam_id {seam_id}"
-    ))
-}
-
-#[test]
-fn hover_response_keeps_current_guidance_text() -> Result<(), String> {
-    let hover = hover_response();
-
-    match hover.contents {
-        HoverContents::Markup(markup) => {
-            assert_eq!(markup.value, HOVER_TEXT);
-            Ok(())
-        }
-        _ => Err("expected markup hover".to_string()),
-    }
-}
-
-#[test]
-fn hover_for_position_uses_latest_matching_diagnostic() -> Result<(), String> {
-    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-    let backend = service.inner();
-    let finding = sample_finding();
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let diagnostics = sample_workspace_diagnostics(
-        PathBuf::from("/workspace"),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        vec![finding],
-    );
-    let Some(_) = backend.refresh_plan(diagnostics) else {
-        return Err("expected refresh plan".to_string());
-    };
-
-    let Some(hover) = backend.hover_for_position(&hover_params(uri, 87, 1)) else {
-        return Err("expected diagnostic hover".to_string());
-    };
-
-    match hover.contents {
-        HoverContents::Markup(markup) => {
-            assert!(markup.value.contains("**ripr** `weakly_exposed`"));
-            assert!(markup.value.contains("Add an exact boundary assertion."));
-            assert!(markup.value.contains("## RIPR Evidence"));
-            assert!(markup.value.contains("* reach yes: related tests found"));
-            assert!(
-                markup
-                    .value
-                    .contains("* infection yes: predicate can alter branch behavior")
-            );
-            assert!(
-                markup
-                    .value
-                    .contains("* propagation yes: branch influences return value")
-            );
-            assert!(
-                markup
-                    .value
-                    .contains("* observation weak: return value asserted")
-            );
-            assert!(
-                markup
-                    .value
-                    .contains("* discriminator weak: boundary value missing")
-            );
-            Ok(())
-        }
-        _ => Err("expected markup hover".to_string()),
-    }
-}
-
-#[test]
-fn finding_diagnostic_and_hover_include_canonical_gap_id() -> Result<(), String> {
-    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-    let backend = service.inner();
-    let mut finding = sample_finding();
-    finding.canonical_gap = Some(sample_canonical_gap());
-    finding.evidence = vec!["related evidence".to_string()];
-    finding.missing = vec!["missing exact discriminator".to_string()];
-    finding.recommended_next_step = Some("Add the exact assertion.".to_string());
-    finding.activation.missing_discriminators = vec![crate::domain::MissingDiscriminatorFact {
-        value: "threshold equality".to_string(),
-        reason: "the equality boundary is not observed".to_string(),
-        flow_sink: None,
-    }];
-    finding.related_tests = vec![RelatedTest {
-        name: "pricing::discount_boundary".to_string(),
-        file: PathBuf::from("tests/pricing.rs"),
-        line: 12,
-        oracle: Some("assert_eq".to_string()),
-        oracle_kind: OracleKind::ExactValue,
-        oracle_strength: OracleStrength::Strong,
-        relation_reason: None,
-        relation_confidence: None,
-    }];
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-    let canonical_gap_id = diagnostic
-        .data
-        .as_ref()
-        .and_then(|data| data.get("canonical_gap_id"))
-        .and_then(|value| value.as_str())
-        .ok_or_else(|| "expected canonical_gap_id in diagnostic data".to_string())?;
-    assert_eq!(
-        canonical_gap_id,
-        "gap:python:src/pricing.py:apply_discount:predicate_boundary:predicate:amount>=threshold"
-    );
-    let mut raw_finding = finding.clone();
-    raw_finding.id = "probe:pricing:89:predicate".to_string();
-    raw_finding.probe.id = ProbeId(raw_finding.id.clone());
-    raw_finding.probe.location.line = 89;
-    let mut grouped_diagnostic = diagnostic.clone();
-    add_canonical_group_data(
-        Path::new("/workspace"),
-        &mut grouped_diagnostic,
-        &finding,
-        &[finding.clone(), raw_finding],
-    );
-    assert_eq!(
-        grouped_diagnostic
-            .data
-            .as_ref()
-            .and_then(|data| data["raw_signal_count"].as_u64()),
-        Some(2)
-    );
-    assert_eq!(
-        grouped_diagnostic
-            .data
-            .as_ref()
-            .and_then(|data| data["raw_findings"].as_array())
-            .map(Vec::len),
-        Some(2)
-    );
-    assert_eq!(
-        grouped_diagnostic
-            .data
-            .as_ref()
-            .and_then(|data| data["related_tests"].as_array())
-            .map(Vec::len),
-        Some(1)
-    );
-    let mut no_data_diagnostic = tower_lsp_server::ls_types::Diagnostic::default();
-    add_canonical_group_data(
-        Path::new("/workspace"),
-        &mut no_data_diagnostic,
-        &finding,
-        std::slice::from_ref(&finding),
-    );
-    assert!(no_data_diagnostic.data.is_none());
-    assert_eq!(
-        grouped_diagnostic
-            .data
-            .as_ref()
-            .and_then(|data| data["evidence"].as_array())
-            .map(Vec::len),
-        Some(1)
-    );
-    assert_eq!(
-        grouped_diagnostic
-            .data
-            .as_ref()
-            .and_then(|data| data["missing"].as_array())
-            .map(Vec::len),
-        Some(1)
-    );
-    assert_eq!(
-        grouped_diagnostic
-            .data
-            .as_ref()
-            .and_then(|data| data["recommended_next_steps"].as_array())
-            .map(Vec::len),
-        Some(1)
-    );
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let diagnostics = sample_workspace_diagnostics(
-        PathBuf::from("/workspace"),
-        uri.clone(),
-        vec![diagnostic],
-        vec![finding],
-    );
-    let Some(_) = backend.refresh_plan(diagnostics) else {
-        return Err("expected refresh plan".to_string());
-    };
-
-    let Some(hover) = backend.hover_for_position(&hover_params(uri, 87, 1)) else {
-        return Err("expected finding hover".to_string());
-    };
-
-    match hover.contents {
-        HoverContents::Markup(markup) => {
-            assert!(markup.value.contains("## Canonical Gap"));
-            assert!(markup.value.contains(
-                "ID: `gap:python:src/pricing.py:apply_discount:predicate_boundary:predicate:amount>=threshold`"
-            ));
-            Ok(())
-        }
-        _ => Err("expected markup hover".to_string()),
-    }
-}
-
-#[test]
-fn discriminator_witness_stays_aligned_across_lsp_surfaces() -> Result<(), String> {
-    let mut finding = sample_finding();
-    finding.recommended_next_step = None;
-    finding.canonical_gap = Some(sample_canonical_gap());
-    finding.probe.family = ProbeFamily::ErrorPath;
-    finding.probe.before = Some("Err(PricingError::Other)".to_string());
-    finding.probe.after = Some("Err(PricingError::Boundary)".to_string());
-    finding.probe.expected_sinks = vec!["error_variant".to_string()];
-    finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
-        value: "PricingError::Boundary".to_string(),
-        reason: "the broad error oracle does not distinguish the variant".to_string(),
-        flow_sink: None,
-    }];
-    finding.activation.observed_values = vec![ValueFact {
-        line: 12,
-        text: "assert!(result.is_err())".to_string(),
-        value: "result.is_err()".to_string(),
-        context: ValueContext::AssertionArgument,
-    }];
-    finding.related_tests = vec![RelatedTest {
-        name: "rejects_boundary".to_string(),
-        file: PathBuf::from("tests/pricing.rs"),
-        line: 10,
-        oracle: Some("assert!(result.is_err())".to_string()),
-        oracle_kind: OracleKind::BroadError,
-        oracle_strength: OracleStrength::Weak,
-        relation_reason: None,
-        relation_confidence: None,
-    }];
-
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-    let witness = diagnostic
-        .data
-        .as_ref()
-        .and_then(|data| data.get("witness"))
-        .cloned()
-        .ok_or_else(|| "expected diagnostic discriminator witness".to_string())?;
-    assert_eq!(witness["kind"], "static_discriminator_gap");
-    assert_eq!(witness["probe_family"], "error_path");
-    assert_eq!(
-        witness["missing_discriminators"][0]["value"],
-        "PricingError::Boundary"
-    );
-    assert_eq!(witness["fix_site"]["file"], "tests/pricing.rs");
-    assert!(witness["fix_site"]["oracle_location"].is_null());
-    assert!(witness["suggested_assertion"].is_null());
-    assert_eq!(
-        diagnostic
-            .data
-            .as_ref()
-            .and_then(|data| data.get("explain_command"))
-            .and_then(|value| value.as_str()),
-        Some("ripr explain --root . probe:pricing:88:predicate")
-    );
-    assert!(diagnostic.message.contains("Exact error variant"));
-    assert!(diagnostic.message.contains("PricingError::Boundary"));
-
-    let related = diagnostic
-        .related_information
-        .as_ref()
-        .ok_or_else(|| "expected fix-site related information".to_string())?;
-    assert_eq!(related.len(), 1);
-    assert!(related[0].message.starts_with("Fix site:"));
-    assert_eq!(related[0].location.range.start.line, 9);
-
-    let hover = super::hover::finding_hover_response(&finding, &diagnostic);
-    let HoverContents::Markup(markup) = hover.contents else {
-        return Err("expected witness hover markdown".to_string());
-    };
-    assert!(markup.value.contains("## Discriminator witness"));
-    assert!(markup.value.contains("PricingError::Boundary"));
-    assert!(markup.value.contains("tests/pricing.rs:10"));
-    assert!(markup.value.contains("suggested_assertion_unavailable"));
-
-    let context_packet = crate::output::json::render_context_packet(&finding, 5);
-    let context_packet: serde_json::Value =
-        serde_json::from_str(&context_packet).map_err(|err| format!("packet JSON: {err}"))?;
-    assert_eq!(context_packet["witness"], witness);
-
-    let params = code_action_params(vec![diagnostic])?;
-    let actions = code_action_response(&params, None, &vscode_client_features()?);
-    let context_target = actions.iter().find_map(|action| {
-        let CodeActionOrCommand::CodeAction(action) = action else {
-            return None;
-        };
-        if action.title != "Inspect finding: copy context packet" {
-            return None;
-        }
-        action
-            .command
-            .as_ref()
-            .and_then(|command| command.arguments.as_ref())
-            .and_then(|arguments| arguments.first())
-    });
-    assert_eq!(
-        context_target.and_then(|target| target.get("witness")),
-        Some(&witness)
-    );
-    Ok(())
-}
-
-#[test]
-fn hover_for_position_shows_snapshot_age_and_refresh_duration() -> Result<(), String> {
-    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-    let backend = service.inner();
-    let finding = sample_finding();
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let mut diagnostics = sample_workspace_diagnostics(
-        PathBuf::from("/workspace"),
-        uri.clone(),
-        vec![diagnostic],
-        vec![finding],
-    );
-    diagnostics
-        .snapshot
-        .refresh
-        .record_duration(Duration::from_millis(42));
-    let Some(_) = backend.refresh_plan(diagnostics) else {
-        return Err("expected refresh plan".to_string());
-    };
-
-    let Some(hover) = backend.hover_for_position(&hover_params(uri, 87, 1)) else {
-        return Err("expected diagnostic hover".to_string());
-    };
-
-    match hover.contents {
-        HoverContents::Markup(markup) => {
-            assert!(markup.value.contains("Analysis snapshot: generated "));
-            assert!(markup.value.contains(" ago; last refresh took 42 ms."));
-            Ok(())
-        }
-        _ => Err("expected markup hover".to_string()),
-    }
-}
-
-#[test]
-fn hover_for_position_adds_snapshot_status_to_seam_hover() -> Result<(), String> {
-    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-    let backend = service.inner();
-    let seam = sample_classified_seam();
-    let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
-        .ok_or_else(|| "expected seam diagnostic".to_string())?;
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let line = diagnostic.range.start.line;
-    let mut diagnostics = sample_workspace_diagnostics(
-        PathBuf::from("/workspace"),
-        uri.clone(),
-        vec![diagnostic],
-        Vec::new(),
-    );
-    diagnostics.snapshot.classified_seams = vec![seam];
-    diagnostics
-        .snapshot
-        .refresh
-        .record_duration(Duration::from_millis(11));
-    let Some(_) = backend.refresh_plan(diagnostics) else {
-        return Err("expected refresh plan".to_string());
-    };
-
-    let Some(hover) = backend.hover_for_position(&hover_params(uri, line, 1)) else {
-        return Err("expected seam hover".to_string());
-    };
-
-    match hover.contents {
-        HoverContents::Markup(markup) => {
-            assert!(markup.value.contains("**ripr** behavioral seam"));
-            assert!(markup.value.contains("`weakly_gripped`"));
-            assert!(markup.value.contains("Analysis snapshot: generated "));
-            assert!(markup.value.contains(" ago; last refresh took 11 ms."));
-            Ok(())
-        }
-        _ => Err("expected markup hover".to_string()),
-    }
-}
-
-#[test]
-fn snapshot_status_leaves_non_markup_hover_content_unchanged() -> Result<(), String> {
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let snapshot =
-        sample_analysis_snapshot(PathBuf::from("/workspace"), uri, Vec::new(), Vec::new());
-    let hover = tower_lsp_server::ls_types::Hover {
-        contents: HoverContents::Scalar(MarkedString::String("plain".to_string())),
-        range: None,
-    };
-
-    let hover = hover_with_snapshot_status(hover, &snapshot);
-
-    match hover.contents {
-        HoverContents::Scalar(MarkedString::String(value)) => {
-            assert_eq!(value, "plain");
-            Ok(())
-        }
-        _ => Err("expected scalar hover".to_string()),
-    }
-}
-
-#[test]
-fn hover_fallback_to_diagnostic_without_matching_finding() -> Result<(), String> {
-    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-    let backend = service.inner();
-    let finding = sample_finding();
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let mut mismatched_finding = sample_finding();
-    mismatched_finding.id = "probe:other:1:predicate".to_string();
-    mismatched_finding.probe.id.0 = "probe:other:1:predicate".to_string();
-    let snapshot = sample_analysis_snapshot(
-        PathBuf::from("/workspace"),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        vec![mismatched_finding],
-    );
-    let batches = vec![DiagnosticBatch {
-        uri: uri.clone(),
-        diagnostics: vec![diagnostic.clone()],
-    }];
-    let workspace_diagnostics = WorkspaceDiagnostics { snapshot, batches };
-    let Some(_) = backend.refresh_plan(workspace_diagnostics) else {
-        return Err("expected refresh plan".to_string());
-    };
-
-    let Some(hover) = backend.hover_for_position(&hover_params(uri, 87, 1)) else {
-        return Err("expected diagnostic hover".to_string());
-    };
-
-    match hover.contents {
-        HoverContents::Markup(markup) => {
-            assert!(markup.value.contains("**ripr** `weakly_exposed`"));
-            assert!(markup.value.contains("Add an exact boundary assertion."));
-            assert!(
-                markup
-                    .value
-                    .contains("Finding: `probe:pricing:88:predicate`")
-            );
-            assert!(!markup.value.contains("## RIPR Evidence"));
-            Ok(())
-        }
-        _ => Err("expected markup hover".to_string()),
-    }
-}
-
-#[test]
-fn hover_for_position_returns_none_when_no_diagnostic_matches() -> Result<(), String> {
-    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-    let backend = service.inner();
-    let finding = sample_finding();
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let diagnostics = sample_workspace_diagnostics(
-        PathBuf::from("/workspace"),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        vec![finding],
-    );
-    let Some(_) = backend.refresh_plan(diagnostics) else {
-        return Err("expected refresh plan".to_string());
-    };
-
-    assert!(
-        backend
-            .hover_for_position(&hover_params(uri, 0, 1))
-            .is_none(),
-        "expected None when no diagnostic matches position"
-    );
-
-    let generic = hover_response();
-    match generic.contents {
-        HoverContents::Markup(markup) => {
-            assert_eq!(markup.value, HOVER_TEXT);
-            Ok(())
-        }
-        _ => Err("expected markup hover".to_string()),
-    }
-}
-
-#[test]
-fn finding_hover_renders_related_tests_and_oracle_text() -> Result<(), String> {
-    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-    let backend = service.inner();
-    let mut finding = sample_finding();
-    finding.related_tests.push(RelatedTest {
-        name: "discount_boundary_is_exact".to_string(),
-        file: PathBuf::from("tests/pricing.rs"),
-        line: 12,
-        oracle: Some("assert_eq!(total, expected)".to_string()),
-        oracle_kind: OracleKind::ExactValue,
-        oracle_strength: OracleStrength::Strong,
-        relation_reason: None,
-        relation_confidence: None,
-    });
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let diagnostics = sample_workspace_diagnostics(
-        PathBuf::from("/workspace"),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        vec![finding],
-    );
-    let Some(_) = backend.refresh_plan(diagnostics) else {
-        return Err("expected refresh plan".to_string());
-    };
-
-    let Some(hover) = backend.hover_for_position(&hover_params(uri, 87, 1)) else {
-        return Err("expected finding hover".to_string());
-    };
-
-    match hover.contents {
-        HoverContents::Markup(markup) => {
-            assert!(markup.value.contains("## Related Tests"));
-            assert!(
-                markup
-                    .value
-                    .contains("`tests/pricing.rs:12` `discount_boundary_is_exact`")
-            );
-            assert!(
-                markup
-                    .value
-                    .contains("\u{2014} strong exact_value oracle: assert_eq!(total, expected)")
-            );
-            Ok(())
-        }
-        _ => Err("expected markup hover".to_string()),
-    }
-}
-
-#[test]
-fn finding_hover_renders_weakness_section() -> Result<(), String> {
-    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-    let backend = service.inner();
-    let mut finding = sample_finding();
-    finding
-        .missing
-        .push("no equality-boundary case was found".to_string());
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let diagnostics = sample_workspace_diagnostics(
-        PathBuf::from("/workspace"),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        vec![finding],
-    );
-    let Some(_) = backend.refresh_plan(diagnostics) else {
-        return Err("expected refresh plan".to_string());
-    };
-
-    let Some(hover) = backend.hover_for_position(&hover_params(uri, 87, 1)) else {
-        return Err("expected finding hover".to_string());
-    };
-
-    match hover.contents {
-        HoverContents::Markup(markup) => {
-            assert!(markup.value.contains("## Weakness"));
-            assert!(
-                markup
-                    .value
-                    .contains("- no equality-boundary case was found")
-            );
-            Ok(())
-        }
-        _ => Err("expected markup hover".to_string()),
-    }
-}
-
-#[test]
-fn finding_hover_avoids_mutation_runtime_terms() -> Result<(), String> {
-    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-    let backend = service.inner();
-    let finding = sample_finding();
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let diagnostics = sample_workspace_diagnostics(
-        PathBuf::from("/workspace"),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        vec![finding],
-    );
-    let Some(_) = backend.refresh_plan(diagnostics) else {
-        return Err("expected refresh plan".to_string());
-    };
-
-    let Some(hover) = backend.hover_for_position(&hover_params(uri, 87, 1)) else {
-        return Err("expected finding hover".to_string());
-    };
-
-    match hover.contents {
-        HoverContents::Markup(markup) => {
-            let banned: Vec<String> = vec![
-                std::iter::once('k').chain("illed".chars()).collect(),
-                std::iter::once('s').chain("urvived".chars()).collect(),
-                std::iter::once('p').chain("roven".chars()).collect(),
-                std::iter::once('a').chain("dequate".chars()).collect(),
-                std::iter::once('u').chain("ntested".chars()).collect(),
-            ];
-            for term in banned {
-                assert!(
-                    !markup.value.to_ascii_lowercase().contains(&term),
-                    "hover contained banned mutation-runtime term: {term}"
-                );
-            }
-            Ok(())
-        }
-        _ => Err("expected markup hover".to_string()),
-    }
-}
-
-#[test]
-fn analysis_snapshot_finds_finding_from_diagnostic_data() -> Result<(), String> {
-    let finding = sample_finding();
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let snapshot = sample_analysis_snapshot(
-        PathBuf::from("/workspace"),
-        uri,
-        vec![diagnostic.clone()],
-        vec![finding],
-    );
-
-    let Some(found) = snapshot.finding_for_diagnostic(&diagnostic) else {
-        return Err("expected finding from diagnostic data".to_string());
-    };
-
-    assert_eq!(found.id, "probe:pricing:88:predicate");
-    assert_eq!(found.probe.expression, "amount >= threshold");
-    Ok(())
-}
-
-#[test]
-fn overlapping_diagnostics_prefer_seam_id_lookup_over_finding_id_lookup() -> Result<(), String> {
-    // Regression for chatgpt-codex review on PR #242: when a Finding
-    // diagnostic and a Seam diagnostic share the same line, the
-    // backend's hover handler must prefer the seam-bearing one. The
-    // batch builder pushes findings before seams in the per-uri
-    // diagnostic vector, so a naive first-match scan would shadow the
-    // new seam-evidence hover. Pin the priority by direct lookup.
-    let finding = sample_finding();
-    let finding_diag = diagnostic_for_finding(Path::new("/workspace"), &finding);
-    let mut seam_diag = finding_diag.clone();
-    seam_diag.data = Some(serde_json::json!({
-        "schema_version": "0.1",
-        "seam_id": "f3c9e4d21a0b7c88",
-        "seam_kind": "predicate_boundary",
-        "grip_class": "weakly_gripped",
-    }));
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    // Order matters here: finding diagnostic first, seam diagnostic
-    // second â€” the same order the batch builder uses.
-    let snapshot = sample_analysis_snapshot(
-        PathBuf::from("/workspace"),
-        uri,
-        vec![finding_diag.clone(), seam_diag.clone()],
-        vec![finding],
-    );
-
-    // Both lookups exist in the snapshot. The backend's overlap fix
-    // walks all matching diagnostics and prefers the seam-bearing
-    // one. We verify the lookups individually here; the backend
-    // ordering is exercised by `framed_lsp_protocol_smoke_exercises_tower_server`.
-    if snapshot.finding_for_diagnostic(&finding_diag).is_none() {
-        return Err("finding lookup should still resolve".to_string());
-    }
-    // The seam diagnostic carries seam_id but no matching seam in
-    // classified_seams (the test snapshot helper has empty seams).
-    // What matters is that classified_seam_for_diagnostic only fires
-    // for diagnostics with data.seam_id â€” i.e., it does not match
-    // finding_diag.
-    if snapshot
-        .classified_seam_for_diagnostic(&finding_diag)
-        .is_some()
-    {
-        return Err(
-            "classified_seam_for_diagnostic should reject diagnostics carrying finding_id only"
-                .to_string(),
-        );
-    }
-    Ok(())
-}
-
-#[test]
-fn given_diagnostic_with_unknown_seam_id_when_lookup_runs_then_no_classified_seam_is_returned()
--> Result<(), String> {
-    // Regression for the directive's "unknown seam_id falls back
-    // safely" acceptance: a diagnostic carries data.seam_id but the
-    // snapshot has no matching ClassifiedSeam (e.g., the snapshot was
-    // refreshed and the seam was filtered out). Lookup must return
-    // None so the backend falls through to finding hover or the
-    // generic diagnostic hover; the LSP must not panic or hang.
-    let finding = sample_finding();
-    let mut diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-    // Replace the diagnostic data with a synthetic seam_id that does
-    // not appear in classified_seams. Drops the finding_id, mirroring
-    // a seam evidence diagnostic.
-    diagnostic.data = Some(serde_json::json!({
-        "schema_version": "0.1",
-        "seam_id": "deadbeef00000000",
-        "seam_kind": "predicate_boundary",
-        "grip_class": "weakly_gripped",
-    }));
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let snapshot = sample_analysis_snapshot(
-        PathBuf::from("/workspace"),
-        uri,
-        vec![diagnostic.clone()],
-        vec![finding],
-    );
-
-    if snapshot
-        .classified_seam_for_diagnostic(&diagnostic)
-        .is_some()
-    {
-        return Err("expected None for unknown seam_id".to_string());
-    }
-    if snapshot.finding_for_diagnostic(&diagnostic).is_some() {
-        return Err(
-            "expected None for finding_for_diagnostic when seam_id is set instead of finding_id"
-                .to_string(),
-        );
-    }
-    Ok(())
-}
-
-#[test]
-fn given_finding_diagnostic_when_lookup_runs_then_finding_hover_path_still_resolves()
--> Result<(), String> {
-    // Pre-4B Finding diagnostics still resolve through finding_for_diagnostic
-    // even when the new seam-aware lookup is on the same snapshot.
-    let finding = sample_finding();
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let snapshot = sample_analysis_snapshot(
-        PathBuf::from("/workspace"),
-        uri,
-        vec![diagnostic.clone()],
-        vec![finding],
-    );
-
-    if snapshot
-        .classified_seam_for_diagnostic(&diagnostic)
-        .is_some()
-    {
-        return Err("Finding diagnostics carry finding_id, not seam_id; \
-             classified_seam_for_diagnostic should return None"
-            .to_string());
-    }
-    if snapshot.finding_for_diagnostic(&diagnostic).is_none() {
-        return Err("expected Finding hover lookup to still work".to_string());
-    }
-    Ok(())
-}
-
-#[test]
-fn refresh_plan_stores_latest_analysis_snapshot() -> Result<(), String> {
-    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-    let backend = service.inner();
-    let finding = sample_finding();
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let diagnostics = sample_workspace_diagnostics(
-        PathBuf::from("/workspace"),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        vec![finding],
-    );
-
-    let Some(_) = backend.refresh_plan(diagnostics) else {
-        return Err("expected refresh plan".to_string());
-    };
-    let Some(latest) = backend.latest_analysis_snapshot() else {
-        return Err("expected latest analysis snapshot".to_string());
-    };
-
-    assert_eq!(latest.root, PathBuf::from("/workspace"));
-    assert_eq!(latest.base.as_deref(), Some("origin/main"));
-    assert_eq!(latest.mode, Mode::Draft);
-    assert_eq!(latest.findings.len(), 1);
-    assert_eq!(latest.diagnostics_by_uri.len(), 1);
-    Ok(())
-}
-
-#[test]
-fn refresh_plan_accepts_actionable_snapshot_with_suppressed_finding() -> Result<(), String> {
-    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-    let backend = service.inner();
-    let mut visible = sample_finding();
-    visible.activation.missing_discriminators = vec![MissingDiscriminatorFact {
-        value: "PricingError::Boundary".to_string(),
-        reason: "the exact boundary is not observed".to_string(),
-        flow_sink: None,
-    }];
-    visible.related_tests = vec![RelatedTest {
-        name: "checks_boundary".to_string(),
-        file: PathBuf::from("tests/pricing.rs"),
-        line: 12,
-        oracle: Some("assert_eq!(result, expected)".to_string()),
-        oracle_kind: OracleKind::ExactValue,
-        oracle_strength: OracleStrength::Strong,
-        relation_reason: None,
-        relation_confidence: None,
-    }];
-
-    let mut suppressed = sample_finding();
-    suppressed.id = "probe:pricing:9:predicate".to_string();
-    suppressed.probe.id = ProbeId(suppressed.id.clone());
-    suppressed.probe.location.file = PathBuf::from("src/other.rs");
-    suppressed.probe.location.line = 9;
-    suppressed.class = ExposureClass::Exposed;
-
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &visible);
-    let mut diagnostics = sample_workspace_diagnostics(
-        PathBuf::from("/workspace"),
-        uri,
-        vec![diagnostic],
-        vec![visible, suppressed],
-    );
-    diagnostics.snapshot.diagnostic_profile = crate::config::LspDiagnosticProfile::Actionable;
-
-    let Some(_) = backend.refresh_plan(diagnostics) else {
-        return Err("expected actionable refresh plan".to_string());
-    };
-    Ok(())
-}
-
-#[test]
-fn refresh_plan_stores_snapshot_refresh_metadata() -> Result<(), String> {
-    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-    let backend = service.inner();
-    let finding = sample_finding();
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let mut diagnostics = sample_workspace_diagnostics(
-        PathBuf::from("/workspace"),
-        uri,
-        vec![diagnostic],
-        vec![finding],
-    );
-    diagnostics
-        .snapshot
-        .refresh
-        .record_duration(Duration::from_millis(42));
-
-    let Some(_) = backend.refresh_plan(diagnostics) else {
-        return Err("expected refresh plan".to_string());
-    };
-    let Some(latest) = backend.latest_analysis_snapshot() else {
-        return Err("expected latest analysis snapshot".to_string());
-    };
-
-    assert_eq!(latest.refresh.duration, Some(Duration::from_millis(42)));
-    assert!(latest.refresh.age().is_some());
-    assert_eq!(latest.diagnostic_count(), 1);
-    assert_eq!(latest.diagnostic_uri_count(), 1);
-    assert_eq!(latest.finding_count(), 1);
-    assert_eq!(latest.seam_diagnostic_count(), 0);
-    Ok(())
-}
-
-#[test]
-fn refresh_completion_log_message_includes_duration_and_counts() -> Result<(), String> {
-    let seam = sample_classified_seam();
-    let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
-        .ok_or_else(|| "expected seam diagnostic".to_string())?;
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let mut snapshot = sample_analysis_snapshot(
-        PathBuf::from("/workspace"),
-        uri,
-        vec![diagnostic],
-        Vec::new(),
-    );
-    snapshot.classified_seams = vec![seam];
-    snapshot.refresh.record_duration(Duration::from_millis(17));
-
-    let summary = RefreshLogSummary::from_snapshot(7, &snapshot);
-    let message = refresh_completed_log_message(&summary, 1, 2);
-
-    assert!(message.contains("ripr analysis refresh completed in 17 ms"));
-    assert!(message.contains("generation=7"));
-    assert!(message.contains("diagnostics=1"));
-    assert!(message.contains("files=1"));
-    assert!(message.contains("findings=0"));
-    assert!(message.contains("preview_findings=0"));
-    assert!(message.contains("static_limits=0"));
-    assert!(message.contains("seam_diagnostics=1"));
-    assert!(message.contains("gap_artifacts=0"));
-    assert!(message.contains("actionable_gap_artifacts=0"));
-    assert!(message.contains("preview_gap_artifacts=0"));
-    assert!(message.contains("no_action_gap_artifacts=0"));
-    assert!(message.contains("gap_static_limits=0"));
-    assert!(message.contains("gap_artifact_rejections=0"));
-    assert!(message.contains("gap_artifact_rejection_kinds="));
-    assert!(message.contains("enabled_languages=1"));
-    assert!(message.contains("enabled_language_names=rust"));
-    assert!(message.contains("published_files=1"));
-    assert!(message.contains("cleared_files=2"));
-    Ok(())
-}
-
-#[test]
-fn refresh_completion_log_message_counts_preview_findings_and_limits() -> Result<(), String> {
-    let mut finding = sample_finding();
-    finding.language = Some(LanguageId::Python);
-    finding.language_status = Some(LanguageStatus::Preview);
-    finding.static_limit_kind = Some(StaticLimitKind::MissingImportGraph);
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-    let uri = test_uri("file:///workspace/src/pricing.py")?;
-    let snapshot = sample_analysis_snapshot(
-        PathBuf::from("/workspace"),
-        uri,
-        vec![diagnostic],
-        vec![finding],
-    );
-
-    let summary = RefreshLogSummary::from_snapshot(8, &snapshot);
-    let message = refresh_completed_log_message(&summary, 1, 0);
-
-    assert!(message.contains("preview_findings=1"));
-    assert!(message.contains("static_limits=1"));
-    Ok(())
-}
-
-#[test]
-fn refresh_completion_log_message_counts_gap_artifact_state() -> Result<(), String> {
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &sample_finding());
-    let uri = test_uri("file:///workspace/src/pricing.py")?;
-    let mut snapshot = sample_analysis_snapshot(
-        PathBuf::from("/workspace"),
-        uri,
-        vec![diagnostic],
-        Vec::new(),
-    );
-    snapshot.gap_artifacts.push(ValidatedGapArtifact {
-        kind: GapArtifactKind::GapDecisionLedger,
-        root: Some(".".to_string()),
-        identities: vec![GapArtifactIdentity {
-            canonical_gap_id: Some("gap:py:pricing".to_string()),
-            seam_id: None,
-            finding_id: None,
-        }],
-        language: Some(LanguageId::Python),
-        language_status: Some(LanguageStatus::Preview),
-        gap_state: Some("actionable".to_string()),
-        related_paths: vec!["tests/test_pricing.py".to_string()],
-        verify_commands: vec!["ripr agent verify --root . --json".to_string()],
-        receipt_commands: vec!["ripr agent receipt --root . --json".to_string()],
-        verify_command_specs: Vec::new(),
-        receipt_command_specs: Vec::new(),
-        static_limit_kinds: vec!["missing_import_graph".to_string()],
-        has_text_static_limit: false,
-    });
-    snapshot
-        .gap_artifact_rejections
-        .push(GapArtifactRejection::WrongRoot(
-            "/other/workspace".to_string(),
-        ));
-
-    let summary = RefreshLogSummary::from_snapshot(9, &snapshot);
-    let message = refresh_completed_log_message(&summary, 1, 0);
-
-    assert!(message.contains("gap_artifacts=1"));
-    assert!(message.contains("actionable_gap_artifacts=1"));
-    assert!(message.contains("preview_gap_artifacts=1"));
-    assert!(message.contains("no_action_gap_artifacts=0"));
-    assert!(message.contains("gap_static_limits=1"));
-    assert!(message.contains("gap_artifact_rejections=1"));
-    assert!(message.contains("gap_artifact_rejection_kinds=wrong_root"));
-    Ok(())
-}
-
-#[test]
-fn refresh_completion_log_message_defaults_missing_duration_to_zero() -> Result<(), String> {
-    let finding = sample_finding();
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let snapshot = sample_analysis_snapshot(
-        PathBuf::from("/workspace"),
-        uri,
-        vec![diagnostic],
-        vec![finding],
-    );
-
-    let summary = RefreshLogSummary::from_snapshot(3, &snapshot);
-    let message = refresh_completed_log_message(&summary, 1, 0);
-
-    assert!(message.contains("ripr analysis refresh completed in 0 ms"));
-    Ok(())
-}
-
-#[test]
-fn refresh_failure_log_message_includes_actionable_duration() {
-    let message = refresh_failed_log_message(
-        "workspace analysis failed: Cargo.toml not found",
-        Duration::from_millis(9),
-    );
-
-    assert_eq!(
-        message,
-        "ripr analysis refresh failed after 9 ms: workspace analysis failed: Cargo.toml not found"
-    );
-}
-
-#[test]
-fn format_duration_renders_milliseconds_and_whole_seconds() {
-    assert_eq!(format_duration(Duration::from_millis(9)), "9 ms");
-    assert_eq!(format_duration(Duration::from_secs(1)), "1 second");
-    assert_eq!(format_duration(Duration::from_secs(2)), "2 seconds");
-}
-
-#[test]
-fn refresh_metadata_default_records_generation_time() {
-    let metadata = RefreshMetadata::default();
-
-    assert!(metadata.age().is_some());
-    assert_eq!(metadata.duration, None);
-}
-
-#[test]
-fn stale_refresh_generation_does_not_store_older_snapshot() -> Result<(), String> {
-    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-    let backend = service.inner();
-    let Some(first_generation) = backend.next_refresh_generation() else {
-        return Err("expected first generation".to_string());
-    };
-    let Some(second_generation) = backend.next_refresh_generation() else {
-        return Err("expected second generation".to_string());
-    };
-    assert!(!backend.is_current_refresh_generation(first_generation));
-    assert!(backend.is_current_refresh_generation(second_generation));
-
-    let finding = sample_finding();
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-    let current_uri = test_uri("file:///workspace/src/current.rs")?;
-    let current = sample_workspace_diagnostics(
-        PathBuf::from("/workspace/current"),
-        current_uri,
-        vec![diagnostic],
-        vec![finding],
-    );
-    let Some(_) = backend.refresh_plan(current) else {
-        return Err("expected current refresh plan".to_string());
-    };
-
-    if backend.is_current_refresh_generation(first_generation) {
-        let stale = sample_workspace_diagnostics(
-            PathBuf::from("/workspace/stale"),
-            test_uri("file:///workspace/src/stale.rs")?,
-            Vec::new(),
-            Vec::new(),
-        );
-        let Some(_) = backend.refresh_plan(stale) else {
-            return Err("expected stale refresh plan".to_string());
-        };
-    }
-
-    let Some(latest) = backend.latest_analysis_snapshot() else {
-        return Err("expected latest analysis snapshot".to_string());
-    };
-    assert_eq!(latest.root, PathBuf::from("/workspace/current"));
-    Ok(())
-}
-
-#[test]
-fn refresh_plan_rejects_mismatched_snapshot_and_batches() -> Result<(), String> {
-    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-    let backend = service.inner();
-    let finding = sample_finding();
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let baseline = sample_workspace_diagnostics(
-        PathBuf::from("/workspace"),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        vec![finding.clone()],
-    );
-
-    let Some(_) = backend.refresh_plan(baseline) else {
-        return Err("expected baseline refresh plan".to_string());
-    };
-    let mismatched = WorkspaceDiagnostics {
-        snapshot: sample_analysis_snapshot(
-            PathBuf::from("/workspace"),
-            uri.clone(),
-            vec![diagnostic],
-            vec![finding],
-        ),
-        batches: Vec::new(),
-    };
-
-    assert!(backend.refresh_plan(mismatched).is_none());
-    let Some(latest) = backend.latest_analysis_snapshot() else {
-        return Err("expected baseline snapshot to remain stored".to_string());
-    };
-    assert_eq!(latest.findings.len(), 1);
-    assert_eq!(latest.diagnostics_by_uri.len(), 1);
-    Ok(())
-}
-
-#[test]
-fn code_action_response_keeps_current_commands() -> Result<(), String> {
-    let mut finding = sample_finding();
-    finding.related_tests.clear();
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-    let actions = code_action_response(
-        &code_action_params(vec![diagnostic])?,
-        None,
-        &vscode_client_features()?,
-    );
-
-    let mut titles_kinds_and_commands = Vec::new();
-    let mut command_arguments = Vec::new();
-    for action in &actions {
-        match action {
-            CodeActionOrCommand::CodeAction(action) => {
-                let Some(command) = &action.command else {
-                    return Err("expected code action command".to_string());
-                };
-                let Some(kind) = &action.kind else {
-                    return Err("expected code action kind".to_string());
-                };
-                titles_kinds_and_commands.push((
-                    action.title.as_str(),
-                    kind.as_str(),
-                    command.title.as_str(),
-                    command.command.as_str(),
-                ));
-                command_arguments.push(command.arguments.clone());
-            }
-            CodeActionOrCommand::Command(_) => {
-                return Err("expected code action".to_string());
-            }
-        }
-    }
-
-    assert_eq!(
-        titles_kinds_and_commands,
-        vec![
-            (
-                "Inspect finding: copy context packet",
-                "source.ripr.inspect",
-                "Inspect finding: copy context",
-                COPY_CONTEXT_COMMAND,
-            ),
-            (
-                "Refresh Analysis - Saved Workspace Check",
-                "source.ripr.refresh",
-                "Refresh Analysis - Saved Workspace Check",
-                REFRESH_COMMAND,
-            ),
-        ]
-    );
-    let Some(Some(arguments)) = command_arguments.first() else {
-        return Err("expected copy context arguments".to_string());
-    };
-    assert_eq!(arguments[0]["uri"], "file:///workspace/src/pricing.rs");
-    assert_eq!(arguments[0]["line"], 88);
-    assert_eq!(arguments[0]["finding_id"], "probe:pricing:88:predicate");
-    assert_eq!(arguments[0]["probe_id"], "probe:pricing:88:predicate");
-    Ok(())
-}
-
-#[test]
-fn code_action_response_omits_context_action_without_ripr_diagnostic() -> Result<(), String> {
-    let actions = code_action_response(
-        &code_action_params(Vec::new())?,
-        None,
-        &vscode_client_features()?,
-    );
-
-    assert_eq!(actions.len(), 1);
-    let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
-        return Err("expected code action".to_string());
-    };
-    let Some(command) = &action.command else {
-        return Err("expected refresh command".to_string());
-    };
-    assert_eq!(command.command, REFRESH_COMMAND);
-    Ok(())
-}
-
-#[test]
-#[cfg(feature = "lang-python")]
-fn gap_code_actions_surface_bounded_repair_actions_when_artifact_is_valid() -> Result<(), String> {
-    let root = unique_lsp_test_root("gap-actions")?;
-    std::fs::create_dir_all(root.path().join("src"))
-        .map_err(|err| format!("create src failed: {err}"))?;
-    std::fs::create_dir_all(root.path().join("tests"))
-        .map_err(|err| format!("create tests failed: {err}"))?;
-    std::fs::write(
-        root.path().join("tests/test_pricing.py"),
-        "def test_discount_boundary():\n    assert price(10) == 9\n",
-    )
-    .map_err(|err| format!("write related test failed: {err}"))?;
-    let uri = file_uri_for_path(&root.path().join("src/pricing.py"))?;
-    let mut diagnostic = gap_action_diagnostic();
-    let data = diagnostic
-        .data
-        .as_mut()
-        .ok_or_else(|| "missing diagnostic data".to_string())?;
-    data["command_specs"] = serde_json::json!({
-        "verify": crate::agent::command_specs::agent_verify_command_spec(
-            ".", "before.json", "after.json", None,
-        ),
-        "receipt": crate::agent::command_specs::agent_receipt_command_spec(
-            ".", "verify.json", "seam-a", Some("receipt.json"),
-        ),
-    });
-    data["command_specs"]["verify"]["program"] = serde_json::json!("cargo");
-    data["command_specs"]["verify"]["args"] = serde_json::json!(["test", "untrusted"]);
-    data["command_specs"]["receipt"]["program"] = serde_json::json!("python");
-    let mut snapshot = sample_analysis_snapshot(
-        root.path().to_path_buf(),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        Vec::new(),
-    );
-    snapshot.gap_artifacts = vec![validated_gap_artifact()];
-
-    let actions = code_action_response(
-        &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
-        Some(&snapshot),
-        &vscode_client_features()?,
-    );
-    let commands = code_action_commands(&actions)?;
-
-    assert_eq!(
-        commands
-            .iter()
-            .map(|(title, command, _)| (title.as_str(), command.as_str()))
-            .collect::<Vec<_>>(),
-        vec![
-            ("Copy first repair packet", COPY_CONTEXT_COMMAND),
-            ("Agent handoff: copy Python packet", COPY_CONTEXT_COMMAND),
-            ("Inspect gap: copy repair packet", COPY_CONTEXT_COMMAND),
-            ("Copy Python repair card", COPY_TARGETED_TEST_BRIEF_COMMAND),
-            (
-                "Write targeted test: open best related test",
-                OPEN_RELATED_TEST_COMMAND
-            ),
-            (
-                "Verify after test: copy verify command",
-                COPY_AGENT_VERIFY_COMMAND
-            ),
-            (
-                "Review result: copy receipt command",
-                COPY_AGENT_RECEIPT_COMMAND
-            ),
-            ("Inspect gap: copy static-limit note", COPY_CONTEXT_COMMAND),
-            ("Refresh Analysis - Saved Workspace Check", REFRESH_COMMAND),
-        ]
-    );
-    assert_eq!(commands[0].2[0]["label"], "first_repair_packet");
-    assert_eq!(commands[0].2[0]["gap_identity"], "gap:py:pricing");
-    assert_eq!(commands[0].2[0]["canonical_gap_id"], "gap:py:pricing");
-    assert_eq!(
-        commands[0].2[0]["verify_command"],
-        "ripr agent verify --root . --json"
-    );
-    assert_eq!(
-        commands[0].2[0]["receipt_command"],
-        "ripr agent receipt --root . --json"
-    );
-    assert_eq!(
-        commands[0].2[0]["command_specs"]["verify"]["command_id"],
-        "ripr:agent:verify"
-    );
-    assert_eq!(
-        commands[0].2[0]["command_specs"]["receipt"]["command_id"],
-        "ripr:agent:receipt"
-    );
-    assert_eq!(
-        commands[0].2[0]["command_specs"]["verify"]["program"],
-        "ripr"
-    );
-    let packet = commands[0].2[0]["packet"]
-        .as_str()
-        .ok_or_else(|| "missing first repair packet text".to_string())?;
-    assert!(
-        packet.contains("RIPR first repair packet")
-            && packet.contains("Language status: preview")
-            && packet.contains("Static limit: missing_import_graph")
-            && packet.contains("Suggested action:")
-            && packet.contains("Missing discriminator: price(threshold) == expected")
-            && packet.contains("Focused proof intent:")
-            && packet.contains("Artifacts:")
-            && packet.contains("Verify command:")
-            && packet.contains("Receipt command:")
-            && packet
-                .contains("Do not edit production code unless the packet explicitly scopes it."),
-        "unexpected first repair packet:\n{packet}"
-    );
-    let static_limit_position = packet
-        .find("Static limit: missing_import_graph")
-        .ok_or_else(|| format!("missing static limit in first repair packet:\n{packet}"))?;
-    let suggested_action_position = packet
-        .find("Suggested action:")
-        .ok_or_else(|| format!("missing suggested action in first repair packet:\n{packet}"))?;
-    assert!(
-        static_limit_position < suggested_action_position,
-        "static limits must appear before action language:\n{packet}"
-    );
-    assert_eq!(commands[1].2[0]["label"], "python_agent_packet");
-    assert_eq!(commands[1].2[0]["canonical_gap_id"], "gap:py:pricing");
-    assert_eq!(
-        commands[1].2[0]["freshness"],
-        "validated_current_gap_record"
-    );
-    assert_eq!(commands[1].2[0]["packet_kind"], "agent_gap_record_packet");
-    assert_eq!(
-        commands[1].2[0]["gap_ledger"],
-        "target/ripr/reports/gap-decision-ledger.json"
-    );
-    assert_eq!(commands[2].2[0]["label"], "gap_repair_packet");
-    assert_eq!(
-        commands[2].2[0]["command_specs"]["verify"]["execution_mode"],
-        "direct"
-    );
-    assert_eq!(
-        commands[2].2[0]["command_specs"]["receipt"]["program"],
-        "ripr"
-    );
-    assert_eq!(commands[2].2[0]["canonical_gap_id"], "gap:py:pricing");
-    assert_eq!(
-        commands[2].2[0]["repair_route"]["related_test"],
-        "tests/test_pricing.py::test_discount_boundary"
-    );
-    assert_eq!(commands[3].2[0]["label"], "python_repair_card");
-    assert_eq!(
-        commands[3].2[0]["freshness"],
-        "validated_current_gap_record"
-    );
-    let card = commands[3].2[0]["brief"]
-        .as_str()
-        .ok_or_else(|| "missing Python repair-card text".to_string())?;
-    for needle in [
-        "Python repair card (preview/advisory)",
-        "Freshness: current validated GapRecord diagnostic.",
-        "Changed owner:\n  python:app/pricing.py::calculate_discount",
-        "Current test evidence:",
-        "Missing discriminator:\n  price(threshold) == expected",
-        "Verify:\n  ripr agent verify --root . --json",
-        "Receipt:\n  ripr agent receipt --root . --json",
-        "Static preview evidence only",
-    ] {
-        assert!(card.contains(needle), "missing {needle:?} in:\n{card}");
-    }
-    assert_eq!(
-        commands[4].2[0]["uri"],
-        file_uri_for_path(&root.path().join("tests/test_pricing.py"))?.as_str()
-    );
-    assert_eq!(commands[4].2[0]["line"], 2);
-    assert_eq!(commands[4].2[0]["test_name"], "test_discount_boundary");
-    assert_eq!(commands[5].2[0]["label"], "gap_verify");
-    assert_eq!(
-        commands[5].2[0]["command"],
-        "ripr agent verify --root . --json"
-    );
-    assert_eq!(commands[6].2[0]["label"], "gap_receipt");
-    assert_eq!(
-        commands[6].2[0]["command"],
-        "ripr agent receipt --root . --json"
-    );
-    assert!(
-        commands[7].2[0]["note"]
-            .as_str()
-            .is_some_and(|note| note.contains("Static limit: missing_import_graph")),
-        "expected static-limit note, got {:?}",
-        commands[7].2[0]
-    );
-    Ok(())
-}
-
-#[test]
-#[cfg(feature = "lang-python")]
-fn gap_code_actions_suppress_first_repair_packet_without_verify_or_receipt_command()
--> Result<(), String> {
-    let root = unique_lsp_test_root("gap-first-repair-requires-commands")?;
-    std::fs::create_dir_all(root.path().join("tests"))
-        .map_err(|err| format!("create tests failed: {err}"))?;
-    std::fs::write(
-        root.path().join("tests/test_pricing.py"),
-        "def test_discount_boundary():\n    assert price(10) == 9\n",
-    )
-    .map_err(|err| format!("write related test failed: {err}"))?;
-    let uri = file_uri_for_path(&root.path().join("src/pricing.py"))?;
-    let mut diagnostic = gap_action_diagnostic();
-    let data = diagnostic
-        .data
-        .as_mut()
-        .ok_or_else(|| "missing diagnostic data".to_string())?;
-    data.as_object_mut()
-        .ok_or_else(|| "expected object data".to_string())?
-        .remove("receipt_command");
-    let mut snapshot = sample_analysis_snapshot(
-        root.path().to_path_buf(),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        Vec::new(),
-    );
-    snapshot.gap_artifacts = vec![validated_gap_artifact()];
-
-    let actions = code_action_response(
-        &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
-        Some(&snapshot),
-        &vscode_client_features()?,
-    );
-    let commands = code_action_commands(&actions)?;
-
-    assert!(
-        commands
-            .iter()
-            .all(|(title, _, args)| title != "Copy first repair packet"
-                && title != "Agent handoff: copy Python packet"
-                && args
-                    .first()
-                    .is_none_or(|arg| arg["label"] != "first_repair_packet"
-                        && arg["label"] != "python_agent_packet")),
-        "packet actions must be suppressed when receipt command is missing: {commands:?}"
-    );
-    assert!(
-        commands
-            .iter()
-            .any(|(title, _, _)| title == "Inspect gap: copy repair packet"),
-        "existing inspect action should remain available"
-    );
-    Ok(())
-}
-
-#[test]
-#[cfg(feature = "lang-python")]
-fn gap_code_actions_suppress_first_repair_packet_without_producer_discriminator()
--> Result<(), String> {
-    let root = unique_lsp_test_root("gap-first-repair-requires-discriminator")?;
-    std::fs::create_dir_all(root.path().join("tests"))
-        .map_err(|err| format!("create tests failed: {err}"))?;
-    std::fs::write(
-        root.path().join("tests/test_pricing.py"),
-        "def test_discount_boundary():\n    assert price(10) == 9\n",
-    )
-    .map_err(|err| format!("write related test failed: {err}"))?;
-    let uri = file_uri_for_path(&root.path().join("src/pricing.py"))?;
-    let mut diagnostic = gap_action_diagnostic();
-    let data = diagnostic
-        .data
-        .as_mut()
-        .ok_or_else(|| "missing diagnostic data".to_string())?;
-    let object = data
-        .as_object_mut()
-        .ok_or_else(|| "expected diagnostic object data".to_string())?;
-    object.remove("missing_discriminator");
-    object
-        .get_mut("repair_route")
-        .and_then(serde_json::Value::as_object_mut)
-        .map(|route| route.remove("missing_discriminator"));
-
-    let mut snapshot = sample_analysis_snapshot(
-        root.path().to_path_buf(),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        Vec::new(),
-    );
-    snapshot.gap_artifacts = vec![validated_gap_artifact()];
-
-    let actions = code_action_response(
-        &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
-        Some(&snapshot),
-        &vscode_client_features()?,
-    );
-    let commands = code_action_commands(&actions)?;
-
-    assert!(
-        commands.iter().all(|(title, _, args)| {
-            title != "Copy first repair packet"
-                && title != "Agent handoff: copy Python packet"
-                && args.first().is_none_or(|arg| {
-                    arg["label"] != "first_repair_packet" && arg["label"] != "python_agent_packet"
-                })
-        }),
-        "repair packet handoffs must require producer-owned discriminator evidence: {commands:?}"
-    );
-    assert!(
-        commands
-            .iter()
-            .any(|(title, _, _)| title == "Inspect gap: copy repair packet"),
-        "inspect route should remain available without a discriminator: {commands:?}"
-    );
-    Ok(())
-}
-
-#[test]
-fn gap_code_actions_suppress_python_agent_packet_without_actionable_python_gap_record()
--> Result<(), String> {
-    let root = unique_lsp_test_root("gap-python-agent-packet-contract")?;
-    std::fs::create_dir_all(root.path().join("tests"))
-        .map_err(|err| format!("create tests failed: {err}"))?;
-    let uri = file_uri_for_path(&root.path().join("src/pricing.py"))?;
-    for (field, value) in [
-        ("source", "repo_exposure"),
-        ("language", "rust"),
-        ("gap_state", "already_observed"),
-        ("repairability", "no_action"),
-    ] {
-        let mut diagnostic = gap_action_diagnostic();
-        let data = diagnostic
-            .data
-            .as_mut()
-            .ok_or_else(|| "missing diagnostic data".to_string())?
-            .as_object_mut()
-            .ok_or_else(|| "expected object data".to_string())?;
-        data.insert(field.to_string(), serde_json::json!(value));
-        let mut snapshot = sample_analysis_snapshot(
-            root.path().to_path_buf(),
-            uri.clone(),
-            vec![diagnostic.clone()],
-            Vec::new(),
-        );
-        snapshot.gap_artifacts = vec![validated_gap_artifact()];
-
-        let actions = code_action_response(
-            &code_action_params_for(uri.clone(), diagnostic.range.start.line, vec![diagnostic])?,
-            Some(&snapshot),
-            &vscode_client_features()?,
-        );
-        let commands = code_action_commands(&actions)?;
-
-        assert!(
-            commands.iter().all(
-                |(title, _, args)| title != "Agent handoff: copy Python packet"
-                    && args
-                        .first()
-                        .is_none_or(|arg| arg["label"] != "python_agent_packet")
-            ),
-            "Python agent packet action must be suppressed when {field}={value}: {commands:?}"
-        );
-    }
-    Ok(())
-}
-
-#[test]
-#[cfg(feature = "lang-python")]
-fn gap_code_actions_suppress_repair_actions_for_cross_language_target_unresolved()
--> Result<(), String> {
-    let root = unique_lsp_test_root("gap-cross-language-target-unresolved")?;
-    let uri = file_uri_for_path(&root.path().join("src/jsc/Blob.rs"))?;
-    let mut diagnostic = gap_action_diagnostic();
-    let data = diagnostic
-        .data
-        .as_mut()
-        .ok_or_else(|| "missing diagnostic data".to_string())?;
-    data["language"] = serde_json::json!("rust");
-    data["gap_state"] = serde_json::json!("static_limitation");
-    data["repairability"] = serde_json::json!("no_action");
-    data["static_limit_kind"] = serde_json::json!("cross_language_target_unresolved");
-    data["static_limit_detail"] = serde_json::json!("binding/FFI target placement is unresolved");
-    data["projection_exclusion_reasons"] = serde_json::json!(["cross_language_target_unresolved"]);
-    data["navigation_only_target"] = serde_json::json!({
-        "file": "test/js/web/fetch/blob.test.ts",
-        "line": 41,
-        "test_name": "blob copies resizable buffers",
-        "language": "typescript",
-        "authority_boundary": "navigation_only_external_observer_context",
-        "repair_packet_ready": false,
-        "limitation_route": "analysis/cross-language-test-target-inference"
-    });
-    let mut snapshot = sample_analysis_snapshot(
-        root.path().to_path_buf(),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        Vec::new(),
-    );
-    snapshot.gap_artifacts = vec![validated_gap_artifact()];
-
-    let actions = code_action_response(
-        &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
-        Some(&snapshot),
-        &vscode_client_features()?,
-    );
-    let commands = code_action_commands(&actions)?;
-
-    assert_eq!(
-        commands
-            .iter()
-            .map(|(title, command, _)| (title.as_str(), command.as_str()))
-            .collect::<Vec<_>>(),
-        vec![
-            ("Inspect gap: copy static-limit note", COPY_CONTEXT_COMMAND),
-            ("Refresh Analysis - Saved Workspace Check", REFRESH_COMMAND),
-        ],
-        "target-unresolved gap diagnostics must not expose repair packets, verify, receipt, or edit actions"
-    );
-    assert!(
-        commands[0].2[0]["note"].as_str().is_some_and(|note| {
-            note.contains("cross_language_target_unresolved")
-                && note.contains("Navigation-only target: test/js/web/fetch/blob.test.ts:41")
-                && note.contains("External observer: blob copies resizable buffers")
-                && note.contains("Repair packet ready: false")
-        }),
-        "expected static-limit note, got {:?}",
-        commands[0].2[0]
-    );
-    assert_eq!(
-        commands[0].2[0]["navigation_only_target"]["file"],
-        "test/js/web/fetch/blob.test.ts"
-    );
-    assert_eq!(
-        commands[0].2[0]["navigation_only_target"]["repair_packet_ready"],
-        false
-    );
-    Ok(())
-}
-
-#[test]
-#[cfg(feature = "lang-python")]
-fn gap_code_actions_project_python_pytest_skeleton_and_target_file() -> Result<(), String> {
-    let root = unique_lsp_test_root("gap-python-pytest-actions")?;
-    std::fs::create_dir_all(root.path().join("src"))
-        .map_err(|err| format!("create src failed: {err}"))?;
-    std::fs::create_dir_all(root.path().join("tests"))
-        .map_err(|err| format!("create tests failed: {err}"))?;
-    std::fs::write(
-        root.path().join("tests/test_pricing.py"),
-        "def test_calculate_discount_threshold_boundary():\n    pass\n",
-    )
-    .map_err(|err| format!("write related test failed: {err}"))?;
-    let uri = file_uri_for_path(&root.path().join("src/pricing.py"))?;
-    let mut diagnostic = gap_action_diagnostic();
-    let data = diagnostic
-        .data
-        .as_mut()
-        .ok_or_else(|| "missing diagnostic data".to_string())?;
-    data["repair_route"]["target_file"] = serde_json::json!("tests/test_pricing.py");
-    data["repair_route"]["target_line"] = serde_json::json!(1);
-    data["repair_route"]["related_test"] =
-        serde_json::json!("test_calculate_discount_threshold_boundary");
-    data["repair_route"]["missing_discriminator"] = serde_json::json!("amount == threshold");
-    data["repair_route"]["assertion_shape"] = serde_json::json!(
-        "assert calculate_discount(amount=threshold, threshold=threshold) == expected_discount"
-    );
-    data["repair_route"]["changed_behavior"] = serde_json::json!("if amount >= threshold:");
-    data["verification_commands"] = serde_json::json!([
-        "pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary"
-    ]);
-    data["receipt_command"] = serde_json::json!(
-        "ripr outcome --before target/ripr/reports/check.json --after target/ripr/reports/after-check.json --format json --out target/ripr/receipts/python-pricing-boundary.json"
-    );
-    data.as_object_mut()
-        .ok_or_else(|| "expected object data".to_string())?
-        .remove("static_limit_kind");
-    data.as_object_mut()
-        .ok_or_else(|| "expected object data".to_string())?
-        .remove("static_limit_detail");
-    data["static_limits"] = serde_json::json!([]);
-    let mut snapshot = sample_analysis_snapshot(
-        root.path().to_path_buf(),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        Vec::new(),
-    );
-    snapshot.gap_artifacts = vec![validated_gap_artifact()];
-
-    let actions = code_action_response(
-        &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
-        Some(&snapshot),
-        &vscode_client_features()?,
-    );
-    let commands = code_action_commands(&actions)?;
-
-    assert!(
-        commands
-            .iter()
-            .any(|(title, _, _)| title == "Copy first repair packet"),
-        "pytest verify commands should be safe enough for first repair packets: {commands:?}"
-    );
-    let repair_card = commands
-        .iter()
-        .find(|(title, command, _)| {
-            title == "Copy Python repair card" && command == COPY_TARGETED_TEST_BRIEF_COMMAND
-        })
-        .and_then(|(_, _, args)| args.first())
-        .ok_or_else(|| format!("missing Python repair-card action: {commands:?}"))?;
-    assert_eq!(repair_card["label"], "python_repair_card");
-    let card = repair_card["brief"]
-        .as_str()
-        .ok_or_else(|| format!("missing repair-card brief: {repair_card:?}"))?;
-    for needle in [
-        "Python repair card (preview/advisory)",
-        "Freshness: current validated GapRecord diagnostic.",
-        "Changed behavior:\n  if amount >= threshold:",
-        "Missing discriminator:\n  amount == threshold",
-        "Suggested assertion:\n  assert calculate_discount(amount=threshold, threshold=threshold) == expected_discount",
-        "Verify:\n  pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary",
-    ] {
-        assert!(card.contains(needle), "missing {needle:?} in:\n{card}");
-    }
-    let skeleton = commands
-        .iter()
-        .find(|(title, command, _)| {
-            title == "Write Python test: copy pytest skeleton"
-                && command == COPY_TARGETED_TEST_BRIEF_COMMAND
-        })
-        .and_then(|(_, _, args)| args.first())
-        .ok_or_else(|| format!("missing Python pytest skeleton action: {commands:?}"))?;
-    assert_eq!(skeleton["label"], "python_pytest_skeleton");
-    assert_eq!(skeleton["target_file"], "tests/test_pricing.py");
-    assert_eq!(
-        skeleton["test_name"],
-        "test_calculate_discount_threshold_boundary"
-    );
-    let brief = skeleton["brief"]
-        .as_str()
-        .ok_or_else(|| format!("missing skeleton brief: {skeleton:?}"))?;
-    for needle in [
-        "# RIPR Python repair skeleton",
-        "# Missing discriminator: amount == threshold",
-        "# Verify: pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary",
-        "def test_calculate_discount_threshold_boundary():",
-        "# assert calculate_discount(amount=threshold, threshold=threshold) == expected_discount",
-        "raise NotImplementedError",
-    ] {
-        assert!(brief.contains(needle), "missing {needle:?} in:\n{brief}");
-    }
-    let open_target = commands
-        .iter()
-        .find(|(title, command, _)| {
-            title == "Write targeted test: open best related test"
-                && command == OPEN_RELATED_TEST_COMMAND
-        })
-        .and_then(|(_, _, args)| args.first())
-        .ok_or_else(|| format!("missing open related test action: {commands:?}"))?;
-    assert_eq!(
-        open_target["uri"],
-        file_uri_for_path(&root.path().join("tests/test_pricing.py"))?.as_str()
-    );
-    assert_eq!(
-        open_target["test_name"],
-        "test_calculate_discount_threshold_boundary"
-    );
-    Ok(())
-}
-
-#[test]
-#[cfg(feature = "lang-python")]
-fn gap_code_actions_omit_partial_or_invalid_typed_specs() -> Result<(), String> {
-    let mut missing_verify = validated_gap_artifact();
-    missing_verify.verify_command_specs.clear();
-    assert_gap_action_specs_omitted(missing_verify, "missing verify")?;
-
-    let mut missing_receipt = validated_gap_artifact();
-    missing_receipt.receipt_command_specs.clear();
-    assert_gap_action_specs_omitted(missing_receipt, "missing receipt")?;
-
-    let mut malformed = validated_gap_artifact();
-    malformed
-        .verify_command_specs
-        .first_mut()
-        .ok_or_else(|| "validated fixture omitted verify spec".to_string())?
-        .program
-        .clear();
-    assert_gap_actions_refresh_only(malformed, "malformed verify")?;
-
-    let mut role_mismatch = validated_gap_artifact();
-    role_mismatch
-        .verify_command_specs
-        .first_mut()
-        .ok_or_else(|| "validated fixture omitted verify spec".to_string())?
-        .role = crate::domain::CommandRole::Receipt;
-    assert_gap_actions_refresh_only(role_mismatch, "role-mismatched verify")?;
-    Ok(())
-}
-
-fn assert_gap_action_specs_omitted(
-    artifact: ValidatedGapArtifact,
-    case: &str,
-) -> Result<(), String> {
-    let commands = gap_action_commands_for_artifact(artifact, case)?;
-    for index in [0, 1, 2] {
-        let (label, target) = commands
-            .get(index)
-            .and_then(|(title, _, arguments)| arguments.first().map(|target| (title, target)))
-            .ok_or_else(|| format!("{case}: missing repair action {index}"))?;
-        if target.get("command_specs").is_some() {
-            return Err(format!(
-                "{case}: action {} projected typed specs without a complete valid pair: {target}",
-                label
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn assert_gap_actions_refresh_only(
-    artifact: ValidatedGapArtifact,
-    case: &str,
-) -> Result<(), String> {
-    let commands = gap_action_commands_for_artifact(artifact, case)?;
-    assert_eq!(
-        commands
-            .iter()
-            .map(|(title, command, _)| (title.as_str(), command.as_str()))
-            .collect::<Vec<_>>(),
-        vec![("Refresh Analysis - Saved Workspace Check", REFRESH_COMMAND)],
-        "{case}: invalid typed specs must fail closed to refresh-only actions"
-    );
-    Ok(())
-}
-
-fn gap_action_commands_for_artifact(
-    artifact: ValidatedGapArtifact,
-    case: &str,
-) -> Result<Vec<(String, String, Vec<serde_json::Value>)>, String> {
-    let root = unique_lsp_test_root("gap-actions-invalid-specs")?;
-    std::fs::create_dir_all(root.path().join("src"))
-        .map_err(|err| format!("create src failed: {err}"))?;
-    std::fs::create_dir_all(root.path().join("tests"))
-        .map_err(|err| format!("create tests failed: {err}"))?;
-    std::fs::write(
-        root.path().join("tests/test_pricing.py"),
-        "def test_discount_boundary():\n    assert price(10) == 9\n",
-    )
-    .map_err(|err| format!("write related test failed: {err}"))?;
-    let uri = file_uri_for_path(&root.path().join("src/pricing.py"))?;
-    let mut diagnostic = gap_action_diagnostic();
-    let data = diagnostic
-        .data
-        .as_mut()
-        .ok_or_else(|| format!("{case}: missing diagnostic data"))?;
-    data["command_specs"] = serde_json::json!({
-        "verify": crate::agent::command_specs::agent_verify_command_spec(
-            ".", "diagnostic-before.json", "diagnostic-after.json", None,
-        ),
-        "receipt": crate::agent::command_specs::agent_receipt_command_spec(
-            ".", "diagnostic-verify.json", "diagnostic-seam", Some("diagnostic-receipt.json"),
-        ),
-    });
-    let mut snapshot = sample_analysis_snapshot(
-        root.path().to_path_buf(),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        Vec::new(),
-    );
-    snapshot.gap_artifacts = vec![artifact];
-
-    let actions = code_action_response(
-        &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
-        Some(&snapshot),
-        &vscode_client_features()?,
-    );
-    code_action_commands(&actions)
-}
-
-#[test]
-fn gap_code_actions_fail_closed_without_valid_current_artifact() -> Result<(), String> {
-    let diagnostic = gap_action_diagnostic();
-    let uri = test_uri("file:///workspace/src/pricing.py")?;
-    let snapshot = sample_analysis_snapshot(
-        PathBuf::from("/workspace"),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        Vec::new(),
-    );
-
-    let actions = code_action_response(
-        &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
-        Some(&snapshot),
-        &vscode_client_features()?,
-    );
-    let commands = code_action_commands(&actions)?;
-
-    assert_eq!(
-        commands
-            .iter()
-            .map(|(title, command, _)| (title.as_str(), command.as_str()))
-            .collect::<Vec<_>>(),
-        vec![("Refresh Analysis - Saved Workspace Check", REFRESH_COMMAND)],
-        "stale or unvalidated gap diagnostics must not expose repair actions"
-    );
-    Ok(())
-}
-
-#[test]
-fn gap_code_actions_omit_unsafe_related_paths_and_commands() -> Result<(), String> {
-    let root = unique_lsp_test_root("gap-unsafe-actions")?;
-    let uri = file_uri_for_path(&root.path().join("src/pricing.py"))?;
-    let mut diagnostic = gap_action_diagnostic();
-    let data = diagnostic
-        .data
-        .as_mut()
-        .ok_or_else(|| "missing diagnostic data".to_string())?;
-    data["repair_route"]["related_test"] = serde_json::json!("../outside.py::test_escape");
-    data["verification_commands"] =
-        serde_json::json!(["ripr agent verify --root ../outside --json"]);
-    data["receipt_command"] = serde_json::json!("ripr agent receipt --root ../outside --json");
-    data.as_object_mut()
-        .ok_or_else(|| "expected object data".to_string())?
-        .remove("static_limit_kind");
-    data.as_object_mut()
-        .ok_or_else(|| "expected object data".to_string())?
-        .remove("static_limit_detail");
-    let mut snapshot = sample_analysis_snapshot(
-        root.path().to_path_buf(),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        Vec::new(),
-    );
-    snapshot.gap_artifacts = vec![validated_gap_artifact()];
-
-    let actions = code_action_response(
-        &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
-        Some(&snapshot),
-        &vscode_client_features()?,
-    );
-    let commands = code_action_commands(&actions)?;
-
-    assert_eq!(
-        commands
-            .iter()
-            .map(|(title, command, _)| (title.as_str(), command.as_str()))
-            .collect::<Vec<_>>(),
-        vec![("Refresh Analysis - Saved Workspace Check", REFRESH_COMMAND)],
-        "unsafe gap paths or command roots must leave refresh as the only action"
-    );
-    Ok(())
-}
-
-#[test]
-fn gap_code_actions_suppress_python_repair_card_without_target_file() -> Result<(), String> {
-    let root = unique_lsp_test_root("gap-python-card-no-target")?;
-    let uri = file_uri_for_path(&root.path().join("src/pricing.py"))?;
-    let mut diagnostic = gap_action_diagnostic();
-    let data = diagnostic
-        .data
-        .as_mut()
-        .and_then(serde_json::Value::as_object_mut)
-        .ok_or_else(|| "expected diagnostic data object".to_string())?;
-    let route = data
-        .get_mut("repair_route")
-        .and_then(serde_json::Value::as_object_mut)
-        .ok_or_else(|| "expected repair_route object".to_string())?;
-    route.remove("target_file");
-    route.remove("related_test");
-    let mut snapshot = sample_analysis_snapshot(
-        root.path().to_path_buf(),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        Vec::new(),
-    );
-    snapshot.gap_artifacts = vec![validated_gap_artifact()];
-
-    let actions = code_action_response(
-        &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
-        Some(&snapshot),
-        &vscode_client_features()?,
-    );
-    let commands = code_action_commands(&actions)?;
-
-    assert!(
-        commands
-            .iter()
-            .all(|(title, _, _)| title != "Copy Python repair card"),
-        "Python repair card must not surface without a bounded target file: {commands:?}"
-    );
-    Ok(())
-}
-
-#[test]
-#[cfg(feature = "lang-python")]
-fn editor_adoption_baseline_pins_gap_repair_action_contract() -> Result<(), String> {
-    let root = unique_lsp_test_root("editor-adoption-gap-actions")?;
-    std::fs::create_dir_all(root.path().join("src"))
-        .map_err(|err| format!("create src failed: {err}"))?;
-    std::fs::create_dir_all(root.path().join("tests"))
-        .map_err(|err| format!("create tests failed: {err}"))?;
-    std::fs::write(
-        root.path().join("tests/test_pricing.py"),
-        "def test_discount_boundary():\n    assert price(10) == 9\n",
-    )
-    .map_err(|err| format!("write related test failed: {err}"))?;
-
-    let uri = file_uri_for_path(&root.path().join("src/pricing.py"))?;
-    let diagnostic = gap_action_diagnostic();
-    let mut snapshot = sample_analysis_snapshot(
-        root.path().to_path_buf(),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        Vec::new(),
-    );
-    snapshot.gap_artifacts = vec![validated_gap_artifact()];
-
-    let actions = code_action_response(
-        &code_action_params_for(
-            uri.clone(),
-            diagnostic.range.start.line,
-            vec![diagnostic.clone()],
-        )?,
-        Some(&snapshot),
-        &vscode_client_features()?,
-    );
-    let commands = code_action_commands(&actions)?;
-    assert_eq!(
-        commands
-            .iter()
-            .map(|(title, command, _)| (title.as_str(), command.as_str()))
-            .collect::<Vec<_>>(),
-        vec![
-            ("Copy first repair packet", COPY_CONTEXT_COMMAND),
-            ("Agent handoff: copy Python packet", COPY_CONTEXT_COMMAND),
-            ("Inspect gap: copy repair packet", COPY_CONTEXT_COMMAND),
-            ("Copy Python repair card", COPY_TARGETED_TEST_BRIEF_COMMAND),
-            (
-                "Write targeted test: open best related test",
-                OPEN_RELATED_TEST_COMMAND
-            ),
-            (
-                "Verify after test: copy verify command",
-                COPY_AGENT_VERIFY_COMMAND
-            ),
-            (
-                "Review result: copy receipt command",
-                COPY_AGENT_RECEIPT_COMMAND
-            ),
-            ("Inspect gap: copy static-limit note", COPY_CONTEXT_COMMAND),
-            ("Refresh Analysis - Saved Workspace Check", REFRESH_COMMAND),
-        ],
-        "the editor adoption baseline must keep one bounded repair ladder"
-    );
-    let packet = commands[0].2[0]["packet"]
-        .as_str()
-        .ok_or_else(|| "missing first repair packet text".to_string())?;
-    assert!(packet.contains("Language status: preview"));
-    assert!(packet.contains("Static limit: missing_import_graph"));
-    assert!(packet.contains("Missing discriminator: price(threshold) == expected"));
-    assert!(packet.contains("Focused proof intent:"));
-    assert!(packet.contains("Artifacts:"));
-    assert!(packet.contains("Verify command:\nripr agent verify --root . --json"));
-    assert!(packet.contains("Receipt command:\nripr agent receipt --root . --json"));
-    let static_limit_position = packet
-        .find("Static limit: missing_import_graph")
-        .ok_or_else(|| format!("missing static limit in first repair packet:\n{packet}"))?;
-    let suggested_action_position = packet
-        .find("Suggested action:")
-        .ok_or_else(|| format!("missing suggested action in first repair packet:\n{packet}"))?;
-    assert!(
-        static_limit_position < suggested_action_position,
-        "static limits must stay before action language:\n{packet}"
-    );
-
-    let unvalidated_snapshot = sample_analysis_snapshot(
-        root.path().to_path_buf(),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        Vec::new(),
-    );
-    let unvalidated_actions = code_action_response(
-        &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
-        Some(&unvalidated_snapshot),
-        &vscode_client_features()?,
-    );
-    let unvalidated_commands = code_action_commands(&unvalidated_actions)?;
-    assert_eq!(
-        unvalidated_commands
-            .iter()
-            .map(|(title, command, _)| (title.as_str(), command.as_str()))
-            .collect::<Vec<_>>(),
-        vec![("Refresh Analysis - Saved Workspace Check", REFRESH_COMMAND)],
-        "stale or unvalidated adoption-baseline evidence must fail closed to refresh"
-    );
-    Ok(())
-}
-
-#[test]
-fn seam_code_actions_surface_packet_assertion_related_test_and_refresh() -> Result<(), String> {
-    let seam = sample_classified_seam();
-    let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
-        .ok_or_else(|| "expected seam diagnostic".to_string())?;
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let mut snapshot = sample_analysis_snapshot(
-        PathBuf::from("/workspace"),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        Vec::new(),
-    );
-    snapshot.classified_seams = vec![seam.clone()];
-    let actions = code_action_response(
-        &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
-        Some(&snapshot),
-        &vscode_client_features()?,
-    );
-
-    let commands = code_action_commands(&actions)?;
-    assert_eq!(
-        commands
-            .iter()
-            .map(|(_, command, _)| command.as_str())
-            .collect::<Vec<_>>(),
-        vec![
-            COPY_CONTEXT_COMMAND,
-            COPY_TARGETED_TEST_BRIEF_COMMAND,
-            COPY_AGENT_PACKET_COMMAND,
-            COPY_AGENT_BRIEF_COMMAND,
-            COPY_AFTER_SNAPSHOT_COMMAND,
-            COPY_AGENT_VERIFY_COMMAND,
-            COPY_AGENT_RECEIPT_COMMAND,
-            COPY_SUGGESTED_ASSERTION_COMMAND,
-            OPEN_RELATED_TEST_COMMAND,
-            REFRESH_COMMAND,
-        ]
-    );
-    assert_eq!(commands[0].0, "Inspect Test Gap - Copy Context");
-    assert_eq!(commands[0].2[0]["seam_id"], seam.seam.id().as_str());
-    assert_eq!(commands[0].2[0]["seam_kind"], "predicate_boundary");
-    assert_eq!(commands[0].2[0]["line"], 88);
-    assert_eq!(commands[1].0, "Write targeted test: copy brief");
-    assert_eq!(commands[1].2[0]["seam_id"], seam.seam.id().as_str());
-    assert!(
-        commands[1].2[0]["brief"]
-            .as_str()
-            .is_some_and(|value| value.contains("Add a targeted test:")),
-        "expected targeted test brief argument, got {:?}",
-        commands[1].2
-    );
-    assert_eq!(commands[2].0, "Agent handoff: copy packet command");
-    assert_eq!(commands[2].2[0]["label"], "agent_packet");
-    assert_eq!(commands[2].2[0]["root"], ".");
-    assert_eq!(commands[2].2[0]["base"], "origin/main");
-    assert_eq!(commands[2].2[0]["mode"], "draft");
-    assert_eq!(commands[2].2[0]["seam_id"], seam.seam.id().as_str());
-    assert_eq!(commands[2].2[0]["seam_kind"], "predicate_boundary");
-    assert_eq!(commands[2].2[0]["seam_file"], "src/pricing.rs");
-    assert_eq!(commands[2].2[0]["owner"], "pricing::discounted_total");
-    assert_eq!(commands[2].2[0]["line"], 88);
-    assert_eq!(commands[2].2[0]["severity"], "warning");
-    assert_eq!(
-        commands[2].2[0]["target_artifact"],
-        "target/ripr/agent/agent-packet.json"
-    );
-    assert_eq!(
-        commands[2].2[0]["command"],
-        format!(
-            "ripr agent packet --root . --seam-id {} --json > target/ripr/agent/agent-packet.json",
-            seam.seam.id().as_str()
-        )
-    );
-    assert_eq!(commands[3].0, "Agent handoff: copy brief command");
-    assert_eq!(
-        commands[3].2[0]["command"],
-        format!(
-            "ripr agent brief --root . --seam-id {} --json > target/ripr/agent/agent-brief.json",
-            seam.seam.id().as_str()
-        )
-    );
-    assert_eq!(
-        commands[4].0,
-        "Verify after test: copy after-snapshot command"
-    );
-    assert_eq!(
-        commands[4].2[0]["command"],
-        "ripr check --root . --base origin/main --mode draft --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json"
-    );
-    assert_eq!(commands[5].0, "Verify after test: copy verify command");
-    assert_eq!(
-        commands[5].2[0]["command"],
-        "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json > target/ripr/agent/agent-verify.json"
-    );
-    assert_eq!(commands[6].0, "Review result: copy receipt command");
-    assert_eq!(
-        commands[6].2[0]["command"],
-        format!(
-            "ripr agent receipt --root . --verify-json target/ripr/agent/agent-verify.json --seam-id {} --json --out target/ripr/agent/agent-receipt.json",
-            seam.seam.id().as_str()
-        )
-    );
-    assert_eq!(
-        commands[7].0,
-        "Write targeted test: copy suggested assertion"
-    );
-    assert!(
-        commands[7].2[0]["assertion"]
-            .as_str()
-            .is_some_and(|value| value.contains("assert_eq!(discounted_total")),
-        "expected assertion argument, got {:?}",
-        commands[7].2
-    );
-    assert_eq!(commands[8].0, "Write targeted test: open best related test");
-    assert_eq!(
-        commands[8].2[0]["uri"],
-        "file:///workspace/tests/pricing.rs"
-    );
-    assert_eq!(commands[8].2[0]["line"], 12);
-    Ok(())
-}
-
-#[test]
-fn code_action_response_filters_client_commands_for_unenhanced_client() -> Result<(), String> {
-    // Layer 1 (#1776, RIPR-SPEC-0129): a client that advertised no
-    // riprEditor block must receive no client-executed command IDs â€” every
-    // ripr.copy*/ripr.openRelatedTest action is stripped and only the
-    // server-executed refresh action remains. Diagnostics and hover are
-    // separate surfaces and stay unfiltered.
-    let unenhanced = ClientFeatureProfile::unsupported();
-    let (seam_params, seam_snapshot) = seam_code_action_request()?;
-    let seam_commands = code_action_commands(&code_action_response(
-        &seam_params,
-        Some(&seam_snapshot),
-        &unenhanced,
-    ))?;
-    assert_eq!(
-        seam_commands
-            .iter()
-            .map(|(_, command, _)| command.as_str())
-            .collect::<Vec<_>>(),
-        vec![REFRESH_COMMAND],
-        "an unenhanced client must receive only server-executed commands"
-    );
-
-    let finding_diagnostic = diagnostic_for_finding(Path::new("/workspace"), &sample_finding());
-    let finding_commands = code_action_commands(&code_action_response(
-        &code_action_params(vec![finding_diagnostic])?,
-        None,
-        &unenhanced,
-    ))?;
-    assert_eq!(
-        finding_commands
-            .iter()
-            .map(|(_, command, _)| command.as_str())
-            .collect::<Vec<_>>(),
-        vec![REFRESH_COMMAND],
-        "an unenhanced client must not receive the finding context copy command"
-    );
-    Ok(())
-}
-
-#[test]
-fn code_action_response_negotiates_only_the_advertised_client_commands() -> Result<(), String> {
-    // A client advertising only ripr.openRelatedTest keeps the navigation
-    // action and loses every clipboard action (#1776, RIPR-SPEC-0129).
-    let navigate_only = client_features_with_commands(&[OPEN_RELATED_TEST_COMMAND])?;
-    let (seam_params, seam_snapshot) = seam_code_action_request()?;
-    let commands = code_action_commands(&code_action_response(
-        &seam_params,
-        Some(&seam_snapshot),
-        &navigate_only,
-    ))?;
-    assert_eq!(
-        commands
-            .iter()
-            .map(|(_, command, _)| command.as_str())
-            .collect::<Vec<_>>(),
-        vec![OPEN_RELATED_TEST_COMMAND, REFRESH_COMMAND],
-        "only the advertised navigation command and the refresh action survive"
-    );
-    Ok(())
-}
-
-#[test]
-fn code_action_response_emitted_commands_stay_within_server_or_advertised_sets()
--> Result<(), String> {
-    // Parity invariant (#1776, RIPR-SPEC-0129): every emitted command ID is
-    // either a server-executed command from the executeCommandProvider
-    // advertisement or a client command the negotiated profile advertised.
-    let provider_commands = initialize_result()
-        .capabilities
-        .execute_command_provider
-        .map(|options| options.commands)
-        .unwrap_or_default();
-    assert_eq!(
-        provider_commands,
-        SERVER_EXECUTED_COMMANDS
-            .iter()
-            .map(|command| command.to_string())
-            .collect::<Vec<_>>(),
-        "the server-executed filter set must mirror the executeCommandProvider advertisement"
-    );
-
-    let unenhanced = ClientFeatureProfile::unsupported();
-    let navigate_only = client_features_with_commands(&[OPEN_RELATED_TEST_COMMAND])?;
-    let vscode = vscode_client_features()?;
-    let (seam_params, seam_snapshot) = seam_code_action_request()?;
-    let finding_params = code_action_params(vec![diagnostic_for_finding(
-        Path::new("/workspace"),
-        &sample_finding(),
-    )])?;
-    for (label, profile) in [
-        ("unenhanced", &unenhanced),
-        ("navigate-only", &navigate_only),
-        ("vscode", &vscode),
-    ] {
-        let advertised: BTreeSet<&str> = profile
-            .ripr_editor
-            .as_ref()
-            .map(|editor| editor.commands.iter().map(String::as_str).collect())
-            .unwrap_or_default();
-        for (scenario, actions) in [
-            (
-                "seam",
-                code_action_response(&seam_params, Some(&seam_snapshot), profile),
-            ),
-            (
-                "finding",
-                code_action_response(&finding_params, None, profile),
-            ),
-        ] {
-            for (_, command, _) in code_action_commands(&actions)? {
-                if !SERVER_EXECUTED_COMMANDS.contains(&command.as_str())
-                    && !advertised.contains(command.as_str())
-                {
-                    return Err(format!(
-                        "{label}/{scenario}: emitted command {command} is neither server-executed nor advertised"
-                    ));
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-#[test]
-fn code_action_response_honors_only_quickfix_when_no_repair_actions_exist() -> Result<(), String> {
-    // `only: [quickfix]` (#1750, RIPR-SPEC-0129): `quickfix.ripr` is
-    // advertised-but-unemitted (no repair actions exist yet), so no emitted
-    // kind equals or sits under `quickfix` and the response is empty.
-    let vscode = vscode_client_features()?;
-    let (mut seam_params, seam_snapshot) = seam_code_action_request()?;
-    seam_params.context.only = Some(vec![CodeActionKind::QUICKFIX]);
-    let actions = code_action_response(&seam_params, Some(&seam_snapshot), &vscode);
-    assert_eq!(
-        actions.len(),
-        0,
-        "only: [quickfix] must filter out every source.ripr.* action"
-    );
-    Ok(())
-}
-
-#[test]
-fn code_action_response_only_source_ripr_navigate_keeps_only_navigation() -> Result<(), String> {
-    // `only: [source.ripr.navigate]` (#1750, RIPR-SPEC-0129) keeps exactly
-    // the related-test navigation action; every inspect/refresh action is
-    // outside the requested subtree.
-    let vscode = vscode_client_features()?;
-    let (mut seam_params, seam_snapshot) = seam_code_action_request()?;
-    seam_params.context.only = Some(vec![CodeActionKind::new("source.ripr.navigate")]);
-    let actions = code_action_response(&seam_params, Some(&seam_snapshot), &vscode);
-    let commands = code_action_commands(&actions)?;
-    assert_eq!(
-        commands
-            .iter()
-            .map(|(_, command, _)| command.as_str())
-            .collect::<Vec<_>>(),
-        vec![OPEN_RELATED_TEST_COMMAND],
-        "only: [source.ripr.navigate] must keep only the navigation action"
-    );
-    Ok(())
-}
-
-#[test]
-fn code_action_response_only_source_or_absent_only_keeps_every_action() -> Result<(), String> {
-    // `only: [source]` (#1750, RIPR-SPEC-0129) dot-segment-prefixes every
-    // kind emitted today, so the response matches the unfiltered one; an
-    // absent `only` leaves the response unfiltered by kind.
-    let vscode = vscode_client_features()?;
-    let (mut source_params, seam_snapshot) = seam_code_action_request()?;
-    source_params.context.only = Some(vec![CodeActionKind::SOURCE]);
-    let source_only = code_action_response(&source_params, Some(&seam_snapshot), &vscode);
-
-    let mut unfiltered_params = source_params.clone();
-    unfiltered_params.context.only = None;
-    let unfiltered = code_action_response(&unfiltered_params, Some(&seam_snapshot), &vscode);
-
-    if unfiltered.len() < 2 {
-        return Err(format!(
-            "seam scenario should emit several actions, got {}",
-            unfiltered.len()
-        ));
-    }
-    assert_eq!(
-        source_only.len(),
-        unfiltered.len(),
-        "only: [source] must keep every action emitted without an only filter"
-    );
-    Ok(())
-}
-
-#[test]
-fn code_action_response_only_filter_compounds_with_client_command_filter() -> Result<(), String> {
-    // Both filters apply (#1750 + #1776, RIPR-SPEC-0129): with
-    // `only: [source.ripr.inspect]` and an unenhanced client profile, the
-    // kind filter drops the navigate and refresh actions while the
-    // client-command filter strips every surviving inspect action (all are
-    // client-executed) â€” nothing remains.
-    let unenhanced = ClientFeatureProfile::unsupported();
-    let (mut seam_params, seam_snapshot) = seam_code_action_request()?;
-    seam_params.context.only = Some(vec![CodeActionKind::new("source.ripr.inspect")]);
-    let actions = code_action_response(&seam_params, Some(&seam_snapshot), &unenhanced);
-    assert_eq!(
-        actions.len(),
-        0,
-        "the kind filter and the client-command filter must compound"
-    );
-    Ok(())
-}
-
-#[test]
-#[cfg(feature = "lang-python")]
-fn code_action_response_emitted_kinds_stay_within_the_advertised_set() -> Result<(), String> {
-    // Kind parity invariant (#1750, RIPR-SPEC-0129): every kind emitted
-    // across the seam, gap, finding, and refresh paths is in the advertised
-    // `CodeActionOptions.code_action_kinds` set. The advertised constant is
-    // shared with `capabilities.rs`, so this test fails on emitter drift
-    // instead of re-blessing it.
-    let vscode = vscode_client_features()?;
-    let (seam_params, seam_snapshot) = seam_code_action_request()?;
-    let finding_params = code_action_params(vec![diagnostic_for_finding(
-        Path::new("/workspace"),
-        &sample_finding(),
-    )])?;
-    let (_gap_root, gap_params, gap_snapshot) = gap_kind_parity_request()?;
-    let scenarios = [
-        (
-            "seam",
-            code_action_response(&seam_params, Some(&seam_snapshot), &vscode),
-        ),
-        (
-            "finding",
-            code_action_response(&finding_params, None, &vscode),
-        ),
-        (
-            "gap",
-            code_action_response(&gap_params, Some(&gap_snapshot), &vscode),
-        ),
-    ];
-    for (scenario, actions) in &scenarios {
-        if actions.len() < 2 {
-            return Err(format!(
-                "{scenario}: scenario should emit actions beyond refresh, got {}",
-                actions.len()
-            ));
-        }
-        for kind in code_action_kinds(actions)? {
-            if !ADVERTISED_CODE_ACTION_KINDS.contains(&kind.as_str()) {
-                return Err(format!(
-                    "{scenario}: emitted kind {kind} is not in the advertised code-action kinds"
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Collect the kind string of every action, failing when an action carries
-/// no kind (a kind-less action would fail closed under `context.only`).
-fn code_action_kinds(actions: &[CodeActionOrCommand]) -> Result<Vec<String>, String> {
-    let mut kinds = Vec::new();
-    for action in actions {
-        let CodeActionOrCommand::CodeAction(action) = action else {
-            return Err("expected code action".to_string());
-        };
-        let Some(kind) = &action.kind else {
-            return Err(format!("expected kind for action {}", action.title));
-        };
-        kinds.push(kind.as_str().to_string());
-    }
-    Ok(kinds)
-}
-
-/// The gap code-action scenario for the kind-parity test (#1750): one gap
-/// diagnostic whose snapshot carries a matching validated gap artifact, so
-/// the gap emitters in `lsp/actions.rs` run. The temp root must stay alive
-/// for the duration of the response call.
-fn gap_kind_parity_request() -> Result<(TempLspRoot, CodeActionParams, AnalysisSnapshot), String> {
-    let root = unique_lsp_test_root("gap-kind-parity")?;
-    std::fs::create_dir_all(root.path().join("src"))
-        .map_err(|err| format!("create src failed: {err}"))?;
-    let uri = file_uri_for_path(&root.path().join("src/pricing.py"))?;
-    let diagnostic = gap_action_diagnostic();
-    let mut snapshot = sample_analysis_snapshot(
-        root.path().to_path_buf(),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        Vec::new(),
-    );
-    snapshot.gap_artifacts = vec![validated_gap_artifact()];
-    let params = code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?;
-    Ok((root, params, snapshot))
-}
-
-/// A negotiated profile that advertises `CodeAction.disabled` support plus
-/// exactly `commands` in its `riprEditor` block (#1892).
-fn client_features_with_disabled_support(
-    commands: &[&str],
-) -> Result<ClientFeatureProfile, String> {
-    let params: InitializeParams = serde_json::from_value(serde_json::json!({
-        "capabilities": {
-            "textDocument": {
-                "codeAction": {
-                    "disabledSupport": true
-                }
-            },
-            "experimental": {
-                "riprEditor": {
-                    "version": "0.10.0",
-                    "commands": commands,
-                    "guardedTestEdit": false
-                }
-            }
-        }
-    }))
-    .map_err(|err| format!("fixture params must parse: {err}"))?;
-    let profile = ClientFeatureProfile::from_initialize_params(&params);
-    if !profile.code_action_disabled {
-        return Err("fixture must negotiate CodeAction.disabled support".to_string());
-    }
-    Ok(profile)
-}
-
-/// Collect every `CodeAction` literal, failing on a bare `Command` entry.
-fn code_action_literals(
-    actions: &[CodeActionOrCommand],
-) -> Result<Vec<&tower_lsp_server::ls_types::CodeAction>, String> {
-    let mut literals = Vec::new();
-    for action in actions {
-        let CodeActionOrCommand::CodeAction(action) = action else {
-            return Err("expected code action literal".to_string());
-        };
-        literals.push(action);
-    }
-    Ok(literals)
-}
-
-/// The disabled-action invariants (#1892, RIPR-SPEC-0129): a disabled action
-/// never carries a command or edit (a disabled action that still executes is
-/// the cardinal-sin flip), is never preferred, keeps its kind for the
-/// `context.only` filter, names a human reason, and names a machine reason
-/// from the closed emitted vocabulary.
-fn assert_disabled_action_invariants(
-    action: &tower_lsp_server::ls_types::CodeAction,
-) -> Result<(), String> {
-    if action.command.is_some() || action.edit.is_some() {
-        return Err(format!(
-            "disabled action {} must not carry a command or edit",
-            action.title
-        ));
-    }
-    if action.is_preferred == Some(true) {
-        return Err(format!(
-            "disabled action {} must never be preferred",
-            action.title
-        ));
-    }
-    if action.kind.is_none() {
-        return Err(format!(
-            "disabled action {} must retain its kind",
-            action.title
-        ));
-    }
-    let Some(disabled) = &action.disabled else {
-        return Err(format!("action {} is not disabled", action.title));
-    };
-    if disabled.reason.trim().is_empty() {
-        return Err(format!(
-            "disabled action {} must carry a human reason",
-            action.title
-        ));
-    }
-    let reason = action
-        .data
-        .as_ref()
-        .and_then(|data| data.get("disabled_reason"))
-        .and_then(|reason| reason.as_str())
-        .ok_or_else(|| {
-            format!(
-                "disabled action {} must name a machine reason",
-                action.title
-            )
-        })?;
-    if !super::action_contract::EMITTED_DISABLED_REASONS
-        .iter()
-        .any(|candidate| candidate.as_str() == reason)
-    {
-        return Err(format!(
-            "disabled action {} names {reason}, which is outside the emitted closed vocabulary",
-            action.title
-        ));
-    }
-    Ok(())
-}
-
-#[test]
-fn code_action_response_actions_carry_versioned_data_payloads() -> Result<(), String> {
-    // #1892, RIPR-SPEC-0129: every emitted action carries the versioned data
-    // payload (schema, deterministic fingerprinted action_id, class, kind,
-    // addressed identity, required capability); diagnostic-addressing
-    // actions attach the addressed diagnostic; the refresh action names the
-    // server as its required capability.
-    let vscode = vscode_client_features()?;
-    let (seam_params, seam_snapshot) = seam_code_action_request()?;
-    let seam_id = seam_snapshot
-        .classified_seams
-        .first()
-        .map(|seam| seam.seam.id().as_str().to_string())
-        .ok_or_else(|| "seam scenario must carry a seam".to_string())?;
-    let actions = code_action_response(&seam_params, Some(&seam_snapshot), &vscode);
-    if actions.len() < 2 {
-        return Err(format!(
-            "seam scenario should emit several actions, got {}",
-            actions.len()
-        ));
-    }
-    let mut action_ids = BTreeSet::new();
-    for action in code_action_literals(&actions)? {
-        let data = action
-            .data
-            .as_ref()
-            .ok_or_else(|| format!("action {} must carry data", action.title))?;
-        if data["schema_version"] != super::action_contract::RIPR_CODE_ACTION_DATA_SCHEMA_VERSION {
-            return Err(format!("action {} schema version drifted", action.title));
-        }
-        let action_id = data["action_id"]
-            .as_str()
-            .ok_or_else(|| format!("action {} must carry a string action_id", action.title))?;
-        if !action_id.starts_with("fnv1a64:") {
-            return Err(format!(
-                "action {} action_id must be a config fingerprint: {action_id}",
-                action.title
-            ));
-        }
-        if !action_ids.insert(action_id.to_string()) {
-            return Err(format!("duplicate action_id in one response: {action_id}"));
-        }
-        let kind = action
-            .kind
-            .as_ref()
-            .ok_or_else(|| format!("action {} must carry a kind", action.title))?;
-        if data["action_kind"] != kind.as_str() {
-            return Err(format!(
-                "action {} data action_kind must mirror its kind",
-                action.title
-            ));
-        }
-        if data.get("disabled_reason").is_some() {
-            return Err(format!(
-                "enabled action {} must not carry disabled_reason",
-                action.title
-            ));
-        }
-        let capability = data["required_client_capability"]
-            .as_str()
-            .ok_or_else(|| format!("action {} must name its required capability", action.title))?;
-        if action.title == "Refresh Analysis - Saved Workspace Check" {
-            if capability != "server" {
-                return Err("refresh is server-executed and must require \"server\"".to_string());
-            }
-            if action.diagnostics.is_some() {
-                return Err("refresh addresses no diagnostic".to_string());
-            }
-            let input_identity = data["input_identity"]
-                .as_str()
-                .ok_or_else(|| "refresh data must carry the snapshot input identity".to_string())?;
-            if !input_identity.starts_with("input:fnv1a64:") {
-                return Err(format!(
-                    "input identity must be the snapshot stable_id: {input_identity}"
-                ));
-            }
-        } else {
-            let diagnostics = action.diagnostics.as_ref().ok_or_else(|| {
-                format!(
-                    "diagnostic-addressing action {} must attach the diagnostic",
-                    action.title
-                )
-            })?;
-            if diagnostics.len() != 1 {
-                return Err(format!(
-                    "action {} must attach exactly the addressed diagnostic",
-                    action.title
-                ));
-            }
-            if data["seam_id"] != seam_id {
-                return Err(format!(
-                    "action {} must carry the addressed seam identity",
-                    action.title
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
-#[test]
-#[cfg(feature = "lang-python")]
-fn gap_code_actions_carry_distinct_action_ids_and_names() -> Result<(), String> {
-    // #1892 review (action_id collisions): several constructors share one
-    // command id on one diagnostic â€” the copy_context sites all use
-    // COPY_CONTEXT_COMMAND, and the pytest-skeleton / repair-card pair both
-    // use COPY_TARGETED_TEST_BRIEF_COMMAND â€” so the stable action_name must
-    // keep every action_id in one response distinct.
-    let vscode = vscode_client_features()?;
-    let (_gap_root, gap_params, gap_snapshot) = gap_kind_parity_request()?;
-    let actions = code_action_response(&gap_params, Some(&gap_snapshot), &vscode);
-    let literals = code_action_literals(&actions)?;
-    if literals.len() < 4 {
-        return Err(format!(
-            "gap scenario should emit several actions, got {}",
-            literals.len()
-        ));
-    }
-    let shared_context_command = literals
-        .iter()
-        .filter(|action| {
-            action
-                .command
-                .as_ref()
-                .is_some_and(|command| command.command == COPY_CONTEXT_COMMAND)
-        })
-        .count();
-    if shared_context_command < 2 {
-        return Err(format!(
-            "gap scenario should resolve at least two copy_context actions, got {shared_context_command}"
-        ));
-    }
-    let mut action_ids = BTreeSet::new();
-    let mut action_names = BTreeSet::new();
-    for action in &literals {
-        let data = action
-            .data
-            .as_ref()
-            .ok_or_else(|| format!("action {} must carry data", action.title))?;
-        let name = data["action_name"]
-            .as_str()
-            .ok_or_else(|| format!("action {} must carry action_name", action.title))?;
-        if !action_names.insert(name.to_string()) {
-            return Err(format!(
-                "duplicate action_name {name} in one response (action {})",
-                action.title
-            ));
-        }
-        let action_id = data["action_id"]
-            .as_str()
-            .ok_or_else(|| format!("action {} must carry action_id", action.title))?;
-        if !action_ids.insert(action_id.to_string()) {
-            return Err(format!(
-                "duplicate action_id {action_id} in one response (action {})",
-                action.title
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn first_enabled_action(actions: &[CodeActionOrCommand]) -> Result<CodeAction, String> {
-    code_action_literals(actions)?
-        .into_iter()
-        .find(|action| action.command.is_some())
-        .cloned()
-        .ok_or_else(|| "scenario must emit an enabled action".to_string())
-}
-
-fn disabled_reason_of(action: &CodeAction) -> Option<&str> {
-    action
-        .data
-        .as_ref()
-        .and_then(|data| data.get("disabled_reason"))
-        .and_then(|reason| reason.as_str())
-}
-
-/// Retargets one action's addressed identity (#1751): drops the listed
-/// identity keys, inserts `insert_key = insert_value`, and recomputes the
-/// `action_id` fingerprint so the payload stays well-formed. The canonical
-/// identity after retargeting is `insert_value` (higher-precedence keys are
-/// the caller's responsibility to drop), and the command id comes from the
-/// attached command, mirroring the build-side fingerprint inputs.
-fn retarget_action_identity(
-    action: &CodeAction,
-    drop_keys: &[&str],
-    insert_key: &str,
-    insert_value: &str,
-) -> Result<CodeAction, String> {
-    let mut retargeted = action.clone();
-    let command_id = retargeted
-        .command
-        .as_ref()
-        .map(|command| command.command.clone())
-        .ok_or_else(|| "enabled action must carry a command".to_string())?;
-    let object = retargeted
-        .data
-        .as_mut()
-        .and_then(serde_json::Value::as_object_mut)
-        .ok_or_else(|| "action must carry a data object".to_string())?;
-    for key in drop_keys {
-        object.remove(*key);
-    }
-    object.insert(
-        insert_key.to_string(),
-        serde_json::Value::String(insert_value.to_string()),
-    );
-    let action_class = object
-        .get("action_class")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| "payload must carry action_class".to_string())?;
-    let action_name = object
-        .get("action_name")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| "payload must carry action_name".to_string())?;
-    let fingerprint = crate::config::config_fingerprint(&format!(
-        "{action_class}|{insert_value}|{command_id}|{action_name}"
-    ));
-    object.insert(
-        "action_id".to_string(),
-        serde_json::Value::String(fingerprint),
-    );
-    Ok(retargeted)
-}
-
-#[test]
-fn code_action_resolve_returns_fresh_action_resolved() -> Result<(), String> {
-    // #1751, RIPR-SPEC-0129: a well-formed action revalidated against the
-    // snapshot it was built from resolves in its enabled form â€” command
-    // attached, not disabled.
-    let vscode = vscode_client_features()?;
-    let (seam_params, seam_snapshot) = seam_code_action_request()?;
-    let actions = code_action_response(&seam_params, Some(&seam_snapshot), &vscode);
-    let mut resolved_count = 0;
-    for action in code_action_literals(&actions)? {
-        let resolved = resolve_action(action.clone(), Some(&seam_snapshot), &vscode)
-            .map_err(|err| format!("fresh action {} was rejected: {err}", action.title))?;
-        if resolved.command.is_none() {
-            return Err(format!("resolved action {} lost its command", action.title));
-        }
-        if resolved.disabled.is_some() {
-            return Err(format!("fresh action {} resolved disabled", action.title));
-        }
-        resolved_count += 1;
-    }
-    if resolved_count < 2 {
-        return Err(format!(
-            "seam scenario should resolve several actions, got {resolved_count}"
-        ));
-    }
-    Ok(())
-}
-
-#[test]
-fn code_action_resolve_stale_input_identity_yields_disabled_stale_snapshot() -> Result<(), String> {
-    // #1751: the payload's input identity no longer matches the current
-    // snapshot â€” the action resolves inert naming `stale_snapshot`. The
-    // identity sits outside the `action_id` fingerprint, so mutating it
-    // leaves the payload well-formed.
-    let vscode = vscode_client_features()?;
-    let (seam_params, seam_snapshot) = seam_code_action_request()?;
-    let actions = code_action_response(&seam_params, Some(&seam_snapshot), &vscode);
-    let mut action = first_enabled_action(&actions)?;
-    let object = action
-        .data
-        .as_mut()
-        .and_then(serde_json::Value::as_object_mut)
-        .ok_or_else(|| "action must carry a data object".to_string())?;
-    object.insert(
-        "input_identity".to_string(),
-        serde_json::Value::String("input:fnv1a64:0000000000000000".to_string()),
-    );
-    let resolved = resolve_action(action, Some(&seam_snapshot), &vscode)
-        .map_err(|err| format!("stale action was rejected instead of disabled: {err}"))?;
-    assert_disabled_action_invariants(&resolved)?;
-    if disabled_reason_of(&resolved) != Some("stale_snapshot") {
-        return Err(format!(
-            "expected stale_snapshot, got {:?}",
-            disabled_reason_of(&resolved)
-        ));
-    }
-    Ok(())
-}
-
-#[test]
-fn code_action_resolve_stale_seam_snapshot_yields_disabled_stale_snapshot() -> Result<(), String> {
-    let vscode = vscode_client_features()?;
-    let (seam_params, mut old_snapshot) = seam_code_action_request()?;
-    old_snapshot.refresh.snapshot_id = Some("snapshot:old".to_string());
-    let actions = code_action_response(&seam_params, Some(&old_snapshot), &vscode);
-    let action = first_enabled_action(&actions)?;
-
-    let mut current_snapshot = old_snapshot.clone();
-    current_snapshot.refresh.snapshot_id = Some("snapshot:new".to_string());
-    let resolved = resolve_action(action, Some(&current_snapshot), &vscode)
-        .map_err(|err| format!("stale seam action was rejected instead of disabled: {err}"))?;
-    assert_disabled_action_invariants(&resolved)?;
-    if disabled_reason_of(&resolved) != Some("stale_snapshot") {
-        return Err(format!(
-            "expected stale_snapshot, got {:?}",
-            disabled_reason_of(&resolved)
-        ));
-    }
-    Ok(())
-}
-
-#[test]
-fn code_action_resolve_missing_addressed_artifact_yields_disabled_stale_snapshot()
--> Result<(), String> {
-    // #1751: the current snapshot no longer carries the seam the action
-    // addresses â€” the action resolves inert naming `stale_snapshot`.
-    let vscode = vscode_client_features()?;
-    let (seam_params, seam_snapshot) = seam_code_action_request()?;
-    let actions = code_action_response(&seam_params, Some(&seam_snapshot), &vscode);
-    let action = first_enabled_action(&actions)?;
-    let (_ignored_params, mut snapshot_without_seam) = seam_code_action_request()?;
-    snapshot_without_seam.classified_seams.clear();
-    let resolved = resolve_action(action, Some(&snapshot_without_seam), &vscode)
-        .map_err(|err| format!("lapsed action was rejected instead of disabled: {err}"))?;
-    assert_disabled_action_invariants(&resolved)?;
-    if disabled_reason_of(&resolved) != Some("stale_snapshot") {
-        return Err(format!(
-            "expected stale_snapshot, got {:?}",
-            disabled_reason_of(&resolved)
-        ));
-    }
-    Ok(())
-}
-
-#[test]
-fn code_action_resolve_unadvertised_client_command_yields_disabled_capability_missing()
--> Result<(), String> {
-    // #1751: the negotiated profile does not advertise the action's
-    // client-executed command â€” the action resolves inert naming
-    // `client_capability_missing`, mirroring the #1892 disabled form.
-    let vscode = vscode_client_features()?;
-    let (seam_params, seam_snapshot) = seam_code_action_request()?;
-    let actions = code_action_response(&seam_params, Some(&seam_snapshot), &vscode);
-    let action = code_action_literals(&actions)?
-        .into_iter()
-        .find(|action| {
-            action
-                .command
-                .as_ref()
-                .is_some_and(|command| command.command == COPY_CONTEXT_COMMAND)
-        })
-        .cloned()
-        .ok_or_else(|| "seam scenario must emit a copy-context action".to_string())?;
-    let unenhanced = ClientFeatureProfile::unsupported();
-    let resolved = resolve_action(action, Some(&seam_snapshot), &unenhanced)
-        .map_err(|err| format!("capability-lapsed action was rejected: {err}"))?;
-    assert_disabled_action_invariants(&resolved)?;
-    if disabled_reason_of(&resolved) != Some("client_capability_missing") {
-        return Err(format!(
-            "expected client_capability_missing, got {:?}",
-            disabled_reason_of(&resolved)
-        ));
-    }
-    Ok(())
-}
-
-#[test]
-fn code_action_resolve_without_snapshot_keeps_refresh_enabled() -> Result<(), String> {
-    // #1751: the health/root gate withholds the snapshot â€” every
-    // diagnostic-addressing action resolves inert naming `stale_snapshot`,
-    // while the refresh action addresses no snapshot artifact and stays
-    // enabled (it is the recovery path out of staleness).
-    let vscode = vscode_client_features()?;
-    let (seam_params, seam_snapshot) = seam_code_action_request()?;
-    let actions = code_action_response(&seam_params, Some(&seam_snapshot), &vscode);
-    let mut saw_refresh = false;
-    for action in code_action_literals(&actions)? {
-        let resolved = resolve_action(action.clone(), None, &vscode)
-            .map_err(|err| format!("action {} was rejected: {err}", action.title))?;
-        if action.title == "Refresh Analysis - Saved Workspace Check" {
-            saw_refresh = true;
-            if resolved.command.is_none() || resolved.disabled.is_some() {
-                return Err("refresh must stay enabled without a snapshot".to_string());
-            }
-        } else {
-            assert_disabled_action_invariants(&resolved)?;
-            if disabled_reason_of(&resolved) != Some("stale_snapshot") {
-                return Err(format!(
-                    "action {} must name stale_snapshot, got {:?}",
-                    action.title,
-                    disabled_reason_of(&resolved)
-                ));
-            }
-        }
-    }
-    if !saw_refresh {
-        return Err("seam scenario must emit the refresh action".to_string());
-    }
-    Ok(())
-}
-
-#[test]
-fn code_action_resolve_rejects_tampered_or_versionless_payloads() -> Result<(), String> {
-    // #1751: fail-closed parse â€” a tampered `action_id`, a missing or
-    // foreign `schema_version`, or a missing payload is a protocol
-    // rejection, never a best-effort read.
-    let vscode = vscode_client_features()?;
-    let (seam_params, seam_snapshot) = seam_code_action_request()?;
-    let actions = code_action_response(&seam_params, Some(&seam_snapshot), &vscode);
-    let action = first_enabled_action(&actions)?;
-
-    let mut tampered = action.clone();
-    tampered
-        .data
-        .as_mut()
-        .and_then(serde_json::Value::as_object_mut)
-        .ok_or_else(|| "action must carry a data object".to_string())?
-        .insert(
-            "action_id".to_string(),
-            serde_json::Value::String("fnv1a64:0000000000000000".to_string()),
-        );
-    if resolve_action(tampered, Some(&seam_snapshot), &vscode).is_ok() {
-        return Err("a tampered action_id must be rejected".to_string());
-    }
-
-    let mut versionless = action.clone();
-    versionless
-        .data
-        .as_mut()
-        .and_then(serde_json::Value::as_object_mut)
-        .ok_or_else(|| "action must carry a data object".to_string())?
-        .remove("schema_version");
-    if resolve_action(versionless, Some(&seam_snapshot), &vscode).is_ok() {
-        return Err("a missing schema_version must be rejected".to_string());
-    }
-
-    let mut foreign = action.clone();
-    foreign
-        .data
-        .as_mut()
-        .and_then(serde_json::Value::as_object_mut)
-        .ok_or_else(|| "action must carry a data object".to_string())?
-        .insert(
-            "schema_version".to_string(),
-            serde_json::Value::String("foreign-schema-v0".to_string()),
-        );
-    if resolve_action(foreign, Some(&seam_snapshot), &vscode).is_ok() {
-        return Err("a foreign schema_version must be rejected".to_string());
-    }
-
-    let mut payloadless = action;
-    payloadless.data = None;
-    if resolve_action(payloadless, Some(&seam_snapshot), &vscode).is_ok() {
-        return Err("a missing payload must be rejected".to_string());
-    }
-    Ok(())
-}
-
-#[test]
-fn code_action_resolve_unknown_seam_or_finding_identity_yields_disabled_stale_snapshot()
--> Result<(), String> {
-    // #1751: a fingerprint-valid payload pointing at a seam or finding the
-    // current snapshot does not carry resolves inert naming `stale_snapshot`
-    // â€” the addressed-artifact lookup is the discriminator, not the
-    // freshness identity (which is left fresh here).
-    let vscode = vscode_client_features()?;
-    let (seam_params, seam_snapshot) = seam_code_action_request()?;
-    let actions = code_action_response(&seam_params, Some(&seam_snapshot), &vscode);
-    let action = code_action_literals(&actions)?
-        .into_iter()
-        .find(|action| {
-            action.command.is_some()
-                && action
-                    .data
-                    .as_ref()
-                    .and_then(|data| data.get("seam_id"))
-                    .and_then(serde_json::Value::as_str)
-                    .is_some()
-        })
-        .cloned()
-        .ok_or_else(|| "seam scenario must emit an enabled seam-addressed action".to_string())?;
-    let seam_retargeted = retarget_action_identity(
-        &action,
-        &["canonical_gap_id", "gap_id", "finding_id"],
-        "seam_id",
-        "seam:does-not-exist",
-    )?;
-    let resolved = resolve_action(seam_retargeted, Some(&seam_snapshot), &vscode)
-        .map_err(|err| format!("unknown-seam action was rejected instead of disabled: {err}"))?;
-    assert_disabled_action_invariants(&resolved)?;
-    if disabled_reason_of(&resolved) != Some("stale_snapshot") {
-        return Err(format!(
-            "unknown seam must name stale_snapshot, got {:?}",
-            disabled_reason_of(&resolved)
-        ));
-    }
-
-    let finding_retargeted = retarget_action_identity(
-        &action,
-        &["canonical_gap_id", "gap_id", "seam_id"],
-        "finding_id",
-        "finding:does-not-exist",
-    )?;
-    let resolved = resolve_action(finding_retargeted, Some(&seam_snapshot), &vscode)
-        .map_err(|err| format!("unknown-finding action was rejected instead of disabled: {err}"))?;
-    assert_disabled_action_invariants(&resolved)?;
-    if disabled_reason_of(&resolved) != Some("stale_snapshot") {
-        return Err(format!(
-            "unknown finding must name stale_snapshot, got {:?}",
-            disabled_reason_of(&resolved)
-        ));
-    }
-    Ok(())
-}
-
-#[test]
-fn code_action_resolve_rejects_class_kind_and_capability_disagreement() -> Result<(), String> {
-    // #1751: fail-closed parse and revalidation â€” an `action_class` that
-    // disagrees with `action_kind`, or a `required_client_capability` that
-    // disagrees with the attached command, is a protocol rejection, never a
-    // best-effort read.
-    let vscode = vscode_client_features()?;
-    let (seam_params, seam_snapshot) = seam_code_action_request()?;
-    let actions = code_action_response(&seam_params, Some(&seam_snapshot), &vscode);
-    let action = first_enabled_action(&actions)?;
-
-    let mut class_tampered = action.clone();
-    let object = class_tampered
-        .data
-        .as_mut()
-        .and_then(serde_json::Value::as_object_mut)
-        .ok_or_else(|| "action must carry a data object".to_string())?;
-    let original_class = object
-        .get("action_class")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| "payload must carry action_class".to_string())?
-        .to_string();
-    let flipped_class = if original_class == "inspect" {
-        "navigate"
-    } else {
-        "inspect"
-    };
-    object.insert(
-        "action_class".to_string(),
-        serde_json::Value::String(flipped_class.to_string()),
-    );
-    if resolve_action(class_tampered, Some(&seam_snapshot), &vscode).is_ok() {
-        return Err("an action_class/action_kind disagreement must be rejected".to_string());
-    }
-
-    let mut capability_tampered = action;
-    capability_tampered
-        .data
-        .as_mut()
-        .and_then(serde_json::Value::as_object_mut)
-        .ok_or_else(|| "action must carry a data object".to_string())?
-        .insert(
-            "required_client_capability".to_string(),
-            serde_json::Value::String("ripr.noSuchNegotiatedCommand".to_string()),
-        );
-    if resolve_action(capability_tampered, Some(&seam_snapshot), &vscode).is_ok() {
-        return Err(
-            "a required_client_capability/command disagreement must be rejected".to_string(),
-        );
-    }
-    Ok(())
-}
-
-#[test]
-fn code_action_response_disabled_capable_client_receives_inert_client_command_actions()
--> Result<(), String> {
-    // Omit-vs-disabled policy (#1892, RIPR-SPEC-0129): a client advertising
-    // `CodeAction.disabled` support but no riprEditor commands receives every
-    // client-command action inert instead of omitted; a client without
-    // disabled support keeps the fail-closed omission (#1776).
-    let disabled_capable = client_features_with_disabled_support(&[])?;
-    let unenhanced = ClientFeatureProfile::unsupported();
-    let (seam_params, seam_snapshot) = seam_code_action_request()?;
-
-    let omitted = code_action_response(&seam_params, Some(&seam_snapshot), &unenhanced);
-    assert_eq!(
-        omitted.len(),
-        1,
-        "a client without disabled support keeps the omission (refresh only)"
-    );
-
-    let actions = code_action_response(&seam_params, Some(&seam_snapshot), &disabled_capable);
-    let literals = code_action_literals(&actions)?;
-    let disabled = literals
-        .iter()
-        .filter(|action| action.disabled.is_some())
-        .collect::<Vec<_>>();
-    if disabled.len() < 2 {
-        return Err(format!(
-            "disabled-capable client should receive the omitted set inert, got {}",
-            disabled.len()
-        ));
-    }
-    for action in &disabled {
-        assert_disabled_action_invariants(action)?;
-        let reason = action
-            .data
-            .as_ref()
-            .and_then(|data| data["disabled_reason"].as_str());
-        if reason != Some("client_capability_missing") {
-            return Err(format!(
-                "policy-disabled action {} must name client_capability_missing",
-                action.title
-            ));
-        }
-    }
-    let executable = literals
-        .iter()
-        .filter_map(|action| action.command.as_ref())
-        .map(|command| command.command.as_str())
-        .collect::<Vec<_>>();
-    assert_eq!(
-        executable,
-        vec![REFRESH_COMMAND],
-        "only the server-executed refresh command may survive on an unenhanced client"
-    );
-    Ok(())
-}
-
-#[test]
-fn code_action_response_disabled_actions_never_execute_across_scenarios() -> Result<(), String> {
-    // Negative-experiment guard (#1892): across every scenario that can emit
-    // a disabled action (policy-disabled, stale snapshot, cross-language
-    // limitation), no disabled action carries a command or edit, none is
-    // preferred, and every machine reason stays inside the emitted closed
-    // vocabulary. This test must fail if any disabled path ever leaves an
-    // executable payload attached.
-    let disabled_capable = client_features_with_disabled_support(&[])?;
-    let (seam_params, seam_snapshot) = seam_code_action_request()?;
-    let (_gap_root, gap_params, mut stale_snapshot) = gap_kind_parity_request()?;
-    stale_snapshot.diagnostics_by_uri.clear();
-    let scenarios = [
-        (
-            "policy",
-            code_action_response(&seam_params, Some(&seam_snapshot), &disabled_capable),
-        ),
-        (
-            "stale-gap",
-            code_action_response(&gap_params, Some(&stale_snapshot), &disabled_capable),
-        ),
-    ];
-    let mut disabled_count = 0usize;
-    for (scenario, actions) in &scenarios {
-        let mut scenario_disabled_count = 0usize;
-        for action in code_action_literals(actions)? {
-            if action.disabled.is_some() {
-                assert_disabled_action_invariants(action)?;
-                scenario_disabled_count += 1;
-            }
-        }
-        if scenario_disabled_count == 0 {
-            return Err(format!(
-                "{scenario} scenario must emit at least one disabled action"
-            ));
-        }
-        disabled_count += scenario_disabled_count;
-    }
-    if disabled_count == 0 {
-        return Err("no disabled actions were inspected".to_string());
-    }
-    Ok(())
-}
-
-#[test]
-fn code_action_response_disabled_policy_keeps_only_filter_parity() -> Result<(), String> {
-    // Disabled actions retain their kind (#1892): the `CodeActionContext.only`
-    // filter (#1750) fail-closes on kind-less actions, so a disabled navigate
-    // action must still survive `only: [source.ripr.navigate]`.
-    let disabled_capable = client_features_with_disabled_support(&[])?;
-    let (mut seam_params, seam_snapshot) = seam_code_action_request()?;
-    seam_params.context.only = Some(vec![CodeActionKind::new("source.ripr.navigate")]);
-    let actions = code_action_response(&seam_params, Some(&seam_snapshot), &disabled_capable);
-    let literals = code_action_literals(&actions)?;
-    assert_eq!(
-        literals
-            .iter()
-            .map(|action| action.title.as_str())
-            .collect::<Vec<_>>(),
-        vec!["Write targeted test: open best related test"],
-        "only: [source.ripr.navigate] must keep the (disabled) navigation action"
-    );
-    let action = literals
-        .first()
-        .ok_or_else(|| "navigation action missing".to_string())?;
-    assert_disabled_action_invariants(action)?;
-    Ok(())
-}
-
-#[test]
-fn gap_code_actions_stale_diagnostic_yields_disabled_stale_snapshot_action() -> Result<(), String> {
-    // Staleness suppression (#1892, RIPR-SPEC-0129): a gap diagnostic the
-    // current snapshot no longer carries yields an inert packet action
-    // naming stale_snapshot for disabled-capable clients; other clients keep
-    // the legacy omission.
-    let disabled_capable = client_features_with_disabled_support(&[])?;
-    let (_gap_root, gap_params, mut snapshot) = gap_kind_parity_request()?;
-    snapshot.diagnostics_by_uri.clear();
-
-    let omitted = code_action_response(&gap_params, Some(&snapshot), &vscode_client_features()?);
-    assert_eq!(
-        omitted.len(),
-        1,
-        "a client without disabled support keeps the omission (refresh only)"
-    );
-
-    let actions = code_action_response(&gap_params, Some(&snapshot), &disabled_capable);
-    let literals = code_action_literals(&actions)?;
-    let disabled = literals
-        .iter()
-        .filter(|action| action.disabled.is_some())
-        .collect::<Vec<_>>();
-    assert_eq!(
-        disabled
-            .iter()
-            .map(|action| action.title.as_str())
-            .collect::<Vec<_>>(),
-        vec!["Inspect gap: copy repair packet"],
-        "a stale gap diagnostic must surface exactly the packet action inert"
-    );
-    let action = disabled
-        .first()
-        .ok_or_else(|| "stale gap disabled action missing".to_string())?;
-    assert_disabled_action_invariants(action)?;
-    if action
-        .data
-        .as_ref()
-        .and_then(|data| data["disabled_reason"].as_str())
-        != Some("stale_snapshot")
-    {
-        return Err("stale gap action must name stale_snapshot".to_string());
-    }
-    if action
-        .data
-        .as_ref()
-        .and_then(|data| data["gap_id"].as_str())
-        != Some("gap:py:pricing")
-    {
-        return Err("stale gap action must carry the addressed gap identity".to_string());
-    }
-    Ok(())
-}
-
-#[test]
-#[cfg(feature = "lang-python")]
-fn gap_code_actions_disable_verify_route_when_verification_commands_missing() -> Result<(), String>
-{
-    // Missing verification route (#1892): the gap record carries no safe
-    // verification command, so the verify handoff is emitted inert naming
-    // verification_route_unavailable instead of being silently absent.
-    let root = unique_lsp_test_root("gap-disabled-verify-route")?;
-    let uri = file_uri_for_path(&root.path().join("src/pricing.py"))?;
-    let mut diagnostic = gap_action_diagnostic();
-    diagnostic
-        .data
-        .as_mut()
-        .and_then(|data| data.as_object_mut())
-        .ok_or_else(|| "missing diagnostic data".to_string())?
-        .remove("verification_commands");
-    let mut snapshot = sample_analysis_snapshot(
-        root.path().to_path_buf(),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        Vec::new(),
-    );
-    snapshot.gap_artifacts = vec![validated_gap_artifact()];
-    let params = code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?;
-
-    let actions = code_action_response(
-        &params,
-        Some(&snapshot),
-        &client_features_with_disabled_support(&[])?,
-    );
-    let literals = code_action_literals(&actions)?;
-    let verify = literals
-        .iter()
-        .find(|action| action.title == "Verify after test: copy verify command")
-        .ok_or_else(|| "verify action missing".to_string())?;
-    assert_disabled_action_invariants(verify)?;
-    if verify
-        .data
-        .as_ref()
-        .and_then(|data| data["disabled_reason"].as_str())
-        != Some("verification_route_unavailable")
-    {
-        return Err("verify action must name verification_route_unavailable".to_string());
-    }
-    if literals
-        .iter()
-        .filter_map(|action| action.command.as_ref())
-        .any(|command| command.command == COPY_AGENT_VERIFY_COMMAND)
-    {
-        return Err("no executable verify command may survive without a route".to_string());
-    }
-    Ok(())
-}
-
-#[test]
-#[cfg(feature = "lang-python")]
-fn gap_code_actions_disable_receipt_route_when_receipt_command_missing() -> Result<(), String> {
-    // Missing receipt route (#1892): the gap record carries a verify route
-    // but no safe receipt command, so the receipt handoff is emitted inert
-    // naming receipt_route_unavailable while the verify handoff stays
-    // executable.
-    let root = unique_lsp_test_root("gap-disabled-receipt-route")?;
-    let uri = file_uri_for_path(&root.path().join("src/pricing.py"))?;
-    let mut diagnostic = gap_action_diagnostic();
-    diagnostic
-        .data
-        .as_mut()
-        .and_then(|data| data.as_object_mut())
-        .ok_or_else(|| "missing diagnostic data".to_string())?
-        .remove("receipt_command");
-    let mut snapshot = sample_analysis_snapshot(
-        root.path().to_path_buf(),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        Vec::new(),
-    );
-    snapshot.gap_artifacts = vec![validated_gap_artifact()];
-    let params = code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?;
-
-    let actions = code_action_response(
-        &params,
-        Some(&snapshot),
-        &client_features_with_disabled_support(&[])?,
-    );
-    let literals = code_action_literals(&actions)?;
-    let receipt = literals
-        .iter()
-        .find(|action| action.title == "Review result: copy receipt command")
-        .ok_or_else(|| "receipt action missing".to_string())?;
-    assert_disabled_action_invariants(receipt)?;
-    if receipt
-        .data
-        .as_ref()
-        .and_then(|data| data["disabled_reason"].as_str())
-        != Some("receipt_route_unavailable")
-    {
-        return Err("receipt action must name receipt_route_unavailable".to_string());
-    }
-    Ok(())
-}
-
-#[test]
-#[cfg(feature = "lang-python")]
-fn gap_code_actions_cross_language_unresolved_yields_disabled_preview_limitation()
--> Result<(), String> {
-    // Cross-language suppression (#1892): the producer-owned
-    // cross-language-target-unresolved limitation suppresses the whole
-    // repair-packet block; a disabled-capable client sees the packet action
-    // inert naming preview_or_static_limitation while the static-limit note
-    // stays executable.
-    let root = unique_lsp_test_root("gap-disabled-cross-language")?;
-    let uri = file_uri_for_path(&root.path().join("src/jsc/Blob.rs"))?;
-    let mut diagnostic = gap_action_diagnostic();
-    let data = diagnostic
-        .data
-        .as_mut()
-        .ok_or_else(|| "missing diagnostic data".to_string())?;
-    data["language"] = serde_json::json!("rust");
-    data["gap_state"] = serde_json::json!("static_limitation");
-    data["repairability"] = serde_json::json!("no_action");
-    data["static_limit_kind"] = serde_json::json!("cross_language_target_unresolved");
-    data["projection_exclusion_reasons"] = serde_json::json!(["cross_language_target_unresolved"]);
-    let mut snapshot = sample_analysis_snapshot(
-        root.path().to_path_buf(),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        Vec::new(),
-    );
-    snapshot.gap_artifacts = vec![validated_gap_artifact()];
-    let params = code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?;
-
-    let actions = code_action_response(
-        &params,
-        Some(&snapshot),
-        &client_features_with_disabled_support(&[])?,
-    );
-    let literals = code_action_literals(&actions)?;
-    let packet = literals
-        .iter()
-        .find(|action| action.title == "Inspect gap: copy repair packet")
-        .ok_or_else(|| "packet action missing".to_string())?;
-    assert_disabled_action_invariants(packet)?;
-    if packet
-        .data
-        .as_ref()
-        .and_then(|data| data["disabled_reason"].as_str())
-        != Some("preview_or_static_limitation")
-    {
-        return Err("packet action must name preview_or_static_limitation".to_string());
-    }
-    Ok(())
-}
-
-#[test]
-fn seam_code_actions_cross_language_unresolved_yields_disabled_preview_limitation()
--> Result<(), String> {
-    // Seam-side cross-language suppression (#1892): mirrors
-    // `seam_code_actions_fail_closed_for_cross_language_target_unresolved`
-    // for a disabled-capable client â€” the targeted-test brief stays visible
-    // but inert naming preview_or_static_limitation.
-    let mut seam = sample_classified_seam();
-    seam.seam = RepoSeam::new(
-        "src/jsc/Blob.rs",
-        "Blob::from_js_without_defer_gc",
-        SeamKind::PredicateBoundary,
-        42,
-        88,
-        "array_buffer.shared || array_buffer.resizable",
-        RequiredDiscriminator::BoundaryValue {
-            description: "array_buffer.shared || array_buffer.resizable".to_string(),
-        },
-        ExpectedSink::ReturnValue,
-    );
-    seam.evidence.seam_id = seam.seam.id().clone();
-    seam.evidence.related_tests[0].file = PathBuf::from("test/js/web/fetch/blob.test.ts");
-    seam.evidence.related_tests[0].test_name = "blob copies shared buffers".to_string();
-    let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
-        .ok_or_else(|| "expected seam diagnostic".to_string())?;
-    let uri = test_uri("file:///workspace/src/jsc/Blob.rs")?;
-    let mut snapshot = sample_analysis_snapshot(
-        PathBuf::from("/workspace"),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        Vec::new(),
-    );
-    snapshot.classified_seams = vec![seam];
-    let params = code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?;
-
-    let actions = code_action_response(
-        &params,
-        Some(&snapshot),
-        &client_features_with_disabled_support(&[])?,
-    );
-    let literals = code_action_literals(&actions)?;
-    let brief = literals
-        .iter()
-        .find(|action| action.title == "Write targeted test: copy brief")
-        .ok_or_else(|| "targeted-test brief action missing".to_string())?;
-    assert_disabled_action_invariants(brief)?;
-    if brief
-        .data
-        .as_ref()
-        .and_then(|data| data["disabled_reason"].as_str())
-        != Some("preview_or_static_limitation")
-    {
-        return Err("brief action must name preview_or_static_limitation".to_string());
-    }
-    Ok(())
-}
-
-/// Negotiated-profile legs for the push/pull action-availability parity
-/// test (#1628 residual, RIPR-SPEC-0129): a real client session is either
-/// push or pull, so parity is checked cross-session with the same
-/// `riprEditor` negotiation on both transports.
-#[derive(Clone, Copy)]
-enum PushPullParityProfile {
-    /// Layer 1 baseline: no `riprEditor` block, so the omit policy (#1776)
-    /// strips every client-command action on both transports.
-    Generic,
-    /// The VS Code command list parsed from `client.ts` (#1776).
-    VsCode,
-    /// The VS Code list minus one command plus `CodeAction.disabled`
-    /// support: the missing command arrives inert (#1892).
-    DisabledSupport,
-}
-
-impl PushPullParityProfile {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Generic => "generic",
-            Self::VsCode => "vscode",
-            Self::DisabledSupport => "disabled-support",
-        }
-    }
-}
-
-/// The initialize negotiation for one parity session: the profile's
-/// `riprEditor` block (when any), plus the pull capability for pull
-/// sessions. The root URI selects the temp workspace root so the
-/// health/root gate admits the committed snapshot.
-fn push_pull_parity_initialize_params(
-    root: &TempLspRoot,
-    profile: PushPullParityProfile,
-    pull: bool,
-) -> Result<InitializeParams, String> {
-    let mut capabilities = serde_json::json!({});
-    if pull {
-        capabilities["textDocument"]["diagnostic"] = serde_json::json!({});
-        capabilities["window"]["workDoneProgress"] = serde_json::json!(true);
-    }
-    let mut commands = None;
-    match profile {
-        PushPullParityProfile::Generic => {}
-        PushPullParityProfile::VsCode => {
-            commands = Some(vscode_advertised_client_commands()?);
-        }
-        PushPullParityProfile::DisabledSupport => {
-            capabilities["textDocument"]["codeAction"]["disabledSupport"] = serde_json::json!(true);
-            let advertised = vscode_advertised_client_commands()?;
-            let reduced = advertised
-                .iter()
-                .filter(|command| command.as_str() != COPY_CONTEXT_COMMAND)
-                .cloned()
-                .collect::<Vec<_>>();
-            if reduced.len() + 1 != advertised.len() {
-                return Err(format!(
-                    "expected {COPY_CONTEXT_COMMAND} in the VS Code advertisement"
-                ));
-            }
-            commands = Some(reduced);
-        }
-    }
-    if let Some(commands) = commands {
-        capabilities["experimental"] = serde_json::json!({
-            "riprEditor": {
-                "version": "0.10.0",
-                "commands": commands,
-                "guardedTestEdit": false
-            }
-        });
-    }
-    let negotiated: InitializeParams = serde_json::from_value(serde_json::json!({
-        "capabilities": capabilities
-    }))
-    .map_err(|err| format!("parity fixture params must parse: {err}"))?;
-    let mut params = initialize_params(None, Some(file_uri_for_path(root.path())?));
-    params.capabilities = negotiated.capabilities;
-    Ok(params)
-}
-
-/// Commit the gap parity fixture to one session and open the health gate
-/// exactly as a published refresh would. The diagnostic is marked
-/// `headline_eligible` (the producer-owned signal the delivery budget
-/// reads, #1973) so both transports serve it; an empty served set would
-/// make the parity comparison vacuous.
-fn commit_push_pull_parity_fixture(
-    backend: &Backend,
-    root: &TempLspRoot,
-) -> Result<(tower_lsp_server::ls_types::Uri, u32), String> {
-    std::fs::create_dir_all(root.path().join("src"))
-        .map_err(|err| format!("create src failed: {err}"))?;
-    let uri = file_uri_for_path(&root.path().join("src/pricing.py"))?;
-    let mut diagnostic = gap_action_diagnostic();
-    diagnostic
-        .data
-        .as_mut()
-        .and_then(serde_json::Value::as_object_mut)
-        .ok_or_else(|| "missing diagnostic data".to_string())?
-        .insert("headline_eligible".to_string(), serde_json::json!(true));
-    let line = diagnostic.range.start.line;
-    let mut snapshot = sample_analysis_snapshot(
-        root.path().to_path_buf(),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        Vec::new(),
-    );
-    snapshot.gap_artifacts = vec![validated_gap_artifact()];
-    backend
-        .refresh_plan(WorkspaceDiagnostics {
-            snapshot,
-            batches: vec![DiagnosticBatch {
-                uri: uri.clone(),
-                diagnostics: vec![diagnostic],
-            }],
-        })
-        .ok_or_else(|| "expected committed parity snapshot".to_string())?;
-    // Without a recorded success the code-action handler withholds the
-    // snapshot (health gate) and both transports degrade to the
-    // refresh-only fallback â€” parity would pass vacuously.
-    let request = RefreshRequest {
-        generation: 1,
-        authority_epoch: 0,
-        input_identity: LspAnalysisInputIdentity::from_refresh_inputs(
-            root.path().to_path_buf(),
-            1,
-            &LspAnalysisConfig::default(),
-        ),
-        git_inputs: crate::lsp::git_inputs::ResolvedGitInputs::resolve(root.path(), None, None),
-        root: root.path().to_path_buf(),
-        config: LspAnalysisConfig::default(),
-        workspace_revision: 1,
-        scope: RefreshScope::Interactive,
-        reason: RefreshReason::DidSave,
-        cancellation: AnalysisCancellationToken::new(),
-    };
-    backend.record_health_outcome(&request, RefreshAttemptOutcome::Published);
-    Ok((uri, line))
-}
-
-/// The ordered availability signature of one code-action response (#1628
-/// residual): per action, title, kind, command id (or `none`), the human
-/// disabled reason (or `none`), the versioned `data.action_id`, and the
-/// machine `data.disabled_reason` (or `none`). `data.action_id` fingerprints
-/// the action class, addressed identity, command id, and action name â€”
-/// never the session root â€” so identical delivered sets produce identical
-/// signatures across two sessions.
-fn action_availability_signature(actions: &[CodeActionOrCommand]) -> Result<Vec<String>, String> {
-    let mut signature = Vec::new();
-    for action in code_action_literals(actions)? {
-        let kind = action
-            .kind
-            .as_ref()
-            .ok_or_else(|| format!("action {} must carry a kind", action.title))?;
-        let command = action
-            .command
-            .as_ref()
-            .map(|command| command.command.as_str())
-            .unwrap_or("none");
-        let disabled = action
-            .disabled
-            .as_ref()
-            .map(|disabled| disabled.reason.as_str())
-            .unwrap_or("none");
-        let data = action
-            .data
-            .as_ref()
-            .ok_or_else(|| format!("action {} must carry data", action.title))?;
-        let action_id = data["action_id"]
-            .as_str()
-            .ok_or_else(|| format!("action {} must carry a string action_id", action.title))?;
-        let machine_reason = data["disabled_reason"].as_str().unwrap_or("none");
-        signature.push(format!(
-            "{}|{}|{command}|{disabled}|{action_id}|{machine_reason}",
-            action.title,
-            kind.as_str()
-        ));
-    }
-    Ok(signature)
-}
-
-/// Anti-vacuity guard for one parity leg (#1628 residual): the health/root
-/// gate must have admitted the committed snapshot â€” the refresh action's
-/// data names the live snapshot input identity only when it did â€” so a gate
-/// regression cannot make both transports agree on the refresh-only
-/// fallback and pass vacuously.
-fn assert_parity_snapshot_admitted(
-    actions: &[CodeActionOrCommand],
-    leg: &str,
-    transport: &str,
-) -> Result<(), String> {
-    let literals = code_action_literals(actions)?;
-    let refresh = literals
-        .iter()
-        .find(|action| {
-            action
-                .kind
-                .as_ref()
-                .is_some_and(|kind| kind.as_str() == "source.ripr.refresh")
-        })
-        .ok_or_else(|| format!("{leg}/{transport}: refresh action missing"))?;
-    let input_identity = refresh
-        .data
-        .as_ref()
-        .and_then(|data| data["input_identity"].as_str())
-        .ok_or_else(|| {
-            format!(
-                "{leg}/{transport}: refresh action carries no snapshot input identity; the health/root gate withheld the snapshot"
-            )
-        })?;
-    if !input_identity.starts_with("input:") {
-        return Err(format!(
-            "{leg}/{transport}: unexpected input identity {input_identity}"
-        ));
-    }
-    Ok(())
-}
-
-/// The enhanced-profile legs must surface diagnostic-addressing gap actions
-/// (more than the refresh fallback) so the parity comparison covers real
-/// availability, not the empty intersection.
-fn assert_gap_actions_present(actions: &[CodeActionOrCommand], leg: &str) -> Result<(), String> {
-    let literals = code_action_literals(actions)?;
-    if literals.len() < 2 {
-        return Err(format!(
-            "{leg}: expected more than the refresh action for an enhanced profile"
-        ));
-    }
-    let gap_actions = literals
-        .iter()
-        .filter(|action| {
-            action
-                .data
-                .as_ref()
-                .and_then(|data| data["gap_id"].as_str())
-                == Some("gap:py:pricing")
-        })
-        .count();
-    if gap_actions == 0 {
-        return Err(format!(
-            "{leg}: no action addresses the gap diagnostic; parity would be vacuous"
-        ));
-    }
-    Ok(())
-}
-
-async fn run_push_pull_parity_leg(profile: PushPullParityProfile) -> Result<(), String> {
-    let leg = profile.label();
-
-    // Pull session: the pulled full-report items are the delivered set.
-    let pull_root = unique_lsp_test_root(&format!("push-pull-parity-{leg}-pull"))?;
-    let (pull_service, _pull_socket) =
-        LspService::new(|client| Backend::new(client, pull_root.path().to_path_buf()));
-    let pull_backend = pull_service.inner();
-    pull_backend
-        .initialize(push_pull_parity_initialize_params(
-            &pull_root, profile, true,
-        )?)
-        .await
-        .map_err(|err| format!("{leg}: pull initialize failed: {err}"))?;
-    let (pull_uri, line) = commit_push_pull_parity_fixture(pull_backend, &pull_root)?;
-    let pull_report = pull_backend
-        .diagnostic(DocumentDiagnosticParams {
-            text_document: TextDocumentIdentifier {
-                uri: pull_uri.clone(),
-            },
-            identifier: None,
-            previous_result_id: None,
-            work_done_progress_params: Default::default(),
-            partial_result_params: PartialResultParams::default(),
-        })
-        .await
-        .map_err(|err| format!("{leg}: document pull failed: {err}"))?;
-    let pull_json = serde_json::to_value(pull_report)
-        .map_err(|err| format!("{leg}: serialize pull report failed: {err}"))?;
-    if pull_json.get("kind").and_then(serde_json::Value::as_str) != Some("full") {
-        return Err(format!("{leg}: expected full pull report: {pull_json}"));
-    }
-    let pull_items = pull_json
-        .get("items")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| format!("{leg}: full pull report carried no items: {pull_json}"))?;
-    if pull_items.is_empty() {
-        return Err(format!(
-            "{leg}: pull delivered an empty set; parity would be vacuous"
-        ));
-    }
-    let pull_diagnostics: Vec<Diagnostic> =
-        serde_json::from_value(serde_json::Value::Array(pull_items.clone()))
-            .map_err(|err| format!("{leg}: pulled items must decode as diagnostics: {err}"))?;
-
-    // Push session: the delivered set is exactly what the publish loop
-    // sends â€” the committed snapshot's stored-selection set for the URI
-    // (the same computation the module-private
-    // `committed_served_diagnostics_for_uri` runs, re-implemented here).
-    let push_root = unique_lsp_test_root(&format!("push-pull-parity-{leg}-push"))?;
-    let (push_service, _push_socket) =
-        LspService::new(|client| Backend::new(client, push_root.path().to_path_buf()));
-    let push_backend = push_service.inner();
-    push_backend
-        .initialize(push_pull_parity_initialize_params(
-            &push_root, profile, false,
-        )?)
-        .await
-        .map_err(|err| format!("{leg}: push initialize failed: {err}"))?;
-    let (push_uri, push_line) = commit_push_pull_parity_fixture(push_backend, &push_root)?;
-    let push_snapshot = push_backend
-        .latest_analysis_snapshot()
-        .ok_or_else(|| format!("{leg}: push session committed no snapshot"))?;
-    let push_diagnostics = push_snapshot.served_diagnostics_for_uri(&push_uri);
-    if push_diagnostics.is_empty() {
-        return Err(format!(
-            "{leg}: push delivered an empty set; parity would be vacuous"
-        ));
-    }
-    let push_items = push_diagnostics
-        .iter()
-        .map(serde_json::to_value)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|err| format!("{leg}: serialize push set failed: {err}"))?;
-
-    // Precondition (anti-vacuous): the two transports deliver identical
-    // diagnostics â€” including the producer-owned `data` blocks the action
-    // constructors resolve against. Wire-level membership parity is pinned
-    // separately (#1973); this precondition keeps the action comparison
-    // below honest about comparing the same inputs.
-    if *pull_items != push_items {
-        return Err(format!(
-            "{leg}: push and pull delivered different diagnostics:\npull={}\npush={}",
-            pretty_json(&serde_json::Value::Array(pull_items.clone())),
-            pretty_json(&serde_json::Value::Array(push_items.clone()))
-        ));
-    }
-
-    // Action availability per transport, through the real handler.
-    let pull_actions = pull_backend
-        .code_action(code_action_params_for(pull_uri, line, pull_diagnostics)?)
-        .await
-        .map_err(|err| format!("{leg}: pull code_action failed: {err}"))?
-        .ok_or_else(|| format!("{leg}: pull code_action returned no response"))?;
-    let push_actions = push_backend
-        .code_action(code_action_params_for(
-            push_uri,
-            push_line,
-            push_diagnostics,
-        )?)
-        .await
-        .map_err(|err| format!("{leg}: push code_action failed: {err}"))?
-        .ok_or_else(|| format!("{leg}: push code_action returned no response"))?;
-    let pull_signature = action_availability_signature(&pull_actions)?;
-    let push_signature = action_availability_signature(&push_actions)?;
-    if pull_signature != push_signature {
-        return Err(format!(
-            "{leg}: push/pull action availability diverged:\npull={pull_signature:?}\npush={push_signature:?}"
-        ));
-    }
-    assert_parity_snapshot_admitted(&pull_actions, leg, "pull")?;
-    assert_parity_snapshot_admitted(&push_actions, leg, "push")?;
-
-    match profile {
-        PushPullParityProfile::Generic => {
-            // Omit policy (#1776): only server-executed (or command-less)
-            // actions survive on both transports.
-            for action in code_action_literals(&pull_actions)? {
-                if let Some(command) = &action.command
-                    && !SERVER_EXECUTED_COMMANDS.contains(&command.command.as_str())
-                {
-                    return Err(format!(
-                        "{leg}: unenhanced client received client command {}",
-                        command.command
-                    ));
-                }
-            }
-        }
-        PushPullParityProfile::VsCode => {
-            assert_gap_actions_present(&pull_actions, leg)?;
-        }
-        PushPullParityProfile::DisabledSupport => {
-            assert_gap_actions_present(&pull_actions, leg)?;
-            // The dropped command arrives inert with the machine reason
-            // named (#1892) on both transports.
-            let disabled_missing = code_action_literals(&pull_actions)?
-                .iter()
-                .filter(|action| {
-                    action.disabled.is_some()
-                        && action
-                            .data
-                            .as_ref()
-                            .and_then(|data| data["disabled_reason"].as_str())
-                            == Some("client_capability_missing")
-                })
-                .count();
-            if disabled_missing == 0 {
-                return Err(format!(
-                    "{leg}: expected inert actions naming client_capability_missing"
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
-#[test]
-#[cfg(feature = "lang-python")]
-fn push_and_pull_delivery_yield_identical_code_action_availability() -> Result<(), String> {
-    // Push/pull action-availability parity (#1628 residual,
-    // RIPR-SPEC-0129): both transports serve clones of the same committed
-    // `Diagnostic` values through the stored delivery selection (#1973), so
-    // for the same negotiated client capabilities the push-held and
-    // pull-held diagnostic sets must produce identical
-    // `textDocument/codeAction` availability. A real client is either push
-    // or pull, so each leg runs two in-process sessions with the same
-    // `riprEditor` negotiation and compares the ordered availability
-    // signature (title, kind, command, disabled state, `data.action_id`,
-    // `data.disabled_reason`). Parity holds within each profile; the
-    // omit-vs-disabled difference (#1776/#1892) lives between profiles, not
-    // between transports. A divergence here is a transport bug, not a
-    // profile difference.
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        for profile in [
-            PushPullParityProfile::Generic,
-            PushPullParityProfile::VsCode,
-            PushPullParityProfile::DisabledSupport,
-        ] {
-            run_push_pull_parity_leg(profile).await?;
-        }
-        Ok(())
-    })
-}
-
-#[test]
-fn seam_code_actions_fail_closed_for_cross_language_target_unresolved() -> Result<(), String> {
-    let mut seam = sample_classified_seam();
-    seam.seam = RepoSeam::new(
-        "src/jsc/Blob.rs",
-        "Blob::from_js_without_defer_gc",
-        SeamKind::PredicateBoundary,
-        42,
-        88,
-        "array_buffer.shared || array_buffer.resizable",
-        RequiredDiscriminator::BoundaryValue {
-            description: "array_buffer.shared || array_buffer.resizable".to_string(),
-        },
-        ExpectedSink::ReturnValue,
-    );
-    seam.evidence.seam_id = seam.seam.id().clone();
-    seam.evidence.related_tests[0].file = PathBuf::from("test/js/web/fetch/blob.test.ts");
-    seam.evidence.related_tests[0].test_name = "blob copies shared buffers".to_string();
-    let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
-        .ok_or_else(|| "expected seam diagnostic".to_string())?;
-    let uri = test_uri("file:///workspace/src/jsc/Blob.rs")?;
-    let mut snapshot = sample_analysis_snapshot(
-        PathBuf::from("/workspace"),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        Vec::new(),
-    );
-    snapshot.classified_seams = vec![seam.clone()];
-    let actions = code_action_response(
-        &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
-        Some(&snapshot),
-        &vscode_client_features()?,
-    );
-
-    let commands = code_action_commands(&actions)?;
-    assert_eq!(
-        commands
-            .iter()
-            .map(|(title, command, _)| (title.as_str(), command.as_str()))
-            .collect::<Vec<_>>(),
-        vec![
-            ("Inspect Test Gap - Copy Context", COPY_CONTEXT_COMMAND),
-            ("Refresh Analysis - Saved Workspace Check", REFRESH_COMMAND),
-        ],
-        "binding/FFI target-unresolved seams must not expose repair, handoff, verify, receipt, or edit actions"
-    );
-    assert_eq!(commands[0].2[0]["seam_id"], seam.seam.id().as_str());
-    assert_eq!(commands[0].2[0]["uri"], "file:///workspace/src/jsc/Blob.rs");
-    Ok(())
-}
-
-#[test]
-fn agent_loop_command_payloads_stay_workspace_relative_for_platform_roots() -> Result<(), String> {
-    let seam = sample_classified_seam();
-    let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
-        .ok_or_else(|| "expected seam diagnostic".to_string())?;
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let mut snapshot = sample_analysis_snapshot(
-        PathBuf::from(r"workspace root\ripr workspace"),
-        uri,
-        vec![diagnostic.clone()],
-        Vec::new(),
-    );
-    snapshot.base = Some("origin/main with space".to_string());
-    snapshot.mode = Mode::Ready;
-    snapshot.classified_seams = vec![seam.clone()];
-    let actions = code_action_response(
-        &code_action_params(vec![diagnostic])?,
-        Some(&snapshot),
-        &vscode_client_features()?,
-    );
-
-    let commands = code_action_commands(&actions)?;
-    let expected_commands = [
-        (
-            COPY_AGENT_PACKET_COMMAND,
-            "agent_packet",
-            "target/ripr/agent/agent-packet.json",
-            format!(
-                "ripr agent packet --root . --seam-id {} --json > target/ripr/agent/agent-packet.json",
-                seam.seam.id().as_str()
-            ),
-        ),
-        (
-            COPY_AGENT_BRIEF_COMMAND,
-            "agent_brief",
-            "target/ripr/agent/agent-brief.json",
-            format!(
-                "ripr agent brief --root . --seam-id {} --json > target/ripr/agent/agent-brief.json",
-                seam.seam.id().as_str()
-            ),
-        ),
-        (
-            COPY_AFTER_SNAPSHOT_COMMAND,
-            "after_snapshot",
-            "target/ripr/pilot/after.repo-exposure.json",
-            "ripr check --root . --base 'origin/main with space' --mode ready --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json"
-                .to_string(),
-        ),
-        (
-            COPY_AGENT_VERIFY_COMMAND,
-            "agent_verify",
-            "target/ripr/agent/agent-verify.json",
-            "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json > target/ripr/agent/agent-verify.json"
-                .to_string(),
-        ),
-        (
-            COPY_AGENT_RECEIPT_COMMAND,
-            "agent_receipt",
-            "target/ripr/agent/agent-receipt.json",
-            format!(
-                "ripr agent receipt --root . --verify-json target/ripr/agent/agent-verify.json --seam-id {} --json --out target/ripr/agent/agent-receipt.json",
-                seam.seam.id().as_str()
-            ),
-        ),
-    ];
-
-    for (command_id, label, target_artifact, expected_command) in expected_commands {
-        let argument = commands
-            .iter()
-            .find(|(_, command, _)| command == command_id)
-            .and_then(|(_, _, arguments)| arguments.first())
-            .ok_or_else(|| format!("missing command payload for {command_id}"))?;
-        assert_eq!(argument["label"], label);
-        assert_eq!(argument["root"], ".");
-        assert_eq!(argument["base"], "origin/main with space");
-        assert_eq!(argument["mode"], "ready");
-        assert_eq!(argument["seam_id"], seam.seam.id().as_str());
-        assert_eq!(argument["seam_file"], "src/pricing.rs");
-        assert_eq!(argument["owner"], "pricing::discounted_total");
-        assert_eq!(argument["severity"], "warning");
-        assert_eq!(argument["target_artifact"], target_artifact);
-        assert_eq!(argument["command"], expected_command);
-        let copied = argument["command"]
-            .as_str()
-            .ok_or_else(|| "expected command string".to_string())?;
-        assert!(
-            !copied.contains('\\'),
-            "copied commands should use workspace-relative slash paths, got {copied}"
-        );
-        assert!(
-            !copied.contains("ripr workspace"),
-            "copied commands should not leak platform-specific workspace roots, got {copied}"
-        );
-    }
-    Ok(())
-}
-
-#[test]
-fn seam_code_actions_fail_closed_for_stale_seam_diagnostic() -> Result<(), String> {
-    let seam = sample_classified_seam();
-    let mut diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
-        .ok_or_else(|| "expected seam diagnostic".to_string())?;
-    diagnostic.data = Some(serde_json::json!({
-        "schema_version": "0.1",
-        "seam_id": "deadbeef00000000",
-        "seam_kind": "predicate_boundary",
-    }));
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let mut snapshot = sample_analysis_snapshot(
-        PathBuf::from("/workspace"),
-        uri,
-        vec![diagnostic.clone()],
-        Vec::new(),
-    );
-    snapshot.classified_seams = vec![seam];
-    let actions = code_action_response(
-        &code_action_params(vec![diagnostic])?,
-        Some(&snapshot),
-        &vscode_client_features()?,
-    );
-
-    let commands = code_action_commands(&actions)?;
-    assert_eq!(
-        commands
-            .iter()
-            .map(|(title, command, _)| (title.as_str(), command.as_str()))
-            .collect::<Vec<_>>(),
-        vec![("Refresh Analysis - Saved Workspace Check", REFRESH_COMMAND)]
-    );
-    Ok(())
-}
-
-#[test]
-fn seam_code_actions_keep_legacy_finding_context_when_both_diagnostics_are_present()
--> Result<(), String> {
-    let seam = sample_classified_seam();
-    let seam_diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
-        .ok_or_else(|| "expected seam diagnostic".to_string())?;
-    let finding_diagnostic = diagnostic_for_finding(Path::new("/workspace"), &sample_finding());
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let mut snapshot = sample_analysis_snapshot(
-        PathBuf::from("/workspace"),
-        uri,
-        vec![seam_diagnostic.clone(), finding_diagnostic.clone()],
-        vec![sample_finding()],
-    );
-    snapshot.classified_seams = vec![seam.clone()];
-    let actions = code_action_response(
-        &code_action_params(vec![seam_diagnostic, finding_diagnostic])?,
-        Some(&snapshot),
-        &vscode_client_features()?,
-    );
-
-    let commands = code_action_commands(&actions)?;
-    assert_eq!(
-        commands
-            .iter()
-            .map(|(title, _, _)| title.as_str())
-            .collect::<Vec<_>>(),
-        vec![
-            "Inspect Test Gap - Copy Context",
-            "Write targeted test: copy brief",
-            "Agent handoff: copy packet command",
-            "Agent handoff: copy brief command",
-            "Verify after test: copy after-snapshot command",
-            "Verify after test: copy verify command",
-            "Review result: copy receipt command",
-            "Write targeted test: copy suggested assertion",
-            "Write targeted test: open best related test",
-            "Inspect finding: copy context packet",
-            "Refresh Analysis - Saved Workspace Check",
-        ]
-    );
-    assert_eq!(commands[0].2[0]["seam_id"], seam.seam.id().as_str());
-    assert_eq!(commands[9].2[0]["finding_id"], "probe:pricing:88:predicate");
-    assert_eq!(commands[9].2[0]["probe_id"], "probe:pricing:88:predicate");
-    Ok(())
-}
-
-#[test]
-fn seam_code_actions_open_strong_related_test_before_first_related_test() -> Result<(), String> {
-    use crate::analysis::test_grip_evidence::{
-        RelatedTestGrip, RelationConfidence, RelationReason,
-    };
-
-    let mut seam = sample_classified_seam();
-    seam.evidence.related_tests = vec![
-        RelatedTestGrip {
-            test_name: "nearby_smoke_reaches_owner".to_string(),
-            file: PathBuf::from("tests/smoke.rs"),
-            line: 7,
-            test_target: None,
-            oracle_kind: OracleKind::SmokeOnly,
-            oracle_strength: OracleStrength::Smoke,
-            evidence_summary: "smoke-only assertion".to_string(),
-            relation_reason: RelationReason::DirectOwnerCall,
-            relation_confidence: RelationConfidence::High,
-        },
-        RelatedTestGrip {
-            test_name: "below_threshold_has_no_discount".to_string(),
-            file: PathBuf::from("tests/pricing.rs"),
-            line: 12,
-            test_target: None,
-            oracle_kind: OracleKind::ExactValue,
-            oracle_strength: OracleStrength::Strong,
-            evidence_summary: "exact value assertion".to_string(),
-            relation_reason: RelationReason::DirectOwnerCall,
-            relation_confidence: RelationConfidence::Medium,
-        },
-    ];
-    let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
-        .ok_or_else(|| "expected seam diagnostic".to_string())?;
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let mut snapshot = sample_analysis_snapshot(
-        PathBuf::from("/workspace"),
-        uri,
-        vec![diagnostic.clone()],
-        Vec::new(),
-    );
-    snapshot.classified_seams = vec![seam];
-    let actions = code_action_response(
-        &code_action_params(vec![diagnostic])?,
-        Some(&snapshot),
-        &vscode_client_features()?,
-    );
-
-    let commands = code_action_commands(&actions)?;
-    let Some((_, command, args)) = commands
-        .iter()
-        .find(|(title, _, _)| title == "Write targeted test: open best related test")
-    else {
-        return Err(format!(
-            "expected open related test action, got {commands:?}"
-        ));
-    };
-
-    assert_eq!(command, OPEN_RELATED_TEST_COMMAND);
-    assert_eq!(args[0]["uri"], "file:///workspace/tests/pricing.rs");
-    assert_eq!(args[0]["test_name"], "below_threshold_has_no_discount");
-    Ok(())
-}
-
-#[test]
-fn seam_code_actions_open_highest_confidence_related_test_when_no_strong_test_exists()
--> Result<(), String> {
-    use crate::analysis::test_grip_evidence::{
-        RelatedTestGrip, RelationConfidence, RelationReason,
-    };
-
-    let mut seam = sample_classified_seam();
-    seam.evidence.related_tests = vec![
-        RelatedTestGrip {
-            test_name: "opaque_fixture_hint".to_string(),
-            file: PathBuf::from("tests/opaque.rs"),
-            line: 3,
-            test_target: None,
-            oracle_kind: OracleKind::Unknown,
-            oracle_strength: OracleStrength::None,
-            evidence_summary: "opaque relation".to_string(),
-            relation_reason: RelationReason::FixtureOwnerAffinity,
-            relation_confidence: RelationConfidence::Opaque,
-        },
-        RelatedTestGrip {
-            test_name: "low_confidence_smoke".to_string(),
-            file: PathBuf::from("tests/low.rs"),
-            line: 5,
-            test_target: None,
-            oracle_kind: OracleKind::SmokeOnly,
-            oracle_strength: OracleStrength::Smoke,
-            evidence_summary: "smoke-only assertion".to_string(),
-            relation_reason: RelationReason::FixtureOwnerAffinity,
-            relation_confidence: RelationConfidence::Low,
-        },
-        RelatedTestGrip {
-            test_name: "medium_confidence_property".to_string(),
-            file: PathBuf::from("tests/medium.rs"),
-            line: 9,
-            test_target: None,
-            oracle_kind: OracleKind::RelationalCheck,
-            oracle_strength: OracleStrength::Medium,
-            evidence_summary: "medium oracle".to_string(),
-            relation_reason: RelationReason::SameModule,
-            relation_confidence: RelationConfidence::Medium,
-        },
-        RelatedTestGrip {
-            test_name: "high_confidence_weak_assertion".to_string(),
-            file: PathBuf::from("tests/high.rs"),
-            line: 11,
-            test_target: None,
-            oracle_kind: OracleKind::RelationalCheck,
-            oracle_strength: OracleStrength::Weak,
-            evidence_summary: "weak oracle".to_string(),
-            relation_reason: RelationReason::DirectOwnerCall,
-            relation_confidence: RelationConfidence::High,
-        },
-    ];
-    let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
-        .ok_or_else(|| "expected seam diagnostic".to_string())?;
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let mut snapshot = sample_analysis_snapshot(
-        PathBuf::from("/workspace"),
-        uri,
-        vec![diagnostic.clone()],
-        Vec::new(),
-    );
-    snapshot.classified_seams = vec![seam];
-    let actions = code_action_response(
-        &code_action_params(vec![diagnostic])?,
-        Some(&snapshot),
-        &vscode_client_features()?,
-    );
-
-    let commands = code_action_commands(&actions)?;
-    let Some((_, command, args)) = commands
-        .iter()
-        .find(|(title, _, _)| title == "Write targeted test: open best related test")
-    else {
-        return Err(format!(
-            "expected open related test action, got {commands:?}"
-        ));
-    };
-
-    assert_eq!(command, OPEN_RELATED_TEST_COMMAND);
-    assert_eq!(args[0]["uri"], "file:///workspace/tests/high.rs");
-    assert_eq!(args[0]["test_name"], "high_confidence_weak_assertion");
-    Ok(())
-}
-
-#[test]
-fn seam_code_actions_omit_assertion_and_related_test_when_evidence_is_missing() -> Result<(), String>
-{
-    let seam = sample_side_effect_seam_without_related_tests();
-    let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
-        .ok_or_else(|| "expected seam diagnostic".to_string())?;
-    let uri = test_uri("file:///workspace/src/service.rs")?;
-    let mut snapshot = sample_analysis_snapshot(
-        PathBuf::from("/workspace"),
-        uri,
-        vec![diagnostic.clone()],
-        Vec::new(),
-    );
-    snapshot.classified_seams = vec![seam];
-    let actions = code_action_response(
-        &code_action_params_for(
-            test_uri("file:///workspace/src/service.rs")?,
-            diagnostic.range.start.line,
-            vec![diagnostic],
-        )?,
-        Some(&snapshot),
-        &vscode_client_features()?,
-    );
-
-    let commands = code_action_commands(&actions)?;
-    assert_eq!(
-        commands
-            .iter()
-            .map(|(_, command, _)| command.as_str())
-            .collect::<Vec<_>>(),
-        vec![
-            COPY_CONTEXT_COMMAND,
-            COPY_AGENT_PACKET_COMMAND,
-            COPY_AGENT_BRIEF_COMMAND,
-            COPY_AFTER_SNAPSHOT_COMMAND,
-            COPY_AGENT_VERIFY_COMMAND,
-            COPY_AGENT_RECEIPT_COMMAND,
-            REFRESH_COMMAND
-        ]
-    );
-    assert_eq!(commands[0].0, "Inspect Test Gap - Copy Context");
-    assert_eq!(commands[1].0, "Agent handoff: copy packet command");
-    assert_eq!(commands[5].0, "Review result: copy receipt command");
-    Ok(())
-}
-
-#[test]
-fn unknown_stage_value_route_omits_suggested_assertion_action() -> Result<(), String> {
-    use crate::analysis::seams::SeamGripClass;
-
-    let mut seam = sample_classified_seam();
-    seam.class = SeamGripClass::ActivationUnknown;
-    let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
-        .ok_or_else(|| "expected seam diagnostic".to_string())?;
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let mut snapshot = sample_analysis_snapshot(
-        PathBuf::from("/workspace"),
-        uri,
-        vec![diagnostic.clone()],
-        Vec::new(),
-    );
-    snapshot.classified_seams = vec![seam];
-    let actions = code_action_response(
-        &code_action_params(vec![diagnostic])?,
-        Some(&snapshot),
-        &vscode_client_features()?,
-    );
-    let commands = code_action_commands(&actions)?;
-
-    if commands
-        .iter()
-        .any(|(_, command, _)| command == COPY_SUGGESTED_ASSERTION_COMMAND)
-    {
-        return Err(format!(
-            "unknown-stage route must not offer suggested assertion: {commands:?}"
-        ));
-    }
-    Ok(())
-}
-
-#[test]
-fn seam_code_actions_keep_navigation_when_related_test_is_unresolved() -> Result<(), String> {
-    use crate::analysis::test_grip_evidence::{
-        RelatedTestGrip, RelationConfidence, RelationReason,
-    };
-
-    let mut seam = sample_side_effect_seam_without_related_tests();
-    seam.evidence.related_tests = vec![RelatedTestGrip {
-        test_name: "publish_event_emits_bus_message".to_string(),
-        file: PathBuf::from("tests/service.rs"),
-        line: 21,
-        test_target: None,
-        oracle_kind: OracleKind::SmokeOnly,
-        oracle_strength: OracleStrength::Smoke,
-        evidence_summary: "related smoke test reaches event publishing".to_string(),
-        relation_reason: RelationReason::DirectOwnerCall,
-        relation_confidence: RelationConfidence::High,
-    }];
-    let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
-        .ok_or_else(|| "expected seam diagnostic".to_string())?;
-    let uri = test_uri("file:///workspace/src/service.rs")?;
-    let mut snapshot = sample_analysis_snapshot(
-        PathBuf::from("/workspace"),
-        uri,
-        vec![diagnostic.clone()],
-        Vec::new(),
-    );
-    snapshot.classified_seams = vec![seam];
-    let actions = code_action_response(
-        &code_action_params_for(
-            test_uri("file:///workspace/src/service.rs")?,
-            diagnostic.range.start.line,
-            vec![diagnostic],
-        )?,
-        Some(&snapshot),
-        &vscode_client_features()?,
-    );
-
-    let commands = code_action_commands(&actions)?;
-    assert!(
-        commands
-            .iter()
-            .all(|(_, command, _)| command != COPY_TARGETED_TEST_BRIEF_COMMAND),
-        "unresolved related-test evidence must not produce a repair brief: {commands:?}"
-    );
-    assert!(
-        commands
-            .iter()
-            .all(|(_, command, _)| command != COPY_SUGGESTED_ASSERTION_COMMAND),
-        "expected no suggested assertion action for prose-only side-effect guidance, got {commands:?}"
-    );
-    let Some((_, command, args)) = commands
-        .iter()
-        .find(|(title, _, _)| title == "Write targeted test: open best related test")
-    else {
-        return Err(format!(
-            "expected open related test action, got {commands:?}"
-        ));
-    };
-    assert_eq!(command, OPEN_RELATED_TEST_COMMAND);
-    assert_eq!(args[0]["uri"], "file:///workspace/tests/service.rs");
-    assert_eq!(args[0]["line"], 21);
-    Ok(())
-}
-
-#[test]
-fn boundary_gap_lsp_diagnostics_match_fixture_expectation() -> Result<(), String> {
-    let (diagnostics, _) = boundary_gap_lsp_fixture_outputs()?;
-    assert_json_fixture("lsp-diagnostics.json", diagnostics)
-}
-
-#[test]
-fn boundary_gap_lsp_code_actions_match_fixture_expectation() -> Result<(), String> {
-    let (_, actions) = boundary_gap_lsp_fixture_outputs()?;
-    assert_json_fixture("lsp-code-actions.json", actions)
-}
-
-#[test]
-fn diagnostic_for_finding_preserves_lsp_payload_shape() -> Result<(), String> {
-    let finding = sample_finding();
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-
-    assert_eq!(diagnostic.range.start.line, 87);
-    assert_eq!(diagnostic.range.start.character, 0);
-    assert_eq!(diagnostic.range.end.line, 87);
-    assert_eq!(diagnostic.range.end.character, 19);
-    assert_eq!(diagnostic.severity, Some(DiagnosticSeverity::WARNING));
-    assert_eq!(
-        diagnostic.code,
-        Some(NumberOrString::String("weakly_exposed".to_string()))
-    );
-    assert_eq!(diagnostic.source.as_deref(), Some("ripr"));
-    assert_eq!(diagnostic.message, "Add an exact boundary assertion.");
-    let Some(data) = diagnostic.data else {
-        return Err("expected diagnostic data".to_string());
-    };
-    assert_eq!(data["schema_version"], "0.1");
-    assert_eq!(data["finding_id"], "probe:pricing:88:predicate");
-    assert_eq!(data["probe_id"], "probe:pricing:88:predicate");
-    assert_eq!(data["classification"], "weakly_exposed");
-    assert_eq!(data["probe_family"], "predicate");
-    assert_eq!(data["confidence"], 0.75);
-    assert_eq!(data["source_range"]["file"], "src/pricing.rs");
-    assert_eq!(data["source_range"]["line"], 88);
-    assert_eq!(data["source_range"]["column"], 1);
-    Ok(())
-}
-
-#[test]
-fn diagnostic_for_finding_uses_probe_column_and_expression_width() {
-    let mut finding = sample_finding();
-    finding.probe.location.column = 5;
-    finding.probe.expression = "total".to_string();
-
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-
-    assert_eq!(diagnostic.range.start.line, 87);
-    assert_eq!(diagnostic.range.start.character, 4);
-    assert_eq!(diagnostic.range.end.line, 87);
-    assert_eq!(diagnostic.range.end.character, 9);
-}
-
-#[test]
-fn diagnostic_for_finding_uses_utf16_width_for_non_ascii_expression() {
-    let mut finding = sample_finding();
-    finding.probe.location.column = 2;
-    finding.probe.expression = "\u{e9}\u{1f389}".to_string();
-
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-
-    assert_eq!(diagnostic.range.start.character, 1);
-    assert_eq!(diagnostic.range.end.character, 4);
-}
-
-#[test]
-fn diagnostic_for_finding_uses_one_character_range_for_empty_expression() {
-    let mut finding = sample_finding();
-    finding.probe.location.column = 3;
-    finding.probe.expression.clear();
-
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-
-    assert_eq!(diagnostic.range.start.character, 2);
-    assert_eq!(diagnostic.range.end.character, 3);
-}
-
-#[test]
-fn diagnostic_for_finding_attaches_related_test_information() -> Result<(), String> {
-    let mut finding = sample_finding();
-    finding.related_tests.push(RelatedTest {
-        name: "discount_boundary_is_exact".to_string(),
-        file: PathBuf::from("tests/pricing.rs"),
-        line: 12,
-        oracle: Some("assert_eq!(total, expected)".to_string()),
-        oracle_kind: OracleKind::ExactValue,
-        oracle_strength: OracleStrength::Strong,
-        relation_reason: None,
-        relation_confidence: None,
-    });
-
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-    let Some(related) = diagnostic.related_information else {
-        return Err("expected related diagnostic information".to_string());
-    };
-
-    assert_eq!(related.len(), 1);
-    assert_eq!(
-        related[0].location.uri.as_str(),
-        "file:///workspace/tests/pricing.rs"
-    );
-    assert_eq!(related[0].location.range.start.line, 11);
-    assert_eq!(
-        related[0].message,
-        "Fix site: related test `discount_boundary_is_exact` has strong exact_value oracle: assert_eq!(total, expected)"
-    );
-    Ok(())
-}
-
-#[test]
-fn diagnostic_severity_tracks_static_exposure_class() {
-    let cases = [
-        (ExposureClass::Exposed, DiagnosticSeverity::WARNING),
-        (ExposureClass::WeaklyExposed, DiagnosticSeverity::WARNING),
-        (
-            ExposureClass::ReachableUnrevealed,
-            DiagnosticSeverity::WARNING,
-        ),
-        (ExposureClass::NoStaticPath, DiagnosticSeverity::WARNING),
-        (ExposureClass::InfectionUnknown, DiagnosticSeverity::WARNING),
-        (
-            ExposureClass::PropagationUnknown,
-            DiagnosticSeverity::INFORMATION,
-        ),
-        (
-            ExposureClass::StaticUnknown,
-            DiagnosticSeverity::INFORMATION,
-        ),
-    ];
-
-    for (class, expected) in cases {
-        assert_eq!(diagnostic_severity_for_class(&class), expected);
-    }
-}
-
-#[test]
-fn diagnostic_refresh_plan_clears_stale_previous_uris() -> Result<(), String> {
-    let stale_uri = test_uri("file:///workspace/src/stale.rs")?;
-    let current_uri = test_uri("file:///workspace/src/current.rs")?;
-    let mut previous = BTreeMap::new();
-    previous.insert(stale_uri.clone(), Vec::new());
-    previous.insert(current_uri.clone(), Vec::new());
-
-    let plan = diagnostic_refresh_plan(
-        &previous,
-        vec![DiagnosticBatch {
-            uri: current_uri.clone(),
-            diagnostics: vec![gap_action_diagnostic()],
-        }],
-    );
-
-    assert_eq!(plan.publish_batches.len(), 1);
-    assert_eq!(plan.publish_batches[0].uri, current_uri);
-    assert_eq!(plan.clear_uris, vec![stale_uri]);
-    assert_eq!(plan.current_uris.len(), 1);
-    Ok(())
-}
-
-#[test]
-fn diagnostic_refresh_plan_suppresses_unchanged_uri_and_publishes_changed_uri() -> Result<(), String>
-{
-    let uri = test_uri("file:///workspace/src/current.rs")?;
-    let first = gap_action_diagnostic();
-    let mut previous = BTreeMap::new();
-    previous.insert(uri.clone(), vec![first.clone()]);
-
-    let unchanged = diagnostic_refresh_plan(
-        &previous,
-        vec![DiagnosticBatch {
-            uri: uri.clone(),
-            diagnostics: vec![first.clone()],
-        }],
-    );
-    assert!(unchanged.publish_batches.is_empty());
-    assert_eq!(unchanged.unchanged_uri_count, 1);
-    assert!(unchanged.suppressed_payload_bytes > 0);
-
-    let mut changed = first;
-    changed.message.push_str("; changed");
-    let changed_plan = diagnostic_refresh_plan(
-        &previous,
-        vec![DiagnosticBatch {
-            uri,
-            diagnostics: vec![changed],
-        }],
-    );
-    assert_eq!(changed_plan.publish_batches.len(), 1);
-    assert_eq!(changed_plan.unchanged_uri_count, 0);
-    assert!(changed_plan.published_payload_bytes > 0);
-    Ok(())
-}
-
-#[test]
-fn take_all_uris_returns_and_clears_previous_diagnostic_uris() -> Result<(), String> {
-    let first_uri = test_uri("file:///workspace/src/first.rs")?;
-    let second_uri = test_uri("file:///workspace/src/second.rs")?;
-    let mut uris = BTreeSet::new();
-    uris.insert(first_uri.clone());
-    uris.insert(second_uri.clone());
-
-    let cleared = take_all_uris(&mut uris);
-
-    assert_eq!(cleared, vec![first_uri, second_uri]);
-    assert!(uris.is_empty());
-    Ok(())
-}
-
-#[test]
-fn explicit_snapshot_clear_helper_clears_tracked_diagnostics() -> Result<(), String> {
-    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-    let backend = service.inner();
-    let tracked_uri = test_uri("file:///workspace/src/stale.rs")?;
-    let diagnostics = sample_workspace_diagnostics(
-        PathBuf::from("/workspace"),
-        tracked_uri.clone(),
-        Vec::new(),
-        Vec::new(),
-    );
-    let Some(_) = backend.refresh_plan(diagnostics) else {
-        return Err("expected refresh plan".to_string());
-    };
-    assert!(backend.latest_analysis_snapshot().is_some());
-
-    assert_eq!(backend.clear_all_diagnostic_uris(), vec![tracked_uri]);
-
-    assert!(backend.clear_all_diagnostic_uris().is_empty());
-    assert!(backend.latest_analysis_snapshot().is_none());
-    Ok(())
-}
-
-#[test]
-fn refresh_generation_marks_older_requests_stale() -> Result<(), String> {
-    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-    let backend = service.inner();
-
-    let Some(first) = backend.next_refresh_generation() else {
-        return Err("expected first refresh generation".to_string());
-    };
-    assert!(backend.is_current_refresh_generation(first));
-
-    let Some(second) = backend.next_refresh_generation() else {
-        return Err("expected second refresh generation".to_string());
-    };
-
-    assert!(!backend.is_current_refresh_generation(first));
-    assert!(backend.is_current_refresh_generation(second));
-    Ok(())
-}
-
-#[test]
-fn refresh_diagnostics_advances_generation_before_analysis() -> Result<(), String> {
-    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-    let backend = service.inner();
-
-    let Some(generation) = backend.next_refresh_generation() else {
-        return Err("expected refresh generation".to_string());
-    };
-
-    assert_eq!(generation, 1);
-    assert!(backend.is_current_refresh_generation(generation));
-    assert!(backend.latest_analysis_snapshot().is_none());
-    Ok(())
-}
-
-#[test]
-fn stale_refresh_does_not_rollback_after_root_authority_transition() -> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let backend = service.inner();
-        backend.initialize_test_workspace_root();
-        let request = RefreshRequest {
-            generation: 1,
-            authority_epoch: 0,
-            input_identity: LspAnalysisInputIdentity::from_refresh_inputs(
-                PathBuf::from("/workspace"),
-                1,
-                &LspAnalysisConfig::default(),
-            ),
-            git_inputs: crate::lsp::git_inputs::ResolvedGitInputs::resolve(
-                Path::new("/workspace"),
-                None,
-                None,
-            ),
-            root: PathBuf::from("/workspace"),
-            config: LspAnalysisConfig::default(),
-            workspace_revision: 1,
-            scope: RefreshScope::Interactive,
-            reason: RefreshReason::DidSave,
-            cancellation: AnalysisCancellationToken::new(),
-        };
-
-        if !backend.refresh_authority_is_unchanged(&request) {
-            return Err("expected request authority to match before transition".to_string());
-        }
-        backend.invalidate_workspace_root_for_test().await;
-        if backend.refresh_authority_is_unchanged(&request) {
-            return Err("expected root transition to invalidate request authority".to_string());
-        }
-        Ok(())
-    })
-}
-
-#[tokio::test]
-async fn did_save_with_unchanged_content_deduplicates_without_refresh() -> Result<(), String> {
-    let uri = test_uri("file:///workspace/src/lib.rs")?;
-    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-    let backend = service.inner();
-    backend
-        .did_open(DidOpenTextDocumentParams {
-            text_document: TextDocumentItem::new(
-                uri.clone(),
-                "rust".to_string(),
-                1,
-                "fn same() {}".to_string(),
-            ),
-        })
-        .await;
-    backend.advance_workspace_revision();
-    let baseline = backend.workspace_revision();
-
-    // First save after open: nothing recorded yet, so it always counts as
-    // changed (conservative) and records the digest.
-    backend
-        .did_save(DidSaveTextDocumentParams {
-            text_document: TextDocumentIdentifier { uri: uri.clone() },
-            text: Some("fn same() {}".to_string()),
-        })
-        .await;
-    if backend.workspace_revision() != baseline + 1 {
-        return Err(format!(
-            "first save did not advance the revision: {baseline} -> {}",
-            backend.workspace_revision()
-        ));
-    }
-    // A repeated save of the same bytes now dedups.
-    backend
-        .did_save(DidSaveTextDocumentParams {
-            text_document: TextDocumentIdentifier { uri: uri.clone() },
-            text: Some("fn same() {}".to_string()),
-        })
-        .await;
-    if backend.workspace_revision() != baseline + 1 {
-        return Err(format!(
-            "unchanged repeated save advanced the revision: {baseline} -> {}",
-            backend.workspace_revision()
-        ));
-    }
-    Ok(())
-}
-
-#[tokio::test]
-async fn did_save_with_changed_content_advances_and_refreshes() -> Result<(), String> {
-    let uri = test_uri("file:///workspace/src/lib.rs")?;
-    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-    let backend = service.inner();
-    backend
-        .did_open(DidOpenTextDocumentParams {
-            text_document: TextDocumentItem::new(
-                uri.clone(),
-                "rust".to_string(),
-                1,
-                "fn same() {}".to_string(),
-            ),
-        })
-        .await;
-    backend.advance_workspace_revision();
-    let baseline = backend.workspace_revision();
-
-    backend
-        .did_save(DidSaveTextDocumentParams {
-            text_document: TextDocumentIdentifier { uri: uri.clone() },
-            text: Some("fn changed() {}".to_string()),
-        })
-        .await;
-    if backend.workspace_revision() != baseline + 1 {
-        return Err(format!(
-            "changed save did not advance the revision exactly once: {baseline} -> {}",
-            backend.workspace_revision()
-        ));
-    }
-
-    // A repeated save of the now-recorded content dedups again.
-    backend
-        .did_save(DidSaveTextDocumentParams {
-            text_document: TextDocumentIdentifier { uri: uri.clone() },
-            text: Some("fn changed() {}".to_string()),
-        })
-        .await;
-    if backend.workspace_revision() != baseline + 1 {
-        return Err(format!(
-            "repeated save of recorded content did not deduplicate: {baseline} -> {}",
-            backend.workspace_revision()
-        ));
-    }
-    Ok(())
-}
-
-#[tokio::test]
-async fn did_save_without_text_falls_back_to_document_store_content() -> Result<(), String> {
-    let uri = test_uri("file:///workspace/src/lib.rs")?;
-    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-    let backend = service.inner();
-    backend
-        .did_open(DidOpenTextDocumentParams {
-            text_document: TextDocumentItem::new(
-                uri.clone(),
-                "rust".to_string(),
-                1,
-                "fn stored() {}".to_string(),
-            ),
-        })
-        .await;
-    backend.advance_workspace_revision();
-    let baseline = backend.workspace_revision();
-
-    // Clients without includeText send no content: the digest comes from the
-    // document store. First save records; the repeat dedups.
-    for expected_revision in [baseline + 1, baseline + 1] {
-        backend
-            .did_save(DidSaveTextDocumentParams {
-                text_document: TextDocumentIdentifier { uri: uri.clone() },
-                text: None,
-            })
-            .await;
-        if backend.workspace_revision() != expected_revision {
-            return Err(format!(
-                "text-less save path drifted: expected revision {expected_revision}, got {}",
-                backend.workspace_revision()
-            ));
-        }
-    }
-    Ok(())
-}
-
-#[tokio::test]
-async fn did_close_clears_the_saved_content_digest() -> Result<(), String> {
-    let uri = test_uri("file:///workspace/src/lib.rs")?;
-    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-    let backend = service.inner();
-    backend
-        .did_open(DidOpenTextDocumentParams {
-            text_document: TextDocumentItem::new(
-                uri.clone(),
-                "rust".to_string(),
-                1,
-                "fn same() {}".to_string(),
-            ),
-        })
-        .await;
-    backend.advance_workspace_revision();
-    backend
-        .did_save(DidSaveTextDocumentParams {
-            text_document: TextDocumentIdentifier { uri: uri.clone() },
-            text: Some("fn same() {}".to_string()),
-        })
-        .await;
-    let after_record = backend.workspace_revision();
-
-    backend
-        .did_close(DidCloseTextDocumentParams {
-            text_document: TextDocumentIdentifier { uri: uri.clone() },
-        })
-        .await;
-    // did_close advances the revision by design; the digest must be gone.
-    backend
-        .did_open(DidOpenTextDocumentParams {
-            text_document: TextDocumentItem::new(
-                uri.clone(),
-                "rust".to_string(),
-                2,
-                "fn same() {}".to_string(),
-            ),
-        })
-        .await;
-    let after_reopen = backend.workspace_revision();
-
-    // The same bytes after close+reopen are treated as changed (conservative):
-    // nothing is recorded for the document anymore.
-    backend
-        .did_save(DidSaveTextDocumentParams {
-            text_document: TextDocumentIdentifier { uri: uri.clone() },
-            text: Some("fn same() {}".to_string()),
-        })
-        .await;
-    if backend.workspace_revision() != after_reopen + 1 {
-        return Err(format!(
-            "reopened document kept its digest: record={after_record} reopen={after_reopen} now={}",
-            backend.workspace_revision()
-        ));
-    }
-    Ok(())
-}
-
-#[test]
-fn document_store_tracks_open_change_and_close() -> Result<(), String> {
-    let uri = test_uri("file:///workspace/src/lib.rs")?;
-    let mut store = DocumentStore::default();
-
-    store.open(DidOpenTextDocumentParams {
-        text_document: TextDocumentItem::new(
-            uri.clone(),
-            "rust".to_string(),
-            1,
-            "fn old() {}".to_string(),
-        ),
-    });
-
-    let Some(opened) = store.documents.get(&uri) else {
-        return Err("expected opened document".to_string());
-    };
-    assert_eq!(opened.path, PathBuf::from("/workspace/src/lib.rs"));
-    assert_eq!(opened.version, Some(1));
-    assert_eq!(opened.text, "fn old() {}");
-
-    store.change(DidChangeTextDocumentParams {
-        text_document: VersionedTextDocumentIdentifier::new(uri.clone(), 2),
-        content_changes: vec![TextDocumentContentChangeEvent {
-            range: None,
-            range_length: None,
-            text: "fn new() {}".to_string(),
-        }],
-    });
-
-    let Some(changed) = store.documents.get(&uri) else {
-        return Err("expected changed document".to_string());
-    };
-    assert_eq!(changed.version, Some(2));
-    assert_eq!(changed.text, "fn new() {}");
-
-    store.close(DidCloseTextDocumentParams {
-        text_document: TextDocumentIdentifier::new(uri.clone()),
-    });
-
-    assert!(!store.documents.contains_key(&uri));
-    Ok(())
-}
-
-#[test]
-fn document_store_creates_document_from_full_change_when_missing() -> Result<(), String> {
-    let uri = test_uri("file:///workspace/src/lib.rs")?;
-    let mut store = DocumentStore::default();
-
-    store.change(DidChangeTextDocumentParams {
-        text_document: VersionedTextDocumentIdentifier::new(uri.clone(), 7),
-        content_changes: vec![TextDocumentContentChangeEvent {
-            range: None,
-            range_length: None,
-            text: "fn discovered() {}".to_string(),
-        }],
-    });
-
-    let Some(document) = store.documents.get(&uri) else {
-        return Err("expected document from full change".to_string());
-    };
-    assert_eq!(document.version, Some(7));
-    assert_eq!(document.text, "fn discovered() {}");
-    Ok(())
-}
-
-#[test]
-fn initialize_root_rejects_ambiguous_workspace_folders() -> Result<(), String> {
-    let params = initialize_params(
-        Some(vec![
-            WorkspaceFolder {
-                uri: test_uri("file:///workspace/main")?,
-                name: "main".to_string(),
-            },
-            WorkspaceFolder {
-                uri: test_uri("file:///workspace/other")?,
-                name: "other".to_string(),
-            },
-        ]),
-        Some(test_uri("file:///workspace/root-uri")?),
-    );
-
-    assert_eq!(
-        root_from_initialize_params(&params),
-        WorkspaceRootResolution::Ambiguous(vec![
-            PathBuf::from("/workspace/main"),
-            PathBuf::from("/workspace/other"),
-        ])
-    );
-    Ok(())
-}
-
-#[test]
-fn initialize_root_uses_root_uri_when_workspace_folders_are_missing() -> Result<(), String> {
-    let params = initialize_params(None, Some(test_uri("file:///workspace/root-uri")?));
-
-    assert_eq!(
-        root_from_initialize_params(&params),
-        WorkspaceRootResolution::Selected(PathBuf::from("/workspace/root-uri"))
-    );
-    Ok(())
-}
-
-#[test]
-fn initialize_root_rejects_empty_workspace_folders_even_with_root_uri() -> Result<(), String> {
-    let params = initialize_params(
-        Some(Vec::new()),
-        Some(test_uri("file:///workspace/root-uri")?),
-    );
-
-    assert_eq!(
-        root_from_initialize_params(&params),
-        WorkspaceRootResolution::Unavailable(
-            "the client explicitly reported no workspace folders".to_string()
-        )
-    );
-    Ok(())
-}
-
-#[test]
-fn initialize_root_reports_unavailable_when_no_lsp_root_exists() {
-    let params = initialize_params(None, None);
-
-    assert_eq!(
-        root_from_initialize_params(&params),
-        WorkspaceRootResolution::Unavailable(
-            "the client did not provide a workspace folder or root URI".to_string()
-        )
-    );
-}
-
-#[test]
-fn initialization_options_override_lsp_analysis_config() {
-    let mut params = initialize_params(None, None);
-    params.initialization_options = Some(serde_json::json!({
-        "baseRef": "origin/release",
-        "checkMode": "deep",
-        "includeUnchangedTests": false,
-    }));
-
-    let config = LspAnalysisConfig::from_initialize_params(
-        &params,
-        crate::config::RiprConfig::default(),
-        &crate::lsp::client_features::ClientFeatureProfile::from_initialize_params(&params),
-    );
-    let input = config.check_input(Path::new("/workspace"));
-
-    assert_eq!(config.base_ref.as_deref(), Some("origin/release"));
-    assert_eq!(config.mode, Mode::Deep);
-    assert!(!config.include_unchanged_tests);
-    assert_eq!(input.root, PathBuf::from("/workspace"));
-    assert_eq!(input.base.as_deref(), Some("origin/release"));
-    assert_eq!(input.mode, Mode::Deep);
-    assert!(!input.include_unchanged_tests);
-}
-
-#[test]
-fn initialization_options_allow_empty_base_ref_and_invalid_mode_falls_back() {
-    let mut params = initialize_params(None, None);
-    params.initialization_options = Some(serde_json::json!({
-        "baseRef": "",
-        "checkMode": "surprise",
-    }));
-
-    let config = LspAnalysisConfig::from_initialize_params(
-        &params,
-        crate::config::RiprConfig::default(),
-        &crate::lsp::client_features::ClientFeatureProfile::from_initialize_params(&params),
-    );
-
-    assert_eq!(config.base_ref, None);
-    assert_eq!(config.mode, Mode::Draft);
-    assert!(config.include_unchanged_tests);
-}
-
-#[test]
-fn initialization_options_accept_all_analysis_mode_labels() {
-    let cases = [
-        ("instant", Mode::Instant),
-        ("draft", Mode::Draft),
-        ("fast", Mode::Fast),
-        ("deep", Mode::Deep),
-        ("ready", Mode::Ready),
-    ];
-
-    for (label, expected) in cases {
-        let mut params = initialize_params(None, None);
-        params.initialization_options = Some(serde_json::json!({
-            "checkMode": label,
-        }));
-
-        let config = LspAnalysisConfig::from_initialize_params(
-            &params,
-            crate::config::RiprConfig::default(),
-            &crate::lsp::client_features::ClientFeatureProfile::from_initialize_params(&params),
-        );
-
-        assert_eq!(config.mode, expected);
-    }
-}
-
-#[test]
-fn default_lsp_analysis_config_matches_check_input_defaults() {
-    let config = LspAnalysisConfig::default();
-    let input = config.check_input(Path::new("/workspace"));
-
-    assert_eq!(input.root, PathBuf::from("/workspace"));
-    assert_eq!(input.base.as_deref(), Some("origin/main"));
-    assert_eq!(input.mode, Mode::Draft);
-    assert!(input.include_unchanged_tests);
-    assert!(config.enable_seam_diagnostics);
-}
-
-#[test]
-fn initialize_stores_lsp_analysis_config() -> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let backend = service.inner();
-        let mut params = initialize_params(None, None);
-        params.initialization_options = Some(serde_json::json!({
-            "baseRef": "upstream/main",
-            "checkMode": "fast",
-        }));
-
-        backend
-            .initialize(params)
-            .await
-            .map_err(|err| format!("initialize failed: {err}"))?;
-        let Some(config) = backend.analysis_config() else {
-            return Err("expected backend analysis config".to_string());
-        };
-
-        assert_eq!(config.base_ref.as_deref(), Some("upstream/main"));
-        assert_eq!(config.mode, Mode::Fast);
-        Ok(())
-    })
-}
-
-#[test]
-fn initialize_with_invalid_languages_config_falls_back_to_rust_defaults() -> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        let root = unique_lsp_test_root("invalid-languages-config")?;
-        std::fs::write(
-            root.path().join("ripr.toml"),
-            r#"
-[languages]
-enabled = ["ruby"]
-"#,
-        )
-        .map_err(|err| format!("write invalid config failed: {err}"))?;
-        let config_error = match crate::config::load_for_root(root.path()) {
-            Ok(_) => {
-                return Err(
-                    "invalid language config should stay owned by config parsing".to_string(),
-                );
-            }
-            Err(err) => err,
-        };
-        assert!(
-            config_error.contains("languages.enabled") && config_error.contains("ruby"),
-            "expected config-owned language error, got: {config_error}"
-        );
-
-        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let backend = service.inner();
-        backend
-            .initialize(initialize_params(
-                None,
-                Some(file_uri_for_path(root.path())?),
-            ))
-            .await
-            .map_err(|err| format!("initialize failed: {err}"))?;
-        let Some(config) = backend.analysis_config() else {
-            return Err("expected backend analysis config".to_string());
-        };
-
-        assert_eq!(config.repo_config().source_path(), None);
-        assert_eq!(
-            config.repo_config().languages().enabled(),
-            &[LanguageId::Rust]
-        );
-        assert_eq!(config.mode, Mode::Draft);
-        assert!(config.enable_seam_diagnostics);
-        let Some(failure) = backend.configuration_failure() else {
-            return Err("invalid config should pause analysis with a typed failure".to_string());
-        };
-        assert_eq!(failure.kind, AnalysisFailureKind::ConfigInvalid);
-        backend.invalidate_workspace_root_for_test().await;
-        assert!(backend.configuration_failure().is_none());
-        Ok(())
-    })
-}
-
-#[test]
-fn session_configuration_change_preserves_invalid_repository_config_health() -> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        let root = unique_lsp_test_root("invalid-config-session-change")?;
-        std::fs::write(
-            root.path().join("ripr.toml"),
-            "[languages]\nenabled = [\"ruby\"]\n",
-        )
-        .map_err(|err| format!("write invalid config failed: {err}"))?;
-        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let backend = service.inner();
-        backend
-            .initialize(initialize_params(
-                None,
-                Some(file_uri_for_path(root.path())?),
-            ))
-            .await
-            .map_err(|err| format!("initialize failed: {err}"))?;
-
-        if backend.configuration_failure().is_none() {
-            return Err("invalid repository config should latch config_invalid".to_string());
-        }
-        backend
-            .did_change_configuration(DidChangeConfigurationParams {
-                settings: serde_json::json!({"ripr": {"seamDiagnostics": false}}),
-            })
-            .await;
-
-        let status = backend
-            .execute_command(ExecuteCommandParams {
-                command: COLLECT_WORKSPACE_STATUS_COMMAND.to_string(),
-                arguments: vec![],
-                work_done_progress_params: Default::default(),
-            })
-            .await
-            .map_err(|err| format!("execute_command failed: {err}"))?
-            .ok_or_else(|| "expected workspace status".to_string())?;
-        assert_eq!(status["analysis_status"]["state"], "failed");
-        assert_eq!(
-            status["analysis_status"]["failure"]["kind"],
-            "config_invalid"
-        );
-        assert!(
-            !backend
-                .analysis_config()
-                .ok_or_else(|| "expected analysis config".to_string())?
-                .enable_seam_diagnostics
-        );
-        Ok(())
-    })
-}
-
-#[test]
-fn execute_command_rejects_unsupported_commands_with_stable_invalid_params() -> Result<(), String> {
-    // #1628: a manually forwarded command the server does not execute â€”
-    // unknown ids AND client-registered commands â€” gets a determinate
-    // protocol rejection, not a silent no-op.
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        let root = unique_lsp_test_root("execute-command-rejection")?;
-        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let backend = service.inner();
-        backend
-            .initialize(initialize_params(
-                None,
-                Some(file_uri_for_path(root.path())?),
-            ))
-            .await
-            .map_err(|err| format!("initialize failed: {err}"))?;
-
-        for command in [
-            "ripr.notACommand",
-            "ripr.copyContext",
-            "ripr.openRelatedTest",
-            "git.blame",
-        ] {
-            let outcome = backend
-                .execute_command(ExecuteCommandParams {
-                    command: command.to_string(),
-                    arguments: vec![],
-                    work_done_progress_params: Default::default(),
-                })
-                .await;
-            let expected_message =
-                format!("unsupported command `{command}`: not a server-executed ripr command");
-            match outcome {
-                Err(err)
-                    if err.code == tower_lsp_server::jsonrpc::ErrorCode::InvalidParams
-                        && err.message == expected_message => {}
-                other => {
-                    return Err(format!(
-                        "expected stable InvalidParams rejection for {command}, got {other:?}"
-                    ));
-                }
-            }
-        }
-
-        // A server-executed command still answers after the rejections.
-        backend
-            .execute_command(ExecuteCommandParams {
-                command: COLLECT_WORKSPACE_STATUS_COMMAND.to_string(),
-                arguments: vec![],
-                work_done_progress_params: Default::default(),
-            })
-            .await
-            .map_err(|err| format!("server command failed after rejections: {err}"))?;
-        Ok(())
-    })
-}
-
-#[test]
-fn code_action_resolve_rejects_missing_data_with_stable_invalid_params() -> Result<(), String> {
-    // #1751, RIPR-SPEC-0129: a `codeAction/resolve` request whose action is
-    // missing the versioned ripr data payload â€” or carries a payload from a
-    // foreign producer â€” gets a determinate protocol rejection, mirroring
-    // the unsupported-command rejection (#1628).
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        let root = unique_lsp_test_root("code-action-resolve-rejection")?;
-        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let backend = service.inner();
-        backend
-            .initialize(initialize_params(
-                None,
-                Some(file_uri_for_path(root.path())?),
-            ))
-            .await
-            .map_err(|err| format!("initialize failed: {err}"))?;
-
-        let payloadless = CodeAction {
-            title: "Inspect gap: copy repair packet".to_string(),
-            kind: Some(CodeActionKind::new("source.ripr.inspect")),
-            ..CodeAction::default()
-        };
-        match backend.code_action_resolve(payloadless).await {
-            Err(err) if err.code == tower_lsp_server::jsonrpc::ErrorCode::InvalidParams => {}
-            other => {
-                return Err(format!(
-                    "expected InvalidParams for a missing payload, got {other:?}"
-                ));
-            }
-        }
-
-        let foreign = CodeAction {
-            title: "Inspect gap: copy repair packet".to_string(),
-            kind: Some(CodeActionKind::new("source.ripr.inspect")),
-            data: Some(serde_json::json!({
-                "schema_version": "foreign-schema-v0",
-                "action_id": "fnv1a64:0000000000000000",
-                "action_class": "inspect",
-                "action_kind": "source.ripr.inspect",
-                "action_name": "copy_gap_repair_packet",
-                "required_client_capability": "ripr.copyContext"
-            })),
-            ..CodeAction::default()
-        };
-        match backend.code_action_resolve(foreign).await {
-            Err(err) if err.code == tower_lsp_server::jsonrpc::ErrorCode::InvalidParams => {}
-            other => {
-                return Err(format!(
-                    "expected InvalidParams for a foreign payload, got {other:?}"
-                ));
-            }
-        }
-        Ok(())
-    })
-}
-
-#[test]
-fn initialization_only_mode_discloses_transport_and_value_sources() -> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        let root = unique_lsp_test_root("config-mode-initialization-only")?;
-        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let backend = service.inner();
-        backend
-            .initialize(initialize_params(
-                None,
-                Some(file_uri_for_path(root.path())?),
-            ))
-            .await
-            .map_err(|err| format!("initialize failed: {err}"))?;
-
-        let status = backend
-            .execute_command(ExecuteCommandParams {
-                command: COLLECT_WORKSPACE_STATUS_COMMAND.to_string(),
-                arguments: vec![],
-                work_done_progress_params: Default::default(),
-            })
-            .await
-            .map_err(|err| format!("execute_command failed: {err}"))?
-            .ok_or_else(|| "expected workspace status".to_string())?;
-        let authority = &status["analysis_status"]["input_authority"];
-        assert_eq!(authority["configuration_mode"], "initialization_only");
-        assert_eq!(authority["configuration_pull"]["state"], "not_applicable");
-        assert_eq!(
-            authority["configuration_pull"]["failure"],
-            serde_json::Value::Null
-        );
-        assert_eq!(authority["session_value_sources"]["check_mode"], "default");
-        assert_eq!(authority["session_value_sources"]["base_ref"], "default");
-        Ok(())
-    })
-}
-
-#[test]
-fn initialize_discloses_bounded_client_feature_profile_in_workspace_status() -> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        let root = unique_lsp_test_root("client-feature-profile-status")?;
-        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let backend = service.inner();
-        let mut params = initialize_params(None, Some(file_uri_for_path(root.path())?));
-        params.client_info = Some(tower_lsp_server::ls_types::ClientInfo {
-            name: "profile-test-client-name".to_string(),
-            version: None,
-        });
-        params.capabilities.text_document =
-            Some(tower_lsp_server::ls_types::TextDocumentClientCapabilities {
-                diagnostic: Some(
-                    tower_lsp_server::ls_types::DiagnosticClientCapabilities::default(),
-                ),
-                ..tower_lsp_server::ls_types::TextDocumentClientCapabilities::default()
-            });
-        params.capabilities.window = Some(tower_lsp_server::ls_types::WindowClientCapabilities {
-            work_done_progress: Some(true),
-            ..tower_lsp_server::ls_types::WindowClientCapabilities::default()
-        });
-        params.capabilities.experimental = Some(serde_json::json!({
-            "riprEditor": {
-                "version": "0.10.0",
-                "commands": ["ripr.refresh"],
-                "guardedTestEdit": true
-            }
-        }));
-        backend
-            .initialize(params)
-            .await
-            .map_err(|err| format!("initialize failed: {err}"))?;
-
-        let status = backend
-            .execute_command(ExecuteCommandParams {
-                command: COLLECT_WORKSPACE_STATUS_COMMAND.to_string(),
-                arguments: vec![],
-                work_done_progress_params: Default::default(),
-            })
-            .await
-            .map_err(|err| format!("execute_command failed: {err}"))?
-            .ok_or_else(|| "expected workspace status".to_string())?;
-        let features = &status["analysis_status"]["client_features"];
-        assert_eq!(features["position_encoding"], "utf-16");
-        assert_eq!(features["pull_diagnostics"], true);
-        assert_eq!(features["work_done_progress"], true);
-        assert_eq!(features["configuration_mode"], "initialization_only");
-        assert_eq!(features["ripr_editor"]["version"], "0.10.0");
-        assert_eq!(features["ripr_editor"]["guarded_test_edit"], true);
-        assert_eq!(features["ripr_editor"]["command_count"], 1);
-        assert_eq!(features["ripr_agent"], serde_json::Value::Null);
-        // Bounded disclosure: the client name never enters the status payload.
-        if status.to_string().contains("profile-test-client-name") {
-            return Err("status payload leaked the client name".to_string());
-        }
-        Ok(())
-    })
-}
-
-#[test]
-fn receipt_status_discloses_bounded_client_feature_profile() -> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        let root = unique_lsp_test_root("client-feature-profile-receipt")?;
-        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let backend = service.inner();
-        let mut params = initialize_params(None, Some(file_uri_for_path(root.path())?));
-        params.capabilities.experimental = Some(serde_json::json!({
-            "riprAgent": {
-                "protocol": "0.1",
-                "profiles": ["actionable"],
-                "delivery": ["status_notifications"]
-            }
-        }));
-        backend
-            .initialize(params)
-            .await
-            .map_err(|err| format!("initialize failed: {err}"))?;
-
-        let status = backend
-            .execute_command(ExecuteCommandParams {
-                command: COLLECT_RECEIPT_STATUS_COMMAND.to_string(),
-                arguments: vec![],
-                work_done_progress_params: Default::default(),
-            })
-            .await
-            .map_err(|err| format!("execute_command failed: {err}"))?
-            .ok_or_else(|| "expected receipt status".to_string())?;
-        let features = &status["client_features"];
-        assert_eq!(features["ripr_agent"]["protocol_version"], "0.1");
-        assert_eq!(
-            features["ripr_agent"]["profiles"],
-            serde_json::json!(["actionable"])
-        );
-        assert_eq!(
-            features["ripr_agent"]["delivery"],
-            serde_json::json!(["status_notifications"])
-        );
-        assert_eq!(features["ripr_editor"], serde_json::Value::Null);
-        Ok(())
-    })
-}
-
-#[test]
-fn malformed_experimental_blocks_keep_the_standard_session_and_disclose_unsupported()
--> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        let root = unique_lsp_test_root("client-feature-profile-fail-closed")?;
-        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let backend = service.inner();
-        let mut params = initialize_params(None, Some(file_uri_for_path(root.path())?));
-        params.capabilities.text_document =
-            Some(tower_lsp_server::ls_types::TextDocumentClientCapabilities {
-                diagnostic: Some(
-                    tower_lsp_server::ls_types::DiagnosticClientCapabilities::default(),
-                ),
-                ..tower_lsp_server::ls_types::TextDocumentClientCapabilities::default()
-            });
-        params.capabilities.experimental = Some(serde_json::json!({
-            "riprEditor": {"version": 42},
-            "riprAgent": {"protocol": "1.0"}
-        }));
-        let result = backend
-            .initialize(params)
-            .await
-            .map_err(|err| format!("initialize failed: {err}"))?;
-        // The standard session is unaffected: pull support was negotiated
-        // from the standard capabilities and the provider is advertised.
-        if result.capabilities.diagnostic_provider.is_none() {
-            return Err("malformed experimental blocks broke the standard session".to_string());
-        }
-
-        let status = backend
-            .execute_command(ExecuteCommandParams {
-                command: COLLECT_WORKSPACE_STATUS_COMMAND.to_string(),
-                arguments: vec![],
-                work_done_progress_params: Default::default(),
-            })
-            .await
-            .map_err(|err| format!("execute_command failed: {err}"))?
-            .ok_or_else(|| "expected workspace status".to_string())?;
-        let features = &status["analysis_status"]["client_features"];
-        assert_eq!(features["pull_diagnostics"], true);
-        assert_eq!(features["ripr_editor"], serde_json::Value::Null);
-        assert_eq!(features["ripr_agent"], serde_json::Value::Null);
-        Ok(())
-    })
-}
-
-#[test]
-fn initialize_surfaces_poisoned_client_features_store_as_a_session_failure() -> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        let root = unique_lsp_test_root("client-feature-profile-poisoned-store")?;
-        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let backend = service.inner();
-        // Poison the profile store: a std::sync::Mutex is poisoned when a
-        // holder panics. The helper confines the injected panic; no
-        // production path is involved.
-        backend.poison_client_features_for_test();
-        backend
-            .initialize(initialize_params(
-                None,
-                Some(file_uri_for_path(root.path())?),
-            ))
-            .await
-            .map_err(|err| format!("initialize failed: {err}"))?;
-
-        // The store failure must surface through the blocking-failure
-        // channel instead of leaving the pre-initialize profile beside
-        // negotiated sibling state.
-        let failure = backend
-            .configuration_failure()
-            .ok_or_else(|| "poisoned profile store must surface a session failure".to_string())?;
-        if failure.kind != AnalysisFailureKind::SessionStateInconsistent {
-            return Err(format!(
-                "poisoned profile store surfaced the wrong failure kind: {}",
-                failure.kind.as_str()
-            ));
-        }
-        let status = backend
-            .execute_command(ExecuteCommandParams {
-                command: COLLECT_WORKSPACE_STATUS_COMMAND.to_string(),
-                arguments: vec![],
-                work_done_progress_params: Default::default(),
-            })
-            .await
-            .map_err(|err| format!("execute_command failed: {err}"))?
-            .ok_or_else(|| "expected workspace status".to_string())?;
-        assert_eq!(
-            status["analysis_status"]["input_authority"]["configuration_state"],
-            "invalid"
-        );
-        assert_eq!(
-            status["analysis_status"]["failure"]["kind"],
-            "session_state_inconsistent"
-        );
-        Ok(())
-    })
-}
-
-#[test]
-fn pull_mode_is_pending_until_the_first_pull_resolves() -> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        let root = unique_lsp_test_root("config-mode-pull-pending")?;
-        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let backend = service.inner();
-        let mut params = initialize_params(None, Some(file_uri_for_path(root.path())?));
-        params.capabilities.workspace =
-            Some(tower_lsp_server::ls_types::WorkspaceClientCapabilities {
-                configuration: Some(true),
-                ..tower_lsp_server::ls_types::WorkspaceClientCapabilities::default()
-            });
-        backend
-            .initialize(params)
-            .await
-            .map_err(|err| format!("initialize failed: {err}"))?;
-
-        let status = backend
-            .execute_command(ExecuteCommandParams {
-                command: COLLECT_WORKSPACE_STATUS_COMMAND.to_string(),
-                arguments: vec![],
-                work_done_progress_params: Default::default(),
-            })
-            .await
-            .map_err(|err| format!("execute_command failed: {err}"))?
-            .ok_or_else(|| "expected workspace status".to_string())?;
-        let authority = &status["analysis_status"]["input_authority"];
-        assert_eq!(authority["configuration_mode"], "pull");
-        // Startup-window honesty: no pull has resolved, so the status
-        // discloses `pending` instead of presenting defaults as accepted
-        // requested settings.
-        assert_eq!(authority["configuration_pull"]["state"], "pending");
-        Ok(())
-    })
-}
-
-#[test]
-#[serial]
-fn framed_lsp_configuration_pull_applies_and_discloses_pull_state() -> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-
-    runtime.block_on(async {
-        let root = unique_lsp_test_root("framed-config-pull")?;
-        let root_uri = file_uri_for_path(root.path())?;
-        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
-        let (client_read, mut client_write) = tokio::io::split(client_io);
-        let (server_read, server_write) = tokio::io::split(server_io);
-        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let mut server_task = tokio::spawn(async move {
-            Server::new(server_read, server_write, socket)
-                .serve(service)
-                .await;
-        });
-        let mut client_read = client_read;
-
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "processId": null,
-                    "rootUri": root_uri.as_str(),
-                    "initializationOptions": {
-                        "baseRef": "origin/init",
-                        "checkMode": "fast"
-                    },
-                    "capabilities": {
-                        "workspace": {"configuration": true}
-                    }
-                }
-            }),
-        )
-        .await?;
-        let initialize = read_lsp_response(&mut client_read, 1).await?;
-        assert!(initialize.get("error").is_none());
-
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "initialized",
-                "params": {}
-            }),
-        )
-        .await?;
-
-        // The server must pull the bounded `ripr` section scoped to the
-        // selected root URI from `initialized`.
-        let pull_request = read_lsp_request(&mut client_read, "workspace/configuration").await?;
-        assert_eq!(
-            pull_request["params"]["items"],
-            serde_json::json!([{"scopeUri": root_uri.as_str(), "section": "ripr"}])
-        );
-        // Answer with the same checkMode the initialization options supplied:
-        // semantically unchanged effective settings must not reschedule
-        // analysis.
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": pull_request["id"].clone(),
-                "result": [{"checkMode": "fast"}]
-            }),
-        )
-        .await?;
-
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "workspace/executeCommand",
-                "params": {
-                    "command": COLLECT_WORKSPACE_STATUS_COMMAND,
-                    "arguments": []
-                }
-            }),
-        )
-        .await?;
-        let status = read_lsp_response(&mut client_read, 2).await?;
-        assert!(status.get("error").is_none());
-        let authority = &status["result"]["analysis_status"]["input_authority"];
-        assert_eq!(authority["configuration_mode"], "pull");
-        assert_eq!(authority["configuration_pull"]["state"], "applied");
-        assert_eq!(authority["configuration_pull"]["epoch"], 0);
-        assert_eq!(authority["session_value_sources"]["check_mode"], "pulled");
-        assert_eq!(
-            authority["session_value_sources"]["base_ref"],
-            "initialization"
-        );
-        assert_eq!(
-            authority["session_value_sources"]["seam_diagnostics"],
-            "default"
-        );
-        // The pull never launched analysis.
-        assert_eq!(
-            status["result"]["analysis_status"]["snapshot_id"],
-            serde_json::Value::Null
-        );
-
-        // `workspace/didChangeConfiguration` in pull mode invalidates the
-        // pulled layer and schedules one coalesced re-pull; a malformed
-        // response is disclosed as a typed state while the last-known-good
-        // pulled layer is retained.
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "workspace/didChangeConfiguration",
-                "params": {"settings": {}}
-            }),
-        )
-        .await?;
-        let repull_request = read_lsp_request(&mut client_read, "workspace/configuration").await?;
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": repull_request["id"].clone(),
-                "result": [{"checkMode": 42}]
-            }),
-        )
-        .await?;
-
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 3,
-                "method": "workspace/executeCommand",
-                "params": {
-                    "command": COLLECT_WORKSPACE_STATUS_COMMAND,
-                    "arguments": []
-                }
-            }),
-        )
-        .await?;
-        let status = read_lsp_response(&mut client_read, 3).await?;
-        assert!(status.get("error").is_none());
-        let authority = &status["result"]["analysis_status"]["input_authority"];
-        assert_eq!(authority["configuration_pull"]["state"], "failed");
-        assert_eq!(
-            authority["configuration_pull"]["failure"]["kind"],
-            "config_pull_invalid"
-        );
-        assert_eq!(
-            authority["configuration_pull"]["recovery_route"],
-            "retry_via_did_change_configuration"
-        );
-        assert_eq!(authority["configuration_pull"]["epoch"], 1);
-        // Last-known-good pulled settings stay disclosed as the value source.
-        assert_eq!(authority["session_value_sources"]["check_mode"], "pulled");
-        assert_eq!(
-            status["result"]["analysis_status"]["snapshot_id"],
-            serde_json::Value::Null
-        );
-
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 4,
-                "method": "shutdown",
-                "params": null
-            }),
-        )
-        .await?;
-        let shutdown = read_lsp_response(&mut client_read, 4).await?;
-        assert!(shutdown.get("error").is_none());
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "exit",
-                "params": null
-            }),
-        )
-        .await?;
-        client_write
-            .shutdown()
-            .await
-            .map_err(|err| format!("failed to close test client: {err}"))?;
-        match tokio::time::timeout(std::time::Duration::from_secs(2), &mut server_task).await {
-            Ok(join_result) => {
-                join_result.map_err(|err| format!("LSP server task failed: {err}"))?;
-            }
-            Err(_) => {
-                server_task.abort();
-                return Err("LSP server did not stop after exit notification".to_string());
-            }
-        }
-        Ok(())
-    })
-}
-
-#[test]
-#[serial]
-fn framed_lsp_deferred_configuration_pull_runs_after_root_transition_guard_release()
--> Result<(), String> {
-    // Regression pin for the deferred-pull deadlock (#2031 review): the pull
-    // must be scheduled AFTER `workspace_root_transition` is released, because
-    // a pull that changes effective settings reaches `refresh_diagnostics` â†’
-    // `run_refresh_request`, which re-locks that guard on the publication
-    // path. The analysis must succeed for the lock to be reached, so the
-    // selected root uses the known-good fixture recipe (baseRef HEAD,
-    // checkMode instant). Pre-fix this exchange deadlocks and the timeout
-    // below fails the test; post-fix it completes.
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-
-    runtime.block_on(async {
-        let repo_fixture =
-            boundary_gap_git_fixture_root("framed-config-pull-deferred-fixture")?;
-        let repo_root = repo_fixture.path().to_path_buf();
-        let fixture_uri = file_uri_for_path(&repo_root)?;
-        let other = unique_lsp_test_root("framed-config-pull-deferred")?;
-        let other_uri = file_uri_for_path(other.path())?;
-        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
-        let (client_read, mut client_write) = tokio::io::split(client_io);
-        let (server_read, server_write) = tokio::io::split(server_io);
-        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let mut server_task = tokio::spawn(async move {
-            Server::new(server_read, server_write, socket)
-                .serve(service)
-                .await;
-        });
-        let mut client_read = client_read;
-
-        // Ambiguous start: two workspace folders, so no single root is
-        // selected and the initialized pull defers without any client
-        // request.
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "processId": null,
-                    "workspaceFolders": [
-                        {"uri": fixture_uri.as_str(), "name": "fixture"},
-                        {"uri": other_uri.as_str(), "name": "other"}
-                    ],
-                    "initializationOptions": {
-                        "baseRef": "HEAD",
-                        "checkMode": "instant"
-                    },
-                    "capabilities": {
-                        "workspace": {"configuration": true}
-                    }
-                }
-            }),
-        )
-        .await?;
-        let initialize = read_lsp_response(&mut client_read, 1).await?;
-        assert!(initialize.get("error").is_none());
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "initialized",
-                "params": {}
-            }),
-        )
-        .await?;
-
-        let exchange = async {
-            // Drive a root transition to a single selected root. The server
-            // queries the client for the current folders.
-            write_lsp_message(
-                &mut client_write,
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "method": "workspace/didChangeWorkspaceFolders",
-                    "params": {"event": {"added": [], "removed": []}}
-                }),
-            )
-            .await?;
-            let folders_request =
-                read_lsp_request(&mut client_read, "workspace/workspaceFolders").await?;
-            write_lsp_message(
-                &mut client_write,
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": folders_request["id"].clone(),
-                    "result": [{"uri": fixture_uri.as_str(), "name": "fixture"}]
-                }),
-            )
-            .await?;
-
-            // The deferred pull must now run, scoped to the selected root.
-            let pull_request =
-                read_lsp_request(&mut client_read, "workspace/configuration").await?;
-            assert_eq!(
-                pull_request["params"]["items"],
-                serde_json::json!([{"scopeUri": fixture_uri.as_str(), "section": "ripr"}])
-            );
-            // Change effective settings so the apply path reaches
-            // refresh_diagnostics; analysis on this root succeeds, so the
-            // publication path re-locks the root transition guard.
-            write_lsp_message(
-                &mut client_write,
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": pull_request["id"].clone(),
-                    "result": [{"includeUnchangedTests": false}]
-                }),
-            )
-            .await?;
-
-            // Probe responsiveness: a deadlocked server never answers.
-            write_lsp_message(
-                &mut client_write,
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": 2,
-                    "method": "workspace/executeCommand",
-                    "params": {
-                        "command": COLLECT_WORKSPACE_STATUS_COMMAND,
-                        "arguments": []
-                    }
-                }),
-            )
-            .await?;
-            let status = read_lsp_response(&mut client_read, 2).await?;
-            assert!(status.get("error").is_none());
-            let authority = &status["result"]["analysis_status"]["input_authority"];
-            assert_eq!(authority["configuration_mode"], "pull");
-            assert_eq!(authority["configuration_pull"]["state"], "applied");
-            assert_eq!(
-                authority["session_value_sources"]["include_unchanged_tests"],
-                "pulled"
-            );
-            assert_eq!(
-                authority["session_value_sources"]["base_ref"],
-                "initialization"
-            );
-
-            // Discriminating probe: the status request above could still be
-            // answered by a concurrent handler while the transition task is
-            // deadlocked (request concurrency is 4 and the pull state is set
-            // before the refresh). An explicit refresh awaits the full
-            // analysis inline and its publication path must acquire the root
-            // transition guard, so it only completes when the deferred pull
-            // ran after the guard was released.
-            write_lsp_message(
-                &mut client_write,
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": 3,
-                    "method": "workspace/executeCommand",
-                    "params": {
-                        "command": REFRESH_COMMAND,
-                        "arguments": []
-                    }
-                }),
-            )
-            .await?;
-            let refresh = read_lsp_response(&mut client_read, 3).await?;
-            assert!(refresh.get("error").is_none());
-            assert_eq!(refresh["result"], serde_json::Value::Null);
-
-            write_lsp_message(
-                &mut client_write,
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": 4,
-                    "method": "shutdown",
-                    "params": null
-                }),
-            )
-            .await?;
-            let shutdown = read_lsp_response(&mut client_read, 4).await?;
-            assert!(shutdown.get("error").is_none());
-            write_lsp_message(
-                &mut client_write,
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "method": "exit",
-                    "params": null
-                }),
-            )
-            .await?;
-            client_write
-                .shutdown()
-                .await
-                .map_err(|err| format!("failed to close test client: {err}"))?;
-            Ok::<(), String>(())
-        };
-        match tokio::time::timeout(Duration::from_mins(1), exchange).await {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => return Err(error),
-            Err(_) => {
-                return Err(
-                    "deferred configuration pull deadlocked: it was scheduled while the workspace root transition guard was held, and its refresh path re-locks that guard"
-                        .to_string(),
-                );
-            }
-        }
-        // Allow extra drain time under parallel test load (#2567).
-        match tokio::time::timeout(Duration::from_mins(1), &mut server_task).await {
-            Ok(join_result) => {
-                join_result.map_err(|err| format!("LSP server task failed: {err}"))?;
-            }
-            Err(_) => {
-                server_task.abort();
-                return Err("LSP server did not stop after exit notification".to_string());
-            }
-        }
-        Ok(())
-    })
-}
-
-#[test]
-#[serial]
-fn framed_lsp_root_switch_repulls_scoped_to_new_root() -> Result<(), String> {
-    // Regression pin for the root-switch re-pull (#2031 review): pulled
-    // settings are scoped to the root URI, so leaving a selected root in
-    // pull mode must invalidate the old layer (epoch bump) and landing on a
-    // new analysis-capable root must schedule one re-pull scoped to the NEW
-    // root. Drives A -> removed -> B; a single remove+add notification lands
-    // on the RootChanged authority, where analysis (and therefore the pull)
-    // is intentionally paused until re-selection.
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-
-    runtime.block_on(async {
-        let root_a_fixture =
-            boundary_gap_git_fixture_root("framed-config-pull-root-switch-a")?;
-        let root_a = root_a_fixture.path().to_path_buf();
-        let root_a_uri = file_uri_for_path(&root_a)?;
-        let root_b = unique_lsp_test_root("framed-config-pull-root-switch")?;
-        let root_b_uri = file_uri_for_path(root_b.path())?;
-        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
-        let (client_read, mut client_write) = tokio::io::split(client_io);
-        let (server_read, server_write) = tokio::io::split(server_io);
-        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let mut server_task = tokio::spawn(async move {
-            Server::new(server_read, server_write, socket)
-                .serve(service)
-                .await;
-        });
-        let mut client_read = client_read;
-
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "processId": null,
-                    "workspaceFolders": [
-                        {"uri": root_a_uri.as_str(), "name": "root-a"}
-                    ],
-                    "initializationOptions": {
-                        "baseRef": "HEAD",
-                        "checkMode": "instant"
-                    },
-                    "capabilities": {
-                        "workspace": {"configuration": true}
-                    }
-                }
-            }),
-        )
-        .await?;
-        let initialize = read_lsp_response(&mut client_read, 1).await?;
-        assert!(initialize.get("error").is_none());
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "initialized",
-                "params": {}
-            }),
-        )
-        .await?;
-
-        let exchange = async {
-            // First pull, scoped to root A; the answer matches the effective
-            // defaults so the apply is a clean no-op that reaches Applied.
-            let first_pull = read_lsp_request(&mut client_read, "workspace/configuration").await?;
-            assert_eq!(
-                first_pull["params"]["items"],
-                serde_json::json!([{"scopeUri": root_a_uri.as_str(), "section": "ripr"}])
-            );
-            write_lsp_message(
-                &mut client_write,
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": first_pull["id"].clone(),
-                    "result": [{"includeUnchangedTests": true}]
-                }),
-            )
-            .await?;
-            write_lsp_message(
-                &mut client_write,
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": 2,
-                    "method": "workspace/executeCommand",
-                    "params": {
-                        "command": COLLECT_WORKSPACE_STATUS_COMMAND,
-                        "arguments": []
-                    }
-                }),
-            )
-            .await?;
-            let status = read_lsp_response(&mut client_read, 2).await?;
-            assert!(status.get("error").is_none());
-            let authority = &status["result"]["analysis_status"]["input_authority"];
-            assert_eq!(authority["configuration_pull"]["state"], "applied");
-            assert_eq!(authority["configuration_pull"]["epoch"], 0);
-
-            // A -> removed: no analysis-capable root, so no re-pull yet; the
-            // epoch bump invalidates A's layer.
-            write_lsp_message(
-                &mut client_write,
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "method": "workspace/didChangeWorkspaceFolders",
-                    "params": {"event": {"added": [], "removed": []}}
-                }),
-            )
-            .await?;
-            let folders_request =
-                read_lsp_request(&mut client_read, "workspace/workspaceFolders").await?;
-            write_lsp_message(
-                &mut client_write,
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": folders_request["id"].clone(),
-                    "result": []
-                }),
-            )
-            .await?;
-
-            // removed -> B: the Applied pull lifecycle is restartable, so the
-            // server must send a SECOND pull scoped to root B, never root A.
-            write_lsp_message(
-                &mut client_write,
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "method": "workspace/didChangeWorkspaceFolders",
-                    "params": {"event": {"added": [], "removed": []}}
-                }),
-            )
-            .await?;
-            let folders_request =
-                read_lsp_request(&mut client_read, "workspace/workspaceFolders").await?;
-            write_lsp_message(
-                &mut client_write,
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": folders_request["id"].clone(),
-                    "result": [{"uri": root_b_uri.as_str(), "name": "root-b"}]
-                }),
-            )
-            .await?;
-            let second_pull =
-                read_lsp_request(&mut client_read, "workspace/configuration").await?;
-            assert_eq!(
-                second_pull["params"]["items"],
-                serde_json::json!([{"scopeUri": root_b_uri.as_str(), "section": "ripr"}]),
-                "the re-pull must be scoped to the new root B"
-            );
-            write_lsp_message(
-                &mut client_write,
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": second_pull["id"].clone(),
-                    "result": [{"includeUnchangedTests": false, "seamDiagnostics": false}]
-                }),
-            )
-            .await?;
-
-            // The B answer replaces the retained layer wholesale:
-            // seamDiagnostics was absent from A's answer, so a "pulled"
-            // source for it can only come from B's layer.
-            write_lsp_message(
-                &mut client_write,
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": 3,
-                    "method": "workspace/executeCommand",
-                    "params": {
-                        "command": COLLECT_WORKSPACE_STATUS_COMMAND,
-                        "arguments": []
-                    }
-                }),
-            )
-            .await?;
-            let status = read_lsp_response(&mut client_read, 3).await?;
-            assert!(status.get("error").is_none());
-            let authority = &status["result"]["analysis_status"]["input_authority"];
-            assert_eq!(authority["configuration_pull"]["state"], "applied");
-            assert_eq!(authority["configuration_pull"]["epoch"], 1);
-            assert_eq!(
-                authority["session_value_sources"]["include_unchanged_tests"],
-                "pulled"
-            );
-            assert_eq!(
-                authority["session_value_sources"]["seam_diagnostics"],
-                "pulled"
-            );
-
-            write_lsp_message(
-                &mut client_write,
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": 4,
-                    "method": "shutdown",
-                    "params": null
-                }),
-            )
-            .await?;
-            let shutdown = read_lsp_response(&mut client_read, 4).await?;
-            assert!(shutdown.get("error").is_none());
-            write_lsp_message(
-                &mut client_write,
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "method": "exit",
-                    "params": null
-                }),
-            )
-            .await?;
-            client_write
-                .shutdown()
-                .await
-                .map_err(|err| format!("failed to close test client: {err}"))?;
-            Ok::<(), String>(())
-        };
-        match tokio::time::timeout(Duration::from_mins(1), exchange).await {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => return Err(error),
-            Err(_) => {
-                return Err(
-                    "root-switch re-pull did not complete: the server never sent a workspace/configuration request scoped to the new root"
-                        .to_string(),
-                );
-            }
-        }
-        // Allow extra drain time under parallel test load (#2567).
-        match tokio::time::timeout(Duration::from_mins(1), &mut server_task).await {
-            Ok(join_result) => {
-                join_result.map_err(|err| format!("LSP server task failed: {err}"))?;
-            }
-            Err(_) => {
-                server_task.abort();
-                return Err("LSP server did not stop after exit notification".to_string());
-            }
-        }
-        Ok(())
-    })
-}
-
-#[test]
-#[serial]
-fn framed_lsp_direct_root_switch_repulls_on_reselection() -> Result<(), String> {
-    // Regression pin for the direct A -> B root switch (#2031 review): one
-    // didChangeWorkspaceFolders returning [B] rewrites the authority to the
-    // non-analyzable RootChanged state, so NO re-pull may fire at the switch;
-    // the re-pull must fire when the refresh path re-selects B
-    // (refresh_diagnostics' RootChanged + Full branch). Staleness is decided
-    // by comparing the retained layer's scope root against the effective
-    // root, so the re-selection â€” a transition with no root delta â€” still
-    // schedules one pull scoped to B.
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-
-    runtime.block_on(async {
-        let root_a_fixture =
-            boundary_gap_git_fixture_root("framed-config-pull-direct-switch-a")?;
-        let root_a = root_a_fixture.path().to_path_buf();
-        let root_a_uri = file_uri_for_path(&root_a)?;
-        let root_b = unique_lsp_test_root("framed-config-pull-direct-switch")?;
-        let root_b_uri = file_uri_for_path(root_b.path())?;
-        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
-        let (client_read, mut client_write) = tokio::io::split(client_io);
-        let (server_read, server_write) = tokio::io::split(server_io);
-        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let mut server_task = tokio::spawn(async move {
-            Server::new(server_read, server_write, socket)
-                .serve(service)
-                .await;
-        });
-        let mut client_read = client_read;
-
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "processId": null,
-                    "workspaceFolders": [
-                        {"uri": root_a_uri.as_str(), "name": "root-a"}
-                    ],
-                    "initializationOptions": {
-                        "baseRef": "HEAD",
-                        "checkMode": "instant"
-                    },
-                    "capabilities": {
-                        "workspace": {"configuration": true}
-                    }
-                }
-            }),
-        )
-        .await?;
-        let initialize = read_lsp_response(&mut client_read, 1).await?;
-        assert!(initialize.get("error").is_none());
-        write_lsp_message(
-            &mut client_write,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "initialized",
-                "params": {}
-            }),
-        )
-        .await?;
-
-        let exchange = async {
-            // First pull, scoped to root A; the answer matches the effective
-            // defaults so the apply is a clean no-op that reaches Applied.
-            let first_pull = read_lsp_request(&mut client_read, "workspace/configuration").await?;
-            assert_eq!(
-                first_pull["params"]["items"],
-                serde_json::json!([{"scopeUri": root_a_uri.as_str(), "section": "ripr"}])
-            );
-            write_lsp_message(
-                &mut client_write,
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": first_pull["id"].clone(),
-                    "result": [{"includeUnchangedTests": true}]
-                }),
-            )
-            .await?;
-
-            // Completing the client-facing response does not guarantee that
-            // the server has finished applying the pull. Poll the published
-            // state with unique request IDs before starting the root
-            // transition; otherwise the next notification can race the
-            // pull's refresh task under the default parallel workspace load
-            // and make the test report a missing re-pull even though the
-            // route is correct.
-            let status_deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-            let mut status_request_id = 100_u64;
-            let mut observed_states = Vec::new();
-            loop {
-                let remaining = status_deadline.saturating_duration_since(tokio::time::Instant::now());
-                if remaining.is_zero() {
-                    return Err(format!(
-                        "initial configuration pull was not applied before the bounded deadline; observed states: {observed_states:?}"
-                    ));
-                }
-                let request_id = status_request_id;
-                status_request_id += 1;
-                write_lsp_message(
-                    &mut client_write,
-                    serde_json::json!({
-                        "jsonrpc": "2.0",
-                        "id": request_id,
-                        "method": "workspace/executeCommand",
-                        "params": {
-                            "command": COLLECT_WORKSPACE_STATUS_COMMAND,
-                            "arguments": []
-                        }
-                    }),
-                )
-                .await?;
-                let status = tokio::time::timeout(
-                    remaining,
-                    read_lsp_response(&mut client_read, request_id),
-                )
-                .await
-                .map_err(|timeout_error| {
-                    format!(
-                        "initial configuration pull response timed out ({timeout_error}); observed states: {observed_states:?}"
-                    )
-                })??;
-                if status.get("error").is_some() {
-                    return Err(format!(
-                        "initial workspace status request failed: {status}"
-                    ));
-                }
-                let configuration_state = status
-                    .get("result")
-                    .and_then(|result| result.get("analysis_status"))
-                    .and_then(|analysis_status| analysis_status.get("input_authority"))
-                    .and_then(|input_authority| input_authority.get("configuration_pull"))
-                    .and_then(|configuration_pull| configuration_pull.get("state"))
-                    .and_then(serde_json::Value::as_str)
-                    .map_or("<missing>", |value| value);
-                observed_states.push(format!("id {request_id}: {configuration_state}"));
-                if configuration_state == "applied" {
-                    break;
-                }
-                if tokio::time::Instant::now() >= status_deadline {
-                    return Err(format!(
-                        "initial configuration pull was not applied before the bounded deadline; observed states: {observed_states:?}"
-                    ));
-                }
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-
-            // Direct switch A -> B in ONE notification. The authority becomes
-            // RootChanged (non-analyzable), so no re-pull may be scheduled
-            // yet: poll briefly and fail if a configuration request arrives.
-            write_lsp_message(
-                &mut client_write,
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "method": "workspace/didChangeWorkspaceFolders",
-                    "params": {"event": {"added": [], "removed": []}}
-                }),
-            )
-            .await?;
-            let folders_request =
-                read_lsp_request(&mut client_read, "workspace/workspaceFolders").await?;
-            write_lsp_message(
-                &mut client_write,
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": folders_request["id"].clone(),
-                    "result": [{"uri": root_b_uri.as_str(), "name": "root-b"}]
-                }),
-            )
-            .await?;
-            let during_root_changed =
-                read_lsp_messages_for(&mut client_read, Duration::from_millis(200)).await?;
-            if during_root_changed.iter().any(|message| {
-                message.get("method").and_then(serde_json::Value::as_str)
-                    == Some("workspace/configuration")
-            }) {
-                return Err(
-                    "direct root switch scheduled a configuration pull before re-selection"
-                        .to_string(),
-                );
-            }
-
-            // Re-selection trigger: the explicit refresh handler's
-            // RootChanged + Full branch re-selects B, which must schedule
-            // one re-pull scoped to B even though this transition has no
-            // root delta. B needs no git state: the re-selection runs before
-            // any analysis at B.
-            write_lsp_message(
-                &mut client_write,
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": 3,
-                    "method": "workspace/executeCommand",
-                    "params": {
-                        "command": REFRESH_COMMAND,
-                        "arguments": []
-                    }
-                }),
-            )
-            .await?;
-            let second_pull =
-                read_lsp_request(&mut client_read, "workspace/configuration").await?;
-            assert_eq!(
-                second_pull["params"]["items"],
-                serde_json::json!([{"scopeUri": root_b_uri.as_str(), "section": "ripr"}]),
-                "the re-selection re-pull must be scoped to the new root B"
-            );
-            write_lsp_message(
-                &mut client_write,
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": second_pull["id"].clone(),
-                    "result": [{"includeUnchangedTests": false, "seamDiagnostics": false}]
-                }),
-            )
-            .await?;
-            let refresh = read_lsp_response(&mut client_read, 3).await?;
-            assert!(refresh.get("error").is_none());
-
-            // seamDiagnostics was absent from A's answer, so a "pulled"
-            // source for it can only come from B's replacement layer.
-            write_lsp_message(
-                &mut client_write,
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": 4,
-                    "method": "workspace/executeCommand",
-                    "params": {
-                        "command": COLLECT_WORKSPACE_STATUS_COMMAND,
-                        "arguments": []
-                    }
-                }),
-            )
-            .await?;
-            let status = read_lsp_response(&mut client_read, 4).await?;
-            assert!(status.get("error").is_none());
-            let authority = &status["result"]["analysis_status"]["input_authority"];
-            assert_eq!(authority["configuration_pull"]["state"], "applied");
-            assert_eq!(authority["configuration_pull"]["epoch"], 1);
-            assert_eq!(
-                authority["session_value_sources"]["seam_diagnostics"],
-                "pulled"
-            );
-            assert_eq!(
-                authority["session_value_sources"]["include_unchanged_tests"],
-                "pulled"
-            );
-
-            write_lsp_message(
-                &mut client_write,
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": 5,
-                    "method": "shutdown",
-                    "params": null
-                }),
-            )
-            .await?;
-            let shutdown = read_lsp_response(&mut client_read, 5).await?;
-            assert!(shutdown.get("error").is_none());
-            write_lsp_message(
-                &mut client_write,
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "method": "exit",
-                    "params": null
-                }),
-            )
-            .await?;
-            client_write
-                .shutdown()
-                .await
-                .map_err(|err| format!("failed to close test client: {err}"))?;
-            Ok::<(), String>(())
-        };
-        match tokio::time::timeout(Duration::from_mins(1), exchange).await {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => return Err(error),
-            Err(_) => {
-                return Err(
-                    "direct root-switch re-pull did not complete: re-selection never produced a workspace/configuration request scoped to the new root"
-                        .to_string(),
-                );
-            }
-        }
-        // Allow extra drain time under parallel test load (#2567).
-        match tokio::time::timeout(Duration::from_mins(1), &mut server_task).await {
-            Ok(join_result) => {
-                join_result.map_err(|err| format!("LSP server task failed: {err}"))?;
-            }
-            Err(_) => {
-                server_task.abort();
-                return Err("LSP server did not stop after exit notification".to_string());
-            }
-        }
-        Ok(())
-    })
-}
-
-/// Framed duplex harness for the `workspace_folder_transitions` suite
-/// (#2036, RIPR-SPEC-0139). Every `didChangeWorkspaceFolders` event that the
-/// server accepts is followed by exactly one server-originated
-/// `workspace/workspaceFolders` reconciliation request, which this fake
-/// client MUST answer â€” an unanswered server request hangs the test.
-struct WorkspaceFolderTransitionsClient {
-    reader: tokio::io::ReadHalf<tokio::io::DuplexStream>,
-    writer: tokio::io::WriteHalf<tokio::io::DuplexStream>,
-    server_task: tokio::task::JoinHandle<()>,
-    next_id: u64,
-}
-
-impl WorkspaceFolderTransitionsClient {
-    fn spawn() -> Self {
-        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
-        let (client_read, client_write) = tokio::io::split(client_io);
-        let (server_read, server_write) = tokio::io::split(server_io);
-        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let server_task = tokio::spawn(async move {
-            Server::new(server_read, server_write, socket)
-                .serve(service)
-                .await;
-        });
-        Self {
-            reader: client_read,
-            writer: client_write,
-            server_task,
-            next_id: 1,
-        }
-    }
-
-    fn request_id(&mut self) -> u64 {
-        let id = self.next_id;
-        self.next_id += 1;
-        id
-    }
-
-    async fn initialize_with_workspace_folders(
-        &mut self,
-        folders: serde_json::Value,
-    ) -> Result<(), String> {
-        let id = self.request_id();
-        write_lsp_message(
-            &mut self.writer,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "method": "initialize",
-                "params": {
-                    "processId": null,
-                    "workspaceFolders": folders,
-                    "initializationOptions": { "checkMode": "instant" },
-                    "capabilities": {}
-                }
-            }),
-        )
-        .await?;
-        let initialize = read_lsp_response(&mut self.reader, id).await?;
-        if initialize.get("error").is_some() {
-            return Err(format!("initialize failed: {initialize}"));
-        }
-        write_lsp_message(
-            &mut self.writer,
-            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
-        )
-        .await
-    }
-
-    /// Send one `workspace/didChangeWorkspaceFolders` notification and return
-    /// the server's reconciliation request. The caller answers it with
-    /// `answer_workspace_folders`.
-    async fn send_folder_event(
-        &mut self,
-        added: serde_json::Value,
-        removed: serde_json::Value,
-    ) -> Result<serde_json::Value, String> {
-        write_lsp_message(
-            &mut self.writer,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "workspace/didChangeWorkspaceFolders",
-                "params": {"event": {"added": added, "removed": removed}}
-            }),
-        )
-        .await?;
-        read_lsp_request(&mut self.reader, "workspace/workspaceFolders").await
-    }
-
-    async fn answer_workspace_folders(
-        &mut self,
-        request: &serde_json::Value,
-        result: serde_json::Value,
-    ) -> Result<(), String> {
-        write_lsp_message(
-            &mut self.writer,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": request["id"].clone(),
-                "result": result
-            }),
-        )
-        .await
-    }
-
-    async fn run_command(&mut self, command: &str) -> Result<serde_json::Value, String> {
-        let id = self.request_id();
-        write_lsp_message(
-            &mut self.writer,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "method": "workspace/executeCommand",
-                "params": {"command": command, "arguments": []}
-            }),
-        )
-        .await?;
-        let response = read_lsp_response(&mut self.reader, id).await?;
-        if response.get("error").is_some() {
-            return Err(format!("command {command} failed: {response}"));
-        }
-        Ok(response["result"].clone())
-    }
-
-    async fn workspace_status(&mut self) -> Result<serde_json::Value, String> {
-        let result = self.run_command(COLLECT_WORKSPACE_STATUS_COMMAND).await?;
-        Ok(result["analysis_status"].clone())
-    }
-
-    /// Poll the workspace status until the predicate holds. Folder events
-    /// are processed concurrently with command requests, so a plain status
-    /// read could observe the pre-transition state; the bounded poll is the
-    /// synchronization point for transitions that publish no request.
-    async fn poll_workspace_status_until(
-        &mut self,
-        description: &str,
-        predicate: impl Fn(&serde_json::Value) -> bool,
-    ) -> Result<serde_json::Value, String> {
-        let mut last = serde_json::Value::Null;
-        for _ in 0..40 {
-            last = self.workspace_status().await?;
-            if predicate(&last) {
-                return Ok(last);
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-        Err(format!(
-            "workspace status never satisfied {description}; last status: {last}"
-        ))
-    }
-
-    async fn finish(&mut self) -> Result<(), String> {
-        let id = self.request_id();
-        write_lsp_message(
-            &mut self.writer,
-            serde_json::json!({"jsonrpc": "2.0", "id": id, "method": "shutdown", "params": null}),
-        )
-        .await?;
-        let shutdown = read_lsp_response(&mut self.reader, id).await?;
-        if shutdown.get("error").is_some() {
-            return Err(format!("shutdown failed: {shutdown}"));
-        }
-        write_lsp_message(
-            &mut self.writer,
-            serde_json::json!({"jsonrpc": "2.0", "method": "exit", "params": null}),
-        )
-        .await?;
-        self.writer
-            .shutdown()
-            .await
-            .map_err(|err| format!("failed to close test client: {err}"))?;
-        match tokio::time::timeout(Duration::from_secs(2), &mut self.server_task).await {
-            Ok(join_result) => {
-                join_result.map_err(|err| format!("LSP server task failed: {err}"))?;
-            }
-            Err(_) => {
-                self.server_task.abort();
-                return Err("LSP server did not stop after exit notification".to_string());
-            }
-        }
-        Ok(())
-    }
-}
-
-fn run_workspace_folder_transitions_exchange<Fut>(
-    failure: &str,
-    exchange: Fut,
-) -> Result<(), String>
-where
-    Fut: std::future::Future<Output = Result<(), String>>,
-{
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        match tokio::time::timeout(Duration::from_secs(15), exchange).await {
-            Ok(result) => result,
-            Err(_) => Err(failure.to_string()),
-        }
-    })
-}
-
-fn workspace_folder_json(uri: &tower_lsp_server::ls_types::Uri) -> serde_json::Value {
-    serde_json::json!({"uri": uri.as_str(), "name": "folder"})
-}
-
-fn status_root_state(status: &serde_json::Value) -> Option<&str> {
-    status["root_state"].as_str()
-}
-
-fn status_candidate_roots(status: &serde_json::Value) -> Vec<String> {
-    status["candidate_roots"]
-        .as_array()
-        .map(|roots| {
-            roots
-                .iter()
-                .filter_map(|root| root.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-#[test]
-fn workspace_folder_transitions_first_folder_after_none_starts_single_fresh_transition()
--> Result<(), String> {
-    // Issue fixture 1: no folders -> add one. The first valid folder after a
-    // no-workspace state creates one fresh transition: the stored set gains
-    // one entry, the authority selects it, and no duplicate analysis runs.
-    run_workspace_folder_transitions_exchange(
-        "first-folder-after-none transition did not complete",
-        async {
-            let root_a = unique_lsp_test_root("wft-first-folder-a")?;
-            let root_a_uri = file_uri_for_path(root_a.path())?;
-            let root_a_path = server_path_text(root_a.path());
-            let mut client = WorkspaceFolderTransitionsClient::spawn();
-            client
-                .initialize_with_workspace_folders(serde_json::json!([]))
-                .await?;
-            let status = client.workspace_status().await?;
-            if status_root_state(&status) != Some("root_unavailable") {
-                return Err(format!(
-                    "an empty folder list must start unavailable: {status}"
-                ));
-            }
-
-            let request = client
-                .send_folder_event(
-                    serde_json::json!([workspace_folder_json(&root_a_uri)]),
-                    serde_json::json!([]),
-                )
-                .await?;
-            client
-                .answer_workspace_folders(
-                    &request,
-                    serde_json::json!([workspace_folder_json(&root_a_uri)]),
-                )
-                .await?;
-
-            // Collect the transition publish plus a 300ms drain: exactly one
-            // transition to the selected root, no duplicate analysis, and no
-            // further server-originated requests.
-            let id = client.request_id();
-            write_lsp_message(
-                &mut client.writer,
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "method": "workspace/executeCommand",
-                    "params": {"command": COLLECT_WORKSPACE_STATUS_COMMAND, "arguments": []}
-                }),
-            )
-            .await?;
-            let (response, notifications) =
-                read_response_and_notifications(&mut client.reader, id).await?;
-            let status = &response["result"]["analysis_status"];
-            if status_root_state(status) != Some("selected_single_root")
-                || status["effective_root"].as_str() != Some(root_a_path.as_str())
-            {
-                return Err(format!("the first folder must be selected: {status}"));
-            }
-            let mut transition_publishes = 0_u32;
-            for message in &notifications {
-                if message.get("method").and_then(serde_json::Value::as_str)
-                    == Some("ripr/analysisStatus")
-                {
-                    let params = &message["params"];
-                    if params["root_state"].as_str() != Some("selected_single_root")
-                        || params["effective_root"].as_str() != Some(root_a_path.as_str())
-                    {
-                        return Err(format!(
-                            "a second, divergent transition published: {params}"
-                        ));
-                    }
-                    transition_publishes += 1;
-                }
-                if message.get("id").is_some() && message.get("method").is_some() {
-                    return Err(format!(
-                        "unexpected server-originated request after the transition: {message}"
-                    ));
-                }
-                if message.get("method").and_then(serde_json::Value::as_str)
-                    == Some("textDocument/publishDiagnostics")
-                {
-                    return Err("no analysis may publish diagnostics here".to_string());
-                }
-            }
-            if transition_publishes == 0 {
-                return Err("the first-folder transition must publish a status".to_string());
-            }
-            client.finish().await
-        },
-    )
-}
-
-#[test]
-fn workspace_folder_transitions_second_folder_becomes_ambiguous_without_fallback()
--> Result<(), String> {
-    // Issue fixture 2: one folder -> add second. The workspace becomes
-    // ambiguous; the server never silently falls back to the first folder.
-    run_workspace_folder_transitions_exchange(
-        "second-folder ambiguity transition did not complete",
-        async {
-            let root_a = unique_lsp_test_root("wft-ambiguous-a")?;
-            let root_b = unique_lsp_test_root("wft-ambiguous-b")?;
-            let root_a_uri = file_uri_for_path(root_a.path())?;
-            let root_b_uri = file_uri_for_path(root_b.path())?;
-            let root_a_path = server_path_text(root_a.path());
-            let root_b_path = server_path_text(root_b.path());
-            let mut client = WorkspaceFolderTransitionsClient::spawn();
-            client
-                .initialize_with_workspace_folders(serde_json::json!([workspace_folder_json(
-                    &root_a_uri
-                )]))
-                .await?;
-            let status = client.workspace_status().await?;
-            if status_root_state(&status) != Some("selected_single_root") {
-                return Err(format!("one folder must start selected: {status}"));
-            }
-
-            let request = client
-                .send_folder_event(
-                    serde_json::json!([workspace_folder_json(&root_b_uri)]),
-                    serde_json::json!([]),
-                )
-                .await?;
-            client
-                .answer_workspace_folders(
-                    &request,
-                    serde_json::json!([
-                        workspace_folder_json(&root_a_uri),
-                        workspace_folder_json(&root_b_uri)
-                    ]),
-                )
-                .await?;
-            let status = client
-                .poll_workspace_status_until("workspace_ambiguous", |status| {
-                    status_root_state(status) == Some("workspace_ambiguous")
-                })
-                .await?;
-            if !status["effective_root"].is_null() {
-                return Err(format!(
-                    "an ambiguous workspace must not select the first folder: {status}"
-                ));
-            }
-            if status_candidate_roots(&status) != vec![root_a_path, root_b_path] {
-                return Err(format!(
-                    "candidates must be the canonical sorted folder set: {status}"
-                ));
-            }
-            if status["repair_actions_available"].as_bool() != Some(false) {
-                return Err(format!(
-                    "an ambiguous workspace must block repair authority: {status}"
-                ));
-            }
-            client.finish().await
-        },
-    )
-}
-
-#[test]
-fn workspace_folder_transitions_ambiguous_resolves_to_remaining_folder_on_removal()
--> Result<(), String> {
-    // Issue fixture 3: ambiguous -> the client narrows the set to one root
-    // by removing the other folder; the remaining folder is selected.
-    run_workspace_folder_transitions_exchange(
-        "ambiguous-to-selected transition did not complete",
-        async {
-            let root_a = unique_lsp_test_root("wft-resolve-a")?;
-            let root_b = unique_lsp_test_root("wft-resolve-b")?;
-            let root_a_uri = file_uri_for_path(root_a.path())?;
-            let root_b_uri = file_uri_for_path(root_b.path())?;
-            let root_a_path = server_path_text(root_a.path());
-            let mut client = WorkspaceFolderTransitionsClient::spawn();
-            client
-                .initialize_with_workspace_folders(serde_json::json!([
-                    workspace_folder_json(&root_a_uri),
-                    workspace_folder_json(&root_b_uri)
-                ]))
-                .await?;
-            let status = client.workspace_status().await?;
-            if status_root_state(&status) != Some("workspace_ambiguous") {
-                return Err(format!("two folders must start ambiguous: {status}"));
-            }
-
-            let request = client
-                .send_folder_event(
-                    serde_json::json!([]),
-                    serde_json::json!([workspace_folder_json(&root_b_uri)]),
-                )
-                .await?;
-            client
-                .answer_workspace_folders(
-                    &request,
-                    serde_json::json!([workspace_folder_json(&root_a_uri)]),
-                )
-                .await?;
-            let status = client
-                .poll_workspace_status_until("selected_single_root", |status| {
-                    status_root_state(status) == Some("selected_single_root")
-                })
-                .await?;
-            if status["effective_root"].as_str() != Some(root_a_path.as_str()) {
-                return Err(format!(
-                    "the remaining folder must be selected after the removal: {status}"
-                ));
-            }
-            client.finish().await
-        },
-    )
-}
-
-#[test]
-fn workspace_folder_transitions_direct_switch_lands_on_root_changed() -> Result<(), String> {
-    // Issue fixture 4: switch from A to B in one event. The authority lands
-    // on the non-analyzable root_changed state; an explicit refresh owns the
-    // re-selection, exactly as in the query-driven direct-switch pin.
-    run_workspace_folder_transitions_exchange("direct root switch did not complete", async {
-        let root_a = unique_lsp_test_root("wft-switch-a")?;
-        let root_b = unique_lsp_test_root("wft-switch-b")?;
-        let root_a_uri = file_uri_for_path(root_a.path())?;
-        let root_b_uri = file_uri_for_path(root_b.path())?;
-        let root_b_path = server_path_text(root_b.path());
-        let mut client = WorkspaceFolderTransitionsClient::spawn();
-        client
-            .initialize_with_workspace_folders(serde_json::json!([workspace_folder_json(
-                &root_a_uri
-            )]))
-            .await?;
-
-        let request = client
-            .send_folder_event(
-                serde_json::json!([workspace_folder_json(&root_b_uri)]),
-                serde_json::json!([workspace_folder_json(&root_a_uri)]),
-            )
-            .await?;
-        client
-            .answer_workspace_folders(
-                &request,
-                serde_json::json!([workspace_folder_json(&root_b_uri)]),
-            )
-            .await?;
-        let status = client
-            .poll_workspace_status_until("root_changed", |status| {
-                status_root_state(status) == Some("root_changed")
-            })
-            .await?;
-        if status["effective_root"].as_str() != Some(root_b_path.as_str()) {
-            return Err(format!(
-                "root_changed must carry the new root as the current root: {status}"
-            ));
-        }
-        if status["root_recovery_route"].as_str() != Some("refresh") {
-            return Err(format!("root_changed must route to refresh: {status}"));
-        }
-        if status["repair_actions_available"].as_bool() != Some(false) {
-            return Err(format!(
-                "root_changed must block repair authority: {status}"
-            ));
-        }
-        client.finish().await
-    })
-}
-
-#[test]
-fn workspace_folder_transitions_remove_active_root_quarantines_repair_authority()
--> Result<(), String> {
-    // Issue fixture 5: remove the active root. The transition clears the
-    // analysis state and quarantines repair authority behind the typed
-    // workspace_root_removed block reason.
-    run_workspace_folder_transitions_exchange("active-root removal did not complete", async {
-        let root_a = unique_lsp_test_root("wft-removal-a")?;
-        let root_a_uri = file_uri_for_path(root_a.path())?;
-        let mut client = WorkspaceFolderTransitionsClient::spawn();
-        client
-            .initialize_with_workspace_folders(serde_json::json!([workspace_folder_json(
-                &root_a_uri
-            )]))
-            .await?;
-
-        let request = client
-            .send_folder_event(
-                serde_json::json!([]),
-                serde_json::json!([workspace_folder_json(&root_a_uri)]),
-            )
-            .await?;
-        client
-            .answer_workspace_folders(&request, serde_json::json!([]))
-            .await?;
-        let status = client
-            .poll_workspace_status_until("root_removed", |status| {
-                status_root_state(status) == Some("root_removed")
-            })
-            .await?;
-        if !status["effective_root"].is_null()
-            || status["repair_actions_available"].as_bool() != Some(false)
-        {
-            return Err(format!(
-                "removing the active root must clear the root and repair authority: {status}"
-            ));
-        }
-        let receipt = client.run_command(COLLECT_RECEIPT_STATUS_COMMAND).await?;
-        if receipt["missing_receipt_reason"].as_str() != Some("workspace_root_removed")
-            || receipt["receipt_status"].as_str() != Some("not_available")
-        {
-            return Err(format!(
-                "repair authority must stay quarantined behind workspace_root_removed: {receipt}"
-            ));
-        }
-        client.finish().await
-    })
-}
-
-#[test]
-fn workspace_folder_transitions_non_active_folder_removal_keeps_ambiguous_selection()
--> Result<(), String> {
-    // Issue fixture 6: removing a non-active folder from an ambiguous set
-    // changes only the candidate list; no root is selected or removed.
-    run_workspace_folder_transitions_exchange("non-active folder removal did not complete", async {
-        let root_a = unique_lsp_test_root("wft-nonactive-a")?;
-        let root_b = unique_lsp_test_root("wft-nonactive-b")?;
-        let root_c = unique_lsp_test_root("wft-nonactive-c")?;
-        let root_a_uri = file_uri_for_path(root_a.path())?;
-        let root_b_uri = file_uri_for_path(root_b.path())?;
-        let root_c_uri = file_uri_for_path(root_c.path())?;
-        let root_a_path = server_path_text(root_a.path());
-        let root_b_path = server_path_text(root_b.path());
-        let mut client = WorkspaceFolderTransitionsClient::spawn();
-        client
-            .initialize_with_workspace_folders(serde_json::json!([
-                workspace_folder_json(&root_a_uri),
-                workspace_folder_json(&root_b_uri),
-                workspace_folder_json(&root_c_uri)
-            ]))
-            .await?;
-
-        let request = client
-            .send_folder_event(
-                serde_json::json!([]),
-                serde_json::json!([workspace_folder_json(&root_c_uri)]),
-            )
-            .await?;
-        client
-            .answer_workspace_folders(
-                &request,
-                serde_json::json!([
-                    workspace_folder_json(&root_a_uri),
-                    workspace_folder_json(&root_b_uri)
-                ]),
-            )
-            .await?;
-        let status = client
-            .poll_workspace_status_until("two remaining candidates", |status| {
-                status_root_state(status) == Some("workspace_ambiguous")
-                    && status_candidate_roots(status).len() == 2
-            })
-            .await?;
-        if status_candidate_roots(&status) != vec![root_a_path, root_b_path]
-            || !status["effective_root"].is_null()
-        {
-            return Err(format!(
-                "removing a non-active folder must only narrow the candidate list: {status}"
-            ));
-        }
-        client.finish().await
-    })
-}
-
-#[test]
-fn workspace_folder_transitions_duplicate_and_contradictory_events_rejected_typed()
--> Result<(), String> {
-    // Issue fixture 7: duplicate and contradictory entries are rejected with
-    // a typed bounded status; the stored set is left unchanged, which the
-    // follow-up valid events prove.
-    run_workspace_folder_transitions_exchange("typed rejection flow did not complete", async {
-        let root_a = unique_lsp_test_root("wft-reject-a")?;
-        let root_b = unique_lsp_test_root("wft-reject-b")?;
-        let root_c = unique_lsp_test_root("wft-reject-c")?;
-        let root_a_uri = file_uri_for_path(root_a.path())?;
-        let root_b_uri = file_uri_for_path(root_b.path())?;
-        let root_c_uri = file_uri_for_path(root_c.path())?;
-        let root_a_path = server_path_text(root_a.path());
-        let root_b_path = server_path_text(root_b.path());
-        let mut client = WorkspaceFolderTransitionsClient::spawn();
-        client
-            .initialize_with_workspace_folders(serde_json::json!([workspace_folder_json(
-                &root_a_uri
-            )]))
-            .await?;
-
-        // Duplicate addition of the stored folder: rejected. A rejected
-        // event sends no reconciliation request, so the poll is the
-        // synchronization point.
-        write_lsp_message(
-            &mut client.writer,
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "workspace/didChangeWorkspaceFolders",
-                "params": {"event": {"added": [workspace_folder_json(&root_a_uri)], "removed": []}}
-            }),
-        )
-        .await?;
-        let status = client
-            .poll_workspace_status_until("duplicate_addition rejection", |status| {
-                status_root_state(status) == Some("root_unavailable")
-                    && status["root_detail"]
-                        .as_str()
-                        .is_some_and(|detail| detail.contains("duplicate_addition"))
-            })
-            .await?;
-        if status["root_detail"]
-            .as_str()
-            .is_none_or(|detail| !detail.contains("rejected (duplicate_addition)"))
-        {
-            return Err(format!("the rejection must be typed and bounded: {status}"));
-        }
-
-        // The set still holds exactly {A}: adding B now yields the
-        // ambiguous set {A, B}.
-        let request = client
-            .send_folder_event(
-                serde_json::json!([workspace_folder_json(&root_b_uri)]),
-                serde_json::json!([]),
-            )
-            .await?;
-        client
-            .answer_workspace_folders(
-                &request,
-                serde_json::json!([
-                    workspace_folder_json(&root_a_uri),
-                    workspace_folder_json(&root_b_uri)
-                ]),
-            )
-            .await?;
-        let status = client
-            .poll_workspace_status_until("ambiguous after valid add", |status| {
-                status_root_state(status) == Some("workspace_ambiguous")
-            })
-            .await?;
-        if status_candidate_roots(&status) != vec![root_a_path.clone(), root_b_path.clone()] {
-            return Err(format!(
-                "a rejected event must not have mutated the stored set: {status}"
-            ));
-        }
-
-        // Contradictory event (C in both added and removed): rejected.
-        write_lsp_message(
-                &mut client.writer,
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "method": "workspace/didChangeWorkspaceFolders",
-                    "params": {"event": {"added": [workspace_folder_json(&root_c_uri)], "removed": [workspace_folder_json(&root_c_uri)]}}
-                }),
-            )
-            .await?;
-        client
-            .poll_workspace_status_until("contradictory_event rejection", |status| {
-                status_root_state(status) == Some("root_unavailable")
-                    && status["root_detail"]
-                        .as_str()
-                        .is_some_and(|detail| detail.contains("contradictory_event"))
-            })
-            .await?;
-
-        // The set is still {A, B}: removing B selects A, and C never
-        // entered the set.
-        let request = client
-            .send_folder_event(
-                serde_json::json!([]),
-                serde_json::json!([workspace_folder_json(&root_b_uri)]),
-            )
-            .await?;
-        client
-            .answer_workspace_folders(
-                &request,
-                serde_json::json!([workspace_folder_json(&root_a_uri)]),
-            )
-            .await?;
-        let status = client
-            .poll_workspace_status_until("selected after contradictory rejection", |status| {
-                status_root_state(status) == Some("selected_single_root")
-            })
-            .await?;
-        if status["effective_root"].as_str() != Some(root_a_path.as_str()) {
-            return Err(format!(
-                "the contradictory event must not have entered the set: {status}"
-            ));
-        }
-        client.finish().await
-    })
-}
-
-#[test]
-fn workspace_folder_transitions_invalid_file_uri_event_rejected_typed() -> Result<(), String> {
-    // Issue fixture 8: a non-file URI in the delta is rejected with a typed
-    // bounded status; the stored set is left unchanged.
-    run_workspace_folder_transitions_exchange(
-        "invalid-uri rejection flow did not complete",
-        async {
-            let root_a = unique_lsp_test_root("wft-invalid-a")?;
-            let root_b = unique_lsp_test_root("wft-invalid-b")?;
-            let root_a_uri = file_uri_for_path(root_a.path())?;
-            let root_b_uri = file_uri_for_path(root_b.path())?;
-            let root_a_path = server_path_text(root_a.path());
-            let root_b_path = server_path_text(root_b.path());
-            let mut client = WorkspaceFolderTransitionsClient::spawn();
-            client
-                .initialize_with_workspace_folders(serde_json::json!([workspace_folder_json(
-                    &root_a_uri
-                )]))
-                .await?;
-
-            write_lsp_message(
-                &mut client.writer,
-                serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "method": "workspace/didChangeWorkspaceFolders",
-                    "params": {"event": {"added": [{"uri": "https://example.test/workspace", "name": "remote"}], "removed": []}}
-                }),
-            )
-            .await?;
-            client
-                .poll_workspace_status_until("invalid_file_uri rejection", |status| {
-                    status_root_state(status) == Some("root_unavailable")
-                        && status["root_detail"]
-                            .as_str()
-                            .is_some_and(|detail| detail.contains("invalid_file_uri"))
-                })
-                .await?;
-
-            // The set still holds exactly {A}: adding B yields {A, B}.
-            let request = client
-                .send_folder_event(
-                    serde_json::json!([workspace_folder_json(&root_b_uri)]),
-                    serde_json::json!([]),
-                )
-                .await?;
-            client
-                .answer_workspace_folders(
-                    &request,
-                    serde_json::json!([
-                        workspace_folder_json(&root_a_uri),
-                        workspace_folder_json(&root_b_uri)
-                    ]),
-                )
-                .await?;
-            let status = client
-                .poll_workspace_status_until("ambiguous after invalid-uri rejection", |status| {
-                    status_root_state(status) == Some("workspace_ambiguous")
-                })
-                .await?;
-            if status_candidate_roots(&status) != vec![root_a_path, root_b_path] {
-                return Err(format!(
-                    "the invalid-uri event must not have mutated the stored set: {status}"
-                ));
-            }
-            client.finish().await
-        },
-    )
-}
-
-#[test]
-fn workspace_folder_transitions_stale_reconciliation_response_is_dropped() -> Result<(), String> {
-    // Issue fixtures 9 and 10: event A's reconciliation round-trip completes
-    // only after event B was applied from its own delta. The stale response
-    // must be dropped â€” the authority stays at B's outcome and the epoch
-    // never regresses.
-    run_workspace_folder_transitions_exchange("stale-reconciliation flow did not complete", async {
-        let root_a = unique_lsp_test_root("wft-stale-a")?;
-        let root_b = unique_lsp_test_root("wft-stale-b")?;
-        let root_a_uri = file_uri_for_path(root_a.path())?;
-        let root_b_uri = file_uri_for_path(root_b.path())?;
-        let root_a_path = server_path_text(root_a.path());
-        let mut client = WorkspaceFolderTransitionsClient::spawn();
-        client
-            .initialize_with_workspace_folders(serde_json::json!([workspace_folder_json(
-                &root_a_uri
-            )]))
-            .await?;
-
-        // Event A adds B; its reconciliation request stays unanswered.
-        let request_a = client
-            .send_folder_event(
-                serde_json::json!([workspace_folder_json(&root_b_uri)]),
-                serde_json::json!([]),
-            )
-            .await?;
-        // Event B removes B; reading its reconciliation request proves
-        // event B's delta was applied to the stored set.
-        let request_b = client
-            .send_folder_event(
-                serde_json::json!([]),
-                serde_json::json!([workspace_folder_json(&root_b_uri)]),
-            )
-            .await?;
-        // The stale A-era answer claims the folder list is only [B]. If
-        // it were applied, the authority would switch to B
-        // (root_changed); the epoch guard must drop it instead.
-        client
-            .answer_workspace_folders(
-                &request_a,
-                serde_json::json!([workspace_folder_json(&root_b_uri)]),
-            )
-            .await?;
-        let during = read_lsp_messages_for(&mut client.reader, Duration::from_millis(300)).await?;
-        if let Some(message) = during.first() {
-            return Err(format!(
-                "the stale reconciliation response must be dropped without any publication: {message}"
-            ));
-        }
-        // Event B's own round-trip confirms the stored set {A}.
-        client
-            .answer_workspace_folders(
-                &request_b,
-                serde_json::json!([workspace_folder_json(&root_a_uri)]),
-            )
-            .await?;
-        let status = client.workspace_status().await?;
-        if status_root_state(&status) != Some("selected_single_root")
-            || status["effective_root"].as_str() != Some(root_a_path.as_str())
-        {
-            return Err(format!(
-                "the newer event's outcome must survive the stale response: {status}"
-            ));
-        }
-        client.finish().await
-    })
-}
-
-#[test]
-fn workspace_folder_transitions_lagging_contradictory_reconciliation_is_dropped()
--> Result<(), String> {
-    // Review fixture (#2036 review): an accepted delta changes the set, then
-    // the reconciliation answer is the lagging PRE-delta list. The answer
-    // contradicts the stored set and must be dropped without mutating: the
-    // authority keeps the delta-derived state. A consistent answer confirms
-    // the same way.
-    run_workspace_folder_transitions_exchange(
-        "lagging-reconciliation flow did not complete",
-        async {
-            let root_a = unique_lsp_test_root("wft-lagging-a")?;
-            let root_b = unique_lsp_test_root("wft-lagging-b")?;
-            let root_c = unique_lsp_test_root("wft-lagging-c")?;
-            let root_a_uri = file_uri_for_path(root_a.path())?;
-            let root_b_uri = file_uri_for_path(root_b.path())?;
-            let root_c_uri = file_uri_for_path(root_c.path())?;
-            let root_a_path = server_path_text(root_a.path());
-            let root_b_path = server_path_text(root_b.path());
-            let root_c_path = server_path_text(root_c.path());
-            let mut client = WorkspaceFolderTransitionsClient::spawn();
-            client
-                .initialize_with_workspace_folders(serde_json::json!([workspace_folder_json(
-                    &root_a_uri
-                )]))
-                .await?;
-
-            // Accepted delta: add B (stored set {A, B}). The lagging answer
-            // claims the list is still only [A]; installing it would undo
-            // the delta, so it must be dropped and the delta-derived
-            // ambiguous authority applied.
-            let request = client
-                .send_folder_event(
-                    serde_json::json!([workspace_folder_json(&root_b_uri)]),
-                    serde_json::json!([]),
-                )
-                .await?;
-            client
-                .answer_workspace_folders(
-                    &request,
-                    serde_json::json!([workspace_folder_json(&root_a_uri)]),
-                )
-                .await?;
-            let status = client
-                .poll_workspace_status_until("delta-derived ambiguity survives", |status| {
-                    status_root_state(status) == Some("workspace_ambiguous")
-                })
-                .await?;
-            if status_candidate_roots(&status) != vec![root_a_path.clone(), root_b_path.clone()] {
-                return Err(format!(
-                    "the lagging contradictory answer must not undo the accepted delta: {status}"
-                ));
-            }
-
-            // A consistent answer confirms the accepted delta the same way.
-            let request = client
-                .send_folder_event(
-                    serde_json::json!([workspace_folder_json(&root_c_uri)]),
-                    serde_json::json!([]),
-                )
-                .await?;
-            client
-                .answer_workspace_folders(
-                    &request,
-                    serde_json::json!([
-                        workspace_folder_json(&root_a_uri),
-                        workspace_folder_json(&root_b_uri),
-                        workspace_folder_json(&root_c_uri)
-                    ]),
-                )
-                .await?;
-            let status = client
-                .poll_workspace_status_until("consistent confirmation", |status| {
-                    status_root_state(status) == Some("workspace_ambiguous")
-                        && status_candidate_roots(status).len() == 3
-                })
-                .await?;
-            if status_candidate_roots(&status) != vec![root_a_path, root_b_path, root_c_path] {
-                return Err(format!(
-                    "the consistent answer must confirm the accepted delta: {status}"
-                ));
-            }
-            client.finish().await
-        },
-    )
-}
-
-#[test]
-fn workspace_folder_transitions_equivalent_set_different_order_is_noop() -> Result<(), String> {
-    // Issue fixture 11: an equivalent folder set in a different order is
-    // byte-identical after canonicalization â€” no epoch bump, no transition,
-    // no status publish, and the initialize-order authority is untouched.
-    run_workspace_folder_transitions_exchange("equivalent-set no-op flow did not complete", async {
-        let root_a = unique_lsp_test_root("wft-reorder-a")?;
-        let root_b = unique_lsp_test_root("wft-reorder-b")?;
-        let root_a_uri = file_uri_for_path(root_a.path())?;
-        let root_b_uri = file_uri_for_path(root_b.path())?;
-        let root_a_path = server_path_text(root_a.path());
-        let root_b_path = server_path_text(root_b.path());
-        let mut client = WorkspaceFolderTransitionsClient::spawn();
-        client
-            .initialize_with_workspace_folders(serde_json::json!([
-                workspace_folder_json(&root_b_uri),
-                workspace_folder_json(&root_a_uri)
-            ]))
-            .await?;
-        let status = client.workspace_status().await?;
-        if status_root_state(&status) != Some("workspace_ambiguous")
-            || status_candidate_roots(&status) != vec![root_b_path.clone(), root_a_path.clone()]
-        {
-            return Err(format!(
-                "initialize must keep the client folder order for candidates: {status}"
-            ));
-        }
-
-        let request = client
-            .send_folder_event(serde_json::json!([]), serde_json::json!([]))
-            .await?;
-        client
-            .answer_workspace_folders(
-                &request,
-                serde_json::json!([
-                    workspace_folder_json(&root_a_uri),
-                    workspace_folder_json(&root_b_uri)
-                ]),
-            )
-            .await?;
-        let during = read_lsp_messages_for(&mut client.reader, Duration::from_millis(250)).await?;
-        if let Some(message) = during.first() {
-            return Err(format!(
-                "an equivalent set in a different order must not publish or request: {message}"
-            ));
-        }
-        let status = client.workspace_status().await?;
-        if status_root_state(&status) != Some("workspace_ambiguous")
-            || status_candidate_roots(&status) != vec![root_b_path, root_a_path]
-        {
-            return Err(format!(
-                "the equivalent reconciliation must leave the authority untouched: {status}"
-            ));
-        }
-        client.finish().await
-    })
-}
-
-#[test]
-fn workspace_folder_transitions_shutdown_during_inflight_reconciliation_stops_cleanly()
--> Result<(), String> {
-    // Issue fixture 12: shutdown while a reconciliation round-trip is still
-    // in flight. The server must stop cleanly: the shutdown request is
-    // handled concurrently with the pending round-trip, and the late answer
-    // lands in a session that is already stopping, with no observable
-    // effect.
-    run_workspace_folder_transitions_exchange(
-        "shutdown during transition did not complete",
-        async {
-            let root_a = unique_lsp_test_root("wft-shutdown-a")?;
-            let root_b = unique_lsp_test_root("wft-shutdown-b")?;
-            let root_a_uri = file_uri_for_path(root_a.path())?;
-            let root_b_uri = file_uri_for_path(root_b.path())?;
-            let mut client = WorkspaceFolderTransitionsClient::spawn();
-            client
-                .initialize_with_workspace_folders(serde_json::json!([workspace_folder_json(
-                    &root_a_uri
-                )]))
-                .await?;
-            let pending_request = client
-                .send_folder_event(
-                    serde_json::json!([workspace_folder_json(&root_b_uri)]),
-                    serde_json::json!([]),
-                )
-                .await?;
-            // Shutdown while the reconciliation request is unanswered.
-            let id = client.request_id();
-            write_lsp_message(
-                &mut client.writer,
-                serde_json::json!({"jsonrpc": "2.0", "id": id, "method": "shutdown", "params": null}),
-            )
-            .await?;
-            let shutdown = read_lsp_response(&mut client.reader, id).await?;
-            if shutdown.get("error").is_some() {
-                return Err(format!("shutdown failed: {shutdown}"));
-            }
-            // The protocol requires answering every server request; the late
-            // answer must not prevent a clean stop.
-            client
-                .answer_workspace_folders(
-                    &pending_request,
-                    serde_json::json!([
-                        workspace_folder_json(&root_a_uri),
-                        workspace_folder_json(&root_b_uri)
-                    ]),
-                )
-                .await?;
-            write_lsp_message(
-                &mut client.writer,
-                serde_json::json!({"jsonrpc": "2.0", "method": "exit", "params": null}),
-            )
-            .await?;
-            client
-                .writer
-                .shutdown()
-                .await
-                .map_err(|err| format!("failed to close test client: {err}"))?;
-            match tokio::time::timeout(Duration::from_secs(2), &mut client.server_task).await {
-                Ok(join_result) => {
-                    join_result.map_err(|err| format!("LSP server task failed: {err}"))?;
-                }
-                Err(_) => {
-                    client.server_task.abort();
-                    return Err(
-                        "LSP server did not stop after exit during an in-flight transition"
-                            .to_string(),
-                    );
-                }
-            }
-            Ok(())
-        },
-    )
-}
-
-#[test]
-fn backend_starts_with_default_lsp_analysis_config() -> Result<(), String> {
-    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-    let backend = service.inner();
-
-    let Some(config) = backend.analysis_config() else {
-        return Err("expected backend analysis config".to_string());
-    };
-
-    assert_eq!(config.base_ref.as_deref(), Some("origin/main"));
-    assert_eq!(config.mode, Mode::Draft);
-    assert!(config.include_unchanged_tests);
-    assert!(config.enable_seam_diagnostics);
-    Ok(())
-}
-
-#[test]
-fn workspace_diagnostic_batches_uses_default_lsp_analysis_config() {
-    let missing_root = Path::new("target/ripr/definitely-missing-lsp-root");
-
-    assert!(workspace_diagnostic_batches(missing_root).is_err());
-}
-
-#[test]
-fn workspace_diagnostics_exclude_changed_test_files_from_published_findings() -> Result<(), String>
-{
-    let root = unique_lsp_test_root("changed-test-scope")?;
-    write_lsp_scope_fixture(&root.path)?;
-    run_lsp_scope_git(&root.path, &["init"])?;
-    run_lsp_scope_git(
-        &root.path,
-        &["config", "user.email", "ripr@example.invalid"],
-    )?;
-    run_lsp_scope_git(&root.path, &["config", "user.name", "RIPR Test"])?;
-    run_lsp_scope_git(
-        &root.path,
-        &["add", "Cargo.toml", "src/lib.rs", "tests/end_to_end.rs"],
-    )?;
-    run_lsp_scope_git(&root.path, &["commit", "-m", "base"])?;
-
-    fs::write(
-        root.path.join("src/lib.rs"),
-        "pub fn gate_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
-    )
-    .map_err(|err| format!("write changed production fixture failed: {err}"))?;
-    fs::write(
-        root.path.join("tests/end_to_end.rs"),
-        "#[test]\nfn changed_test_helper() {\n    let value = if true { true } else { false };\n    assert_eq!(value, true);\n}\n",
-    )
-    .map_err(|err| format!("write changed test fixture failed: {err}"))?;
-    run_lsp_scope_git(&root.path, &["add", "src/lib.rs", "tests/end_to_end.rs"])?;
-    run_lsp_scope_git(&root.path, &["commit", "-m", "change production and test"])?;
-
-    let config = LspAnalysisConfig {
-        base_ref: Some("HEAD~1".to_string()),
-        mode: Mode::Instant,
-        diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
-        ..LspAnalysisConfig::default()
-    };
-    let diagnostics = workspace_diagnostics_with_config(&root.path, &config, false)?;
-    let test_uri = super::uri::file_uri_for_path(&root.path.join("tests/end_to_end.rs"))?;
-    let production_uri = super::uri::file_uri_for_path(&root.path.join("src/lib.rs"))?;
-
-    let test_diagnostic_count = diagnostics
-        .batches
-        .iter()
-        .find(|batch| batch.uri == test_uri)
-        .map(|batch| batch.diagnostics.len())
-        .unwrap_or(0);
-    if test_diagnostic_count != 0 {
-        return Err(format!(
-            "changed test-only file received {test_diagnostic_count} LSP diagnostics"
-        ));
-    }
-    if !diagnostics
-        .batches
-        .iter()
-        .any(|batch| batch.uri == production_uri && !batch.diagnostics.is_empty())
-    {
-        return Err("changed production file received no LSP diagnostics".to_string());
-    }
-    Ok(())
-}
-
-#[test]
-fn workspace_diagnostics_include_saved_tracked_edits_and_exclude_untracked_files()
--> Result<(), String> {
-    let fixture = boundary_gap_git_fixture_root("saved-tracked-worktree")?;
-    let root = fixture.path();
-    let config = boundary_gap_lsp_config(crate::config::RiprConfig::default());
-    let lib_path = root.join("src/lib.rs");
-    let baseline = std::fs::read_to_string(&lib_path)
-        .map_err(|err| format!("read saved-worktree fixture failed: {err}"))?;
-    let edited = baseline.replace(">=", ">");
-    if edited == baseline {
-        return Err("saved-worktree fixture no longer carries the equality boundary".to_string());
-    }
-    std::fs::write(&lib_path, edited)
-        .map_err(|err| format!("write unstaged tracked edit failed: {err}"))?;
-    let untracked_path = root.join("src/untracked.rs");
-    std::fs::write(
-        &untracked_path,
-        "pub fn untracked_boundary(left: i32, right: i32) -> bool { left >= right }\n",
-    )
-    .map_err(|err| format!("write untracked fixture failed: {err}"))?;
-
-    let interactive = workspace_diagnostics_with_config(root, &config, true)?;
-    let tracked_count = lsp_test_scope_diagnostic_count(&interactive, root, "src/lib.rs")?;
-    if tracked_count == 0 {
-        return Err(
-            "unstaged tracked equality-boundary edit received no LSP diagnostics".to_string(),
-        );
-    }
-    if !interactive
-        .snapshot
-        .findings
-        .iter()
-        .any(|finding| finding.probe.location.file.ends_with("src/lib.rs"))
-    {
-        return Err("unstaged tracked edit produced no diff-scoped finding".to_string());
-    }
-    assert!(
-        interactive.snapshot.seams_deferred,
-        "interactive saved-state analysis must keep seam inventory deferred"
-    );
-    let untracked_uri = file_uri_for_path(&untracked_path)?;
-    if interactive
-        .batches
-        .iter()
-        .any(|batch| batch.uri == untracked_uri)
-    {
-        return Err("untracked file entered the saved-worktree LSP authority".to_string());
-    }
-
-    run_lsp_scope_git(root, &["add", "src/lib.rs"])?;
-    let staged = workspace_diagnostics_with_config(root, &config, true)?;
-    let staged_count = lsp_test_scope_diagnostic_count(&staged, root, "src/lib.rs")?;
-    if staged_count == 0 {
-        return Err(
-            "staged tracked equality-boundary edit received no LSP diagnostics".to_string(),
-        );
-    }
-    assert!(
-        staged.snapshot.seams_deferred,
-        "staged proof must not pass through full seam-inventory fallback"
-    );
-    if !staged
-        .snapshot
-        .findings
-        .iter()
-        .any(|finding| finding.probe.location.file.ends_with("src/lib.rs"))
-    {
-        return Err("staged tracked edit produced no diff-scoped finding".to_string());
-    }
-    if staged
-        .snapshot
-        .findings
-        .iter()
-        .any(|finding| finding.probe.location.file.ends_with("src/untracked.rs"))
-    {
-        return Err("untracked file entered the staged worktree diff authority".to_string());
-    }
-
-    let untracked_only = boundary_gap_git_fixture_root("untracked-only-worktree")?;
-    let untracked_only_root = untracked_only.path();
-    let untracked_only_path = untracked_only_root.join("src/untracked.rs");
-    std::fs::write(
-        &untracked_only_path,
-        "pub fn untracked_boundary(left: i32, right: i32) -> bool { left >= right }\n",
-    )
-    .map_err(|err| format!("write untracked-only fixture failed: {err}"))?;
-    let negative = workspace_diagnostics_with_config(untracked_only_root, &config, true)?;
-    if !negative.snapshot.findings.is_empty() {
-        return Err(format!(
-            "untracked-only workspace produced diff-scoped findings: {:?}",
-            negative.snapshot.findings
-        ));
-    }
-    let untracked_only_uri = file_uri_for_path(&untracked_only_path)?;
-    if negative
-        .batches
-        .iter()
-        .any(|batch| batch.uri == untracked_only_uri)
-    {
-        return Err("untracked-only source entered LSP diagnostics".to_string());
-    }
-    Ok(())
-}
-
-#[test]
-fn boundary_gap_workspace_diagnostics_include_live_seam_diagnostic() -> Result<(), String> {
-    let fixture = boundary_gap_git_fixture_root("workspace-diagnostics")?;
-    let fixture_root = fixture.path();
-    let config = boundary_gap_lsp_config(crate::config::RiprConfig::default());
-
-    let batches = workspace_diagnostic_batches_with_config(fixture_root, &config)?;
-    let seam_diagnostic = batches
-        .iter()
-        .flat_map(|batch| &batch.diagnostics)
-        .any(|diagnostic| {
-            diagnostic.source.as_deref() == Some("ripr")
-                && diagnostic
-                    .code
-                    .as_ref()
-                    .map(diagnostic_code_value)
-                    .as_deref()
-                    == Some("ripr-seam-weakly-gripped")
-        });
-
-    assert!(
-        seam_diagnostic,
-        "expected boundary_gap live workspace diagnostics to include ripr-seam-weakly-gripped"
-    );
-    Ok(())
-}
-
-fn write_lsp_scope_fixture(root: &Path) -> Result<(), String> {
-    fs::create_dir_all(root.join("src"))
-        .map_err(|err| format!("create fixture src failed: {err}"))?;
-    fs::create_dir_all(root.join("tests"))
-        .map_err(|err| format!("create fixture tests failed: {err}"))?;
-    fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"lsp-scope\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
-    )
-    .map_err(|err| format!("write fixture manifest failed: {err}"))?;
-    fs::write(
-        root.join("src/lib.rs"),
-        "pub fn gate_state(flag: bool) -> bool { flag }\n",
-    )
-    .map_err(|err| format!("write fixture production file failed: {err}"))?;
-    fs::write(
-        root.join("tests/end_to_end.rs"),
-        "#[test]\nfn unchanged_test_helper() {\n    assert_eq!(true, true);\n}\n",
-    )
-    .map_err(|err| format!("write fixture test file failed: {err}"))
-}
-
-fn lsp_scope_git_output(root: &Path, args: &[&str]) -> Result<std::process::Output, String> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(root)
-        .output()
-        .map_err(|err| format!("run git {args:?} failed: {err}"))?;
-    Ok(output)
-}
-
-pub(crate) fn run_lsp_scope_git(root: &Path, args: &[&str]) -> Result<(), String> {
-    let output = lsp_scope_git_output(root, args)?;
-    if output.status.success() {
-        return Ok(());
-    }
-    Err(format!(
-        "git {args:?} failed: {}",
-        String::from_utf8_lossy(&output.stderr).trim()
-    ))
-}
-
-#[test]
-fn boundary_gap_lsp_explicit_rust_language_matches_default_projection() -> Result<(), String> {
-    let fixture = boundary_gap_git_fixture_root("explicit-rust-language")?;
-    let fixture_root = fixture.path();
-    let default_config = boundary_gap_lsp_config(crate::config::RiprConfig::default());
-    let rust_only_config = boundary_gap_lsp_config(crate::config::tests_only_parse(
-        r#"
-[languages]
-enabled = ["rust"]
-"#,
-    )?);
-
-    let default_projection = workspace_projection_contract(fixture_root, &default_config)?;
-    let rust_only_projection = workspace_projection_contract(fixture_root, &rust_only_config)?;
-
-    assert_eq!(
-        rust_only_projection, default_projection,
-        "explicit [languages] enabled = [\"rust\"] must preserve the saved-workspace Rust editor diagnostics, hover, actions, and status projection"
-    );
-    Ok(())
-}
-
-#[test]
-fn boundary_gap_lsp_empty_languages_suppresses_saved_workspace_diagnostics() -> Result<(), String> {
-    let fixture = boundary_gap_git_fixture_root("empty-languages")?;
-    let fixture_root = fixture.path();
-    let config = boundary_gap_lsp_config(crate::config::tests_only_parse(
-        r#"
-[languages]
-enabled = []
-"#,
-    )?);
-
-    let diagnostics = workspace_diagnostics_with_config(fixture_root, &config, false)?;
-    let diagnostic_count = diagnostics
-        .batches
-        .iter()
-        .map(|batch| batch.diagnostics.len())
-        .sum::<usize>();
-
-    assert_eq!(
-        diagnostic_count, 0,
-        "empty [languages] must publish no saved-workspace diagnostics"
-    );
-    assert!(
-        diagnostics.snapshot.findings.is_empty(),
-        "empty [languages] must not retain finding diagnostics in the LSP snapshot"
-    );
-    assert!(
-        diagnostics.snapshot.classified_seams.is_empty(),
-        "empty [languages] must not retain seam diagnostics in the LSP snapshot"
-    );
-    let summary = RefreshLogSummary::from_snapshot(1, &diagnostics.snapshot)
-        .with_enabled_languages(config.repo_config().languages().enabled());
-    let message = refresh_completed_log_message(&summary, 0, 1);
-    assert!(
-        message.contains("enabled_languages=0"),
-        "empty [languages] refresh message must explain the language-disabled projection state"
-    );
-    assert!(
-        message.contains("enabled_language_names="),
-        "empty [languages] refresh message must include an empty language-name field"
-    );
-    Ok(())
-}
-
-/// Base fixture for the test-file scoping tests (#2130): one production file,
-/// one `src/tests.rs` helper (a path the diff probe seeder does not skip but
-/// the shared production classifier excludes), and one `tests/` integration
-/// test file.
-fn write_lsp_test_scope_fixture(root: &Path) -> Result<(), String> {
-    std::fs::create_dir_all(root.join("src"))
-        .map_err(|err| format!("create fixture src failed: {err}"))?;
-    std::fs::create_dir_all(root.join("tests"))
-        .map_err(|err| format!("create fixture tests failed: {err}"))?;
-    std::fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"lsp-test-scope\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
-    )
-    .map_err(|err| format!("write fixture manifest failed: {err}"))?;
-    std::fs::write(
-        root.join("src/lib.rs"),
-        "pub fn gate_state(flag: bool) -> bool { flag }\n",
-    )
-    .map_err(|err| format!("write fixture production file failed: {err}"))?;
-    std::fs::write(
-        root.join("src/tests.rs"),
-        "pub fn helper_state(flag: bool) -> bool { flag }\n",
-    )
-    .map_err(|err| format!("write fixture src/tests.rs failed: {err}"))?;
-    std::fs::write(
-        root.join("tests/end_to_end.rs"),
-        "#[test]\nfn end_to_end_placeholder() {\n    assert_eq!(true, true);\n}\n",
-    )
-    .map_err(|err| format!("write fixture tests/end_to_end.rs failed: {err}"))
-}
-
-fn run_lsp_test_scope_git(root: &Path, args: &[&str]) -> Result<(), String> {
-    let output = std::process::Command::new("git")
-        .args(args)
-        .current_dir(root)
-        .output()
-        .map_err(|err| format!("run git {args:?} failed: {err}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "git {args:?} failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    Ok(())
-}
-
-fn init_lsp_test_scope_repo(root: &Path) -> Result<(), String> {
-    write_lsp_test_scope_fixture(root)?;
-    run_lsp_test_scope_git(root, &["init"])?;
-    run_lsp_test_scope_git(root, &["config", "user.email", "ripr@example.invalid"])?;
-    run_lsp_test_scope_git(root, &["config", "user.name", "RIPR Test"])?;
-    // Do not inherit commit.gpgSign from the host environment: a
-    // signing-enabled host would fail the fixture commits before the
-    // scoping assertions ever run (#2158 review).
-    run_lsp_test_scope_git(root, &["config", "commit.gpgSign", "false"])?;
-    run_lsp_test_scope_git(root, &["add", "."])?;
-    run_lsp_test_scope_git(root, &["commit", "-m", "base"])
-}
-
-fn commit_lsp_test_scope_change(root: &Path, message: &str) -> Result<(), String> {
-    run_lsp_test_scope_git(root, &["add", "."])?;
-    run_lsp_test_scope_git(root, &["commit", "-m", message])
-}
-
-fn lsp_test_scope_config() -> LspAnalysisConfig {
-    LspAnalysisConfig {
-        base_ref: Some("HEAD~1".to_string()),
-        mode: Mode::Instant,
-        diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
-        ..LspAnalysisConfig::default()
-    }
-}
-
-fn lsp_test_scope_diagnostic_count(
-    diagnostics: &WorkspaceDiagnostics,
-    root: &Path,
-    relative: &str,
-) -> Result<usize, String> {
-    let uri = file_uri_for_path(&root.join(relative))?;
-    Ok(diagnostics
-        .batches
-        .iter()
-        .find(|batch| batch.uri == uri)
-        .map(|batch| batch.diagnostics.len())
-        .unwrap_or(0))
-}
-
-#[test]
-fn workspace_diagnostics_scope_changed_test_file_findings_out_of_projection() -> Result<(), String>
-{
-    let root = unique_lsp_test_root("lsp-test-file-scope-mixed")?;
-    init_lsp_test_scope_repo(root.path())?;
-    std::fs::write(
-        root.path().join("src/lib.rs"),
-        "pub fn gate_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
-    )
-    .map_err(|err| format!("write changed production file failed: {err}"))?;
-    std::fs::create_dir_all(root.path().join("examples/demo/src"))
-        .map_err(|err| format!("create examples dir failed: {err}"))?;
-    std::fs::write(
-        root.path().join("examples/demo/src/lib.rs"),
-        "pub fn helper_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
-    )
-    .map_err(|err| format!("write changed examples/demo/src/lib.rs failed: {err}"))?;
-    std::fs::write(
-        root.path().join("tests/end_to_end.rs"),
-        "#[test]\nfn end_to_end_changed() {\n    let value = if true { 1 } else { 2 };\n    assert_eq!(value, 1);\n}\n",
-    )
-    .map_err(|err| format!("write changed tests/end_to_end.rs failed: {err}"))?;
-    commit_lsp_test_scope_change(root.path(), "change production and test files")?;
-
-    let diagnostics =
-        workspace_diagnostics_with_config(root.path(), &lsp_test_scope_config(), true)?;
-
-    let production_count =
-        lsp_test_scope_diagnostic_count(&diagnostics, root.path(), "src/lib.rs")?;
-    if production_count == 0 {
-        return Err("changed production file received no LSP diagnostics".to_string());
-    }
-    // #3285: the partition consumes the same source-role model as seeding,
-    // so a nested-src example (a production subject â€” the declared
-    // divergence) KEEPS its editor projection instead of being dropped.
-    let nested_example_count =
-        lsp_test_scope_diagnostic_count(&diagnostics, root.path(), "examples/demo/src/lib.rs")?;
-    if nested_example_count == 0 {
-        return Err(
-            "a nested-src example is a production subject and must keep its editor projection"
-                .to_string(),
-        );
-    }
-    let test_only_count =
-        lsp_test_scope_diagnostic_count(&diagnostics, root.path(), "tests/end_to_end.rs")?;
-    if test_only_count != 0 {
-        return Err(format!(
-            "evidence-role test file received {test_only_count} line-local LSP diagnostics"
-        ));
-    }
-    if diagnostics.snapshot.out_of_scope_test_file_findings != 0 {
-        return Err(format!(
-            "a converged partition suppresses nothing the seeding model already excluded: {}",
-            diagnostics.snapshot.out_of_scope_test_file_findings
-        ));
-    }
-    Ok(())
-}
-
-#[test]
-fn workspace_diagnostics_test_only_diff_publishes_no_line_local_diagnostics() -> Result<(), String>
-{
-    let root = unique_lsp_test_root("lsp-test-file-scope-test-only")?;
-    init_lsp_test_scope_repo(root.path())?;
-    std::fs::create_dir_all(root.path().join("examples"))
-        .map_err(|err| format!("create examples dir failed: {err}"))?;
-    std::fs::write(
-        root.path().join("examples/demo.rs"),
-        "fn main() {\n    let value = if true { 1 } else { 2 };\n    println!(\"{value}\");\n}\n",
-    )
-    .map_err(|err| format!("write changed examples/demo.rs failed: {err}"))?;
-    std::fs::write(
-        root.path().join("tests/end_to_end.rs"),
-        "#[test]\nfn end_to_end_changed() {\n    let value = if true { 1 } else { 2 };\n    assert_eq!(value, 1);\n}\n",
-    )
-    .map_err(|err| format!("write changed tests/end_to_end.rs failed: {err}"))?;
-    commit_lsp_test_scope_change(root.path(), "change test files only")?;
-
-    let diagnostics =
-        workspace_diagnostics_with_config(root.path(), &lsp_test_scope_config(), true)?;
-
-    let total = diagnostics
-        .batches
-        .iter()
-        .map(|batch| batch.diagnostics.len())
-        .sum::<usize>();
-    if total != 0 {
-        return Err(format!(
-            "test-only diff published {total} line-local diagnostics; expected zero"
-        ));
-    }
-    if !diagnostics.snapshot.findings.is_empty() {
-        return Err("test-only diff findings must be scoped out of the LSP snapshot".to_string());
-    }
-    if diagnostics.snapshot.out_of_scope_test_file_findings != 0 {
-        return Err(format!(
-            "seeding already excludes evidence role; the converged partition suppresses nothing: {}",
-            diagnostics.snapshot.out_of_scope_test_file_findings
-        ));
-    }
-    Ok(())
-}
-
-#[test]
-fn workspace_diagnostics_production_only_diff_keeps_full_projection() -> Result<(), String> {
-    let root = unique_lsp_test_root("lsp-test-file-scope-production")?;
-    init_lsp_test_scope_repo(root.path())?;
-    std::fs::write(
-        root.path().join("src/lib.rs"),
-        "pub fn gate_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
-    )
-    .map_err(|err| format!("write changed production file failed: {err}"))?;
-    commit_lsp_test_scope_change(root.path(), "change production file only")?;
-
-    let diagnostics =
-        workspace_diagnostics_with_config(root.path(), &lsp_test_scope_config(), true)?;
-
-    let production_count =
-        lsp_test_scope_diagnostic_count(&diagnostics, root.path(), "src/lib.rs")?;
-    if production_count == 0 {
-        return Err("changed production file received no LSP diagnostics".to_string());
-    }
-    assert_eq!(
-        diagnostics.snapshot.out_of_scope_test_file_findings, 0,
-        "production-only diff must not report suppressed test-file findings"
-    );
-    Ok(())
-}
-
-#[test]
-fn file_uri_to_path_decodes_spaces_and_windows_drive_prefix() -> Result<(), String> {
-    let uri = test_uri(&format!("file:///{}{}", "C%3A", "/path/to/ripr%20repo"))?;
-
-    let Some(path) = path_from_file_uri(&uri) else {
-        return Err("expected path from file URI".to_string());
-    };
-
-    assert_eq!(
-        path,
-        PathBuf::from(format!("{}{}", "C:", "/path/to/ripr repo"))
-    );
-    Ok(())
-}
-
-#[test]
-fn file_uri_to_path_returns_none_for_non_file_scheme() -> Result<(), String> {
-    let uri = test_uri("https://example.com/workspace/src/lib.rs")?;
-
-    assert!(path_from_file_uri(&uri).is_none());
-    Ok(())
-}
-
-#[test]
-fn file_uri_to_path_decodes_uppercase_hex_escape() -> Result<(), String> {
-    let uri = test_uri("file:///workspace/src%2Dlib.rs")?;
-
-    let Some(path) = path_from_file_uri(&uri) else {
-        return Err("expected path from file URI".to_string());
-    };
-    assert_eq!(path, PathBuf::from("/workspace/src-lib.rs"));
-    Ok(())
-}
-
-#[test]
-fn file_uri_to_path_normalizes_backslash_separators() -> Result<(), String> {
-    let drive = "C";
-    let uri = test_uri(&format!("file:///{drive}:%5Cworkspace%5Csrc%5Clib.rs"))?;
-
-    let Some(path) = path_from_file_uri(&uri) else {
-        return Err("expected path from file URI".to_string());
-    };
-    assert_eq!(
-        path,
-        PathBuf::from(format!("{drive}:/workspace/src/lib.rs"))
-    );
-    Ok(())
-}
-
-#[test]
-fn file_uri_for_path_uses_valid_encoded_file_uri() -> Result<(), String> {
-    let uri = file_uri_for_path(&PathBuf::from("src lib.rs"))?;
-
-    assert_eq!(uri.as_str(), "file:///src%20lib.rs");
-    Ok(())
-}
-
-#[test]
-fn uri_path_encoding_preserves_path_syntax_and_escapes_spaces() {
-    assert_eq!(
-        encode_uri_path("workspace/src lib.rs"),
-        "workspace/src%20lib.rs"
-    );
-}
-
-#[test]
-fn file_uri_match_decodes_equivalent_file_paths() -> Result<(), String> {
-    let encoded_uri = test_uri("file:///workspace/src%2Dlib.rs")?;
-    let plain_uri = test_uri("file:///workspace/src-lib.rs")?;
-
-    assert!(file_uris_match(&encoded_uri, &plain_uri));
-    Ok(())
-}
-
-#[test]
-fn file_uri_match_treats_windows_drive_paths_case_insensitively() -> Result<(), String> {
-    let drive = "C";
-    let stored_uri = test_uri(&format!("file:///{drive}:/Workspace/Src/lib.rs"))?;
-    let queried_uri = test_uri(&format!(
-        "file:///{drive}:/workspace/src/lib.rs",
-        drive = drive.to_ascii_lowercase()
-    ))?;
-
-    assert!(file_uris_match(&stored_uri, &queried_uri));
-    Ok(())
-}
-
-#[test]
-fn file_uri_match_rejects_non_file_and_distinct_paths() -> Result<(), String> {
-    let file_uri = test_uri("file:///workspace/src/lib.rs")?;
-    let other_file_uri = test_uri("file:///workspace/src/other.rs")?;
-    let non_file_uri = test_uri("https://example.com/workspace/src/lib.rs")?;
-
-    assert!(!file_uris_match(&file_uri, &other_file_uri));
-    assert!(!file_uris_match(&non_file_uri, &file_uri));
-    assert!(!file_uris_match(&file_uri, &non_file_uri));
-    Ok(())
-}
-
-#[test]
-fn diagnostics_for_uri_matches_windows_drive_case_variants() -> Result<(), String> {
-    let drive = "H";
-    let root = format!("{drive}:/workspace");
-    let stored_uri = test_uri(&format!("file:///{drive}:/workspace/src/pricing.rs"))?;
-    let queried_uri = test_uri(&format!(
-        "file:///{drive}:/workspace/src/pricing.rs",
-        drive = drive.to_ascii_lowercase()
-    ))?;
-    let finding = sample_finding();
-    let diagnostic = diagnostic_for_finding(Path::new(&root), &finding);
-    let snapshot = sample_analysis_snapshot(
-        PathBuf::from(root),
-        stored_uri,
-        vec![diagnostic],
-        vec![finding],
-    );
-
-    let Some(diagnostics) = snapshot.diagnostics_for_uri(&queried_uri) else {
-        return Err("expected diagnostics for URI with lowercase drive letter".to_string());
-    };
-
-    assert_eq!(diagnostics.len(), 1);
-    Ok(())
-}
-
-fn test_uri(uri: &str) -> Result<tower_lsp_server::ls_types::Uri, String> {
-    uri.parse::<tower_lsp_server::ls_types::Uri>()
-        .map_err(|err| format!("failed to parse test URI: {err}"))
-}
-
-async fn write_lsp_message<W>(writer: &mut W, message: serde_json::Value) -> Result<(), String>
-where
-    W: AsyncWrite + Unpin,
-{
-    let body = serde_json::to_vec(&message)
-        .map_err(|err| format!("failed to encode LSP message: {err}"))?;
-    let header = format!("Content-Length: {}\r\n\r\n", body.len());
-    writer
-        .write_all(header.as_bytes())
-        .await
-        .map_err(|err| format!("failed to write LSP header: {err}"))?;
-    writer
-        .write_all(&body)
-        .await
-        .map_err(|err| format!("failed to write LSP body: {err}"))?;
-    writer
-        .flush()
-        .await
-        .map_err(|err| format!("failed to flush LSP message: {err}"))
-}
-
-async fn read_lsp_response<R>(reader: &mut R, id: u64) -> Result<serde_json::Value, String>
-where
-    R: AsyncRead + Unpin,
-{
-    loop {
-        let message = read_lsp_message(reader).await?;
-        if message.get("id").and_then(serde_json::Value::as_u64) == Some(id) {
-            return Ok(message);
-        }
-    }
-}
-
-async fn read_lsp_response_with_notifications<R>(
-    reader: &mut R,
-    id: u64,
-) -> Result<(serde_json::Value, Vec<serde_json::Value>), String>
-where
-    R: AsyncRead + Unpin,
-{
-    let mut notifications = Vec::new();
-    loop {
-        let message = read_lsp_message(reader).await?;
-        if message.get("id").and_then(serde_json::Value::as_u64) == Some(id) {
-            return Ok((message, notifications));
-        }
-        notifications.push(message);
-    }
-}
-
-/// Read until a server-originated request with the given method arrives,
-/// skipping notifications. Used by configuration-pull tests where the fake
-/// client must answer `workspace/configuration` (#2031).
-async fn read_lsp_request<R>(reader: &mut R, method: &str) -> Result<serde_json::Value, String>
-where
-    R: AsyncRead + Unpin,
-{
-    loop {
-        let message = read_lsp_message(reader).await?;
-        if message.get("method").and_then(serde_json::Value::as_str) == Some(method) {
-            return Ok(message);
-        }
-    }
-}
-
-/// Read until the response for `id` arrives, answering every
-/// `workspace/codeLens/refresh` server-originated request with a null result
-/// so the publish path cannot stall (#2032, RIPR-SPEC-0138). Returns the
-/// response plus how many refresh requests arrived before it. The publish
-/// path awaits the refresh request before completing the command response,
-/// so the count needs no timing window.
-async fn read_response_answering_code_lens_refresh<R, W>(
-    reader: &mut R,
-    writer: &mut W,
-    id: u64,
-) -> Result<(serde_json::Value, u64), String>
-where
-    R: AsyncRead + Unpin,
-    W: AsyncWrite + Unpin,
-{
-    let mut refresh_requests = 0_u64;
-    loop {
-        let message = read_lsp_message(reader).await?;
-        if message.get("method").and_then(serde_json::Value::as_str)
-            == Some("workspace/codeLens/refresh")
-        {
-            refresh_requests += 1;
-            let request_id = message
-                .get("id")
-                .cloned()
-                .ok_or_else(|| "workspace/codeLens/refresh request carried no id".to_string())?;
-            write_lsp_message(
-                writer,
-                serde_json::json!({"jsonrpc": "2.0", "id": request_id, "result": null}),
-            )
-            .await?;
-            continue;
-        }
-        if message.get("method").is_none()
-            && message.get("id").and_then(serde_json::Value::as_u64) == Some(id)
-        {
-            return Ok((message, refresh_requests));
-        }
-    }
-}
-
-/// Collect every message arriving within `window`, then return. Used to
-/// assert the ABSENCE of a server-originated request without hanging: the
-/// bounded window doubles as the poll budget.
-async fn read_lsp_messages_for<R>(
-    reader: &mut R,
-    window: Duration,
-) -> Result<Vec<serde_json::Value>, String>
-where
-    R: AsyncRead + Unpin,
-{
-    let deadline = tokio::time::Instant::now() + window;
-    let mut messages = Vec::new();
-    loop {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
-            return Ok(messages);
-        }
-        match tokio::time::timeout(remaining, read_lsp_message(reader)).await {
-            Ok(Ok(message)) => messages.push(message),
-            Ok(Err(err)) => return Err(err),
-            Err(_) => return Ok(messages),
-        }
-    }
-}
-
-fn log_notification_messages(messages: &[serde_json::Value]) -> Vec<String> {
-    messages
-        .iter()
-        .filter(|message| {
-            message.get("method").and_then(serde_json::Value::as_str) == Some("window/logMessage")
-        })
-        .filter_map(|message| {
-            message
-                .get("params")
-                .and_then(|params| params.get("message"))
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string)
-        })
-        .collect()
-}
-
-async fn read_lsp_message<R>(reader: &mut R) -> Result<serde_json::Value, String>
-where
-    R: AsyncRead + Unpin,
-{
-    let mut header = Vec::new();
-    loop {
-        let mut byte = [0_u8; 1];
-        reader
-            .read_exact(&mut byte)
-            .await
-            .map_err(|err| format!("failed to read LSP header: {err}"))?;
-        header.push(byte[0]);
-        if header.ends_with(b"\r\n\r\n") {
-            break;
-        }
-    }
-    let header =
-        std::str::from_utf8(&header).map_err(|err| format!("invalid LSP header UTF-8: {err}"))?;
-    let content_length = header
-        .lines()
-        .find_map(|line| line.strip_prefix("Content-Length: "))
-        .ok_or_else(|| "missing LSP Content-Length header".to_string())?
-        .parse::<usize>()
-        .map_err(|err| format!("invalid LSP Content-Length header: {err}"))?;
-    let mut body = vec![0_u8; content_length];
-    reader
-        .read_exact(&mut body)
-        .await
-        .map_err(|err| format!("failed to read LSP body: {err}"))?;
-    serde_json::from_slice(&body).map_err(|err| format!("failed to decode LSP message: {err}"))
-}
-
-fn gap_action_diagnostic() -> tower_lsp_server::ls_types::Diagnostic {
-    tower_lsp_server::ls_types::Diagnostic {
-        range: Range {
-            start: Position {
-                line: 11,
-                character: 0,
-            },
-            end: Position {
-                line: 11,
-                character: 120,
-            },
-        },
-        severity: Some(DiagnosticSeverity::WARNING),
-        code: Some(NumberOrString::String(
-            "ripr-gap-MissingBoundaryAssertion".to_string(),
-        )),
-        code_description: None,
-        source: Some("ripr".to_string()),
-        message: "ripr gap: MissingBoundaryAssertion; repair route: AddBoundaryAssertion"
-            .to_string(),
-        related_information: None,
-        tags: None,
-        data: Some(serde_json::json!({
-            "schema_version": "0.1",
-            "source": "gap_decision_ledger",
-            "gap_ledger": "target/ripr/reports/gap-decision-ledger.json",
-            "gap_id": "gap:py:pricing",
-            "canonical_gap_id": "gap:py:pricing",
-            "gap_kind": "MissingBoundaryAssertion",
-            "language": "python",
-            "language_status": "preview",
-            "gap_state": "actionable",
-            "policy_state": "advisory",
-            "repairability": "repairable",
-            "static_limit_kind": "missing_import_graph",
-            "static_limit_detail": "Imported owner targets were not resolved in preview mode.",
-            "anchor": {
-                "file": "src/pricing.py",
-                "line": 12,
-                "owner": "python:app/pricing.py::calculate_discount"
-            },
-            "repair_route": {
-                "route_kind": "AddBoundaryAssertion",
-                "target_file": "tests/test_pricing.py",
-                "target_line": 2,
-                "related_test": "tests/test_pricing.py::test_discount_boundary",
-                "missing_discriminator": "price(threshold) == expected",
-                "assertion_shape": "assert price(threshold) == expected",
-                "changed_behavior": "amount >= threshold",
-                "stop_conditions": ["Stop if the related test belongs to another package."]
-            },
-            "verification_commands": ["ripr agent verify --root . --json"],
-            "receipt_command": "ripr agent receipt --root . --json",
-            "authority_boundary": "advisory"
-        })),
-    }
-}
-
-fn validated_gap_artifact() -> ValidatedGapArtifact {
-    ValidatedGapArtifact {
-        kind: GapArtifactKind::GapDecisionLedger,
-        root: Some(".".to_string()),
-        identities: vec![GapArtifactIdentity {
-            canonical_gap_id: Some("gap:py:pricing".to_string()),
-            seam_id: None,
-            finding_id: None,
-        }],
-        language: Some(LanguageId::Python),
-        language_status: Some(LanguageStatus::Preview),
-        gap_state: Some("actionable".to_string()),
-        related_paths: vec!["tests/test_pricing.py".to_string()],
-        verify_commands: vec!["ripr agent verify --root . --json".to_string()],
-        receipt_commands: vec!["ripr agent receipt --root . --json".to_string()],
-        verify_command_specs: vec![crate::agent::command_specs::agent_verify_command_spec(
-            ".",
-            "before.json",
-            "after.json",
-            None,
-        )],
-        receipt_command_specs: vec![crate::agent::command_specs::agent_receipt_command_spec(
-            ".",
-            "verify.json",
-            "seam-a",
-            Some("receipt.json"),
-        )],
-        static_limit_kinds: vec!["missing_import_graph".to_string()],
-        has_text_static_limit: false,
-    }
-}
-
-fn sample_analysis_snapshot(
-    root: PathBuf,
-    uri: tower_lsp_server::ls_types::Uri,
-    diagnostics: Vec<tower_lsp_server::ls_types::Diagnostic>,
-    findings: Vec<Finding>,
-) -> AnalysisSnapshot {
-    let mut diagnostics_by_uri = BTreeMap::new();
-    diagnostics_by_uri.insert(uri, diagnostics);
-    let input_identity = LspAnalysisInputIdentity::from_refresh_inputs(
-        root.clone(),
-        1,
-        &LspAnalysisConfig::default(),
-    );
-    AnalysisSnapshot {
-        root,
-        input_identity: Some(input_identity),
-        base: Some("origin/main".to_string()),
-        mode: Mode::Draft,
-        refresh: RefreshMetadata::generated_now(),
-        findings,
-        analysis_outcome: None,
-        diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
-        classified_seams: Vec::new(),
-        gap_artifacts: Vec::new(),
-        gap_artifact_rejections: Vec::new(),
-        diagnostics_by_uri,
-        delivery_selection: None,
-        seams_deferred: false,
-        partial_scope: None,
-        component_outcomes: Vec::new(),
-        out_of_scope_test_file_findings: 0,
-    }
-}
-
-fn sample_workspace_diagnostics(
-    root: PathBuf,
-    uri: tower_lsp_server::ls_types::Uri,
-    diagnostics: Vec<tower_lsp_server::ls_types::Diagnostic>,
-    findings: Vec<Finding>,
-) -> WorkspaceDiagnostics {
-    let snapshot = sample_analysis_snapshot(root, uri.clone(), diagnostics.clone(), findings);
-    WorkspaceDiagnostics {
-        snapshot,
-        batches: vec![DiagnosticBatch { uri, diagnostics }],
-    }
-}
-
-fn code_action_params(
-    diagnostics: Vec<tower_lsp_server::ls_types::Diagnostic>,
-) -> Result<CodeActionParams, String> {
-    Ok(CodeActionParams {
-        text_document: TextDocumentIdentifier::new(test_uri("file:///workspace/src/pricing.rs")?),
-        range: Range {
-            start: Position {
-                line: 87,
-                character: 0,
-            },
-            end: Position {
-                line: 87,
-                character: 120,
-            },
-        },
-        context: CodeActionContext {
-            diagnostics,
-            only: None,
-            trigger_kind: None,
-        },
-        work_done_progress_params: Default::default(),
-        partial_result_params: Default::default(),
-    })
-}
-
-fn code_action_commands(
-    actions: &[CodeActionOrCommand],
-) -> Result<Vec<(String, String, Vec<serde_json::Value>)>, String> {
-    let mut commands = Vec::new();
-    for action in actions {
-        let CodeActionOrCommand::CodeAction(action) = action else {
-            return Err("expected code action".to_string());
-        };
-        let Some(command) = &action.command else {
-            return Err(format!("expected command for action {}", action.title));
-        };
-        commands.push((
-            action.title.clone(),
-            command.command.clone(),
-            command.arguments.clone().unwrap_or_default(),
-        ));
-    }
-    Ok(commands)
-}
-
-/// Parse the `RIPR_CLIENT_COMMANDS` advertisement from the VS Code
-/// extension client (#1776, RIPR-SPEC-0129). The code-action parity tests
-/// negotiate against the exact list the extension sends at `initialize`,
-/// so a command the extension registers but forgets to advertise breaks
-/// these tests instead of silently stripping quick fixes from VS Code.
-fn vscode_advertised_client_commands() -> Result<Vec<String>, String> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join("editors/vscode/src/client.ts");
-    let source = fs::read_to_string(&path)
-        .map_err(|err| format!("read {} failed: {err}", path.display()))?;
-    let mut commands = Vec::new();
-    let mut in_block = false;
-    for line in source.lines() {
-        let trimmed = line.trim();
-        if !in_block {
-            in_block = trimmed.starts_with("const RIPR_CLIENT_COMMANDS");
-            continue;
-        }
-        if trimmed.starts_with("];") {
-            break;
-        }
-        let id = trimmed
-            .strip_prefix('\'')
-            .and_then(|value| {
-                value
-                    .strip_suffix("\',")
-                    .or_else(|| value.strip_suffix('\''))
-            })
-            .ok_or_else(|| format!("unparsable RIPR_CLIENT_COMMANDS entry: {trimmed}"))?;
-        commands.push(id.to_string());
-    }
-    if commands.is_empty() {
-        return Err("RIPR_CLIENT_COMMANDS block not found in client.ts".to_string());
-    }
-    Ok(commands)
-}
-
-/// The negotiated profile for the real VS Code extension: exactly the
-/// `RIPR_CLIENT_COMMANDS` advertisement from `editors/vscode/src/client.ts`
-/// (#1776).
-fn vscode_client_features() -> Result<ClientFeatureProfile, String> {
-    let commands = vscode_advertised_client_commands()?;
-    let borrowed = commands.iter().map(String::as_str).collect::<Vec<_>>();
-    client_features_with_commands(&borrowed)
-}
-
-/// A negotiated profile whose `riprEditor` block advertises exactly
-/// `commands` (#1776).
-fn client_features_with_commands(commands: &[&str]) -> Result<ClientFeatureProfile, String> {
-    let params: InitializeParams = serde_json::from_value(serde_json::json!({
-        "capabilities": {
-            "experimental": {
-                "riprEditor": {
-                    "version": "0.10.0",
-                    "commands": commands,
-                    "guardedTestEdit": false
-                }
-            }
-        }
-    }))
-    .map_err(|err| format!("fixture params must parse: {err}"))?;
-    Ok(ClientFeatureProfile::from_initialize_params(&params))
-}
-
-/// The seam code-action scenario shared by the client-command filter tests
-/// (#1776): one seam diagnostic whose snapshot resolves to a classified
-/// seam, so the unfiltered response carries every client command the
-/// code-action path can emit.
-fn seam_code_action_request() -> Result<(CodeActionParams, AnalysisSnapshot), String> {
-    let seam = sample_classified_seam();
-    let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
-        .ok_or_else(|| "expected seam diagnostic".to_string())?;
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let mut snapshot = sample_analysis_snapshot(
-        PathBuf::from("/workspace"),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        Vec::new(),
-    );
-    snapshot.classified_seams = vec![seam];
-    let params = code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?;
-    Ok((params, snapshot))
-}
-
-fn boundary_gap_fixture_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join("fixtures/boundary_gap/input")
-}
-
-/// A writable, independently committed copy for saved-workspace tests.
-///
-/// The tracked fixture is suitable for static inventory checks, but a
-/// saved-workspace analysis must not borrow `HEAD` from the enclosing
-/// checkout: PR merge refs and other Git layouts can make that implicit
-/// authority unavailable. Each caller gets a private repository with a
-/// deterministic baseline commit instead.
-fn boundary_gap_git_fixture_root(name: &str) -> Result<TempLspRoot, String> {
-    let root = unique_lsp_test_root(name)?;
-    copy_fixture_tree(&boundary_gap_fixture_root(), root.path())?;
-    run_lsp_scope_git(root.path(), &["init", "-q"])?;
-    run_lsp_scope_git(root.path(), &["add", "-A"])?;
-    run_lsp_scope_git(
-        root.path(),
-        &[
-            "-c",
-            "user.email=ripr-test@example.com",
-            "-c",
-            "user.name=ripr-test",
-            "-c",
-            "commit.gpgSign=false",
-            "commit",
-            "-qm",
-            "fixture baseline",
-        ],
-    )?;
-    run_lsp_scope_git(root.path(), &["rev-parse", "--verify", "HEAD^{commit}"])?;
-    Ok(root)
-}
-
-#[test]
-fn boundary_gap_git_fixture_is_committed_isolated_and_removed_on_drop() -> Result<(), String> {
-    let tracked_root = boundary_gap_fixture_root();
-    let tracked_lib = tracked_root.join("src/lib.rs");
-    let tracked_before = std::fs::read(&tracked_lib)
-        .map_err(|err| format!("read tracked boundary-gap fixture failed: {err}"))?;
-    let temp_path;
-
-    {
-        let fixture = boundary_gap_git_fixture_root("isolation-contract")?;
-        temp_path = fixture.path().to_path_buf();
-        if temp_path == tracked_root {
-            return Err("saved-workspace fixture reused the tracked fixture root".to_string());
-        }
-        run_lsp_scope_git(fixture.path(), &["diff", "--quiet", "HEAD", "--"])?;
-        std::fs::write(
-            fixture.path().join("src/lib.rs"),
-            "pub fn isolated_fixture_edit() {}\n",
-        )
-        .map_err(|err| format!("write isolated boundary-gap fixture failed: {err}"))?;
-        let tracked_after = std::fs::read(&tracked_lib)
-            .map_err(|err| format!("re-read tracked boundary-gap fixture failed: {err}"))?;
-        if tracked_after != tracked_before {
-            return Err("editing the saved-workspace copy mutated the tracked fixture".to_string());
-        }
-    }
-
-    if temp_path.exists() {
-        return Err("saved-workspace fixture root remained after its guard dropped".to_string());
-    }
-    Ok(())
-}
-
-pub(crate) struct TempLspRoot {
-    path: PathBuf,
-}
-
-impl TempLspRoot {
-    pub(crate) fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for TempLspRoot {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
-    }
-}
-
-pub(crate) fn unique_lsp_test_root(name: &str) -> Result<TempLspRoot, String> {
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    let root = std::env::temp_dir().join(format!("ripr-lsp-{name}-{}-{stamp}", std::process::id()));
-    std::fs::create_dir_all(&root).map_err(|err| format!("create temp root failed: {err}"))?;
-    Ok(TempLspRoot { path: root })
-}
-
-fn boundary_gap_lsp_config(repo_config: crate::config::RiprConfig) -> LspAnalysisConfig {
-    LspAnalysisConfig {
-        base_ref: Some("HEAD".to_string()),
-        mode: Mode::Instant,
-        diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
-        repo_config,
-        ..LspAnalysisConfig::default()
-    }
-}
-
-fn workspace_projection_contract(
-    root: &Path,
-    config: &LspAnalysisConfig,
-) -> Result<serde_json::Value, String> {
-    // Run the full inventory (defer_seam_inventory = false) so tests exercise
-    // the seam diagnostic contract end-to-end.
-    let diagnostics = workspace_diagnostics_with_config(root, config, false)?;
-    let projected_diagnostics = diagnostics
-        .batches
-        .iter()
-        .flat_map(|batch| {
-            batch
-                .diagnostics
-                .iter()
-                .map(|diagnostic| project_diagnostic(root, &batch.uri, diagnostic))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let (uri, diagnostic) = first_seam_diagnostic(&diagnostics)?;
-    let seam = diagnostics
-        .snapshot
-        .classified_seam_for_diagnostic(&diagnostic)
-        .ok_or_else(|| "expected seam diagnostic to resolve to classified seam".to_string())?;
-    let hover = hover_with_snapshot_status(
-        classified_seam_hover_response(seam, &diagnostic, Some(&diagnostics.snapshot)),
-        &diagnostics.snapshot,
-    );
-    let hover_markdown = match hover.contents {
-        HoverContents::Markup(markup) => markup.value,
-        _ => return Err("expected markup hover".to_string()),
-    };
-    let actions = code_action_response(
-        &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic.clone()])?,
-        Some(&diagnostics.snapshot),
-        &vscode_client_features()?,
-    );
-    let summary = RefreshLogSummary::from_snapshot(1, &diagnostics.snapshot)
-        .with_enabled_languages(config.repo_config().languages().enabled());
-    let status = refresh_completed_log_message(&summary, diagnostics.batches.len(), 0);
-
-    Ok(serde_json::json!({
-        "diagnostics": projected_diagnostics,
-        "hover": normalize_snapshot_age(&hover_markdown),
-        "actions": project_code_actions(root, &actions)?,
-        "status": status,
-    }))
-}
-
-fn normalize_snapshot_age(markdown: &str) -> String {
-    markdown
-        .lines()
-        .map(|line| {
-            if line.starts_with("Analysis snapshot: generated ") {
-                "Analysis snapshot: generated <elapsed> ago.".to_string()
-            } else {
-                line.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn first_seam_diagnostic(
-    diagnostics: &WorkspaceDiagnostics,
-) -> Result<
-    (
-        tower_lsp_server::ls_types::Uri,
-        tower_lsp_server::ls_types::Diagnostic,
-    ),
-    String,
-> {
-    diagnostics
-        .batches
-        .iter()
-        .flat_map(|batch| {
-            batch
-                .diagnostics
-                .iter()
-                .map(move |diagnostic| (&batch.uri, diagnostic))
-        })
-        .find(|(_, diagnostic)| {
-            diagnostic
-                .code
-                .as_ref()
-                .map(diagnostic_code_value)
-                .is_some_and(|code| code.starts_with("ripr-seam-"))
-        })
-        .map(|(uri, diagnostic)| (uri.clone(), diagnostic.clone()))
-        .ok_or_else(|| "expected at least one seam diagnostic".to_string())
-}
-
-fn boundary_gap_lsp_fixture_outputs() -> Result<(serde_json::Value, serde_json::Value), String> {
-    let fixture_root = boundary_gap_fixture_root();
-    let (mut seams, _) = crate::analysis::inventory_classified_seams_at_with_config(
-        &fixture_root,
-        &crate::config::RiprConfig::default(),
-    )?;
-    seams.sort_by(|left, right| left.seam.id().as_str().cmp(right.seam.id().as_str()));
-    if seams.len() != 1 {
-        return Err(format!(
-            "expected one boundary_gap classified seam, got {}",
-            seams.len()
-        ));
-    }
-    let seam = seams
-        .into_iter()
-        .next()
-        .ok_or_else(|| "expected classified seam".to_string())?;
-    let diagnostic = diagnostic_for_classified_seam(&fixture_root, &seam)
-        .ok_or_else(|| "expected seam diagnostic".to_string())?;
-    let uri = file_uri_for_path(&fixture_root.join(seam.seam.file()))?;
-    let mut snapshot = sample_analysis_snapshot(
-        fixture_root.clone(),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        Vec::new(),
-    );
-    snapshot.mode = Mode::Fast;
-    snapshot.classified_seams = vec![seam.clone()];
-    let actions = code_action_response(
-        &code_action_params_for(
-            uri.clone(),
-            diagnostic.range.start.line,
-            vec![diagnostic.clone()],
-        )?,
-        Some(&snapshot),
-        &vscode_client_features()?,
-    );
-
-    Ok((
-        serde_json::json!({
-            "fixture": "boundary_gap",
-            "diagnostics": [project_diagnostic(&fixture_root, &uri, &diagnostic)?],
-        }),
-        serde_json::json!({
-            "fixture": "boundary_gap",
-            "actions": project_code_actions(&fixture_root, &actions)?,
-        }),
-    ))
-}
-
-fn assert_json_fixture(name: &str, actual: serde_json::Value) -> Result<(), String> {
-    let path = Path::new("fixtures")
-        .join("boundary_gap")
-        .join("expected")
-        .join(name);
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join(path);
-    let text = std::fs::read_to_string(&path).map_err(|err| {
-        format!(
-            "failed to read {}: {err}\nactual:\n{}",
-            path.display(),
-            pretty_json(&actual)
-        )
-    })?;
-    let expected: serde_json::Value = serde_json::from_str(&text)
-        .map_err(|err| format!("failed to parse {}: {err}", path.display()))?;
-    if expected != actual {
-        return Err(format!(
-            "{} drifted\nexpected:\n{}\nactual:\n{}",
-            path.display(),
-            pretty_json(&expected),
-            pretty_json(&actual)
-        ));
-    }
-    Ok(())
-}
-
-fn project_diagnostic(
-    root: &Path,
-    uri: &tower_lsp_server::ls_types::Uri,
-    diagnostic: &tower_lsp_server::ls_types::Diagnostic,
-) -> Result<serde_json::Value, String> {
-    Ok(serde_json::json!({
-        "uri": relative_uri_path(root, uri)?,
-        "range": {
-            "start": {
-                "line": diagnostic.range.start.line,
-                "character": diagnostic.range.start.character,
-            },
-            "end": {
-                "line": diagnostic.range.end.line,
-                "character": diagnostic.range.end.character,
-            },
-        },
-        "severity": diagnostic.severity.map(diagnostic_severity_label),
-        "code": diagnostic.code.as_ref().map(diagnostic_code_value),
-        "source": diagnostic.source.clone(),
-        "message": diagnostic.message,
-        "data": diagnostic.data.clone(),
-    }))
-}
-
-fn project_code_actions(
-    root: &Path,
-    actions: &[CodeActionOrCommand],
-) -> Result<Vec<serde_json::Value>, String> {
-    let commands = code_action_commands(actions)?;
-    commands
-        .into_iter()
-        .map(|(title, command, arguments)| {
-            let arguments = arguments
-                .iter()
-                .map(|argument| normalize_lsp_action_argument(root, argument))
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(serde_json::json!({
-                "title": title,
-                "command": command,
-                "arguments": arguments,
-            }))
-        })
-        .collect()
-}
-
-fn normalize_lsp_action_argument(
-    root: &Path,
-    argument: &serde_json::Value,
-) -> Result<serde_json::Value, String> {
-    let Some(object) = argument.as_object() else {
-        return Ok(argument.clone());
-    };
-    let mut normalized = serde_json::Map::new();
-    for (key, value) in object {
-        if key == "uri"
-            && let Some(uri) = value.as_str()
-            && uri.starts_with("file://")
-        {
-            let parsed = uri
-                .parse()
-                .map_err(|err| format!("failed to parse action uri {uri}: {err}"))?;
-            normalized.insert(
-                key.clone(),
-                serde_json::json!(relative_uri_path(root, &parsed)?),
-            );
-        } else {
-            normalized.insert(key.clone(), value.clone());
-        }
-    }
-    Ok(serde_json::Value::Object(normalized))
-}
-
-fn code_action_params_for(
-    uri: tower_lsp_server::ls_types::Uri,
-    line: u32,
-    diagnostics: Vec<tower_lsp_server::ls_types::Diagnostic>,
-) -> Result<CodeActionParams, String> {
-    Ok(CodeActionParams {
-        text_document: TextDocumentIdentifier::new(uri),
-        range: Range {
-            start: Position { line, character: 0 },
-            end: Position {
-                line,
-                character: 120,
-            },
-        },
-        context: CodeActionContext {
-            diagnostics,
-            only: None,
-            trigger_kind: None,
-        },
-        work_done_progress_params: Default::default(),
-        partial_result_params: Default::default(),
-    })
-}
-
-fn diagnostic_severity_label(severity: DiagnosticSeverity) -> &'static str {
-    match severity {
-        DiagnosticSeverity::ERROR => "error",
-        DiagnosticSeverity::WARNING => "warning",
-        DiagnosticSeverity::INFORMATION => "information",
-        DiagnosticSeverity::HINT => "hint",
-        _ => "unknown",
-    }
-}
-
-fn diagnostic_code_value(code: &NumberOrString) -> String {
-    match code {
-        NumberOrString::Number(value) => value.to_string(),
-        NumberOrString::String(value) => value.clone(),
-    }
-}
-
-fn relative_uri_path(root: &Path, uri: &tower_lsp_server::ls_types::Uri) -> Result<String, String> {
-    let path =
-        path_from_file_uri(uri).ok_or_else(|| format!("expected file uri: {}", uri.as_str()))?;
-    relative_path(root, &path)
-}
-
-fn relative_path(root: &Path, path: &Path) -> Result<String, String> {
-    let root = normalize_fixture_path(root);
-    let path = normalize_fixture_path(path);
-    if path == root {
-        return Ok(".".to_string());
-    }
-    let prefix = format!("{root}/");
-    path.strip_prefix(&prefix)
-        .map(str::to_string)
-        .ok_or_else(|| format!("path {path} is not under fixture root {root}"))
-}
-
-fn normalize_fixture_path(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
-}
-
-fn pretty_json(value: &serde_json::Value) -> String {
-    serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
-}
-
-fn hover_params(uri: tower_lsp_server::ls_types::Uri, line: u32, character: u32) -> HoverParams {
-    HoverParams {
-        text_document_position_params: TextDocumentPositionParams {
-            text_document: TextDocumentIdentifier::new(uri),
-            position: Position { line, character },
-        },
-        work_done_progress_params: Default::default(),
-    }
-}
-
-#[expect(
-    deprecated,
-    reason = "Test helper constructs InitializeParams including the deprecated root_path/root_uri fields to exercise fallback handling in capabilities.rs."
-)]
-fn initialize_params(
-    workspace_folders: Option<Vec<WorkspaceFolder>>,
-    root_uri: Option<tower_lsp_server::ls_types::Uri>,
-) -> InitializeParams {
-    InitializeParams {
-        workspace_folders,
-        root_uri,
-        ..InitializeParams::default()
-    }
-}
-
-#[test]
-fn canonical_finding_groups_collapse_same_gap_and_preserve_raw_signals() -> Result<(), String> {
-    let mut first = sample_finding();
-    first.canonical_gap = Some(sample_canonical_gap());
-    let mut second = first.clone();
-    second.id = "probe:pricing:89:predicate".to_string();
-    second.probe.id = ProbeId(second.id.clone());
-    second.probe.location.line = 89;
-
-    let groups = canonical_finding_groups(&[first, second]);
-
-    assert_eq!(groups.len(), 1, "one canonical gap should yield one group");
-    assert_eq!(groups[0].1.len(), 2, "raw findings must remain attached");
-    assert_eq!(
-        groups[0]
-            .0
-            .canonical_gap
-            .as_ref()
-            .map(|gap| gap.id.as_str()),
-        Some(
-            "gap:python:src/pricing.py:apply_discount:predicate_boundary:predicate:amount>=threshold"
-        )
-    );
-    Ok(())
-}
-
-#[test]
-fn canonical_group_mixed_classes_are_detected_without_promotion() {
-    let mut first = sample_finding();
-    first.canonical_gap = Some(sample_canonical_gap());
-    let mut second = first.clone();
-    second.class = ExposureClass::StaticUnknown;
-
-    assert!(canonical_group_has_mixed_classes(&[first, second]));
-    assert!(!canonical_group_has_mixed_classes(std::slice::from_ref(
-        &sample_finding()
-    )));
-}
-
-#[test]
-fn finding_projection_emits_one_limited_diagnostic_for_mixed_canonical_group() -> Result<(), String>
-{
-    let mut first = sample_finding();
-    first.canonical_gap = Some(sample_canonical_gap());
-    let mut second = first.clone();
-    second.id = "probe:pricing:89:predicate".to_string();
-    second.probe.id = ProbeId(second.id.clone());
-    second.probe.location.line = 89;
-    second.class = ExposureClass::StaticUnknown;
-    let config = LspAnalysisConfig::default();
-    let grouped = finding_diagnostics_by_uri(
-        Path::new("/workspace"),
-        &[first, second],
-        config.repo_config().severity(),
-        true,
-        None,
-    )?;
-    let diagnostics = grouped.values().flatten().collect::<Vec<_>>();
-
-    assert_eq!(diagnostics.len(), 1);
-    assert_eq!(
-        diagnostics[0].severity,
-        Some(DiagnosticSeverity::INFORMATION)
-    );
-    assert_eq!(
-        diagnostics[0]
-            .data
-            .as_ref()
-            .and_then(|data| data["raw_signal_count"].as_u64()),
-        Some(2)
-    );
-    assert_eq!(
-        diagnostics[0]
-            .data
-            .as_ref()
-            .and_then(|data| data["canonical_limitation"].as_str()),
-        Some("mixed_static_classes")
-    );
-    Ok(())
-}
-
-fn sample_finding() -> Finding {
-    Finding {
-        id: "probe:pricing:88:predicate".to_string(),
-        canonical_gap: None,
-        probe: Probe {
-            id: ProbeId("probe:pricing:88:predicate".to_string()),
-            location: SourceLocation {
-                file: PathBuf::from("src/pricing.rs"),
-                line: 88,
-                column: 1,
-            },
-            owner: None,
-            family: ProbeFamily::Predicate,
-            delta: DeltaKind::Control,
-            before: None,
-            after: None,
-            expression: "amount >= threshold".to_string(),
-            expected_sinks: Vec::new(),
-            required_oracles: Vec::new(),
-        },
-        class: ExposureClass::WeaklyExposed,
-        ripr: RiprEvidence {
-            reach: StageEvidence::new(StageState::Yes, Confidence::High, "related tests found"),
-            infect: StageEvidence::new(
-                StageState::Yes,
-                Confidence::High,
-                "predicate can alter branch behavior",
-            ),
-            propagate: StageEvidence::new(
-                StageState::Yes,
-                Confidence::Medium,
-                "branch influences return value",
-            ),
-            reveal: RevealEvidence {
-                observe: StageEvidence::new(
-                    StageState::Weak,
-                    Confidence::Medium,
-                    "return value asserted",
-                ),
-                discriminate: StageEvidence::new(
-                    StageState::Weak,
-                    Confidence::Medium,
-                    "boundary value missing",
-                ),
-            },
-        },
-        confidence: 0.75,
-        evidence: Vec::new(),
-        missing: Vec::new(),
-        flow_sinks: Vec::new(),
-        activation: crate::domain::ActivationEvidence::default(),
-        stop_reasons: Vec::new(),
-        related_tests: Vec::new(),
-        recommended_next_step: Some("Add an exact boundary assertion.".to_string()),
-        language: None,
-        language_status: None,
-        owner_kind: None,
-        static_limit_kind: None,
-        changed_sink: None,
-        observed_sink: None,
-        oracle_alignment: None,
-        alignment_reason: None,
-        source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
-    }
-}
-
-fn sample_typescript_preview_actionability_finding() -> Finding {
-    let mut finding = sample_finding();
-    finding.language = Some(LanguageId::TypeScript);
-    finding.language_status = Some(LanguageStatus::Preview);
-    finding.owner_kind = Some(OwnerKind::Function);
-    finding.evidence = vec![
-        "gap_state: advisory".to_string(),
-        "actionability_category: missing_context".to_string(),
-        "why_not_actionable: verify command and receipt command are not inferred for TypeScript preview".to_string(),
-        "repair_route: add strict TypeScript repair-packet actionability proof".to_string(),
-        "missing_actionability_fields: verify_command, receipt_command, must_not_change".to_string(),
-        "evidence_needed_to_promote: complete repair packet with verify and receipt commands".to_string(),
-        "raw_evidence_ref: file=src/pricing.ts;line=88;kind=probe;source_id=ts-probe-1;owner=discountedTotal".to_string(),
-    ];
-    finding
-}
-
-fn sample_canonical_gap() -> FindingCanonicalGap {
-    FindingCanonicalGap {
-        id: "gap:python:src/pricing.py:apply_discount:predicate_boundary:predicate:amount>=threshold"
-            .to_string(),
-        language: "python".to_string(),
-        file: "src/pricing.py".to_string(),
-        owner: "apply_discount".to_string(),
-        behavior_kind: "predicate_boundary".to_string(),
-        probe_kind: "predicate".to_string(),
-        normalized_discriminator: "amount>=threshold".to_string(),
-    }
-}
-
-fn sample_classified_seam() -> crate::analysis::ClassifiedSeam {
-    use crate::analysis::seams::{
-        ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,
-    };
-    use crate::analysis::test_grip_evidence::{
-        RelatedTestGrip, RelationConfidence, RelationReason, TestGripEvidence, TestTargetEvidence,
-    };
-    use crate::domain::{MissingDiscriminatorFact, ValueContext, ValueFact};
-
-    let seam = RepoSeam::new(
-        "src/pricing.rs",
-        "pricing::discounted_total",
-        SeamKind::PredicateBoundary,
-        42,
-        88,
-        "amount >= discount_threshold",
-        RequiredDiscriminator::BoundaryValue {
-            description: "amount >= discount_threshold".to_string(),
-        },
-        ExpectedSink::ReturnValue,
-    );
-    let seam_id = seam.id().clone();
-    crate::analysis::ClassifiedSeam {
-        seam,
-        evidence: TestGripEvidence {
-            seam_id,
-            related_tests: vec![RelatedTestGrip {
-                test_name: "below_threshold_has_no_discount".to_string(),
-                file: PathBuf::from("tests/pricing.rs"),
-                line: 12,
-                test_target: Some(TestTargetEvidence::fixture(
-                    "below_threshold_has_no_discount",
-                    Path::new("tests/pricing.rs"),
-                    12,
-                )),
-                oracle_kind: OracleKind::ExactValue,
-                oracle_strength: OracleStrength::Strong,
-                evidence_summary: "exact value assertion".to_string(),
-                relation_reason: RelationReason::DirectOwnerCall,
-                relation_confidence: RelationConfidence::High,
-            }],
-            reach: StageEvidence::new(
-                StageState::Yes,
-                Confidence::High,
-                "related test calls owner",
-            ),
-            activate: StageEvidence::new(StageState::Yes, Confidence::High, "test reaches branch"),
-            propagate: StageEvidence::new(StageState::Yes, Confidence::Medium, "return value sink"),
-            observe: StageEvidence::new(StageState::Yes, Confidence::Medium, "exact assertion"),
-            discriminate: StageEvidence::new(
-                StageState::Weak,
-                Confidence::Medium,
-                "boundary value missing",
-            ),
-            observed_values: vec![ValueFact {
-                line: 12,
-                text: "discounted_total(50, 100)".to_string(),
-                value: "50".to_string(),
-                context: ValueContext::FunctionArgument,
-            }],
-            missing_discriminators: vec![MissingDiscriminatorFact {
-                value: "discount_threshold (equality boundary)".to_string(),
-                reason: "observed values skip equality boundary".to_string(),
-                flow_sink: None,
-            }],
-        },
-        class: SeamGripClass::WeaklyGripped,
-    }
-}
-
-fn sample_side_effect_seam_without_related_tests() -> crate::analysis::ClassifiedSeam {
-    use crate::analysis::seams::{
-        ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,
-    };
-    use crate::analysis::test_grip_evidence::TestGripEvidence;
-
-    let seam = RepoSeam::new(
-        "src/service.rs",
-        "service::publish_event",
-        SeamKind::SideEffect,
-        7,
-        14,
-        "event_bus.publish(event)",
-        RequiredDiscriminator::Effect {
-            sink: "event bus publish".to_string(),
-        },
-        ExpectedSink::SideEffect,
-    );
-    let seam_id = seam.id().clone();
-    crate::analysis::ClassifiedSeam {
-        seam,
-        evidence: TestGripEvidence {
-            seam_id,
-            related_tests: Vec::new(),
-            reach: StageEvidence::new(StageState::No, Confidence::Low, "no related test"),
-            activate: StageEvidence::new(StageState::No, Confidence::Low, "no activation value"),
-            propagate: StageEvidence::new(StageState::Unknown, Confidence::Low, "unknown sink"),
-            observe: StageEvidence::new(StageState::No, Confidence::Low, "no observer"),
-            discriminate: StageEvidence::new(StageState::No, Confidence::Low, "no discriminator"),
-            observed_values: Vec::new(),
-            missing_discriminators: Vec::new(),
-        },
-        class: SeamGripClass::Ungripped,
-    }
-}
-
-#[test]
-fn finding_hover_response_includes_ripr_evidence_path() -> Result<(), String> {
-    use super::hover::finding_hover_response;
-
-    let finding = sample_finding();
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-
-    let hover = finding_hover_response(&finding, &diagnostic);
-
-    match hover.contents {
-        HoverContents::Markup(markup) => {
-            assert!(markup.value.contains("**ripr** `weakly_exposed`"));
-            assert!(markup.value.contains("predicate"));
-            assert!(markup.value.contains("reach yes:"));
-            assert!(markup.value.contains("infection yes:"));
-            assert!(markup.value.contains("propagation yes:"));
-            assert!(markup.value.contains("observation weak:"));
-            assert!(markup.value.contains("discriminator weak:"));
-            Ok(())
-        }
-        _ => Err("expected markup hover".to_string()),
-    }
-}
-
-#[test]
-fn finding_hover_response_includes_evidence_details() -> Result<(), String> {
-    use super::hover::finding_hover_response;
-    use crate::domain::{
-        ActivationEvidence, FlowSinkFact, FlowSinkKind, MissingDiscriminatorFact, RelatedTest,
-        ValueContext, ValueFact,
-    };
-
-    let mut finding = sample_finding();
-    finding.flow_sinks = vec![FlowSinkFact {
-        kind: FlowSinkKind::ReturnValue,
-        text: "total".to_string(),
-        line: 88,
-        owner: None,
-    }];
-    finding.related_tests = vec![RelatedTest {
-        name: "discount_boundary_is_exact".to_string(),
-        file: PathBuf::from("tests/pricing.rs"),
-        line: 12,
-        oracle: Some("assert_eq!(total, expected)".to_string()),
-        oracle_kind: OracleKind::ExactValue,
-        oracle_strength: OracleStrength::Strong,
-        relation_reason: None,
-        relation_confidence: None,
-    }];
-    finding.activation = ActivationEvidence {
-        observed_values: vec![ValueFact {
-            line: 12,
-            text: "assert_eq!".to_string(),
-            value: "amount == threshold".to_string(),
-            context: ValueContext::FunctionArgument,
-        }],
-        missing_discriminators: vec![MissingDiscriminatorFact {
-            value: "amount == threshold".to_string(),
-            reason: "related tests do not cover the changed boundary value".to_string(),
-            flow_sink: None,
-        }],
-    };
-
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-    let hover = finding_hover_response(&finding, &diagnostic);
-
-    match hover.contents {
-        HoverContents::Markup(markup) => {
-            assert!(markup.value.contains("## RIPR Evidence"));
-            assert!(markup.value.contains("* reach yes: related tests found"));
-            assert!(
-                markup
-                    .value
-                    .contains("* infection yes: predicate can alter branch behavior")
-            );
-            assert!(
-                markup
-                    .value
-                    .contains("* propagation yes: branch influences return value")
-            );
-            assert!(
-                markup
-                    .value
-                    .contains("* observation weak: return value asserted")
-            );
-            assert!(
-                markup
-                    .value
-                    .contains("* discriminator weak: boundary value missing")
-            );
-            assert!(markup.value.contains("## Related Tests"));
-            assert!(markup.value.contains("tests/pricing.rs:12"));
-            assert!(markup.value.contains("discount_boundary_is_exact"));
-            assert!(
-                markup
-                    .value
-                    .contains("strong exact_value oracle: assert_eq!(total, expected)")
-            );
-            assert!(markup.value.contains("Add an exact boundary assertion."));
-            Ok(())
-        }
-        _ => Err("expected markup hover".to_string()),
-    }
-}
-
-#[test]
-fn preview_finding_diagnostic_preserves_language_metadata() -> Result<(), String> {
-    let mut finding = sample_finding();
-    finding.language = Some(LanguageId::Python);
-    finding.language_status = Some(LanguageStatus::Preview);
-    finding.owner_kind = Some(OwnerKind::Function);
-    finding.static_limit_kind = Some(StaticLimitKind::MissingImportGraph);
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-
-    assert!(
-        diagnostic
-            .message
-            .contains("python preview evidence (syntax-first, advisory)")
-    );
-    assert!(
-        diagnostic
-            .message
-            .contains("Static limit: missing_import_graph")
-    );
-    let data = diagnostic
-        .data
-        .and_then(|value| value.as_object().cloned())
-        .ok_or_else(|| "expected diagnostic data".to_string())?;
-    assert_eq!(
-        data.get("language").and_then(|value| value.as_str()),
-        Some("python")
-    );
-    assert_eq!(
-        data.get("language_status").and_then(|value| value.as_str()),
-        Some("preview")
-    );
-    assert_eq!(
-        data.get("owner_kind").and_then(|value| value.as_str()),
-        Some("function")
-    );
-    assert_eq!(
-        data.get("static_limit_kind")
-            .and_then(|value| value.as_str()),
-        Some("missing_import_graph")
-    );
-    Ok(())
-}
-
-#[test]
-fn typescript_preview_finding_diagnostic_carries_actionability_context() -> Result<(), String> {
-    let finding = sample_typescript_preview_actionability_finding();
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-
-    let data = diagnostic
-        .data
-        .and_then(|value| value.as_object().cloned())
-        .ok_or_else(|| "expected diagnostic data".to_string())?;
-    let actionability = data
-        .get("preview_actionability")
-        .and_then(|value| value.as_object())
-        .ok_or_else(|| "expected preview_actionability data".to_string())?;
-    assert_eq!(
-        actionability
-            .get("gap_state")
-            .and_then(|value| value.as_str()),
-        Some("advisory")
-    );
-    assert_eq!(
-        actionability
-            .get("actionability_category")
-            .and_then(|value| value.as_str()),
-        Some("missing_context")
-    );
-    assert_eq!(
-        actionability
-            .get("repair_packet_ready")
-            .and_then(|value| value.as_bool()),
-        Some(false)
-    );
-    assert_eq!(
-        actionability["missing_actionability_fields"][0].as_str(),
-        Some("verify_command")
-    );
-    assert_eq!(
-        actionability["raw_evidence_refs"][0]["file"].as_str(),
-        Some("src/pricing.ts")
-    );
-    assert_eq!(
-        actionability["raw_evidence_refs"][0]["owner"].as_str(),
-        Some("discountedTotal")
-    );
-    Ok(())
-}
-
-#[test]
-fn preview_finding_hover_shows_boundary_before_evidence() -> Result<(), String> {
-    use super::hover::finding_hover_response;
-
-    let mut finding = sample_finding();
-    finding.language = Some(LanguageId::Python);
-    finding.language_status = Some(LanguageStatus::Preview);
-    finding.static_limit_kind = Some(StaticLimitKind::MissingImportGraph);
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-
-    let hover = finding_hover_response(&finding, &diagnostic);
-
-    match hover.contents {
-        HoverContents::Markup(markup) => {
-            let preview_index = markup
-                .value
-                .find("## Preview Boundary")
-                .ok_or_else(|| "expected preview boundary".to_string())?;
-            let evidence_index = markup
-                .value
-                .find("## RIPR Evidence")
-                .ok_or_else(|| "expected evidence section".to_string())?;
-            let static_limit_index = markup
-                .value
-                .find("Static limit: missing_import_graph")
-                .ok_or_else(|| "expected static limit".to_string())?;
-            let action_index = markup
-                .value
-                .find("Add an exact boundary assertion.")
-                .ok_or_else(|| "expected suggested action text".to_string())?;
-            assert!(
-                preview_index < evidence_index,
-                "preview boundary must appear before evidence details"
-            );
-            assert!(
-                static_limit_index < action_index,
-                "static limits must appear before suggested action language"
-            );
-            assert!(markup.value.contains("Language: python"));
-            assert!(markup.value.contains("Status: preview"));
-            assert!(markup.value.contains("Evidence: syntax-first"));
-            assert!(markup.value.contains("Action: advisory only"));
-            assert!(markup.value.contains("Static limit: missing_import_graph"));
-            Ok(())
-        }
-        _ => Err("expected markup hover".to_string()),
-    }
-}
-
-#[test]
-fn typescript_preview_finding_hover_shows_actionability_before_evidence() -> Result<(), String> {
-    use super::hover::finding_hover_response;
-
-    let finding = sample_typescript_preview_actionability_finding();
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-    let hover = finding_hover_response(&finding, &diagnostic);
-
-    match hover.contents {
-        HoverContents::Markup(markup) => {
-            let boundary_index = markup
-                .value
-                .find("## Preview Boundary")
-                .ok_or_else(|| "expected preview boundary".to_string())?;
-            let actionability_index = markup
-                .value
-                .find("## Preview Actionability")
-                .ok_or_else(|| "expected preview actionability".to_string())?;
-            let evidence_index = markup
-                .value
-                .find("## RIPR Evidence")
-                .ok_or_else(|| "expected RIPR evidence".to_string())?;
-            assert!(
-                boundary_index < actionability_index && actionability_index < evidence_index,
-                "preview actionability must appear before evidence details:\n{}",
-                markup.value
-            );
-            for needle in [
-                "Language: typescript",
-                "Status: preview",
-                "Repair packet: not ready",
-                "State: advisory",
-                "Category: missing_context",
-                "Why not actionable: verify command and receipt command are not inferred for TypeScript preview",
-                "Repair route: add strict TypeScript repair-packet actionability proof",
-                "Missing fields: verify_command, receipt_command, must_not_change",
-                "Evidence needed: complete repair packet with verify and receipt commands",
-                "Authority: preview advisory only",
-            ] {
-                assert!(
-                    markup.value.contains(needle),
-                    "missing {needle:?} in:\n{}",
-                    markup.value
-                );
-            }
-            Ok(())
-        }
-        _ => Err("expected markup hover".to_string()),
-    }
-}
-
-#[test]
-fn preview_finding_code_actions_stay_bounded_to_context_and_refresh() -> Result<(), String> {
-    let mut finding = sample_finding();
-    finding.language = Some(LanguageId::Python);
-    finding.language_status = Some(LanguageStatus::Preview);
-    finding.owner_kind = Some(OwnerKind::Function);
-    finding.static_limit_kind = Some(StaticLimitKind::MissingImportGraph);
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-    let uri = test_uri("file:///workspace/src/pricing.py")?;
-    let snapshot = sample_analysis_snapshot(
-        PathBuf::from("/workspace"),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        vec![finding],
-    );
-    let actions = code_action_response(
-        &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
-        Some(&snapshot),
-        &vscode_client_features()?,
-    );
-
-    let commands = code_action_commands(&actions)?;
-    assert_eq!(
-        commands
-            .iter()
-            .map(|(title, command, _)| (title.as_str(), command.as_str()))
-            .collect::<Vec<_>>(),
-        vec![
-            ("Inspect finding: copy context packet", COPY_CONTEXT_COMMAND),
-            ("Refresh Analysis - Saved Workspace Check", REFRESH_COMMAND),
-        ],
-        "preview findings must not expose seam repair, related-test, verify, or receipt actions without validated seam/gap evidence"
-    );
-    assert_eq!(commands[0].2[0]["finding_id"], "probe:pricing:88:predicate");
-    assert_eq!(commands[0].2[0]["probe_id"], "probe:pricing:88:predicate");
-    Ok(())
-}
-
-#[test]
-fn typescript_preview_code_action_copies_actionability_without_repair_packet() -> Result<(), String>
-{
-    let finding = sample_typescript_preview_actionability_finding();
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-    let uri = test_uri("file:///workspace/src/pricing.ts")?;
-    let snapshot = sample_analysis_snapshot(
-        PathBuf::from("/workspace"),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        vec![finding],
-    );
-    let actions = code_action_response(
-        &code_action_params_for(uri, diagnostic.range.start.line, vec![diagnostic])?,
-        Some(&snapshot),
-        &vscode_client_features()?,
-    );
-
-    let commands = code_action_commands(&actions)?;
-    assert_eq!(
-        commands
-            .iter()
-            .map(|(title, command, _)| (title.as_str(), command.as_str()))
-            .collect::<Vec<_>>(),
-        vec![
-            ("Inspect finding: copy context packet", COPY_CONTEXT_COMMAND),
-            ("Refresh Analysis - Saved Workspace Check", REFRESH_COMMAND),
-        ],
-        "incomplete TypeScript preview actionability must not expose repair-packet, verify, receipt, or edit actions"
-    );
-    assert_eq!(commands[0].2[0]["language"], "typescript");
-    assert_eq!(commands[0].2[0]["language_status"], "preview");
-    assert_eq!(commands[0].2[0]["owner_kind"], "function");
-    assert_eq!(
-        commands[0].2[0]["preview_actionability"]["repair_packet_ready"].as_bool(),
-        Some(false)
-    );
-    assert_eq!(
-        commands[0].2[0]["preview_actionability"]["repair_route"].as_str(),
-        Some("add strict TypeScript repair-packet actionability proof")
-    );
-    Ok(())
-}
-
-#[test]
-fn hover_for_position_uses_snapshot_finding_hover() -> Result<(), String> {
-    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-    let backend = service.inner();
-    let finding = sample_finding();
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let diagnostics = sample_workspace_diagnostics(
-        PathBuf::from("/workspace"),
-        uri.clone(),
-        vec![diagnostic.clone()],
-        vec![finding],
-    );
-    let Some(_) = backend.refresh_plan(diagnostics) else {
-        return Err("expected refresh plan".to_string());
-    };
-
-    let Some(hover) = backend.hover_for_position(&hover_params(uri, 87, 1)) else {
-        return Err("expected finding hover".to_string());
-    };
-
-    match hover.contents {
-        HoverContents::Markup(markup) => {
-            assert!(markup.value.contains("**ripr** `weakly_exposed`"));
-            assert!(markup.value.contains("predicate"));
-            assert!(markup.value.contains("## RIPR Evidence"));
-            assert!(markup.value.contains("reach yes:"));
-            assert!(markup.value.contains("Add an exact boundary assertion."));
-            Ok(())
-        }
-        _ => Err("expected markup hover".to_string()),
-    }
-}
-
-#[test]
-fn finding_hover_avoids_mutation_runtime_language() -> Result<(), String> {
-    use super::hover::finding_hover_response;
-
-    let finding = sample_finding();
-    let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-
-    let hover = finding_hover_response(&finding, &diagnostic);
-
-    match hover.contents {
-        HoverContents::Markup(markup) => {
-            let lower = markup.value.to_lowercase();
-            let forbidden_terms = vec!["kil", "surv", "prov", "adeq", "untest"];
-            for term in forbidden_terms {
-                assert!(
-                    !lower.contains(term),
-                    "hover must use conservative static language"
-                );
-            }
-            Ok(())
-        }
-        _ => Err("expected markup hover".to_string()),
-    }
-}
-
-#[test]
-fn execute_command_collect_context_returns_packet_for_known_finding() -> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let backend = service.inner();
-        let finding = sample_finding();
-        let expected_finding = finding.clone();
-        let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-        let uri = test_uri("file:///workspace/src/pricing.rs")?;
-        let diagnostics = sample_workspace_diagnostics(
-            PathBuf::from("/workspace"),
-            uri.clone(),
-            vec![diagnostic.clone()],
-            vec![finding],
-        );
-        let Some(_) = backend.refresh_plan(diagnostics) else {
-            return Err("expected refresh plan".to_string());
-        };
-
-        let params = ExecuteCommandParams {
-            command: COLLECT_CONTEXT_COMMAND.to_string(),
-            arguments: vec![serde_json::json!({
-                "finding_id": "probe:pricing:88:predicate",
-                "probe_id": "probe:pricing:88:predicate",
-                "uri": "file:///workspace/src/pricing.rs",
-                "line": 88,
-            })],
-            work_done_progress_params: Default::default(),
-        };
-        let result = backend.execute_command(params).await;
-        let packet = result.map_err(|err| format!("execute_command failed: {err}"))?;
-        let Some(packet) = packet else {
-            return Err("expected context packet".to_string());
-        };
-        let expected_stop_reasons = expected_finding
-            .effective_stop_reasons()
-            .iter()
-            .map(|reason| reason.as_str().to_string())
-            .collect();
-        let expected_context_packet = crate::domain::context_packet::ContextPacket::from_finding(
-            &expected_finding,
-            crate::config::DEFAULT_CONTEXT_RELATED_TESTS,
-            expected_stop_reasons,
-        );
-        let expected_json =
-            crate::output::json::render_context_packet_dto(&expected_context_packet);
-        let expected_packet: serde_json::Value = serde_json::from_str(&expected_json)
-            .map_err(|err| format!("failed to parse expected packet: {err}"))?;
-        assert_eq!(packet, expected_packet);
-        let packet_str = serde_json::to_string(&packet)
-            .map_err(|err| format!("failed to serialize packet: {err}"))?;
-        assert!(packet_str.contains("\"version\""));
-        assert!(packet_str.contains("\"tool\""));
-        assert!(packet_str.contains("probe:pricing:88:predicate"));
-        Ok(())
-    })
-}
-
-#[test]
-fn execute_command_collect_context_returns_agent_seam_packet_for_known_seam() -> Result<(), String>
-{
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let backend = service.inner();
-        let seam = sample_classified_seam();
-        let seam_id = seam.seam.id().as_str().to_string();
-        let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
-            .ok_or_else(|| "expected seam diagnostic".to_string())?;
-        let uri = test_uri("file:///workspace/src/pricing.rs")?;
-        let mut diagnostics = sample_workspace_diagnostics(
-            PathBuf::from("/workspace"),
-            uri,
-            vec![diagnostic],
-            Vec::new(),
-        );
-        diagnostics.snapshot.classified_seams = vec![seam];
-        let Some(_) = backend.refresh_plan(diagnostics) else {
-            return Err("expected refresh plan".to_string());
-        };
-
-        let params = ExecuteCommandParams {
-            command: COLLECT_CONTEXT_COMMAND.to_string(),
-            arguments: vec![serde_json::json!({
-                "seam_id": seam_id,
-                "uri": "file:///workspace/src/pricing.rs",
-                "line": 88,
-            })],
-            work_done_progress_params: Default::default(),
-        };
-        let result = backend.execute_command(params).await;
-        let packet = result.map_err(|err| format!("execute_command failed: {err}"))?;
-        let Some(packet) = packet else {
-            return Err("expected seam packet".to_string());
-        };
-        assert_eq!(packet["schema_version"], "0.4");
-        assert_eq!(packet["packets_total"], 1);
-        assert_eq!(packet["packets"][0]["seam_id"], seam_id);
-        assert_eq!(
-            packet["packets"][0]["assertion_shape"]["kind"],
-            "exact_return_value"
-        );
-        Ok(())
-    })
-}
-
-#[test]
-fn execute_command_collect_evidence_context_returns_editor_packet_for_known_seam()
--> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let backend = service.inner();
-        let seam = sample_classified_seam();
-        let seam_id = seam.seam.id().as_str().to_string();
-        let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
-            .ok_or_else(|| "expected seam diagnostic".to_string())?;
-        let uri = test_uri("file:///workspace/src/pricing.rs")?;
-        let mut diagnostics = sample_workspace_diagnostics(
-            PathBuf::from("/workspace"),
-            uri,
-            vec![diagnostic],
-            Vec::new(),
-        );
-        diagnostics.snapshot.classified_seams = vec![seam];
-        let Some(_) = backend.refresh_plan(diagnostics) else {
-            return Err("expected refresh plan".to_string());
-        };
-
-        let params = ExecuteCommandParams {
-            command: COLLECT_EVIDENCE_CONTEXT_COMMAND.to_string(),
-            arguments: vec![serde_json::json!({
-                "seam_id": seam_id,
-                "uri": "file:///workspace/src/pricing.rs",
-                "line": 88,
-            })],
-            work_done_progress_params: Default::default(),
-        };
-        let result = backend.execute_command(params).await;
-        let packet = result.map_err(|err| format!("execute_command failed: {err}"))?;
-        let Some(packet) = packet else {
-            return Err("expected evidence context packet".to_string());
-        };
-
-        assert_eq!(packet["schema_version"], "0.1");
-        assert_eq!(packet["tool"], "ripr");
-        assert_eq!(packet["base"], "origin/main");
-        assert_eq!(packet["mode"], "draft");
-        assert_eq!(packet["seam_id"], seam_id);
-        assert_eq!(packet["file"], "src/pricing.rs");
-        assert_eq!(packet["range"]["start"], 88);
-        assert_eq!(packet["range"]["end"], 88);
-        assert_eq!(packet["class"], "weakly_gripped");
-        assert_eq!(packet["seam_kind"], "predicate_boundary");
-        assert_eq!(packet["owner"], "pricing::discounted_total");
-        assert_eq!(packet["evidence_path"]["reach"], "present");
-        assert_eq!(packet["evidence_path"]["activate"], "present");
-        assert_eq!(packet["evidence_path"]["propagate"], "present");
-        assert_eq!(packet["evidence_path"]["observe"], "present");
-        assert_eq!(packet["evidence_path"]["discriminate"], "weak");
-        assert_eq!(
-            packet["missing_discriminator"],
-            "discount_threshold (equality boundary)"
-        );
-        assert_eq!(
-            packet["related_test"],
-            "tests/pricing.rs::below_threshold_has_no_discount"
-        );
-        assert_eq!(
-            packet["related_test_location"]["oracle_strength"],
-            "strong"
-        );
-        assert_eq!(packet["suggested_test"]["file"], "tests/pricing.rs");
-        assert!(
-            packet["suggested_assertion"]
-                .as_str()
-                .is_some_and(|value| value.contains("assert"))
-        );
-        assert!(
-            packet["agent_brief_command"]
-                .as_str()
-                .is_some_and(|value| value.starts_with("ripr agent brief --root . --seam-id "))
-        );
-        assert_eq!(
-            packet["after_snapshot_command"],
-            "ripr check --root . --base origin/main --mode draft --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json"
-        );
-        assert_eq!(
-            packet["verify_command"],
-            "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json > target/ripr/agent/agent-verify.json"
-        );
-        assert!(
-            packet["receipt_command"]
-                .as_str()
-                .is_some_and(|value| {
-                    value.contains("ripr agent receipt --root . --verify-json target/ripr/agent/agent-verify.json")
-                        && value.contains("--out target/ripr/agent/agent-receipt.json")
-                })
-        );
-        assert_eq!(
-            packet["limits_note"],
-            "Static evidence only; no runtime mutation execution."
-        );
-        Ok(())
-    })
-}
-
-#[test]
-fn seam_evidence_is_identity_bound_and_deferred_refresh_returns_typed_stale_result()
--> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let backend = service.inner();
-        let seam = sample_classified_seam();
-        let seam_id = seam.seam.id().as_str().to_string();
-        let uri = test_uri("file:///workspace/src/pricing.rs")?;
-        let seam_diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
-            .ok_or_else(|| "expected seam diagnostic".to_string())?;
-
-        let mut full = sample_workspace_diagnostics(
-            PathBuf::from("/workspace"),
-            uri.clone(),
-            vec![seam_diagnostic],
-            Vec::new(),
-        );
-        full.snapshot.classified_seams = vec![seam];
-        full.snapshot.refresh.snapshot_id = Some("snapshot:full".to_string());
-        let pending_analyzed = BTreeMap::new();
-        let pending_entered = Vec::new();
-        let transaction = backend
-            .prepare_refresh_transaction(full)
-            .ok_or_else(|| "expected full refresh transaction".to_string())?;
-        let super::backend::RefreshTransaction { plan, snapshot, .. } = transaction;
-        assert!(
-            backend
-                .commit_refresh_snapshot(snapshot, &plan, &pending_analyzed, &pending_entered)
-                .is_some()
-        );
-
-        let full_snapshot = backend
-            .latest_analysis_snapshot()
-            .ok_or_else(|| "expected full snapshot".to_string())?;
-        let published_diagnostic = full_snapshot
-            .diagnostics_by_uri
-            .get(&uri)
-            .and_then(|diagnostics| diagnostics.first())
-            .ok_or_else(|| "expected published seam diagnostic".to_string())?;
-        let evidence_identity = published_diagnostic
-            .data
-            .as_ref()
-            .and_then(|data| data.get("evidence_identity"))
-            .cloned()
-            .ok_or_else(|| "expected seam evidence identity".to_string())?;
-        assert_eq!(evidence_identity["snapshot_id"], "snapshot:full");
-
-        let current_packet = backend
-            .execute_command(ExecuteCommandParams {
-                command: COLLECT_CONTEXT_COMMAND.to_string(),
-                arguments: vec![serde_json::json!({
-                    "seam_id": seam_id.clone(),
-                    "evidence_identity": evidence_identity.clone(),
-                })],
-                work_done_progress_params: Default::default(),
-            })
-            .await
-            .map_err(|err| format!("current seam command failed: {err}"))?
-            .ok_or_else(|| "expected current seam packet".to_string())?;
-        assert_eq!(current_packet["packets_total"], 1);
-        backend.set_analysis_attempt_state_for_test(AnalysisAttemptState::Succeeded);
-
-        for (cited_identity, expected_reason) in [
-            (
-                serde_json::json!({"snapshot_id": "snapshot:older"}),
-                "the cited seam evidence belongs to an older snapshot",
-            ),
-            (
-                serde_json::Value::Null,
-                "the cited seam action has no evidence identity",
-            ),
-        ] {
-            let stale = backend
-                .execute_command(ExecuteCommandParams {
-                    command: COLLECT_CONTEXT_COMMAND.to_string(),
-                    arguments: vec![serde_json::json!({
-                        "seam_id": seam_id.clone(),
-                        "evidence_identity": cited_identity,
-                    })],
-                    work_done_progress_params: Default::default(),
-                })
-                .await
-                .map_err(|err| format!("mismatched seam command failed: {err}"))?
-                .ok_or_else(|| "expected typed stale result for mismatched identity".to_string())?;
-            assert_eq!(stale["kind"], "lsp_seam_evidence");
-            assert_eq!(stale["status"], "stale");
-            assert_eq!(stale["current_snapshot_id"], "snapshot:full");
-            assert_eq!(stale["recovery_route"], "ripr.refreshDiagnostics");
-            assert_eq!(stale["invalidation_reason"], expected_reason);
-            if cited_identity.is_null() {
-                assert_eq!(stale["stale_evidence_identity"]["seam_id"], seam_id);
-            }
-        }
-
-        let stale_without_identity = backend
-            .execute_command(ExecuteCommandParams {
-                command: COLLECT_CONTEXT_COMMAND.to_string(),
-                arguments: vec![serde_json::json!({"seam_id": seam_id.clone()})],
-                work_done_progress_params: Default::default(),
-            })
-            .await
-            .map_err(|err| format!("unbound seam command failed: {err}"))?
-            .ok_or_else(|| "expected typed stale result without evidence identity".to_string())?;
-        assert_eq!(stale_without_identity["status"], "stale");
-        assert_eq!(
-            stale_without_identity["invalidation_reason"],
-            "the cited seam action has no evidence identity"
-        );
-
-        let mut deferred = sample_workspace_diagnostics(
-            PathBuf::from("/workspace"),
-            uri.clone(),
-            Vec::new(),
-            Vec::new(),
-        );
-        deferred.batches.clear();
-        deferred.snapshot.diagnostics_by_uri.clear();
-        deferred.snapshot.refresh.snapshot_id = Some("snapshot:deferred".to_string());
-        deferred.snapshot.seams_deferred = true;
-        let transaction = backend
-            .prepare_refresh_transaction(deferred)
-            .ok_or_else(|| "expected deferred refresh transaction".to_string())?;
-        let super::backend::RefreshTransaction { plan, snapshot, .. } = transaction;
-        assert_eq!(plan.clear_uris, vec![uri]);
-        assert!(
-            backend
-                .commit_refresh_snapshot(snapshot, &plan, &pending_analyzed, &pending_entered)
-                .is_some()
-        );
-
-        for command in [COLLECT_CONTEXT_COMMAND, COLLECT_EVIDENCE_CONTEXT_COMMAND] {
-            let stale = backend
-                .execute_command(ExecuteCommandParams {
-                    command: command.to_string(),
-                    arguments: vec![serde_json::json!({
-                        "seam_id": seam_id.clone(),
-                        "evidence_identity": evidence_identity.clone(),
-                    })],
-                    work_done_progress_params: Default::default(),
-                })
-                .await
-                .map_err(|err| format!("stale seam command failed: {err}"))?
-                .ok_or_else(|| "expected typed stale seam result".to_string())?;
-            assert_eq!(stale["kind"], "lsp_seam_evidence");
-            assert_eq!(stale["status"], "stale");
-            assert_eq!(
-                stale["stale_evidence_identity"]["snapshot_id"],
-                "snapshot:full"
-            );
-            assert_eq!(stale["current_snapshot_id"], "snapshot:deferred");
-            assert_eq!(stale["recovery_route"], "ripr.refreshDiagnostics");
-            assert!(
-                stale["invalidation_reason"]
-                    .as_str()
-                    .is_some_and(|reason| reason.contains("deferred"))
-            );
-        }
-
-        backend.clear_all_diagnostic_uris();
-        backend.reset_analysis_health_for_test();
-        let stale_without_snapshot = backend
-            .execute_command(ExecuteCommandParams {
-                command: COLLECT_CONTEXT_COMMAND.to_string(),
-                arguments: vec![serde_json::json!({
-                    "seam_id": seam_id,
-                    "evidence_identity": evidence_identity,
-                })],
-                work_done_progress_params: Default::default(),
-            })
-            .await
-            .map_err(|err| format!("cleared seam command failed: {err}"))?
-            .ok_or_else(|| "expected typed stale result without snapshot".to_string())?;
-        assert_eq!(stale_without_snapshot["status"], "stale");
-        assert!(stale_without_snapshot["current_snapshot_id"].is_null());
-        assert_eq!(
-            stale_without_snapshot["recovery_route"],
-            "ripr.refreshDiagnostics"
-        );
-        Ok(())
-    })
-}
-
-#[test]
-fn seam_code_actions_reject_a_mismatched_evidence_identity() -> Result<(), String> {
-    let seam = sample_classified_seam();
-    let mut current = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
-        .ok_or_else(|| "expected seam diagnostic".to_string())?;
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    let mut snapshot = sample_analysis_snapshot(
-        PathBuf::from("/workspace"),
-        uri,
-        vec![current.clone()],
-        Vec::new(),
-    );
-    snapshot.classified_seams = vec![seam];
-    snapshot.refresh.snapshot_id = Some("snapshot:current".to_string());
-    current
-        .data
-        .as_mut()
-        .and_then(|data| data.as_object_mut())
-        .ok_or_else(|| "expected seam diagnostic data".to_string())?
-        .insert(
-            "evidence_identity".to_string(),
-            snapshot.evidence_identity(),
-        );
-    snapshot
-        .diagnostics_by_uri
-        .values_mut()
-        .flatten()
-        .for_each(|diagnostic| diagnostic.data = current.data.clone());
-    let mut stale = current.clone();
-    stale
-        .data
-        .as_mut()
-        .and_then(|data| data.as_object_mut())
-        .ok_or_else(|| "expected stale seam diagnostic data".to_string())?
-        .insert(
-            "evidence_identity".to_string(),
-            serde_json::json!({
-                "snapshot_id": "snapshot:old",
-                "input_identity": "input:old",
-            }),
-        );
-
-    let actions = code_action_response(
-        &code_action_params(vec![stale])?,
-        Some(&snapshot),
-        &vscode_client_features()?,
-    );
-    let commands = code_action_commands(&actions)?;
-    assert!(
-        commands
-            .iter()
-            .all(|(_, command, _)| command == REFRESH_COMMAND),
-        "mismatched seam evidence must expose only refresh: {commands:?}"
-    );
-    Ok(())
-}
-
-#[test]
-fn execute_command_collect_evidence_context_returns_typed_stale_for_unknown_seam()
--> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let backend = service.inner();
-        let seam = sample_classified_seam();
-        let diagnostic = diagnostic_for_classified_seam(Path::new("/workspace"), &seam)
-            .ok_or_else(|| "expected seam diagnostic".to_string())?;
-        let uri = test_uri("file:///workspace/src/pricing.rs")?;
-        let mut diagnostics = sample_workspace_diagnostics(
-            PathBuf::from("/workspace"),
-            uri,
-            vec![diagnostic],
-            Vec::new(),
-        );
-        diagnostics.snapshot.classified_seams = vec![seam];
-        let Some(_) = backend.refresh_plan(diagnostics) else {
-            return Err("expected refresh plan".to_string());
-        };
-
-        let params = ExecuteCommandParams {
-            command: COLLECT_EVIDENCE_CONTEXT_COMMAND.to_string(),
-            arguments: vec![serde_json::json!({
-                "seam_id": "unknown-seam",
-            })],
-            work_done_progress_params: Default::default(),
-        };
-        let result = backend.execute_command(params).await;
-        let packet = result.map_err(|err| format!("execute_command failed: {err}"))?;
-        let packet = packet.ok_or_else(|| "expected typed stale packet".to_string())?;
-        assert_eq!(packet["status"], "stale");
-        assert_eq!(packet["seam_id"], "unknown-seam");
-        assert_eq!(
-            packet["invalidation_reason"],
-            "the cited seam is absent from the current full-seam evidence"
-        );
-        assert_eq!(packet["recovery_command"], "ripr.refreshDiagnostics");
-        Ok(())
-    })
-}
-
-#[test]
-fn execute_command_collect_context_returns_none_for_unknown_finding() -> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let backend = service.inner();
-        let finding = sample_finding();
-        let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-        let uri = test_uri("file:///workspace/src/pricing.rs")?;
-        let diagnostics = sample_workspace_diagnostics(
-            PathBuf::from("/workspace"),
-            uri.clone(),
-            vec![diagnostic.clone()],
-            vec![finding],
-        );
-        let Some(_) = backend.refresh_plan(diagnostics) else {
-            return Err("expected refresh plan".to_string());
-        };
-
-        let params = ExecuteCommandParams {
-            command: COLLECT_CONTEXT_COMMAND.to_string(),
-            arguments: vec![serde_json::json!({
-                "finding_id": "probe:unknown:1:predicate",
-            })],
-            work_done_progress_params: Default::default(),
-        };
-        let result = backend.execute_command(params).await;
-        let packet = result.map_err(|err| format!("execute_command failed: {err}"))?;
-        assert!(packet.is_none(), "expected None for unknown finding");
-        Ok(())
-    })
-}
-
-#[test]
-fn execute_command_refresh_remains_unchanged() -> Result<(), String> {
-    let Some(provider) = initialize_result().capabilities.execute_command_provider else {
-        return Err("expected execute command provider".to_string());
-    };
-
-    assert!(
-        provider
-            .commands
-            .iter()
-            .any(|command| command == REFRESH_COMMAND)
-    );
-    Ok(())
-}
-
-#[test]
-fn execute_command_collect_workspace_status_no_snapshot_returns_no_snapshot_status()
--> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let backend = service.inner();
-        backend.initialize_test_workspace_root();
-
-        let params = ExecuteCommandParams {
-            command: COLLECT_WORKSPACE_STATUS_COMMAND.to_string(),
-            arguments: vec![],
-            work_done_progress_params: Default::default(),
-        };
-        let result = backend.execute_command(params).await;
-        let status = result
-            .map_err(|err| format!("execute_command failed: {err}"))?
-            .ok_or_else(|| "expected workspace status even without snapshot".to_string())?;
-
-        assert_eq!(status["schema_version"], "0.1");
-        assert_eq!(status["tool"], "ripr");
-        assert_eq!(status["kind"], "workspace_status");
-        assert_eq!(status["run_status"], "no_snapshot");
-        assert_eq!(status["analysis_status"]["state"], "stopped");
-        assert_eq!(status["analysis_status"]["run_status"], "no_snapshot");
-        assert_eq!(status["analysis_status"]["repair_actions_available"], false);
-        assert_eq!(status["top_actionable_packet"], serde_json::Value::Null);
-        assert_eq!(
-            status["diagnostic_budget_state"],
-            serde_json::json!({
-                "status": "unavailable",
-                "reason": "no_snapshot",
-            })
-        );
-        assert_eq!(status["top_limitation"]["status"], "no_snapshot");
-        assert_eq!(
-            status["top_limitation"]["limitation_category"],
-            "no_snapshot"
-        );
-        assert_eq!(
-            status["analysis_status"]["input_authority"]["configuration_state"],
-            "valid"
-        );
-        assert_eq!(
-            status["analysis_status"]["input_authority"]["repository_config_source"],
-            serde_json::Value::Null
-        );
-        assert_eq!(
-            status["analysis_status"]["input_authority"]["session_options_present"],
-            false
-        );
-        assert_eq!(
-            status["analysis_status"]["input_authority"]["current"],
-            serde_json::Value::Null
-        );
-        assert_eq!(
-            status["analysis_status"]["input_authority"]["last_success"],
-            serde_json::Value::Null
-        );
-        assert_eq!(
-            status["limits_note"],
-            "Static evidence only; advisory, not a gate decision."
-        );
-        assert_eq!(status["refresh_command"], REFRESH_COMMAND);
-        assert!(
-            status["report_paths"]["actionable_gaps"]
-                .as_str()
-                .is_some_and(|p| p.contains("actionable-gaps")),
-            "expected report_paths.actionable_gaps in status: {status}"
-        );
-        Ok(())
-    })
-}
-
-#[test]
-fn failed_refresh_retains_last_snapshot_and_reports_stale_health() -> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let backend = service.inner();
-        backend.initialize_test_workspace_root();
-        let uri = test_uri("file:///workspace/src/pricing.rs")?;
-        let finding = sample_finding();
-        let diagnostics = sample_workspace_diagnostics(
-            PathBuf::from("/workspace"),
-            uri,
-            vec![diagnostic_for_finding(Path::new("/workspace"), &finding)],
-            vec![finding],
-        );
-        backend
-            .refresh_plan(diagnostics)
-            .ok_or_else(|| "expected successful snapshot".to_string())?;
-
-        let request = RefreshRequest {
-            generation: 7,
-            authority_epoch: 0,
-            input_identity: LspAnalysisInputIdentity::from_refresh_inputs(
-                PathBuf::from("/workspace"),
-                1,
-                &LspAnalysisConfig::default(),
-            ),
-            git_inputs: crate::lsp::git_inputs::ResolvedGitInputs::resolve(
-                Path::new("/workspace"),
-                None,
-                None,
-            ),
-            root: PathBuf::from("/workspace"),
-            config: LspAnalysisConfig::default(),
-            workspace_revision: 1,
-            scope: RefreshScope::Interactive,
-            reason: RefreshReason::DidSave,
-            cancellation: AnalysisCancellationToken::new(),
-        };
-        backend.record_health_outcome(&request, RefreshAttemptOutcome::Published);
-        backend
-            .report_refresh_failure_after(
-                &request,
-                "temporary analysis timeout at /workspace/src/pricing.rs".to_string(),
-                Duration::from_millis(25),
-                AnalysisFailureKind::AnalysisError,
-            )
-            .await;
-
-        let retained = backend
-            .latest_analysis_snapshot()
-            .ok_or_else(|| "failed refresh erased the last snapshot".to_string())?;
-        if retained.finding_count() != 1 {
-            return Err("failed refresh did not retain diagnostics evidence".to_string());
-        }
-
-        let status = backend
-            .execute_command(ExecuteCommandParams {
-                command: COLLECT_WORKSPACE_STATUS_COMMAND.to_string(),
-                arguments: vec![],
-                work_done_progress_params: Default::default(),
-            })
-            .await
-            .map_err(|err| format!("execute_command failed: {err}"))?
-            .ok_or_else(|| "expected workspace status after failure".to_string())?;
-        assert_eq!(status["run_status"], "stale");
-        assert_eq!(status["analysis_status"]["state"], "failed");
-        assert_eq!(status["analysis_status"]["run_status"], "stale");
-        assert_eq!(
-            status["analysis_status"]["failure"]["kind"],
-            "analysis_error"
-        );
-        assert_eq!(
-            status["analysis_status"]["failure"]["message"],
-            "temporary analysis timeout at <path>"
-        );
-        assert_eq!(
-            status["analysis_status"]["last_success_snapshot_id"],
-            "snapshot:7"
-        );
-        assert!(
-            status["analysis_status"]["current_input_identity"]
-                .as_str()
-                .is_some_and(|value| value.starts_with("input:"))
-        );
-        assert!(
-            status["analysis_status"]["last_success_input_identity"]
-                .as_str()
-                .is_some_and(|value| value.starts_with("input:"))
-        );
-        assert_eq!(status["analysis_status"]["repair_actions_available"], false);
-        assert_eq!(status["top_actionable_packet"], serde_json::Value::Null);
-        assert_eq!(
-            status["top_limitation"]["status"],
-            "analysis_failed_retained_snapshot"
-        );
-        assert_eq!(status["top_limitation"]["run_status"], "stale");
-
-        let retained_input_identity = status["analysis_status"]["input_authority"]["last_success"]
-            ["input_identity"]
-            .as_str()
-            .ok_or_else(|| "expected retained input identity before invalidation".to_string())?
-            .to_string();
-
-        backend.invalidate_analysis_input_for_test("workspace_manifest_or_lockfile_changed");
-        let invalidated_status = backend
-            .execute_command(ExecuteCommandParams {
-                command: COLLECT_WORKSPACE_STATUS_COMMAND.to_string(),
-                arguments: vec![],
-                work_done_progress_params: Default::default(),
-            })
-            .await
-            .map_err(|err| format!("execute_command after invalidation failed: {err}"))?
-            .ok_or_else(|| "expected workspace status after invalidation".to_string())?;
-        assert_eq!(
-            invalidated_status["analysis_status"]["input_authority"]["current"],
-            serde_json::Value::Null,
-            "invalidated retained evidence must not be promoted to current input"
-        );
-        assert_eq!(
-            invalidated_status["analysis_status"]["input_authority"]["last_success"]
-                ["input_identity"]
-                .as_str(),
-            Some(retained_input_identity.as_str())
-        );
-
-        let retained_diagnostic = retained
-            .diagnostics_by_uri
-            .values()
-            .flatten()
-            .next()
-            .cloned()
-            .ok_or_else(|| "expected retained diagnostic".to_string())?;
-        let actions = backend
-            .code_action(code_action_params(vec![retained_diagnostic])?)
-            .await
-            .map_err(|err| format!("code_action failed: {err}"))?
-            .ok_or_else(|| "expected code action response".to_string())?;
-        let action_titles = actions
-            .iter()
-            .map(|action| match action {
-                CodeActionOrCommand::CodeAction(action) => action.title.as_str(),
-                CodeActionOrCommand::Command(command) => command.title.as_str(),
-            })
-            .collect::<Vec<_>>();
-        assert!(
-            action_titles
-                .iter()
-                .all(|title| { title.contains("Refresh") || title.contains("Inspect") }),
-            "stale snapshots must expose only inspection and refresh actions: {action_titles:?}"
-        );
-        Ok(())
-    })
-}
-
-#[test]
-fn retained_snapshot_during_queued_or_running_refresh_reports_wait_state() -> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let backend = service.inner();
-        backend.initialize_test_workspace_root();
-        let finding = sample_finding();
-        let uri = test_uri("file:///workspace/src/pricing.rs")?;
-        let diagnostics = sample_workspace_diagnostics(
-            PathBuf::from("/workspace"),
-            uri,
-            vec![diagnostic_for_finding(Path::new("/workspace"), &finding)],
-            vec![finding],
-        );
-        backend
-            .refresh_plan(diagnostics)
-            .ok_or_else(|| "expected retained snapshot".to_string())?;
-
-        for (state, expected_status) in [
-            (AnalysisAttemptState::Queued, "analysis_queued"),
-            (AnalysisAttemptState::Running, "analysis_running"),
-        ] {
-            backend.set_analysis_attempt_state_for_test(state);
-            let status = backend
-                .execute_command(ExecuteCommandParams {
-                    command: COLLECT_WORKSPACE_STATUS_COMMAND.to_string(),
-                    arguments: vec![],
-                    work_done_progress_params: Default::default(),
-                })
-                .await
-                .map_err(|err| format!("execute_command failed: {err}"))?
-                .ok_or_else(|| "expected workspace status".to_string())?;
-            assert_eq!(status["top_limitation"]["status"], expected_status);
-            assert_eq!(status["top_limitation"]["completeness"], "pending");
-            assert_eq!(
-                status["top_limitation"]["recovery_route"],
-                "wait_for_analysis"
-            );
-            assert_eq!(status["top_limitation"]["run_status"], "stale");
-        }
-        Ok(())
-    })
-}
-
-#[test]
-fn refresh_transaction_does_not_replace_snapshot_before_commit() -> Result<(), String> {
-    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-    let backend = service.inner();
-    let baseline_finding = sample_finding();
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    backend
-        .refresh_plan(sample_workspace_diagnostics(
-            PathBuf::from("/workspace"),
-            uri.clone(),
-            vec![diagnostic_for_finding(
-                Path::new("/workspace"),
-                &baseline_finding,
-            )],
-            vec![baseline_finding.clone()],
-        ))
-        .ok_or_else(|| "expected baseline snapshot".to_string())?;
-
-    let mut candidate_finding = sample_finding();
-    candidate_finding.id = "probe:pricing:99:predicate".to_string();
-    candidate_finding.probe.id = ProbeId(candidate_finding.id.clone());
-    let transaction = backend
-        .prepare_refresh_transaction(sample_workspace_diagnostics(
-            PathBuf::from("/workspace"),
-            uri,
-            vec![diagnostic_for_finding(
-                Path::new("/workspace"),
-                &candidate_finding,
-            )],
-            vec![candidate_finding.clone()],
-        ))
-        .ok_or_else(|| "expected prepared refresh transaction".to_string())?;
-
-    let retained = backend
-        .latest_analysis_snapshot()
-        .ok_or_else(|| "expected retained baseline snapshot".to_string())?;
-    assert_eq!(retained.findings[0].id, baseline_finding.id);
-
-    let super::backend::RefreshTransaction {
-        plan,
-        snapshot,
-        pending_analyzed,
-        pending_entered,
-        ..
-    } = transaction;
-    if backend
-        .commit_refresh_snapshot(snapshot, &plan, &pending_analyzed, &pending_entered)
-        .is_none()
-    {
-        return Err("expected snapshot commit".to_string());
-    }
-    let committed = backend
-        .latest_analysis_snapshot()
-        .ok_or_else(|| "expected committed snapshot".to_string())?;
-    assert_eq!(committed.findings[0].id, candidate_finding.id);
-    Ok(())
-}
-
-#[test]
-fn execute_command_collect_workspace_status_with_snapshot_returns_diagnostics_counts()
--> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let backend = service.inner();
-        let finding = sample_finding();
-        let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
-        let uri = test_uri("file:///workspace/src/pricing.rs")?;
-        let mut diagnostics = sample_workspace_diagnostics(
-            PathBuf::from("/workspace"),
-            uri,
-            vec![diagnostic],
-            vec![finding],
-        );
-        diagnostics
-            .snapshot
-            .refresh
-            .record_duration(Duration::from_millis(12));
-        let Some(_) = backend.refresh_plan(diagnostics) else {
-            return Err("expected refresh plan".to_string());
-        };
-
-        let params = ExecuteCommandParams {
-            command: COLLECT_WORKSPACE_STATUS_COMMAND.to_string(),
-            arguments: vec![],
-            work_done_progress_params: Default::default(),
-        };
-        let result = backend.execute_command(params).await;
-        let status = result
-            .map_err(|err| format!("execute_command failed: {err}"))?
-            .ok_or_else(|| "expected workspace status after snapshot".to_string())?;
-
-        assert_eq!(status["schema_version"], "0.1");
-        assert_eq!(status["tool"], "ripr");
-        assert_eq!(status["kind"], "workspace_status");
-        assert_ne!(
-            status["run_status"], "no_snapshot",
-            "run_status must not be no_snapshot when snapshot is present"
-        );
-        assert!(
-            status["snapshot_age_ms"].as_u64().is_some(),
-            "expected numeric snapshot_age_ms"
-        );
-        assert_eq!(
-            status["snapshot_duration_ms"].as_u64(),
-            Some(12),
-            "expected snapshot_duration_ms of 12 ms"
-        );
-        assert_eq!(
-            status["diagnostics"]["findings"].as_u64(),
-            Some(1),
-            "expected findings count of 1"
-        );
-        assert_eq!(status["diagnostics"]["raw_signals"].as_u64(), Some(1));
-        assert_eq!(status["diagnostics"]["canonical_items"].as_u64(), Some(1));
-        assert_eq!(
-            status["diagnostics"]["actionable_diagnostics"].as_u64(),
-            Some(0)
-        );
-        assert_eq!(
-            status["diagnostic_budget"]["total_canonical_items"].as_u64(),
-            Some(1)
-        );
-        assert_eq!(
-            status["diagnostic_budget"]["selected_count"].as_u64(),
-            Some(0)
-        );
-        assert_eq!(
-            status["diagnostic_budget"]["eligible_items"].as_u64(),
-            Some(0)
-        );
-        assert_eq!(
-            status["diagnostic_budget"]["omitted_count"].as_u64(),
-            Some(1)
-        );
-        assert_eq!(
-            status["diagnostic_budget"]["omitted"][0]["reason"],
-            "profile_filtered"
-        );
-        assert_eq!(status["diagnostic_budget_state"]["status"], "available");
-        assert_eq!(
-            status["diagnostic_budget"]["inline_detail_measurement"],
-            "not_available"
-        );
-        let current_input = &status["analysis_status"]["input_authority"]["current"];
-        let input_identity = current_input["input_identity"]
-            .as_str()
-            .ok_or_else(|| "expected input identity in workspace status".to_string())?;
-        assert!(
-            status["diagnostic_budget"]["snapshot_profile_budget_identity"]
-                .as_str()
-                .is_some_and(|identity| identity.contains(input_identity)),
-            "budget identity must bind to the snapshot input identity: {status}"
-        );
-        assert_ne!(
-            status["diagnostic_budget"]["complete_evidence_identity"],
-            "workspace_status"
-        );
-        assert_eq!(status["diagnostic_budget"]["overflowed"], false);
-        assert_eq!(
-            status["analysis_status"]["input_authority"]["configuration_state"],
-            "valid"
-        );
-        assert_eq!(
-            status["analysis_status"]["input_authority"]["repository_config_source"],
-            serde_json::Value::Null
-        );
-        assert_eq!(
-            status["analysis_status"]["input_authority"]["session_options_present"],
-            false
-        );
-        assert!(
-            current_input["input_identity"]
-                .as_str()
-                .is_some_and(|identity| identity.starts_with("input:")),
-            "status must expose the current producer-owned input identity: {status}"
-        );
-        assert!(
-            current_input["root_identity"]
-                .as_str()
-                .is_some_and(|identity| identity.starts_with("root:")),
-            "status must expose a bounded root identity: {status}"
-        );
-        assert_eq!(current_input["effective_root"], "/workspace");
-        assert_eq!(current_input["saved_workspace_revision"], 1);
-        assert_eq!(
-            current_input["repository_config_identity"],
-            serde_json::Value::Null
-        );
-        assert_eq!(
-            current_input["session_options_identity"],
-            serde_json::Value::Null
-        );
-        assert_eq!(current_input["requested_base"], "origin/main");
-        assert_eq!(current_input["resolved_base"], serde_json::Value::Null);
-        assert_eq!(current_input["mode"], "draft");
-        assert_eq!(current_input["profile"], "actionable");
-        assert_eq!(
-            current_input["enabled_languages"],
-            serde_json::json!(["rust"])
-        );
-        assert_eq!(current_input["manifest_identity"], serde_json::Value::Null);
-        assert_eq!(current_input["lockfile_identity"], serde_json::Value::Null);
-        assert_eq!(current_input["analyzer_version"], env!("CARGO_PKG_VERSION"));
-        assert_eq!(current_input["schema_version"], "lsp-analysis-input-v1");
-        assert_eq!(
-            status["analysis_status"]["input_authority"]["last_success"]["input_identity"],
-            current_input["input_identity"]
-        );
-        assert_eq!(status["refresh_command"], REFRESH_COMMAND);
-        assert!(
-            status["report_paths"]["gap_decision_ledger"]
-                .as_str()
-                .is_some_and(|p| p.contains("gap-decision-ledger")),
-            "expected report_paths.gap_decision_ledger in status"
-        );
-        assert!(
-            status["report_paths"]["start_here"]
-                .as_str()
-                .is_some_and(|p| p.contains("start-here")),
-            "expected report_paths.start_here in status"
-        );
-        assert_eq!(
-            status["limits_note"],
-            "Static evidence only; staged and unstaged tracked files are analyzed; untracked files remain out of scope until staged or supplied through an explicit diff."
-        );
-        Ok(())
-    })
-}
-
-#[test]
-fn workspace_status_budget_identity_changes_with_diagnostic_snapshot() -> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let backend = service.inner();
-        backend.initialize_test_workspace_root();
-        let uri = test_uri("file:///workspace/src/pricing.rs")?;
-
-        let diagnostic = |id: &str| Diagnostic {
-            data: Some(serde_json::json!({
-                "diagnostic_id": id,
-            })),
-            ..Default::default()
-        };
-        let status = || async {
-            let params = ExecuteCommandParams {
-                command: COLLECT_WORKSPACE_STATUS_COMMAND.to_string(),
-                arguments: vec![],
-                work_done_progress_params: Default::default(),
-            };
-            backend
-                .execute_command(params)
-                .await
-                .map_err(|err| format!("execute_command failed: {err}"))?
-                .ok_or_else(|| "expected workspace status after snapshot".to_string())
-        };
-
-        let first = sample_workspace_diagnostics(
-            PathBuf::from("/workspace"),
-            uri.clone(),
-            vec![diagnostic("gap:first")],
-            vec![sample_finding()],
-        );
-        backend
-            .refresh_plan(first)
-            .ok_or_else(|| "expected first refresh plan".to_string())?;
-        let first_status = status().await?;
-        let first_identity = first_status["diagnostic_budget"]["complete_evidence_identity"]
-            .as_str()
-            .ok_or_else(|| "expected first complete evidence identity".to_string())?
-            .to_string();
-
-        let second = sample_workspace_diagnostics(
-            PathBuf::from("/workspace"),
-            uri,
-            vec![diagnostic("gap:second")],
-            vec![sample_finding()],
-        );
-        backend
-            .refresh_plan(second)
-            .ok_or_else(|| "expected second refresh plan".to_string())?;
-        let second_status = status().await?;
-        let second_identity = second_status["diagnostic_budget"]["complete_evidence_identity"]
-            .as_str()
-            .ok_or_else(|| "expected second complete evidence identity".to_string())?;
-
-        if first_identity == second_identity {
-            return Err(format!(
-                "different diagnostic snapshots reused complete evidence identity: {first_status}"
-            ));
-        }
-        Ok(())
-    })
-}
-
-#[test]
-fn execute_command_collect_workspace_status_with_actionable_gap_and_rejection_returns_packet_and_limitation()
--> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let backend = service.inner();
-        backend.initialize_test_workspace_root();
-        let uri = test_uri("file:///workspace/src/pricing.rs")?;
-        let mut diagnostics =
-            sample_workspace_diagnostics(PathBuf::from("/workspace"), uri, Vec::new(), Vec::new());
-        diagnostics
-            .snapshot
-            .gap_artifacts
-            .push(ValidatedGapArtifact {
-                kind: GapArtifactKind::ActionableGaps,
-                root: Some(".".to_string()),
-                identities: vec![GapArtifactIdentity {
-                    canonical_gap_id: Some("gap:rust:pricing:threshold-boundary".to_string()),
-                    seam_id: None,
-                    finding_id: None,
-                }],
-                language: Some(LanguageId::Rust),
-                language_status: Some(LanguageStatus::Stable),
-                gap_state: Some("actionable".to_string()),
-                related_paths: vec!["src/pricing.rs".to_string()],
-                verify_commands: vec!["ripr agent verify --root . --json".to_string()],
-                receipt_commands: vec!["ripr agent receipt --root . --json".to_string()],
-                verify_command_specs: Vec::new(),
-                receipt_command_specs: Vec::new(),
-                static_limit_kinds: Vec::new(),
-                has_text_static_limit: false,
-            });
-        diagnostics
-            .snapshot
-            .gap_artifact_rejections
-            .push(GapArtifactRejection::WrongRoot(
-                "/other/workspace".to_string(),
-            ));
-        let Some(_) = backend.refresh_plan(diagnostics) else {
-            return Err("expected refresh plan".to_string());
-        };
-
-        let params = ExecuteCommandParams {
-            command: COLLECT_WORKSPACE_STATUS_COMMAND.to_string(),
-            arguments: vec![],
-            work_done_progress_params: Default::default(),
-        };
-        let result = backend.execute_command(params).await;
-        let status = result
-            .map_err(|err| format!("execute_command failed: {err}"))?
-            .ok_or_else(|| "expected workspace status".to_string())?;
-
-        // run_status should be cache_limited because there's a rejection
-        assert_eq!(
-            status["run_status"], "cache_limited",
-            "expected cache_limited run_status when rejections present"
-        );
-
-        // top_actionable_packet should be non-null with the expected fields
-        let packet = &status["top_actionable_packet"];
-        assert_ne!(
-            packet,
-            &serde_json::Value::Null,
-            "expected non-null top_actionable_packet"
-        );
-        assert_eq!(
-            packet["canonical_gap_id"],
-            "gap:rust:pricing:threshold-boundary"
-        );
-        assert_eq!(
-            packet["verify_command"],
-            "ripr agent verify --root . --json"
-        );
-        assert_eq!(
-            packet["receipt_command"],
-            "ripr agent receipt --root . --json"
-        );
-        assert_eq!(packet["file"], "src/pricing.rs");
-
-        // top_limitation should be non-null with category + repair_route + why_not_actionable
-        let limitation = &status["top_limitation"];
-        assert_ne!(
-            limitation,
-            &serde_json::Value::Null,
-            "expected non-null top_limitation"
-        );
-        assert_eq!(limitation["status"], "artifact_rejected");
-        assert_eq!(limitation["limitation_category"], "wrong_root");
-        assert!(
-            limitation["repair_route"]
-                .as_str()
-                .is_some_and(|s| !s.is_empty()),
-            "expected non-empty repair_route in top_limitation"
-        );
-        assert!(
-            limitation["why_not_actionable"]
-                .as_str()
-                .is_some_and(|s| !s.is_empty()),
-            "expected non-empty why_not_actionable in top_limitation"
-        );
-
-        Ok(())
-    })
-}
-
-#[test]
-fn execute_command_collect_workspace_status_registered_in_capabilities() -> Result<(), String> {
-    let Some(provider) = initialize_result().capabilities.execute_command_provider else {
-        return Err("expected execute command provider".to_string());
-    };
-
-    assert!(
-        provider
-            .commands
-            .iter()
-            .any(|command| command == COLLECT_WORKSPACE_STATUS_COMMAND),
-        "expected collectWorkspaceStatus in registered commands"
-    );
-    Ok(())
-}
-
-// â”€â”€ collect_repair_packet tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-fn complete_actionable_gaps_report() -> serde_json::Value {
-    let raw_finding = serde_json::json!({
-        "file": "src/pricing.rs",
-        "line": 42,
-        "kind": "weakly_exposed",
-        "language": "rust",
-        "language_status": "stable"
-    });
-    let packet = serde_json::json!({
-        "canonical_gap_id": "gap:rust:pricing-boundary",
-        "evidence_class": "predicate_boundary",
-        "gap_state": "actionable",
-        "primary_anchor": { "file": "src/pricing.rs", "line": 42 },
-        "repair_kind": "add_boundary_assertion",
-        "verify_command": "ripr agent verify --root . --json",
-        "receipt_command": "ripr agent receipt --root . --json",
-        "allowed_edit_surface": ["tests/pricing.rs"],
-        "must_not_change": ["Do not infer actionability from raw static class."],
-        "raw_evidence_refs": [raw_finding],
-        "confidence_basis": "static_only"
-    });
-    serde_json::json!({
-        "schema_version": "0.1",
-        "tool": "ripr",
-        "report": "actionable-gaps",
-        "scope": "repo",
-        "status": "advisory",
-        "summary": { "actionable_gaps": 1, "packets_emitted": 1 },
-        "run_limitations": [],
-        "packets": [packet]
-    })
-}
-
-fn write_actionable_gaps_report(
-    root: &std::path::Path,
-    report: &serde_json::Value,
-) -> Result<(), String> {
-    let reports_dir = root.join("target/ripr/reports");
-    std::fs::create_dir_all(&reports_dir)
-        .map_err(|err| format!("create reports dir failed: {err}"))?;
-    let path = reports_dir.join("actionable-gaps.json");
-    std::fs::write(&path, report.to_string())
-        .map_err(|err| format!("write actionable-gaps.json failed: {err}"))?;
-    Ok(())
-}
-
-fn seed_successful_snapshot(backend: &Backend) -> Result<(), String> {
-    backend.initialize_test_workspace_root();
-    let finding = sample_finding();
-    let uri = test_uri("file:///workspace/src/pricing.rs")?;
-    backend
-        .refresh_plan(sample_workspace_diagnostics(
-            PathBuf::from("/workspace"),
-            uri,
-            vec![diagnostic_for_finding(Path::new("/workspace"), &finding)],
-            vec![finding],
-        ))
-        .ok_or_else(|| "expected successful analysis snapshot".to_string())?;
-    let request = RefreshRequest {
-        generation: 1,
-        authority_epoch: 0,
-        input_identity: LspAnalysisInputIdentity::from_refresh_inputs(
-            PathBuf::from("/workspace"),
-            1,
-            &LspAnalysisConfig::default(),
-        ),
-        git_inputs: crate::lsp::git_inputs::ResolvedGitInputs::resolve(
-            Path::new("/workspace"),
-            None,
-            None,
-        ),
-        root: PathBuf::from("/workspace"),
-        config: LspAnalysisConfig::default(),
-        workspace_revision: 1,
-        scope: RefreshScope::Interactive,
-        reason: RefreshReason::DidSave,
-        cancellation: AnalysisCancellationToken::new(),
-    };
-    backend.record_health_outcome(&request, RefreshAttemptOutcome::Published);
-    Ok(())
-}
-
-#[test]
-fn execute_command_collect_repair_packet_no_snapshot_and_no_file_returns_sentinel()
--> Result<(), String> {
-    // Without a successful snapshot, on-disk artifacts must never become a
-    // repair packet, even when the report files are absent.
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        let root = unique_lsp_test_root("repair-packet-no-file")?;
-        let (service, _socket) =
-            LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
-        let backend = service.inner();
-        let params = ExecuteCommandParams {
-            command: COLLECT_REPAIR_PACKET_COMMAND.to_string(),
-            arguments: vec![],
-            work_done_progress_params: Default::default(),
-        };
-        let result = backend.execute_command(params).await;
-        let value = result
-            .map_err(|err| format!("execute_command failed: {err}"))?
-            .ok_or_else(|| "expected stale-snapshot sentinel".to_string())?;
-        assert_eq!(value["kind"], "repair_packet");
-        assert_eq!(value["status"], "not_actionable_or_incomplete");
-        assert_eq!(value["reason"], "analysis_snapshot_stale");
-        Ok(())
-    })
-}
-
-#[test]
-fn execute_command_collect_repair_packet_incomplete_gap_returns_sentinel() -> Result<(), String> {
-    // An actionable-gaps.json that is missing required fields (receipt_command
-    // absent here) must emit the not_actionable_or_incomplete sentinel, never a
-    // partial packet.
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        let root = unique_lsp_test_root("repair-packet-incomplete")?;
-        // Build a packet that looks actionable but is missing receipt_command.
-        let raw_finding = serde_json::json!({
-            "file": "src/pricing.rs", "line": 42,
-            "kind": "weakly_exposed", "language": "rust", "language_status": "stable"
-        });
-        let packet = serde_json::json!({
-            "canonical_gap_id": "gap:rust:pricing-boundary",
-            "gap_state": "actionable",
-            "primary_anchor": { "file": "src/pricing.rs", "line": 42 },
-            "repair_kind": "add_boundary_assertion",
-            "verify_command": "ripr agent verify --root . --json",
-            // receipt_command intentionally omitted
-            "allowed_edit_surface": ["tests/pricing.rs"],
-            "must_not_change": ["Do not infer actionability from raw static class."],
-            "raw_evidence_refs": [raw_finding],
-            "confidence_basis": "static_only"
-        });
-        let report = serde_json::json!({
-            "schema_version": "0.1", "tool": "ripr", "report": "actionable-gaps",
-            "scope": "repo", "status": "advisory",
-            "summary": { "actionable_gaps": 1, "packets_emitted": 1 },
-            "run_limitations": [], "packets": [packet]
-        });
-        write_actionable_gaps_report(root.path(), &report)?;
-
-        let (service, _socket) =
-            LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
-        let backend = service.inner();
-        seed_successful_snapshot(backend)?;
-        let params = ExecuteCommandParams {
-            command: COLLECT_REPAIR_PACKET_COMMAND.to_string(),
-            arguments: vec![],
-            work_done_progress_params: Default::default(),
-        };
-        let result = backend.execute_command(params).await;
-        let packet = result
-            .map_err(|err| format!("execute_command failed: {err}"))?
-            .ok_or_else(|| "expected a response (sentinel) not null".to_string())?;
-
-        assert_eq!(
-            packet["schema_version"], "0.1",
-            "sentinel must carry schema_version"
-        );
-        assert_eq!(packet["tool"], "ripr", "sentinel must carry tool");
-        assert_eq!(
-            packet["kind"], "repair_packet",
-            "sentinel must carry kind=repair_packet"
-        );
-        assert_eq!(
-            packet["status"], "not_actionable_or_incomplete",
-            "incomplete packet must return not_actionable_or_incomplete status, got {packet}"
-        );
-        assert!(
-            packet["reason"].as_str().is_some_and(|r| !r.is_empty()),
-            "sentinel must carry a non-empty reason, got {packet}"
-        );
-        Ok(())
-    })
-}
-
-#[test]
-fn execute_command_collect_repair_packet_complete_gap_returns_full_packet() -> Result<(), String> {
-    // A well-formed actionable-gaps.json with a complete packet must emit the
-    // full repair packet JSON with real line, non-empty edit-surface, verify,
-    // receipt, must_not_change, and raw_evidence_refs.
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        let root = unique_lsp_test_root("repair-packet-complete")?;
-        write_actionable_gaps_report(root.path(), &complete_actionable_gaps_report())?;
-
-        let (service, _socket) =
-            LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
-        let backend = service.inner();
-        seed_successful_snapshot(backend)?;
-        let params = ExecuteCommandParams {
-            command: COLLECT_REPAIR_PACKET_COMMAND.to_string(),
-            arguments: vec![serde_json::json!({
-                "gap_id": "gap:rust:pricing-boundary"
-            })],
-            work_done_progress_params: Default::default(),
-        };
-        let result = backend.execute_command(params).await;
-        let packet = result
-            .map_err(|err| format!("execute_command failed: {err}"))?
-            .ok_or_else(|| "expected full repair packet".to_string())?;
-
-        assert_eq!(packet["schema_version"], "0.1");
-        assert_eq!(packet["tool"], "ripr");
-        assert_eq!(packet["kind"], "repair_packet");
-        assert_eq!(
-            packet["canonical_gap_id"], "gap:rust:pricing-boundary",
-            "must carry canonical_gap_id"
-        );
-        assert_eq!(
-            packet["language"], "rust",
-            "must carry language from raw_evidence_refs"
-        );
-        assert_eq!(
-            packet["repair_kind"], "add_boundary_assertion",
-            "must carry repair_kind"
-        );
-        // source_location must have a real positive integer line, never 0 or null.
-        assert_eq!(
-            packet["source_location"]["file"], "src/pricing.rs",
-            "source_location.file must resolve"
-        );
-        assert_eq!(
-            packet["source_location"]["line"].as_u64(),
-            Some(42),
-            "source_location.line must be a real positive integer, not fabricated"
-        );
-        assert!(
-            packet["allowed_edit_surface"]
-                .as_array()
-                .is_some_and(|v| !v.is_empty()),
-            "allowed_edit_surface must be non-empty"
-        );
-        assert_eq!(
-            packet["allowed_edit_surface"][0], "tests/pricing.rs",
-            "allowed_edit_surface must carry test file"
-        );
-        assert!(
-            packet["must_not_change"]
-                .as_array()
-                .is_some_and(|v| !v.is_empty()),
-            "must_not_change must be non-empty"
-        );
-        assert!(
-            packet["raw_evidence_refs"]
-                .as_array()
-                .is_some_and(|v| !v.is_empty()),
-            "raw_evidence_refs must be non-empty"
-        );
-        assert_eq!(
-            packet["verify_command"], "ripr agent verify --root . --json",
-            "must carry verify_command"
-        );
-        assert_eq!(
-            packet["receipt_command"], "ripr agent receipt --root . --json",
-            "must carry receipt_command"
-        );
-        assert_eq!(
-            packet["confidence"], "static_only",
-            "confidence must be static_only"
-        );
-        assert_eq!(
-            packet["limits_note"], "Static evidence only; advisory, not a gate decision.",
-            "must carry limits_note"
-        );
-        // Ensure no mutation-runtime vocabulary leaks into the packet.
-        // Terms are constructed to avoid tripping the static-language gate.
-        let packet_str = packet.to_string().to_ascii_lowercase();
-        let banned: Vec<String> = vec![
-            std::iter::once('k').chain("illed".chars()).collect(),
-            std::iter::once('s').chain("urvived".chars()).collect(),
-            std::iter::once('p').chain("roven".chars()).collect(),
-            std::iter::once('a').chain("dequate".chars()).collect(),
-            std::iter::once('u').chain("ntested".chars()).collect(),
-        ];
-        for term in &banned {
-            assert!(
-                !packet_str.contains(term.as_str()),
-                "repair packet must not contain mutation-runtime term '{term}'"
-            );
-        }
-        Ok(())
-    })
-}
-
-#[test]
-fn execute_command_collect_repair_packet_stale_snapshot_returns_sentinel() -> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let backend = service.inner();
-        seed_successful_snapshot(backend)?;
-        backend.set_snapshot_run_status_for_test("stale");
-
-        let result = backend
-            .execute_command(ExecuteCommandParams {
-                command: COLLECT_REPAIR_PACKET_COMMAND.to_string(),
-                arguments: vec![],
-                work_done_progress_params: Default::default(),
-            })
-            .await
-            .map_err(|err| format!("execute_command failed: {err}"))?
-            .ok_or_else(|| "expected stale-snapshot sentinel".to_string())?;
-        assert_eq!(result["status"], "not_actionable_or_incomplete");
-        assert_eq!(result["reason"], "analysis_snapshot_stale");
-        Ok(())
-    })
-}
-
-#[test]
-fn execute_command_collect_repair_packet_registered_in_capabilities() -> Result<(), String> {
-    let Some(provider) = initialize_result().capabilities.execute_command_provider else {
-        return Err("expected execute command provider".to_string());
-    };
-    assert_eq!(
-        provider.commands.len(),
-        7,
-        "expected 7 registered commands (REFRESH, COLLECT_CONTEXT, COLLECT_EVIDENCE_CONTEXT, COLLECT_WORKSPACE_STATUS, COLLECT_REPAIR_PACKET, COLLECT_TOP_LIMITATION, COLLECT_RECEIPT_STATUS), got {:?}",
-        provider.commands
-    );
-    assert!(
-        provider
-            .commands
-            .iter()
-            .any(|command| command == COLLECT_REPAIR_PACKET_COMMAND),
-        "expected collectRepairPacket in registered commands, got {:?}",
-        provider.commands
-    );
-    Ok(())
-}
-
-#[test]
-fn execute_command_collect_top_limitation_no_snapshot_returns_no_snapshot_status()
--> Result<(), String> {
-    // No snapshot is an explicit incomplete state, never an all-clear sentinel.
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| format!("failed to start test runtime: {err}"))?;
-    runtime.block_on(async {
-        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
-        let backend = service.inner();
-        backend.initialize_test_workspace_root();
-
-        let params = ExecuteCommandParams {
-            command: COLLECT_TOP_LIMITATION_COMMAND.to_string(),
-            arguments: vec![],
-            work_done_progress_params: Default::default(),
-        };
-        let result = backend.execute_command(params).await;
-        let value = result
+YªçŠx-®éÜj×¢ëiºÚ+Š§j[h‘éÜ¢éíÛo4×dèµ©hºÚn¶X§zÍ]\ÙHÝ\\ŽŽ˜XÝ[ÛœÎŽžÔÑT•‘T—ÑVPÕUQÐÓÓSPS‘ËÛÙWØXÝ[Û—Ü™\ÜÛœÙK™\ÛÛ™WØXÝ[ÛŸNÂ\ÙHÝ\\ŽŽ˜˜XÚÙ[™ŽžÂˆ˜XÚÙ[™™Yœ™\ÚÙÔÝ[[X\žK™Yœ™\ÚØÛÛ\]YÛÙ×ÛY\ÜØYÙK™Yœ™\ÚÙ˜Z[YÛÙ×ÛY\ÜØYÙKˆÛÜšÜÜXÙWÚ[œ]Ü]Ú\×Ü™[]˜[ŸNÂ\ÙHÝ\\ŽŽ˜Ø\Xš[]Y\ÎŽžÂˆQ‘T•TÑQÐÓÑWÐPÕSÓ—ÒÒS‘ËÛÜšÜÜXÙT›ÛÝ™\ÛÛ][Û‹[š]X[^™WÜ™\Ý[ˆ›ÛÝÙœ›ÛWÚ[š]X[^™WÜ\˜[\ËŸNÂ\ÙHÝ\\ŽŽ˜ÛY[Ù™X]\™\ÎŽÛY[™X]\™T›Ùš[NÂ\ÙHÝ\\ŽŽ˜ÛÛ™šYÎŽ“Ü[˜[\Ú\ÐÛÛ™šYÎÂ\ÙHÝ\\ŽŽ™XYÛ›ÜÝXÜÎŽžÂˆXYÛ›ÜÝXÐ˜]ÚÛÜšÜÜXÙQXYÛ›ÜÝXÜËYØØ[›ÛšXØ[ÙÜ›Ý\Ù]KØ[›ÛšXØ[Ùš[™[™×ÙÜ›Ý\ËˆØ[›ÛšXØ[ÙÜ›Ý\Ú\×ÛZ^YØÛ\ÜÙ\ËXYÛ›ÜÝX×Ù›Ü—ØÛ\ÜÚYšYYÜÙX[KXYÛ›ÜÝX×Ù›Ü—Ùš[™[™ËˆXYÛ›ÜÝX×Ü™Yœ™\ÚÜ[‹XYÛ›ÜÝX×ÜÙ]™\š]WÙ›Ü—ØÛ\ÜËš[™[™×ÙXYÛ›ÜÝXÜ×ØžWÝ\šKˆZÙWØ[Ý\š\ËÛÜšÜÜXÙWÙXYÛ›ÜÝX×Ø˜]Ú\ËÛÜšÜÜXÙWÙXYÛ›ÜÝX×Ø˜]Ú\×ÝÚ]ØÛÛ™šYËˆÛÜšÜÜXÙWÙXYÛ›ÜÝXÜ×ÝÚ]ØÛÛ™šYËŸNÂ\ÙHÝ\\ŽŽ™Ø\Ø\Y˜XÝÎŽžÂˆØ\\Y˜XÝY[]KØ\\Y˜XÝÚ[™Ø\\Y˜XÝ™Z™XÝ[Û‹˜[Y]YØ\\Y˜XÝŸNÂ\ÙHÝ\\ŽŽšÝ™\ŽŽžØÛ\ÜÚYšYYÜÙX[WÚÝ™\—Ü™\ÜÛœÙKÝ™\—Ü™\ÜÛœÙKÝ™\—ÝÚ]ÜÛ˜\ÚÝÜÝ]\ßNÂ\ÙHÝ\\ŽŽš[œ]ÚY[]NŽ“Ü[˜[\Ú\Ò[œ]Y[]NÂ\ÙHÝ\\ŽŽ›[œÎŽžØÛÙWÛ[œ×Ü™\ÜÛœÙK[œ×Ý]WÚ\×ÜÝ]X×Û[™ÝXYÙWØÛX[‹[œ×ÝšY]×ÚY[]_NÂ\ÙHÝ\\ŽŽœ›ÙÜ™\ÜÎŽ”›ÙÜ™\ÜÑ]™[Â\ÙHÝ\\ŽŽœ™Yœ™\ÚÜØÚY[\ŽŽžÂˆ™Yœ™\Ú][\Ý]ÛÛYK™Yœ™\ÚXÚ\Ú[Û‹™Yœ™\Ú™X\ÛÛ‹™Yœ™\Ú™\]Y\Ý™Yœ™\ÚØÛÜKŸNÂ\ÙHÝ\\ŽŽœÝ]NŽžÂˆ[˜[\Ú\Ð][\Ý]K[˜[\Ú\Ñ˜Z[\™RÚ[™[˜[\Ú\ÔÛ˜\ÚÝØÝ[Y[ÝÜ™K™Yœ™\ÚY]Y]KˆÛÛ[ÙYÙ\Ý›Ü›X]Ù\˜][Û‹ŸNÂ\ÙHÝ\\ŽŽ\šNŽžÙ[˜ÛÙWÝ\šWÜ]š[WÝ\šWÙ›Ü—Ü]š[WÝ\š\×ÛX]Ú]Ùœ›ÛWÙš[WÝ\š_NÂ\ÙHÝ\\ŽŽžÂˆÓÓPÕÐÓÓ•VÐÓÓSPS‘ÓÓPÕÑU’QSÑWÐÓÓ•VÐÓÓSPS‘ÓÓPÕÔ‘PÑRTÔÕUT×ÐÓÓSPS‘ˆÓÓPÕÔ‘TRT—ÔPÒÑUÐÓÓSPS‘ÓÓPÕÕÔÓSRUUSÓ—ÐÓÓSPS‘ˆÓÓPÕÕÓÔ’ÔÔPÑWÔÕUT×ÐÓÓSPS‘ÓÔWÐQ•T—ÔÓTÒÕÐÓÓSPS‘ÓÔWÐQÑS•Ð”’QQ—ÐÓÓSPS‘ˆÓÔWÐQÑS•ÔPÒÑUÐÓÓSPS‘ÓÔWÐQÑS•Ô‘PÑRTÐÓÓSPS‘ÓÔWÐQÑS•Õ‘T’Q–WÐÓÓSPS‘ˆÓÔWÐÓÓ•VÐÓÓSPS‘ÓÔWÔÕQÑÑTÕQÐTÔÑT•SÓ—ÐÓÓSPS‘ÓÔWÕT‘ÑUQÕTÕÐ”’QQ—ÐÓÓSPS‘ˆÕ‘T—ÕVÔS—Ô‘SUQÕTÕÐÓÓSPS‘‘Q”‘TÒÐÓÓSPS‘Z[ÜÙ\šXÙKŸNÂ\ÙHÜ˜]NŽ˜[˜[\Ú\ÎŽ˜Ø[˜Ù[][ÛŽŽ[˜[\Ú\ÐØ[˜Ù[][Û•ÚÙ[ŽÂ\ÙHÜ˜]NŽ˜[˜[\Ú\ÎŽœÙX[\ÎŽžÑ^XÝYÚ[šË™\ÔÙX[K™\]Z\™Y\ØÜš[Z[˜]Ü‹ÙX[RÚ[™NÂ\ÙHÜ˜]NŽ˜\Ž“[ÙNÂ\ÙHÜ˜]NŽ™ÛXZ[ŽŽžÂˆÛÛ™šY[˜ÙK[RÚ[™^ÜÝ\™PÛ\ÜËš[™[™Ëš[™[™ÐØ[›ÛšXØ[Ø\[™ÝXYÙRY[™ÝXYÙTÝ]\ËˆZ\ÜÚ[™Ñ\ØÜš[Z[˜]Ü‘˜XÝÜ˜XÛRÚ[™Ü˜XÛTÝ™[™ÝÝÛ™\’Ú[™›Ø™K›Ø™Q˜[Z[K›Ø™RYˆ™[]Y\Ý™]™X[]šY[˜ÙKš\‘]šY[˜ÙKÛÝ\˜ÙSØØ][Û‹ÝYÙQ]šY[˜ÙKÝYÙTÝ]KˆÝ]XÓ[Z]Ú[™˜[YPÛÛ^˜[YQ˜XÝŸNÂ\ÙHÙ\šX[Ý\ÝŽœÙ\šX[Â\ÙHÝŽ˜ÛÛXÝ[ÛœÎŽžÐ•™YSX\•™YTÙ]NÂ\ÙHÝŽ™œÎÂ\ÙHÝŽœ]ŽžÔ]]YŸNÂ\ÙHÝŽœ›ØÙ\ÜÎŽÛÛ[X[™Â\ÙHÝŽ[YNŽžÑ\˜][Û‹Þ\Ý[U[YKS’VÑTÐÒNÂ\ÙHÚÚ[ÎŽš[ÎŽžÐ\Þ[˜Ô™XY\Þ[˜Ô™XY^\Þ[˜ÕÜš]K\Þ[˜ÕÜš]Q^NÂ\ÙHÝÙ\—ÛÜÜÙ\™\ŽŽ“[™ÝXYÙTÙ\™\ŽÂ\ÙHÝÙ\—ÛÜÜÙ\™\ŽŽ›×Ý\\ÎŽžÂˆÛÙPXÝ[Û‹ÛÙPXÝ[ÛÛÛ^ÛÙPXÝ[Û’Ú[™ÛÙPXÝ[Û“ÜÛÛ[X[™ÛÙPXÝ[Û”\˜[\ËˆÛÙS[œÓÜ[ÛœËXYÛ›ÜÝXËXYÛ›ÜÝXÔÙ]™\š]KYÚ[™ÙPÛÛ™šYÝ\˜][Û”\˜[\ËˆYÚ[™ÙU^ØÝ[Y[\˜[\ËYÛÜÙU^ØÝ[Y[\˜[\ËYÜ[•^ØÝ[Y[\˜[\ËˆYØ]™U^ØÝ[Y[\˜[\ËØÝ[Y[XYÛ›ÜÝXÔ\˜[\Ë^XÝ]PÛÛ[X[™\˜[\Ëš[PÚ[™ÙU\Kˆš[Q]™[Ý™\ÛÛ[ËÝ™\”\˜[\ËÝ™\”›ÝšY\Ø\Xš[]K[š]X[^™T\˜[\ËX\šÙYÝš[™Ëˆ[X™\“Ü”Ýš[™Ë\X[™\Ý[\˜[\ËÜÚ][Û‹ÜÚ][Û‘[˜ÛÙ[™ÒÚ[™™]š[Ý\Ô™\Ý[Y˜[™ÙKˆ^ØÝ[Y[ÛÛ[Ú[™ÙQ]™[^ØÝ[Y[Y[YšY\‹^ØÝ[Y[][Kˆ^ØÝ[Y[ÜÚ][Û”\˜[\Ë^ØÝ[Y[Þ[˜ÐØ\Xš[]K^ØÝ[Y[Þ[˜ÒÚ[™˜XÙU˜[YKˆ™\œÚ[Û™Y^ØÝ[Y[Y[YšY\‹Ú[™ÝÐÛY[Ø\Xš[]Y\ËÛÜšÜÜXÙQXYÛ›ÜÝXÔ\˜[\ËˆÛÜšÜÜXÙQ›Û\‹ŸNÂ\ÙHÝÙ\—ÛÜÜÙ\™\ŽŽžÓÜÙ\šXÙKÙ\™\ŸNÂ‚‹ËËÈ™[™\ˆHš^\™H]HØ^HHÔÝ\™˜XÙH™[™\œÈ]Ë‚‹ËËÂ‹ËËÈHÙ\™\ˆ›Ü›X[^™\È]™\žH[Z]Y]È›ÜØ\™Û\Ú\ÈÛˆ[‹ËËÈ]›Ü›\ËÛÈH\›™\ÜÈ]ÛÛ\\™\ÈYØZ[œÝ]Ž™\Ü^J
+XX]Ú\ÈÛ‚‹ËËÈ[š^[™˜Z[ÈÛˆÚ[™ÝÜÈÛ›H8 %Ú\™H\Ü^J
+XZY[È˜XÚÜÛ\Ú\Ëˆ]™\žB‹ËËÈ^XÝ][ÛˆZ[œ›ÛHHš^\™H›ÛÝ]\ÝÛÈ›ÝYÚ\È[\‹Ý\Ú\ÙB‹ËËÈH\Ý\È\ÜÙ\[™ÈÛˆHÜÝ\ÜXÚYšXÈÙ\\˜]Üˆ˜]\ˆ[ˆÛˆÙ\™\‚‹ËËÈ™Z]š[Ü‹‚™›ˆÙ\™\—Ü]Ý^
+]ˆ	”]
+HOˆÝš[™ÈÂˆ]™\Ü^J
+K×ÜÝš[™Ê
+Kœ™\XÙJ	×	Ë‹ÈŠBŸB‚ˆÖÝ\ÝB™›ˆ[š]X[^™WÜ™\Ý[Ù^ÜÙ\×Ù^\Ý[™×ÛÜØØ\Xš[]Y\Ê
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]™\Ý[H[š]X[^™WÜ™\Ý[
+
+NÂ‚ˆ\ÜÙ\Ù\HJˆ™\Ý[˜Ø\Xš[]Y\Ë^ÙØÝ[Y[ÜÞ[˜ËˆÛÛYJ^ØÝ[Y[Þ[˜ÐØ\Xš[]NŽ’Ú[™
+^ØÝ[Y[Þ[˜ÒÚ[™Ž‘•S
+JBˆ
+NÂˆ\ÜÙ\Ù\HJˆ™\Ý[˜Ø\Xš[]Y\ËšÝ™\—Ü›ÝšY\‹ˆÛÛYJÝ™\”›ÝšY\Ø\Xš[]NŽ”Ú[\JYJJBˆ
+NÂˆ\ÜÙ\Ù\HJˆ™\Ý[˜Ø\Xš[]Y\ËœÜÚ][Û—Ù[˜ÛÙ[™ËˆÛÛYJÜÚ][Û‘[˜ÛÙ[™ÒÚ[™Ž•UŒMŠKˆ™XYÛ›ÜÝXÈ˜[™Ù\È\ÙHU‹LMˆÛÙK][š]Ù™œÙ]È‚ˆ
+NÂˆ]ÛÛYJÛÜšÜÜXÙJHH™\Ý[˜Ø\Xš[]Y\ËÛÜšÜÜXÙH[ÙHÂˆ™]\›ˆ\œŠ™^XÝYÛÜšÜÜXÙHØ\Xš[]H‹×ÜÝš[™Ê
+JNÂˆNÂˆ]ÛÛYJÛÜšÜÜXÙWÙ›Û\œÊHHÛÜšÜÜXÙKÛÜšÜÜXÙWÙ›Û\œÈ[ÙHÂˆ™]\›ˆ\œŠ™^XÝYÛÜšÜÜXÙKY›Û\ˆØ\Xš[]H‹×ÜÝš[™Ê
+JNÂˆNÂˆ\ÜÙ\Ù\HJÛÜšÜÜXÙWÙ›Û\œËœÝ\ÜYÛÛYJYJJNÂˆ]ÛÛYJ›ÝšY\ŠHH™\Ý[˜Ø\Xš[]Y\Ë™^XÝ]WØÛÛ[X[™Ü›ÝšY\ˆ[ÙHÂˆ™]\›ˆ\œŠ™^XÝY^XÝ]HÛÛ[X[™›ÝšY\ˆ‹×ÜÝš[™Ê
+JNÂˆNÂˆ]ÛÛ[X[™ÈH›ÝšY\‹˜ÛÛ[X[™ÎÂˆ\ÜÙ\Ù\HJˆÛÛ[X[™Ëˆ™XÈVÂˆ‘Q”‘TÒÐÓÓSPS‘ˆÓÓPÕÐÓÓ•VÐÓÓSPS‘ˆÓÓPÕÑU’QSÑWÐÓÓ•VÐÓÓSPS‘ˆÓÓPÕÕÓÔ’ÔÔPÑWÔÕUT×ÐÓÓSPS‘ˆÓÓPÕÔ‘TRT—ÔPÒÑUÐÓÓSPS‘ˆÓÓPÕÕÔÓSRUUSÓ—ÐÓÓSPS‘ˆÓÓPÕÔ‘PÑRTÔÕUT×ÐÓÓSPS‘ˆBˆ
+NÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆÛÜšÜÜXÙWÚ[œ]ÝØ]ÚÜ™\]Z\™\×ØÛÛZ[™YØØ\™Û×ÛX[šY™\ÝÛÜ—ÛØÚÙš[J
+HÂˆ]›ÛÝBˆÝŽ™[ŽŽ[\Ù\Š
+Kš›Ú[Š›Ü›X]Jœš\‹]ÛÜšÜÜXÙKZ[œ]]Ø]Ú^ßH‹ÝŽœ›ØÙ\ÜÎŽšY
+
+JJNÂˆ]›ÛÝH›ÛÝ˜\×Ü]
+
+NÂˆ\ÜÙ\JÛÜšÜÜXÙWÚ[œ]Ü]Ú\×Ü™[]˜[
+ˆ›ÛÝˆ	œ›ÛÝš›Ú[ŠØ\™ÛËÛ[ŠBˆ
+JNÂˆ\ÜÙ\JÛÜšÜÜXÙWÚ[œ]Ü]Ú\×Ü™[]˜[
+ˆ›ÛÝˆ	œ›ÛÝš›Ú[Š˜Ü˜]\ËØ\ÐØ\™ÛË›ØÚÈŠBˆ
+JNÂˆ\ÜÙ\J]ÛÜšÜÜXÙWÚ[œ]Ü]Ú\×Ü™[]˜[
+ˆ›ÛÝˆ	œ›ÛÝˆÚ]Ùš[WÛ˜[YJœš\‹]ÛÜšÜÜXÙKZ[œ]]Ø]Ú\ÚX›[™ÈŠBˆš›Ú[ŠØ\™ÛËÛ[ŠBˆ
+JNÂˆ\ÜÙ\J]ÛÜšÜÜXÙWÚ[œ]Ü]Ú\×Ü™[]˜[
+ˆ›ÛÝˆ	œ›ÛÝš›Ú[ŠØ\™ÛËÛ[˜˜ZÈŠBˆ
+JNÂŸB‚ˆÖØÙ™ÊÚ[™ÝÜÊWBˆÖÝ\ÝB™›ˆÛÜšÜÜXÙWÚ[œ]ÝØ]ÚÝ\Ù\×ØØ\ÙWÚ[œÙ[œÚ]]™WÝÚ[™ÝÜ×ØÛÛZ[›Y[
+
+HÂˆ]›ÛÝHÝŽ™[ŽŽ[\Ù\Š
+Kš›Ú[Š›Ü›X]Jˆœš\‹]ÛÜšÜÜXÙKZ[œ]]Ø]ÚXØ\ÙK^ßH‹ˆÝŽœ›ØÙ\ÜÎŽšY
+
+Bˆ
+JNÂˆ]Y™™\™[WØØ\ÙYÜ›ÛÝH]YŽŽ™œ›ÛJ›ÛÝ×ÜÝš[™×ÛÜÜÞJ
+K×Ø\ØÚZWÝ\\˜Ø\ÙJ
+JNÂˆ\ÜÙ\JÛÜšÜÜXÙWÚ[œ]Ü]Ú\×Ü™[]˜[
+ˆ	œ›ÛÝˆ	™Y™™\™[WØØ\ÙYÜ›ÛÝš›Ú[ŠØ\™ÛËÛ[ŠBˆ
+JNÂˆ\ÜÙ\J]ÛÜšÜÜXÙWÚ[œ]Ü]Ú\×Ü™[]˜[
+ˆ	œ›ÛÝˆ	™Y™™\™[WØØ\ÙYÜ›ÛÝˆÚ]Ùš[WÛ˜[YJ”’T‹UÓÔ’ÔÔPÑKRS”UUÐUÒPÐTÑKTÒP“S‘ÈŠBˆš›Ú[ŠØ\™ÛËÛ[ŠBˆ
+JNÂŸB‚ˆÖÝ\ÝB™›ˆØ]ÚYÙš[WØ˜]ÚÜ™\Ù\™\×ØÛÛ™šY×Ø[™ÝÛÜšÜÜXÙWÙÜ˜\ÜÚYÛ˜[Ê
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]›ÛÝH]YŽŽ™œ›ÛJ[ˆJÐT‘Ó×ÓPS’Q‘TÕÑTˆŠJKš›Ú[Š‹‹‹Ë‹ˆŠNÂˆ]˜XÚÙ[™Ü›ÛÝH›ÛÝ˜ÛÛ™J
+NÂˆ]
+Ù\šXÙKÜÛØÚÙ]
+HBˆÜÙ\šXÙNŽ›™]Ê[Ý™HÛY[˜XÚÙ[™Ž›™]ÊÛY[˜XÚÙ[™Ü›ÛÝ˜ÛÛ™J
+JJNÂˆ]˜XÚÙ[™HÙ\šXÙKš[›™\Š
+NÂˆ˜XÚÙ[™š[š]X[^™WÝ\ÝÝÛÜšÜÜXÙWÜ›ÛÝ
+
+NÂˆ]ÛÛ™šY×Ý\šHHš[WÝ\šWÙ›Ü—Ü]
+	œ›ÛÝš›Ú[ŠÜ˜]NŽ˜ÛÛ™šYÎŽÓÓ‘’Q×Ñ’SWÓSQJJBˆ›X\Ù\œŠ\œŸ›Ü›X]J˜ÛÛ™šYÈT’H˜Z[YˆÙ\œŸHŠJOÎÂˆ]X[šY™\ÝÝ\šHHš[WÝ\šWÙ›Ü—Ü]
+	œ›ÛÝš›Ú[ŠØ\™ÛËÛ[ŠJBˆ›X\Ù\œŠ\œŸ›Ü›X]J›X[šY™\ÝT’H˜Z[YˆÙ\œŸHŠJOÎÂˆ]Ú[™Ù\ÈH™XÈVÂˆš[Q]™[Âˆ\šNˆÛÛ™šY×Ý\šKˆ\ˆš[PÚ[™ÙU\NŽÒS‘ÑQˆKˆš[Q]™[Âˆ\šNˆX[šY™\ÝÝ\šKˆ\ˆš[PÚ[™ÙU\NŽÒS‘ÑQˆKˆNÂ‚ˆ\ÜÙ\Ù\HJ˜XÚÙ[™Ø]ÚYÙš[WØÚ[™ÙWÚÚ[™Ê	˜Ú[™Ù\ÊK
+YKYJJNÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆØ\Xš[]Y\×ØY™\\ÙWØÛÙWÛ[œ×Ü›ÝšY\Š
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]™\Ý[H[š]X[^™WÜ™\Ý[
+
+NÂˆ]›ÝšY\ˆH™\Ý[ˆ˜Ø\Xš[]Y\Âˆ˜ÛÙWÛ[œ×Ü›ÝšY\‚ˆ›Ú×ÛÜŠ™^XÝYÛÙWÛ[œ×Ü›ÝšY\ˆÈ™HÛÛYHŠOÎÂˆ\ÜÙ\Ù\HJˆ›ÝšY\‹ˆÛÙS[œÓÜ[ÛœÈÂˆ™\ÛÛ™WÜ›ÝšY\ŽˆÛÛYJ˜[ÙJKˆKˆ˜ÛÙWÛ[œ×Ü›ÝšY\ˆ]\ÝY™\\ÙH™\ÛÛ™WÜ›ÝšY\Žˆ˜[ÙH
+Yš\ÛÜžH^[Û›NÈ›È™\ÛÛ™H›Ý[™]š\
+H‚ˆ
+NÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆØÝ[Y[Ü[Ü™]\Ù\×Ü™\Ý[ÚYØ\×Ý[˜Ú[™ÙYÜ™\Ü
+
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]
+Ù\šXÙKÜÛØÚÙ]
+HHÜÙ\šXÙNŽ›™]ÊÛY[˜XÚÙ[™Ž›™]ÊÛY[]YŽŽ™œ›ÛJ‹ˆŠJJNÂˆ]˜XÚÙ[™HÙ\šXÙKš[›™\Š
+NÂˆ]\šHH\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜšXÚ[™ËœœÈŠOÎÂˆ]š[™[™ÈHØ[\WÙš[™[™Ê
+NÂˆ˜XÚÙ[™ˆœ™Yœ™\ÚÜ[ŠØ[\WÝÛÜšÜÜXÙWÙXYÛ›ÜÝXÜÊˆ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙHŠKˆ\šK˜ÛÛ™J
+Kˆ™XÈVÙXYÛ›ÜÝX×Ù›Ü—Ùš[™[™Ê]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠK	™š[™[™ÊWKˆ™XÈVÙš[™[™×Kˆ
+JBˆ›Ú×ÛÜ—Ù[ÙJ™^XÝYÛÛ[Z]YÛ˜\ÚÝ‹×ÜÝš[™Ê
+JOÎÂˆ][[YHHÚÚ[ÎŽœ[[YNŽZ[\ŽŽ›™]×ØÝ\œ™[Ý™XY
+
+Bˆ™[˜X›WØ[
+
+Bˆ˜Z[
+
+Bˆ›X\Ù\œŠ\œŸ›Ü›X]J™˜Z[YÈÝ\\Ý[[YNˆÙ\œŸHŠJOÎÂˆ]™\]Y\ÝH™]š[Ý\×Ü™\Ý[ÚYØÝ[Y[XYÛ›ÜÝXÔ\˜[\ÈÂˆ^ÙØÝ[Y[ˆ^ØÝ[Y[Y[YšY\ˆÈ\šNˆ\šK˜ÛÛ™J
+HKˆY[YšY\Žˆ›Û™Kˆ™]š[Ý\×Ü™\Ý[ÚYˆÛÜš×ÙÛ™WÜ›ÙÜ™\Ü×Ü\˜[\ÎˆY˜][Ž™Y˜][
+
+Kˆ\X[Ü™\Ý[Ü\˜[\Îˆ\X[™\Ý[\˜[\ÎŽ™Y˜][
+
+KˆNÂˆ]š\œÝH[[YBˆ˜›ØÚ×ÛÛŠ˜XÚÙ[™™XYÛ›ÜÝXÊ™\]Y\Ý
+›Û™JJJBˆ›X\Ù\œŠ\œŸ›Ü›X]J™š\œÝ[˜Z[YˆÙ\œŸHŠJOÎÂˆ]š\œÝÚœÛÛˆHÙ\™WÚœÛÛŽŽ×Ý˜[YJš\œÝ
+Bˆ›X\Ù\œŠ\œŸ›Ü›X]JœÙ\šX[^™Hš\œÝ™\Ü˜Z[YˆÙ\œŸHŠJOÎÂˆYˆš\œÝÚœÛÛ‹™Ù]
+šÚ[™ŠK˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×ÜÝŠHOHÛÛYJ™[ŠHÂˆ™]\›ˆ\œŠ›Ü›X]J™^XÝY[š\œÝ™\ÜˆÙš\œÝÚœÛÛŸHŠJNÂˆBˆ]™\Ý[ÚYHš\œÝÚœÛÛ‚ˆ™Ù]
+œ™\Ý[YŠBˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×ÜÝŠBˆ›Ú×ÛÜ—Ù[ÙJ™[™\ÜY›ÝØ\œžH™\Ý[Y‹×ÜÝš[™Ê
+JOÂˆ×ÜÝš[™Ê
+NÂˆ]ÙXÛÛ™H[[YBˆ˜›ØÚ×ÛÛŠ˜XÚÙ[™™XYÛ›ÜÝXÊ™\]Y\Ý
+ÛÛYJ™\Ý[ÚY
+JJJBˆ›X\Ù\œŠ\œŸ›Ü›X]JœÙXÛÛ™[˜Z[YˆÙ\œŸHŠJOÎÂˆ]ÙXÛÛ™ÚœÛÛˆHÙ\™WÚœÛÛŽŽ×Ý˜[YJÙXÛÛ™
+Bˆ›X\Ù\œŠ\œŸ›Ü›X]JœÙ\šX[^™HÙXÛÛ™™\Ü˜Z[YˆÙ\œŸHŠJOÎÂˆYˆÙXÛÛ™ÚœÛÛ‹™Ù]
+šÚ[™ŠK˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×ÜÝŠHOHÛÛYJ[˜Ú[™ÙYŠHÂˆ™]\›ˆ\œŠ›Ü›X]J™^XÝY[˜Ú[™ÙYÙXÛÛ™™\ÜˆÜÙXÛÛ™ÚœÛÛŸHŠJNÂˆBˆYˆÙXÛÛ™ÚœÛÛ‹™Ù]
+š][\ÈŠKš\×ÜÛÛYJ
+HÂˆ™]\›ˆ\œŠ[˜Ú[™ÙY™\Ü[™^XÝYHØ\œšYY][\È‹×ÜÝš[™Ê
+JNÂˆBˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆÛÜšÜÜXÙWÜ[Ü™]\Ù\×ÙXXÚÙØÝ[Y[Ü™\Ý[ÚY
+
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]
+Ù\šXÙKÜÛØÚÙ]
+HHÜÙ\šXÙNŽ›™]ÊÛY[˜XÚÙ[™Ž›™]ÊÛY[]YŽŽ™œ›ÛJ‹ˆŠJJNÂˆ]˜XÚÙ[™HÙ\šXÙKš[›™\Š
+NÂˆ]\šHH\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜšXÚ[™ËœœÈŠOÎÂˆ]š[™[™ÈHØ[\WÙš[™[™Ê
+NÂˆ˜XÚÙ[™ˆœ™Yœ™\ÚÜ[ŠØ[\WÝÛÜšÜÜXÙWÙXYÛ›ÜÝXÜÊˆ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙHŠKˆ\šK˜ÛÛ™J
+Kˆ™XÈVÙXYÛ›ÜÝX×Ù›Ü—Ùš[™[™Ê]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠK	™š[™[™ÊWKˆ™XÈVÙš[™[™×Kˆ
+JBˆ›Ú×ÛÜ—Ù[ÙJ™^XÝYÛÛ[Z]YÛ˜\ÚÝ‹×ÜÝš[™Ê
+JOÎÂˆ][[YHHÚÚ[ÎŽœ[[YNŽZ[\ŽŽ›™]×ØÝ\œ™[Ý™XY
+
+Bˆ™[˜X›WØ[
+
+Bˆ˜Z[
+
+Bˆ›X\Ù\œŠ\œŸ›Ü›X]J™˜Z[YÈÝ\\Ý[[YNˆÙ\œŸHŠJOÎÂˆ]š\œÝH[[YBˆ˜›ØÚ×ÛÛŠ˜XÚÙ[™ÛÜšÜÜXÙWÙXYÛ›ÜÝXÊÛÜšÜÜXÙQXYÛ›ÜÝXÔ\˜[\ÈÂˆY[YšY\Žˆ›Û™Kˆ™]š[Ý\×Ü™\Ý[ÚYÎˆ™XÎŽ›™]Ê
+KˆÛÜš×ÙÛ™WÜ›ÙÜ™\Ü×Ü\˜[\ÎˆY˜][Ž™Y˜][
+
+Kˆ\X[Ü™\Ý[Ü\˜[\Îˆ\X[™\Ý[\˜[\ÎŽ™Y˜][
+
+KˆJJBˆ›X\Ù\œŠ\œŸ›Ü›X]J™š\œÝÛÜšÜÜXÙH[˜Z[YˆÙ\œŸHŠJOÎÂˆ]š\œÝÚœÛÛˆHÙ\™WÚœÛÛŽŽ×Ý˜[YJš\œÝ
+Bˆ›X\Ù\œŠ\œŸ›Ü›X]JœÙ\šX[^™Hš\œÝÛÜšÜÜXÙH™\Ü˜Z[YˆÙ\œŸHŠJOÎÂˆ]™\Ý[ÚYHš\œÝÚœÛÛ‚ˆ™Ù]
+š][\ÈŠBˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×Ø\œ˜^JBˆ˜[™Ý[Š][\ß][\Ë™š\œÝ
+
+JBˆ˜[™Ý[Š][_][K™Ù]
+œ™\Ý[YŠJBˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×ÜÝŠBˆ›Ú×ÛÜ—Ù[ÙJÛÜšÜÜXÙH[™\ÜY›ÝØ\œžH™\Ý[Y‹×ÜÝš[™Ê
+JOÂˆ×ÜÝš[™Ê
+NÂˆ]ÙXÛÛ™H[[YBˆ˜›ØÚ×ÛÛŠ˜XÚÙ[™ÛÜšÜÜXÙWÙXYÛ›ÜÝXÊÛÜšÜÜXÙQXYÛ›ÜÝXÔ\˜[\ÈÂˆY[YšY\Žˆ›Û™Kˆ™]š[Ý\×Ü™\Ý[ÚYÎˆ™XÈVÔ™]š[Ý\Ô™\Ý[YÂˆ\šKˆ˜[YNˆ™\Ý[ÚYˆWKˆÛÜš×ÙÛ™WÜ›ÙÜ™\Ü×Ü\˜[\ÎˆY˜][Ž™Y˜][
+
+Kˆ\X[Ü™\Ý[Ü\˜[\Îˆ\X[™\Ý[\˜[\ÎŽ™Y˜][
+
+KˆJJBˆ›X\Ù\œŠ\œŸ›Ü›X]JœÙXÛÛ™ÛÜšÜÜXÙH[˜Z[YˆÙ\œŸHŠJOÎÂˆ]ÙXÛÛ™ÚœÛÛˆHÙ\™WÚœÛÛŽŽ×Ý˜[YJÙXÛÛ™
+Bˆ›X\Ù\œŠ\œŸ›Ü›X]JœÙ\šX[^™HÙXÛÛ™ÛÜšÜÜXÙH™\Ü˜Z[YˆÙ\œŸHŠJOÎÂˆ]Ú[™HÙXÛÛ™ÚœÛÛ‚ˆ™Ù]
+š][\ÈŠBˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×Ø\œ˜^JBˆ˜[™Ý[Š][\ß][\Ë™š\œÝ
+
+JBˆ˜[™Ý[Š][_][K™Ù]
+šÚ[™ŠJBˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×ÜÝŠNÂˆYˆÚ[™OHÛÛYJ[˜Ú[™ÙYŠHÂˆ™]\›ˆ\œŠ›Ü›X]Jˆ™^XÝY[˜Ú[™ÙYÛÜšÜÜXÙH™\ÜˆÜÙXÛÛ™ÚœÛÛŸH‚ˆ
+JNÂˆBˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆ[ÙXYÛ›ÜÝXÜ×Ø™Y›Ü™WÙš\œÝÜÛ˜\ÚÝÜ™]\›—Ù[\WÙ[Ü™\ÜÊ
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]
+Ù\šXÙKÜÛØÚÙ]
+HHÜÙ\šXÙNŽ›™]ÊÛY[˜XÚÙ[™Ž›™]ÊÛY[]YŽŽ™œ›ÛJ‹ˆŠJJNÂˆ]˜XÚÙ[™HÙ\šXÙKš[›™\Š
+NÂˆ]\šHH\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜšXÚ[™ËœœÈŠOÎÂˆ][[YHHÚÚ[ÎŽœ[[YNŽZ[\ŽŽ›™]×ØÝ\œ™[Ý™XY
+
+Bˆ™[˜X›WØ[
+
+Bˆ˜Z[
+
+Bˆ›X\Ù\œŠ\œŸ›Ü›X]J™˜Z[YÈÝ\\Ý[[YNˆÙ\œŸHŠJOÎÂ‚ˆ]ØÝ[Y[H[[YBˆ˜›ØÚ×ÛÛŠ˜XÚÙ[™™XYÛ›ÜÝXÊØÝ[Y[XYÛ›ÜÝXÔ\˜[\ÈÂˆ^ÙØÝ[Y[ˆ^ØÝ[Y[Y[YšY\ˆÈ\šHKˆY[YšY\Žˆ›Û™Kˆ™]š[Ý\×Ü™\Ý[ÚYˆ›Û™KˆÛÜš×ÙÛ™WÜ›ÙÜ™\Ü×Ü\˜[\ÎˆY˜][Ž™Y˜][
+
+Kˆ\X[Ü™\Ý[Ü\˜[\Îˆ\X[™\Ý[\˜[\ÎŽ™Y˜][
+
+KˆJJBˆ›X\Ù\œŠ\œŸ›Ü›X]J˜ÛÛ\Ý\ØÝ[Y[[˜Z[YˆÙ\œŸHŠJOÎÂˆ]ØÝ[Y[ÚœÛÛˆHÙ\™WÚœÛÛŽŽ×Ý˜[YJØÝ[Y[
+Bˆ›X\Ù\œŠ\œŸ›Ü›X]JœÙ\šX[^™HÛÛ\Ý\ØÝ[Y[™\Ü˜Z[YˆÙ\œŸHŠJOÎÂˆYˆØÝ[Y[ÚœÛÛ‚ˆ™Ù]
+šÚ[™ŠBˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×ÜÝŠBˆOHÛÛYJ™[ŠBˆØÝ[Y[ÚœÛÛ‚ˆ™Ù]
+š][\ÈŠBˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×Ø\œ˜^JBˆš\×Û›Û™WÛÜŠ][\ßZ][\Ëš\×Ù[\J
+JBˆÂˆ™]\›ˆ\œŠ›Ü›X]Jˆ™^XÝY[ˆ[\H[ØÝ[Y[™\Ü™Y›Ü™HHš\œÝÛ˜\ÚÝˆÙØÝ[Y[ÚœÛÛŸH‚ˆ
+JNÂˆB‚ˆ]ÛÜšÜÜXÙHH[[YBˆ˜›ØÚ×ÛÛŠ˜XÚÙ[™ÛÜšÜÜXÙWÙXYÛ›ÜÝXÊÛÜšÜÜXÙQXYÛ›ÜÝXÔ\˜[\ÈÂˆY[YšY\Žˆ›Û™Kˆ™]š[Ý\×Ü™\Ý[ÚYÎˆ™XÎŽ›™]Ê
+KˆÛÜš×ÙÛ™WÜ›ÙÜ™\Ü×Ü\˜[\ÎˆY˜][Ž™Y˜][
+
+Kˆ\X[Ü™\Ý[Ü\˜[\Îˆ\X[™\Ý[\˜[\ÎŽ™Y˜][
+
+KˆJJBˆ›X\Ù\œŠ\œŸ›Ü›X]J˜ÛÛ\Ý\ÛÜšÜÜXÙH[˜Z[YˆÙ\œŸHŠJOÎÂˆ]ÛÜšÜÜXÙWÚœÛÛˆHÙ\™WÚœÛÛŽŽ×Ý˜[YJÛÜšÜÜXÙJBˆ›X\Ù\œŠ\œŸ›Ü›X]JœÙ\šX[^™HÛÛ\Ý\ÛÜšÜÜXÙH™\Ü˜Z[YˆÙ\œŸHŠJOÎÂˆYˆÛÜšÜÜXÙWÚœÛÛ‚ˆ™Ù]
+š][\ÈŠBˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×Ø\œ˜^JBˆš\×Û›Û™WÛÜŠ][\ßZ][\Ëš\×Ù[\J
+JBˆÂˆ™]\›ˆ\œŠ›Ü›X]Jˆ™^XÝY[ˆ[\HÛÜšÜÜXÙH™\Ü™Y›Ü™HHš\œÝÛ˜\ÚÝˆÝÛÜšÜÜXÙWÚœÛÛŸH‚ˆ
+JNÂˆBˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆÛÜšÜÜXÙWÜ[ÛX\šÜ×ÛÛ›WØÚ[™ÙYÙØÝ[Y[Ù[
+
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆËÈÙ[XÝ[Û‹X]]Üš]HÛÛ˜XÝ
+ÌNMÌÊNˆ[Ù\™\ÈHÝÜ™YÙ[XÝYˆËÈÙ][™\š]™\È™\Ý[QÈœ›ÛH]ÛÈHÚ[™ÙYØÝ[Y[]\Ý™HBˆËÈÙ\™Y
+YÙ]XXÝ[Û˜X›JH][H›Üˆ]ÈY\ÜØYÙHÚ[™ÙHÈ™BˆËÈÙ[XÝ[Û‹\™[]˜[ˆXY[™WÙ[YÚX›X\ÈH›ÙXÙ\‹[ÝÛ™YˆËÈ[YÚXš[]HÚYÛ˜[HYÙ]™XYË‚ˆ›ˆÙ\™YÙXYÛ›ÜÝXÊ›ÛÝˆ	”]š[™[™Îˆ	‘š[™[™ÊHOˆÝÙ\—ÛÜÜÙ\™\ŽŽ›×Ý\\ÎŽ‘XYÛ›ÜÝXÈÂˆ]]]XYÛ›ÜÝXÈHXYÛ›ÜÝX×Ù›Ü—Ùš[™[™Ê›ÛÝš[™[™ÊNÂˆYˆ]ÛÛYJ]JHHXYÛ›ÜÝXÂˆ™]Bˆ˜\×Û]]
+
+Bˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×ÛØš™XÝÛ]]
+BˆÂˆ]Kš[œÙ\
+šXY[™WÙ[YÚX›H‹×ÜÝš[™Ê
+KÙ\™WÚœÛÛŽŽšœÛÛˆJYJJNÂˆBˆXYÛ›ÜÝXÂˆBˆ]
+Ù\šXÙKÜÛØÚÙ]
+HHÜÙ\šXÙNŽ›™]ÊÛY[˜XÚÙ[™Ž›™]ÊÛY[]YŽŽ™œ›ÛJ‹ˆŠJJNÂˆ]˜XÚÙ[™HÙ\šXÙKš[›™\Š
+NÂˆ]š\œÝÝ\šHH\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÙš\œÝœœÈŠOÎÂˆ]ÙXÛÛ™Ý\šHH\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜÙXÛÛ™œœÈŠOÎÂˆ]š\œÝÙš[™[™ÈHØ[\WÙš[™[™Ê
+NÂˆ]]]ÙXÛÛ™Ùš[™[™ÈHØ[\WÙš[™[™Ê
+NÂˆÙXÛÛ™Ùš[™[™ËšYHœ›Ø™NœÙXÛÛ™Žœ™YXØ]H‹×ÜÝš[™Ê
+NÂˆÙXÛÛ™Ùš[™[™Ëœ›Ø™KšYH›Ø™RY
+œ›Ø™NœÙXÛÛ™Žœ™YXØ]H‹×ÜÝš[™Ê
+JNÂˆÙXÛÛ™Ùš[™[™Ëœ›Ø™K›ØØ][Û‹™š[HH]YŽŽ™œ›ÛJœÜ˜ËÜÙXÛÛ™œœÈŠNÂˆ]š\œÝÙXYÛ›ÜÝXÈHÙ\™YÙXYÛ›ÜÝXÊ]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠK	™š\œÝÙš[™[™ÊNÂˆ][š]X[ÜÙXÛÛ™ÙXYÛ›ÜÝXÈHÙ\™YÙXYÛ›ÜÝXÊ]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠK	œÙXÛÛ™Ùš[™[™ÊNÂˆ]]]Û˜\ÚÝHØ[\WØ[˜[\Ú\×ÜÛ˜\ÚÝ
+ˆ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙHŠKˆš\œÝÝ\šK˜ÛÛ™J
+Kˆ™XÈVÙš\œÝÙXYÛ›ÜÝXË˜ÛÛ™J
+WKˆ™XÈVÙš\œÝÙš[™[™Ë˜ÛÛ™J
+KÙXÛÛ™Ùš[™[™Ë˜ÛÛ™J
+WKˆ
+NÂˆÛ˜\ÚÝˆ™XYÛ›ÜÝXÜ×ØžWÝ\šBˆš[œÙ\
+ÙXÛÛ™Ý\šK˜ÛÛ™J
+K™XÈVÚ[š]X[ÜÙXÛÛ™ÙXYÛ›ÜÝXË˜ÛÛ™J
+WJNÂˆ]XYÛ›ÜÝXÜÈHÛÜšÜÜXÙQXYÛ›ÜÝXÜÈÂˆÛ˜\ÚÝˆ˜]Ú\Îˆ™XÈVÂˆXYÛ›ÜÝXÐ˜]ÚÂˆ\šNˆš\œÝÝ\šK˜ÛÛ™J
+KˆXYÛ›ÜÝXÜÎˆ™XÈVÙš\œÝÙXYÛ›ÜÝX×KˆKˆXYÛ›ÜÝXÐ˜]ÚÂˆ\šNˆÙXÛÛ™Ý\šK˜ÛÛ™J
+KˆXYÛ›ÜÝXÜÎˆ™XÈVÚ[š]X[ÜÙXÛÛ™ÙXYÛ›ÜÝX×KˆKˆKˆNÂˆ˜XÚÙ[™ˆœ™Yœ™\ÚÜ[ŠXYÛ›ÜÝXÜÊBˆ›Ú×ÛÜ—Ù[ÙJ™^XÝYÛÛ[Z]Y][KYØÝ[Y[Û˜\ÚÝ‹×ÜÝš[™Ê
+JOÎÂˆ][[YHHÚÚ[ÎŽœ[[YNŽZ[\ŽŽ›™]×ØÝ\œ™[Ý™XY
+
+Bˆ™[˜X›WØ[
+
+Bˆ˜Z[
+
+Bˆ›X\Ù\œŠ\œŸ›Ü›X]J™˜Z[YÈÝ\\Ý[[YNˆÙ\œŸHŠJOÎÂˆ]š\œÝH[[YBˆ˜›ØÚ×ÛÛŠ˜XÚÙ[™ÛÜšÜÜXÙWÙXYÛ›ÜÝXÊÛÜšÜÜXÙQXYÛ›ÜÝXÔ\˜[\ÈÂˆY[YšY\Žˆ›Û™Kˆ™]š[Ý\×Ü™\Ý[ÚYÎˆ™XÎŽ›™]Ê
+KˆÛÜš×ÙÛ™WÜ›ÙÜ™\Ü×Ü\˜[\ÎˆY˜][Ž™Y˜][
+
+Kˆ\X[Ü™\Ý[Ü\˜[\Îˆ\X[™\Ý[\˜[\ÎŽ™Y˜][
+
+KˆJJBˆ›X\Ù\œŠ\œŸ›Ü›X]J™š\œÝ][KYØÝ[Y[[˜Z[YˆÙ\œŸHŠJOÎÂˆ]š\œÝÚœÛÛˆHÙ\™WÚœÛÛŽŽ×Ý˜[YJš\œÝ
+Bˆ›X\Ù\œŠ\œŸ›Ü›X]JœÙ\šX[^™Hš\œÝ][KYØÝ[Y[™\Ü˜Z[YˆÙ\œŸHŠJOÎÂˆ]™]š[Ý\×Ü™\Ý[ÚYÈHš\œÝÚœÛÛ‚ˆ™Ù]
+š][\ÈŠBˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×Ø\œ˜^JBˆ›Ú×ÛÜ—Ù[ÙJ™š\œÝ][KYØÝ[Y[™\ÜY›È][\È‹×ÜÝš[™Ê
+JOÂˆš]\Š
+Bˆ›X\
+][_Âˆ]\šHH][Bˆ™Ù]
+\šHŠBˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×ÜÝŠBˆ›Ú×ÛÜ—Ù[ÙJ›][KYØÝ[Y[][HY›ÈT’H‹×ÜÝš[™Ê
+JOÂˆœ\œÙJ
+Bˆ›X\Ù\œŠ\œŸ›Ü›X]Jœ\œÙH™]\›™YT’H˜Z[YˆÙ\œŸHŠJOÎÂˆ]™\Ý[ÚYH][Bˆ™Ù]
+œ™\Ý[YŠBˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×ÜÝŠBˆ›Ú×ÛÜ—Ù[ÙJ›][KYØÝ[Y[][HY›È™\Ý[Q‹×ÜÝš[™Ê
+JOÎÂˆÚÊ™]š[Ý\Ô™\Ý[YÂˆ\šKˆ˜[YNˆ™\Ý[ÚY×ÜÝš[™Ê
+KˆJBˆJBˆ˜ÛÛXÝŽ™\Ý[™XÏÏ‹Ýš[™ÏŠ
+OÎÂ‚ˆ]]]Ú[™ÙYÜÙXÛÛ™ÙXYÛ›ÜÝXÈBˆÙ\™YÙXYÛ›ÜÝXÊ]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠK	œØ[\WÙš[™[™Ê
+JNÂˆÚ[™ÙYÜÙXÛÛ™ÙXYÛ›ÜÝXË›Y\ÜØYÙKœ\ÚÜÝŠˆÚ[™ÙYŠNÂˆ]]]Ú[™ÙYÜÛ˜\ÚÝHØ[\WØ[˜[\Ú\×ÜÛ˜\ÚÝ
+ˆ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙHŠKˆš\œÝÝ\šK˜ÛÛ™J
+Kˆ™XÈVÜÙ\™YÙXYÛ›ÜÝXÊˆ]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠKˆ	œØ[\WÙš[™[™Ê
+Kˆ
+WKˆ™XÈVÙš\œÝÙš[™[™ËÙXÛÛ™Ùš[™[™×Kˆ
+NÂˆÚ[™ÙYÜÛ˜\ÚÝˆ™XYÛ›ÜÝXÜ×ØžWÝ\šBˆš[œÙ\
+ÙXÛÛ™Ý\šK˜ÛÛ™J
+K™XÈVØÚ[™ÙYÜÙXÛÛ™ÙXYÛ›ÜÝXË˜ÛÛ™J
+WJNÂˆ˜XÚÙ[™ˆœ™Yœ™\ÚÜ[ŠÛÜšÜÜXÙQXYÛ›ÜÝXÜÈÂˆÛ˜\ÚÝˆÚ[™ÙYÜÛ˜\ÚÝˆ˜]Ú\Îˆ™XÈVÂˆXYÛ›ÜÝXÐ˜]ÚÂˆ\šNˆš\œÝÝ\šKˆXYÛ›ÜÝXÜÎˆ™XÈVÜÙ\™YÙXYÛ›ÜÝXÊˆ]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠKˆ	œØ[\WÙš[™[™Ê
+Kˆ
+WKˆKˆXYÛ›ÜÝXÐ˜]ÚÂˆ\šNˆÙXÛÛ™Ý\šKˆXYÛ›ÜÝXÜÎˆ™XÈVØÚ[™ÙYÜÙXÛÛ™ÙXYÛ›ÜÝX×KˆKˆKˆJBˆ›Ú×ÛÜ—Ù[ÙJ™^XÝYÚ[™ÙY][KYØÝ[Y[Û˜\ÚÝ‹×ÜÝš[™Ê
+JOÎÂ‚ˆ]ÙXÛÛ™H[[YBˆ˜›ØÚ×ÛÛŠ˜XÚÙ[™ÛÜšÜÜXÙWÙXYÛ›ÜÝXÊÛÜšÜÜXÙQXYÛ›ÜÝXÔ\˜[\ÈÂˆY[YšY\Žˆ›Û™Kˆ™]š[Ý\×Ü™\Ý[ÚYËˆÛÜš×ÙÛ™WÜ›ÙÜ™\Ü×Ü\˜[\ÎˆY˜][Ž™Y˜][
+
+Kˆ\X[Ü™\Ý[Ü\˜[\Îˆ\X[™\Ý[\˜[\ÎŽ™Y˜][
+
+KˆJJBˆ›X\Ù\œŠ\œŸ›Ü›X]JœÙXÛÛ™][KYØÝ[Y[[˜Z[YˆÙ\œŸHŠJOÎÂˆ]ÙXÛÛ™ÚœÛÛˆHÙ\™WÚœÛÛŽŽ×Ý˜[YJÙXÛÛ™
+Bˆ›X\Ù\œŠ\œŸ›Ü›X]JœÙ\šX[^™HÙXÛÛ™][KYØÝ[Y[™\Ü˜Z[YˆÙ\œŸHŠJOÎÂˆ]Ú[™ÈHÙXÛÛ™ÚœÛÛ‚ˆ™Ù]
+š][\ÈŠBˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×Ø\œ˜^JBˆ›Ú×ÛÜ—Ù[ÙJœÙXÛÛ™][KYØÝ[Y[™\ÜY›È][\È‹×ÜÝš[™Ê
+JOÂˆš]\Š
+Bˆ™š[\—ÛX\
+][_Âˆ][K™Ù]
+\šHŠBˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×ÜÝŠBˆžš\
+][K™Ù]
+šÚ[™ŠK˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×ÜÝŠJBˆJBˆ˜ÛÛXÝŽ•™YSX\ËÏŠ
+NÂˆYˆÚ[™Ë™Ù]
+™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÙš\œÝœœÈŠHOHÛÛYJ	ˆ[˜Ú[™ÙYŠBˆÚ[™Ë™Ù]
+™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜÙXÛÛ™œœÈŠHOHÛÛYJ	ˆ™[ŠBˆÂˆ™]\›ˆ\œŠ›Ü›X]Jˆ™^XÝYÛ›HHÚ[™ÙYØÝ[Y[È™H[ˆÜÙXÛÛ™ÚœÛÛŸH‚ˆ
+JNÂˆBˆÚÊ
+
+JBŸB‚‹ËËÈš]™\ÈH™X[\Þ[˜ÈÛÙWÛ[œØ[™\ˆ]
+˜XÚÙ[™8¡¤ˆÛÙWÛ[œ×Ü™\ÜÛœÙJB‹ËËÈ\Ú[™ÈHÚÚ[È[[YKX]Ú[™ÈH]\›ˆÙˆœ˜[YYÛÜÜ›ÝØÛÛÜÛ[ÚÙWÙ^\˜Ú\Ù\×ÝÝÙ\—ÜÙ\™\˜‚‹ËËÈÛÛœÝXÝÈH˜XÚÙ[™Ú]HÜ[]Y]\ÝØ[˜[\Ú\ØÛ˜\ÚÝØ[Â‹ËËÈÛÙWÛ[œØÚ]HÛÙS[œÔ\˜[\Ø›ÜˆHš[K[™\ÜÙ\È[œÙ\È™]\›™Y‚‹ËËÈ\È^\˜Ú\Ù\ÈH[™\¸¡¤š[\ˆÚ\š[™Ë›Ý\ÝH\™H›‹‚ˆÖÝ\ÝB™›ˆ˜XÚÙ[™ØÛÙWÛ[œ×Ú[™\—Ù[YØ]\×Ý×Û[œ×Ú[\Š
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆËÈZ[HZ[š[X[Û˜\ÚÝÚ]Û™Hš[™[™È]™[Û™ÜÈÈHÜXÚYšXÈš[K‚ˆ]›ÛÝH‹ÝÛÜšÜÜXÙHŽÂˆ]š[HHœÜ˜ËÛX‹œœÈŽÂˆ]\šWÜÝˆH™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÛX‹œœÈŽÂ‚ˆËÈ™]\ÙHHØ[YHš[™[™ÈÛÛœÝXÝ[Ûˆ\ÈH\™KY›ˆ\ÝÈšXHH[\ÜY[\‹‚ˆËÈÙHØ[ÛÙWÛ[œ×Ü™\ÜÛœÙH\™XÝH
+H\™H›ŠHÈ™\šYžHH[™\ˆÚ\š[™Ë‚ˆ]\šHH\šWÜÝ‚ˆœ\œÙNŽÝÙ\—ÛÜÜÙ\™\ŽŽ›×Ý\\ÎŽ•\šOŠ
+Bˆ›X\Ù\œŠ_›Ü›X]J\ÝT’H\œÙH˜Z[YˆÙ_HŠJOÎÂ‚ˆËÈZ[š[™[™È[™Û˜\ÚÝX[X[H
+Ø[YH\È[œÎŽ\ÝÈ[\œÊK‚ˆ\ÙHÜ˜]NŽ™ÛXZ[ŽŽžÂˆXÝ]˜][Û‘]šY[˜ÙKÛÛ™šY[˜ÙK[RÚ[™^ÜÝ\™PÛ\ÜËÜ˜XÛRÚ[™Ü˜XÛTÝ™[™Ýˆ›Ø™K›Ø™Q˜[Z[K›Ø™RY™[]Y\Ý™]™X[]šY[˜ÙKš\‘]šY[˜ÙKÛÝ\˜ÙSØØ][Û‹ˆÝYÙQ]šY[˜ÙKÝYÙTÝ]KÞ[X›ÛYˆNÂˆ]š[™[™ÈHÜ˜]NŽ™ÛXZ[ŽŽ‘š[™[™ÈÂˆYˆ›Ü›X]Jœ›Ø™NžÙš[_NŒLœ™YXØ]N˜XX˜˜ØÙŠKˆØ[›ÛšXØ[ÙØ\ˆ›Û™Kˆ›Ø™Nˆ›Ø™HÂˆYˆ›Ø™RY
+›Ü›X]Jœ›Ø™NžÙš[_NŒLœ™YXØ]N˜XX˜˜ØÙŠJKˆØØ][ÛŽˆÛÝ\˜ÙSØØ][ÛŽŽ›™]Êš[KLJKˆÝÛ™\ŽˆÛÛYJÞ[X›ÛY
+›ÝÛ™\ŽŽ™›ˆ‹×ÜÝš[™Ê
+JJKˆ˜[Z[Nˆ›Ø™Q˜[Z[NŽ”™YXØ]Kˆ[Nˆ[RÚ[™Ž•˜[YKˆ™Y›Ü™Nˆ›Û™KˆY\ŽˆÛÛYJYH‹×ÜÝš[™Ê
+JKˆ^™\ÜÚ[ÛŽˆžˆ‹×ÜÝš[™Ê
+Kˆ^XÝYÜÚ[šÜÎˆ™XÎŽ›™]Ê
+Kˆ™\]Z\™YÛÜ˜XÛ\Îˆ™XÎŽ›™]Ê
+KˆKˆÛ\ÜÎˆ^ÜÝ\™PÛ\ÜÎŽ‘^ÜÙYˆš\Žˆš\‘]šY[˜ÙHÂˆ™XXÚˆÝYÙQ]šY[˜ÙNŽ›™]ÊÝYÙTÝ]NŽ–Y\ËÛÛ™šY[˜ÙNŽ’YÚœ™XXÚX›HŠKˆ[™™XÝˆÝYÙQ]šY[˜ÙNŽ›™]ÊÝYÙTÝ]NŽ–Y\ËÛÛ™šY[˜ÙNŽ’YÚš[™™XÝX›HŠKˆ›ÜYØ]NˆÝYÙQ]šY[˜ÙNŽ›™]ÊÝYÙTÝ]NŽ–Y\ËÛÛ™šY[˜ÙNŽ“YY][Kœ›ÜYØ]X›HŠKˆ™]™X[ˆ™]™X[]šY[˜ÙHÂˆØœÙ\™NˆÝYÙQ]šY[˜ÙNŽ›™]ÊÝYÙTÝ]NŽ•ÙXZËÛÛ™šY[˜ÙNŽ“YY][K›ØœÙ\™YŠKˆ\ØÜš[Z[˜]NˆÝYÙQ]šY[˜ÙNŽ›™]ÊˆÝYÙTÝ]NŽ•ÙXZËˆÛÛ™šY[˜ÙNŽ“YY][Kˆ™\ØÜš[Z[˜]Y‹ˆ
+KˆKˆKˆÛÛ™šY[˜ÙNˆKŒˆ]šY[˜ÙNˆ™XÎŽ›™]Ê
+KˆZ\ÜÚ[™Îˆ™XÎŽ›™]Ê
+Kˆ›Ý×ÜÚ[šÜÎˆ™XÎŽ›™]Ê
+KˆXÝ]˜][ÛŽˆXÝ]˜][Û‘]šY[˜ÙNŽ™Y˜][
+
+KˆÝÜÜ™X\ÛÛœÎˆ™XÎŽ›™]Ê
+Kˆ™[]YÝ\ÝÎˆ™XÈVÔ™[]Y\ÝÂˆ˜[YNˆ\ÝÙ\ØÛÝ[È‹×ÜÝš[™Ê
+Kˆš[NˆÝŽœ]Ž”]YŽŽ™œ›ÛJ\ÝËÛX‹œœÈŠKˆ[™Nˆ‹ˆÜ˜XÛNˆ›Û™KˆÜ˜XÛWÚÚ[™ˆÜ˜XÛRÚ[™Ž•[šÛ›ÝÛ‹ˆÜ˜XÛWÜÝ™[™ÝˆÜ˜XÛTÝ™[™ÝŽ•ÙXZËˆ™[][Û—Ü™X\ÛÛŽˆ›Û™Kˆ™[][Û—ØÛÛ™šY[˜ÙNˆ›Û™KˆWKˆ™XÛÛ[Y[™YÛ™^ÜÝ\ˆ›Û™Kˆ[™ÝXYÙNˆ›Û™Kˆ[™ÝXYÙWÜÝ]\Îˆ›Û™KˆÝÛ™\—ÚÚ[™ˆ›Û™KˆÝ]X×Û[Z]ÚÚ[™ˆ›Û™KˆÚ[™ÙYÜÚ[šÎˆ›Û™KˆØœÙ\™YÜÚ[šÎˆ›Û™KˆÜ˜XÛWØ[YÛ›Y[ˆ›Û™Kˆ[YÛ›Y[Ü™X\ÛÛŽˆ›Û™KˆÛÝ\˜ÙWØÝ\œ™[™\ÜÎˆÜ˜]NŽ™ÛXZ[ŽŽ”ÛÝ\˜ÙPÝ\œ™[™\ÜÎŽØ[™Y]PÝ\œ™[ˆNÂ‚ˆËÈZ[Û˜\ÚÝØ]\ÙžZ[™È\×ØÛÛœÚ\Ý[
+
+K‚ˆ]XY×Ý\šHHš[WÝ\šWÙ›Ü—Ü]
+	œÝŽœ]Ž”]YŽŽ™œ›ÛJ›ÛÝ
+Kš›Ú[Šš[JJBˆ›X\Ù\œŠ_›Ü›X]J\šHZ[˜Z[YˆÙ_HŠJOÎÂˆ]XYÈHÝÙ\—ÛÜÜÙ\™\ŽŽ›×Ý\\ÎŽ‘XYÛ›ÜÝXÈÂˆ˜[™ÙNˆ˜[™ÙHÂˆÝ\ˆÜÚ][ÛˆÂˆ[™NˆKˆÚ\˜XÝ\ŽˆˆKˆ[™ˆÜÚ][ÛˆÂˆ[™NˆKˆÚ\˜XÝ\ŽˆLŒˆKˆKˆÙ]™\š]Nˆ›Û™KˆÛÙNˆ›Û™KˆÛÙWÙ\ØÜš\[ÛŽˆ›Û™KˆÛÝ\˜ÙNˆÛÛYJœš\ˆ‹×ÜÝš[™Ê
+JKˆY\ÜØYÙNˆ\Ý‹×ÜÝš[™Ê
+Kˆ™[]YÚ[™›Ü›X][ÛŽˆ›Û™KˆYÜÎˆ›Û™Kˆ]NˆÛÛYJÙ\™WÚœÛÛŽŽšœÛÛˆJÈ™š[™[™×ÚYŽˆš[™[™ËšYJJKˆNÂˆ]]]XYÛ›ÜÝXÜ×ØžWÝ\šHHÝŽ˜ÛÛXÝ[ÛœÎŽ•™YSX\Ž›™]Ê
+NÂˆXYÛ›ÜÝXÜ×ØžWÝ\šKš[œÙ\
+XY×Ý\šK™XÈVÙXY×JNÂ‚ˆ]Û˜\ÚÝH[˜[\Ú\ÔÛ˜\ÚÝÂˆ›ÛÝˆÝŽœ]Ž”]YŽŽ™œ›ÛJ›ÛÝ
+Kˆ[œ]ÚY[]Nˆ›Û™Kˆ˜\ÙNˆ›Û™Kˆ[ÙNˆÜ˜]NŽ˜\Ž“[ÙNŽ‘˜Yˆ™Yœ™\Úˆ™Yœ™\ÚY]Y]NŽ™Y˜][
+
+Kˆš[™[™ÜÎˆ™XÈVÙš[™[™×Kˆ[˜[\Ú\×ÛÝ]ÛÛYNˆ›Û™KˆXYÛ›ÜÝX×Ü›Ùš[NˆÜ˜]NŽ˜ÛÛ™šYÎŽ“ÜXYÛ›ÜÝXÔ›Ùš[NŽ‘[ˆÛ\ÜÚYšYYÜÙX[\Îˆ™XÎŽ›™]Ê
+KˆØ\Ø\Y˜XÝÎˆ™XÎŽ›™]Ê
+KˆØ\Ø\Y˜XÝÜ™Z™XÝ[ÛœÎˆ™XÎŽ›™]Ê
+KˆXYÛ›ÜÝXÜ×ØžWÝ\šKˆ[]™\žWÜÙ[XÝ[ÛŽˆ›Û™KˆÙX[\×ÙY™\œ™Yˆ˜[ÙKˆ\X[ÜØÛÜNˆ›Û™KˆÛÛ\Û™[ÛÝ]ÛÛY\Îˆ™XÎŽ›™]Ê
+KˆÝ]ÛÙ—ÜØÛÜWÝ\ÝÙš[WÙš[™[™ÜÎˆˆNÂ‚ˆËÈØ[H\™HÛÙWÛ[œ×Ü™\ÜÛœÙH\™XÝHÈ™\šYžHH[™\¸¡¤š[\ˆ]‚ˆËÈ
+H\Þ[˜È˜XÚÙ[™\ÝÛÝ[™\]Z\™HÜ[›š[™È\[ˆÜÙ\šXÙKÚXÚ\ÈÛÝ™\™YˆËÈžHœ˜[YYÛÜÜ›ÝØÛÛÜÛ[ÚÙWÙ^\˜Ú\Ù\×ÝÝÙ\—ÜÙ\™\ŽÈ\È\Ý™\šYšY\ÈHÚ\š[™ÂˆËÈ]H[™\ˆ›Ý[™\žHÚ]H™X[Û˜\ÚÝŠBˆ][œÙ\ÈHÛÙWÛ[œ×Ü™\ÜÛœÙJ	\šKÛÛYJ	œÛ˜\ÚÝ
+JNÂ‚ˆYˆ[œÙ\Ëš\×Ù[\J
+HÂˆ™]\›ˆ\œŠˆš[™\ˆ]\Ý™]\›ˆ[œÙ\È›ÜˆHÛ˜\ÚÝÚ]HX]Ú[™Èš[™[™È‹×ÜÝš[™Ê
+Kˆ
+NÂˆBˆ]]HH[œÙ\ÖÌBˆ˜ÛÛ[X[™ˆ˜\×Ü™YŠ
+Bˆ›Ú×ÛÜŠ™^XÝYÛÛ[X[™[ˆ[œÈœ›ÛH[™\ˆŠOÂˆ]Bˆ˜ÛÛ™J
+NÂˆYˆ]]K˜ÛÛZ[œÊŒHŠHÂˆ™]\›ˆ\œŠ›Ü›X]Jˆš[™\ˆ[œÈ]\ÝÚ]HH™[]Y\ÝÛÝˆÝ]_H‚ˆ
+JNÂˆBˆYˆ[[œ×Ý]WÚ\×ÜÝ]X×Û[™ÝXYÙWØÛX[Š	]JHÂˆ™]\›ˆ\œŠ›Ü›X]Jˆš[™\ˆ[œÈ]HÛÛZ[œÈ›Ü˜šY[ˆ›ØØX[\žNˆÝ]_H‚ˆ
+JNÂˆBˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆÛÙWÛ[œ×Ü™Yœ™\ÚÚ\×Û›ÝØ][\YÙ›Ü—Ý[œÝ\ÜYØÛY[Ê
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ][[YHHÚÚ[ÎŽœ[[YNŽZ[\ŽŽ›™]×ØÝ\œ™[Ý™XY
+
+Bˆ™[˜X›WØ[
+
+Bˆ˜Z[
+
+Bˆ›X\Ù\œŠ\œŸ›Ü›X]J™˜Z[YÈÝ\\Ý[[YNˆÙ\œŸHŠJOÎÂˆ[[YK˜›ØÚ×ÛÛŠ\Þ[˜ÈÂˆ]›ÛÝH[š\]YWÛÜÝ\ÝÜ›ÛÝ
+˜ÛÙK[[œË\™Yœ™\Ú][œÝ\ÜYŠOÎÂˆ]
+Ù\šXÙKÜÛØÚÙ]
+HHÜÙ\šXÙNŽ›™]ÊÛY[˜XÚÙ[™Ž›™]ÊÛY[]YŽŽ™œ›ÛJ‹ˆŠJJNÂˆ]˜XÚÙ[™HÙ\šXÙKš[›™\Š
+NÂˆËÈ[š]X[^™HÒUÕUÛÜšÜÜXÙK˜ÛÙS[œËœ™Yœ™\ÚÝ\ÜˆHÙ\™\‚ˆËÈ]\Ý›Ý™XÛÜ™Üˆ][\[žH™Yœ™\Ú›Üˆ\ÈÛY[
+ÌŒÌŠK‚ˆ˜XÚÙ[™ˆš[š]X[^™J[š]X[^™WÜ\˜[\Êˆ›Û™KˆÛÛYJš[WÝ\šWÙ›Ü—Ü]
+›ÛÝœ]
+
+JOÊKˆ
+JBˆ˜]ØZ]ˆ›X\Ù\œŠ\œŸ›Ü›X]Jš[š]X[^™H˜Z[YˆÙ\œŸHŠJOÎÂ‚ˆ]\šHH\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜšXÚ[™ËœœÈŠOÎÂˆ]š[™[™ÈHØ[\WÙš[™[™Ê
+NÂˆ]XYÛ›ÜÝXÜÈHØ[\WÝÛÜšÜÜXÙWÙXYÛ›ÜÝXÜÊˆ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙHŠKˆ\šK˜ÛÛ™J
+Kˆ™XÈVÙXYÛ›ÜÝX×Ù›Ü—Ùš[™[™Ê]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠK	™š[™[™ÊWKˆ™XÈVÙš[™[™×Kˆ
+NÂˆ]Y[]HH[œ×ÝšY]×ÚY[]J	™XYÛ›ÜÝXÜËœÛ˜\ÚÝ
+NÂˆYˆ˜XÚÙ[™››ÝWÛ[œ×ÝšY]×Ù›Ü—Ü™Yœ™\Ú
+Y[]JHÂˆ™]\›ˆ\œŠ˜[ˆ[œÝ\ÜYÛY[]\Ý›Ý][\HÛÙH[œÈ™Yœ™\Ú‹×ÜÝš[™Ê
+JNÂˆBˆYˆ˜XÚÙ[™›\ÝÜ™\]Y\ÝYÛ[œ×ÝšY]×ÚY[]J
+Kš\×ÜÛÛYJ
+HÂˆ™]\›ˆ\œŠˆ˜[ˆ[œÝ\ÜYÛY[]\Ý›Ý™XÛÜ™Üˆ][\HÛÙH[œÈ™Yœ™\Ú‹×ÜÝš[™Ê
+Kˆ
+NÂˆBˆÚÊ
+
+JBˆJBŸB‚ˆÖÝ\ÝB™›ˆÛÙWÛ[œ×Ü™Yœ™\ÚÝ˜XÚÜ×ÜÙ[X[X×ÝšY]×ØÚ[™Ù\×Ù›Ü—ÜÝ\ÜYØÛY[Ê
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ][[YHHÚÚ[ÎŽœ[[YNŽZ[\ŽŽ›™]×ØÝ\œ™[Ý™XY
+
+Bˆ™[˜X›WØ[
+
+Bˆ˜Z[
+
+Bˆ›X\Ù\œŠ\œŸ›Ü›X]J™˜Z[YÈÝ\\Ý[[YNˆÙ\œŸHŠJOÎÂˆ[[YK˜›ØÚ×ÛÛŠ\Þ[˜ÈÂˆ]›ÛÝH[š\]YWÛÜÝ\ÝÜ›ÛÝ
+˜ÛÙK[[œË\™Yœ™\Ú\Ý\ÜYŠOÎÂˆ]
+Ù\šXÙKÜÛØÚÙ]
+HHÜÙ\šXÙNŽ›™]ÊÛY[˜XÚÙ[™Ž›™]ÊÛY[]YŽŽ™œ›ÛJ‹ˆŠJJNÂˆ]˜XÚÙ[™HÙ\šXÙKš[›™\Š
+NÂˆ]]]\˜[\ÈH[š]X[^™WÜ\˜[\Ê›Û™KÛÛYJš[WÝ\šWÙ›Ü—Ü]
+›ÛÝœ]
+
+JOÊJNÂˆ\˜[\Ë˜Ø\Xš[]Y\ËÛÜšÜÜXÙHBˆÛÛYJÝÙ\—ÛÜÜÙ\™\ŽŽ›×Ý\\ÎŽ•ÛÜšÜÜXÙPÛY[Ø\Xš[]Y\ÈÂˆÛÙWÛ[œÎˆÛÛYJˆÝÙ\—ÛÜÜÙ\™\ŽŽ›×Ý\\ÎŽÛÙS[œÕÛÜšÜÜXÙPÛY[Ø\Xš[]Y\ÈÂˆ™Yœ™\ÚÜÝ\ÜˆÛÛYJYJKˆKˆ
+Kˆ‹ÝÙ\—ÛÜÜÙ\™\ŽŽ›×Ý\\ÎŽ•ÛÜšÜÜXÙPÛY[Ø\Xš[]Y\ÎŽ™Y˜][
+
+BˆJNÂˆ˜XÚÙ[™ˆš[š]X[^™J\˜[\ÊBˆ˜]ØZ]ˆ›X\Ù\œŠ\œŸ›Ü›X]Jš[š]X[^™H˜Z[YˆÙ\œŸHŠJOÎÂ‚ˆ]\šHH\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜšXÚ[™ËœœÈŠOÎÂˆ]Y[]WÙ›ÜˆHš[™[™Îˆš[™[™ßÂˆ[œ×ÝšY]×ÚY[]Jˆ	œØ[\WÝÛÜšÜÜXÙWÙXYÛ›ÜÝXÜÊˆ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙHŠKˆ\šK˜ÛÛ™J
+Kˆ™XÈVÙXYÛ›ÜÝX×Ù›Ü—Ùš[™[™Ê]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠK	™š[™[™ÊWKˆ™XÈVÙš[™[™×Kˆ
+BˆœÛ˜\ÚÝˆ
+BˆNÂˆ]Y[]WØHHY[]WÙ›ÜŠØ[\WÙš[™[™Ê
+JNÂˆYˆX˜XÚÙ[™››ÝWÛ[œ×ÝšY]×Ù›Ü—Ü™Yœ™\Ú
+Y[]WØK˜ÛÛ™J
+JHÂˆ™]\›ˆ\œŠ˜HÝ\ÜYÛY[	ÜÈš\œÝ[œÈšY]È]\Ý™XY\ÈÚ[™ÙY‹×ÜÝš[™Ê
+JNÂˆBˆYˆ˜XÚÙ[™›\ÝÜ™\]Y\ÝYÛ[œ×ÝšY]×ÚY[]J
+HOHÛÛYJY[]WØK˜ÛÛ™J
+JHÂˆ™]\›ˆ\œŠˆ˜HÝ\ÜYÛY[	ÜÈš\œÝ[œÈšY]È]\Ý™H™XÛÜ™Y\È™\]Y\ÝY‹×ÜÝš[™Ê
+Kˆ
+NÂˆBˆËÈHž]KZY[XØ[™KXÛÛ[Z]™\ÜÈ›ÈÚ[™ÙH[™Ù[™È›Ý[™Ë‚ˆYˆ˜XÚÙ[™››ÝWÛ[œ×ÝšY]×Ù›Ü—Ü™Yœ™\Ú
+Y[]WØJHÂˆ™]\›ˆ\œŠ˜Hž]KZY[XØ[[œÈšY]È]\Ý›Ý™XY\ÈÚ[™ÙY‹×ÜÝš[™Ê
+JNÂˆB‚ˆËÈHÙ[X[XÈÚ[™ÙH
+Û\ÜÚYšXØ][Ûˆ›\
+HY˜[˜Ù\ÈH™XÛÜ™YšY]Ë‚ˆ]]]Ú[™ÙYHØ[\WÙš[™[™Ê
+NÂˆÚ[™ÙY˜Û\ÜÈH^ÜÝ\™PÛ\ÜÎŽ‘^ÜÙYÂˆ]Y[]WØˆHY[]WÙ›ÜŠÚ[™ÙY
+NÂˆYˆX˜XÚÙ[™››ÝWÛ[œ×ÝšY]×Ù›Ü—Ü™Yœ™\Ú
+Y[]WØ‹˜ÛÛ™J
+JHÂˆ™]\›ˆ\œŠ˜HÛ\ÜÚYšXØ][ÛˆÚ[™ÙH]\Ý™XY\ÈH[œË]šY]ÈÚ[™ÙH‹×ÜÝš[™Ê
+JNÂˆBˆYˆ˜XÚÙ[™›\ÝÜ™\]Y\ÝYÛ[œ×ÝšY]×ÚY[]J
+HOHÛÛYJY[]WØŠHÂˆ™]\›ˆ\œŠ˜HÛ\ÜÚYšXØ][ÛˆÚ[™ÙH]\ÝY˜[˜ÙHH™XÛÜ™Y[œÈšY]È‹×ÜÝš[™Ê
+JNÂˆBˆÚÊ
+
+JBˆJBŸB‚ˆÖÝ\ÝB™›ˆÙ\™WÜÝ[×ØØ[Ü™\Ù[˜ÙWÛØœÙ\™\Š
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]ÛÝ\˜ÙHH[˜ÛYWÜÝˆJ‹‹‹ÛÜœœÈŠNÂˆ]Ù\™WÜÝ[ÈHÛÝ\˜ÙBˆœÜ]
+˜\Þ[˜È›ˆÙ\™WÜÝ[Ê
+HŠBˆ›
+JBˆ›Ú×ÛÜ—Ù[ÙJ™^XÝYÙ\™WÜÝ[È[\[Y[][Ûˆ[ˆÜ[Ù[H‹×ÜÝš[™Ê
+JOÎÂˆ]Ù\™WÜÝ™X[\ÈHÛÝ\˜ÙBˆœÜ]
+˜\Þ[˜È›ˆÙ\™WÜÝ™X[\ÈŠBˆ›
+JBˆ›Ú×ÛÜ—Ù[ÙJ™^XÝYÙ\™WÜÝ™X[\È[\[Y[][Ûˆ[ˆÜ[Ù[H‹×ÜÝš[™Ê
+JOÎÂ‚ˆ\ÜÙ\JˆÙ\™WÜÝ[Ë˜ÛÛZ[œÊ˜[œÜÜØ›Ý[™ÎŽ•˜[œÜÜ›Ý[™ÎŽ™Y˜][
+
+HŠKˆœÙ\™WÜÝ[ÈÚÝ[Ù\™HHÝ[È˜[œÜÜÚ]H™]šY]ÙYY˜][˜[œÜÜ›Ý[™È
+ÌŒÍ
+H‚ˆ
+NÂˆ\ÜÙ\JˆÙ\™WÜÝ™X[\Ë˜ÛÛZ[œÊ˜Z[ÜÙ\šXÙJ›ÛÝ˜ÛÛ™J
+JHŠKˆœÙ\™WÜÝ™X[\ÈÚÝ[ÛÛœÝXÝHÔÙ\šXÙHÚ]H™\ÛÛ™YÛÜšÜÜXÙH›ÛÝ›ÝYÚHÚ\™YÛÛœÝXÝÜˆ‚ˆ
+NÂˆ\ÜÙ\JˆÛÝ\˜ÙK˜ÛÛZ[œÊ‹˜Ý\ÝÛWÛY]Ù
+‰ÜÙ]˜XÙW‹˜XÚÙ[™ŽœÙ]Ý˜XÙJHŠKˆ˜Z[ÜÙ\šXÙHÚÝ[™YÚ\Ý\ˆHÝ[™\™	ÜÙ]˜XÙH˜XÙHY™XÞXÛH›ÝYšXØ][Ûˆ
+ÌŒÍK’T‹TÔPËLLÍÊH‚ˆ
+NÂˆ\ÜÙ\JˆÙ\™WÜÝ™X[\Ë˜ÛÛZ[œÊ˜›Ý[™ËÜ˜\
+Ý[‹ÝÝ]
+HŠKˆœÙ\™WÜÝ™X[\ÈÚÝ[Ü˜\Ý[‹ÜÝÝ][ˆH›Ý[™Y˜[œÜÜY\\œÈ
+ÌŒÍ
+H‚ˆ
+NÂˆ\ÜÙ\JˆÙ\™WÜÝ™X[\Ë˜ÛÛZ[œÊ‹˜ÛÛ˜Ý\œ™[˜ÞWÛ]™[
+›Ý[™Ëœ™\]Y\ÝØÛÛ˜Ý\œ™[˜ÞJHŠKˆœÙ\™WÜÝ™X[\ÈÚÝ[Ù]H^XÚ][‹Y›YÚ™\]Y\ÝÛÛ˜Ý\œ™[˜ÞH›Ý[™
+ÌŒÍ
+H‚ˆ
+NÂˆ\ÜÙ\JˆÙ\™WÜÝ™X[\Ë˜ÛÛZ[œÊ‹œÙ\™JÙ\šXÙJHŠKˆœÙ\™WÜÝ™X[\ÈÚÝ[[™H›Ý[™Y˜[œÜÜHÛØÚÙ][™HÙ\šXÙHÈHÝÙ\ˆÔÙ\™\ˆ‚ˆ
+NÂ‚ˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝBˆÖÜÙ\šX[B™›ˆœ˜[YYÛÜÜ›ÝØÛÛÜÛ[ÚÙWÙ^\˜Ú\Ù\×ÝÝÙ\—ÜÙ\™\Š
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ][[YHHÚÚ[ÎŽœ[[YNŽZ[\ŽŽ›™]×ØÝ\œ™[Ý™XY
+
+Bˆ™[˜X›WØ[
+
+Bˆ˜Z[
+
+Bˆ›X\Ù\œŠ\œŸ›Ü›X]J™˜Z[YÈÝ\\Ý[[YNˆÙ\œŸHŠJOÎÂ‚ˆ[[YK˜›ØÚ×ÛÛŠ\Þ[˜ÈÂˆ][˜[YÜ›ÛÝÜ\™[H[š\]YWÛÜÝ\ÝÜ›ÛÝ
+™œ˜[YYZ[˜[Y\›ÛÝŠOÎÂˆ][˜[YÜ›ÛÝH[˜[YÜ›ÛÝÜ\™[œ]
+
+Kš›Ú[Š››ÝXKY\™XÝÜžHŠNÂˆÝŽ™œÎŽÜš]J	š[˜[YÜ›ÛÝˆ››ÝHÛÜšÜÜXÙH\™XÝÜžHŠBˆ›X\Ù\œŠ\œŸ›Ü›X]JÜš]H[˜[YÔ›ÛÝ˜Z[YˆÙ\œŸHŠJOÎÂˆ][˜[YÜ›ÛÝÝ\šHHš[WÝ\šWÙ›Ü—Ü]
+	š[˜[YÜ›ÛÝ
+OÎÂˆ]
+ÛY[Ú[ËÙ\™\—Ú[ÊHHÚÚ[ÎŽš[ÎŽ™\^
+
+ˆL
+NÂˆ]
+ÛY[Ü™XY]]ÛY[ÝÜš]JHHÚÚ[ÎŽš[ÎŽœÜ]
+ÛY[Ú[ÊNÂˆ]
+Ù\™\—Ü™XYÙ\™\—ÝÜš]JHHÚÚ[ÎŽš[ÎŽœÜ]
+Ù\™\—Ú[ÊNÂˆ]
+Ù\šXÙKÛØÚÙ]
+HHÜÙ\šXÙNŽ›™]ÊÛY[˜XÚÙ[™Ž›™]ÊÛY[]YŽŽ™œ›ÛJ‹ˆŠJJNÂˆ]]]Ù\™\—Ý\ÚÈHÚÚ[ÎŽœÜ]ÛŠ\Þ[˜È[Ý™HÂˆÙ\™\ŽŽ›™]ÊÙ\™\—Ü™XYÙ\™\—ÝÜš]KÛØÚÙ]
+BˆœÙ\™JÙ\šXÙJBˆ˜]ØZ]ÂˆJNÂˆ]]]ÛY[Ü™XYHÛY[Ü™XYÂˆ]^Ý\šHH™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÛX‹œœÈŽÂ‚ˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆšYŽˆKˆ›Y]ÙŽˆš[š]X[^™H‹ˆœ\˜[\ÈŽˆÂˆœ›ØÙ\ÜÒYŽˆ[ˆœ›ÛÝ\šHŽˆ[˜[YÜ›ÛÝÝ\šK˜\×ÜÝŠ
+Kˆš[š]X[^˜][Û“Ü[ÛœÈŽˆÂˆ˜˜\ÙT™YˆŽˆœš\‹[Ü\›ÝØÛÛ\Û[ÚÙK[Z\ÜÚ[™ËX˜\ÙH‚ˆKˆ˜Ø\Xš[]Y\ÈŽˆßBˆBˆJKˆ
+Bˆ˜]ØZ]ÎÂˆ][š]X[^™HH™XYÛÜÜ™\ÜÛœÙJ	›]]ÛY[Ü™XYJK˜]ØZ]ÎÂˆ\ÜÙ\Ù\HJˆ[š]X[^™VÈœ™\Ý[—VÈ˜Ø\Xš[]Y\È—VÈ™^XÝ]PÛÛ[X[™›ÝšY\ˆ—VÈ˜ÛÛ[X[™È—VÌKˆ‘Q”‘TÒÐÓÓSPS‘ˆ
+NÂˆ\ÜÙ\Ù\HJˆ[š]X[^™VÈœ™\Ý[—VÈ˜Ø\Xš[]Y\È—VÈ™^XÝ]PÛÛ[X[™›ÝšY\ˆ—VÈ˜ÛÛ[X[™È—VÌWKˆÓÓPÕÐÓÓ•VÐÓÓSPS‘ˆ
+NÂˆ\ÜÙ\Ù\HJˆ[š]X[^™VÈœ™\Ý[—VÈ˜Ø\Xš[]Y\È—VÈ™^XÝ]PÛÛ[X[™›ÝšY\ˆ—VÈ˜ÛÛ[X[™È—VÌ—KˆÓÓPÕÑU’QSÑWÐÓÓ•VÐÓÓSPS‘ˆ
+NÂˆ\ÜÙ\Ù\HJˆ[š]X[^™VÈœ™\Ý[—VÈ˜Ø\Xš[]Y\È—VÈ™^XÝ]PÛÛ[X[™›ÝšY\ˆ—VÈ˜ÛÛ[X[™È—VÌ×KˆÓÓPÕÕÓÔ’ÔÔPÑWÔÕUT×ÐÓÓSPS‘ˆ
+NÂˆ\ÜÙ\Ù\HJˆ[š]X[^™VÈœ™\Ý[—VÈ˜Ø\Xš[]Y\È—VÈ™^XÝ]PÛÛ[X[™›ÝšY\ˆ—VÈ˜ÛÛ[X[™È—VÍKˆÓÓPÕÔ‘TRT—ÔPÒÑUÐÓÓSPS‘ˆ
+NÂˆ\ÜÙ\Ù\HJˆ[š]X[^™VÈœ™\Ý[—VÈ˜Ø\Xš[]Y\È—VÈ™^XÝ]PÛÛ[X[™›ÝšY\ˆ—VÈ˜ÛÛ[X[™È—VÍWKˆÓÓPÕÕÔÓSRUUSÓ—ÐÓÓSPS‘ˆ
+NÂˆ\ÜÙ\Ù\HJˆ[š]X[^™VÈœ™\Ý[—VÈ˜Ø\Xš[]Y\È—VÈšÝ™\”›ÝšY\ˆ—KˆÙ\™WÚœÛÛŽŽ•˜[YNŽ›ÛÛ
+YJBˆ
+NÂ‚ˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆ›Y]ÙŽˆš[š]X[^™Y‹ˆœ\˜[\ÈŽˆßBˆJKˆ
+Bˆ˜]ØZ]ÎÂˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆ›Y]ÙŽˆ^ØÝ[Y[ÙYÜ[ˆ‹ˆœ\˜[\ÈŽˆÂˆ^ØÝ[Y[ŽˆÂˆ\šHŽˆ^Ý\šKˆ›[™ÝXYÙRYŽˆœ\Ý‹ˆ™\œÚ[ÛˆŽˆKˆ^ŽˆœXˆ›ˆ[[Ê
+HOˆ›ÛÛÈYHWˆ‚ˆBˆBˆJKˆ
+Bˆ˜]ØZ]ÎÂˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆšYŽˆ‹ˆ›Y]ÙŽˆÛÜšÜÜXÙKÙ^XÝ]PÛÛ[X[™‹ˆœ\˜[\ÈŽˆÂˆ˜ÛÛ[X[™ŽˆÓÓPÕÕÓÔ’ÔÔPÑWÔÕUT×ÐÓÓSPS‘ˆ˜\™Ý[Y[ÈŽˆ×BˆBˆJKˆ
+Bˆ˜]ØZ]ÎÂˆ]Ý]\ÈH™XYÛÜÜ™\ÜÛœÙJ	›]]ÛY[Ü™XYŠK˜]ØZ]ÎÂˆ\ÜÙ\Ù\HJˆÝ]\ÖÈœ™\Ý[—VÈ˜[˜[\Ú\×ÜÝ]\È—VÈœ›ÛÝÜÝ]H—Kˆœ›ÛÝÝ[˜]˜Z[X›H‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆÝ]\ÖÈœ™\Ý[—VÈ˜[˜[\Ú\×ÜÝ]\È—VÈœ™\Z\—ØXÝ[Ûœ×Ø]˜Z[X›H—Kˆ˜[ÙBˆ
+NÂˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆšYŽˆËˆ›Y]ÙŽˆÛÜšÜÜXÙKÙ^XÝ]PÛÛ[X[™‹ˆœ\˜[\ÈŽˆÂˆ˜ÛÛ[X[™Žˆ‘Q”‘TÒÐÓÓSPS‘ˆ˜\™Ý[Y[ÈŽˆ×BˆBˆJKˆ
+Bˆ˜]ØZ]ÎÂˆ]
+™Yœ™\Ú›ÝYšXØ][ÛœÊHBˆ™XYÛÜÜ™\ÜÛœÙWÝÚ]Û›ÝYšXØ][ÛœÊ	›]]ÛY[Ü™XYÊK˜]ØZ]ÎÂˆ\ÜÙ\J™Yœ™\Ú™Ù]
+™\œ›ÜˆŠKš\×Û›Û™J
+JNÂˆ\ÜÙ\Ù\HJ™Yœ™\ÚÈœ™\Ý[—KÙ\™WÚœÛÛŽŽ•˜[YNŽ“[
+NÂˆ\ÜÙ\JÙ×Û›ÝYšXØ][Û—ÛY\ÜØYÙ\Ê	››ÝYšXØ][ÛœÊKš\×Ù[\J
+JNÂ‚ˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆšYŽˆˆ›Y]ÙŽˆ^ØÝ[Y[ÚÝ™\ˆ‹ˆœ\˜[\ÈŽˆÂˆ^ØÝ[Y[ŽˆÈ\šHŽˆ^Ý\šHKˆœÜÚ][ÛˆŽˆÈ›[™HŽˆ˜Ú\˜XÝ\ˆŽˆBˆBˆJKˆ
+Bˆ˜]ØZ]ÎÂˆ]Ý™\ˆH™XYÛÜÜ™\ÜÛœÙJ	›]]ÛY[Ü™XY
+K˜]ØZ]ÎÂˆ]Ý™\—Ý˜[YHHÝ™\–Èœ™\Ý[—VÈ˜ÛÛ[È—VÈ˜[YH—Bˆ˜\×ÜÝŠ
+Bˆ›Ú×ÛÜ—Ù[ÙJ™^XÝYÝ™\ˆX\šÙÝÛˆ˜[YH‹×ÜÝš[™Ê
+JOÎÂˆ\ÜÙ\JÝ™\—Ý˜[YK˜ÛÛZ[œÊœš\ˆ\Ý[X]\ÈÝ]XÈ’Tˆ^ÜÝ\™HŠJNÂ‚ˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆšYŽˆKˆ›Y]ÙŽˆ^ØÝ[Y[ØÛÙPXÝ[Ûˆ‹ˆœ\˜[\ÈŽˆÂˆ^ØÝ[Y[ŽˆÈ\šHŽˆ^Ý\šHKˆœ˜[™ÙHŽˆÂˆœÝ\ŽˆÈ›[™HŽˆ˜Ú\˜XÝ\ˆŽˆKˆ™[™ŽˆÈ›[™HŽˆ˜Ú\˜XÝ\ˆŽˆBˆKˆ˜ÛÛ^ŽˆÈ™XYÛ›ÜÝXÜÈŽˆ×HBˆBˆJKˆ
+Bˆ˜]ØZ]ÎÂˆ]XÝ[ÛœÈH™XYÛÜÜ™\ÜÛœÙJ	›]]ÛY[Ü™XYJK˜]ØZ]ÎÂˆ\ÜÙ\Ù\HJˆXÝ[ÛœÖÈœ™\Ý[—VÌVÈ]H—Kˆ”™Yœ™\Ú[˜[\Ú\ÈHØ]™YÛÜšÜÜXÙHÚXÚÈ‚ˆ
+NÂˆ\ÜÙ\Ù\HJXÝ[ÛœÖÈœ™\Ý[—VÌVÈ˜ÛÛ[X[™—VÈ˜ÛÛ[X[™—K‘Q”‘TÒÐÓÓSPS‘
+NÂ‚ˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆšYŽˆ‹ˆ›Y]ÙŽˆœÚ]ÝÛˆ‹ˆœ\˜[\ÈŽˆ[ˆJKˆ
+Bˆ˜]ØZ]ÎÂˆ]Ú]ÝÛˆH™XYÛÜÜ™\ÜÛœÙJ	›]]ÛY[Ü™XYŠK˜]ØZ]ÎÂˆ\ÜÙ\JÚ]ÝÛ‹™Ù]
+™\œ›ÜˆŠKš\×Û›Û™J
+JNÂˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆ›Y]ÙŽˆ™^]‹ˆœ\˜[\ÈŽˆ[ˆJKˆ
+Bˆ˜]ØZ]ÎÂˆÛY[ÝÜš]BˆœÚ]ÝÛŠ
+Bˆ˜]ØZ]ˆ›X\Ù\œŠ\œŸ›Ü›X]J™˜Z[YÈÛÜÙH\ÝÛY[ˆÙ\œŸHŠJOÎÂˆX]ÚÚÚ[ÎŽ[YNŽ[Y[Ý]
+ÝŽ[YNŽ‘\˜][ÛŽŽ™œ›ÛWÜÙXÜÊŠK	›]]Ù\™\—Ý\ÚÊK˜]ØZ]ÂˆÚÊ›Ú[—Ü™\Ý[
+HOˆÂˆ›Ú[—Ü™\Ý[›X\Ù\œŠ\œŸ›Ü›X]J“ÔÙ\™\ˆ\ÚÈ˜Z[YˆÙ\œŸHŠJOÎÂˆBˆ\œŠÊHOˆÂˆÙ\™\—Ý\ÚË˜X›Ü
+
+NÂˆ™]\›ˆ\œŠ“ÔÙ\™\ˆY›ÝÝÜY\ˆ^]›ÝYšXØ][Ûˆ‹×ÜÝš[™Ê
+JNÂˆBˆBˆÚÊ
+
+JBˆJBŸB‚ˆÖÝ\ÝBˆÖÜÙ\šX[B™›ˆœ˜[YYÛÜÜ›ÝØÛÛÜÛ[ÚÙWÛÙÜ×ÜÝXØÙ\ÜÙ[Ü™Yœ™\ÚØÛÛ\][ÛŠ
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ][[YHHÚÚ[ÎŽœ[[YNŽZ[\ŽŽ›™]×ØÝ\œ™[Ý™XY
+
+Bˆ™[˜X›WØ[
+
+Bˆ˜Z[
+
+Bˆ›X\Ù\œŠ\œŸ›Ü›X]J™˜Z[YÈÝ\\Ý[[YNˆÙ\œŸHŠJOÎÂ‚ˆ[[YK˜›ØÚ×ÛÛŠ\Þ[˜ÈÂˆ]
+ÛY[Ú[ËÙ\™\—Ú[ÊHHÚÚ[ÎŽš[ÎŽ™\^
+
+ˆL
+NÂˆ]
+ÛY[Ü™XY]]ÛY[ÝÜš]JHHÚÚ[ÎŽš[ÎŽœÜ]
+ÛY[Ú[ÊNÂˆ]
+Ù\™\—Ü™XYÙ\™\—ÝÜš]JHHÚÚ[ÎŽš[ÎŽœÜ]
+Ù\™\—Ú[ÊNÂˆ]
+Ù\šXÙKÛØÚÙ]
+HHÜÙ\šXÙNŽ›™]ÊÛY[˜XÚÙ[™Ž›™]ÊÛY[]YŽŽ™œ›ÛJ‹ˆŠJJNÂˆ]]]Ù\™\—Ý\ÚÈHÚÚ[ÎŽœÜ]ÛŠ\Þ[˜È[Ý™HÂˆÙ\™\ŽŽ›™]ÊÙ\™\—Ü™XYÙ\™\—ÝÜš]KÛØÚÙ]
+BˆœÙ\™JÙ\šXÙJBˆ˜]ØZ]ÂˆJNÂˆ]]]ÛY[Ü™XYHÛY[Ü™XYÂˆËÈÙY\\È›ÝØÛÛÛ[ÚÙH›Ý[™Y›ÝÈ]ÙX[HXYÛ›ÜÝXÜÈY˜][ÛŽÂˆËÈÚÛK\™\È[™[ÜžH™Z]š[Üˆ\ÈÛÝ™\™YžHš^\™H[™™\Ü\ÝË‚ˆ]š^\™HH›Ý[™\žWÙØ\ÙÚ]Ùš^\™WÜ›ÛÝ
+™œ˜[YY\›ÝØÛÛ\Û[ÚÙHŠOÎÂˆ]™\×Ü›ÛÝHš^\™Kœ]
+
+K×Ü]ØYŠ
+NÂˆ]›ÛÝÝ\šHHš[WÝ\šWÙ›Ü—Ü]
+	œ™\×Ü›ÛÝ
+OÎÂ‚ˆËÈY™\\ÙHHš\‘Y]Üˆ›ØÚÈ^XÝH\ÈH”ÈÛÙH^[œÚ[Û‚ˆËÈÙ\È
+ÌMÍÍ‹’T‹TÔPËLLŽJHÛÈHÙ\ÜÚ[Ûˆ™YÛÝX]\ÈBˆËÈÛY[XÛÛ[X[™ÛÙHXÝ[ÛœÈ\ÜÙ\Y™[ÝË‚ˆ]Y™\\ÙYØÛÛ[X[™ÈHœØÛÙWØY™\\ÙYØÛY[ØÛÛ[X[™Ê
+OÎÂˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆšYŽˆKˆ›Y]ÙŽˆš[š]X[^™H‹ˆœ\˜[\ÈŽˆÂˆœ›ØÙ\ÜÒYŽˆ[ˆœ›ÛÝ\šHŽˆ›ÛÝÝ\šK˜\×ÜÝŠ
+Kˆš[š]X[^˜][Û“Ü[ÛœÈŽˆÂˆ˜˜\ÙT™YˆŽˆ’PQ‹ˆ˜ÚXÚÓ[ÙHŽˆš[œÝ[‹ˆ™XYÛ›ÜÝXÔ›Ùš[HŽˆ™[‚ˆKˆ˜Ø\Xš[]Y\ÈŽˆÂˆ™^\š[Y[[ŽˆÂˆœš\‘Y]ÜˆŽˆÂˆ™\œÚ[ÛˆŽˆŒŒLŒ‹ˆ˜ÛÛ[X[™ÈŽˆY™\\ÙYØÛÛ[X[™Ëˆ™ÝX\™Y\ÝY]Žˆ˜[ÙBˆBˆBˆBˆBˆJKˆ
+Bˆ˜]ØZ]ÎÂˆ][š]X[^™HH™XYÛÜÜ™\ÜÛœÙJ	›]]ÛY[Ü™XYJK˜]ØZ]ÎÂˆ\ÜÙ\J[š]X[^™K™Ù]
+™\œ›ÜˆŠKš\×Û›Û™J
+JNÂ‚ˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆšYŽˆ‹ˆ›Y]ÙŽˆÛÜšÜÜXÙKÙ^XÝ]PÛÛ[X[™‹ˆœ\˜[\ÈŽˆÂˆ˜ÛÛ[X[™Žˆ‘Q”‘TÒÐÓÓSPS‘ˆ˜\™Ý[Y[ÈŽˆ×BˆBˆJKˆ
+Bˆ˜]ØZ]ÎÂˆ]
+™Yœ™\Ú›ÝYšXØ][ÛœÊHBˆ™XYÛÜÜ™\ÜÛœÙWÝÚ]Û›ÝYšXØ][ÛœÊ	›]]ÛY[Ü™XYŠK˜]ØZ]ÎÂˆ\ÜÙ\J™Yœ™\Ú™Ù]
+™\œ›ÜˆŠKš\×Û›Û™J
+JNÂˆ\ÜÙ\Ù\HJ™Yœ™\ÚÈœ™\Ý[—KÙ\™WÚœÛÛŽŽ•˜[YNŽ“[
+NÂˆ]›ÝYšXØ][Û—ÛY\ÜØYÙ\ÈHÙ×Û›ÝYšXØ][Û—ÛY\ÜØYÙ\Ê	››ÝYšXØ][ÛœÊNÂˆ\ÜÙ\Jˆ›ÝYšXØ][Û—ÛY\ÜØYÙ\Âˆš]\Š
+Bˆ˜[žJY\ÜØYÙ_Y\ÜØYÙK˜ÛÛZ[œÊœš\ˆ[˜[\Ú\È™Yœ™\ÚÝ\YŠJBˆ
+NÂˆ\ÜÙ\Jˆ›ÝYšXØ][Û—ÛY\ÜØYÙ\Âˆš]\Š
+Bˆ˜[žJY\ÜØYÙ_Y\ÜØYÙK˜ÛÛZ[œÊœš\ˆ[˜[\Ú\È™Yœ™\ÚÛÛ\]Y[ˆŠJBˆ
+NÂ‚ˆ]
+^Ý\šKÙX[WÙXYÛ›ÜÝXÊHBˆX›\ÚYÜÙX[WÙXYÛ›ÜÝXÊ	››ÝYšXØ][ÛœËÙ˜ÍÍ˜LÍÙÍØ™ŠOÎÂˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆšYŽˆËˆ›Y]ÙŽˆ^ØÝ[Y[ÚÝ™\ˆ‹ˆœ\˜[\ÈŽˆÂˆ^ØÝ[Y[ŽˆÈ\šHŽˆ^Ý\šHKˆœÜÚ][ÛˆŽˆÈ›[™HŽˆK˜Ú\˜XÝ\ˆŽˆHBˆBˆJKˆ
+Bˆ˜]ØZ]ÎÂˆ]Ý™\ˆH™XYÛÜÜ™\ÜÛœÙJ	›]]ÛY[Ü™XYÊK˜]ØZ]ÎÂˆ]Ý™\—Ý˜[YHHÝ™\–Èœ™\Ý[—VÈ˜ÛÛ[È—VÈ˜[YH—Bˆ˜\×ÜÝŠ
+Bˆ›Ú×ÛÜ—Ù[ÙJ™^XÝYÙX[HÝ™\ˆX\šÙÝÛˆ˜[YH‹×ÜÝš[™Ê
+JOÎÂˆ\ÜÙ\JˆÝ™\—Ý˜[YK˜ÛÛZ[œÊˆÈÈZ\ÜÚ[™È\ØÜš[Z[˜]ÜˆŠKˆ™^XÝYÙX[HÝ™\ˆÈ˜[YHZ\ÜÚ[™È\ØÜš[Z[˜]Ü‹ÛÝÚÝ™\—Ý˜[Y_H‚ˆ
+NÂˆ\ÜÙ\JˆÝ™\—Ý˜[YK˜ÛÛZ[œÊˆÈÈ™[]Y\ÝÈŠKˆ™^XÝYÙX[HÝ™\ˆÈ˜[YH™[]Y\ÝËÛÝÚÝ™\—Ý˜[Y_H‚ˆ
+NÂˆ\ÜÙ\JˆÝ™\—Ý˜[YK˜ÛÛZ[œÊˆÈÈ™^Ý\ŠKˆ™^XÝYÙX[HÝ™\ˆÈ˜[YH™^Ý\ÛÝÚÝ™\—Ý˜[Y_H‚ˆ
+NÂˆ\ÜÙ\JˆÝ™\—Ý˜[YK˜ÛÛZ[œÊˆÈÈÝYÙÙ\ÝY\ÝÚ\HŠKˆ™^XÝYÙX[HÝ™\ˆÈ˜[YHÝYÙÙ\ÝY\ÝÚ\KÛÝÚÝ™\—Ý˜[Y_H‚ˆ
+NÂˆ\ÜÙ\JˆÝ™\—Ý˜[YK˜ÛÛZ[œÊˆÈÈ[™Ù™‹™\šYžK[™™XÙZ\ÛÛ[X[™ÈŠKˆ™^XÝYÙX[HÝ™\ˆÈ˜[YH[™Ù™‹™\šYžK[™™XÙZ\ÛÛ[X[™ËÛÝÚÝ™\—Ý˜[Y_H‚ˆ
+NÂˆ\ÜÙ\JˆÝ™\—Ý˜[YK˜ÛÛZ[œÊˆÈÈ[Z]ÈŠKˆ™^XÝYÙX[HÝ™\ˆÈ˜[YHÝ]XÈ[Z]ËÛÝÚÝ™\—Ý˜[Y_H‚ˆ
+NÂ‚ˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆšYŽˆˆ›Y]ÙŽˆ^ØÝ[Y[ØÛÙPXÝ[Ûˆ‹ˆœ\˜[\ÈŽˆÂˆ^ØÝ[Y[ŽˆÈ\šHŽˆ^Ý\šHKˆœ˜[™ÙHŽˆÙX[WÙXYÛ›ÜÝXÖÈœ˜[™ÙH—K˜ÛÛ™J
+Kˆ˜ÛÛ^ŽˆÈ™XYÛ›ÜÝXÜÈŽˆÜÙX[WÙXYÛ›ÜÝX×HBˆBˆJKˆ
+Bˆ˜]ØZ]ÎÂˆ]ÛÙWØXÝ[ÛœÈH™XYÛÜÜ™\ÜÛœÙJ	›]]ÛY[Ü™XY
+K˜]ØZ]ÎÂˆ]]\ÈHÛÙWØXÝ[ÛœÖÈœ™\Ý[—Bˆ˜\×Ø\œ˜^J
+Bˆ›Ú×ÛÜ—Ù[ÙJ™^XÝYÛÙPXÝ[Ûˆ™\Ý[\œ˜^H‹×ÜÝš[™Ê
+JOÂˆš]\Š
+Bˆ™š[\—ÛX\
+XÝ[ÛŸXÝ[Û‹™Ù]
+]HŠK˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×ÜÝŠJBˆ˜ÛÛXÝŽ™XÏÏŠ
+NÂˆ›Üˆ^XÝY[ˆÂˆ’[œÜXÝ\ÝØ\HÛÜHÛÛ^‹ˆ•Üš]H\™Ù]Y\ÝˆÛÜHœšYYˆ‹ˆ•™\šYžHY\ˆ\ÝˆÛÜH™\šYžHÛÛ[X[™‹ˆ”™]šY]È™\Ý[ˆÛÜH™XÙZ\ÛÛ[X[™‹ˆHÂˆ\ÜÙ\Jˆ]\Ë˜ÛÛZ[œÊ	™^XÝY
+Kˆ™^XÝY›ÝØÛÛÛÙHXÝ[ÛœÈÈÛÛZ[ˆÙ^XÝYKÛÝÝ]\ÎßH‚ˆ
+NÂˆB‚ˆ]ÙX[WÚYHÙX[WÙXYÛ›ÜÝXÖÈ™]H—VÈœÙX[WÚY—Bˆ˜\×ÜÝŠ
+Bˆ›Ú×ÛÜ—Ù[ÙJ™^XÝYÙX[HXYÛ›ÜÝXÈ]KœÙX[WÚY‹×ÜÝš[™Ê
+JOÎÂˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆšYŽˆKˆ›Y]ÙŽˆÛÜšÜÜXÙKÙ^XÝ]PÛÛ[X[™‹ˆœ\˜[\ÈŽˆÂˆ˜ÛÛ[X[™ŽˆÓÓPÕÑU’QSÑWÐÓÓ•VÐÓÓSPS‘ˆ˜\™Ý[Y[ÈŽˆÞÂˆœÙX[WÚYŽˆÙX[WÚYˆ™]šY[˜ÙWÚY[]HŽˆÙX[WÙXYÛ›ÜÝXÖÈ™]H—VÈ™]šY[˜ÙWÚY[]H—Kˆ\šHŽˆ^Ý\šKˆ›[™HŽˆ‚ˆWBˆBˆJKˆ
+Bˆ˜]ØZ]ÎÂˆ]ÛÛ^ÜXÚÙ]H™XYÛÜÜ™\ÜÛœÙJ	›]]ÛY[Ü™XYJK˜]ØZ]ÎÂˆ\ÜÙ\Ù\HJˆÛÛ^ÜXÚÙ]Èœ™\Ý[—VÈœØÚ[XWÝ™\œÚ[Ûˆ—KˆÙ\™WÚœÛÛŽŽ•˜[YNŽ”Ýš[™ÊŒŒH‹×ÜÝš[™Ê
+JBˆ
+NÂˆ\ÜÙ\Ù\HJÛÛ^ÜXÚÙ]Èœ™\Ý[—VÈœÙX[WÚY—KÙX[WÚY
+NÂˆ\ÜÙ\Ù\HJˆÛÛ^ÜXÚÙ]Èœ™\Ý[—VÈ™]šY[˜ÙWÜ]—VÈ™\ØÜš[Z[˜]H—Kˆœ™\Ù[‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆÛÛ^ÜXÚÙ]Èœ™\Ý[—VÈ›Z\ÜÚ[™×Ù\ØÜš[Z[˜]Üˆ—Kˆ™\ØÛÝ[Ý™\ÚÛ
+\]X[]H›Ý[™\žJH‚ˆ
+NÂˆ\ÜÙ\JˆÛÛ^ÜXÚÙ]Èœ™\Ý[—VÈœ™[]YÝ\Ý—Bˆ˜\×ÜÝŠ
+Bˆš\×ÜÛÛYWØ[™
+˜[Y_˜[YK˜ÛÛZ[œÊ\ÝËÜšXÚ[™ËœœÈŠJBˆ
+NÂˆ\ÜÙ\JˆÛÛ^ÜXÚÙ]Èœ™\Ý[—VÈ˜YÙ[ØœšYY—ØÛÛ[X[™—Bˆ˜\×ÜÝŠ
+Bˆš\×ÜÛÛYWØ[™
+˜[Y_˜[YKœÝ\×ÝÚ]
+œš\ˆYÙ[œšYYˆK\›ÛÝˆK\ÙX[KZYŠJBˆ
+NÂˆ\ÜÙ\JˆÛÛ^ÜXÚÙ]Èœ™\Ý[—VÈ™\šYžWØÛÛ[X[™—Bˆ˜\×ÜÝŠ
+Bˆš\×ÜÛÛYWØ[™
+˜[Y_˜[YK˜ÛÛZ[œÊœš\ˆYÙ[™\šYžHK\›ÛÝˆŠJBˆ
+NÂˆ\ÜÙ\JˆÛÛ^ÜXÚÙ]Èœ™\Ý[—VÈœ™XÙZ\ØÛÛ[X[™—Bˆ˜\×ÜÝŠ
+Bˆš\×ÜÛÛYWØ[™
+˜[Y_˜[YK˜ÛÛZ[œÊœš\ˆYÙ[™XÙZ\K\›ÛÝˆŠJBˆ
+NÂˆ\ÜÙ\Ù\HJˆÛÛ^ÜXÚÙ]Èœ™\Ý[—VÈ›[Z]×Û›ÝH—Kˆ”Ý]XÈ]šY[˜ÙHÛ›NÈ›È[[YH]]][Ûˆ^XÝ][Û‹ˆ‚ˆ
+NÂ‚ˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆšYŽˆ‹ˆ›Y]ÙŽˆœÚ]ÝÛˆ‹ˆœ\˜[\ÈŽˆ[ˆJKˆ
+Bˆ˜]ØZ]ÎÂˆ]Ú]ÝÛˆH™XYÛÜÜ™\ÜÛœÙJ	›]]ÛY[Ü™XYŠK˜]ØZ]ÎÂˆ\ÜÙ\JÚ]ÝÛ‹™Ù]
+™\œ›ÜˆŠKš\×Û›Û™J
+JNÂˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆ›Y]ÙŽˆ™^]‹ˆœ\˜[\ÈŽˆ[ˆJKˆ
+Bˆ˜]ØZ]ÎÂˆÛY[ÝÜš]BˆœÚ]ÝÛŠ
+Bˆ˜]ØZ]ˆ›X\Ù\œŠ\œŸ›Ü›X]J™˜Z[YÈÛÜÙH\ÝÛY[ˆÙ\œŸHŠJOÎÂˆX]ÚÚÚ[ÎŽ[YNŽ[Y[Ý]
+ÝŽ[YNŽ‘\˜][ÛŽŽ™œ›ÛWÜÙXÜÊŠK	›]]Ù\™\—Ý\ÚÊK˜]ØZ]ÂˆÚÊ›Ú[—Ü™\Ý[
+HOˆÂˆ›Ú[—Ü™\Ý[›X\Ù\œŠ\œŸ›Ü›X]J“ÔÙ\™\ˆ\ÚÈ˜Z[YˆÙ\œŸHŠJOÎÂˆBˆ\œŠÊHOˆÂˆÙ\™\—Ý\ÚË˜X›Ü
+
+NÂˆ™]\›ˆ\œŠ“ÔÙ\™\ˆY›ÝÝÜY\ˆ^]›ÝYšXØ][Ûˆ‹×ÜÝš[™Ê
+JNÂˆBˆBˆÚÊ
+
+JBˆJBŸB‚ˆÖÝ\ÝBˆÖÜÙ\šX[B™›ˆœ˜[YYÛÜÜ™Yœ™\ÚÜ™\ÛÛ™\×ÙÚ]Ú[œ]×ÛÛ˜ÙWØ[™Ü›Ú™XÝ×ÝWÜ™XÛÜ™
+
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ][[YHHÚÚ[ÎŽœ[[YNŽZ[\ŽŽ›™]×ØÝ\œ™[Ý™XY
+
+Bˆ™[˜X›WØ[
+
+Bˆ˜Z[
+
+Bˆ›X\Ù\œŠ\œŸ›Ü›X]J™˜Z[YÈÝ\\Ý[[YNˆÙ\œŸHŠJOÎÂ‚ˆ[[YK˜›ØÚ×ÛÛŠ\Þ[˜ÈÂˆËÈH™X[[\Ú]™\ÈÛÈH™Yœ™\Ú™\ÛÛ™\ÈH™\]Y\ÝY˜\ÙBˆËÈ›ÝYÚHÛ™H\Y™XÛÜ™
+ÌŒ’T‹TÔPËLMŠK‚ˆ]›ÛÝH[š\]YWÛÜÝ\ÝÜ›ÛÝ
+™œ˜[YYYÚ]Z[œ]X]]Üš]HŠOÎÂˆ[š]ÛÜÝ\ÝÜØÛÜWÜ™\Ê›ÛÝœ]
+
+JOÎÂˆÝŽ™œÎŽÜš]Jˆ›ÛÝœ]
+
+Kš›Ú[ŠœÜ˜ËÛX‹œœÈŠKˆœXˆ›ˆØ]WÜÝ]J›YÎˆ›ÛÛ
+HOˆ›ÛÛ×ˆYˆ›YÈÈYHH[ÙHÈ˜[ÙHWŸWˆ‹ˆ
+Bˆ›X\Ù\œŠ\œŸ›Ü›X]JÜš]HÚ[™ÙY›ÙXÝ[Ûˆš^\™H˜Z[YˆÙ\œŸHŠJOÎÂˆÛÛ[Z]ÛÜÝ\ÝÜØÛÜWØÚ[™ÙJ›ÛÝœ]
+
+K˜Ú[™ÙH›ÙXÝ[ÛˆŠOÎÂˆ]^XÝYØ˜\ÙHHÜ˜]NŽ˜[˜[\Ú\ÎŽœ™\ÛÛ™WØ˜\ÙWØÛÛ[Z]
+›ÛÝœ]
+
+KÛÛYJ’PQŒHŠK›Û™JBˆ›Ú×ÛÜ—Ù[ÙJ™š^\™HPQŒH]\Ý™\ÛÛ™H‹×ÜÝš[™Ê
+JOÎÂˆ]›ÛÝÝ\šHHš[WÝ\šWÙ›Ü—Ü]
+›ÛÝœ]
+
+JOÎÂ‚ˆ]
+ÛY[Ú[ËÙ\™\—Ú[ÊHHÚÚ[ÎŽš[ÎŽ™\^
+
+ˆL
+NÂˆ]
+ÛY[Ü™XY]]ÛY[ÝÜš]JHHÚÚ[ÎŽš[ÎŽœÜ]
+ÛY[Ú[ÊNÂˆ]
+Ù\™\—Ü™XYÙ\™\—ÝÜš]JHHÚÚ[ÎŽš[ÎŽœÜ]
+Ù\™\—Ú[ÊNÂˆ]
+Ù\šXÙKÛØÚÙ]
+HHÜÙ\šXÙNŽ›™]ÊÛY[˜XÚÙ[™Ž›™]ÊÛY[]YŽŽ™œ›ÛJ‹ˆŠJJNÂˆ]]]Ù\™\—Ý\ÚÈHÚÚ[ÎŽœÜ]ÛŠ\Þ[˜È[Ý™HÂˆÙ\™\ŽŽ›™]ÊÙ\™\—Ü™XYÙ\™\—ÝÜš]KÛØÚÙ]
+BˆœÙ\™JÙ\šXÙJBˆ˜]ØZ]ÂˆJNÂˆ]]]ÛY[Ü™XYHÛY[Ü™XYÂ‚ˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆšYŽˆKˆ›Y]ÙŽˆš[š]X[^™H‹ˆœ\˜[\ÈŽˆÂˆœ›ØÙ\ÜÒYŽˆ[ˆœ›ÛÝ\šHŽˆ›ÛÝÝ\šK˜\×ÜÝŠ
+Kˆš[š]X[^˜][Û“Ü[ÛœÈŽˆÂˆ˜˜\ÙT™YˆŽˆ’PQŒH‹ˆ˜ÚXÚÓ[ÙHŽˆš[œÝ[‚ˆKˆ˜Ø\Xš[]Y\ÈŽˆßBˆBˆJKˆ
+Bˆ˜]ØZ]ÎÂˆ][š]X[^™HH™XYÛÜÜ™\ÜÛœÙJ	›]]ÛY[Ü™XYJK˜]ØZ]ÎÂˆ\ÜÙ\J[š]X[^™K™Ù]
+™\œ›ÜˆŠKš\×Û›Û™J
+JNÂ‚ˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆšYŽˆ‹ˆ›Y]ÙŽˆÛÜšÜÜXÙKÙ^XÝ]PÛÛ[X[™‹ˆœ\˜[\ÈŽˆÂˆ˜ÛÛ[X[™Žˆ‘Q”‘TÒÐÓÓSPS‘ˆ˜\™Ý[Y[ÈŽˆ×BˆBˆJKˆ
+Bˆ˜]ØZ]ÎÂˆ]
+™Yœ™\Ú›ÝYšXØ][ÛœÊHBˆ™XYÛÜÜ™\ÜÛœÙWÝÚ]Û›ÝYšXØ][ÛœÊ	›]]ÛY[Ü™XYŠK˜]ØZ]ÎÂˆ\ÜÙ\J™Yœ™\Ú™Ù]
+™\œ›ÜˆŠKš\×Û›Û™J
+JNÂˆ]›ÝYšXØ][Û—ÛY\ÜØYÙ\ÈHÙ×Û›ÝYšXØ][Û—ÛY\ÜØYÙ\Ê	››ÝYšXØ][ÛœÊNÂˆËÈHÛ™HXØÙ\Y™Yœ™\Ú™\ÛÛ™YH™\]Y\ÝY˜\ÙHÛ˜ÙH[™BˆËÈ\ÙKX›Ý[™\žHÙÈ˜[Y\ÈH\Y™XÛÜ™H][\ÛÛœÝ[Y\Ë‚ˆ]^XÝYÛÙÈH›Ü›X]Jˆ™Ú]Ú[œ]Ü™\ÛÛ][Û\™\ÛÛ™Y™\]Y\ÝYØ˜\ÙOTÛÛYJ’PQŒWŠK™\ÛÛ™YØ˜\ÙOTÛÛYJžÙ^XÝYØ˜\Ù_WŠH‚ˆ
+NÂˆ\ÜÙ\Jˆ›ÝYšXØ][Û—ÛY\ÜØYÙ\Âˆš]\Š
+Bˆ˜[žJY\ÜØYÙ_Y\ÜØYÙK˜ÛÛZ[œÊ	™^XÝYÛÙÊJKˆ™^XÝY™Yœ™\Ú\Ý\ÙÈÈ˜[YHH™\ÛÛ™Y™XÛÜ™ÛÝÛ›ÝYšXØ][Û—ÛY\ÜØYÙ\ÎßH‚ˆ
+NÂˆËÈ^XÝHÛ™H™Yœ™\ÚÝ\Yˆ›ÈÛÛœÝ[Y\ˆ™K\™\ÛÛ™Y[™Ü]Û™YBˆËÈÙXÛÛ™][\›ÜˆHØ[YH™\]Y\Ý‚ˆ]Ý\YØÛÝ[H›ÝYšXØ][Û—ÛY\ÜØYÙ\Âˆš]\Š
+Bˆ™š[\ŠY\ÜØYÙ_Y\ÜØYÙK˜ÛÛZ[œÊœš\ˆ[˜[\Ú\È™Yœ™\ÚÝ\YŠJBˆ˜ÛÝ[
+
+NÂˆ\ÜÙ\Ù\HJÝ\YØÛÝ[K›Û™HXØÙ\Y™Yœ™\ÚÛ™H™\ÛÛ][ÛˆŠNÂ‚ˆËÈHÛÜšÜÜXÙHÝ]\È›Ú™XÝÈHØ[YH™\ÛÛ™Y[œ]Èœ›ÛHBˆËÈÛÛ[Z]YÛ˜\ÚÝY[]K‚ˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆšYŽˆËˆ›Y]ÙŽˆÛÜšÜÜXÙKÙ^XÝ]PÛÛ[X[™‹ˆœ\˜[\ÈŽˆÂˆ˜ÛÛ[X[™ŽˆÓÓPÕÕÓÔ’ÔÔPÑWÔÕUT×ÐÓÓSPS‘ˆ˜\™Ý[Y[ÈŽˆ×BˆBˆJKˆ
+Bˆ˜]ØZ]ÎÂˆ]Ý]\ÈH™XYÛÜÜ™\ÜÛœÙJ	›]]ÛY[Ü™XYÊK˜]ØZ]ÎÂˆ\ÜÙ\JÝ]\Ë™Ù]
+™\œ›ÜˆŠKš\×Û›Û™J
+JNÂˆ]Ý\œ™[H	œÝ]\ÖÈœ™\Ý[—VÈ˜[˜[\Ú\×ÜÝ]\È—VÈš[œ]Ø]]Üš]H—VÈ˜Ý\œ™[—NÂˆ\ÜÙ\Ù\HJˆÝ\œ™[Èœ™\]Y\ÝYØ˜\ÙH—K˜\×ÜÝŠ
+KˆÛÛYJ’PQŒHŠKˆœÝ]\È]\Ý›Ú™XÝH™\]Y\ÝY˜\ÙNˆØÝ\œ™[H‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆÝ\œ™[Èœ™\ÛÛ™YØ˜\ÙH—K˜\×ÜÝŠ
+KˆÛÛYJ^XÝYØ˜\ÙK˜\×ÜÝŠ
+JKˆœÝ]\È]\Ý›Ú™XÝHÛ™H™\ÛÛ™Y˜\ÙNˆØÝ\œ™[H‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆÝ\œ™[È™Ú]Ú[œ]Ü™\ÛÛ][Ûˆ—K˜\×ÜÝŠ
+KˆÛÛYJœ™\ÛÛ™YŠKˆœÝ]\È]\Ý›Ú™XÝH\Y™\ÛÛ][ÛŽˆØÝ\œ™[H‚ˆ
+NÂ‚ˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆšYŽˆˆ›Y]ÙŽˆœÚ]ÝÛˆ‹ˆœ\˜[\ÈŽˆ[ˆJKˆ
+Bˆ˜]ØZ]ÎÂˆ]Ú]ÝÛˆH™XYÛÜÜ™\ÜÛœÙJ	›]]ÛY[Ü™XY
+K˜]ØZ]ÎÂˆ\ÜÙ\JÚ]ÝÛ‹™Ù]
+™\œ›ÜˆŠKš\×Û›Û™J
+JNÂˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆ›Y]ÙŽˆ™^]‹ˆœ\˜[\ÈŽˆ[ˆJKˆ
+Bˆ˜]ØZ]ÎÂˆÛY[ÝÜš]BˆœÚ]ÝÛŠ
+Bˆ˜]ØZ]ˆ›X\Ù\œŠ\œŸ›Ü›X]J™˜Z[YÈÛÜÙH\ÝÛY[ˆÙ\œŸHŠJOÎÂˆX]ÚÚÚ[ÎŽ[YNŽ[Y[Ý]
+ÝŽ[YNŽ‘\˜][ÛŽŽ™œ›ÛWÜÙXÜÊŠK	›]]Ù\™\—Ý\ÚÊK˜]ØZ]ÂˆÚÊ›Ú[—Ü™\Ý[
+HOˆÂˆ›Ú[—Ü™\Ý[›X\Ù\œŠ\œŸ›Ü›X]J“ÔÙ\™\ˆ\ÚÈ˜Z[YˆÙ\œŸHŠJOÎÂˆBˆ\œŠÊHOˆÂˆÙ\™\—Ý\ÚË˜X›Ü
+
+NÂˆ™]\›ˆ\œŠ“ÔÙ\™\ˆY›ÝÝÜY\ˆ^]›ÝYšXØ][Ûˆ‹×ÜÝš[™Ê
+JNÂˆBˆBˆÚÊ
+
+JBˆJBŸB‚ˆÖÝ\ÝB™›ˆœ˜[YYØÛÙWÛ[œ×Ü™Yœ™\ÚÙ›ÛÝÜ×ÜÙ[X[X×Û[œ×ÝšY]×ØÚ[™Ù\Ê
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ][[YHHÚÚ[ÎŽœ[[YNŽZ[\ŽŽ›™]×ØÝ\œ™[Ý™XY
+
+Bˆ™[˜X›WØ[
+
+Bˆ˜Z[
+
+Bˆ›X\Ù\œŠ\œŸ›Ü›X]J™˜Z[YÈÝ\\Ý[[YNˆÙ\œŸHŠJOÎÂ‚ˆ[[YK˜›ØÚ×ÛÛŠ\Þ[˜ÈÂˆËÈ[\Ú]™\ÎˆHÛÛ[Z]Y˜\ÙH\ÈHÛÛ[Z]Y›ÙXÝ[Û‚ˆËÈÚ[™ÙKÛÈHØ]™Y]ÛÜšÜÜXÙH[˜[\Ú\È
+˜\ÙK‹’PQ
+H›ÙXÙ\ÂˆËÈš[™[™ÜË‚ˆ]›ÛÝH[š\]YWÛÜÝ\ÝÜ›ÛÝ
+™œ˜[YYXÛÙK[[œË\™Yœ™\ÚŠOÎÂˆÜš]WÛÜÜØÛÜWÙš^\™J	œ›ÛÝœ]
+OÎÂˆ[—ÛÜÜØÛÜWÙÚ]
+	œ›ÛÝœ]	–Èš[š]—JOÎÂˆ[—ÛÜÜØÛÜWÙÚ]
+ˆ	œ›ÛÝœ]ˆ	–È˜ÛÛ™šYÈ‹\Ù\‹™[XZ[‹œš\^[\Kš[˜[Y—Kˆ
+OÎÂˆ[—ÛÜÜØÛÜWÙÚ]
+	œ›ÛÝœ]	–È˜ÛÛ™šYÈ‹\Ù\‹›˜[YH‹”’Tˆ\Ý—JOÎÂˆ[—ÛÜÜØÛÜWÙÚ]
+ˆ	œ›ÛÝœ]ˆ	–È˜Y‹Ø\™ÛËÛ[‹œÜ˜ËÛX‹œœÈ‹\ÝËÙ[™Ý×Ù[™œœÈ—Kˆ
+OÎÂˆ[—ÛÜÜØÛÜWÙÚ]
+	œ›ÛÝœ]	–È˜ÛÛ[Z]‹‹[H‹˜˜\ÙH—JOÎÂˆœÎŽÜš]Jˆ›ÛÝœ]š›Ú[ŠœÜ˜ËÛX‹œœÈŠKˆœXˆ›ˆØ]WÜÝ]J›YÎˆ›ÛÛ
+HOˆ›ÛÛ×ˆYˆ›YÈÈYHH[ÙHÈ˜[ÙHWŸWˆ‹ˆ
+Bˆ›X\Ù\œŠ\œŸ›Ü›X]JÜš]HÚ[™ÙY›ÙXÝ[Ûˆš^\™H˜Z[YˆÙ\œŸHŠJOÎÂˆ[—ÛÜÜØÛÜWÙÚ]
+	œ›ÛÝœ]	–È˜Y‹œÜ˜ËÛX‹œœÈ—JOÎÂˆ[—ÛÜÜØÛÜWÙÚ]
+	œ›ÛÝœ]	–È˜ÛÛ[Z]‹‹[H‹˜Ú[™ÙH›ÙXÝ[Ûˆ—JOÎÂˆ]›ÛÝÝ\šHHš[WÝ\šWÙ›Ü—Ü]
+›ÛÝœ]
+
+JOÎÂ‚ˆ]
+ÛY[Ú[ËÙ\™\—Ú[ÊHHÚÚ[ÎŽš[ÎŽ™\^
+
+ˆL
+NÂˆ]
+ÛY[Ü™XY]]ÛY[ÝÜš]JHHÚÚ[ÎŽš[ÎŽœÜ]
+ÛY[Ú[ÊNÂˆ]
+Ù\™\—Ü™XYÙ\™\—ÝÜš]JHHÚÚ[ÎŽš[ÎŽœÜ]
+Ù\™\—Ú[ÊNÂˆ]
+Ù\šXÙKÛØÚÙ]
+HHÜÙ\šXÙNŽ›™]ÊÛY[˜XÚÙ[™Ž›™]ÊÛY[]YŽŽ™œ›ÛJ‹ˆŠJJNÂˆ]]]Ù\™\—Ý\ÚÈHÚÚ[ÎŽœÜ]ÛŠ\Þ[˜È[Ý™HÂˆÙ\™\ŽŽ›™]ÊÙ\™\—Ü™XYÙ\™\—ÝÜš]KÛØÚÙ]
+BˆœÙ\™JÙ\šXÙJBˆ˜]ØZ]ÂˆJNÂˆ]]]ÛY[Ü™XYHÛY[Ü™XYÂ‚ˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆšYŽˆKˆ›Y]ÙŽˆš[š]X[^™H‹ˆœ\˜[\ÈŽˆÂˆœ›ØÙ\ÜÒYŽˆ[ˆœ›ÛÝ\šHŽˆ›ÛÝÝ\šK˜\×ÜÝŠ
+Kˆš[š]X[^˜][Û“Ü[ÛœÈŽˆÂˆ˜˜\ÙT™YˆŽˆ’PQŒH‹ˆ˜ÚXÚÓ[ÙHŽˆš[œÝ[‹ˆ™XYÛ›ÜÝXÔ›Ùš[HŽˆ™[‚ˆKˆ˜Ø\Xš[]Y\ÈŽˆÂˆÛÜšÜÜXÙHŽˆÂˆ˜ÛÙS[œÈŽˆÈœ™Yœ™\ÚÝ\ÜŽˆYHBˆBˆBˆBˆJKˆ
+Bˆ˜]ØZ]ÎÂˆ][š]X[^™HH™XYÛÜÜ™\ÜÛœÙJ	›]]ÛY[Ü™XYJK˜]ØZ]ÎÂˆ\ÜÙ\J[š]X[^™K™Ù]
+™\œ›ÜˆŠKš\×Û›Û™J
+JNÂˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆ›Y]ÙŽˆš[š]X[^™Y‹ˆœ\˜[\ÈŽˆßBˆJKˆ
+Bˆ˜]ØZ]ÎÂ‚ˆËÈ™Yœ™\ÚNˆHš\œÝÛ˜\ÚÝÛÛ[Z]ÈÚ]š[™[™ÜËÛÈ^XÝHÛ™BˆËÈÛÜšÜÜXÙKØÛÙS[œËÜ™Yœ™\Ú™\]Y\Ý]\Ý\œš]™H
+ÌŒÌŠK‚ˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆšYŽˆ‹ˆ›Y]ÙŽˆÛÜšÜÜXÙKÙ^XÝ]PÛÛ[X[™‹ˆœ\˜[\ÈŽˆÂˆ˜ÛÛ[X[™Žˆ‘Q”‘TÒÐÓÓSPS‘ˆ˜\™Ý[Y[ÈŽˆ×BˆBˆJKˆ
+Bˆ˜]ØZ]ÎÂˆ]
+™Yœ™\Ú™Yœ™\ÚÜ™\]Y\ÝÊHBˆ™XYÜ™\ÜÛœÙWØ[œÝÙ\š[™×ØÛÙWÛ[œ×Ü™Yœ™\Ú
+	›]]ÛY[Ü™XY	›]]ÛY[ÝÜš]KŠBˆ˜]ØZ]ÎÂˆ\ÜÙ\J™Yœ™\Ú™Ù]
+™\œ›ÜˆŠKš\×Û›Û™J
+JNÂˆ\ÜÙ\Ù\HJˆ™Yœ™\ÚÜ™\]Y\ÝËKˆHš\œÝÛ˜\ÚÝÛÛ[Z]]\ÝÙ[™^XÝHÛ™HÛÜšÜÜXÙKØÛÙS[œËÜ™Yœ™\Ú‚ˆ
+NÂ‚ˆËÈ˜XÝ[Ý\Ë\\ÜÈÝX\™
+\ÝË\™YYÜ™Y[ˆ™]šY]ÊNˆHš^\™H]\ÝˆËÈXÝX[H›ÙXÙH[œÙ\ËÜˆH™\]Y\ÝÛÝ[È[ˆ\È\ÝÛÝ[ˆËÈ\ÜÈÛˆ[ˆ[\HšY]È
+[ˆ[\Hš\œÝšY]È[ÛÈÚ[™Ù\ÈBˆËÈ™XÛÜ™YY[]Hœ›ÛH›Û™JK‚ˆ]Ú[™ÙYÙš[WÝ\šHHš[WÝ\šWÙ›Ü—Ü]
+	œ›ÛÝœ]š›Ú[ŠœÜ˜ËÛX‹œœÈŠJOÎÂˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆšYŽˆŒˆ›Y]ÙŽˆ^ØÝ[Y[ØÛÙS[œÈ‹ˆœ\˜[\ÈŽˆÂˆ^ØÝ[Y[ŽˆÈ\šHŽˆÚ[™ÙYÙš[WÝ\šK˜\×ÜÝŠ
+HBˆBˆJKˆ
+Bˆ˜]ØZ]ÎÂˆ][œÙ\ÈH™XYÛÜÜ™\ÜÛœÙJ	›]]ÛY[Ü™XYŒ
+K˜]ØZ]ÎÂˆ][œ×ØÛÝ[H[œÙ\ÖÈœ™\Ý[—K˜\×Ø\œ˜^J
+K›X\ÛÜŠ™XÎŽ›[ŠNÂˆYˆ[œ×ØÛÝ[OHÂˆ™]\›ˆ\œŠ›Ü›X]Jˆ™š^\™H]\Ý›ÙXÙH]X\ÝÛ™HÛÙH[œËÜˆH™Yœ™\ÚÛÝ[È\ÜÈ˜XÝ[Ý\ÛNˆÛ[œÙ\ßH‚ˆ
+JNÂˆB‚ˆËÈ™Yœ™\ÚŽˆž]KZY[XØ[[œ]ËˆH™]ÈÛ˜\ÚÝÛÛ[Z]ÈÚ]BˆËÈœ™\ÚØ[XÛØÚÈYÙH
+H™[™\™Y]HÝY™š^Ú[™Ù\ÊK]BˆËÈÙ[X[XÈ[œÈšY]È\È[˜Ú[™ÙYÛÈ›È™\]Y\ÝX^H™HÙ[‚ˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆšYŽˆËˆ›Y]ÙŽˆÛÜšÜÜXÙKÙ^XÝ]PÛÛ[X[™‹ˆœ\˜[\ÈŽˆÂˆ˜ÛÛ[X[™Žˆ‘Q”‘TÒÐÓÓSPS‘ˆ˜\™Ý[Y[ÈŽˆ×BˆBˆJKˆ
+Bˆ˜]ØZ]ÎÂˆ]
+™Yœ™\Ú™Yœ™\ÚÜ™\]Y\ÝÊHBˆ™XYÜ™\ÜÛœÙWØ[œÝÙ\š[™×ØÛÙWÛ[œ×Ü™Yœ™\Ú
+	›]]ÛY[Ü™XY	›]]ÛY[ÝÜš]KÊBˆ˜]ØZ]ÎÂˆ\ÜÙ\J™Yœ™\Ú™Ù]
+™\œ›ÜˆŠKš\×Û›Û™J
+JNÂˆ\ÜÙ\Ù\HJˆ™Yœ™\ÚÜ™\]Y\ÝËˆ˜Hž]KZY[XØ[™KXÛÛ[Z]]\Ý›ÝÙ[™ÛÜšÜÜXÙKØÛÙS[œËÜ™Yœ™\Ú‚ˆ
+NÂ‚ˆËÈ™Yœ™\ÚÈ
+ÌÌNÊNˆHØ]™YÛÜšÜÜXÙHÚ[™Ù\ÈÙ[X[XØ[H›ÝYÚˆËÈH˜XÚÙYÛ‹Y\ÚÈY]]\È›Ý™Y[ˆÛÛ[Z]YˆHY]Üˆ\ÈBˆËÈ˜Y][YHÝ\™˜XÙKÛÈHØ[›ÛšXØ[ÛÜšÝ™YHY™ˆ]\Ý[˜ÛYHBˆËÈ™]È™YXØ]H[™Ú[™ÙHHš\ÚX›H[œÈÙ]Ú]Ý]™\]Z\š[™ÈBˆËÈÛÛ[Z]‚ˆœÎŽÜš]Jˆ›ÛÝœ]š›Ú[ŠœÜ˜ËÛX‹œœÈŠKˆœXˆ›ˆØ]WÜÝ]J›YÎˆ›ÛÛ
+HOˆ›ÛÛ×ˆYˆ›YÈÈYHH[ÙHÈ˜[ÙHWŸW—œXˆ›ˆÙXÛÛ™ÙØ]J]™[ˆN
+HOˆ›ÛÛ×ˆ]™[ˆ×ŸWˆ‹ˆ
+Bˆ›X\Ù\œŠ\œŸ›Ü›X]JÜš]HÙXÛÛ™›ÙXÝ[ÛˆÚ[™ÙH˜Z[YˆÙ\œŸHŠJOÎÂˆ]ÛÜšÝ™YHHÜÜØÛÜWÙÚ]ÛÝ]]
+ˆ	œ›ÛÝœ]ˆ	–È™Y™ˆ‹‹K[˜[YK[Û›H‹’PQ‹‹KH—Kˆ
+OÎÂˆYˆ]ÛÜšÝ™YKœÝ]\ËœÝXØÙ\ÜÊ
+BˆÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	ÛÜšÝ™YKœÝÝ]
+Kš[J
+HOHœÜ˜ËÛX‹œœÈ‚ˆÂˆ™]\›ˆ\œŠ›Ü›X]Jˆ™š^\™H]\ÝÛÛZ[ˆ^XÝHHØ]™Y˜XÚÙYÛÝ\˜ÙHY]™Y›Ü™H™Yœ™\ÚˆÝ]\Ï^ßHÝÝ]^ÎßHÝ\œ^ÎßH‹ˆÛÜšÝ™YKœÝ]\ËˆÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	ÛÜšÝ™YKœÝÝ]
+KˆÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	ÛÜšÝ™YKœÝ\œŠBˆ
+JNÂˆBˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆšYŽˆˆ›Y]ÙŽˆÛÜšÜÜXÙKÙ^XÝ]PÛÛ[X[™‹ˆœ\˜[\ÈŽˆÂˆ˜ÛÛ[X[™Žˆ‘Q”‘TÒÐÓÓSPS‘ˆ˜\™Ý[Y[ÈŽˆ×BˆBˆJKˆ
+Bˆ˜]ØZ]ÎÂˆ]
+™Yœ™\Ú™Yœ™\ÚÜ™\]Y\ÝÊHBˆ™XYÜ™\ÜÛœÙWØ[œÝÙ\š[™×ØÛÙWÛ[œ×Ü™Yœ™\Ú
+	›]]ÛY[Ü™XY	›]]ÛY[ÝÜš]K
+Bˆ˜]ØZ]ÎÂˆ\ÜÙ\J™Yœ™\Ú™Ù]
+™\œ›ÜˆŠKš\×Û›Û™J
+JNÂˆ\ÜÙ\Ù\HJˆ™Yœ™\ÚÜ™\]Y\ÝËKˆ˜HØ]™Y˜XÚÙYÛÜšÝ™YHY]]\ÝÚ[™ÙHH[œÈšY]ÈÚ]Ý]™\]Z\š[™ÈHÛÛ[Z]‚ˆ
+NÂ‚ˆËÈ™Yœ™\ÚˆH^XÚ][™Yœ™\Ú]\ÝÛÛœÝ[YHHØ[YHÛÜšÝ™YBˆËÈY™ˆ]]Üš]Kˆ]Ý[ÝÛœÈH[ÙX[H[™[ÜžK]BˆËÈ[˜Ú[™ÙYØ]™Y]ÛÜšÝ™YH[œÈšY]È]\Ý›Ý[Z]H\XØ]H™Yœ™\Ú‚ˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆšYŽˆKˆ›Y]ÙŽˆÛÜšÜÜXÙKÙ^XÝ]PÛÛ[X[™‹ˆœ\˜[\ÈŽˆÂˆ˜ÛÛ[X[™Žˆ‘Q”‘TÒÐÓÓSPS‘ˆ˜\™Ý[Y[ÈŽˆ×BˆBˆJKˆ
+Bˆ˜]ØZ]ÎÂˆ]
+™Yœ™\Ú™Yœ™\ÚÜ™\]Y\ÝÊHBˆ™XYÜ™\ÜÛœÙWØ[œÝÙ\š[™×ØÛÙWÛ[œ×Ü™Yœ™\Ú
+	›]]ÛY[Ü™XY	›]]ÛY[ÝÜš]KJBˆ˜]ØZ]ÎÂˆ\ÜÙ\J™Yœ™\Ú™Ù]
+™\œ›ÜˆŠKš\×Û›Û™J
+JNÂˆ\ÜÙ\Ù\HJˆ™Yœ™\ÚÜ™\]Y\ÝËˆ˜[ˆ[˜Ú[™ÙY^XÚ][™Yœ™\Ú]\Ý™\Ù\™HHÛÜšÝ™YKY\š]™Y[œÈšY]È‚ˆ
+NÂ‚ˆËÈ™Yœ™\ÚH
+’T‹TÔPËLLÎ™]šY]ÊNˆ™[[Ýš[™ÈHÛÜšÜÜXÙH›ÛÝˆËÈÛX\œÈ[˜[\Ú\ÈÝ]H8 %]™\žH[œÈ\È›ÝÈÝ[H8 %ÛÈHÙ\™\‚ˆËÈ]\ÝÙ[™Û™H[Ü™H™Yœ™\Ú›ÜˆHÛX\™YšY]Ë‚ˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆ›Y]ÙŽˆÛÜšÜÜXÙKÙYÚ[™ÙUÛÜšÜÜXÙQ›Û\œÈ‹ˆœ\˜[\ÈŽˆÈ™]™[ŽˆÈ˜YYŽˆ×Kœ™[[Ý™YŽˆÞÈ\šHŽˆ›ÛÝÝ\šK˜\×ÜÝŠ
+K›˜[YHŽˆ™š^\™HŸW__BˆJKˆ
+Bˆ˜]ØZ]ÎÂˆ]›Û\œ×Ü™\]Y\ÝBˆ™XYÛÜÜ™\]Y\Ý
+	›]]ÛY[Ü™XYÛÜšÜÜXÙKÝÛÜšÜÜXÙQ›Û\œÈŠK˜]ØZ]ÎÂˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆšYŽˆ›Û\œ×Ü™\]Y\ÝÈšY—K˜ÛÛ™J
+Kˆœ™\Ý[Žˆ×BˆJKˆ
+Bˆ˜]ØZ]ÎÂˆ]ÛX\™YÜ™Yœ™\ÚBˆ™XYÛÜÜ™\]Y\Ý
+	›]]ÛY[Ü™XYÛÜšÜÜXÙKØÛÙS[œËÜ™Yœ™\ÚŠK˜]ØZ]ÎÂˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆšYŽˆÛX\™YÜ™Yœ™\ÚÈšY—K˜ÛÛ™J
+Kˆœ™\Ý[Žˆ[ˆJKˆ
+Bˆ˜]ØZ]ÎÂ‚ˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆšYŽˆ‹ˆ›Y]ÙŽˆœÚ]ÝÛˆ‹ˆœ\˜[\ÈŽˆ[ˆJKˆ
+Bˆ˜]ØZ]ÎÂˆ]Ú]ÝÛˆH™XYÛÜÜ™\ÜÛœÙJ	›]]ÛY[Ü™XYŠK˜]ØZ]ÎÂˆ\ÜÙ\JÚ]ÝÛ‹™Ù]
+™\œ›ÜˆŠKš\×Û›Û™J
+JNÂˆÜš]WÛÜÛY\ÜØYÙJˆ	›]]ÛY[ÝÜš]KˆÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆšœÛÛœœÈŽˆŒ‹Œ‹ˆ›Y]ÙŽˆ™^]‹ˆœ\˜[\ÈŽˆ[ˆJKˆ
+Bˆ˜]ØZ]ÎÂˆÛY[ÝÜš]BˆœÚ]ÝÛŠ
+Bˆ˜]ØZ]ˆ›X\Ù\œŠ\œŸ›Ü›X]J™˜Z[YÈÛÜÙH\ÝÛY[ˆÙ\œŸHŠJOÎÂˆX]ÚÚÚ[ÎŽ[YNŽ[Y[Ý]
+ÝŽ[YNŽ‘\˜][ÛŽŽ™œ›ÛWÜÙXÜÊŠK	›]]Ù\™\—Ý\ÚÊK˜]ØZ]ÂˆÚÊ›Ú[—Ü™\Ý[
+HOˆÂˆ›Ú[—Ü™\Ý[›X\Ù\œŠ\œŸ›Ü›X]J“ÔÙ\™\ˆ\ÚÈ˜Z[YˆÙ\œŸHŠJOÎÂˆBˆ\œŠÊHOˆÂˆÙ\™\—Ý\ÚË˜X›Ü
+
+NÂˆ™]\›ˆ\œŠ“ÔÙ\™\ˆY›ÝÝÜY\ˆ^]›ÝYšXØ][Ûˆ‹×ÜÝš[™Ê
+JNÂˆBˆBˆÚÊ
+
+JBˆJBŸB‚ˆÖÝ\ÝB™›ˆÜÜØ]™YÝÛÜšÝ™YWÜ™Yœ™\ÚØ[˜[^™\×Ý[˜ÛÛ[Z]YÝ˜XÚÙYÙY]
+
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]›ÛÝH[š\]YWÛÜÝ\ÝÜ›ÛÝ
+œØ]™Y]ÛÜšÝ™YKYY™‹X]]Üš]HŠOÎÂˆÜš]WÛÜÜØÛÜWÙš^\™J›ÛÝœ]
+
+JOÎÂˆ[—ÛÜÜØÛÜWÙÚ]
+›ÛÝœ]
+
+K	–Èš[š]—JOÎÂˆ[—ÛÜÜØÛÜWÙÚ]
+ˆ›ÛÝœ]
+
+Kˆ	–È˜ÛÛ™šYÈ‹\Ù\‹™[XZ[‹œš\^[\Kš[˜[Y—Kˆ
+OÎÂˆ[—ÛÜÜØÛÜWÙÚ]
+›ÛÝœ]
+
+K	–È˜ÛÛ™šYÈ‹\Ù\‹›˜[YH‹”’Tˆ\Ý—JOÎÂˆ[—ÛÜÜØÛÜWÙÚ]
+ˆ›ÛÝœ]
+
+Kˆ	–È˜Y‹Ø\™ÛËÛ[‹œÜ˜ËÛX‹œœÈ‹\ÝËÙ[™Ý×Ù[™œœÈ—Kˆ
+OÎÂˆ[—ÛÜÜØÛÜWÙÚ]
+›ÛÝœ]
+
+K	–È˜ÛÛ[Z]‹‹[H‹˜˜\ÙH—JOÎÂ‚ˆœÎŽÜš]Jˆ›ÛÝœ]
+
+Kš›Ú[ŠœÜ˜ËÛX‹œœÈŠKˆœXˆ›ˆØ]WÜÝ]J›YÎˆ›ÛÛ
+HOˆ›ÛÛ×ˆYˆ›YÈÈYHH[ÙHÈ˜[ÙHWŸWˆ‹ˆ
+Bˆ›X\Ù\œŠ\œŸ›Ü›X]Jœ\œÚ\ÝØ]™Y˜XÚÙYÛÝ\˜ÙHY]˜Z[YˆÙ\œŸHŠJOÎÂ‚ˆËÈ\ØÜš[Z[˜][™ÈÙ]\ˆÛÛ[Z]YZ\ÝÜžH[ÙH\È›ÈÝXš™XÝÚ[HBˆËÈØ[›ÛšXØ[ÛÜšÝ™YHY™ˆ\È^XÝHÛ™H˜XÚÙYÛÝ\˜ÙHš[KˆH™X\˜žBˆËÈš^]Û›HÚ[™Ù\ÈÝ]\ÈÜˆÙX[H[™[ÜžHØ[››ÝØ]\ÙžH\Ë‚ˆ]ÛÛ[Z]YBˆÜÜØÛÜWÙÚ]ÛÝ]]
+›ÛÝœ]
+
+K	–È™Y™ˆ‹‹K[˜[YK[Û›H‹’PQ‹‹’PQ‹‹KH—JOÎÂˆYˆXÛÛ[Z]YœÝ]\ËœÝXØÙ\ÜÊ
+HXÛÛ[Z]YœÝÝ]š\×Ù[\J
+HÂˆ™]\›ˆ\œŠ›Ü›X]Jˆ™š^\™HÛÛ[Z]YY™ˆ]\Ý™H[\NˆÝ]\Ï^ßHÝÝ]^ÎßHÝ\œ^ÎßH‹ˆÛÛ[Z]YœÝ]\ËˆÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	˜ÛÛ[Z]YœÝÝ]
+KˆÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	˜ÛÛ[Z]YœÝ\œŠBˆ
+JNÂˆBˆ]ÛÜšÝ™YHHÜÜØÛÜWÙÚ]ÛÝ]]
+›ÛÝœ]
+
+K	–È™Y™ˆ‹‹K[˜[YK[Û›H‹’PQ‹‹KH—JOÎÂˆYˆ]ÛÜšÝ™YKœÝ]\ËœÝXØÙ\ÜÊ
+BˆÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	ÛÜšÝ™YKœÝÝ]
+Kš[J
+HOHœÜ˜ËÛX‹œœÈ‚ˆÂˆ™]\›ˆ\œŠ›Ü›X]Jˆ™š^\™HÛÜšÝ™YHY™ˆ]\ÝÛÛZ[ˆ^XÝHÜ˜ËÛX‹œœÎˆÝ]\Ï^ßHÝÝ]^ÎßHÝ\œ^ÎßH‹ˆÛÜšÝ™YKœÝ]\ËˆÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	ÛÜšÝ™YKœÝÝ]
+KˆÝš[™ÎŽ™œ›ÛWÝ]ŽÛÜÜÞJ	ÛÜšÝ™YKœÝ\œŠBˆ
+JNÂˆB‚ˆ]ÛÛ™šYÈHÜ[˜[\Ú\ÐÛÛ™šYÈÂˆ˜\ÙWÜ™YŽˆÛÛYJ’PQ‹×ÜÝš[™Ê
+JKˆ[ÙNˆ[ÙNŽ’[œÝ[ˆXYÛ›ÜÝX×Ü›Ùš[NˆÜ˜]NŽ˜ÛÛ™šYÎŽ“ÜXYÛ›ÜÝXÔ›Ùš[NŽ‘[ˆ‹“Ü[˜[\Ú\ÐÛÛ™šYÎŽ™Y˜][
+
+BˆNÂˆ]XYÛ›ÜÝXÜÈHÛÜšÜÜXÙWÙXYÛ›ÜÝXÜ×ÝÚ]ØÛÛ™šYÊ›ÛÝœ]
+
+K	˜ÛÛ™šYËYJOÎÂˆYˆYXYÛ›ÜÝXÜËœÛ˜\ÚÝœÙX[\×ÙY™\œ™YÂˆ™]\›ˆ\œŠš[\˜XÝ]™HØ]™Y]ÛÜšÝ™YH›ÛÙˆ]\ÝY™\ˆÙX[H[™[ÜžH‹×ÜÝš[™Ê
+JNÂˆBˆYˆXYÛ›ÜÝXÜËœÛ˜\ÚÝ™š[™[™ÜËš\×Ù[\J
+HÂˆ™]\›ˆ\œŠˆœØ]™Y˜XÚÙYY]›ÙXÙY›ÈY™‹\ØÛÜYš[™[™ÜÎÈHÔ™Yœ™\ÚÝ[\X\œÈÈ[˜[^™HPQ[œÝXYÙˆHÛÜšÝ™YH‚ˆ×ÜÝš[™Ê
+Kˆ
+NÂˆBˆ]ÛÝ\˜ÙWÝ\šHHš[WÝ\šWÙ›Ü—Ü]
+	œ›ÛÝœ]
+
+Kš›Ú[ŠœÜ˜ËÛX‹œœÈŠJOÎÂˆYˆYXYÛ›ÜÝXÜÂˆ˜˜]Ú\Âˆš]\Š
+Bˆ˜[žJ˜]Ú˜]Ú\šHOHÛÝ\˜ÙWÝ\šH	‰ˆX˜]Ú™XYÛ›ÜÝXÜËš\×Ù[\J
+JBˆÂˆ™]\›ˆ\œŠœØ]™Y˜XÚÙYÛÝ\˜ÙHY]Y›Ý™XXÚHÔXYÛ›ÜÝXÈ˜]Ú‹×ÜÝš[™Ê
+JNÂˆBˆÚÊ
+
+JBŸB‚™›ˆX›\ÚYÜÙX[WÙXYÛ›ÜÝXÊˆ›ÝYšXØ][ÛœÎˆ	–ÜÙ\™WÚœÛÛŽŽ•˜[YWKˆÙX[WÚYˆ	œÝ‹ŠHOˆ™\Ý[
+Ýš[™ËÙ\™WÚœÛÛŽŽ•˜[YJKÝš[™ÏˆÂˆ›Üˆ›ÝYšXØ][Ûˆ[ˆ›ÝYšXØ][ÛœÈÂˆYˆ›ÝYšXØ][Û‚ˆ™Ù]
+›Y]ÙŠBˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×ÜÝŠBˆOHÛÛYJ^ØÝ[Y[ÜX›\ÚXYÛ›ÜÝXÜÈŠBˆÂˆÛÛ[YNÂˆBˆ]ÛÛYJ\šJHH›ÝYšXØ][Û‚ˆ™Ù]
+œ\˜[\ÈŠBˆ˜[™Ý[Š\˜[\ß\˜[\Ë™Ù]
+\šHŠJBˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×ÜÝŠBˆ[ÙHÂˆÛÛ[YNÂˆNÂˆ]ÛÛYJXYÛ›ÜÝXÜÊHH›ÝYšXØ][Û‚ˆ™Ù]
+œ\˜[\ÈŠBˆ˜[™Ý[Š\˜[\ß\˜[\Ë™Ù]
+™XYÛ›ÜÝXÜÈŠJBˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×Ø\œ˜^JBˆ[ÙHÂˆÛÛ[YNÂˆNÂˆ›ÜˆXYÛ›ÜÝXÈ[ˆXYÛ›ÜÝXÜÈÂˆYˆXYÛ›ÜÝXÂˆ™Ù]
+™]HŠBˆ˜[™Ý[Š]_]K™Ù]
+œÙX[WÚYŠJBˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×ÜÝŠBˆOHÛÛYJÙX[WÚY
+BˆÂˆ™]\›ˆÚÊ
+\šK×ÜÝš[™Ê
+KXYÛ›ÜÝXË˜ÛÛ™J
+JJNÂˆBˆBˆBˆ\œŠ›Ü›X]Jˆ™^XÝYX›\ÚYÙX[HXYÛ›ÜÝXÈÚ]ÙX[WÚYÜÙX[WÚYH‚ˆ
+JBŸB‚ˆÖÝ\ÝB™›ˆÝ™\—Ü™\ÜÛœÙWÚÙY\×ØÝ\œ™[ÙÝZY[˜ÙWÝ^
+
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]Ý™\ˆHÝ™\—Ü™\ÜÛœÙJ
+NÂ‚ˆX]ÚÝ™\‹˜ÛÛ[ÈÂˆÝ™\ÛÛ[ÎŽ“X\šÝ\
+X\šÝ\
+HOˆÂˆ\ÜÙ\Ù\HJX\šÝ\˜[YKÕ‘T—ÕV
+NÂˆÚÊ
+
+JBˆBˆÈOˆ\œŠ™^XÝYX\šÝ\Ý™\ˆ‹×ÜÝš[™Ê
+JKˆBŸB‚ˆÖÝ\ÝB™›ˆÝ™\—Ù›Ü—ÜÜÚ][Û—Ý\Ù\×Û]\ÝÛX]Ú[™×ÙXYÛ›ÜÝXÊ
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]
+Ù\šXÙKÜÛØÚÙ]
+HHÜÙ\šXÙNŽ›™]ÊÛY[˜XÚÙ[™Ž›™]ÊÛY[]YŽŽ™œ›ÛJ‹ˆŠJJNÂˆ]˜XÚÙ[™HÙ\šXÙKš[›™\Š
+NÂˆ]š[™[™ÈHØ[\WÙš[™[™Ê
+NÂˆ]XYÛ›ÜÝXÈHXYÛ›ÜÝX×Ù›Ü—Ùš[™[™Ê]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠK	™š[™[™ÊNÂˆ]\šHH\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜšXÚ[™ËœœÈŠOÎÂˆ]XYÛ›ÜÝXÜÈHØ[\WÝÛÜšÜÜXÙWÙXYÛ›ÜÝXÜÊˆ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙHŠKˆ\šK˜ÛÛ™J
+Kˆ™XÈVÙXYÛ›ÜÝXË˜ÛÛ™J
+WKˆ™XÈVÙš[™[™×Kˆ
+NÂˆ]ÛÛYJÊHH˜XÚÙ[™œ™Yœ™\ÚÜ[ŠXYÛ›ÜÝXÜÊH[ÙHÂˆ™]\›ˆ\œŠ™^XÝY™Yœ™\Ú[ˆ‹×ÜÝš[™Ê
+JNÂˆNÂ‚ˆ]ÛÛYJÝ™\ŠHH˜XÚÙ[™šÝ™\—Ù›Ü—ÜÜÚ][ÛŠ	šÝ™\—Ü\˜[\Ê\šKËJJH[ÙHÂˆ™]\›ˆ\œŠ™^XÝYXYÛ›ÜÝXÈÝ™\ˆ‹×ÜÝš[™Ê
+JNÂˆNÂ‚ˆX]ÚÝ™\‹˜ÛÛ[ÈÂˆÝ™\ÛÛ[ÎŽ“X\šÝ\
+X\šÝ\
+HOˆÂˆ\ÜÙ\JX\šÝ\˜[YK˜ÛÛZ[œÊŠŠœš\ŠŠˆÙXZÛWÙ^ÜÙYŠJNÂˆ\ÜÙ\JX\šÝ\˜[YK˜ÛÛZ[œÊY[ˆ^XÝ›Ý[™\žH\ÜÙ\[Û‹ˆŠJNÂˆ\ÜÙ\JX\šÝ\˜[YK˜ÛÛZ[œÊˆÈÈ’Tˆ]šY[˜ÙHŠJNÂˆ\ÜÙ\JX\šÝ\˜[YK˜ÛÛZ[œÊŠˆ™XXÚY\Îˆ™[]Y\ÝÈ›Ý[™ŠJNÂˆ\ÜÙ\JˆX\šÝ\ˆ˜[YBˆ˜ÛÛZ[œÊŠˆ[™™XÝ[ÛˆY\Îˆ™YXØ]HØ[ˆ[\ˆœ˜[˜Ú™Z]š[ÜˆŠBˆ
+NÂˆ\ÜÙ\JˆX\šÝ\ˆ˜[YBˆ˜ÛÛZ[œÊŠˆ›ÜYØ][ÛˆY\Îˆœ˜[˜Ú[™›Y[˜Ù\È™]\›ˆ˜[YHŠBˆ
+NÂˆ\ÜÙ\JˆX\šÝ\ˆ˜[YBˆ˜ÛÛZ[œÊŠˆØœÙ\˜][ÛˆÙXZÎˆ™]\›ˆ˜[YH\ÜÙ\YŠBˆ
+NÂˆ\ÜÙ\JˆX\šÝ\ˆ˜[YBˆ˜ÛÛZ[œÊŠˆ\ØÜš[Z[˜]ÜˆÙXZÎˆ›Ý[™\žH˜[YHZ\ÜÚ[™ÈŠBˆ
+NÂˆÚÊ
+
+JBˆBˆÈOˆ\œŠ™^XÝYX\šÝ\Ý™\ˆ‹×ÜÝš[™Ê
+JKˆBŸB‚ˆÖÝ\ÝB™›ˆš[™[™×ÙXYÛ›ÜÝX×Ø[™ÚÝ™\—Ú[˜ÛYWØØ[›ÛšXØ[ÙØ\ÚY
+
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]
+Ù\šXÙKÜÛØÚÙ]
+HHÜÙ\šXÙNŽ›™]ÊÛY[˜XÚÙ[™Ž›™]ÊÛY[]YŽŽ™œ›ÛJ‹ˆŠJJNÂˆ]˜XÚÙ[™HÙ\šXÙKš[›™\Š
+NÂˆ]]]š[™[™ÈHØ[\WÙš[™[™Ê
+NÂˆš[™[™Ë˜Ø[›ÛšXØ[ÙØ\HÛÛYJØ[\WØØ[›ÛšXØ[ÙØ\
+
+JNÂˆš[™[™Ë™]šY[˜ÙHH™XÈVÈœ™[]Y]šY[˜ÙH‹×ÜÝš[™Ê
+WNÂˆš[™[™Ë›Z\ÜÚ[™ÈH™XÈVÈ›Z\ÜÚ[™È^XÝ\ØÜš[Z[˜]Üˆ‹×ÜÝš[™Ê
+WNÂˆš[™[™Ëœ™XÛÛ[Y[™YÛ™^ÜÝ\HÛÛYJYH^XÝ\ÜÙ\[Û‹ˆ‹×ÜÝš[™Ê
+JNÂˆš[™[™Ë˜XÝ]˜][Û‹›Z\ÜÚ[™×Ù\ØÜš[Z[˜]ÜœÈH™XÈVØÜ˜]NŽ™ÛXZ[ŽŽ“Z\ÜÚ[™Ñ\ØÜš[Z[˜]Ü‘˜XÝÂˆ˜[YNˆ™\ÚÛ\]X[]H‹×ÜÝš[™Ê
+Kˆ™X\ÛÛŽˆH\]X[]H›Ý[™\žH\È›ÝØœÙ\™Y‹×ÜÝš[™Ê
+Kˆ›Ý×ÜÚ[šÎˆ›Û™KˆWNÂˆš[™[™Ëœ™[]YÝ\ÝÈH™XÈVÔ™[]Y\ÝÂˆ˜[YNˆœšXÚ[™ÎŽ™\ØÛÝ[Ø›Ý[™\žH‹×ÜÝš[™Ê
+Kˆš[Nˆ]YŽŽ™œ›ÛJ\ÝËÜšXÚ[™ËœœÈŠKˆ[™NˆL‹ˆÜ˜XÛNˆÛÛYJ˜\ÜÙ\Ù\H‹×ÜÝš[™Ê
+JKˆÜ˜XÛWÚÚ[™ˆÜ˜XÛRÚ[™Ž‘^XÝ˜[YKˆÜ˜XÛWÜÝ™[™ÝˆÜ˜XÛTÝ™[™ÝŽ”Ý›Û™Ëˆ™[][Û—Ü™X\ÛÛŽˆ›Û™Kˆ™[][Û—ØÛÛ™šY[˜ÙNˆ›Û™KˆWNÂˆ]XYÛ›ÜÝXÈHXYÛ›ÜÝX×Ù›Ü—Ùš[™[™Ê]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠK	™š[™[™ÊNÂˆ]Ø[›ÛšXØ[ÙØ\ÚYHXYÛ›ÜÝXÂˆ™]Bˆ˜\×Ü™YŠ
+Bˆ˜[™Ý[Š]_]K™Ù]
+˜Ø[›ÛšXØ[ÙØ\ÚYŠJBˆ˜[™Ý[Š˜[Y_˜[YK˜\×ÜÝŠ
+JBˆ›Ú×ÛÜ—Ù[ÙJ™^XÝYØ[›ÛšXØ[ÙØ\ÚY[ˆXYÛ›ÜÝXÈ]H‹×ÜÝš[™Ê
+JOÎÂˆ\ÜÙ\Ù\HJˆØ[›ÛšXØ[ÙØ\ÚYˆ™Ø\œ]ÛŽœÜ˜ËÜšXÚ[™ËœN˜\WÙ\ØÛÝ[œ™YXØ]WØ›Ý[™\žNœ™YXØ]N˜[[Ý[]™\ÚÛ‚ˆ
+NÂˆ]]]˜]×Ùš[™[™ÈHš[™[™Ë˜ÛÛ™J
+NÂˆ˜]×Ùš[™[™ËšYHœ›Ø™NœšXÚ[™ÎŽNœ™YXØ]H‹×ÜÝš[™Ê
+NÂˆ˜]×Ùš[™[™Ëœ›Ø™KšYH›Ø™RY
+˜]×Ùš[™[™ËšY˜ÛÛ™J
+JNÂˆ˜]×Ùš[™[™Ëœ›Ø™K›ØØ][Û‹›[™HHNÂˆ]]]Ü›Ý\YÙXYÛ›ÜÝXÈHXYÛ›ÜÝXË˜ÛÛ™J
+NÂˆYØØ[›ÛšXØ[ÙÜ›Ý\Ù]Jˆ]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠKˆ	›]]Ü›Ý\YÙXYÛ›ÜÝXËˆ	™š[™[™Ëˆ	–Ùš[™[™Ë˜ÛÛ™J
+K˜]×Ùš[™[™×Kˆ
+NÂˆ\ÜÙ\Ù\HJˆÜ›Ý\YÙXYÛ›ÜÝXÂˆ™]Bˆ˜\×Ü™YŠ
+Bˆ˜[™Ý[Š]_]VÈœ˜]×ÜÚYÛ˜[ØÛÝ[—K˜\×ÝM
+
+JKˆÛÛYJŠBˆ
+NÂˆ\ÜÙ\Ù\HJˆÜ›Ý\YÙXYÛ›ÜÝXÂˆ™]Bˆ˜\×Ü™YŠ
+Bˆ˜[™Ý[Š]_]VÈœ˜]×Ùš[™[™ÜÈ—K˜\×Ø\œ˜^J
+JBˆ›X\
+™XÎŽ›[ŠKˆÛÛYJŠBˆ
+NÂˆ\ÜÙ\Ù\HJˆÜ›Ý\YÙXYÛ›ÜÝXÂˆ™]Bˆ˜\×Ü™YŠ
+Bˆ˜[™Ý[Š]_]VÈœ™[]YÝ\ÝÈ—K˜\×Ø\œ˜^J
+JBˆ›X\
+™XÎŽ›[ŠKˆÛÛYJJBˆ
+NÂˆ]]]›×Ù]WÙXYÛ›ÜÝXÈHÝÙ\—ÛÜÜÙ\™\ŽŽ›×Ý\\ÎŽ‘XYÛ›ÜÝXÎŽ™Y˜][
+
+NÂˆYØØ[›ÛšXØ[ÙÜ›Ý\Ù]Jˆ]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠKˆ	›]]›×Ù]WÙXYÛ›ÜÝXËˆ	™š[™[™ËˆÝŽœÛXÙNŽ™œ›ÛWÜ™YŠ	™š[™[™ÊKˆ
+NÂˆ\ÜÙ\J›×Ù]WÙXYÛ›ÜÝXË™]Kš\×Û›Û™J
+JNÂˆ\ÜÙ\Ù\HJˆÜ›Ý\YÙXYÛ›ÜÝXÂˆ™]Bˆ˜\×Ü™YŠ
+Bˆ˜[™Ý[Š]_]VÈ™]šY[˜ÙH—K˜\×Ø\œ˜^J
+JBˆ›X\
+™XÎŽ›[ŠKˆÛÛYJJBˆ
+NÂˆ\ÜÙ\Ù\HJˆÜ›Ý\YÙXYÛ›ÜÝXÂˆ™]Bˆ˜\×Ü™YŠ
+Bˆ˜[™Ý[Š]_]VÈ›Z\ÜÚ[™È—K˜\×Ø\œ˜^J
+JBˆ›X\
+™XÎŽ›[ŠKˆÛÛYJJBˆ
+NÂˆ\ÜÙ\Ù\HJˆÜ›Ý\YÙXYÛ›ÜÝXÂˆ™]Bˆ˜\×Ü™YŠ
+Bˆ˜[™Ý[Š]_]VÈœ™XÛÛ[Y[™YÛ™^ÜÝ\È—K˜\×Ø\œ˜^J
+JBˆ›X\
+™XÎŽ›[ŠKˆÛÛYJJBˆ
+NÂˆ]\šHH\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜšXÚ[™ËœœÈŠOÎÂˆ]XYÛ›ÜÝXÜÈHØ[\WÝÛÜšÜÜXÙWÙXYÛ›ÜÝXÜÊˆ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙHŠKˆ\šK˜ÛÛ™J
+Kˆ™XÈVÙXYÛ›ÜÝX×Kˆ™XÈVÙš[™[™×Kˆ
+NÂˆ]ÛÛYJÊHH˜XÚÙ[™œ™Yœ™\ÚÜ[ŠXYÛ›ÜÝXÜÊH[ÙHÂˆ™]\›ˆ\œŠ™^XÝY™Yœ™\Ú[ˆ‹×ÜÝš[™Ê
+JNÂˆNÂ‚ˆ]ÛÛYJÝ™\ŠHH˜XÚÙ[™šÝ™\—Ù›Ü—ÜÜÚ][ÛŠ	šÝ™\—Ü\˜[\Ê\šKËJJH[ÙHÂˆ™]\›ˆ\œŠ™^XÝYš[™[™ÈÝ™\ˆ‹×ÜÝš[™Ê
+JNÂˆNÂ‚ˆX]ÚÝ™\‹˜ÛÛ[ÈÂˆÝ™\ÛÛ[ÎŽ“X\šÝ\
+X\šÝ\
+HOˆÂˆ\ÜÙ\JX\šÝ\˜[YK˜ÛÛZ[œÊˆÈÈØ[›ÛšXØ[Ø\ŠJNÂˆ\ÜÙ\JX\šÝ\˜[YK˜ÛÛZ[œÊˆ’QˆØ\œ]ÛŽœÜ˜ËÜšXÚ[™ËœN˜\WÙ\ØÛÝ[œ™YXØ]WØ›Ý[™\žNœ™YXØ]N˜[[Ý[]™\ÚÛ‚ˆ
+JNÂˆÚÊ
+
+JBˆBˆÈOˆ\œŠ™^XÝYX\šÝ\Ý™\ˆ‹×ÜÝš[™Ê
+JKˆBŸB‚ˆÖÝ\ÝB™›ˆ\ØÜš[Z[˜]Ü—ÝÚ]™\Ü×ÜÝ^\×Ø[YÛ™YØXÜ›ÜÜ×ÛÜÜÝ\™˜XÙ\Ê
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]]]š[™[™ÈHØ[\WÙš[™[™Ê
+NÂˆš[™[™Ëœ™XÛÛ[Y[™YÛ™^ÜÝ\H›Û™NÂˆš[™[™Ë˜Ø[›ÛšXØ[ÙØ\HÛÛYJØ[\WØØ[›ÛšXØ[ÙØ\
+
+JNÂˆš[™[™Ëœ›Ø™K™˜[Z[HH›Ø™Q˜[Z[NŽ‘\œ›Ü”]Âˆš[™[™Ëœ›Ø™K˜™Y›Ü™HHÛÛYJ‘\œŠšXÚ[™Ñ\œ›ÜŽŽ“Ý\ŠH‹×ÜÝš[™Ê
+JNÂˆš[™[™Ëœ›Ø™K˜Y\ˆHÛÛYJ‘\œŠšXÚ[™Ñ\œ›ÜŽŽ›Ý[™\žJH‹×ÜÝš[™Ê
+JNÂˆš[™[™Ëœ›Ø™K™^XÝYÜÚ[šÜÈH™XÈVÈ™\œ›Ü—Ý˜\šX[‹×ÜÝš[™Ê
+WNÂˆš[™[™Ë˜XÝ]˜][Û‹›Z\ÜÚ[™×Ù\ØÜš[Z[˜]ÜœÈH™XÈVÓZ\ÜÚ[™Ñ\ØÜš[Z[˜]Ü‘˜XÝÂˆ˜[YNˆ”šXÚ[™Ñ\œ›ÜŽŽ›Ý[™\žH‹×ÜÝš[™Ê
+Kˆ™X\ÛÛŽˆHœ›ØY\œ›ÜˆÜ˜XÛHÙ\È›Ý\Ý[™ÝZ\ÚH˜\šX[‹×ÜÝš[™Ê
+Kˆ›Ý×ÜÚ[šÎˆ›Û™KˆWNÂˆš[™[™Ë˜XÝ]˜][Û‹›ØœÙ\™YÝ˜[Y\ÈH™XÈVÕ˜[YQ˜XÝÂˆ[™NˆL‹ˆ^ˆ˜\ÜÙ\J™\Ý[š\×Ù\œŠ
+JH‹×ÜÝš[™Ê
+Kˆ˜[YNˆœ™\Ý[š\×Ù\œŠ
+H‹×ÜÝš[™Ê
+KˆÛÛ^ˆ˜[YPÛÛ^Ž\ÜÙ\[Û\™Ý[Y[ˆWNÂˆš[™[™Ëœ™[]YÝ\ÝÈH™XÈVÔ™[]Y\ÝÂˆ˜[YNˆœ™Z™XÝ×Ø›Ý[™\žH‹×ÜÝš[™Ê
+Kˆš[Nˆ]YŽŽ™œ›ÛJ\ÝËÜšXÚ[™ËœœÈŠKˆ[™NˆLˆÜ˜XÛNˆÛÛYJ˜\ÜÙ\J™\Ý[š\×Ù\œŠ
+JH‹×ÜÝš[™Ê
+JKˆÜ˜XÛWÚÚ[™ˆÜ˜XÛRÚ[™Žœ›ØY\œ›Ü‹ˆÜ˜XÛWÜÝ™[™ÝˆÜ˜XÛTÝ™[™ÝŽ•ÙXZËˆ™[][Û—Ü™X\ÛÛŽˆ›Û™Kˆ™[][Û—ØÛÛ™šY[˜ÙNˆ›Û™KˆWNÂ‚ˆ]XYÛ›ÜÝXÈHXYÛ›ÜÝX×Ù›Ü—Ùš[™[™Ê]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠK	™š[™[™ÊNÂˆ]Ú]™\ÜÈHXYÛ›ÜÝXÂˆ™]Bˆ˜\×Ü™YŠ
+Bˆ˜[™Ý[Š]_]K™Ù]
+Ú]™\ÜÈŠJBˆ˜ÛÛ™Y
+
+Bˆ›Ú×ÛÜ—Ù[ÙJ™^XÝYXYÛ›ÜÝXÈ\ØÜš[Z[˜]ÜˆÚ]™\ÜÈ‹×ÜÝš[™Ê
+JOÎÂˆ\ÜÙ\Ù\HJÚ]™\ÜÖÈšÚ[™—KœÝ]X×Ù\ØÜš[Z[˜]Ü—ÙØ\ŠNÂˆ\ÜÙ\Ù\HJÚ]™\ÜÖÈœ›Ø™WÙ˜[Z[H—K™\œ›Ü—Ü]ŠNÂˆ\ÜÙ\Ù\HJˆÚ]™\ÜÖÈ›Z\ÜÚ[™×Ù\ØÜš[Z[˜]ÜœÈ—VÌVÈ˜[YH—Kˆ”šXÚ[™Ñ\œ›ÜŽŽ›Ý[™\žH‚ˆ
+NÂˆ\ÜÙ\Ù\HJÚ]™\ÜÖÈ™š^ÜÚ]H—VÈ™š[H—K\ÝËÜšXÚ[™ËœœÈŠNÂˆ\ÜÙ\JÚ]™\ÜÖÈ™š^ÜÚ]H—VÈ›Ü˜XÛWÛØØ][Ûˆ—Kš\×Û[
+
+JNÂˆ\ÜÙ\JÚ]™\ÜÖÈœÝYÙÙ\ÝYØ\ÜÙ\[Ûˆ—Kš\×Û[
+
+JNÂˆ\ÜÙ\Ù\HJˆXYÛ›ÜÝXÂˆ™]Bˆ˜\×Ü™YŠ
+Bˆ˜[™Ý[Š]_]K™Ù]
+™^Z[—ØÛÛ[X[™ŠJBˆ˜[™Ý[Š˜[Y_˜[YK˜\×ÜÝŠ
+JKˆÛÛYJœš\ˆ^Z[ˆK\›ÛÝˆ›Ø™NœšXÚ[™ÎŽœ™YXØ]HŠBˆ
+NÂˆ\ÜÙ\JXYÛ›ÜÝXË›Y\ÜØYÙK˜ÛÛZ[œÊ‘^XÝ\œ›Üˆ˜\šX[ŠJNÂˆ\ÜÙ\JXYÛ›ÜÝXË›Y\ÜØYÙK˜ÛÛZ[œÊ”šXÚ[™Ñ\œ›ÜŽŽ›Ý[™\žHŠJNÂ‚ˆ]™[]YHXYÛ›ÜÝXÂˆœ™[]YÚ[™›Ü›X][Û‚ˆ˜\×Ü™YŠ
+Bˆ›Ú×ÛÜ—Ù[ÙJ™^XÝYš^\Ú]H™[]Y[™›Ü›X][Ûˆ‹×ÜÝš[™Ê
+JOÎÂˆ\ÜÙ\Ù\HJ™[]Y›[Š
+KJNÂˆ\ÜÙ\J™[]YÌK›Y\ÜØYÙKœÝ\×ÝÚ]
+‘š^Ú]NˆŠJNÂˆ\ÜÙ\Ù\HJ™[]YÌK›ØØ][Û‹œ˜[™ÙKœÝ\›[™KJNÂ‚ˆ]Ý™\ˆHÝ\\ŽŽšÝ™\ŽŽ™š[™[™×ÚÝ™\—Ü™\ÜÛœÙJ	™š[™[™Ë	™XYÛ›ÜÝXÊNÂˆ]Ý™\ÛÛ[ÎŽ“X\šÝ\
+X\šÝ\
+HHÝ™\‹˜ÛÛ[È[ÙHÂˆ™]\›ˆ\œŠ™^XÝYÚ]™\ÜÈÝ™\ˆX\šÙÝÛˆ‹×ÜÝš[™Ê
+JNÂˆNÂˆ\ÜÙ\JX\šÝ\˜[YK˜ÛÛZ[œÊˆÈÈ\ØÜš[Z[˜]ÜˆÚ]™\ÜÈŠJNÂˆ\ÜÙ\JX\šÝ\˜[YK˜ÛÛZ[œÊ”šXÚ[™Ñ\œ›ÜŽŽ›Ý[™\žHŠJNÂˆ\ÜÙ\JX\šÝ\˜[YK˜ÛÛZ[œÊ\ÝËÜšXÚ[™ËœœÎŒLŠJNÂˆ\ÜÙ\JX\šÝ\˜[YK˜ÛÛZ[œÊœÝYÙÙ\ÝYØ\ÜÙ\[Û—Ý[˜]˜Z[X›HŠJNÂ‚ˆ]ÛÛ^ÜXÚÙ]HÜ˜]NŽ›Ý]]ŽšœÛÛŽŽœ™[™\—ØÛÛ^ÜXÚÙ]
+	™š[™[™ËJNÂˆ]ÛÛ^ÜXÚÙ]ˆÙ\™WÚœÛÛŽŽ•˜[YHBˆÙ\™WÚœÛÛŽŽ™œ›ÛWÜÝŠ	˜ÛÛ^ÜXÚÙ]
+K›X\Ù\œŠ\œŸ›Ü›X]JœXÚÙ]”ÓÓŽˆÙ\œŸHŠJOÎÂˆ\ÜÙ\Ù\HJÛÛ^ÜXÚÙ]ÈÚ]™\ÜÈ—KÚ]™\ÜÊNÂ‚ˆ]\˜[\ÈHÛÙWØXÝ[Û—Ü\˜[\Ê™XÈVÙXYÛ›ÜÝX×JOÎÂˆ]XÝ[ÛœÈHÛÙWØXÝ[Û—Ü™\ÜÛœÙJ	œ\˜[\Ë›Û™K	œØÛÙWØÛY[Ù™X]\™\Ê
+OÊNÂˆ]ÛÛ^Ý\™Ù]HXÝ[ÛœËš]\Š
+K™š[™ÛX\
+XÝ[ÛŸÂˆ]ÛÙPXÝ[Û“ÜÛÛ[X[™ŽÛÙPXÝ[ÛŠXÝ[ÛŠHHXÝ[Ûˆ[ÙHÂˆ™]\›ˆ›Û™NÂˆNÂˆYˆXÝ[Û‹]HOH’[œÜXÝš[™[™ÎˆÛÜHÛÛ^XÚÙ]ˆÂˆ™]\›ˆ›Û™NÂˆBˆXÝ[Û‚ˆ˜ÛÛ[X[™ˆ˜\×Ü™YŠ
+Bˆ˜[™Ý[ŠÛÛ[X[™ÛÛ[X[™˜\™Ý[Y[Ë˜\×Ü™YŠ
+JBˆ˜[™Ý[Š\™Ý[Y[ß\™Ý[Y[Ë™š\œÝ
+
+JBˆJNÂˆ\ÜÙ\Ù\HJˆÛÛ^Ý\™Ù]˜[™Ý[Š\™Ù]\™Ù]™Ù]
+Ú]™\ÜÈŠJKˆÛÛYJ	Ú]™\ÜÊBˆ
+NÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆÝ™\—Ù›Ü—ÜÜÚ][Û—ÜÚÝÜ×ÜÛ˜\ÚÝØYÙWØ[™Ü™Yœ™\ÚÙ\˜][ÛŠ
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]
+Ù\šXÙKÜÛØÚÙ]
+HHÜÙ\šXÙNŽ›™]ÊÛY[˜XÚÙ[™Ž›™]ÊÛY[]YŽŽ™œ›ÛJ‹ˆŠJJNÂˆ]˜XÚÙ[™HÙ\šXÙKš[›™\Š
+NÂˆ]š[™[™ÈHØ[\WÙš[™[™Ê
+NÂˆ]XYÛ›ÜÝXÈHXYÛ›ÜÝX×Ù›Ü—Ùš[™[™Ê]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠK	™š[™[™ÊNÂˆ]\šHH\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜšXÚ[™ËœœÈŠOÎÂˆ]]]XYÛ›ÜÝXÜÈHØ[\WÝÛÜšÜÜXÙWÙXYÛ›ÜÝXÜÊˆ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙHŠKˆ\šK˜ÛÛ™J
+Kˆ™XÈVÙXYÛ›ÜÝX×Kˆ™XÈVÙš[™[™×Kˆ
+NÂˆXYÛ›ÜÝXÜÂˆœÛ˜\ÚÝˆœ™Yœ™\Úˆœ™XÛÜ™Ù\˜][ÛŠ\˜][ÛŽŽ™œ›ÛWÛZ[\ÊŠJNÂˆ]ÛÛYJÊHH˜XÚÙ[™œ™Yœ™\ÚÜ[ŠXYÛ›ÜÝXÜÊH[ÙHÂˆ™]\›ˆ\œŠ™^XÝY™Yœ™\Ú[ˆ‹×ÜÝš[™Ê
+JNÂˆNÂ‚ˆ]ÛÛYJÝ™\ŠHH˜XÚÙ[™šÝ™\—Ù›Ü—ÜÜÚ][ÛŠ	šÝ™\—Ü\˜[\Ê\šKËJJH[ÙHÂˆ™]\›ˆ\œŠ™^XÝYXYÛ›ÜÝXÈÝ™\ˆ‹×ÜÝš[™Ê
+JNÂˆNÂ‚ˆX]ÚÝ™\‹˜ÛÛ[ÈÂˆÝ™\ÛÛ[ÎŽ“X\šÝ\
+X\šÝ\
+HOˆÂˆ\ÜÙ\JX\šÝ\˜[YK˜ÛÛZ[œÊ[˜[\Ú\ÈÛ˜\ÚÝˆÙ[™\˜]YŠJNÂˆ\ÜÙ\JX\šÝ\˜[YK˜ÛÛZ[œÊˆYÛÎÈ\Ý™Yœ™\ÚÛÚÈˆ\ËˆŠJNÂˆÚÊ
+
+JBˆBˆÈOˆ\œŠ™^XÝYX\šÝ\Ý™\ˆ‹×ÜÝš[™Ê
+JKˆBŸB‚ˆÖÝ\ÝB™›ˆÝ™\—Ù›Ü—ÜÜÚ][Û—ØY×ÜÛ˜\ÚÝÜÝ]\×Ý×ÜÙX[WÚÝ™\Š
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]
+Ù\šXÙKÜÛØÚÙ]
+HHÜÙ\šXÙNŽ›™]ÊÛY[˜XÚÙ[™Ž›™]ÊÛY[]YŽŽ™œ›ÛJ‹ˆŠJJNÂˆ]˜XÚÙ[™HÙ\šXÙKš[›™\Š
+NÂˆ]ÙX[HHØ[\WØÛ\ÜÚYšYYÜÙX[J
+NÂˆ]XYÛ›ÜÝXÈHXYÛ›ÜÝX×Ù›Ü—ØÛ\ÜÚYšYYÜÙX[J]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠK	œÙX[JBˆ›Ú×ÛÜ—Ù[ÙJ™^XÝYÙX[HXYÛ›ÜÝXÈ‹×ÜÝš[™Ê
+JOÎÂˆ]\šHH\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜšXÚ[™ËœœÈŠOÎÂˆ][™HHXYÛ›ÜÝXËœ˜[™ÙKœÝ\›[™NÂˆ]]]XYÛ›ÜÝXÜÈHØ[\WÝÛÜšÜÜXÙWÙXYÛ›ÜÝXÜÊˆ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙHŠKˆ\šK˜ÛÛ™J
+Kˆ™XÈVÙXYÛ›ÜÝX×Kˆ™XÎŽ›™]Ê
+Kˆ
+NÂˆXYÛ›ÜÝXÜËœÛ˜\ÚÝ˜Û\ÜÚYšYYÜÙX[\ÈH™XÈVÜÙX[WNÂˆXYÛ›ÜÝXÜÂˆœÛ˜\ÚÝˆœ™Yœ™\Úˆœ™XÛÜ™Ù\˜][ÛŠ\˜][ÛŽŽ™œ›ÛWÛZ[\ÊLJJNÂˆ]ÛÛYJÊHH˜XÚÙ[™œ™Yœ™\ÚÜ[ŠXYÛ›ÜÝXÜÊH[ÙHÂˆ™]\›ˆ\œŠ™^XÝY™Yœ™\Ú[ˆ‹×ÜÝš[™Ê
+JNÂˆNÂ‚ˆ]ÛÛYJÝ™\ŠHH˜XÚÙ[™šÝ™\—Ù›Ü—ÜÜÚ][ÛŠ	šÝ™\—Ü\˜[\Ê\šK[™KJJH[ÙHÂˆ™]\›ˆ\œŠ™^XÝYÙX[HÝ™\ˆ‹×ÜÝš[™Ê
+JNÂˆNÂ‚ˆX]ÚÝ™\‹˜ÛÛ[ÈÂˆÝ™\ÛÛ[ÎŽ“X\šÝ\
+X\šÝ\
+HOˆÂˆ\ÜÙ\JX\šÝ\˜[YK˜ÛÛZ[œÊŠŠœš\ŠŠˆ™Z]š[Ü˜[ÙX[HŠJNÂˆ\ÜÙ\JX\šÝ\˜[YK˜ÛÛZ[œÊ˜ÙXZÛWÙÜš\YŠJNÂˆ\ÜÙ\JX\šÝ\˜[YK˜ÛÛZ[œÊ[˜[\Ú\ÈÛ˜\ÚÝˆÙ[™\˜]YŠJNÂˆ\ÜÙ\JX\šÝ\˜[YK˜ÛÛZ[œÊˆYÛÎÈ\Ý™Yœ™\ÚÛÚÈLH\ËˆŠJNÂˆÚÊ
+
+JBˆBˆÈOˆ\œŠ™^XÝYX\šÝ\Ý™\ˆ‹×ÜÝš[™Ê
+JKˆBŸB‚ˆÖÝ\ÝB™›ˆÛ˜\ÚÝÜÝ]\×ÛX]™\×Û›Û—ÛX\šÝ\ÚÝ™\—ØÛÛ[Ý[˜Ú[™ÙY
+
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]\šHH\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜšXÚ[™ËœœÈŠOÎÂˆ]Û˜\ÚÝBˆØ[\WØ[˜[\Ú\×ÜÛ˜\ÚÝ
+]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙHŠK\šK™XÎŽ›™]Ê
+K™XÎŽ›™]Ê
+JNÂˆ]Ý™\ˆHÝÙ\—ÛÜÜÙ\™\ŽŽ›×Ý\\ÎŽ’Ý™\ˆÂˆÛÛ[ÎˆÝ™\ÛÛ[ÎŽ”ØØ[\ŠX\šÙYÝš[™ÎŽ”Ýš[™ÊœZ[ˆ‹×ÜÝš[™Ê
+JJKˆ˜[™ÙNˆ›Û™KˆNÂ‚ˆ]Ý™\ˆHÝ™\—ÝÚ]ÜÛ˜\ÚÝÜÝ]\ÊÝ™\‹	œÛ˜\ÚÝ
+NÂ‚ˆX]ÚÝ™\‹˜ÛÛ[ÈÂˆÝ™\ÛÛ[ÎŽ”ØØ[\ŠX\šÙYÝš[™ÎŽ”Ýš[™Ê˜[YJJHOˆÂˆ\ÜÙ\Ù\HJ˜[YKœZ[ˆŠNÂˆÚÊ
+
+JBˆBˆÈOˆ\œŠ™^XÝYØØ[\ˆÝ™\ˆ‹×ÜÝš[™Ê
+JKˆBŸB‚ˆÖÝ\ÝB™›ˆÝ™\—Ù˜[˜XÚ×Ý×ÙXYÛ›ÜÝX×ÝÚ]Ý]ÛX]Ú[™×Ùš[™[™Ê
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]
+Ù\šXÙKÜÛØÚÙ]
+HHÜÙ\šXÙNŽ›™]ÊÛY[˜XÚÙ[™Ž›™]ÊÛY[]YŽŽ™œ›ÛJ‹ˆŠJJNÂˆ]˜XÚÙ[™HÙ\šXÙKš[›™\Š
+NÂˆ]š[™[™ÈHØ[\WÙš[™[™Ê
+NÂˆ]XYÛ›ÜÝXÈHXYÛ›ÜÝX×Ù›Ü—Ùš[™[™Ê]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠK	™š[™[™ÊNÂˆ]\šHH\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜšXÚ[™ËœœÈŠOÎÂˆ]]]Z\ÛX]ÚYÙš[™[™ÈHØ[\WÙš[™[™Ê
+NÂˆZ\ÛX]ÚYÙš[™[™ËšYHœ›Ø™N›Ý\ŽŒNœ™YXØ]H‹×ÜÝš[™Ê
+NÂˆZ\ÛX]ÚYÙš[™[™Ëœ›Ø™KšYŒHœ›Ø™N›Ý\ŽŒNœ™YXØ]H‹×ÜÝš[™Ê
+NÂˆ]Û˜\ÚÝHØ[\WØ[˜[\Ú\×ÜÛ˜\ÚÝ
+ˆ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙHŠKˆ\šK˜ÛÛ™J
+Kˆ™XÈVÙXYÛ›ÜÝXË˜ÛÛ™J
+WKˆ™XÈVÛZ\ÛX]ÚYÙš[™[™×Kˆ
+NÂˆ]˜]Ú\ÈH™XÈVÑXYÛ›ÜÝXÐ˜]ÚÂˆ\šNˆ\šK˜ÛÛ™J
+KˆXYÛ›ÜÝXÜÎˆ™XÈVÙXYÛ›ÜÝXË˜ÛÛ™J
+WKˆWNÂˆ]ÛÜšÜÜXÙWÙXYÛ›ÜÝXÜÈHÛÜšÜÜXÙQXYÛ›ÜÝXÜÈÈÛ˜\ÚÝ˜]Ú\ÈNÂˆ]ÛÛYJÊHH˜XÚÙ[™œ™Yœ™\ÚÜ[ŠÛÜšÜÜXÙWÙXYÛ›ÜÝXÜÊH[ÙHÂˆ™]\›ˆ\œŠ™^XÝY™Yœ™\Ú[ˆ‹×ÜÝš[™Ê
+JNÂˆNÂ‚ˆ]ÛÛYJÝ™\ŠHH˜XÚÙ[™šÝ™\—Ù›Ü—ÜÜÚ][ÛŠ	šÝ™\—Ü\˜[\Ê\šKËJJH[ÙHÂˆ™]\›ˆ\œŠ™^XÝYXYÛ›ÜÝXÈÝ™\ˆ‹×ÜÝš[™Ê
+JNÂˆNÂ‚ˆX]ÚÝ™\‹˜ÛÛ[ÈÂˆÝ™\ÛÛ[ÎŽ“X\šÝ\
+X\šÝ\
+HOˆÂˆ\ÜÙ\JX\šÝ\˜[YK˜ÛÛZ[œÊŠŠœš\ŠŠˆÙXZÛWÙ^ÜÙYŠJNÂˆ\ÜÙ\JX\šÝ\˜[YK˜ÛÛZ[œÊY[ˆ^XÝ›Ý[™\žH\ÜÙ\[Û‹ˆŠJNÂˆ\ÜÙ\JˆX\šÝ\ˆ˜[YBˆ˜ÛÛZ[œÊ‘š[™[™Îˆ›Ø™NœšXÚ[™ÎŽœ™YXØ]XŠBˆ
+NÂˆ\ÜÙ\J[X\šÝ\˜[YK˜ÛÛZ[œÊˆÈÈ’Tˆ]šY[˜ÙHŠJNÂˆÚÊ
+
+JBˆBˆÈOˆ\œŠ™^XÝYX\šÝ\Ý™\ˆ‹×ÜÝš[™Ê
+JKˆBŸB‚ˆÖÝ\ÝB™›ˆÝ™\—Ù›Ü—ÜÜÚ][Û—Ü™]\›œ×Û›Û™WÝÚ[—Û›×ÙXYÛ›ÜÝX×ÛX]Ú\Ê
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]
+Ù\šXÙKÜÛØÚÙ]
+HHÜÙ\šXÙNŽ›™]ÊÛY[˜XÚÙ[™Ž›™]ÊÛY[]YŽŽ™œ›ÛJ‹ˆŠJJNÂˆ]˜XÚÙ[™HÙ\šXÙKš[›™\Š
+NÂˆ]š[™[™ÈHØ[\WÙš[™[™Ê
+NÂˆ]XYÛ›ÜÝXÈHXYÛ›ÜÝX×Ù›Ü—Ùš[™[™Ê]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠK	™š[™[™ÊNÂˆ]\šHH\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜšXÚ[™ËœœÈŠOÎÂˆ]XYÛ›ÜÝXÜÈHØ[\WÝÛÜšÜÜXÙWÙXYÛ›ÜÝXÜÊˆ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙHŠKˆ\šK˜ÛÛ™J
+Kˆ™XÈVÙXYÛ›ÜÝXË˜ÛÛ™J
+WKˆ™XÈVÙš[™[™×Kˆ
+NÂˆ]ÛÛYJÊHH˜XÚÙ[™œ™Yœ™\ÚÜ[ŠXYÛ›ÜÝXÜÊH[ÙHÂˆ™]\›ˆ\œŠ™^XÝY™Yœ™\Ú[ˆ‹×ÜÝš[™Ê
+JNÂˆNÂ‚ˆ\ÜÙ\Jˆ˜XÚÙ[™ˆšÝ™\—Ù›Ü—ÜÜÚ][ÛŠ	šÝ™\—Ü\˜[\Ê\šKJJBˆš\×Û›Û™J
+Kˆ™^XÝY›Û™HÚ[ˆ›ÈXYÛ›ÜÝXÈX]Ú\ÈÜÚ][Ûˆ‚ˆ
+NÂ‚ˆ]Ù[™\šXÈHÝ™\—Ü™\ÜÛœÙJ
+NÂˆX]ÚÙ[™\šXË˜ÛÛ[ÈÂˆÝ™\ÛÛ[ÎŽ“X\šÝ\
+X\šÝ\
+HOˆÂˆ\ÜÙ\Ù\HJX\šÝ\˜[YKÕ‘T—ÕV
+NÂˆÚÊ
+
+JBˆBˆÈOˆ\œŠ™^XÝYX\šÝ\Ý™\ˆ‹×ÜÝš[™Ê
+JKˆBŸB‚ˆÖÝ\ÝB™›ˆš[™[™×ÚÝ™\—Ü™[™\œ×Ü™[]YÝ\Ý×Ø[™ÛÜ˜XÛWÝ^
+
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]
+Ù\šXÙKÜÛØÚÙ]
+HHÜÙ\šXÙNŽ›™]ÊÛY[˜XÚÙ[™Ž›™]ÊÛY[]YŽŽ™œ›ÛJ‹ˆŠJJNÂˆ]˜XÚÙ[™HÙ\šXÙKš[›™\Š
+NÂˆ]]]š[™[™ÈHØ[\WÙš[™[™Ê
+NÂˆš[™[™Ëœ™[]YÝ\ÝËœ\Ú
+™[]Y\ÝÂˆ˜[YNˆ™\ØÛÝ[Ø›Ý[™\žWÚ\×Ù^XÝ‹×ÜÝš[™Ê
+Kˆš[Nˆ]YŽŽ™œ›ÛJ\ÝËÜšXÚ[™ËœœÈŠKˆ[™NˆL‹ˆÜ˜XÛNˆÛÛYJ˜\ÜÙ\Ù\HJÝ[^XÝY
+H‹×ÜÝš[™Ê
+JKˆÜ˜XÛWÚÚ[™ˆÜ˜XÛRÚ[™Ž‘^XÝ˜[YKˆÜ˜XÛWÜÝ™[™ÝˆÜ˜XÛTÝ™[™ÝŽ”Ý›Û™Ëˆ™[][Û—Ü™X\ÛÛŽˆ›Û™Kˆ™[][Û—ØÛÛ™šY[˜ÙNˆ›Û™KˆJNÂˆ]XYÛ›ÜÝXÈHXYÛ›ÜÝX×Ù›Ü—Ùš[™[™Ê]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠK	™š[™[™ÊNÂˆ]\šHH\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜšXÚ[™ËœœÈŠOÎÂˆ]XYÛ›ÜÝXÜÈHØ[\WÝÛÜšÜÜXÙWÙXYÛ›ÜÝXÜÊˆ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙHŠKˆ\šK˜ÛÛ™J
+Kˆ™XÈVÙXYÛ›ÜÝXË˜ÛÛ™J
+WKˆ™XÈVÙš[™[™×Kˆ
+NÂˆ]ÛÛYJÊHH˜XÚÙ[™œ™Yœ™\ÚÜ[ŠXYÛ›ÜÝXÜÊH[ÙHÂˆ™]\›ˆ\œŠ™^XÝY™Yœ™\Ú[ˆ‹×ÜÝš[™Ê
+JNÂˆNÂ‚ˆ]ÛÛYJÝ™\ŠHH˜XÚÙ[™šÝ™\—Ù›Ü—ÜÜÚ][ÛŠ	šÝ™\—Ü\˜[\Ê\šKËJJH[ÙHÂˆ™]\›ˆ\œŠ™^XÝYš[™[™ÈÝ™\ˆ‹×ÜÝš[™Ê
+JNÂˆNÂ‚ˆX]ÚÝ™\‹˜ÛÛ[ÈÂˆÝ™\ÛÛ[ÎŽ“X\šÝ\
+X\šÝ\
+HOˆÂˆ\ÜÙ\JX\šÝ\˜[YK˜ÛÛZ[œÊˆÈÈ™[]Y\ÝÈŠJNÂˆ\ÜÙ\JˆX\šÝ\ˆ˜[YBˆ˜ÛÛZ[œÊ˜\ÝËÜšXÚ[™ËœœÎŒL˜\ØÛÝ[Ø›Ý[™\žWÚ\×Ù^XÝŠBˆ
+NÂˆ\ÜÙ\JˆX\šÝ\ˆ˜[YBˆ˜ÛÛZ[œÊ—^ÌŒMHÝ›Û™È^XÝÝ˜[YHÜ˜XÛNˆ\ÜÙ\Ù\HJÝ[^XÝY
+HŠBˆ
+NÂˆÚÊ
+
+JBˆBˆÈOˆ\œŠ™^XÝYX\šÝ\Ý™\ˆ‹×ÜÝš[™Ê
+JKˆBŸB‚ˆÖÝ\ÝB™›ˆš[™[™×ÚÝ™\—Ü™[™\œ×ÝÙXZÛ™\Ü×ÜÙXÝ[ÛŠ
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]
+Ù\šXÙKÜÛØÚÙ]
+HHÜÙ\šXÙNŽ›™]ÊÛY[˜XÚÙ[™Ž›™]ÊÛY[]YŽŽ™œ›ÛJ‹ˆŠJJNÂˆ]˜XÚÙ[™HÙ\šXÙKš[›™\Š
+NÂˆ]]]š[™[™ÈHØ[\WÙš[™[™Ê
+NÂˆš[™[™Âˆ›Z\ÜÚ[™Âˆœ\Ú
+››È\]X[]KX›Ý[™\žHØ\ÙHØ\È›Ý[™‹×ÜÝš[™Ê
+JNÂˆ]XYÛ›ÜÝXÈHXYÛ›ÜÝX×Ù›Ü—Ùš[™[™Ê]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠK	™š[™[™ÊNÂˆ]\šHH\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜšXÚ[™ËœœÈŠOÎÂˆ]XYÛ›ÜÝXÜÈHØ[\WÝÛÜšÜÜXÙWÙXYÛ›ÜÝXÜÊˆ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙHŠKˆ\šK˜ÛÛ™J
+Kˆ™XÈVÙXYÛ›ÜÝXË˜ÛÛ™J
+WKˆ™XÈVÙš[™[™×Kˆ
+NÂˆ]ÛÛYJÊHH˜XÚÙ[™œ™Yœ™\ÚÜ[ŠXYÛ›ÜÝXÜÊH[ÙHÂˆ™]\›ˆ\œŠ™^XÝY™Yœ™\Ú[ˆ‹×ÜÝš[™Ê
+JNÂˆNÂ‚ˆ]ÛÛYJÝ™\ŠHH˜XÚÙ[™šÝ™\—Ù›Ü—ÜÜÚ][ÛŠ	šÝ™\—Ü\˜[\Ê\šKËJJH[ÙHÂˆ™]\›ˆ\œŠ™^XÝYš[™[™ÈÝ™\ˆ‹×ÜÝš[™Ê
+JNÂˆNÂ‚ˆX]ÚÝ™\‹˜ÛÛ[ÈÂˆÝ™\ÛÛ[ÎŽ“X\šÝ\
+X\šÝ\
+HOˆÂˆ\ÜÙ\JX\šÝ\˜[YK˜ÛÛZ[œÊˆÈÈÙXZÛ™\ÜÈŠJNÂˆ\ÜÙ\JˆX\šÝ\ˆ˜[YBˆ˜ÛÛZ[œÊ‹H›È\]X[]KX›Ý[™\žHØ\ÙHØ\È›Ý[™ŠBˆ
+NÂˆÚÊ
+
+JBˆBˆÈOˆ\œŠ™^XÝYX\šÝ\Ý™\ˆ‹×ÜÝš[™Ê
+JKˆBŸB‚ˆÖÝ\ÝB™›ˆš[™[™×ÚÝ™\—Ø]›ÚY×Û]]][Û—Ü[[YWÝ\›\Ê
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]
+Ù\šXÙKÜÛØÚÙ]
+HHÜÙ\šXÙNŽ›™]ÊÛY[˜XÚÙ[™Ž›™]ÊÛY[]YŽŽ™œ›ÛJ‹ˆŠJJNÂˆ]˜XÚÙ[™HÙ\šXÙKš[›™\Š
+NÂˆ]š[™[™ÈHØ[\WÙš[™[™Ê
+NÂˆ]XYÛ›ÜÝXÈHXYÛ›ÜÝX×Ù›Ü—Ùš[™[™Ê]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠK	™š[™[™ÊNÂˆ]\šHH\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜšXÚ[™ËœœÈŠOÎÂˆ]XYÛ›ÜÝXÜÈHØ[\WÝÛÜšÜÜXÙWÙXYÛ›ÜÝXÜÊˆ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙHŠKˆ\šK˜ÛÛ™J
+Kˆ™XÈVÙXYÛ›ÜÝXË˜ÛÛ™J
+WKˆ™XÈVÙš[™[™×Kˆ
+NÂˆ]ÛÛYJÊHH˜XÚÙ[™œ™Yœ™\ÚÜ[ŠXYÛ›ÜÝXÜÊH[ÙHÂˆ™]\›ˆ\œŠ™^XÝY™Yœ™\Ú[ˆ‹×ÜÝš[™Ê
+JNÂˆNÂ‚ˆ]ÛÛYJÝ™\ŠHH˜XÚÙ[™šÝ™\—Ù›Ü—ÜÜÚ][ÛŠ	šÝ™\—Ü\˜[\Ê\šKËJJH[ÙHÂˆ™]\›ˆ\œŠ™^XÝYš[™[™ÈÝ™\ˆ‹×ÜÝš[™Ê
+JNÂˆNÂ‚ˆX]ÚÝ™\‹˜ÛÛ[ÈÂˆÝ™\ÛÛ[ÎŽ“X\šÝ\
+X\šÝ\
+HOˆÂˆ]˜[›™Yˆ™XÏÝš[™ÏˆH™XÈVÂˆÝŽš]\ŽŽ›Û˜ÙJ	ÚÉÊK˜ÚZ[Šš[Y‹˜Ú\œÊ
+JK˜ÛÛXÝ
+
+KˆÝŽš]\ŽŽ›Û˜ÙJ	ÜÉÊK˜ÚZ[Š\š]™Y‹˜Ú\œÊ
+JK˜ÛÛXÝ
+
+KˆÝŽš]\ŽŽ›Û˜ÙJ	Ü	ÊK˜ÚZ[Šœ›Ý™[ˆ‹˜Ú\œÊ
+JK˜ÛÛXÝ
+
+KˆÝŽš]\ŽŽ›Û˜ÙJ	ØIÊK˜ÚZ[Š™\]X]H‹˜Ú\œÊ
+JK˜ÛÛXÝ
+
+KˆÝŽš]\ŽŽ›Û˜ÙJ	ÝIÊK˜ÚZ[Š›\ÝY‹˜Ú\œÊ
+JK˜ÛÛXÝ
+
+KˆNÂˆ›Üˆ\›H[ˆ˜[›™YÂˆ\ÜÙ\Jˆ[X\šÝ\˜[YK×Ø\ØÚZWÛÝÙ\˜Ø\ÙJ
+K˜ÛÛZ[œÊ	\›JKˆšÝ™\ˆÛÛZ[™Y˜[›™Y]]][Û‹\[[YH\›NˆÝ\›_H‚ˆ
+NÂˆBˆÚÊ
+
+JBˆBˆÈOˆ\œŠ™^XÝYX\šÝ\Ý™\ˆ‹×ÜÝš[™Ê
+JKˆBŸB‚ˆÖÝ\ÝB™›ˆ[˜[\Ú\×ÜÛ˜\ÚÝÙš[™×Ùš[™[™×Ùœ›ÛWÙXYÛ›ÜÝX×Ù]J
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]š[™[™ÈHØ[\WÙš[™[™Ê
+NÂˆ]XYÛ›ÜÝXÈHXYÛ›ÜÝX×Ù›Ü—Ùš[™[™Ê]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠK	™š[™[™ÊNÂˆ]\šHH\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜšXÚ[™ËœœÈŠOÎÂˆ]Û˜\ÚÝHØ[\WØ[˜[\Ú\×ÜÛ˜\ÚÝ
+ˆ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙHŠKˆ\šKˆ™XÈVÙXYÛ›ÜÝXË˜ÛÛ™J
+WKˆ™XÈVÙš[™[™×Kˆ
+NÂ‚ˆ]ÛÛYJ›Ý[™
+HHÛ˜\ÚÝ™š[™[™×Ù›Ü—ÙXYÛ›ÜÝXÊ	™XYÛ›ÜÝXÊH[ÙHÂˆ™]\›ˆ\œŠ™^XÝYš[™[™Èœ›ÛHXYÛ›ÜÝXÈ]H‹×ÜÝš[™Ê
+JNÂˆNÂ‚ˆ\ÜÙ\Ù\HJ›Ý[™šYœ›Ø™NœšXÚ[™ÎŽœ™YXØ]HŠNÂˆ\ÜÙ\Ù\HJ›Ý[™œ›Ø™K™^™\ÜÚ[Û‹˜[[Ý[H™\ÚÛŠNÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆÝ™\›\[™×ÙXYÛ›ÜÝXÜ×Ü™Y™\—ÜÙX[WÚYÛÛÚÝ\ÛÝ™\—Ùš[™[™×ÚYÛÛÚÝ\
+
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆËÈ™YÜ™\ÜÚ[Ûˆ›ÜˆÚ]ÜXÛÙ^™]šY]ÈÛˆˆÌŽˆÚ[ˆHš[™[™ÂˆËÈXYÛ›ÜÝXÈ[™HÙX[HXYÛ›ÜÝXÈÚ\™HHØ[YH[™KBˆËÈ˜XÚÙ[™	ÜÈÝ™\ˆ[™\ˆ]\Ý™Y™\ˆHÙX[KX™X\š[™ÈÛ™KˆBˆËÈ˜]ÚZ[\ˆ\Ú\Èš[™[™ÜÈ™Y›Ü™HÙX[\È[ˆH\‹]\šBˆËÈXYÛ›ÜÝXÈ™XÝÜ‹ÛÈH˜Z]™Hš\œÝ[X]ÚØØ[ˆÛÝ[ÚYÝÈBˆËÈ™]ÈÙX[KY]šY[˜ÙHÝ™\‹ˆ[ˆHš[Üš]HžH\™XÝÛÚÝ\‚ˆ]š[™[™ÈHØ[\WÙš[™[™Ê
+NÂˆ]š[™[™×ÙXYÈHXYÛ›ÜÝX×Ù›Ü—Ùš[™[™Ê]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠK	™š[™[™ÊNÂˆ]]]ÙX[WÙXYÈHš[™[™×ÙXYË˜ÛÛ™J
+NÂˆÙX[WÙXYË™]HHÛÛYJÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆœØÚ[XWÝ™\œÚ[ÛˆŽˆŒŒH‹ˆœÙX[WÚYŽˆ™ŒØÎYMŒXLØÎ‹ˆœÙX[WÚÚ[™Žˆœ™YXØ]WØ›Ý[™\žH‹ˆ™Üš\ØÛ\ÜÈŽˆÙXZÛWÙÜš\Y‹ˆJJNÂˆ]\šHH\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜšXÚ[™ËœœÈŠOÎÂˆËÈÜ™\ˆX]\œÈ\™Nˆš[™[™ÈXYÛ›ÜÝXÈš\œÝÙX[HXYÛ›ÜÝXÂˆËÈÙXÛÛ™8 %HØ[YHÜ™\ˆH˜]ÚZ[\ˆ\Ù\Ë‚ˆ]Û˜\ÚÝHØ[\WØ[˜[\Ú\×ÜÛ˜\ÚÝ
+ˆ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙHŠKˆ\šKˆ™XÈVÙš[™[™×ÙXYË˜ÛÛ™J
+KÙX[WÙXYË˜ÛÛ™J
+WKˆ™XÈVÙš[™[™×Kˆ
+NÂ‚ˆËÈ›ÝÛÚÝ\È^\Ý[ˆHÛ˜\ÚÝˆH˜XÚÙ[™	ÜÈÝ™\›\š^ˆËÈØ[ÜÈ[X]Ú[™ÈXYÛ›ÜÝXÜÈ[™™Y™\œÈHÙX[KX™X\š[™ÂˆËÈÛ™KˆÙH™\šYžHHÛÚÝ\È[™]šYX[H\™NÈH˜XÚÙ[™ˆËÈÜ™\š[™È\È^\˜Ú\ÙYžHœ˜[YYÛÜÜ›ÝØÛÛÜÛ[ÚÙWÙ^\˜Ú\Ù\×ÝÝÙ\—ÜÙ\™\˜‚ˆYˆÛ˜\ÚÝ™š[™[™×Ù›Ü—ÙXYÛ›ÜÝXÊ	™š[™[™×ÙXYÊKš\×Û›Û™J
+HÂˆ™]\›ˆ\œŠ™š[™[™ÈÛÚÝ\ÚÝ[Ý[™\ÛÛ™H‹×ÜÝš[™Ê
+JNÂˆBˆËÈHÙX[HXYÛ›ÜÝXÈØ\œšY\ÈÙX[WÚY]›ÈX]Ú[™ÈÙX[H[‚ˆËÈÛ\ÜÚYšYYÜÙX[\È
+H\ÝÛ˜\ÚÝ[\ˆ\È[\HÙX[\ÊK‚ˆËÈÚ]X]\œÈ\È]Û\ÜÚYšYYÜÙX[WÙ›Ü—ÙXYÛ›ÜÝXÈÛ›Hš\™\ÂˆËÈ›ÜˆXYÛ›ÜÝXÜÈÚ]]KœÙX[WÚY8 %K™K‹]Ù\È›ÝX]ÚˆËÈš[™[™×ÙXYË‚ˆYˆÛ˜\ÚÝˆ˜Û\ÜÚYšYYÜÙX[WÙ›Ü—ÙXYÛ›ÜÝXÊ	™š[™[™×ÙXYÊBˆš\×ÜÛÛYJ
+BˆÂˆ™]\›ˆ\œŠˆ˜Û\ÜÚYšYYÜÙX[WÙ›Ü—ÙXYÛ›ÜÝXÈÚÝ[™Z™XÝXYÛ›ÜÝXÜÈØ\œžZ[™Èš[™[™×ÚYÛ›H‚ˆ×ÜÝš[™Ê
+Kˆ
+NÂˆBˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆÚ]™[—ÙXYÛ›ÜÝX×ÝÚ]Ý[šÛ›ÝÛ—ÜÙX[WÚYÝÚ[—ÛÛÚÝ\Ü[œ×Ý[—Û›×ØÛ\ÜÚYšYYÜÙX[WÚ\×Ü™]\›™Y
+
+B‹Oˆ™\Ý[
+
+KÝš[™ÏˆÂˆËÈ™YÜ™\ÜÚ[Ûˆ›ÜˆH\™XÝ]™IÜÈ[šÛ›ÝÛˆÙX[WÚY˜[È˜XÚÂˆËÈØY™[HˆXØÙ\[˜ÙNˆHXYÛ›ÜÝXÈØ\œšY\È]KœÙX[WÚY]BˆËÈÛ˜\ÚÝ\È›ÈX]Ú[™ÈÛ\ÜÚYšYYÙX[H
+K™Ë‹HÛ˜\ÚÝØ\ÂˆËÈ™Yœ™\ÚY[™HÙX[HØ\Èš[\™YÝ]
+KˆÛÚÝ\]\Ý™]\›‚ˆËÈ›Û™HÛÈH˜XÚÙ[™˜[È›ÝYÚÈš[™[™ÈÝ™\ˆÜˆBˆËÈÙ[™\šXÈXYÛ›ÜÝXÈÝ™\ŽÈHÔ]\Ý›Ý[šXÈÜˆ[™Ë‚ˆ]š[™[™ÈHØ[\WÙš[™[™Ê
+NÂˆ]]]XYÛ›ÜÝXÈHXYÛ›ÜÝX×Ù›Ü—Ùš[™[™Ê]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠK	™š[™[™ÊNÂˆËÈ™\XÙHHXYÛ›ÜÝXÈ]HÚ]HÞ[]XÈÙX[WÚY]Ù\ÂˆËÈ›Ý\X\ˆ[ˆÛ\ÜÚYšYYÜÙX[\Ëˆ›ÜÈHš[™[™×ÚYZ\œ›Üš[™ÂˆËÈHÙX[H]šY[˜ÙHXYÛ›ÜÝXË‚ˆXYÛ›ÜÝXË™]HHÛÛYJÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆœØÚ[XWÝ™\œÚ[ÛˆŽˆŒŒH‹ˆœÙX[WÚYŽˆ™XY™YYŒ‹ˆœÙX[WÚÚ[™Žˆœ™YXØ]WØ›Ý[™\žH‹ˆ™Üš\ØÛ\ÜÈŽˆÙXZÛWÙÜš\Y‹ˆJJNÂˆ]\šHH\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜšXÚ[™ËœœÈŠOÎÂˆ]Û˜\ÚÝHØ[\WØ[˜[\Ú\×ÜÛ˜\ÚÝ
+ˆ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙHŠKˆ\šKˆ™XÈVÙXYÛ›ÜÝXË˜ÛÛ™J
+WKˆ™XÈVÙš[™[™×Kˆ
+NÂ‚ˆYˆÛ˜\ÚÝˆ˜Û\ÜÚYšYYÜÙX[WÙ›Ü—ÙXYÛ›ÜÝXÊ	™XYÛ›ÜÝXÊBˆš\×ÜÛÛYJ
+BˆÂˆ™]\›ˆ\œŠ™^XÝY›Û™H›Üˆ[šÛ›ÝÛˆÙX[WÚY‹×ÜÝš[™Ê
+JNÂˆBˆYˆÛ˜\ÚÝ™š[™[™×Ù›Ü—ÙXYÛ›ÜÝXÊ	™XYÛ›ÜÝXÊKš\×ÜÛÛYJ
+HÂˆ™]\›ˆ\œŠˆ™^XÝY›Û™H›Üˆš[™[™×Ù›Ü—ÙXYÛ›ÜÝXÈÚ[ˆÙX[WÚY\ÈÙ][œÝXYÙˆš[™[™×ÚY‚ˆ×ÜÝš[™Ê
+Kˆ
+NÂˆBˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆÚ]™[—Ùš[™[™×ÙXYÛ›ÜÝX×ÝÚ[—ÛÛÚÝ\Ü[œ×Ý[—Ùš[™[™×ÚÝ™\—Ü]ÜÝ[Ü™\ÛÛ™\Ê
+B‹Oˆ™\Ý[
+
+KÝš[™ÏˆÂˆËÈ™KMˆš[™[™ÈXYÛ›ÜÝXÜÈÝ[™\ÛÛ™H›ÝYÚš[™[™×Ù›Ü—ÙXYÛ›ÜÝXÂˆËÈ]™[ˆÚ[ˆH™]ÈÙX[KX]Ø\™HÛÚÝ\\ÈÛˆHØ[YHÛ˜\ÚÝ‚ˆ]š[™[™ÈHØ[\WÙš[™[™Ê
+NÂˆ]XYÛ›ÜÝXÈHXYÛ›ÜÝX×Ù›Ü—Ùš[™[™Ê]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠK	™š[™[™ÊNÂˆ]\šHH\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜšXÚ[™ËœœÈŠOÎÂˆ]Û˜\ÚÝHØ[\WØ[˜[\Ú\×ÜÛ˜\ÚÝ
+ˆ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙHŠKˆ\šKˆ™XÈVÙXYÛ›ÜÝXË˜ÛÛ™J
+WKˆ™XÈVÙš[™[™×Kˆ
+NÂ‚ˆYˆÛ˜\ÚÝˆ˜Û\ÜÚYšYYÜÙX[WÙ›Ü—ÙXYÛ›ÜÝXÊ	™XYÛ›ÜÝXÊBˆš\×ÜÛÛYJ
+BˆÂˆ™]\›ˆ\œŠ‘š[™[™ÈXYÛ›ÜÝXÜÈØ\œžHš[™[™×ÚY›ÝÙX[WÚYÈˆÛ\ÜÚYšYYÜÙX[WÙ›Ü—ÙXYÛ›ÜÝXÈÚÝ[™]\›ˆ›Û™H‚ˆ×ÜÝš[™Ê
+JNÂˆBˆYˆÛ˜\ÚÝ™š[™[™×Ù›Ü—ÙXYÛ›ÜÝXÊ	™XYÛ›ÜÝXÊKš\×Û›Û™J
+HÂˆ™]\›ˆ\œŠ™^XÝYš[™[™ÈÝ™\ˆÛÚÝ\ÈÝ[ÛÜšÈ‹×ÜÝš[™Ê
+JNÂˆBˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆ™Yœ™\ÚÜ[—ÜÝÜ™\×Û]\ÝØ[˜[\Ú\×ÜÛ˜\ÚÝ
+
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]
+Ù\šXÙKÜÛØÚÙ]
+HHÜÙ\šXÙNŽ›™]ÊÛY[˜XÚÙ[™Ž›™]ÊÛY[]YŽŽ™œ›ÛJ‹ˆŠJJNÂˆ]˜XÚÙ[™HÙ\šXÙKš[›™\Š
+NÂˆ]š[™[™ÈHØ[\WÙš[™[™Ê
+NÂˆ]XYÛ›ÜÝXÈHXYÛ›ÜÝX×Ù›Ü—Ùš[™[™Ê]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠK	™š[™[™ÊNÂˆ]\šHH\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜšXÚ[™ËœœÈŠOÎÂˆ]XYÛ›ÜÝXÜÈHØ[\WÝÛÜšÜÜXÙWÙXYÛ›ÜÝXÜÊˆ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙHŠKˆ\šK˜ÛÛ™J
+Kˆ™XÈVÙXYÛ›ÜÝXË˜ÛÛ™J
+WKˆ™XÈVÙš[™[™×Kˆ
+NÂ‚ˆ]ÛÛYJÊHH˜XÚÙ[™œ™Yœ™\ÚÜ[ŠXYÛ›ÜÝXÜÊH[ÙHÂˆ™]\›ˆ\œŠ™^XÝY™Yœ™\Ú[ˆ‹×ÜÝš[™Ê
+JNÂˆNÂˆ]ÛÛYJ]\Ý
+HH˜XÚÙ[™›]\ÝØ[˜[\Ú\×ÜÛ˜\ÚÝ
+
+H[ÙHÂˆ™]\›ˆ\œŠ™^XÝY]\Ý[˜[\Ú\ÈÛ˜\ÚÝ‹×ÜÝš[™Ê
+JNÂˆNÂ‚ˆ\ÜÙ\Ù\HJ]\Ýœ›ÛÝ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙHŠJNÂˆ\ÜÙ\Ù\HJ]\Ý˜˜\ÙK˜\×Ù\™YŠ
+KÛÛYJ›ÜšYÚ[‹ÛXZ[ˆŠJNÂˆ\ÜÙ\Ù\HJ]\Ý›[ÙK[ÙNŽ‘˜Y
+NÂˆ\ÜÙ\Ù\HJ]\Ý™š[™[™ÜË›[Š
+KJNÂˆ\ÜÙ\Ù\HJ]\Ý™XYÛ›ÜÝXÜ×ØžWÝ\šK›[Š
+KJNÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆ™Yœ™\ÚÜ[—ØXØÙ\×ØXÝ[Û˜X›WÜÛ˜\ÚÝÝÚ]ÜÝ\™\ÜÙYÙš[™[™Ê
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]
+Ù\šXÙKÜÛØÚÙ]
+HHÜÙ\šXÙNŽ›™]ÊÛY[˜XÚÙ[™Ž›™]ÊÛY[]YŽŽ™œ›ÛJ‹ˆŠJJNÂˆ]˜XÚÙ[™HÙ\šXÙKš[›™\Š
+NÂˆ]]]š\ÚX›HHØ[\WÙš[™[™Ê
+NÂˆš\ÚX›K˜XÝ]˜][Û‹›Z\ÜÚ[™×Ù\ØÜš[Z[˜]ÜœÈH™XÈVÓZ\ÜÚ[™Ñ\ØÜš[Z[˜]Ü‘˜XÝÂˆ˜[YNˆ”šXÚ[™Ñ\œ›ÜŽŽ›Ý[™\žH‹×ÜÝš[™Ê
+Kˆ™X\ÛÛŽˆH^XÝ›Ý[™\žH\È›ÝØœÙ\™Y‹×ÜÝš[™Ê
+Kˆ›Ý×ÜÚ[šÎˆ›Û™KˆWNÂˆš\ÚX›Kœ™[]YÝ\ÝÈH™XÈVÔ™[]Y\ÝÂˆ˜[YNˆ˜ÚXÚÜ×Ø›Ý[™\žH‹×ÜÝš[™Ê
+Kˆš[Nˆ]YŽŽ™œ›ÛJ\ÝËÜšXÚ[™ËœœÈŠKˆ[™NˆL‹ˆÜ˜XÛNˆÛÛYJ˜\ÜÙ\Ù\HJ™\Ý[^XÝY
+H‹×ÜÝš[™Ê
+JKˆÜ˜XÛWÚÚ[™ˆÜ˜XÛRÚ[™Ž‘^XÝ˜[YKˆÜ˜XÛWÜÝ™[™ÝˆÜ˜XÛTÝ™[™ÝŽ”Ý›Û™Ëˆ™[][Û—Ü™X\ÛÛŽˆ›Û™Kˆ™[][Û—ØÛÛ™šY[˜ÙNˆ›Û™KˆWNÂ‚ˆ]]]Ý\™\ÜÙYHØ[\WÙš[™[™Ê
+NÂˆÝ\™\ÜÙYšYHœ›Ø™NœšXÚ[™ÎŽNœ™YXØ]H‹×ÜÝš[™Ê
+NÂˆÝ\™\ÜÙYœ›Ø™KšYH›Ø™RY
+Ý\™\ÜÙYšY˜ÛÛ™J
+JNÂˆÝ\™\ÜÙYœ›Ø™K›ØØ][Û‹™š[HH]YŽŽ™œ›ÛJœÜ˜ËÛÝ\‹œœÈŠNÂˆÝ\™\ÜÙYœ›Ø™K›ØØ][Û‹›[™HHNÂˆÝ\™\ÜÙY˜Û\ÜÈH^ÜÝ\™PÛ\ÜÎŽ‘^ÜÙYÂ‚ˆ]\šHH\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜšXÚ[™ËœœÈŠOÎÂˆ]XYÛ›ÜÝXÈHXYÛ›ÜÝX×Ù›Ü—Ùš[™[™Ê]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠK	š\ÚX›JNÂˆ]]]XYÛ›ÜÝXÜÈHØ[\WÝÛÜšÜÜXÙWÙXYÛ›ÜÝXÜÊˆ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙHŠKˆ\šKˆ™XÈVÙXYÛ›ÜÝX×Kˆ™XÈVÝš\ÚX›KÝ\™\ÜÙYKˆ
+NÂˆXYÛ›ÜÝXÜËœÛ˜\ÚÝ™XYÛ›ÜÝX×Ü›Ùš[HHÜ˜]NŽ˜ÛÛ™šYÎŽ“ÜXYÛ›ÜÝXÔ›Ùš[NŽXÝ[Û˜X›NÂ‚ˆ]ÛÛYJÊHH˜XÚÙ[™œ™Yœ™\ÚÜ[ŠXYÛ›ÜÝXÜÊH[ÙHÂˆ™]\›ˆ\œŠ™^XÝYXÝ[Û˜X›H™Yœ™\Ú[ˆ‹×ÜÝš[™Ê
+JNÂˆNÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆ™Yœ™\ÚÜ[—ÜÝÜ™\×ÜÛ˜\ÚÝÜ™Yœ™\ÚÛY]Y]J
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]
+Ù\šXÙKÜÛØÚÙ]
+HHÜÙ\šXÙNŽ›™]ÊÛY[˜XÚÙ[™Ž›™]ÊÛY[]YŽŽ™œ›ÛJ‹ˆŠJJNÂˆ]˜XÚÙ[™HÙ\šXÙKš[›™\Š
+NÂˆ]š[™[™ÈHØ[\WÙš[™[™Ê
+NÂˆ]XYÛ›ÜÝXÈHXYÛ›ÜÝX×Ù›Ü—Ùš[™[™Ê]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠK	™š[™[™ÊNÂˆ]\šHH\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜšXÚ[™ËœœÈŠOÎÂˆ]]]XYÛ›ÜÝXÜÈHØ[\WÝÛÜšÜÜXÙWÙXYÛ›ÜÝXÜÊˆ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙHŠKˆ\šKˆ™XÈVÙXYÛ›ÜÝX×Kˆ™XÈVÙš[™[™×Kˆ
+NÂˆXYÛ›ÜÝXÜÂˆœÛ˜\ÚÝˆœ™Yœ™\Úˆœ™XÛÜ™Ù\˜][ÛŠ\˜][ÛŽŽ™œ›ÛWÛZ[\ÊŠJNÂ‚ˆ]ÛÛYJÊHH˜XÚÙ[™œ™Yœ™\ÚÜ[ŠXYÛ›ÜÝXÜÊH[ÙHÂˆ™]\›ˆ\œŠ™^XÝY™Yœ™\Ú[ˆ‹×ÜÝš[™Ê
+JNÂˆNÂˆ]ÛÛYJ]\Ý
+HH˜XÚÙ[™›]\ÝØ[˜[\Ú\×ÜÛ˜\ÚÝ
+
+H[ÙHÂˆ™]\›ˆ\œŠ™^XÝY]\Ý[˜[\Ú\ÈÛ˜\ÚÝ‹×ÜÝš[™Ê
+JNÂˆNÂ‚ˆ\ÜÙ\Ù\HJ]\Ýœ™Yœ™\Ú™\˜][Û‹ÛÛYJ\˜][ÛŽŽ™œ›ÛWÛZ[\ÊŠJJNÂˆ\ÜÙ\J]\Ýœ™Yœ™\Ú˜YÙJ
+Kš\×ÜÛÛYJ
+JNÂˆ\ÜÙ\Ù\HJ]\Ý™XYÛ›ÜÝX×ØÛÝ[
+
+KJNÂˆ\ÜÙ\Ù\HJ]\Ý™XYÛ›ÜÝX×Ý\šWØÛÝ[
+
+KJNÂˆ\ÜÙ\Ù\HJ]\Ý™š[™[™×ØÛÝ[
+
+KJNÂˆ\ÜÙ\Ù\HJ]\ÝœÙX[WÙXYÛ›ÜÝX×ØÛÝ[
+
+K
+NÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆ™Yœ™\ÚØÛÛ\][Û—ÛÙ×ÛY\ÜØYÙWÚ[˜ÛY\×Ù\˜][Û—Ø[™ØÛÝ[Ê
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]ÙX[HHØ[\WØÛ\ÜÚYšYYÜÙX[J
+NÂˆ]XYÛ›ÜÝXÈHXYÛ›ÜÝX×Ù›Ü—ØÛ\ÜÚYšYYÜÙX[J]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠK	œÙX[JBˆ›Ú×ÛÜ—Ù[ÙJ™^XÝYÙX[HXYÛ›ÜÝXÈ‹×ÜÝš[™Ê
+JOÎÂˆ]\šHH\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜšXÚ[™ËœœÈŠOÎÂˆ]]]Û˜\ÚÝHØ[\WØ[˜[\Ú\×ÜÛ˜\ÚÝ
+ˆ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙHŠKˆ\šKˆ™XÈVÙXYÛ›ÜÝX×Kˆ™XÎŽ›™]Ê
+Kˆ
+NÂˆÛ˜\ÚÝ˜Û\ÜÚYšYYÜÙX[\ÈH™XÈVÜÙX[WNÂˆÛ˜\ÚÝœ™Yœ™\Úœ™XÛÜ™Ù\˜][ÛŠ\˜][ÛŽŽ™œ›ÛWÛZ[\ÊMÊJNÂ‚ˆ]Ý[[X\žHH™Yœ™\ÚÙÔÝ[[X\žNŽ™œ›ÛWÜÛ˜\ÚÝ
+Ë	œÛ˜\ÚÝ
+NÂˆ]Y\ÜØYÙHH™Yœ™\ÚØÛÛ\]YÛÙ×ÛY\ÜØYÙJ	œÝ[[X\žKKŠNÂ‚ˆ\ÜÙ\JY\ÜØYÙK˜ÛÛZ[œÊœš\ˆ[˜[\Ú\È™Yœ™\ÚÛÛ\]Y[ˆMÈ\ÈŠJNÂˆ\ÜÙ\JY\ÜØYÙK˜ÛÛZ[œÊ™Ù[™\˜][ÛMÈŠJNÂˆ\ÜÙ\JY\ÜØYÙK˜ÛÛZ[œÊ™XYÛ›ÜÝXÜÏLHŠJNÂˆ\ÜÙ\JY\ÜØYÙK˜ÛÛZ[œÊ™š[\ÏLHŠJNÂˆ\ÜÙ\JY\ÜØYÙK˜ÛÛZ[œÊ™š[™[™ÜÏLŠJNÂˆ\ÜÙ\JY\ÜØYÙK˜ÛÛZ[œÊœ™]šY]×Ùš[™[™ÜÏLŠJNÂˆ\ÜÙ\JY\ÜØYÙK˜ÛÛZ[œÊœÝ]X×Û[Z]ÏLŠJNÂˆ\ÜÙ\JY\ÜØYÙK˜ÛÛZ[œÊœÙX[WÙXYÛ›ÜÝXÜÏLHŠJNÂˆ\ÜÙ\JY\ÜØYÙK˜ÛÛZ[œÊ™Ø\Ø\Y˜XÝÏLŠJNÂˆ\ÜÙ\JY\ÜØYÙK˜ÛÛZ[œÊ˜XÝ[Û˜X›WÙØ\Ø\Y˜XÝÏLŠJNÂˆ\ÜÙ\JY\ÜØYÙK˜ÛÛZ[œÊœ™]šY]×ÙØ\Ø\Y˜XÝÏLŠJNÂˆ\ÜÙ\JY\ÜØYÙK˜ÛÛZ[œÊ››×ØXÝ[Û—ÙØ\Ø\Y˜XÝÏLŠJNÂˆ\ÜÙ\JY\ÜØYÙK˜ÛÛZ[œÊ™Ø\ÜÝ]X×Û[Z]ÏLŠJNÂˆ\ÜÙ\JY\ÜØYÙK˜ÛÛZ[œÊ™Ø\Ø\Y˜XÝÜ™Z™XÝ[ÛœÏLŠJNÂˆ\ÜÙ\JY\ÜØYÙK˜ÛÛZ[œÊ™Ø\Ø\Y˜XÝÜ™Z™XÝ[Û—ÚÚ[™ÏHŠJNÂˆ\ÜÙ\JY\ÜØYÙK˜ÛÛZ[œÊ™[˜X›YÛ[™ÝXYÙ\ÏLHŠJNÂˆ\ÜÙ\JY\ÜØYÙK˜ÛÛZ[œÊ™[˜X›YÛ[™ÝXYÙWÛ˜[Y\Ï\\ÝŠJNÂˆ\ÜÙ\JY\ÜØYÙK˜ÛÛZ[œÊœX›\ÚYÙš[\ÏLHŠJNÂˆ\ÜÙ\JY\ÜØYÙK˜ÛÛZ[œÊ˜ÛX\™YÙš[\ÏLˆŠJNÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆ™Yœ™\ÚØÛÛ\][Û—ÛÙ×ÛY\ÜØYÙWØÛÝ[×Ü™]šY]×Ùš[™[™Ü×Ø[™Û[Z]Ê
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]]]š[™[™ÈHØ[\WÙš[™[™Ê
+NÂˆš[™[™Ë›[™ÝXYÙHHÛÛYJ[™ÝXYÙRYŽ”]ÛŠNÂˆš[™[™Ë›[™ÝXYÙWÜÝ]\ÈHÛÛYJ[™ÝXYÙTÝ]\ÎŽ”™]šY]ÊNÂˆš[™[™ËœÝ]X×Û[Z]ÚÚ[™HÛÛYJÝ]XÓ[Z]Ú[™Ž“Z\ÜÚ[™Ò[\ÜÜ˜\
+NÂˆ]XYÛ›ÜÝXÈHXYÛ›ÜÝX×Ù›Ü—Ùš[™[™Ê]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠK	™š[™[™ÊNÂˆ]\šHH\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜšXÚ[™ËœHŠOÎÂˆ]Û˜\ÚÝHØ[\WØ[˜[\Ú\×ÜÛ˜\ÚÝ
+ˆ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙHŠKˆ\šKˆ™XÈVÙXYÛ›ÜÝX×Kˆ™XÈVÙš[™[™×Kˆ
+NÂ‚ˆ]Ý[[X\žHH™Yœ™\ÚÙÔÝ[[X\žNŽ™œ›ÛWÜÛ˜\ÚÝ
+	œÛ˜\ÚÝ
+NÂˆ]Y\ÜØYÙHH™Yœ™\ÚØÛÛ\]YÛÙ×ÛY\ÜØYÙJ	œÝ[[X\žKK
+NÂ‚ˆ\ÜÙ\JY\ÜØYÙK˜ÛÛZ[œÊœ™]šY]×Ùš[™[™ÜÏLHŠJNÂˆ\ÜÙ\JY\ÜØYÙK˜ÛÛZ[œÊœÝ]X×Û[Z]ÏLHŠJNÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆ™Yœ™\ÚØÛÛ\][Û—ÛÙ×ÛY\ÜØYÙWØÛÝ[×ÙØ\Ø\Y˜XÝÜÝ]J
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]XYÛ›ÜÝXÈHXYÛ›ÜÝX×Ù›Ü—Ùš[™[™Ê]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠK	œØ[\WÙš[™[™Ê
+JNÂˆ]\šHH\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜšXÚ[™ËœHŠOÎÂˆ]]]Û˜\ÚÝHØ[\WØ[˜[\Ú\×ÜÛ˜\ÚÝ
+ˆ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙHŠKˆ\šKˆ™XÈVÙXYÛ›ÜÝX×Kˆ™XÎŽ›™]Ê
+Kˆ
+NÂˆÛ˜\ÚÝ™Ø\Ø\Y˜XÝËœ\Ú
+˜[Y]YØ\\Y˜XÝÂˆÚ[™ˆØ\\Y˜XÝÚ[™Ž‘Ø\XÚ\Ú[Û“YÙ\‹ˆ›ÛÝˆÛÛYJ‹ˆ‹×ÜÝš[™Ê
+JKˆY[]Y\Îˆ™XÈVÑØ\\Y˜XÝY[]HÂˆØ[›ÛšXØ[ÙØ\ÚYˆÛÛYJ™Ø\œNœšXÚ[™È‹×ÜÝš[™Ê
+JKˆÙX[WÚYˆ›Û™Kˆš[™[™×ÚYˆ›Û™KˆWKˆ[™ÝXYÙNˆÛÛYJ[™ÝXYÙRYŽ”]ÛŠKˆ[™ÝXYÙWÜÝ]\ÎˆÛÛYJ[™ÝXYÙTÝ]\ÎŽ”™]šY]ÊKˆØ\ÜÝ]NˆÛÛYJ˜XÝ[Û˜X›H‹×ÜÝš[™Ê
+JKˆ™[]YÜ]Îˆ™XÈVÈ\ÝËÝ\ÝÜšXÚ[™ËœH‹×ÜÝš[™Ê
+WKˆ™\šYžWØÛÛ[X[™Îˆ™XÈVÈœš\ˆYÙ[™\šYžHK\›ÛÝˆKZœÛÛˆ‹×ÜÝš[™Ê
+WKˆ™XÙZ\ØÛÛ[X[™Îˆ™XÈVÈœš\ˆYÙ[™XÙZ\K\›ÛÝˆKZœÛÛˆ‹×ÜÝš[™Ê
+WKˆ™\šYžWØÛÛ[X[™ÜÜXÜÎˆ™XÎŽ›™]Ê
+Kˆ™XÙZ\ØÛÛ[X[™ÜÜXÜÎˆ™XÎŽ›™]Ê
+KˆÝ]X×Û[Z]ÚÚ[™Îˆ™XÈVÈ›Z\ÜÚ[™×Ú[\ÜÙÜ˜\‹×ÜÝš[™Ê
+WKˆ\×Ý^ÜÝ]X×Û[Z]ˆ˜[ÙKˆJNÂˆÛ˜\ÚÝˆ™Ø\Ø\Y˜XÝÜ™Z™XÝ[ÛœÂˆœ\Ú
+Ø\\Y˜XÝ™Z™XÝ[ÛŽŽ•Ü›Û™Ô›ÛÝ
+ˆ‹ÛÝ\‹ÝÛÜšÜÜXÙH‹×ÜÝš[™Ê
+Kˆ
+JNÂ‚ˆ]Ý[[X\žHH™Yœ™\ÚÙÔÝ[[X\žNŽ™œ›ÛWÜÛ˜\ÚÝ
+K	œÛ˜\ÚÝ
+NÂˆ]Y\ÜØYÙHH™Yœ™\ÚØÛÛ\]YÛÙ×ÛY\ÜØYÙJ	œÝ[[X\žKK
+NÂ‚ˆ\ÜÙ\JY\ÜØYÙK˜ÛÛZ[œÊ™Ø\Ø\Y˜XÝÏLHŠJNÂˆ\ÜÙ\JY\ÜØYÙK˜ÛÛZ[œÊ˜XÝ[Û˜X›WÙØ\Ø\Y˜XÝÏLHŠJNÂˆ\ÜÙ\JY\ÜØYÙK˜ÛÛZ[œÊœ™]šY]×ÙØ\Ø\Y˜XÝÏLHŠJNÂˆ\ÜÙ\JY\ÜØYÙK˜ÛÛZ[œÊ››×ØXÝ[Û—ÙØ\Ø\Y˜XÝÏLŠJNÂˆ\ÜÙ\JY\ÜØYÙK˜ÛÛZ[œÊ™Ø\ÜÝ]X×Û[Z]ÏLHŠJNÂˆ\ÜÙ\JY\ÜØYÙK˜ÛÛZ[œÊ™Ø\Ø\Y˜XÝÜ™Z™XÝ[ÛœÏLHŠJNÂˆ\ÜÙ\JY\ÜØYÙK˜ÛÛZ[œÊ™Ø\Ø\Y˜XÝÜ™Z™XÝ[Û—ÚÚ[™Ï]Ü›Û™×Ü›ÛÝŠJNÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆ™Yœ™\ÚØÛÛ\][Û—ÛÙ×ÛY\ÜØYÙWÙY˜][×ÛZ\ÜÚ[™×Ù\˜][Û—Ý×Þ™\›Ê
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]š[™[™ÈHØ[\WÙš[™[™Ê
+NÂˆ]XYÛ›ÜÝXÈHXYÛ›ÜÝX×Ù›Ü—Ùš[™[™Ê]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠK	™š[™[™ÊNÂˆ]\šHH\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜšXÚ[™ËœœÈŠOÎÂˆ]Û˜\ÚÝHØ[\WØ[˜[\Ú\×ÜÛ˜\ÚÝ
+ˆ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙHŠKˆ\šKˆ™XÈVÙXYÛ›ÜÝX×Kˆ™XÈVÙš[™[™×Kˆ
+NÂ‚ˆ]Ý[[X\žHH™Yœ™\ÚÙÔÝ[[X\žNŽ™œ›ÛWÜÛ˜\ÚÝ
+Ë	œÛ˜\ÚÝ
+NÂˆ]Y\ÜØYÙHH™Yœ™\ÚØÛÛ\]YÛÙ×ÛY\ÜØYÙJ	œÝ[[X\žKK
+NÂ‚ˆ\ÜÙ\JY\ÜØYÙK˜ÛÛZ[œÊœš\ˆ[˜[\Ú\È™Yœ™\ÚÛÛ\]Y[ˆ\ÈŠJNÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆ™Yœ™\ÚÙ˜Z[\™WÛÙ×ÛY\ÜØYÙWÚ[˜ÛY\×ØXÝ[Û˜X›WÙ\˜][ÛŠ
+HÂˆ]Y\ÜØYÙHH™Yœ™\ÚÙ˜Z[YÛÙ×ÛY\ÜØYÙJˆÛÜšÜÜXÙH[˜[\Ú\È˜Z[YˆØ\™ÛËÛ[›Ý›Ý[™‹ˆ\˜][ÛŽŽ™œ›ÛWÛZ[\ÊJKˆ
+NÂ‚ˆ\ÜÙ\Ù\HJˆY\ÜØYÙKˆœš\ˆ[˜[\Ú\È™Yœ™\Ú˜Z[YY\ˆH\ÎˆÛÜšÜÜXÙH[˜[\Ú\È˜Z[YˆØ\™ÛËÛ[›Ý›Ý[™‚ˆ
+NÂŸB‚ˆÖÝ\ÝB™›ˆ›Ü›X]Ù\˜][Û—Ü™[™\œ×ÛZ[\ÙXÛÛ™×Ø[™ÝÚÛWÜÙXÛÛ™Ê
+HÂˆ\ÜÙ\Ù\HJ›Ü›X]Ù\˜][ÛŠ\˜][ÛŽŽ™œ›ÛWÛZ[\ÊJJKŽH\ÈŠNÂˆ\ÜÙ\Ù\HJ›Ü›X]Ù\˜][ÛŠ\˜][ÛŽŽ™œ›ÛWÜÙXÜÊJJKŒHÙXÛÛ™ŠNÂˆ\ÜÙ\Ù\HJ›Ü›X]Ù\˜][ÛŠ\˜][ÛŽŽ™œ›ÛWÜÙXÜÊŠJKŒˆÙXÛÛ™ÈŠNÂŸB‚ˆÖÝ\ÝB™›ˆ™Yœ™\ÚÛY]Y]WÙY˜][Ü™XÛÜ™×ÙÙ[™\˜][Û—Ý[YJ
+HÂˆ]Y]Y]HH™Yœ™\ÚY]Y]NŽ™Y˜][
+
+NÂ‚ˆ\ÜÙ\JY]Y]K˜YÙJ
+Kš\×ÜÛÛYJ
+JNÂˆ\ÜÙ\Ù\HJY]Y]K™\˜][Û‹›Û™JNÂŸB‚ˆÖÝ\ÝB™›ˆÝ[WÜ™Yœ™\ÚÙÙ[™\˜][Û—ÙÙ\×Û›ÝÜÝÜ™WÛÛ\—ÜÛ˜\ÚÝ
+
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]
+Ù\šXÙKÜÛØÚÙ]
+HHÜÙ\šXÙNŽ›™]ÊÛY[˜XÚÙ[™Ž›™]ÊÛY[]YŽŽ™œ›ÛJ‹ˆŠJJNÂˆ]˜XÚÙ[™HÙ\šXÙKš[›™\Š
+NÂˆ]ÛÛYJš\œÝÙÙ[™\˜][ÛŠHH˜XÚÙ[™›™^Ü™Yœ™\ÚÙÙ[™\˜][ÛŠ
+H[ÙHÂˆ™]\›ˆ\œŠ™^XÝYš\œÝÙ[™\˜][Ûˆ‹×ÜÝš[™Ê
+JNÂˆNÂˆ]ÛÛYJÙXÛÛ™ÙÙ[™\˜][ÛŠHH˜XÚÙ[™›™^Ü™Yœ™\ÚÙÙ[™\˜][ÛŠ
+H[ÙHÂˆ™]\›ˆ\œŠ™^XÝYÙXÛÛ™Ù[™\˜][Ûˆ‹×ÜÝš[™Ê
+JNÂˆNÂˆ\ÜÙ\JX˜XÚÙ[™š\×ØÝ\œ™[Ü™Yœ™\ÚÙÙ[™\˜][ÛŠš\œÝÙÙ[™\˜][ÛŠJNÂˆ\ÜÙ\J˜XÚÙ[™š\×ØÝ\œ™[Ü™Yœ™\ÚÙÙ[™\˜][ÛŠÙXÛÛ™ÙÙ[™\˜][ÛŠJNÂ‚ˆ]š[™[™ÈHØ[\WÙš[™[™Ê
+NÂˆ]XYÛ›ÜÝXÈHXYÛ›ÜÝX×Ù›Ü—Ùš[™[™Ê]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠK	™š[™[™ÊNÂˆ]Ý\œ™[Ý\šHH\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËØÝ\œ™[œœÈŠOÎÂˆ]Ý\œ™[HØ[\WÝÛÜšÜÜXÙWÙXYÛ›ÜÝXÜÊˆ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙKØÝ\œ™[ŠKˆÝ\œ™[Ý\šKˆ™XÈVÙXYÛ›ÜÝX×Kˆ™XÈVÙš[™[™×Kˆ
+NÂˆ]ÛÛYJÊHH˜XÚÙ[™œ™Yœ™\ÚÜ[ŠÝ\œ™[
+H[ÙHÂˆ™]\›ˆ\œŠ™^XÝYÝ\œ™[™Yœ™\Ú[ˆ‹×ÜÝš[™Ê
+JNÂˆNÂ‚ˆYˆ˜XÚÙ[™š\×ØÝ\œ™[Ü™Yœ™\ÚÙÙ[™\˜][ÛŠš\œÝÙÙ[™\˜][ÛŠHÂˆ]Ý[HHØ[\WÝÛÜšÜÜXÙWÙXYÛ›ÜÝXÜÊˆ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙKÜÝ[HŠKˆ\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜÝ[KœœÈŠOËˆ™XÎŽ›™]Ê
+Kˆ™XÎŽ›™]Ê
+Kˆ
+NÂˆ]ÛÛYJÊHH˜XÚÙ[™œ™Yœ™\ÚÜ[ŠÝ[JH[ÙHÂˆ™]\›ˆ\œŠ™^XÝYÝ[H™Yœ™\Ú[ˆ‹×ÜÝš[™Ê
+JNÂˆNÂˆB‚ˆ]ÛÛYJ]\Ý
+HH˜XÚÙ[™›]\ÝØ[˜[\Ú\×ÜÛ˜\ÚÝ
+
+H[ÙHÂˆ™]\›ˆ\œŠ™^XÝY]\Ý[˜[\Ú\ÈÛ˜\ÚÝ‹×ÜÝš[™Ê
+JNÂˆNÂˆ\ÜÙ\Ù\HJ]\Ýœ›ÛÝ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙKØÝ\œ™[ŠJNÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆ™Yœ™\ÚÜ[—Ü™Z™XÝ×ÛZ\ÛX]ÚYÜÛ˜\ÚÝØ[™Ø˜]Ú\Ê
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]
+Ù\šXÙKÜÛØÚÙ]
+HHÜÙ\šXÙNŽ›™]ÊÛY[˜XÚÙ[™Ž›™]ÊÛY[]YŽŽ™œ›ÛJ‹ˆŠJJNÂˆ]˜XÚÙ[™HÙ\šXÙKš[›™\Š
+NÂˆ]š[™[™ÈHØ[\WÙš[™[™Ê
+NÂˆ]XYÛ›ÜÝXÈHXYÛ›ÜÝX×Ù›Ü—Ùš[™[™Ê]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠK	™š[™[™ÊNÂˆ]\šHH\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜšXÚ[™ËœœÈŠOÎÂˆ]˜\Ù[[™HHØ[\WÝÛÜšÜÜXÙWÙXYÛ›ÜÝXÜÊˆ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙHŠKˆ\šK˜ÛÛ™J
+Kˆ™XÈVÙXYÛ›ÜÝXË˜ÛÛ™J
+WKˆ™XÈVÙš[™[™Ë˜ÛÛ™J
+WKˆ
+NÂ‚ˆ]ÛÛYJÊHH˜XÚÙ[™œ™Yœ™\ÚÜ[Š˜\Ù[[™JH[ÙHÂˆ™]\›ˆ\œŠ™^XÝY˜\Ù[[™H™Yœ™\Ú[ˆ‹×ÜÝš[™Ê
+JNÂˆNÂˆ]Z\ÛX]ÚYHÛÜšÜÜXÙQXYÛ›ÜÝXÜÈÂˆÛ˜\ÚÝˆØ[\WØ[˜[\Ú\×ÜÛ˜\ÚÝ
+ˆ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙHŠKˆ\šK˜ÛÛ™J
+Kˆ™XÈVÙXYÛ›ÜÝX×Kˆ™XÈVÙš[™[™×Kˆ
+Kˆ˜]Ú\Îˆ™XÎŽ›™]Ê
+KˆNÂ‚ˆ\ÜÙ\J˜XÚÙ[™œ™Yœ™\ÚÜ[ŠZ\ÛX]ÚY
+Kš\×Û›Û™J
+JNÂˆ]ÛÛYJ]\Ý
+HH˜XÚÙ[™›]\ÝØ[˜[\Ú\×ÜÛ˜\ÚÝ
+
+H[ÙHÂˆ™]\›ˆ\œŠ™^XÝY˜\Ù[[™HÛ˜\ÚÝÈ™[XZ[ˆÝÜ™Y‹×ÜÝš[™Ê
+JNÂˆNÂˆ\ÜÙ\Ù\HJ]\Ý™š[™[™ÜË›[Š
+KJNÂˆ\ÜÙ\Ù\HJ]\Ý™XYÛ›ÜÝXÜ×ØžWÝ\šK›[Š
+KJNÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆÛÙWØXÝ[Û—Ü™\ÜÛœÙWÚÙY\×ØÝ\œ™[ØÛÛ[X[™Ê
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]]]š[™[™ÈHØ[\WÙš[™[™Ê
+NÂˆš[™[™Ëœ™[]YÝ\ÝË˜ÛX\Š
+NÂˆ]XYÛ›ÜÝXÈHXYÛ›ÜÝX×Ù›Ü—Ùš[™[™Ê]Ž›™]Ê‹ÝÛÜšÜÜXÙHŠK	™š[™[™ÊNÂˆ]XÝ[ÛœÈHÛÙWØXÝ[Û—Ü™\ÜÛœÙJˆ	˜ÛÙWØXÝ[Û—Ü\˜[\Ê™XÈVÙXYÛ›ÜÝX×JOËˆ›Û™Kˆ	œØÛÙWØÛY[Ù™X]\™\Ê
+OËˆ
+NÂ‚ˆ]]]]\×ÚÚ[™×Ø[™ØÛÛ[X[™ÈH™XÎŽ›™]Ê
+NÂˆ]]]ÛÛ[X[™Ø\™Ý[Y[ÈH™XÎŽ›™]Ê
+NÂˆ›ÜˆXÝ[Ûˆ[ˆ	˜XÝ[ÛœÈÂˆX]ÚXÝ[ÛˆÂˆÛÙPXÝ[Û“ÜÛÛ[X[™ŽÛÙPXÝ[ÛŠXÝ[ÛŠHOˆÂˆ]ÛÛYJÛÛ[X[™
+HH	˜XÝ[Û‹˜ÛÛ[X[™[ÙHÂˆ™]\›ˆ\œŠ™^XÝYÛÙHXÝ[ÛˆÛÛ[X[™‹×ÜÝš[™Ê
+JNÂˆNÂˆ]ÛÛYJÚ[™
+HH	˜XÝ[Û‹šÚ[™[ÙHÂˆ™]\›ˆ\œŠ™^XÝYÛÙHXÝ[ÛˆÚ[™‹×ÜÝš[™Ê
+JNÂˆNÂˆ]\×ÚÚ[™×Ø[™ØÛÛ[X[™Ëœ\Ú
+
+ˆXÝ[Û‹]K˜\×ÜÝŠ
+KˆÚ[™˜\×ÜÝŠ
+KˆÛÛ[X[™]K˜\×ÜÝŠ
+KˆÛÛ[X[™˜ÛÛ[X[™˜\×ÜÝŠ
+Kˆ
+JNÂˆÛÛ[X[™Ø\™Ý[Y[Ëœ\Ú
+ÛÛ[X[™˜\™Ý[Y[Ë˜ÛÛ™J
+JNÂˆBˆÛÙPXÝ[Û“ÜÛÛ[X[™ŽÛÛ[X[™
+ÊHOˆÂˆ™]\›ˆ\œŠ™^XÝYÛÙHXÝ[Ûˆ‹×ÜÝš[™Ê
+JNÂˆBˆBˆB‚ˆ\ÜÙ\Ù\HJˆ]\×ÚÚ[™×Ø[™ØÛÛ[X[™Ëˆ™XÈVÂˆ
+ˆ’[œÜXÝš[™[™ÎˆÛÜHÛÛ^XÚÙ]‹ˆœÛÝ\˜ÙKœš\‹š[œÜXÝ‹ˆ’[œÜXÝš[™[™ÎˆÛÜHÛÛ^‹ˆÓÔWÐÓÓ•VÐÓÓSPS‘ˆ
+Kˆ
+ˆ”™Yœ™\Ú[˜[\Ú\ÈHØ]™YÛÜšÜÜXÙHÚXÚÈ‹ˆœÛÝ\˜ÙKœš\‹œ™Yœ™\Ú‹ˆ”™Yœ™\Ú[˜[\Ú\ÈHØ]™YÛÜšÜÜXÙHÚXÚÈ‹ˆ‘Q”‘TÒÐÓÓSPS‘ˆ
+KˆBˆ
+NÂˆ]ÛÛYJÛÛYJ\™Ý[Y[ÊJHHÛÛ[X[™Ø\™Ý[Y[Ë™š\œÝ
+
+H[ÙHÂˆ™]\›ˆ\œŠ™^XÝYÛÜHÛÛ^\™Ý[Y[È‹×ÜÝš[™Ê
+JNÂˆNÂˆ\ÜÙ\Ù\HJ\™Ý[Y[ÖÌVÈ\šH—K™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜšXÚ[™ËœœÈŠNÂˆ\ÜÙ\Ù\HJ\™Ý[Y[ÖÌVÈ›[™H—K
+NÂˆ\ÜÙ\Ù\HJ\™Ý[Y[ÖÌVÈ™š[™[™×ÚY—Kœ›Ø™NœšXÚ[™ÎŽœ™YXØ]HŠNÂˆ\ÜÙ\Ù\HJ\™Ý[Y[ÖÌVÈœ›Ø™WÚY—Kœ›Ø™NœšXÚ[™ÎŽœ™YXØ]HŠNÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆÛÙWØXÝ[Û—Ü™\ÜÛœÙWÛÛZ]×ØÛÛ^ØXÝ[Û—ÝÚ]Ý]Üš\—ÙXYÛ›ÜÝXÊ
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]XÝ[ÛœÈHÛÙWØXÝ[Û—Ü™\ÜÛœÙJˆ	˜ÛÙWØXÝ[Û—Ü\˜[\Ê™XÎŽ›™]Ê
+JOËˆ›Û™Kˆ	œØÛÙWØÛY[Ù™X]\™\Ê
+OËˆ
+NÂ‚ˆ\ÜÙ\Ù\HJXÝ[ÛœË›[Š
+KJNÂˆ]ÛÙPXÝ[Û“ÜÛÛ[X[™ŽÛÙPXÝ[ÛŠXÝ[ÛŠHH	˜XÝ[ÛœÖÌH[ÙHÂˆ™]\›ˆ\œŠ™^XÝYÛÙHXÝ[Ûˆ‹×ÜÝš[™Ê
+JNÂˆNÂˆ]ÛÛYJÛÛ[X[™
+HH	˜XÝ[Û‹˜ÛÛ[X[™[ÙHÂˆ™]\›ˆ\œŠ™^XÝY™Yœ™\ÚÛÛ[X[™‹×ÜÝš[™Ê
+JNÂˆNÂˆ\ÜÙ\Ù\HJÛÛ[X[™˜ÛÛ[X[™‘Q”‘TÒÐÓÓSPS‘
+NÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝBˆÖØÙ™Ê™X]\™HH›[™Ë\]ÛˆŠWB™›ˆØ\ØÛÙWØXÝ[Ûœ×ÜÝ\™˜XÙWØ›Ý[™YÜ™\Z\—ØXÝ[Ûœ×ÝÚ[—Ø\Y˜XÝÚ\×Ý˜[Y
+
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]›ÛÝH[š\]YWÛÜÝ\ÝÜ›ÛÝ
+™Ø\XXÝ[ÛœÈŠOÎÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+›ÛÝœ]
+
+Kš›Ú[ŠœÜ˜ÈŠJBˆ›X\Ù\œŠ\œŸ›Ü›X]J˜Ü™X]HÜ˜È˜Z[YˆÙ\œŸHŠJOÎÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+›ÛÝœ]
+
+Kš›Ú[Š\ÝÈŠJBˆ›X\Ù\œŠ\œŸ›Ü›X]J˜Ü™X]H\ÝÈ˜Z[YˆÙ\œŸHŠJOÎÂˆÝŽ™œÎŽÜš]Jˆ›ÛÝœ]
+
+Kš›Ú[Š\ÝËÝ\ÝÜšXÚ[™ËœHŠKˆ™Yˆ\ÝÙ\ØÛÝ[Ø›Ý[™\žJ
+N—ˆ\ÜÙ\šXÙJL
+HOHWˆ‹ˆ
+Bˆ›X\Ù\œŠ\œŸ›Ü›X]JÜš]H™[]Y\Ý˜Z[YˆÙ\œŸHŠJOÎÂˆ]\šHHš[WÝ\šWÙ›Ü—Ü]
+	œ›ÛÝœ]
+
+Kš›Ú[ŠœÜ˜ËÜšXÚ[™ËœHŠJOÎÂˆ]]]XYÛ›ÜÝXÈHØ\ØXÝ[Û—ÙXYÛ›ÜÝXÊ
+NÂˆ]]HHXYÛ›ÜÝXÂˆ™]Bˆ˜\×Û]]
+
+Bˆ›Ú×ÛÜ—Ù[ÙJ›Z\ÜÚ[™ÈXYÛ›ÜÝXÈ]H‹×ÜÝš[™Ê
+JOÎÂˆ]VÈ˜ÛÛ[X[™ÜÜXÜÈ—HHÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆ™\šYžHŽˆÜ˜]NŽ˜YÙ[Ž˜ÛÛ[X[™ÜÜXÜÎŽ˜YÙ[Ý™\šYžWØÛÛ[X[™ÜÜXÊˆ‹ˆ‹˜™Y›Ü™KšœÛÛˆ‹˜Y\‹šœÛÛˆ‹›Û™Kˆ
+Kˆœ™XÙZ\ŽˆÜ˜]NŽ˜YÙ[Ž˜ÛÛ[X[™ÜÜXÜÎŽ˜YÙ[Ü™XÙZ\ØÛÛ[X[™ÜÜXÊˆ‹ˆ‹™\šYžKšœÛÛˆ‹œÙX[KXH‹ÛÛYJœ™XÙZ\šœÛÛˆŠKˆ
+KˆJNÂˆ]VÈ˜ÛÛ[X[™ÜÜXÜÈ—VÈ™\šYžH—VÈœ›ÙÜ˜[H—HHÙ\™WÚœÛÛŽŽšœÛÛˆJ˜Ø\™ÛÈŠNÂˆ]VÈ˜ÛÛ[X[™ÜÜXÜÈ—VÈ™\šYžH—VÈ˜\™ÜÈ—HHÙ\™WÚœÛÛŽŽšœÛÛˆJÈ\Ý‹[\ÝY—JNÂˆ]VÈ˜ÛÛ[X[™ÜÜXÜÈ—VÈœ™XÙZ\—VÈœ›ÙÜ˜[H—HHÙ\™WÚœÛÛŽŽšœÛÛˆJœ]ÛˆŠNÂˆ]]]Û˜\ÚÝHØ[\WØ[˜[\Ú\×ÜÛ˜\ÚÝ
+ˆ›ÛÝœ]
+
+K×Ü]ØYŠ
+Kˆ\šK˜ÛÛ™J
+Kˆ™XÈVÙXYÛ›ÜÝXË˜ÛÛ™J
+WKˆ™XÎŽ›™]Ê
+Kˆ
+NÂˆÛ˜\ÚÝ™Ø\Ø\Y˜XÝÈH™XÈVÝ˜[Y]YÙØ\Ø\Y˜XÝ
+
+WNÂ‚ˆ]XÝ[ÛœÈHÛÙWØXÝ[Û—Ü™\ÜÛœÙJˆ	˜ÛÙWØXÝ[Û—Ü\˜[\×Ù›ÜŠ\šKXYÛ›ÜÝXËœ˜[™ÙKœÝ\›[™K™XÈVÙXYÛ›ÜÝX×JOËˆÛÛYJ	œÛ˜\ÚÝ
+Kˆ	œØÛÙWØÛY[Ù™X]\™\Ê
+OËˆ
+NÂˆ]ÛÛ[X[™ÈHÛÙWØXÝ[Û—ØÛÛ[X[™Ê	˜XÝ[ÛœÊOÎÂ‚ˆ\ÜÙ\Ù\HJˆÛÛ[X[™Âˆš]\Š
+Bˆ›X\
+
+]KÛÛ[X[™Ê_
+]K˜\×ÜÝŠ
+KÛÛ[X[™˜\×ÜÝŠ
+JJBˆ˜ÛÛXÝŽ™XÏÏŠ
+Kˆ™XÈVÂˆ
+ÛÜHš\œÝ™\Z\ˆXÚÙ]‹ÓÔWÐÓÓ•VÐÓÓSPS‘
+Kˆ
+YÙ[[™Ù™ŽˆÛÜH]ÛˆXÚÙ]‹ÓÔWÐÓÓ•VÐÓÓSPS‘
+Kˆ
+’[œÜXÝØ\ˆÛÜH™\Z\ˆXÚÙ]‹ÓÔWÐÓÓ•VÐÓÓSPS‘
+Kˆ
+ÛÜH]Ûˆ™\Z\ˆØ\™‹ÓÔWÕT‘ÑUQÕTÕÐ”’QQ—ÐÓÓSPS‘
+Kˆ
+ˆ•Üš]H\™Ù]Y\ÝˆÜ[ˆ™\Ý™[]Y\Ý‹ˆÔS—Ô‘SUQÕTÕÐÓÓSPS‘ˆ
+Kˆ
+ˆ•™\šYžHY\ˆ\ÝˆÛÜH™\šYžHÛÛ[X[™‹ˆÓÔWÐQÑS•Õ‘T’Q–WÐÓÓSPS‘ˆ
+Kˆ
+ˆ”™]šY]È™\Ý[ˆÛÜH™XÙZ\ÛÛ[X[™‹ˆÓÔWÐQÑS•Ô‘PÑRTÐÓÓSPS‘ˆ
+Kˆ
+’[œÜXÝØ\ˆÛÜHÝ]XË[[Z]›ÝH‹ÓÔWÐÓÓ•VÐÓÓSPS‘
+Kˆ
+”™Yœ™\Ú[˜[\Ú\ÈHØ]™YÛÜšÜÜXÙHÚXÚÈ‹‘Q”‘TÒÐÓÓSPS‘
+KˆBˆ
+NÂˆ\ÜÙ\Ù\HJÛÛ[X[™ÖÌKŒ–ÌVÈ›X™[—K™š\œÝÜ™\Z\—ÜXÚÙ]ŠNÂˆ\ÜÙ\Ù\HJÛÛ[X[™ÖÌKŒ–ÌVÈ™Ø\ÚY[]H—K™Ø\œNœšXÚ[™ÈŠNÂˆ\ÜÙ\Ù\HJÛÛ[X[™ÖÌKŒ–ÌVÈ˜Ø[›ÛšXØ[ÙØ\ÚY—K™Ø\œNœšXÚ[™ÈŠNÂˆ\ÜÙ\Ù\HJˆÛÛ[X[™ÖÌKŒ–ÌVÈ™\šYžWØÛÛ[X[™—Kˆœš\ˆYÙ[™\šYžHK\›ÛÝˆKZœÛÛˆ‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆÛÛ[X[™ÖÌKŒ–ÌVÈœ™XÙZ\ØÛÛ[X[™—Kˆœš\ˆYÙ[™XÙZ\K\›ÛÝˆKZœÛÛˆ‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆÛÛ[X[™ÖÌKŒ–ÌVÈ˜ÛÛ[X[™ÜÜXÜÈ—VÈ™\šYžH—VÈ˜ÛÛ[X[™ÚY—Kˆœš\Ž˜YÙ[™\šYžH‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆÛÛ[X[™ÖÌKŒ–ÌVÈ˜ÛÛ[X[™ÜÜXÜÈ—VÈœ™XÙZ\—VÈ˜ÛÛ[X[™ÚY—Kˆœš\Ž˜YÙ[œ™XÙZ\‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆÛÛ[X[™ÖÌKŒ–ÌVÈ˜ÛÛ[X[™ÜÜXÜÈ—VÈ™\šYžH—VÈœ›ÙÜ˜[H—Kˆœš\ˆ‚ˆ
+NÂˆ]XÚÙ]HÛÛ[X[™ÖÌKŒ–ÌVÈœXÚÙ]—Bˆ˜\×ÜÝŠ
+Bˆ›Ú×ÛÜ—Ù[ÙJ›Z\ÜÚ[™Èš\œÝ™\Z\ˆXÚÙ]^‹×ÜÝš[™Ê
+JOÎÂˆ\ÜÙ\JˆXÚÙ]˜ÛÛZ[œÊ”’Tˆš\œÝ™\Z\ˆXÚÙ]ŠBˆ	‰ˆXÚÙ]˜ÛÛZ[œÊ“[™ÝXYÙHÝ]\Îˆ™]šY]ÈŠBˆ	‰ˆXÚÙ]˜ÛÛZ[œÊ”Ý]XÈ[Z]ˆZ\ÜÚ[™×Ú[\ÜÙÜ˜\ŠBˆ	‰ˆXÚÙ]˜ÛÛZ[œÊ”ÝYÙÙ\ÝYXÝ[ÛŽˆŠBˆ	‰ˆXÚÙ]˜ÛÛZ[œÊ“Z\ÜÚ[™È\ØÜš[Z[˜]ÜŽˆšXÙJ™\ÚÛ
+HOH^XÝYŠBˆ	‰ˆXÚÙ]˜ÛÛZ[œÊ‘›ØÝ\ÙY›ÛÙˆ[[ˆŠBˆ	‰ˆXÚÙ]˜ÛÛZ[œÊ\Y˜XÝÎˆŠBˆ	‰ˆXÚÙ]˜ÛÛZ[œÊ•™\šYžHÛÛ[X[™ˆŠBˆ	‰ˆXÚÙ]˜ÛÛZ[œÊ”™XÙZ\ÛÛ[X[™ˆŠBˆ	‰ˆXÚÙ]ˆ˜ÛÛZ[œÊ‘È›ÝY]›ÙXÝ[ÛˆÛÙH[›\ÜÈHXÚÙ]^XÚ]HØÛÜ\È]ˆŠKˆ[™^XÝYš\œÝ™\Z\ˆXÚÙ]—žÜXÚÙ]H‚ˆ
+NÂˆ]Ý]X×Û[Z]ÜÜÚ][ÛˆHXÚÙ]ˆ™š[™
+”Ý]XÈ[Z]ˆZ\ÜÚ[™×Ú[\ÜÙÜ˜\ŠBˆ›Ú×ÛÜ—Ù[ÙJ›Ü›X]J›Z\ÜÚ[™ÈÝ]XÈ[Z][ˆš\œÝ™\Z\ˆXÚÙ]—žÜXÚÙ]HŠJOÎÂˆ]ÝYÙÙ\ÝYØXÝ[Û—ÜÜÚ][ÛˆHXÚÙ]ˆ™š[™
+”ÝYÙÙ\ÝYXÝ[ÛŽˆŠBˆ›Ú×ÛÜ—Ù[ÙJ›Ü›X]J›Z\ÜÚ[™ÈÝYÙÙ\ÝYXÝ[Ûˆ[ˆš\œÝ™\Z\ˆXÚÙ]—žÜXÚÙ]HŠJOÎÂˆ\ÜÙ\JˆÝ]X×Û[Z]ÜÜÚ][ÛˆÝYÙÙ\ÝYØXÝ[Û—ÜÜÚ][Û‹ˆœÝ]XÈ[Z]È]\Ý\X\ˆ™Y›Ü™HXÝ[Ûˆ[™ÝXYÙN—žÜXÚÙ]H‚ˆ
+NÂˆ\ÜÙ\Ù\HJÛÛ[X[™ÖÌWKŒ–ÌVÈ›X™[—Kœ]Û—ØYÙ[ÜXÚÙ]ŠNÂˆ\ÜÙ\Ù\HJÛÛ[X[™ÖÌWKŒ–ÌVÈ˜Ø[›ÛšXØ[ÙØ\ÚY—K™Ø\œNœšXÚ[™ÈŠNÂˆ\ÜÙ\Ù\HJˆÛÛ[X[™ÖÌWKŒ–ÌVÈ™œ™\Ú™\ÜÈ—Kˆ˜[Y]YØÝ\œ™[ÙØ\Ü™XÛÜ™‚ˆ
+NÂˆ\ÜÙ\Ù\HJÛÛ[X[™ÖÌWKŒ–ÌVÈœXÚÙ]ÚÚ[™—K˜YÙ[ÙØ\Ü™XÛÜ™ÜXÚÙ]ŠNÂˆ\ÜÙ\Ù\HJˆÛÛ[X[™ÖÌWKŒ–ÌVÈ™Ø\ÛYÙ\ˆ—Kˆ\™Ù]Üš\‹Ü™\ÜËÙØ\YXÚ\Ú[Û‹[YÙ\‹šœÛÛˆ‚ˆ
+NÂˆ\ÜÙ\Ù\HJÛÛ[X[™ÖÌ—KŒ–ÌVÈ›X™[—K™Ø\Ü™\Z\—ÜXÚÙ]ŠNÂˆ\ÜÙ\Ù\HJˆÛÛ[X[™ÖÌ—KŒ–ÌVÈ˜ÛÛ[X[™ÜÜXÜÈ—VÈ™\šYžH—VÈ™^XÝ][Û—Û[ÙH—Kˆ™\™XÝ‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆÛÛ[X[™ÖÌ—KŒ–ÌVÈ˜ÛÛ[X[™ÜÜXÜÈ—VÈœ™XÙZ\—VÈœ›ÙÜ˜[H—Kˆœš\ˆ‚ˆ
+NÂˆ\ÜÙ\Ù\HJÛÛ[X[™ÖÌ—KŒ–ÌVÈ˜Ø[›ÛšXØ[ÙØ\ÚY—K™Ø\œNœšXÚ[™ÈŠNÂˆ\ÜÙ\Ù\HJˆÛÛ[X[™ÖÌ—KŒ–ÌVÈœ™\Z\—Ü›Ý]H—VÈœ™[]YÝ\Ý—Kˆ\ÝËÝ\ÝÜšXÚ[™ËœNŽ\ÝÙ\ØÛÝ[Ø›Ý[™\žH‚ˆ
+NÂˆ\ÜÙ\Ù\HJÛÛ[X[™ÖÌ×KŒ–ÌVÈ›X™[—Kœ]Û—Ü™\Z\—ØØ\™ŠNÂˆ\ÜÙ\Ù\HJˆÛÛ[X[™ÖÌ×KŒ–ÌVÈ™œ™\Ú™\ÜÈ—Kˆ˜[Y]YØÝ\œ™[ÙØ\Ü™XÛÜ™‚ˆ
+NÂˆ]Ø\™HÛÛ[X[™ÖÌ×KŒ–ÌVÈ˜œšYYˆ—Bˆ˜\×ÜÝŠ
+Bˆ›Ú×ÛÜ—Ù[ÙJ›Z\ÜÚ[™È]Ûˆ™\Z\‹XØ\™^‹×ÜÝš[™Ê
+JOÎÂˆ›Üˆ™YYH[ˆÂˆ”]Ûˆ™\Z\ˆØ\™
+™]šY]ËØYš\ÛÜžJH‹ˆ‘œ™\Ú™\ÜÎˆÝ\œ™[˜[Y]YØ\™XÛÜ™XYÛ›ÜÝXËˆ‹ˆÚ[™ÙYÝÛ™\Ž—ˆ]ÛŽ˜\ÜšXÚ[™ËœNŽ˜Ø[Ý[]WÙ\ØÛÝ[‹ˆÝ\œ™[\Ý]šY[˜ÙNˆ‹ˆ“Z\ÜÚ[™È\ØÜš[Z[˜]ÜŽ—ˆšXÙJ™\ÚÛ
+HOH^XÝY‹ˆ•™\šYžN—ˆš\ˆYÙ[™\šYžHK\›ÛÝˆKZœÛÛˆ‹ˆ”™XÙZ\—ˆš\ˆYÙ[™XÙZ\K\›ÛÝˆKZœÛÛˆ‹ˆ”Ý]XÈ™]šY]È]šY[˜ÙHÛ›H‹ˆHÂˆ\ÜÙ\JØ\™˜ÛÛZ[œÊ™YYJK›Z\ÜÚ[™ÈÛ™YYNßH[Ž—žØØ\™HŠNÂˆBˆ\ÜÙ\Ù\HJˆÛÛ[X[™ÖÍKŒ–ÌVÈ\šH—Kˆš[WÝ\šWÙ›Ü—Ü]
+	œ›ÛÝœ]
+
+Kš›Ú[Š\ÝËÝ\ÝÜšXÚ[™ËœHŠJOË˜\×ÜÝŠ
+Bˆ
+NÂˆ\ÜÙ\Ù\HJÛÛ[X[™ÖÍKŒ–ÌVÈ›[™H—KŠNÂˆ\ÜÙ\Ù\HJÛÛ[X[™ÖÍKŒ–ÌVÈ\ÝÛ˜[YH—K\ÝÙ\ØÛÝ[Ø›Ý[™\žHŠNÂˆ\ÜÙ\Ù\HJÛÛ[X[™ÖÍWKŒ–ÌVÈ›X™[—K™Ø\Ý™\šYžHŠNÂˆ\ÜÙ\Ù\HJˆÛÛ[X[™ÖÍWKŒ–ÌVÈ˜ÛÛ[X[™—Kˆœš\ˆYÙ[™\šYžHK\›ÛÝˆKZœÛÛˆ‚ˆ
+NÂˆ\ÜÙ\Ù\HJÛÛ[X[™ÖÍ—KŒ–ÌVÈ›X™[—K™Ø\Ü™XÙZ\ŠNÂˆ\ÜÙ\Ù\HJˆÛÛ[X[™ÖÍ—KŒ–ÌVÈ˜ÛÛ[X[™—Kˆœš\ˆYÙ[™XÙZ\K\›ÛÝˆKZœÛÛˆ‚ˆ
+NÂˆ\ÜÙ\JˆÛÛ[X[™ÖÍ×KŒ–ÌVÈ››ÝH—Bˆ˜\×ÜÝŠ
+Bˆš\×ÜÛÛYWØ[™
+›Ý_›ÝK˜ÛÛZ[œÊ”Ý]XÈ[Z]ˆZ\ÜÚ[™×Ú[\ÜÙÜ˜\ŠJKˆ™^XÝYÝ]XË[[Z]›ÝKÛÝÎßH‹ˆÛÛ[X[™ÖÍ×KŒ–ÌBˆ
+NÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝBˆÖØÙ™Ê™X]\™HH›[™Ë\]ÛˆŠWB™›ˆØ\ØÛÙWØXÝ[Ûœ×ÜÝ\™\Ü×Ùš\œÝÜ™\Z\—ÜXÚÙ]ÝÚ]Ý]Ý™\šYžWÛÜ—Ü™XÙZ\ØÛÛ[X[™
+
+B‹Oˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]›ÛÝH[š\]YWÛÜÝ\ÝÜ›ÛÝ
+™Ø\Yš\œÝ\™\Z\‹\™\]Z\™\ËXÛÛ[X[™ÈŠOÎÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+›ÛÝœ]
+
+Kš›Ú[Š\ÝÈŠJBˆ›X\Ù\œŠ\œŸ›Ü›X]J˜Ü™X]H\ÝÈ˜Z[YˆÙ\œŸHŠJOÎÂˆÝŽ™œÎŽÜš]Jˆ›ÛÝœ]
+
+Kš›Ú[Š\ÝËÝ\ÝÜšXÚ[™ËœHŠKˆ™Yˆ\ÝÙ\ØÛÝ[Ø›Ý[™\žJ
+N—ˆ\ÜÙ\šXÙJL
+HOHWˆ‹ˆ
+Bˆ›X\Ù\œŠ\œŸ›Ü›X]JÜš]H™[]Y\Ý˜Z[YˆÙ\œŸHŠJOÎÂˆ]\šHHš[WÝ\šWÙ›Ü—Ü]
+	œ›ÛÝœ]
+
+Kš›Ú[ŠœÜ˜ËÜšXÚ[™ËœHŠJOÎÂˆ]]]XYÛ›ÜÝXÈHØ\ØXÝ[Û—ÙXYÛ›ÜÝXÊ
+NÂˆ]]HHXYÛ›ÜÝXÂˆ™]Bˆ˜\×Û]]
+
+Bˆ›Ú×ÛÜ—Ù[ÙJ›Z\ÜÚ[™ÈXYÛ›ÜÝXÈ]H‹×ÜÝš[™Ê
+JOÎÂˆ]K˜\×ÛØš™XÝÛ]]
+
+Bˆ›Ú×ÛÜ—Ù[ÙJ™^XÝYØš™XÝ]H‹×ÜÝš[™Ê
+JOÂˆœ™[[Ý™Jœ™XÙZ\ØÛÛ[X[™ŠNÂˆ]]]Û˜\ÚÝHØ[\WØ[˜[\Ú\×ÜÛ˜\ÚÝ
+ˆ›ÛÝœ]
+
+K×Ü]ØYŠ
+Kˆ\šK˜ÛÛ™J
+Kˆ™XÈVÙXYÛ›ÜÝXË˜ÛÛ™J
+WKˆ™XÎŽ›™]Ê
+Kˆ
+NÂˆÛ˜\ÚÝ™Ø\Ø\Y˜XÝÈH™XÈVÝ˜[Y]YÙØ\Ø\Y˜XÝ
+
+WNÂ‚ˆ]XÝ[ÛœÈHÛÙWØXÝ[Û—Ü™\ÜÛœÙJˆ	˜ÛÙWØXÝ[Û—Ü\˜[\×Ù›ÜŠ\šKXYÛ›ÜÝXËœ˜[™ÙKœÝ\›[™K™XÈVÙXYÛ›ÜÝX×JOËˆÛÛYJ	œÛ˜\ÚÝ
+Kˆ	œØÛÙWØÛY[Ù™X]\™\Ê
+OËˆ
+NÂˆ]ÛÛ[X[™ÈHÛÙWØXÝ[Û—ØÛÛ[X[™Ê	˜XÝ[ÛœÊOÎÂ‚ˆ\ÜÙ\JˆÛÛ[X[™Âˆš]\Š
+Bˆ˜[
+
+]KË\™ÜÊ_]HOHÛÜHš\œÝ™\Z\ˆXÚÙ]‚ˆ	‰ˆ]HOHYÙ[[™Ù™ŽˆÛÜH]ÛˆXÚÙ]‚ˆ	‰ˆ\™ÜÂˆ™š\œÝ
+
+Bˆš\×Û›Û™WÛÜŠ\™ß\™ÖÈ›X™[—HOH™š\œÝÜ™\Z\—ÜXÚÙ]‚ˆ	‰ˆ\™ÖÈ›X™[—HOHœ]Û—ØYÙ[ÜXÚÙ]ŠJKˆœXÚÙ]XÝ[ÛœÈ]\Ý™HÝ\™\ÜÙYÚ[ˆ™XÙZ\ÛÛ[X[™\ÈZ\ÜÚ[™ÎˆØÛÛ[X[™ÎßH‚ˆ
+NÂˆ\ÜÙ\JˆÛÛ[X[™Âˆš]\Š
+Bˆ˜[žJ
+]KËÊ_]HOH’[œÜXÝØ\ˆÛÜH™\Z\ˆXÚÙ]ŠKˆ™^\Ý[™È[œÜXÝXÝ[ÛˆÚÝ[™[XZ[ˆ]˜Z[X›H‚ˆ
+NÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝBˆÖØÙ™Ê™X]\™HH›[™Ë\]ÛˆŠWB™›ˆØ\ØÛÙWØXÝ[Ûœ×ÜÝ\™\Ü×Ùš\œÝÜ™\Z\—ÜXÚÙ]ÝÚ]Ý]Ü›ÙXÙ\—Ù\ØÜš[Z[˜]ÜŠ
+B‹Oˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]›ÛÝH[š\]YWÛÜÝ\ÝÜ›ÛÝ
+™Ø\Yš\œÝ\™\Z\‹\™\]Z\™\ËY\ØÜš[Z[˜]ÜˆŠOÎÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+›ÛÝœ]
+
+Kš›Ú[Š\ÝÈŠJBˆ›X\Ù\œŠ\œŸ›Ü›X]J˜Ü™X]H\ÝÈ˜Z[YˆÙ\œŸHŠJOÎÂˆÝŽ™œÎŽÜš]Jˆ›ÛÝœ]
+
+Kš›Ú[Š\ÝËÝ\ÝÜšXÚ[™ËœHŠKˆ™Yˆ\ÝÙ\ØÛÝ[Ø›Ý[™\žJ
+N—ˆ\ÜÙ\šXÙJL
+HOHWˆ‹ˆ
+Bˆ›X\Ù\œŠ\œŸ›Ü›X]JÜš]H™[]Y\Ý˜Z[YˆÙ\œŸHŠJOÎÂˆ]\šHHš[WÝ\šWÙ›Ü—Ü]
+	œ›ÛÝœ]
+
+Kš›Ú[ŠœÜ˜ËÜšXÚ[™ËœHŠJOÎÂˆ]]]XYÛ›ÜÝXÈHØ\ØXÝ[Û—ÙXYÛ›ÜÝXÊ
+NÂˆ]]HHXYÛ›ÜÝXÂˆ™]Bˆ˜\×Û]]
+
+Bˆ›Ú×ÛÜ—Ù[ÙJ›Z\ÜÚ[™ÈXYÛ›ÜÝXÈ]H‹×ÜÝš[™Ê
+JOÎÂˆ]Øš™XÝH]Bˆ˜\×ÛØš™XÝÛ]]
+
+Bˆ›Ú×ÛÜ—Ù[ÙJ™^XÝYXYÛ›ÜÝXÈØš™XÝ]H‹×ÜÝš[™Ê
+JOÎÂˆØš™XÝœ™[[Ý™J›Z\ÜÚ[™×Ù\ØÜš[Z[˜]ÜˆŠNÂˆØš™XÝˆ™Ù]Û]]
+œ™\Z\—Ü›Ý]HŠBˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×ÛØš™XÝÛ]]
+Bˆ›X\
+›Ý]_›Ý]Kœ™[[Ý™J›Z\ÜÚ[™×Ù\ØÜš[Z[˜]ÜˆŠJNÂ‚ˆ]]]Û˜\ÚÝHØ[\WØ[˜[\Ú\×ÜÛ˜\ÚÝ
+ˆ›ÛÝœ]
+
+K×Ü]ØYŠ
+Kˆ\šK˜ÛÛ™J
+Kˆ™XÈVÙXYÛ›ÜÝXË˜ÛÛ™J
+WKˆ™XÎŽ›™]Ê
+Kˆ
+NÂˆÛ˜\ÚÝ™Ø\Ø\Y˜XÝÈH™XÈVÝ˜[Y]YÙØ\Ø\Y˜XÝ
+
+WNÂ‚ˆ]XÝ[ÛœÈHÛÙWØXÝ[Û—Ü™\ÜÛœÙJˆ	˜ÛÙWØXÝ[Û—Ü\˜[\×Ù›ÜŠ\šKXYÛ›ÜÝXËœ˜[™ÙKœÝ\›[™K™XÈVÙXYÛ›ÜÝX×JOËˆÛÛYJ	œÛ˜\ÚÝ
+Kˆ	œØÛÙWØÛY[Ù™X]\™\Ê
+OËˆ
+NÂˆ]ÛÛ[X[™ÈHÛÙWØXÝ[Û—ØÛÛ[X[™Ê	˜XÝ[ÛœÊOÎÂ‚ˆ\ÜÙ\JˆÛÛ[X[™Ëš]\Š
+K˜[
+
+]KË\™ÜÊ_Âˆ]HOHÛÜHš\œÝ™\Z\ˆXÚÙ]‚ˆ	‰ˆ]HOHYÙ[[™Ù™ŽˆÛÜH]ÛˆXÚÙ]‚ˆ	‰ˆ\™ÜË™š\œÝ
+
+Kš\×Û›Û™WÛÜŠ\™ßÂˆ\™ÖÈ›X™[—HOH™š\œÝÜ™\Z\—ÜXÚÙ]ˆ	‰ˆ\™ÖÈ›X™[—HOHœ]Û—ØYÙ[ÜXÚÙ]‚ˆJBˆJKˆœ™\Z\ˆXÚÙ][™Ù™œÈ]\Ý™\]Z\™H›ÙXÙ\‹[ÝÛ™Y\ØÜš[Z[˜]Üˆ]šY[˜ÙNˆØÛÛ[X[™ÎßH‚ˆ
+NÂˆ\ÜÙ\JˆÛÛ[X[™Âˆš]\Š
+Bˆ˜[žJ
+]KËÊ_]HOH’[œÜXÝØ\ˆÛÜH™\Z\ˆXÚÙ]ŠKˆš[œÜXÝ›Ý]HÚÝ[™[XZ[ˆ]˜Z[X›HÚ]Ý]H\ØÜš[Z[˜]ÜŽˆØÛÛ[X[™ÎßH‚ˆ
+NÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆØ\ØÛÙWØXÝ[Ûœ×ÜÝ\™\Ü×Ü]Û—ØYÙ[ÜXÚÙ]ÝÚ]Ý]ØXÝ[Û˜X›WÜ]Û—ÙØ\Ü™XÛÜ™
+
+B‹Oˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]›ÛÝH[š\]YWÛÜÝ\ÝÜ›ÛÝ
+™Ø\\]Û‹XYÙ[\XÚÙ]XÛÛ˜XÝŠOÎÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+›ÛÝœ]
+
+Kš›Ú[Š\ÝÈŠJBˆ›X\Ù\œŠ\œŸ›Ü›X]J˜Ü™X]H\ÝÈ˜Z[YˆÙ\œŸHŠJOÎÂˆ]\šHHš[WÝ\šWÙ›Ü—Ü]
+	œ›ÛÝœ]
+
+Kš›Ú[ŠœÜ˜ËÜšXÚ[™ËœHŠJOÎÂˆ›Üˆ
+šY[˜[YJH[ˆÂˆ
+œÛÝ\˜ÙH‹œ™\×Ù^ÜÝ\™HŠKˆ
+›[™ÝXYÙH‹œ\ÝŠKˆ
+™Ø\ÜÝ]H‹˜[™XYWÛØœÙ\™YŠKˆ
+œ™\Z\˜Xš[]H‹››×ØXÝ[ÛˆŠKˆHÂˆ]]]XYÛ›ÜÝXÈHØ\ØXÝ[Û—ÙXYÛ›ÜÝXÊ
+NÂˆ]]HHXYÛ›ÜÝXÂˆ™]Bˆ˜\×Û]]
+
+Bˆ›Ú×ÛÜ—Ù[ÙJ›Z\ÜÚ[™ÈXYÛ›ÜÝXÈ]H‹×ÜÝš[™Ê
+JOÂˆ˜\×ÛØš™XÝÛ]]
+
+Bˆ›Ú×ÛÜ—Ù[ÙJ™^XÝYØš™XÝ]H‹×ÜÝš[™Ê
+JOÎÂˆ]Kš[œÙ\
+šY[×ÜÝš[™Ê
+KÙ\™WÚœÛÛŽŽšœÛÛˆJ˜[YJJNÂˆ]]]Û˜\ÚÝHØ[\WØ[˜[\Ú\×ÜÛ˜\ÚÝ
+ˆ›ÛÝœ]
+
+K×Ü]ØYŠ
+Kˆ\šK˜ÛÛ™J
+Kˆ™XÈVÙXYÛ›ÜÝXË˜ÛÛ™J
+WKˆ™XÎŽ›™]Ê
+Kˆ
+NÂˆÛ˜\ÚÝ™Ø\Ø\Y˜XÝÈH™XÈVÝ˜[Y]YÙØ\Ø\Y˜XÝ
+
+WNÂ‚ˆ]XÝ[ÛœÈHÛÙWØXÝ[Û—Ü™\ÜÛœÙJˆ	˜ÛÙWØXÝ[Û—Ü\˜[\×Ù›ÜŠ\šK˜ÛÛ™J
+KXYÛ›ÜÝXËœ˜[™ÙKœÝ\›[™K™XÈVÙXYÛ›ÜÝX×JOËˆÛÛYJ	œÛ˜\ÚÝ
+Kˆ	œØÛÙWØÛY[Ù™X]\™\Ê
+OËˆ
+NÂˆ]ÛÛ[X[™ÈHÛÙWØXÝ[Û—ØÛÛ[X[™Ê	˜XÝ[ÛœÊOÎÂ‚ˆ\ÜÙ\JˆÛÛ[X[™Ëš]\Š
+K˜[
+ˆ
+]KË\™ÜÊ_]HOHYÙ[[™Ù™ŽˆÛÜH]ÛˆXÚÙ]‚ˆ	‰ˆ\™ÜÂˆ™š\œÝ
+
+Bˆš\×Û›Û™WÛÜŠ\™ß\™ÖÈ›X™[—HOHœ]Û—ØYÙ[ÜXÚÙ]ŠBˆ
+Kˆ”]ÛˆYÙ[XÚÙ]XÝ[Ûˆ]\Ý™HÝ\™\ÜÙYÚ[ˆÙšY[O^Ý˜[Y_NˆØÛÛ[X[™ÎßH‚ˆ
+NÂˆBˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝBˆÖØÙ™Ê™X]\™HH›[™Ë\]ÛˆŠWB™›ˆØ\ØÛÙWØXÝ[Ûœ×ÜÝ\™\Ü×Ü™\Z\—ØXÝ[Ûœ×Ù›Ü—ØÜ›ÜÜ×Û[™ÝXYÙWÝ\™Ù]Ý[œ™\ÛÛ™Y
+
+B‹Oˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]›ÛÝH[š\]YWÛÜÝ\ÝÜ›ÛÝ
+™Ø\XÜ›ÜÜË[[™ÝXYÙK]\™Ù]][œ™\ÛÛ™YŠOÎÂˆ]\šHHš[WÝ\šWÙ›Ü—Ü]
+	œ›ÛÝœ]
+
+Kš›Ú[ŠœÜ˜ËÚœØËÐ›Ø‹œœÈŠJOÎÂˆ]]]XYÛ›ÜÝXÈHØ\ØXÝ[Û—ÙXYÛ›ÜÝXÊ
+NÂˆ]]HHXYÛ›ÜÝXÂˆ™]Bˆ˜\×Û]]
+
+Bˆ›Ú×ÛÜ—Ù[ÙJ›Z\ÜÚ[™ÈXYÛ›ÜÝXÈ]H‹×ÜÝš[™Ê
+JOÎÂˆ]VÈ›[™ÝXYÙH—HHÙ\™WÚœÛÛŽŽšœÛÛˆJœ\ÝŠNÂˆ]VÈ™Ø\ÜÝ]H—HHÙ\™WÚœÛÛŽŽšœÛÛˆJœÝ]X×Û[Z]][ÛˆŠNÂˆ]VÈœ™\Z\˜Xš[]H—HHÙ\™WÚœÛÛŽŽšœÛÛˆJ››×ØXÝ[ÛˆŠNÂˆ]VÈœÝ]X×Û[Z]ÚÚ[™—HHÙ\™WÚœÛÛŽŽšœÛÛˆJ˜Ü›ÜÜ×Û[™ÝXYÙWÝ\™Ù]Ý[œ™\ÛÛ™YŠNÂˆ]VÈœÝ]X×Û[Z]Ù]Z[—HHÙ\™WÚœÛÛŽŽšœÛÛˆJ˜š[™[™ËÑ‘’H\™Ù]XÙ[Y[\È[œ™\ÛÛ™YŠNÂˆ]VÈœ›Ú™XÝ[Û—Ù^Û\Ú[Û—Ü™X\ÛÛœÈ—HHÙ\™WÚœÛÛŽŽšœÛÛˆJÈ˜Ü›ÜÜ×Û[™ÝXYÙWÝ\™Ù]Ý[œ™\ÛÛ™Y—JNÂˆ]VÈ›˜]šYØ][Û—ÛÛ›WÝ\™Ù]—HHÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆ™š[HŽˆ\ÝÚœËÝÙX‹Ù™]ÚØ›Ø‹\ÝÈ‹ˆ›[™HŽˆKˆ\ÝÛ˜[YHŽˆ˜›ØˆÛÜY\È™\Ú^˜X›HY™™\œÈ‹ˆ›[™ÝXYÙHŽˆ\\ØÜš\‹ˆ˜]]Üš]WØ›Ý[™\žHŽˆ›˜]šYØ][Û—ÛÛ›WÙ^\›˜[ÛØœÙ\™\—ØÛÛ^‹ˆœ™\Z\—ÜXÚÙ]Ü™XYHŽˆ˜[ÙKˆ›[Z]][Û—Ü›Ý]HŽˆ˜[˜[\Ú\ËØÜ›ÜÜË[[™ÝXYÙK]\Ý]\™Ù]Z[™™\™[˜ÙH‚ˆJNÂˆ]]]Û˜\ÚÝHØ[\WØ[˜[\Ú\×ÜÛ˜\ÚÝ
+ˆ›ÛÝœ]
+
+K×Ü]ØYŠ
+Kˆ\šK˜ÛÛ™J
+Kˆ™XÈVÙXYÛ›ÜÝXË˜ÛÛ™J
+WKˆ™XÎŽ›™]Ê
+Kˆ
+NÂˆÛ˜\ÚÝ™Ø\Ø\Y˜XÝÈH™XÈVÝ˜[Y]YÙØ\Ø\Y˜XÝ
+
+WNÂ‚ˆ]XÝ[ÛœÈHÛÙWØXÝ[Û—Ü™\ÜÛœÙJˆ	˜ÛÙWØXÝ[Û—Ü\˜[\×Ù›ÜŠ\šKXYÛ›ÜÝXËœ˜[™ÙKœÝ\›[™K™XÈVÙXYÛ›ÜÝX×JOËˆÛÛYJ	œÛ˜\ÚÝ
+Kˆ	œØÛÙWØÛY[Ù™X]\™\Ê
+OËˆ
+NÂˆ]ÛÛ[X[™ÈHÛÙWØXÝ[Û—ØÛÛ[X[™Ê	˜XÝ[ÛœÊOÎÂ‚ˆ\ÜÙ\Ù\HJˆÛÛ[X[™Âˆš]\Š
+Bˆ›X\
+
+]KÛÛ[X[™Ê_
+]K˜\×ÜÝŠ
+KÛÛ[X[™˜\×ÜÝŠ
+JJBˆ˜ÛÛXÝŽ™XÏÏŠ
+Kˆ™XÈVÂˆ
+’[œÜXÝØ\ˆÛÜHÝ]XË[[Z]›ÝH‹ÓÔWÐÓÓ•VÐÓÓSPS‘
+Kˆ
+”™Yœ™\Ú[˜[\Ú\ÈHØ]™YÛÜšÜÜXÙHÚXÚÈ‹‘Q”‘TÒÐÓÓSPS‘
+KˆKˆ\™Ù]][œ™\ÛÛ™YØ\XYÛ›ÜÝXÜÈ]\Ý›Ý^ÜÙH™\Z\ˆXÚÙ]Ë™\šYžK™XÙZ\ÜˆY]XÝ[ÛœÈ‚ˆ
+NÂˆ\ÜÙ\JˆÛÛ[X[™ÖÌKŒ–ÌVÈ››ÝH—K˜\×ÜÝŠ
+Kš\×ÜÛÛYWØ[™
+›Ý_Âˆ›ÝK˜ÛÛZ[œÊ˜Ü›ÜÜ×Û[™ÝXYÙWÝ\™Ù]Ý[œ™\ÛÛ™YŠBˆ	‰ˆ›ÝK˜ÛÛZ[œÊ“˜]šYØ][Û‹[Û›H\™Ù]ˆ\ÝÚœËÝÙX‹Ù™]ÚØ›Ø‹\ÝÎHŠBˆ	‰ˆ›ÝK˜ÛÛZ[œÊ‘^\›˜[ØœÙ\™\Žˆ›ØˆÛÜY\È™\Ú^˜X›HY™™\œÈŠBˆ	‰ˆ›ÝK˜ÛÛZ[œÊ”™\Z\ˆXÚÙ]™XYNˆ˜[ÙHŠBˆJKˆ™^XÝYÝ]XË[[Z]›ÝKÛÝÎßH‹ˆÛÛ[X[™ÖÌKŒ–ÌBˆ
+NÂˆ\ÜÙ\Ù\HJˆÛÛ[X[™ÖÌKŒ–ÌVÈ›˜]šYØ][Û—ÛÛ›WÝ\™Ù]—VÈ™š[H—Kˆ\ÝÚœËÝÙX‹Ù™]ÚØ›Ø‹\ÝÈ‚ˆ
+NÂˆ\ÜÙ\Ù\HJˆÛÛ[X[™ÖÌKŒ–ÌVÈ›˜]šYØ][Û—ÛÛ›WÝ\™Ù]—VÈœ™\Z\—ÜXÚÙ]Ü™XYH—Kˆ˜[ÙBˆ
+NÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝBˆÖØÙ™Ê™X]\™HH›[™Ë\]ÛˆŠWB™›ˆØ\ØÛÙWØXÝ[Ûœ×Ü›Ú™XÝÜ]Û—Ü]\ÝÜÚÙ[]Û—Ø[™Ý\™Ù]Ùš[J
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]›ÛÝH[š\]YWÛÜÝ\ÝÜ›ÛÝ
+™Ø\\]Û‹\]\ÝXXÝ[ÛœÈŠOÎÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+›ÛÝœ]
+
+Kš›Ú[ŠœÜ˜ÈŠJBˆ›X\Ù\œŠ\œŸ›Ü›X]J˜Ü™X]HÜ˜È˜Z[YˆÙ\œŸHŠJOÎÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+›ÛÝœ]
+
+Kš›Ú[Š\ÝÈŠJBˆ›X\Ù\œŠ\œŸ›Ü›X]J˜Ü™X]H\ÝÈ˜Z[YˆÙ\œŸHŠJOÎÂˆÝŽ™œÎŽÜš]Jˆ›ÛÝœ]
+
+Kš›Ú[Š\ÝËÝ\ÝÜšXÚ[™ËœHŠKˆ™Yˆ\ÝØØ[Ý[]WÙ\ØÛÝ[Ý™\ÚÛØ›Ý[™\žJ
+N—ˆ\Ü×ˆ‹ˆ
+Bˆ›X\Ù\œŠ\œŸ›Ü›X]JÜš]H™[]Y\Ý˜Z[YˆÙ\œŸHŠJOÎÂˆ]\šHHš[WÝ\šWÙ›Ü—Ü]
+	œ›ÛÝœ]
+
+Kš›Ú[ŠœÜ˜ËÜšXÚ[™ËœHŠJOÎÂˆ]]]XYÛ›ÜÝXÈHØ\ØXÝ[Û—ÙXYÛ›ÜÝXÊ
+NÂˆ]]HHXYÛ›ÜÝXÂˆ™]Bˆ˜\×Û]]
+
+Bˆ›Ú×ÛÜ—Ù[ÙJ›Z\ÜÚ[™ÈXYÛ›ÜÝXÈ]H‹×ÜÝš[™Ê
+JOÎÂˆ]VÈœ™\Z\—Ü›Ý]H—VÈ\™Ù]Ùš[H—HHÙ\™WÚœÛÛŽŽšœÛÛˆJ\ÝËÝ\ÝÜšXÚ[™ËœHŠNÂˆ]VÈœ™\Z\—Ü›Ý]H—VÈ\™Ù]Û[™H—HHÙ\™WÚœÛÛŽŽšœÛÛˆJJNÂˆ]VÈœ™\Z\—Ü›Ý]H—VÈœ™[]YÝ\Ý—HBˆÙ\™WÚœÛÛŽŽšœÛÛˆJ\ÝØØ[Ý[]WÙ\ØÛÝ[Ý™\ÚÛØ›Ý[™\žHŠNÂˆ]VÈœ™\Z\—Ü›Ý]H—VÈ›Z\ÜÚ[™×Ù\ØÜš[Z[˜]Üˆ—HHÙ\™WÚœÛÛŽŽšœÛÛˆJ˜[[Ý[OH™\ÚÛŠNÂˆ]VÈœ™\Z\—Ü›Ý]H—VÈ˜\ÜÙ\[Û—ÜÚ\H—HHÙ\™WÚœÛÛŽŽšœÛÛˆJˆ˜\ÜÙ\Ø[Ý[]WÙ\ØÛÝ[
+[[Ý[]™\ÚÛ™\ÚÛ]™\ÚÛ
+HOH^XÝYÙ\ØÛÝ[‚ˆ
+NÂˆ]VÈœ™\Z\—Ü›Ý]H—VÈ˜Ú[™ÙYØ™Z]š[Üˆ—HHÙ\™WÚœÛÛŽŽšœÛÛˆJšYˆ[[Ý[H™\ÚÛˆŠNÂˆ]VÈ™\šYšXØ][Û—ØÛÛ[X[™È—HHÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆœ]\Ý\ÝËÝ\ÝÜšXÚ[™ËœNŽ\ÝØØ[Ý[]WÙ\ØÛÝ[Ý™\ÚÛØ›Ý[™\žH‚ˆJNÂˆ]VÈœ™XÙZ\ØÛÛ[X[™—HHÙ\™WÚœÛÛŽŽšœÛÛˆJˆœš\ˆÝ]ÛÛYHKX™Y›Ü™H\™Ù]Üš\‹Ü™\ÜËØÚXÚËšœÛÛˆKXY\ˆ\™Ù]Üš\‹Ü™\ÜËØY\‹XÚXÚËšœÛÛˆKY›Ü›X]œÛÛˆK[Ý]\™Ù]Üš\‹Ü™XÙZ\ËÜ]Û‹\šXÚ[™ËX›Ý[™\žKšœÛÛˆ‚ˆ
+NÂˆ]K˜\×ÛØš™XÝÛ]]
+
+Bˆ›Ú×ÛÜ—Ù[ÙJ™^XÝYØš™XÝ]H‹×ÜÝš[™Ê
+JOÂˆœ™[[Ý™JœÝ]X×Û[Z]ÚÚ[™ŠNÂˆ]K˜\×ÛØš™XÝÛ]]
+
+Bˆ›Ú×ÛÜ—Ù[ÙJ™^XÝYØš™XÝ]H‹×ÜÝš[™Ê
+JOÂˆœ™[[Ý™JœÝ]X×Û[Z]Ù]Z[ŠNÂˆ]VÈœÝ]X×Û[Z]È—HHÙ\™WÚœÛÛŽŽšœÛÛˆJ×JNÂˆ]]]Û˜\ÚÝHØ[\WØ[˜[\Ú\×ÜÛ˜\ÚÝ
+ˆ›ÛÝœ]
+
+K×Ü]ØYŠ
+Kˆ\šK˜ÛÛ™J
+Kˆ™XÈVÙXYÛ›ÜÝXË˜ÛÛ™J
+WKˆ™XÎŽ›™]Ê
+Kˆ
+NÂˆÛ˜\ÚÝ™Ø\Ø\Y˜XÝÈH™XÈVÝ˜[Y]YÙØ\Ø\Y˜XÝ
+
+WNÂ‚ˆ]XÝ[ÛœÈHÛÙWØXÝ[Û—Ü™\ÜÛœÙJˆ	˜ÛÙWØXÝ[Û—Ü\˜[\×Ù›ÜŠ\šKXYÛ›ÜÝXËœ˜[™ÙKœÝ\›[™K™XÈVÙXYÛ›ÜÝX×JOËˆÛÛYJ	œÛ˜\ÚÝ
+Kˆ	œØÛÙWØÛY[Ù™X]\™\Ê
+OËˆ
+NÂˆ]ÛÛ[X[™ÈHÛÙWØXÝ[Û—ØÛÛ[X[™Ê	˜XÝ[ÛœÊOÎÂ‚ˆ\ÜÙ\JˆÛÛ[X[™Âˆš]\Š
+Bˆ˜[žJ
+]KËÊ_]HOHÛÜHš\œÝ™\Z\ˆXÚÙ]ŠKˆœ]\Ý™\šYžHÛÛ[X[™ÈÚÝ[™HØY™H[›ÝYÚ›Üˆš\œÝ™\Z\ˆXÚÙ]ÎˆØÛÛ[X[™ÎßH‚ˆ
+NÂˆ]™\Z\—ØØ\™HÛÛ[X[™Âˆš]\Š
+Bˆ™š[™
+
+]KÛÛ[X[™Ê_Âˆ]HOHÛÜH]Ûˆ™\Z\ˆØ\™ˆ	‰ˆÛÛ[X[™OHÓÔWÕT‘ÑUQÕTÕÐ”’QQ—ÐÓÓSPS‘ˆJBˆ˜[™Ý[Š
+ËË\™ÜÊ_\™ÜË™š\œÝ
+
+JBˆ›Ú×ÛÜ—Ù[ÙJ›Ü›X]J›Z\ÜÚ[™È]Ûˆ™\Z\‹XØ\™XÝ[ÛŽˆØÛÛ[X[™ÎßHŠJOÎÂˆ\ÜÙ\Ù\HJ™\Z\—ØØ\™È›X™[—Kœ]Û—Ü™\Z\—ØØ\™ŠNÂˆ]Ø\™H™\Z\—ØØ\™È˜œšYYˆ—Bˆ˜\×ÜÝŠ
+Bˆ›Ú×ÛÜ—Ù[ÙJ›Ü›X]J›Z\ÜÚ[™È™\Z\‹XØ\™œšYYŽˆÜ™\Z\—ØØ\™ßHŠJOÎÂˆ›Üˆ™YYH[ˆÂˆ”]Ûˆ™\Z\ˆØ\™
+™]šY]ËØYš\ÛÜžJH‹ˆ‘œ™\Ú™\ÜÎˆÝ\œ™[˜[Y]YØ\™XÛÜ™XYÛ›ÜÝXËˆ‹ˆÚ[™ÙY™Z]š[ÜŽ—ˆYˆ[[Ý[H™\ÚÛˆ‹ˆ“Z\ÜÚ[™È\ØÜš[Z[˜]ÜŽ—ˆ[[Ý[OH™\ÚÛ‹ˆ”ÝYÙÙ\ÝY\ÜÙ\[ÛŽ—ˆ\ÜÙ\Ø[Ý[]WÙ\ØÛÝ[
+[[Ý[]™\ÚÛ™\ÚÛ]™\ÚÛ
+HOH^XÝYÙ\ØÛÝ[‹ˆ•™\šYžN—ˆ]\Ý\ÝËÝ\ÝÜšXÚ[™ËœNŽ\ÝØØ[Ý[]WÙ\ØÛÝ[Ý™\ÚÛØ›Ý[™\žH‹ˆHÂˆ\ÜÙ\JØ\™˜ÛÛZ[œÊ™YYJK›Z\ÜÚ[™ÈÛ™YYNßH[Ž—žØØ\™HŠNÂˆBˆ]ÚÙ[]ÛˆHÛÛ[X[™Âˆš]\Š
+Bˆ™š[™
+
+]KÛÛ[X[™Ê_Âˆ]HOH•Üš]H]Ûˆ\ÝˆÛÜH]\ÝÚÙ[]Ûˆ‚ˆ	‰ˆÛÛ[X[™OHÓÔWÕT‘ÑUQÕTÕÐ”’QQ—ÐÓÓSPS‘ˆJBˆ˜[™Ý[Š
+ËË\™ÜÊ_\™ÜË™š\œÝ
+
+JBˆ›Ú×ÛÜ—Ù[ÙJ›Ü›X]J›Z\ÜÚ[™È]Ûˆ]\ÝÚÙ[]ÛˆXÝ[ÛŽˆØÛÛ[X[™ÎßHŠJOÎÂˆ\ÜÙ\Ù\HJÚÙ[]Û–È›X™[—Kœ]Û—Ü]\ÝÜÚÙ[]ÛˆŠNÂˆ\ÜÙ\Ù\HJÚÙ[]Û–È\™Ù]Ùš[H—K\ÝËÝ\ÝÜšXÚ[™ËœHŠNÂˆ\ÜÙ\Ù\HJˆÚÙ[]Û–È\ÝÛ˜[YH—Kˆ\ÝØØ[Ý[]WÙ\ØÛÝ[Ý™\ÚÛØ›Ý[™\žH‚ˆ
+NÂˆ]œšYYˆHÚÙ[]Û–È˜œšYYˆ—Bˆ˜\×ÜÝŠ
+Bˆ›Ú×ÛÜ—Ù[ÙJ›Ü›X]J›Z\ÜÚ[™ÈÚÙ[]ÛˆœšYYŽˆÜÚÙ[]ÛŽßHŠJOÎÂˆ›Üˆ™YYH[ˆÂˆˆÈ’Tˆ]Ûˆ™\Z\ˆÚÙ[]Ûˆ‹ˆˆÈZ\ÜÚ[™È\ØÜš[Z[˜]ÜŽˆ[[Ý[OH™\ÚÛ‹ˆˆÈ™\šYžNˆ]\Ý\ÝËÝ\ÝÜšXÚ[™ËœNŽ\ÝØØ[Ý[]WÙ\ØÛÝ[Ý™\ÚÛØ›Ý[™\žH‹ˆ™Yˆ\ÝØØ[Ý[]WÙ\ØÛÝ[Ý™\ÚÛØ›Ý[™\žJ
+Nˆ‹ˆˆÈ\ÜÙ\Ø[Ý[]WÙ\ØÛÝ[
+[[Ý[]™\ÚÛ™\ÚÛ]™\ÚÛ
+HOH^XÝYÙ\ØÛÝ[‹ˆœ˜Z\ÙH›Ý[\[Y[Y\œ›Üˆ‹ˆHÂˆ\ÜÙ\JœšYY‹˜ÛÛZ[œÊ™YYJK›Z\ÜÚ[™ÈÛ™YYNßH[Ž—žØœšYYŸHŠNÂˆBˆ]Ü[—Ý\™Ù]HÛÛ[X[™Âˆš]\Š
+Bˆ™š[™
+
+]KÛÛ[X[™Ê_Âˆ]HOH•Üš]H\™Ù]Y\ÝˆÜ[ˆ™\Ý™[]Y\Ý‚ˆ	‰ˆÛÛ[X[™OHÔS—Ô‘SUQÕTÕÐÓÓSPS‘ˆJBˆ˜[™Ý[Š
+ËË\™ÜÊ_\™ÜË™š\œÝ
+
+JBˆ›Ú×ÛÜ—Ù[ÙJ›Ü›X]J›Z\ÜÚ[™ÈÜ[ˆ™[]Y\ÝXÝ[ÛŽˆØÛÛ[X[™ÎßHŠJOÎÂˆ\ÜÙ\Ù\HJˆÜ[—Ý\™Ù]È\šH—Kˆš[WÝ\šWÙ›Ü—Ü]
+	œ›ÛÝœ]
+
+Kš›Ú[Š\ÝËÝ\ÝÜšXÚ[™ËœHŠJOË˜\×ÜÝŠ
+Bˆ
+NÂˆ\ÜÙ\Ù\HJˆÜ[—Ý\™Ù]È\ÝÛ˜[YH—Kˆ\ÝØØ[Ý[]WÙ\ØÛÝ[Ý™\ÚÛØ›Ý[™\žH‚ˆ
+NÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝBˆÖØÙ™Ê™X]\™HH›[™Ë\]ÛˆŠWB™›ˆØ\ØÛÙWØXÝ[Ûœ×ÛÛZ]Ü\X[ÛÜ—Ú[˜[YÝ\YÜÜXÜÊ
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]]]Z\ÜÚ[™×Ý™\šYžHH˜[Y]YÙØ\Ø\Y˜XÝ
+
+NÂˆZ\ÜÚ[™×Ý™\šYžK™\šYžWØÛÛ[X[™ÜÜXÜË˜ÛX\Š
+NÂˆ\ÜÙ\ÙØ\ØXÝ[Û—ÜÜXÜ×ÛÛZ]Y
+Z\ÜÚ[™×Ý™\šYžK›Z\ÜÚ[™È™\šYžHŠOÎÂ‚ˆ]]]Z\ÜÚ[™×Ü™XÙZ\H˜[Y]YÙØ\Ø\Y˜XÝ
+
+NÂˆZ\ÜÚ[™×Ü™XÙZ\œ™XÙZ\ØÛÛ[X[™ÜÜXÜË˜ÛX\Š
+NÂˆ\ÜÙ\ÙØ\ØXÝ[Û—ÜÜXÜ×ÛÛZ]Y
+Z\ÜÚ[™×Ü™XÙZ\›Z\ÜÚ[™È™XÙZ\ŠOÎÂ‚ˆ]]]X[›Ü›YYH˜[Y]YÙØ\Ø\Y˜XÝ
+
+NÂˆX[›Ü›YYˆ™\šYžWØÛÛ[X[™ÜÜXÜÂˆ™š\œÝÛ]]
+
+Bˆ›Ú×ÛÜ—Ù[ÙJ˜[Y]Yš^\™HÛZ]Y™\šYžHÜXÈ‹×ÜÝš[™Ê
+JOÂˆœ›ÙÜ˜[Bˆ˜ÛX\Š
+NÂˆ\ÜÙ\ÙØ\ØXÝ[Ûœ×Ü™Yœ™\ÚÛÛ›JX[›Ü›YY›X[›Ü›YY™\šYžHŠOÎÂ‚ˆ]]]›ÛWÛZ\ÛX]ÚH˜[Y]YÙØ\Ø\Y˜XÝ
+
+NÂˆ›ÛWÛZ\ÛX]Úˆ™\šYžWØÛÛ[X[™ÜÜXÜÂˆ™š\œÝÛ]]
+
+Bˆ›Ú×ÛÜ—Ù[ÙJ˜[Y]Yš^\™HÛZ]Y™\šYžHÜXÈ‹×ÜÝš[™Ê
+JOÂˆœ›ÛHHÜ˜]NŽ™ÛXZ[ŽŽÛÛ[X[™›ÛNŽ”™XÙZ\Âˆ\ÜÙ\ÙØ\ØXÝ[Ûœ×Ü™Yœ™\ÚÛÛ›J›ÛWÛZ\ÛX]Úœ›ÛK[Z\ÛX]ÚY™\šYžHŠOÎÂˆÚÊ
+
+JBŸB‚™›ˆ\ÜÙ\ÙØ\ØXÝ[Û—ÜÜXÜ×ÛÛZ]Y
+ˆ\Y˜XÝˆ˜[Y]YØ\\Y˜XÝˆØ\ÙNˆ	œÝ‹ŠHOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]ÛÛ[X[™ÈHØ\ØXÝ[Û—ØÛÛ[X[™×Ù›Ü—Ø\Y˜XÝ
+\Y˜XÝØ\ÙJOÎÂˆ›Üˆ[™^[ˆÌK—HÂˆ]
+X™[\™Ù]
+HHÛÛ[X[™Âˆ™Ù]
+[™^
+Bˆ˜[™Ý[Š
+]KË\™Ý[Y[Ê_\™Ý[Y[Ë™š\œÝ
+
+K›X\
+\™Ù]
+]K\™Ù]
+JJBˆ›Ú×ÛÜ—Ù[ÙJ›Ü›X]JžØØ\Ù_NˆZ\ÜÚ[™È™\Z\ˆXÝ[ÛˆÚ[™^HŠJOÎÂˆYˆ\™Ù]™Ù]
+˜ÛÛ[X[™ÜÜXÜÈŠKš\×ÜÛÛYJ
+HÂˆ™]\›ˆ\œŠ›Ü›X]JˆžØØ\Ù_NˆXÝ[ÛˆßH›Ú™XÝY\YÜXÜÈÚ]Ý]HÛÛ\]H˜[YZ\ŽˆÝ\™Ù]H‹ˆX™[ˆ
+JNÂˆBˆBˆÚÊ
+
+JBŸB‚™›ˆ\ÜÙ\ÙØ\ØXÝ[Ûœ×Ü™Yœ™\ÚÛÛ›Jˆ\Y˜XÝˆ˜[Y]YØ\\Y˜XÝˆØ\ÙNˆ	œÝ‹ŠHOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]ÛÛ[X[™ÈHØ\ØXÝ[Û—ØÛÛ[X[™×Ù›Ü—Ø\Y˜XÝ
+\Y˜XÝØ\ÙJOÎÂˆ\ÜÙ\Ù\HJˆÛÛ[X[™Âˆš]\Š
+Bˆ›X\
+
+]KÛÛ[X[™Ê_
+]K˜\×ÜÝŠ
+KÛÛ[X[™˜\×ÜÝŠ
+JJBˆ˜ÛÛXÝŽ™XÏÏŠ
+Kˆ™XÈVÊ”™Yœ™\Ú[˜[\Ú\ÈHØ]™YÛÜšÜÜXÙHÚXÚÈ‹‘Q”‘TÒÐÓÓSPS‘
+WKˆžØØ\Ù_Nˆ[˜[Y\YÜXÜÈ]\Ý˜Z[ÛÜÙYÈ™Yœ™\Ú[Û›HXÝ[ÛœÈ‚ˆ
+NÂˆÚÊ
+
+JBŸB‚™›ˆØ\ØXÝ[Û—ØÛÛ[X[™×Ù›Ü—Ø\Y˜XÝ
+ˆ\Y˜XÝˆ˜[Y]YØ\\Y˜XÝˆØ\ÙNˆ	œÝ‹ŠHOˆ™\Ý[™XÏ
+Ýš[™ËÝš[™Ë™XÏÙ\™WÚœÛÛŽŽ•˜[YOŠO‹Ýš[™ÏˆÂˆ]›ÛÝH[š\]YWÛÜÝ\ÝÜ›ÛÝ
+™Ø\XXÝ[ÛœËZ[˜[Y\ÜXÜÈŠOÎÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+›ÛÝœ]
+
+Kš›Ú[ŠœÜ˜ÈŠJBˆ›X\Ù\œŠ\œŸ›Ü›X]J˜Ü™X]HÜ˜È˜Z[YˆÙ\œŸHŠJOÎÂˆÝŽ™œÎŽ˜Ü™X]WÙ\—Ø[
+›ÛÝœ]
+
+Kš›Ú[Š\ÝÈŠJBˆ›X\Ù\œŠ\œŸ›Ü›X]J˜Ü™X]H\ÝÈ˜Z[YˆÙ\œŸHŠJOÎÂˆÝŽ™œÎŽÜš]Jˆ›ÛÝœ]
+
+Kš›Ú[Š\ÝËÝ\ÝÜšXÚ[™ËœHŠKˆ™Yˆ\ÝÙ\ØÛÝ[Ø›Ý[™\žJ
+N—ˆ\ÜÙ\šXÙJL
+HOHWˆ‹ˆ
+Bˆ›X\Ù\œŠ\œŸ›Ü›X]JÜš]H™[]Y\Ý˜Z[YˆÙ\œŸHŠJOÎÂˆ]\šHHš[WÝ\šWÙ›Ü—Ü]
+	œ›ÛÝœ]
+
+Kš›Ú[ŠœÜ˜ËÜšXÚ[™ËœHŠJOÎÂˆ]]]XYÛ›ÜÝXÈHØ\ØXÝ[Û—ÙXYÛ›ÜÝXÊ
+NÂˆ]]HHXYÛ›ÜÝXÂˆ™]Bˆ˜\×Û]]
+
+Bˆ›Ú×ÛÜ—Ù[ÙJ›Ü›X]JžØØ\Ù_NˆZ\ÜÚ[™ÈXYÛ›ÜÝXÈ]HŠJOÎÂˆ]VÈ˜ÛÛ[X[™ÜÜXÜÈ—HHÙ\™WÚœÛÛŽŽšœÛÛˆJÂˆ™\šYžHŽˆÜ˜]NŽ˜YÙ[Ž˜ÛÛ[X[™ÜÜXÜÎŽ˜YÙ[Ý™\šYžWØÛÛ[X[™ÜÜXÊˆ‹ˆ‹™XYÛ›ÜÝXËX™Y›Ü™KšœÛÛˆ‹™XYÛ›ÜÝXËXY\‹šœÛÛˆ‹›Û™Kˆ
+Kˆœ™XÙZ\ŽˆÜ˜]NŽ˜YÙ[Ž˜ÛÛ[X[™ÜÜXÜÎŽ˜YÙ[Ü™XÙZ\ØÛÛ[X[™ÜÜXÊˆ‹ˆ‹™XYÛ›ÜÝXË]™\šYžKšœÛÛˆ‹™XYÛ›ÜÝXË\ÙX[H‹ÛÛYJ™XYÛ›ÜÝXË\™XÙZ\šœÛÛˆŠKˆ
+KˆJNÂˆ]]]Û˜\ÚÝHØ[\WØ[˜[\Ú\×ÜÛ˜\ÚÝ
+ˆ›ÛÝœ]
+
+K×Ü]ØYŠ
+Kˆ\šK˜ÛÛ™J
+Kˆ™XÈVÙXYÛ›ÜÝXË˜ÛÛ™J
+WKˆ™XÎŽ›™]Ê
+Kˆ
+NÂˆÛ˜\ÚÝ™Ø\Ø\Y˜XÝÈH™XÈVØ\Y˜XÝNÂ‚ˆ]XÝ[ÛœÈHÛÙWØXÝ[Û—Ü™\ÜÛœÙJˆ	˜ÛÙWØXÝ[Û—Ü\˜[\×Ù›ÜŠ\šKXYÛ›ÜÝXËœ˜[™ÙKœÝ\›[™K™XÈVÙXYÛ›ÜÝX×JOËˆÛÛYJ	œÛ˜\ÚÝ
+Kˆ	œØÛÙWØÛY[Ù™X]\™\Ê
+OËˆ
+NÂˆÛÙWØXÝ[Û—ØÛÛ[X[™Ê	˜XÝ[ÛœÊBŸB‚ˆÖÝ\ÝB™›ˆØ\ØÛÙWØXÝ[Ûœ×Ù˜Z[ØÛÜÙYÝÚ]Ý]Ý˜[YØÝ\œ™[Ø\Y˜XÝ
+
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]XYÛ›ÜÝXÈHØ\ØXÝ[Û—ÙXYÛ›ÜÝXÊ
+NÂˆ]\šHH\ÝÝ\šJ™š[N‹ËËÝÛÜšÜÜXÙKÜÜ˜ËÜšXÚ[™ËœHŠOÎÂˆ]Û˜\ÚÝHØ[\WØ[˜[\Ú\×ÜÛ˜\ÚÝ
+ˆ]YŽŽ™œ›ÛJ‹ÝÛÜšÜÜXÙHŠKˆ\šK˜ÛÛ™J
+Kˆ™XÈVÙXYÛ›ÜÝXË˜ÛÛ™J
+WKˆ™XÎŽ›™]Ê
+Kˆ
+NÂ‚ˆ]XÝ[ÛœÈHÛÙWØXÝ[Û—Ü™\ÜÛœÙJˆ	˜ÛÙWØXÝ[Û—Ü\˜[\×Ù›ÜŠ\šKXYÛ›ÜÝXËœ˜[™ÙKœÝ\›[™K™XÈVÙXYÛ›ÜÝX×JOËˆÛÛYJ	œÛ˜\ÚÝ
+Kˆ	œØÛÙWØÛY[Ù™X]\™\Ê
+OËˆ
+NÂˆ]ÛÛ[X[™ÈHÛÙWØXÝ[Û—ØÛÛ[X[™Ê	˜XÝ[ÛœÊOÎÂ‚ˆ\ÜÙ\Ù\HJˆÛÛ[X[™Âˆš]\Š
+Bˆ›X\
+
+]KÛÛ[X[™Ê_
+]K˜\×ÜÝŠ
+KÛÛ[X[™˜\×ÜÝŠ
+JJBˆ˜ÛÛXÝŽ™XÏÏŠ
+Kˆ™XÈVÊ”™Yœ™\Ú[˜[\Ú\ÈHØ]™YÛÜšÜÜXÙHÚXÚÈ‹‘Q”‘TÒÐÓÓSPS‘
+WKˆœÝ[HÜˆ[˜[Y]YØ\XYÛ›ÜÝXÜÈ]\Ý›Ý^ÜÙH™\Z\ˆXÝ[ÛœÈ‚ˆ
+NÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆØ\ØÛÙWØXÝ[Ûœ×ÛÛZ]Ý[œØY™WÜ™[]YÜ]×Ø[™ØÛÛ[X[™Ê
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]›ÛÝH[š\]YWÛÜÝ\ÝÜ›ÛÝ
+™Ø\][œØY™KXXÝ[ÛœÈŠOÎÂˆ]\šHHš[WÝ\šWÙ›Ü—Ü]
+	œ›ÛÝœ]
+
+Kš›Ú[ŠœÜ˜ËÜšXÚ[™ËœHŠJOÎÂˆ]]]XYÛ›ÜÝXÈHØ\ØXÝ[Û—ÙXYÛ›ÜÝXÊ
+NÂˆ]]HHXYÛ›ÜÝXÂˆ™]Bˆ˜\×Û]]
+
+Bˆ›Ú×ÛÜ—Ù[ÙJ›Z\ÜÚ[™ÈXYÛ›ÜÝXÈ]H‹×ÜÝš[™Ê
+JOÎÂˆ]VÈœ™\Z\—Ü›Ý]H—VÈœ™[]YÝ\Ý—HHÙ\™WÚœÛÛŽŽšœÛÛˆJ‹‹‹ÛÝ]ÚYKœNŽ\ÝÙ\ØØ\HŠNÂˆ]VÈ™\šYšXØ][Û—ØÛÛ[X[™È—HBˆÙ\™WÚœÛÛŽŽšœÛÛˆJÈœš\ˆYÙ[™\šYžHK\›ÛÝ‹‹ÛÝ]ÚYHKZœÛÛˆ—JNÂˆ]VÈœ™XÙZ\ØÛÛ[X[™—HHÙ\™WÚœÛÛŽŽšœÛÛˆJœš\ˆYÙ[™XÙZ\K\›ÛÝ‹‹ÛÝ]ÚYHKZœÛÛˆŠNÂˆ]K˜\×ÛØš™XÝÛ]]
+
+Bˆ›Ú×ÛÜ—Ù[ÙJ™^XÝYØš™XÝ]H‹×ÜÝš[™Ê
+JOÂˆœ™[[Ý™JœÝ]X×Û[Z]ÚÚ[™ŠNÂˆ]K˜\×ÛØš™XÝÛ]]
+
+Bˆ›Ú×ÛÜ—Ù[ÙJ™^XÝYØš™XÝ]H‹×ÜÝš[™Ê
+JOÂˆœ™[[Ý™JœÝ]X×Û[Z]Ù]Z[ŠNÂˆ]]]Û˜\ÚÝHØ[\WØ[˜[\Ú\×ÜÛ˜\ÚÝ
+ˆ›ÛÝœ]
+
+K×Ü]ØYŠ
+Kˆ\šK˜ÛÛ™J
+Kˆ™XÈVÙXYÛ›ÜÝXË˜ÛÛ™J
+WKˆ™XÎŽ›™]Ê
+Kˆ
+NÂˆÛ˜\ÚÝ™Ø\Ø\Y˜XÝÈH™XÈVÝ˜[Y]YÙØ\Ø\Y˜XÝ
+
+WNÂ‚ˆ]XÝ[ÛœÈHÛÙWØXÝ[Û—Ü™\ÜÛœÙJˆ	˜ÛÙWØXÝ[Û—Ü\˜[\×Ù›ÜŠ\šKXYÛ›ÜÝXËœ˜[™ÙKœÝ\›[™K™XÈVÙXYÛ›ÜÝX×JOËˆÛÛYJ	œÛ˜\ÚÝ
+Kˆ	œØÛÙWØÛY[Ù™X]\™\Ê
+OËˆ
+NÂˆ]ÛÛ[X[™ÈHÛÙWØXÝ[Û—ØÛÛ[X[™Ê	˜XÝ[ÛœÊOÎÂ‚ˆ\ÜÙ\Ù\HJˆÛÛ[X[™Âˆš]\Š
+Bˆ›X\
+
+]KÛÛ[X[™Ê_
+]K˜\×ÜÝŠ
+KÛÛ[X[™˜\×ÜÝŠ
+JJBˆ˜ÛÛXÝŽ™XÏÏŠ
+Kˆ™XÈVÊ”™Yœ™\Ú[˜[\Ú\ÈHØ]™YÛÜšÜÜXÙHÚXÚÈ‹‘Q”‘TÒÐÓÓSPS‘
+WKˆ[œØY™HØ\]ÈÜˆÛÛ[X[™›ÛÝÈ]\ÝX]™H™Yœ™\Ú\ÈHÛ›HXÝ[Ûˆ‚ˆ
+NÂˆÚÊ
+
+JBŸB‚ˆÖÝ\ÝB™›ˆØ\ØÛÙWØXÝ[Ûœ×ÜÝ\™\Ü×Ü]Û—Ü™\Z\—ØØ\™ÝÚ]Ý]Ý\™Ù]Ùš[J
+HOˆ™\Ý[
+
+KÝš[™ÏˆÂˆ]›ÛÝH[š\]YWÛÜÝ\ÝÜ›ÛÝ
+™Ø\\]Û‹XØ\™[›Ë]\™Ù]ŠOÎÂˆ]\šHHš[WÝ\šWÙ›Ü—Ü]
+	œ›ÛÝœ]
+
+Kš›Ú[ŠœÜ˜ËÜšXÚ[™ËœHŠJOÎÂˆ]]]XYÛ›ÜÝXÈHØ\ØXÝ[Û—ÙXYÛ›ÜÝXÊ
+NÂˆ]]HHXYÛ›ÜÝXÂˆ™]Bˆ˜\×Û]]
+
+Bˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×ÛØš™XÝÛ]]
+Bˆ›Ú×ÛÜ—Ù[ÙJ™^XÝYXYÛ›ÜÝXÈ]HØš™XÝ‹×ÜÝš[™Ê
+JOÎÂˆ]›Ý]HH]Bˆ™Ù]Û]]
+œ™\Z\—Ü›Ý]HŠBˆ˜[™Ý[ŠÙ\™WÚœÛÛŽŽ•˜[YNŽ˜\×ÛØš™XÝÛ]]
+Bˆ›Ú×ÛÜ—Ù[ÙJ™^XÝY™\Z\—Ü›Ý]HØš™XÝ‹×ÜÝš[™Ê
+JOÎÂˆ›Ý]Kœ™[[Ý™J\™Ù]Ùš[HŠNÂˆ›Ý]Kœ™[[Ý™Jœ™[]YÝ\ÝŠNÂˆ]]]Û˜\ÚÝHØ[\WØ[˜[\Ú\×ÜÛ˜\ÚÝ
+ˆ›ÛÝœ]
+
+K×Ü]ØYŠ
+Kˆ\šK˜ÛÛ™J
+Kˆ™XÈVÙXYÛ›ÜÝXË˜ÛÛ™J
+WKˆ™XÎŽ›™]Ê
+Kˆ
+NÂˆÛ˜\ÚÝ™Ø\Ø\Y˜XÝÈH™XÈVÝ˜[Y]YÙØ\Ø\Y˜XÝ
+
+WNÂ‚ˆ]XÝ[ÛœÈHÛÙWØXÝ[Û—Ü™\ÜÛœÙJˆ	˜ÛÙWØXÝ[õÛÍ5ÚÚ$z{-®éÜj× result
             .map_err(|err| format!("execute_command failed: {err}"))?
             .ok_or_else(|| "expected Some(value) with status no_snapshot, got null".to_string())?;
 
