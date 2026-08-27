@@ -1357,7 +1357,7 @@ fn judgment_sidecar_public_publish_fails_closed_without_a_valid_host_run() -> Re
         Err(error) if !error.contains("resolve host current") => {
             return Err(format!(
                 "absent host current failed for the wrong reason: {error}"
-            ))
+            ));
         }
         Err(_) => {}
     }
@@ -1398,7 +1398,7 @@ fn judgment_sidecar_public_publish_fails_closed_without_a_valid_host_run() -> Re
         Err(error) if !error.contains("host receipt raw stdout identity mismatch") => {
             return Err(format!(
                 "tampered evidence failed for the wrong reason: {error}"
-            ))
+            ));
         }
         Err(_) => {}
     }
