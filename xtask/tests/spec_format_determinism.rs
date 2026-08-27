@@ -40,7 +40,7 @@ An unchanged old spec remains structurally valid.
 - deterministic result for identical candidate bytes
 "#;
 
-fn temp_root(label: &str) -> Result<PathBuf, String> {
+fn temp_root(label: &str) -> Result<TempRoot, String> {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| error.to_string())?
