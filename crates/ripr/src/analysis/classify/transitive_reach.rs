@@ -194,7 +194,7 @@ pub(in crate::analysis) fn find_macro_reach_witness(
         .flat_map(|file| file.functions.iter().filter(|f| !f.is_test))
         .collect();
 
-    let mut sweep = ReachSweep::new(&prod_fns);
+    let mut sweep = ReachSweep::new(&prod_fns, owner_name);
     let mut witnesses: Vec<MacroWitnessCandidate> = Vec::new();
     for test in &all_tests {
         let mut found: Vec<(String, MacroReachEdge)> = Vec::new();
@@ -561,7 +561,8 @@ impl<'a> ReachSweep<'a> {
             for macro_invocation in
                 macro_invocations_in_text(&current_fn.body, current_fn.start_line)
             {
-                if let Some(edge) = self.macro_edge_for_invocation(
+                if let Some(edge) = macro_edge_for_invocation(
+                    &mut self.macro_mention_memo,
                     &macro_invocation,
                     &current_fn.file,
                     &current_fn.name,
@@ -584,33 +585,32 @@ impl<'a> ReachSweep<'a> {
         None
     }
 
-    fn macro_edge_for_invocation(
-        &mut self,
-        invocation: &MacroInvocation,
-        invocation_file: &std::path::Path,
-        host: &str,
-        owner_name: &str,
-        index: &RustIndex,
-    ) -> Option<MacroReachEdge> {
-        if let Some(cached) = self.macro_mention_memo.get(invocation.name.as_str()) {
-            if !*cached {
-                return None;
-            }
-        } else {
-            let mentions = macro_definition_mentions_owner(index, &invocation.name, owner_name);
-            self.macro_mention_memo
-                .insert(invocation.name.clone(), mentions);
-            if !mentions {
-                return None;
-            }
+fn macro_edge_for_invocation(
+    memo: &mut HashMap<String, bool>,
+    invocation: &MacroInvocation,
+    invocation_file: &std::path::Path,
+    host: &str,
+    owner_name: &str,
+    index: &RustIndex,
+) -> Option<MacroReachEdge> {
+    if let Some(cached) = memo.get(invocation.name.as_str()) {
+        if !*cached {
+            return None;
         }
-        Some(MacroReachEdge {
-            macro_name: invocation.name.clone(),
-            macro_file: invocation_file.to_path_buf(),
-            macro_line: invocation.line,
-            macro_host: host.to_string(),
-        })
+    } else {
+        let mentions = macro_definition_mentions_owner(index, &invocation.name, owner_name);
+        memo.insert(invocation.name.clone(), mentions);
+        if !mentions {
+            return None;
+        }
     }
+    Some(MacroReachEdge {
+        macro_name: invocation.name.clone(),
+        macro_file: invocation_file.to_path_buf(),
+        macro_line: invocation.line,
+        macro_host: host.to_string(),
+    })
+}
 }
 
 fn macro_invocations_in_text(text: &str, start_line: usize) -> Vec<MacroInvocation> {
