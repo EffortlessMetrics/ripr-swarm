@@ -225,6 +225,33 @@ fn outer_after() {
         "same-scope conflicting module aliases must fail closed"
     );
 
+    // The shared lexical scanner narrows a block-local module alias to its
+    // own block instead of publishing it file-wide.
+    let block_local = module_import_aliases(
+        "fn outer() {\n    use crate::child as pipe;\n    pipe::compute();\n}\nfn sibling() { pipe::compute(); }",
+    );
+    let block_pipe = block_local
+        .get("pipe")
+        .ok_or_else(|| "block-local alias should be indexed".to_string())?;
+    assert_eq!(block_pipe.module_path_at(3), Some("child"));
+    assert!(
+        block_pipe.module_path_at(5).is_none(),
+        "a block-local module alias must not leak to a sibling function"
+    );
+
+    // The shared scanner also joins continuation lines, so a multi-line
+    // self-alias import is recognized rather than dropped.
+    let multi_line = module_import_aliases(
+        "use crate::pipeline::{\n    self as pipe,\n};\nfn call() { pipe::compute(); }",
+    );
+    assert_eq!(
+        multi_line
+            .get("pipe")
+            .and_then(|alias| alias.module_path_at(4)),
+        Some("pipeline"),
+        "a multi-line self-alias import resolves through the shared scanner"
+    );
+
     let platform_gated = module_import_aliases(
         "#[cfg(unix)]\nuse crate::unix_owner as pipe;\n#[cfg(windows)]\nuse crate::windows_owner as pipe;\nfn call() { pipe::compute(); }",
     );
