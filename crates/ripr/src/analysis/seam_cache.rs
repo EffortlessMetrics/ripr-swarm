@@ -3292,6 +3292,17 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn path_dependency_helpers_preserve_unix_colons_and_backslashes() {
+        assert!(!is_absolute_declared_path("a:b"));
+        assert!(!is_absolute_declared_path(r"..\\shared"));
+        assert_eq!(
+            resolve_repo_relative("crates/app", r"..\\shared"),
+            ("crates/app/..\\shared".to_string(), false)
+        );
+    }
+
     #[test]
     fn path_dependency_edges_keep_absolute_paths_explicit() -> Result<(), String> {
         let root = isolated_dir("path-dep-absolute");
