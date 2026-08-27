@@ -160,7 +160,7 @@ pub(crate) fn gate_decision_status(report: &GateDecisionReport) -> &str {
 /// For `config_error`: the first config error message. For `blocked`: the
 /// first blocking decision enriched with the exact seam location,
 /// classification, a concrete fix sketch, and the producer-owned
-/// inspection command (#1440) — so the point of failure names what to fix
+/// inspection command (#1440) â so the point of failure names what to fix
 /// and how to inspect it instead of forcing artifact archaeology. When
 /// exception policy is the blocker: the count and first blocking
 /// exception-policy violation.
@@ -184,21 +184,38 @@ pub(crate) fn gate_decision_inline_detail(report: &GateDecisionReport) -> String
                 first.gate_reason
             );
             match (first.placement.path.as_deref(), first.placement.line) {
-                (Some(path), Some(line)) => { let _ = write!(detail, " [{path}:{line}]"); }
-                (Some(path), None) => { let _ = write!(detail, " [{path}]"); }
-                (None, Some(line)) => { let _ = write!(detail, " [(no file anchor):{line}]"); }
+                (Some(path), Some(line)) => {
+                    let _ = write!(detail, " [{path}:{line}]");
+                }
+                (Some(path), None) => {
+                    let _ = write!(detail, " [{path}]");
+                }
+                (None, Some(line)) => {
+                    let _ = write!(detail, " [(no file anchor):{line}]");
+                }
                 (None, None) => {}
             }
-            if let Some(class) = &first.static_class { let _ = write!(detail, " ({class})"); }
-            let behavior = first.repair_route.missing_discriminator.as_deref()
+            if let Some(class) = &first.static_class {
+                let _ = write!(detail, " ({class})");
+            }
+            let behavior = first
+                .repair_route
+                .missing_discriminator
+                .as_deref()
                 .or(first.repair_route.test_intent.as_deref())
                 .or(first.repair_route.changed_behavior.as_deref());
             match (first.repair_route.repair_target.as_ref(), behavior) {
                 (Some(GateRepairTarget::ProductionCaller { owner, .. }), Some(behavior)) => {
-                    let _ = write!(detail, "; add a test that drives `{owner}` so it observes {behavior}");
+                    let _ = write!(
+                        detail,
+                        "; add a test that drives `{owner}` so it observes {behavior}"
+                    );
                 }
                 (_, Some(behavior)) => {
-                    let _ = write!(detail, "; add a test that observes {behavior} at the flagged seam");
+                    let _ = write!(
+                        detail,
+                        "; add a test that observes {behavior} at the flagged seam"
+                    );
                 }
                 (_, None) => {}
             }
@@ -435,7 +452,7 @@ fn push_decision_section(
     out.push_str(&format!("## {title}\n\n"));
     for decision in section {
         out.push_str(&format!(
-            "- {} {} — {}\n",
+            "- {} {} â {}\n",
             decision_location(&decision.placement),
             md_escape(decision.static_class.as_deref().unwrap_or("unknown")),
             md_escape(&decision.gate_reason)
