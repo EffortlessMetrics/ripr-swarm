@@ -60,7 +60,7 @@ fn finish(
 #[test]
 fn canonical_template_materializes_into_a_valid_spec_without_git_history() -> Result<(), String> {
     let root = temp_root("template")?;
-    write_spec(&root, VALID_SPEC)?;
+    write_spec(&root, &VALID_SPEC.replace("RIPR-SPEC-NNNN: Title", "RIPR-SPEC-9999: Template fixture"))?;
     let output = run_check(&root)?;
     finish(root, output, true)
 }
@@ -68,7 +68,9 @@ fn canonical_template_materializes_into_a_valid_spec_without_git_history() -> Re
 #[test]
 fn structural_spec_errors_remain_blocking() -> Result<(), String> {
     let root = temp_root("invalid")?;
-    let invalid = VALID_SPEC.replacen("## Metrics", "## Metrics removed", 1);
+    let invalid = VALID_SPEC
+        .replace("RIPR-SPEC-NNNN: Title", "RIPR-SPEC-9999: Template fixture")
+        .replacen("## Metrics", "## Metrics removed", 1);
     write_spec(&root, &invalid)?;
     let output = run_check(&root)?;
     let details = output_text(&output);
