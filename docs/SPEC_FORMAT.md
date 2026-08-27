@@ -18,6 +18,18 @@ support is promoted, or work is active. Those states belong to implementation
 claims and PR-local slices, traceability and evidence, support authorities, and
 live GitHub/worktree state respectively.
 
+The following authorities remain separate:
+
+| Concern | Authority |
+| --- | --- |
+| Legacy document identity and disposition | This Markdown document and this format contract |
+| Requirement lifecycle and ancestry | The v2 dialect defined by #1667 |
+| One-PR implementation claim | `ImplementationSliceV1` |
+| Evidence and proof currentness | Traceability/evidence edges and exact receipts |
+| Support claim | `docs/status/SUPPORT_TIERS.md` |
+| Live work | GitHub issues/PRs/checks/reviews and the local worktree |
+| Maintenance attention | Advisory reports and content-bound review receipts |
+
 Specs do not expire because time passes or because their files remain
 unchanged. If a contract is wrong, rejected, replaced, or retired, update, supersede, or
 deprecate it explicitly. Review dates may be useful descriptive context, but

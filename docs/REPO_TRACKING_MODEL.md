@@ -2,8 +2,7 @@
 
 This is `ripr`'s agent-neutral, repo-owned tracking model. It is the
 centralized source of truth for proposals, behavior contracts, architectural
-decisions, multi-PR campaigns, the currently active campaign, scoped review
-units, and closeouts.
+decisions, multi-PR campaigns, scoped review units, and closeouts.
 
 External agents have their own goal or task systems — Codex `/goal`, Kiro
 specs/tasks, Claude Code's task tools, Cursor rules, and so on. Those are
@@ -112,10 +111,9 @@ To prevent overloading individual docs:
   duplicate proposal reasoning.
 - A campaign-specific plan adds operational detail for one campaign slice. It
   must not redefine specs, ADRs, or active manifest state.
-- The active manifest names the current execution campaign. It may stay on a
-  closed campaign only when the manifest also declares
-  `successor = "<campaign-id>"` or `no_current_goal = true`. Closed manifests
-  also move to the archive.
+- GitHub issues and PRs, together with the local worktree, identify live
+  execution. Campaign ledgers and plans provide sequence and context but do
+  not select the current worker or issue.
 - A scoped PR is the smallest reviewable unit. It must not bundle unrelated
   contracts.
 - A closeout records what happened. It must not invent new contracts; new
