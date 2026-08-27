@@ -201,6 +201,7 @@ pub(in crate::analysis) fn find_macro_reach_witness(
 
         for macro_invocation in macro_invocations_in_text(&test.body, test.start_line) {
             if let Some(edge) = ReachSweep::macro_edge_for_invocation(
+                &mut sweep.macro_mention_memo,
                 &macro_invocation,
                 &test.file,
                 MACRO_WITNESS_TEST_BODY_HOST,
@@ -561,7 +562,7 @@ impl<'a> ReachSweep<'a> {
             for macro_invocation in
                 macro_invocations_in_text(&current_fn.body, current_fn.start_line)
             {
-                if let Some(edge) = macro_edge_for_invocation(
+                if let Some(edge) = Self::macro_edge_for_invocation(
                     &mut self.macro_mention_memo,
                     &macro_invocation,
                     &current_fn.file,
