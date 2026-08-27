@@ -52,9 +52,19 @@ fn gate_inline_failure_detail_names_seam_location_and_inspection_command() -> Re
     assert_eq!(report.status, "blocked");
     let inline = gate_decision_inline_detail(&report);
     let decision = &report.decisions[0];
-    let missing = decision.repair_route.missing_discriminator.as_deref().expect("fixture must provide the missing discriminator");
-    assert!(inline.contains(&format!(" ({})", decision.static_class.as_deref().unwrap())), "inline detail missing static classification: {inline}");
-    assert!(inline.contains(missing), "inline detail missing exact repair discriminator: {inline}");
+    let missing = decision
+        .repair_route
+        .missing_discriminator
+        .as_deref()
+        .expect("fixture must provide the missing discriminator");
+    assert!(
+        inline.contains(&format!(" ({})", decision.static_class.as_deref().unwrap())),
+        "inline detail missing static classification: {inline}"
+    );
+    assert!(
+        inline.contains(missing),
+        "inline detail missing exact repair discriminator: {inline}"
+    );
     assert!(
         inline.contains("1 blocking gap(s); first:"),
         "inline detail lost the blocking summary: {inline}"
@@ -77,7 +87,10 @@ fn gate_inline_failure_detail_preserves_line_only_anchor() -> Result<(), String>
     report.decisions[0].placement.path = None;
     report.decisions[0].placement.line = Some(88);
     let inline = gate_decision_inline_detail(&report);
-    assert!(inline.contains("[(no file anchor):88]"), "inline detail dropped line-only anchor: {inline}");
+    assert!(
+        inline.contains("[(no file anchor):88]"),
+        "inline detail dropped line-only anchor: {inline}"
+    );
     Ok(())
 }
 
@@ -116,7 +129,7 @@ fn gate_calibrated_mode_requires_explicit_baseline() -> Result<(), String> {
 fn gate_fails_closed_on_limited_partial_scope_pr_guidance() -> Result<(), String> {
     // RIPR-PROP-0019 decision 5: a structurally valid guidance document that
     // discloses a `limited_partial_scope` producer run is a partial
-    // denominator, never a gate input — fail closed like a malformed document.
+    // denominator, never a gate input â fail closed like a malformed document.
     let dir = temp_dir("gate-partial-pr-guidance")?;
     let guidance = write_temp_json(
         &dir,
@@ -936,7 +949,7 @@ fn gate_optional_inputs_emit_warnings_and_markdown_sections() -> Result<(), Stri
     Ok(())
 }
 
-// ── `--exception-policy` ledger integration (#1442) ──
+// ââ `--exception-policy` ledger integration (#1442) ââ
 
 fn exception_ledger_toml(review_after: &str, expires: &str, due_review: &str) -> String {
     format!(
@@ -1109,7 +1122,7 @@ fn gate_exception_policy_missing_or_malformed_ledger_is_config_error() -> Result
     let report = build_gate_decision_report(&input)?;
     assert_eq!(report.status, "config_error");
 
-    // Without the flag, the report and JSON carry no exception fields —
+    // Without the flag, the report and JSON carry no exception fields â
     // existing gate-decision consumers and goldens see identical output.
     input.exception_policy = None;
     let report = build_gate_decision_report(&input)?;
@@ -1306,8 +1319,14 @@ fn gate_acknowledgeable_blocks_complete_gap_ledger_route_with_typed_seam_identit
         "cargo xtask fixtures boundary_gap"
     );
     let inline = gate_decision_inline_detail(&report);
-    assert!(inline.contains("(weakly_exposed)"), "gap-ledger inline detail must preserve its evidence classification: {inline}");
-    assert!(inline.contains("amount == discount_threshold"), "gap-ledger inline detail must name the exact missing discriminator: {inline}");
+    assert!(
+        inline.contains("(weakly_exposed)"),
+        "gap-ledger inline detail must preserve its evidence classification: {inline}"
+    );
+    assert!(
+        inline.contains("amount == discount_threshold"),
+        "gap-ledger inline detail must name the exact missing discriminator: {inline}"
+    );
     assert_eq!(
         value["decisions"][0]["evidence"]["candidate_values"],
         Value::Array(Vec::new()),
@@ -1838,7 +1857,7 @@ fn calibrated_gate_fixture_matrix_matches_checked_outputs() -> Result<(), String
     Ok(())
 }
 
-/// Adversarial baseline-fallback corpus (issue #1934, RIPR-SPEC-0014 §
+/// Adversarial baseline-fallback corpus (issue #1934, RIPR-SPEC-0014 Â§
 /// Baseline Comparison): each scenario pins whether a legacy
 /// `path:line:static_class` fallback-only match is disclosed (warning +
 /// `baseline_match_kind`) or a canonical match stays silent. See
@@ -2755,10 +2774,10 @@ fn given_valid_guidance_doc_with_zero_findings_when_gate_evaluated_then_advisory
 #[test]
 fn given_well_formed_error_status_packet_when_gate_evaluated_then_config_error_not_pass()
 -> Result<(), String> {
-    // Repro: `ripr review-comments` crashes → xtask writes a structurally-valid
+    // Repro: `ripr review-comments` crashes â xtask writes a structurally-valid
     // packet with `status:"error"` and `warnings:[{kind:"tool_error"}]`.
     // Before the fix, gate evaluate read the empty `comments` array, found
-    // zero candidates, and returned exit 0 / status=pass — a fake-clean.
+    // zero candidates, and returned exit 0 / status=pass â a fake-clean.
     let dir = temp_dir("gate-error-packet")?;
     let packet = write_temp_json(
         &dir,
@@ -2968,7 +2987,7 @@ fn given_cap_demoted_summary_only_gap_when_gate_evaluated_then_blocking_not_advi
 /// Advisory candidates ARE counted in `new_unsuppressed.count` even when
 /// `summary.blocking == 0`. In visible-only mode every policy-eligible
 /// candidate is advisory (never blocking), so if the count equalled
-/// `summary.blocking` it would always be 0 — a broken invariant.
+/// `summary.blocking` it would always be 0 â a broken invariant.
 #[test]
 fn new_unsuppressed_counts_advisory_policy_eligible_candidates_not_just_blocking()
 -> Result<(), String> {
