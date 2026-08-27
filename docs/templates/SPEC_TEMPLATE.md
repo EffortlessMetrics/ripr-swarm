@@ -28,10 +28,6 @@ What user or integration problem does this behavior solve?
 
 What should `ripr` do?
 
-## Non-Goals
-
-What is intentionally out of scope?
-
 ## Required Evidence
 
 What data, output, or diagnostics must be present?
@@ -66,7 +62,7 @@ Which commands and CI lanes prove it?
 
 -
 
-## Metrics / Promotion Rule
+## Metrics
 
 What moves this from experimental to stabilizing or stable?
 
