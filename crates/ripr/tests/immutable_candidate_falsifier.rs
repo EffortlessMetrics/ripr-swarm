@@ -505,14 +505,19 @@ fn temporary_candidate_state_is_cleaned() -> Result<(), String> {
             .map(|entry| entry.file_name().to_string_lossy().to_string())
             .collect()
     };
+    // Concurrent corpus tests and an interrupted prior run may leave
+    // sibling roots in the shared parent. Snapshot before this run so the
+    // assertion covers only roots introduced by this invocation; a sibling
+    // root that drops during the settle window is harmless, while a new
+    // root that remains is a real leak.
+    let before = children(&parent);
     run_subject(root, &base, &candidate)?;
-    // Concurrent corpus tests materialize into the same shared parent, so
-    // a single snapshot can see a sibling test's root mid-flight. A
-    // genuinely leaked root persists; a concurrent run's root drops when
-    // that test finishes — settle briefly and require emptiness.
     let mut persisted = Vec::new();
     for _ in 0..12 {
-        persisted = children(&parent);
+        persisted = children(&parent)
+            .into_iter()
+            .filter(|child| !before.contains(child))
+            .collect();
         if persisted.is_empty() {
             break;
         }
