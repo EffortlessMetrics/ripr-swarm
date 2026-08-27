@@ -862,11 +862,10 @@ mod tests {
             },
         );
         RustIndex {
-            include_parents: std::collections::BTreeMap::new(),
-            include_limitations: Vec::new(),
             files,
             tests,
             functions: Vec::new(),
+            workspace_authority: None,
         }
     }
 
