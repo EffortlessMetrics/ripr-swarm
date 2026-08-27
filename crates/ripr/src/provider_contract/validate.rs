@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use super::*;
-use crate::domain::{OracleKind, OracleStrength, RelationReason};
+use crate::domain::{ExposureClass, OracleKind, OracleStrength, RelationReason};
 
 impl RiprProviderCapabilitySetV1 {
     pub fn read_only(provider_version: impl Into<String>) -> Self {
@@ -169,7 +169,18 @@ impl RiprAnalysisReceiptV1 {
             RiprProviderResultClassV1::Completed | RiprProviderResultClassV1::Findings
         );
         if let Some(summary) = &self.summary {
-            validate_summary(summary, &self.request.subject.seam_id, authoritative)?;
+            if !authoritative {
+                return Err(error(
+                    RiprProviderContractErrorCodeV1::CompletenessConflict,
+                    "non-authoritative results cannot carry evidence summaries",
+                ));
+            }
+            validate_summary(
+                summary,
+                &self.request.subject.seam_id,
+                authoritative,
+                matches!(self.native_status, Some(ExposureClass::NoStaticPath)),
+            )?;
         }
         if self.analysis_complete && self.truncated {
             return Err(error(
@@ -256,6 +267,7 @@ fn validate_summary(
     summary: &RiprProviderEvidenceSummaryV1,
     expected_seam_id: &str,
     require_denominator: bool,
+    allow_empty_related_tests: bool,
 ) -> Result<(), RiprProviderContractErrorV1> {
     if summary.seam_id != expected_seam_id {
         return Err(error(
@@ -275,7 +287,7 @@ fn validate_summary(
             "missing discriminators cannot exceed analyzed subjects",
         ));
     }
-    if require_denominator && summary.related_tests.is_empty() {
+    if require_denominator && !allow_empty_related_tests && summary.related_tests.is_empty() {
         return Err(error(
             RiprProviderContractErrorCodeV1::CompletenessConflict,
             "a complete result with analyzed subjects requires related test evidence",
@@ -312,6 +324,27 @@ fn validate_summary(
             &entry.relation_reason,
         )?;
         require_relation_reason(&entry.relation_reason)?;
+    }
+    if !summary.related_tests.is_empty() {
+        let strongest = summary
+            .related_tests
+            .iter()
+            .filter_map(|entry| {
+                require_oracle_strength(
+                    "summary.related_tests.oracle_strength",
+                    &entry.oracle_strength,
+                )
+                .ok()
+            })
+            .max_by_key(OracleStrength::rank)
+            .map(|strength| strength.as_str())
+            .unwrap_or("none");
+        if summary.strongest_oracle != strongest {
+            return Err(error(
+                RiprProviderContractErrorCodeV1::CompletenessConflict,
+                "summary strongest oracle must match the strongest related-test oracle",
+            ));
+        }
     }
     Ok(())
 }

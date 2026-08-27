@@ -257,6 +257,18 @@ fn completed_receipts_require_a_nonzero_analyzed_subject_denominator() {
 }
 
 #[test]
+fn complete_no_static_path_receipts_may_have_no_related_tests() {
+    let mut no_path = receipt();
+    no_path.native_status = Some(ExposureClass::NoStaticPath);
+    if let Some(summary) = no_path.summary.as_mut() {
+        summary.related_tests.clear();
+        summary.strongest_oracle = "none".into();
+        summary.fingerprint = "fp:".into();
+    }
+    assert_eq!(no_path.validate(), Ok(()));
+}
+
+#[test]
 fn non_authoritative_results_require_explicit_disclosure() {
     let mut partial = receipt();
     partial.result_class = RiprProviderResultClassV1::Partial;
@@ -874,6 +886,19 @@ fn findings_require_the_same_authoritative_shape_as_completed() {
     incomplete.analysis_complete = false;
     assert_eq!(
         error_code(incomplete.validate()),
+        Some(RiprProviderContractErrorCodeV1::CompletenessConflict)
+    );
+}
+
+#[test]
+fn summary_strongest_oracle_must_match_related_evidence() {
+    let mut inconsistent = receipt();
+    if let Some(summary) = inconsistent.summary.as_mut() {
+        summary.strongest_oracle = "strong".into();
+        summary.related_tests[0].oracle_strength = "smoke".into();
+    }
+    assert_eq!(
+        error_code(inconsistent.validate()),
         Some(RiprProviderContractErrorCodeV1::CompletenessConflict)
     );
 }
