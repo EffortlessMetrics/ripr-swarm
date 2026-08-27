@@ -3338,14 +3338,35 @@ mod tests {
         assert_eq!(edges.len(), 2, "{edges:?}");
         assert_eq!(edges[0].dependency_name, "posix");
         assert_eq!(edges[1].dependency_name, "windows");
-        for edge in edges {
+        assert_eq!(
+            edges[0].resolution,
+            PathDependencyResolution::UnsupportedAbsolutePath,
+            "POSIX absolute paths are absolute on every host"
+        );
+        assert_eq!(edges[0].resolved_path, None);
+        assert_eq!(edges[0].declared_path.as_deref(), Some("/opt/shared"));
+        #[cfg(windows)]
+        {
             assert_eq!(
-                edge.resolution,
-                PathDependencyResolution::UnsupportedAbsolutePath
+                edges[1].resolution,
+                PathDependencyResolution::UnsupportedAbsolutePath,
+                "drive-rooted paths are absolute on Windows"
             );
-            assert_eq!(edge.resolved_path, None);
-            assert!(edge.declared_path.is_some());
+            assert_eq!(edges[1].resolved_path, None);
         }
+        #[cfg(unix)]
+        {
+            assert_eq!(
+                edges[1].resolution,
+                PathDependencyResolution::TargetMissing,
+                "a drive-prefixed path is relative on Unix"
+            );
+            assert_eq!(
+                edges[1].resolved_path.as_deref(),
+                Some("crates/app/C:/shared")
+            );
+        }
+        assert_eq!(edges[1].declared_path.as_deref(), Some("C:/shared"));
 
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
