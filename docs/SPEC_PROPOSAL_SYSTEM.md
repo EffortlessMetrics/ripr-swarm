@@ -50,8 +50,8 @@ Each layer narrows the previous one.
 
 A **roadmap** says direction. A **proposal** says why. A **spec** says the
 behavior contract. An **ADR** says the architecture decision. An
-**implementation plan** says PR sequence. An **active goal manifest** says what
-is executing now. A **support-tier map** says what users may believe. A
+**implementation plan** says PR sequence. Live execution is observed from GitHub issues, PRs, checks, reviews, and the local
+worktree. A **support-tier map** says what users may believe. A
 **policy ledger** says exceptions and obligations. A **closeout** says what
 actually happened.
 
@@ -68,7 +68,7 @@ and hallucinated commands or policies.
 With the system, the repo itself provides the execution graph:
 
 ```text
-.ripr/goals/active.toml
+.ripr/goals/active.toml (retired; see #1701)
   -> linked implementation plan
     -> live GitHub issue/PR and local worktree
       -> linked spec
