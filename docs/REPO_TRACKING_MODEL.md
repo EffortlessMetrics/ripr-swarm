@@ -112,10 +112,9 @@ To prevent overloading individual docs:
   duplicate proposal reasoning.
 - A campaign-specific plan adds operational detail for one campaign slice. It
   must not redefine specs, ADRs, or active manifest state.
-- The active manifest names the current execution campaign. It may stay on a
-  closed campaign only when the manifest also declares
-  `successor = "<campaign-id>"` or `no_current_goal = true`. Closed manifests
-  also move to the archive.
+- Live execution is selected from GitHub issues, pull requests, checks, reviews,
+  and the local worktree. No tracked singleton manifest selects, authorizes, or
+  schedules the repository-wide current issue, lane, branch, writer, or wave.
 - A scoped PR is the smallest reviewable unit. It must not bundle unrelated
   contracts.
 - A closeout records what happened. It must not invent new contracts; new
@@ -147,6 +146,20 @@ If an external runner proposes a runner-local goals tree, a runner-local
 source-of-truth directory, or another persistent planning ledger, map that
 request back to this repo model unless a dedicated proposal, spec, and migration
 PR deliberately change the repository contract.
+
+## Authority matrix
+
+| Axis | Authority |
+| --- | --- |
+| Legacy document identity and disposition | Spec Markdown and `docs/SPEC_FORMAT.md` |
+| v2 requirement lifecycle and ancestry | RIPR-SPEC v2 dialect and schema |
+| One-PR implementation claim | `ImplementationSliceV1` |
+| Evidence and proof currentness | Traceability edges and exact receipts |
+| Support claim | `docs/status/SUPPORT_TIERS.md` |
+| Live work | GitHub issues/PRs/checks/reviews and the local worktree |
+| Maintenance attention | Advisory maintenance report and review receipts |
+
+These axes are intentionally separate. A spec disposition does not prove an implementation, a receipt does not select live work, and a maintenance candidate does not invalidate a document or authorize a lifecycle transition.
 
 ## Validation
 
