@@ -93,9 +93,7 @@ impl ReviewCommentsRunReceipt {
             category: "analysis_timeout".to_string(),
             repair_route: "rerun review-comments with a larger configured timeout".to_string(),
         });
-        self.non_claims
-            .push("no complete route inventory".to_string());
-        self.non_claims.push("no all-clear".to_string());
+        self.terminalize_non_claims();
     }
 
     #[allow(
@@ -105,12 +103,22 @@ impl ReviewCommentsRunReceipt {
     pub fn failed(&mut self, active_phase: &str, error: &str) {
         self.status = "failed";
         self.active_phase = Some(active_phase.to_string());
+        let repair_route = if error.trim().is_empty() {
+            "unknown analysis failure".to_string()
+        } else {
+            error.to_string()
+        };
         self.limitations.push(ReviewCommentsReceiptLimitation {
             category: "analysis_failed".to_string(),
-            repair_route: error.to_string(),
+            repair_route,
         });
+        self.terminalize_non_claims();
+    }
+
+    fn terminalize_non_claims(&mut self) {
         self.non_claims
-            .push("no complete route inventory".to_string());
+            .retain(|claim| claim != "no complete route inventory is claimed until status is complete");
+        self.non_claims.push("no complete route inventory".to_string());
         self.non_claims.push("no all-clear".to_string());
     }
 
@@ -250,6 +258,12 @@ mod tests {
         assert_eq!(timeout.status, "limited_timeout");
         assert_eq!(timeout.active_phase.as_deref(), Some("review_guidance"));
         assert_eq!(timeout.last_completed_phase, None);
+        assert_eq!(timeout.limitations[0].category, "analysis_timeout");
+        assert_eq!(
+            timeout.limitations[0].repair_route,
+            "rerun review-comments with a larger configured timeout"
+        );
+        assert!(timeout.non_claims.iter().any(|claim| claim == "no all-clear"));
         timeout.write_atomic(&timeout_path)?;
         let timeout_json: Value = serde_json::from_slice(
             &fs::read(&timeout_path)
@@ -259,6 +273,11 @@ mod tests {
         assert_eq!(timeout_json["status"], "limited_timeout");
         assert_eq!(timeout_json["active_phase"], "review_guidance");
         assert_eq!(timeout_json["atomic_write_status"], "committed");
+        assert_eq!(timeout_json["limitations"][0]["category"], "analysis_timeout");
+        assert_eq!(timeout_json["limitations"][0]["repair_route"], "rerun review-comments with a larger configured timeout");
+        assert_eq!(timeout_json["non_claims"][0], "static review guidance is advisory evidence only");
+        assert_eq!(timeout_json["non_claims"][1], "no complete route inventory");
+        assert_eq!(timeout_json["non_claims"][2], "no all-clear");
 
         let failure_path = dir.join("failed.json");
         let mut failure = sample_receipt();
@@ -268,10 +287,12 @@ mod tests {
             failure.active_phase.as_deref(),
             Some("canonical_comparison")
         );
+        assert_eq!(failure.limitations[0].category, "analysis_failed");
         assert_eq!(
             failure.limitations[0].repair_route,
             "canonical comparison failed"
         );
+        assert!(failure.non_claims.iter().any(|claim| claim == "no all-clear"));
         failure.write_atomic(&failure_path)?;
         let failure_json: Value = serde_json::from_slice(
             &fs::read(&failure_path).map_err(|err| format!("read failed receipt failed: {err}"))?,
@@ -280,6 +301,11 @@ mod tests {
         assert_eq!(failure_json["status"], "failed");
         assert_eq!(failure_json["active_phase"], "canonical_comparison");
         assert_eq!(failure_json["atomic_write_status"], "committed");
+        assert_eq!(failure_json["limitations"][0]["category"], "analysis_failed");
+        assert_eq!(failure_json["limitations"][0]["repair_route"], "canonical comparison failed");
+        assert_eq!(failure_json["non_claims"][0], "static review guidance is advisory evidence only");
+        assert_eq!(failure_json["non_claims"][1], "no complete route inventory");
+        assert_eq!(failure_json["non_claims"][2], "no all-clear");
 
         let _ = fs::remove_dir_all(&dir);
         Ok(())
