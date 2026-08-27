@@ -829,10 +829,10 @@ fn diagnostics_require_identity_and_a_coherent_source_position() {
 #[test]
 fn summary_rejects_noncanonical_taxonomy_and_counter_contradictions() {
     let mut invalid_kind = receipt();
-    if let Some(summary) = invalid_kind.summary.as_mut() {
-        if let Some(entry) = summary.related_tests.first_mut() {
-            entry.oracle_kind = "proven".into();
-        }
+    if let Some(summary) = invalid_kind.summary.as_mut()
+        && let Some(entry) = summary.related_tests.first_mut()
+    {
+        entry.oracle_kind = "proven".into(); // ripr-allow: static-language: taxonomy fixture value
     }
     assert_eq!(
         error_code(invalid_kind.validate()),
@@ -840,10 +840,10 @@ fn summary_rejects_noncanonical_taxonomy_and_counter_contradictions() {
     );
 
     let mut invalid_strength = receipt();
-    if let Some(summary) = invalid_strength.summary.as_mut() {
-        if let Some(entry) = summary.related_tests.first_mut() {
-            entry.oracle_strength = "adequate".into();
-        }
+    if let Some(summary) = invalid_strength.summary.as_mut()
+        && let Some(entry) = summary.related_tests.first_mut()
+    {
+        entry.oracle_strength = "adequate".into(); // ripr-allow: static-language: taxonomy fixture value
     }
     assert_eq!(
         error_code(invalid_strength.validate()),

@@ -52,9 +52,23 @@ fn gate_inline_failure_detail_names_seam_location_and_inspection_command() -> Re
     assert_eq!(report.status, "blocked");
     let inline = gate_decision_inline_detail(&report);
     let decision = &report.decisions[0];
-    let missing = decision.repair_route.missing_discriminator.as_deref().expect("fixture must provide the missing discriminator");
-    assert!(inline.contains(&format!(" ({})", decision.static_class.as_deref().unwrap())), "inline detail missing static classification: {inline}");
-    assert!(inline.contains(missing), "inline detail missing exact repair discriminator: {inline}");
+    let missing = decision
+        .repair_route
+        .missing_discriminator
+        .as_deref()
+        .ok_or_else(|| "fixture must provide the missing discriminator".to_owned())?;
+    let static_class = decision
+        .static_class
+        .as_deref()
+        .ok_or_else(|| "fixture must provide the static classification".to_owned())?;
+    assert!(
+        inline.contains(&format!(" ({static_class})")),
+        "inline detail missing static classification: {inline}"
+    );
+    assert!(
+        inline.contains(missing),
+        "inline detail missing exact repair discriminator: {inline}"
+    );
     assert!(
         inline.contains("1 blocking gap(s); first:"),
         "inline detail lost the blocking summary: {inline}"
@@ -64,7 +78,9 @@ fn gate_inline_failure_detail_names_seam_location_and_inspection_command() -> Re
         "inline detail missing seam location: {inline}"
     );
     assert!(
-        inline.contains("`ripr agent brief --root . --seam-id 8f7fa8644fd12280 --json ...`"),
+        inline.contains(
+            "`ripr agent brief --root . --seam-id 8f7fa8644fd12280 --json > target/ripr/workflow/agent-brief.json`",
+        ),
         "inline detail missing inspection command: {inline}"
     );
     Ok(())
@@ -77,7 +93,10 @@ fn gate_inline_failure_detail_preserves_line_only_anchor() -> Result<(), String>
     report.decisions[0].placement.path = None;
     report.decisions[0].placement.line = Some(88);
     let inline = gate_decision_inline_detail(&report);
-    assert!(inline.contains("[(no file anchor):88]"), "inline detail dropped line-only anchor: {inline}");
+    assert!(
+        inline.contains("[(no file anchor):88]"),
+        "inline detail dropped line-only anchor: {inline}"
+    );
     Ok(())
 }
 
@@ -1306,8 +1325,14 @@ fn gate_acknowledgeable_blocks_complete_gap_ledger_route_with_typed_seam_identit
         "cargo xtask fixtures boundary_gap"
     );
     let inline = gate_decision_inline_detail(&report);
-    assert!(inline.contains("(weakly_exposed)"), "gap-ledger inline detail must preserve its evidence classification: {inline}");
-    assert!(inline.contains("amount == discount_threshold"), "gap-ledger inline detail must name the exact missing discriminator: {inline}");
+    assert!(
+        inline.contains("(weakly_exposed)"),
+        "gap-ledger inline detail must preserve its evidence classification: {inline}"
+    );
+    assert!(
+        inline.contains("amount == discount_threshold"),
+        "gap-ledger inline detail must name the exact missing discriminator: {inline}"
+    );
     assert_eq!(
         value["decisions"][0]["evidence"]["candidate_values"],
         Value::Array(Vec::new()),

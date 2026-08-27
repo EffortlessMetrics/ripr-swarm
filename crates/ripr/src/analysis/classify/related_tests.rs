@@ -151,8 +151,8 @@ pub(in crate::analysis) fn find_related_tests<'a>(
         // not publish it as file identity.  A short source stem such as
         // `config` can occur in unrelated test paths (for example
         // `reconfigure.rs`).
-        let file_path_token_matches = !file_name.is_empty()
-            && normalize_path(&test.file).contains(file_name);
+        let file_path_token_matches =
+            !file_name.is_empty() && normalize_path(&test.file).contains(file_name);
         let owner_name_in_test = !owner_name_lc.is_empty() && test_name.contains(&owner_name_lc);
         let token_in_test_name = probe_tokens
             .iter()
@@ -534,7 +534,11 @@ mod tests {
         let index = RustIndex {
             functions: vec![owner.clone()],
             tests: vec![
-                test("crates/core/tests/config.rs", "config_file", "assert!(true);"),
+                test(
+                    "crates/core/tests/config.rs",
+                    "config_file",
+                    "assert!(true);",
+                ),
                 test(
                     "crates/core/tests/config_test.rs",
                     "config_test_file",
@@ -553,9 +557,11 @@ mod tests {
         let related = find_related_tests(&probe, Some(&owner), &index, true, None);
 
         assert_eq!(related.len(), 3);
-        assert!(related
-            .iter()
-            .all(|(_, reason)| *reason == RelationReason::SameTestFile));
+        assert!(
+            related
+                .iter()
+                .all(|(_, reason)| *reason == RelationReason::SameTestFile)
+        );
     }
 
     #[test]
