@@ -1,7 +1,7 @@
 use std::fs::{self, FileTimes};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const VALID_SPEC: &str = r#"# RIPR-SPEC-9999: Time-independent fixture
 
