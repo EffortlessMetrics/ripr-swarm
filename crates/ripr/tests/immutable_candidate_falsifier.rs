@@ -652,10 +652,9 @@ fn materialization_roots_fails_closed_on_an_unreadable_parent() -> Result<(), St
 fn type_change_fails_closed_naming_the_entry() -> Result<(), String> {
     let (guard, base, candidate) = type_change_repo("typechange", true)?;
     let root = &guard.0;
-    let error = match run_subject(root, &base, &candidate) {
-        Err(error) => error,
-        Ok(_) => return Err("a type-changed entry must fail closed".to_string()),
-    };
+    let error = run_subject(root, &base, &candidate)
+        .err()
+        .ok_or_else(|| "a type-changed entry must fail closed".to_string())?;
     assert!(
         error.contains("git candidate subject"),
         "failure must stay inside the subject boundary: {error}"
@@ -716,11 +715,10 @@ fn fail_closed_subject_leaves_no_materialized_state() -> Result<(), String> {
 
     let (guard, base, candidate) = type_change_repo("cleanup-failclosed", true)?;
     let (_temp_guard, parent) = private_temp("cleanup-failclosed-temp")?;
-    let error = match run_subject_in_temp_dir(&guard.0, &base, &candidate, _temp_guard.0.as_path())
-    {
-        Err(error) => error,
-        Ok(_) => return Err("a type-changed entry must fail closed".to_string()),
-    };
+    let error = run_subject_in_temp_dir(&guard.0, &base, &candidate, _temp_guard.0.as_path())
+        .err()
+        .ok_or_else(|| "a type-changed entry must fail closed".to_string())?;
+
     // The rejection must come from `untar` naming the entry it could not
     // materialize. That is what proves extraction was already under way —
     // and therefore that there was a materialization root to leak — rather

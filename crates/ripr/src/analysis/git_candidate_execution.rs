@@ -64,27 +64,41 @@ impl Drop for TempRootGuard {
         // unbounded, invisible disk leak indistinguishable from a clean run,
         // so name the path an operator has to remove.
         if let Err(error) = remove_temp_root(&self.0) {
-            eprintln!(
-                "ripr: candidate materialization root could not be removed: {} ({error}); \
-                 remove it manually to reclaim the space",
-                self.0.display()
-            );
+            eprintln!("{}", cleanup_failure_report(&self.0, &error));
         }
     }
 }
 
-/// Remove one materialization root. A path that is already gone is success —
-/// the root is what must not survive, not this particular call. One retry
-/// absorbs a transient hold (an antivirus scan or a still-closing handle on
-/// Windows); a second failure is real and is reported by the caller.
+/// The operator-facing text for a cleanup that could not be performed. Split
+/// out of `Drop` so the message an operator has to act on is assertable:
+/// `Drop` can neither return the error nor be given a channel to report it
+/// through.
+fn cleanup_failure_report(path: &Path, error: &std::io::Error) -> String {
+    format!(
+        "ripr: candidate materialization root could not be removed: {} ({error}); \
+         remove it manually to reclaim the space",
+        path.display()
+    )
+}
+
+/// Remove one materialization root, retrying once.
+///
+/// One retry absorbs a transient hold (an antivirus scan or a still-closing
+/// handle on Windows). A second failure is real and is returned to the caller.
 fn remove_temp_root(path: &Path) -> std::io::Result<()> {
-    match std::fs::remove_dir_all(path) {
+    match remove_temp_root_once(path) {
         Ok(()) => Ok(()),
+        Err(_) => remove_temp_root_once(path),
+    }
+}
+
+/// One removal attempt. A path that is already gone is success: what must not
+/// survive is the root, not this particular call — a guard dropped after a
+/// manual cleanup has nothing to report.
+fn remove_temp_root_once(path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_dir_all(path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(_) => match std::fs::remove_dir_all(path) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            result => result,
-        },
+        result => result,
     }
 }
 
@@ -816,9 +830,9 @@ mod tests {
         // holds in a container as well as on a developer machine.
         let not_a_directory = base.join("regular-file");
         std::fs::write(&not_a_directory, "not a directory\n").map_err(|error| error.to_string())?;
-        let Err(error) = remove_temp_root(&not_a_directory) else {
-            return Err("removing a non-directory must report the failure".to_string());
-        };
+        let error = remove_temp_root(&not_a_directory)
+            .err()
+            .ok_or_else(|| "removing a non-directory must report the failure".to_string())?;
         assert_ne!(
             error.kind(),
             std::io::ErrorKind::NotFound,
@@ -830,6 +844,61 @@ mod tests {
         );
 
         let _ = std::fs::remove_file(&not_a_directory);
+        let _ = std::fs::remove_dir_all(&base);
+        Ok(())
+    }
+
+    /// The guard's whole reason to exist on the failure path is that it says
+    /// something. Drive a real `Drop` over a root that cannot be removed and
+    /// assert both halves: the path survives (so the failure was genuine, not
+    /// a silent success) and the operator-facing text names it.
+    #[test]
+    fn dropping_the_guard_over_an_unremovable_root_reports_the_path() -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!(
+            "ripr-guard-drop-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).map_err(|error| error.to_string())?;
+
+        // A regular file is not a directory on every platform, and — unlike a
+        // permission denial — it fails for root too, so this holds in a
+        // container as well as on a developer machine.
+        let unremovable = base.join("regular-file");
+        std::fs::write(&unremovable, "not a directory\n").map_err(|error| error.to_string())?;
+
+        drop(TempRootGuard(unremovable.clone()));
+        assert!(
+            unremovable.exists(),
+            "the failing path must survive, or this proves nothing about the failure branch"
+        );
+
+        let error = remove_temp_root(&unremovable)
+            .err()
+            .ok_or_else(|| "the fixture path must not be removable".to_string())?;
+        let report = cleanup_failure_report(&unremovable, &error);
+        assert!(
+            report.contains(&unremovable.display().to_string()),
+            "the report must name the path an operator has to remove: {report}"
+        );
+        assert!(
+            report.contains("could not be removed"),
+            "the report must say what went wrong: {report}"
+        );
+
+        // A guard over a root that IS removable stays quiet and removes it.
+        let removable = base.join("tree");
+        std::fs::create_dir_all(removable.join("nested")).map_err(|error| error.to_string())?;
+        drop(TempRootGuard(removable.clone()));
+        assert!(
+            !removable.exists(),
+            "a removable root must be gone after the guard drops"
+        );
+
+        let _ = std::fs::remove_file(&unremovable);
         let _ = std::fs::remove_dir_all(&base);
         Ok(())
     }
