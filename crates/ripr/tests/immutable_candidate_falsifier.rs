@@ -88,11 +88,34 @@ fn fixture_repo(name: &str) -> Result<(RepoGuard, String, String), String> {
 }
 
 fn run_check(root: &Path, args: &[&str]) -> Result<Value, String> {
-    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+    run_check_in_temp_dir(root, args, None)
+}
+
+/// `temp_dir`, when given, becomes the subject process's private temp
+/// directory. Every materialization the run performs then lands under that
+/// path instead of the shared process temp directory, so a test observes its
+/// own run's temporary state and nothing else — no snapshot diffing against
+/// sibling roots, and no settle window betting on when a sibling finishes.
+fn run_check_in_temp_dir(
+    root: &Path,
+    args: &[&str],
+    temp_dir: Option<&Path>,
+) -> Result<Value, String> {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    command
         .current_dir(root)
         .args(["check", "--root"])
         .arg(root)
-        .args(args)
+        .args(args);
+    if let Some(temp_dir) = temp_dir {
+        // `std::env::temp_dir` reads `TMPDIR` on Unix and `TMP`/`TEMP` on
+        // Windows; set all three so the redirect holds on every platform
+        // this suite runs on.
+        for key in ["TMPDIR", "TMP", "TEMP"] {
+            command.env(key, temp_dir);
+        }
+    }
+    let output = command
         .output()
         .map_err(|error| format!("ripr check failed to start: {error}"))?;
     if !output.status.success() {
@@ -131,6 +154,71 @@ fn run_subject_with_base(
     let args = subject_args(base, candidate);
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
     run_check(root, &refs)
+}
+
+fn run_subject_in_temp_dir(
+    root: &Path,
+    base: &str,
+    candidate: &str,
+    temp_dir: &Path,
+) -> Result<Value, String> {
+    let args = subject_args(Some(base), candidate);
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    run_check_in_temp_dir(root, &refs, Some(temp_dir))
+}
+
+/// A private temp directory for one subject process, plus the
+/// `ripr-git-candidate` parent that will appear inside it.
+fn private_temp(name: &str) -> Result<(RepoGuard, PathBuf), String> {
+    let guard = RepoGuard(unique_root(name));
+    std::fs::create_dir_all(&guard.0).map_err(|error| error.to_string())?;
+    let parent = guard.0.join("ripr-git-candidate");
+    Ok((guard, parent))
+}
+
+/// The per-run materialization roots under one `ripr-git-candidate` parent.
+///
+/// Fail-closed on every read error. Treating an unreadable parent or an
+/// unreadable entry as "no roots" would let the emptiness assertions below
+/// pass for the wrong reason — what they exist to catch is exactly a
+/// directory that is present and not being cleaned up.
+fn materialization_roots(parent: &Path) -> Result<Vec<String>, String> {
+    let entries = std::fs::read_dir(parent).map_err(|error| {
+        format!(
+            "materialization parent {} unreadable: {error}",
+            parent.display()
+        )
+    })?;
+    let mut roots = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!(
+                "materialization parent {} had an unreadable entry: {error}",
+                parent.display()
+            )
+        })?;
+        roots.push(entry.file_name().to_string_lossy().to_string());
+    }
+    roots.sort();
+    Ok(roots)
+}
+
+/// Assert that a subject run materialized into `parent` and left nothing
+/// behind. The existence check is the positive control: without it, a temp
+/// redirect that silently stopped working would leave `parent` absent and
+/// the emptiness check would hold for the wrong reason.
+fn assert_materialization_root_cleaned(parent: &Path, context: &str) -> Result<(), String> {
+    assert!(
+        parent.is_dir(),
+        "{context}: run must have materialized under {}",
+        parent.display()
+    );
+    let persisted = materialization_roots(parent)?;
+    assert!(
+        persisted.is_empty(),
+        "{context}: no per-run materialization root may persist: {persisted:?}"
+    );
+    Ok(())
 }
 
 /// The #3279 reproduction, verbatim: bind base B and candidate tree T,
@@ -437,15 +525,27 @@ enabled = [\"rust\", \"python\"]
     Ok(())
 }
 
-/// #3279 review M3: a type change (regular file → symlink) in the
-/// candidate tree fails closed with a named error naming the entry —
-/// never a worktree fallback, never clean zero findings.
-#[test]
-#[serial]
-fn type_change_fails_closed_naming_the_entry() -> Result<(), String> {
-    let root = unique_root("typechange");
+/// A repository whose candidate tree replaces a regular file with a symlink
+/// entry — a mode `untar` rejects.
+///
+/// The symlink is written straight into the **index** as a `120000` entry
+/// rather than created in the worktree. Creating a real symlink needs
+/// privileges Windows runners may not have, and the previous fixture skipped
+/// the whole arm when that failed, so the fail-closed test could report
+/// success without ever exercising the path it names. A `cacheinfo` entry
+/// needs no filesystem support, so the corpus is identical on every platform.
+///
+/// `symlink_entry: false` builds the same repository with `src/linked.rs`
+/// left as an ordinary file. That is the positive control: it must
+/// materialize cleanly, so a rejection in the other arm is attributable to
+/// the entry mode and not to a fixture that could never materialize at all.
+fn type_change_repo(
+    name: &str,
+    symlink_entry: bool,
+) -> Result<(RepoGuard, String, String), String> {
+    let root = unique_root(name);
     std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
-    let _guard = RepoGuard(root.clone());
+    let guard = RepoGuard(root.clone());
     git(&root, &["init", "--initial-branch=main"])?;
     git(&root, &["config", "user.email", "r@e.invalid"])?;
     git(&root, &["config", "user.name", "ripr"])?;
@@ -469,30 +569,100 @@ edition='2024'
     git(&root, &["commit", "-qm", "base"])?;
     let base = git(&root, &["rev-parse", "HEAD"])?;
     write(&root, "src/lib.rs", LIB_CANDIDATE)?;
-    // Replace the regular file with a symlink via the index (type change).
-    std::fs::remove_file(root.join("src/linked.rs")).map_err(|e| e.to_string())?;
-    #[cfg(unix)]
-    std::os::unix::fs::symlink("lib.rs", root.join("src/linked.rs")).map_err(|e| e.to_string())?;
-    #[cfg(windows)]
-    {
-        // Windows symlinks need privileges; use a gitlinks-free stand-in:
-        // commit the deletion only (type-change-to-absent is covered by
-        // the delete corpus test). Skip the symlink arm where it cannot
-        // be created, keeping the corpus honest.
-        if std::os::windows::fs::symlink_file("lib.rs", root.join("src/linked.rs")).is_err() {
-            return Ok(());
-        }
+    git(&root, &["add", "src/lib.rs"])?;
+    if symlink_entry {
+        // A symlink blob is exactly its target path, no trailing newline.
+        // Hash it, then stage it at mode 120000 so the candidate *tree*
+        // carries the type change without the worktree needing one.
+        write(&root, ".link-target", "lib.rs")?;
+        let blob = git(&root, &["hash-object", "-w", ".link-target"])?;
+        std::fs::remove_file(root.join(".link-target")).map_err(|e| e.to_string())?;
+        git(
+            &root,
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                &format!("120000,{blob},src/linked.rs"),
+            ],
+        )?;
     }
-    git(&root, &["add", "."])?;
     git(&root, &["commit", "-qm", "candidate"])?;
     let candidate = git(&root, &["rev-parse", "HEAD"])?;
-    let error = match run_subject(&root, &base, &candidate) {
+    if symlink_entry {
+        // Assert the fixture really is what the test claims. Without this a
+        // silently-failed `update-index` would leave an ordinary file and
+        // every downstream assertion would be about the wrong tree.
+        let entry = git(&root, &["ls-tree", &candidate, "src/linked.rs"])?;
+        assert!(
+            entry.starts_with("120000 blob"),
+            "candidate tree must carry a symlink entry, got: {entry}"
+        );
+    }
+    Ok((guard, base, candidate))
+}
+
+/// The cleanup oracles are only as good as the probe underneath them. A
+/// probe that reported an unreadable parent as "no roots" would turn every
+/// emptiness assertion into a vacuous pass, so bind that directly: a parent
+/// that cannot be listed is an error, never an empty result.
+#[test]
+fn materialization_roots_fails_closed_on_an_unreadable_parent() -> Result<(), String> {
+    let guard = RepoGuard(unique_root("roots-probe"));
+    std::fs::create_dir_all(&guard.0).map_err(|error| error.to_string())?;
+
+    let empty = guard.0.join("empty-parent");
+    std::fs::create_dir_all(&empty).map_err(|error| error.to_string())?;
+    assert!(
+        materialization_roots(&empty)?.is_empty(),
+        "a readable empty parent must report no roots"
+    );
+
+    let populated = guard.0.join("populated-parent");
+    std::fs::create_dir_all(populated.join("1234-5678")).map_err(|error| error.to_string())?;
+    assert_eq!(
+        materialization_roots(&populated)?,
+        vec!["1234-5678".to_string()],
+        "a readable parent must report its roots"
+    );
+
+    // A regular file is not a directory on every platform, and — unlike a
+    // permission denial — it fails for root too, so this control holds in a
+    // container as well as on a developer machine.
+    let not_a_directory = guard.0.join("regular-file");
+    std::fs::write(&not_a_directory, "not a directory\n").map_err(|error| error.to_string())?;
+    assert!(
+        materialization_roots(&not_a_directory).is_err(),
+        "an unlistable parent must be an error, not an empty root set"
+    );
+
+    let missing = guard.0.join("never-created");
+    assert!(
+        materialization_roots(&missing).is_err(),
+        "an absent parent must be an error, not an empty root set"
+    );
+    Ok(())
+}
+
+/// #3279 review M3: a type change (regular file → symlink) in the
+/// candidate tree fails closed with a named error naming the entry —
+/// never a worktree fallback, never clean zero findings.
+#[test]
+#[serial]
+fn type_change_fails_closed_naming_the_entry() -> Result<(), String> {
+    let (guard, base, candidate) = type_change_repo("typechange", true)?;
+    let root = &guard.0;
+    let error = match run_subject(root, &base, &candidate) {
         Err(error) => error,
         Ok(_) => return Err("a type-changed entry must fail closed".to_string()),
     };
     assert!(
         error.contains("git candidate subject"),
         "failure must stay inside the subject boundary: {error}"
+    );
+    assert!(
+        error.contains("unsupported archive entry type") && error.contains("src/linked.rs"),
+        "failure must name the exact rejected entry, not a generic error: {error}"
     );
     Ok(())
 }
@@ -502,40 +672,63 @@ edition='2024'
 fn temporary_candidate_state_is_cleaned() -> Result<(), String> {
     let (guard, base, candidate) = fixture_repo("cleanup")?;
     let root = &guard.0;
-    // The oracle is the set of PER-RUN materialization roots (children
-    // of the shared ripr-git-candidate parent), not the parent itself —
-    // the parent persists by design and counting it made the test both
-    // cold-start flaky and vacuous (#3279 review M1).
-    let parent = std::env::temp_dir().join("ripr-git-candidate");
-    let children = |dir: &Path| -> Vec<String> {
-        std::fs::read_dir(dir)
-            .into_iter()
-            .flatten()
-            .filter_map(|entry| entry.ok())
-            .map(|entry| entry.file_name().to_string_lossy().to_string())
-            .collect()
+    // The oracle is the set of PER-RUN materialization roots (children of
+    // the `ripr-git-candidate` parent), not the parent itself — the parent
+    // persists by design and counting it made the test both cold-start
+    // flaky and vacuous (#3279 review M1).
+    //
+    // Reading that parent under the *shared* process temp directory left a
+    // second cross-talk failure: sibling runs materialize into the same
+    // place, so a snapshot sees their in-flight roots. Serializing and
+    // diffing against a before-snapshot narrows it but still cannot tell a
+    // sibling's late-dropping root from a leak, which is why a settle loop
+    // was still needed. A private temp directory removes the ambiguity
+    // instead of timing around it: every child of this parent came from
+    // this run, so the assertion is exact and needs no sleeping.
+    let (_temp_guard, parent) = private_temp("cleanup-temp")?;
+    run_subject_in_temp_dir(root, &base, &candidate, _temp_guard.0.as_path())?;
+    assert_materialization_root_cleaned(&parent, "successful run")
+}
+
+/// The success path is the easy half. A subject that fails closed *after*
+/// the tree is already on disk must clean up too: `materialize` extracts the
+/// candidate tree and only then rejects an unsupported entry, so a guard
+/// armed on the success path alone leaves a full copy of the repository's
+/// source behind on every fail-closed run.
+#[test]
+#[serial]
+fn fail_closed_subject_leaves_no_materialized_state() -> Result<(), String> {
+    // Positive control first: the same fixture without the symlink entry
+    // must materialize cleanly. That establishes the repository is
+    // materializable, so the rejection below is attributable to the entry
+    // mode rather than to a fixture that could never have got that far.
+    let (control_guard, control_base, control_candidate) =
+        type_change_repo("cleanup-control", false)?;
+    let (_control_temp, control_parent) = private_temp("cleanup-control-temp")?;
+    run_subject_in_temp_dir(
+        &control_guard.0,
+        &control_base,
+        &control_candidate,
+        _control_temp.0.as_path(),
+    )
+    .map_err(|error| format!("control fixture must materialize cleanly: {error}"))?;
+    assert_materialization_root_cleaned(&control_parent, "control run")?;
+
+    let (guard, base, candidate) = type_change_repo("cleanup-failclosed", true)?;
+    let (_temp_guard, parent) = private_temp("cleanup-failclosed-temp")?;
+    let error = match run_subject_in_temp_dir(&guard.0, &base, &candidate, _temp_guard.0.as_path())
+    {
+        Err(error) => error,
+        Ok(_) => return Err("a type-changed entry must fail closed".to_string()),
     };
-    // Concurrent corpus tests and an interrupted prior run may leave
-    // sibling roots in the shared parent. Snapshot before this run so the
-    // assertion covers only roots introduced by this invocation; a sibling
-    // root that drops during the settle window is harmless, while a new
-    // root that remains is a real leak.
-    let before = children(&parent);
-    run_subject(root, &base, &candidate)?;
-    let mut persisted = Vec::new();
-    for _ in 0..12 {
-        persisted = children(&parent)
-            .into_iter()
-            .filter(|child| !before.contains(child))
-            .collect();
-        if persisted.is_empty() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(250));
-    }
+    // The rejection must come from `untar` naming the entry it could not
+    // materialize. That is what proves extraction was already under way —
+    // and therefore that there was a materialization root to leak — rather
+    // than the run failing earlier, at identity resolution or `git archive`,
+    // where cleanup would be trivially satisfied.
     assert!(
-        persisted.is_empty(),
-        "no per-run materialization root may persist after a completed run: {persisted:?}"
+        error.contains("unsupported archive entry type") && error.contains("src/linked.rs"),
+        "fail-closed run must reject the extracted entry by name: {error}"
     );
-    Ok(())
+    assert_materialization_root_cleaned(&parent, "fail-closed run")
 }

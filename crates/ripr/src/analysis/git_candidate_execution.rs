@@ -59,7 +59,32 @@ pub(crate) struct TempRootGuard(PathBuf);
 
 impl Drop for TempRootGuard {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        // A cleanup failure leaves an extracted copy of the candidate tree
+        // on disk. `Drop` cannot return it, and discarding it would make an
+        // unbounded, invisible disk leak indistinguishable from a clean run,
+        // so name the path an operator has to remove.
+        if let Err(error) = remove_temp_root(&self.0) {
+            eprintln!(
+                "ripr: candidate materialization root could not be removed: {} ({error}); \
+                 remove it manually to reclaim the space",
+                self.0.display()
+            );
+        }
+    }
+}
+
+/// Remove one materialization root. A path that is already gone is success —
+/// the root is what must not survive, not this particular call. One retry
+/// absorbs a transient hold (an antivirus scan or a still-closing handle on
+/// Windows); a second failure is real and is reported by the caller.
+fn remove_temp_root(path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => match std::fs::remove_dir_all(path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            result => result,
+        },
     }
 }
 
@@ -191,6 +216,14 @@ fn materialize(
     );
     let base_dir = std::env::temp_dir().join("ripr-git-candidate").join(unique);
     let target = base_dir.join(candidate_tree);
+    // Arm cleanup BEFORE any fallible work. Every `?` below returns early,
+    // and until this guard exists those paths leave `base_dir` — which by
+    // then holds an extracted copy of the candidate tree — on disk forever.
+    // A fail-closed subject (an unsupported entry mode, a git archive
+    // failure, a bounded-read overrun) must not cost a permanent temp
+    // directory; only the success path hands the guard to the caller, who
+    // holds it for as long as the materialization is in use.
+    let cleanup = TempRootGuard(base_dir.clone());
     if target.exists() {
         // A stale directory from a crashed run must not be reused: its
         // bytes are unverified. Remove and re-create deterministically.
@@ -226,7 +259,7 @@ fn materialize(
     let extracted = untar(&tar_path, &target)?;
     let _ = std::fs::remove_file(&tar_path);
     let _ = extracted;
-    Ok((target.clone(), TempRootGuard(base_dir)))
+    Ok((target.clone(), cleanup))
 }
 
 /// Minimal in-crate tar extraction for `git archive` output: only the
@@ -746,6 +779,58 @@ mod tests {
             resolved.diff.contains("src/lib.rs"),
             "empty→candidate must show the added files"
         );
+        Ok(())
+    }
+
+    /// The guard reports a cleanup it could not perform instead of
+    /// discarding the error. `Drop` cannot return one, so the decision of
+    /// what counts as a failure lives here, where it can be asserted.
+    #[test]
+    fn remove_temp_root_separates_removal_success_from_real_failure() -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!(
+            "ripr-temp-root-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_nanos()
+        ));
+        let root = base.join("tree");
+        std::fs::create_dir_all(root.join("nested")).map_err(|error| error.to_string())?;
+        std::fs::write(root.join("nested/file.rs"), "pub fn one() {}\n")
+            .map_err(|error| error.to_string())?;
+
+        // A populated root is removed, and the removal is observable.
+        remove_temp_root(&root)
+            .map_err(|error| format!("populated root must be removed: {error}"))?;
+        assert!(!root.exists(), "root must not survive a successful removal");
+
+        // An already-absent root is success: the postcondition is that the
+        // root is gone, not that this call is the one that removed it. A
+        // guard dropped after a manual cleanup must stay quiet.
+        remove_temp_root(&root).map_err(|error| format!("absent root must be success: {error}"))?;
+
+        // A real failure is returned, not swallowed. A regular file is not a
+        // directory on every platform this runs on, and — unlike a
+        // permission denial — it fails for root too, so the negative control
+        // holds in a container as well as on a developer machine.
+        let not_a_directory = base.join("regular-file");
+        std::fs::write(&not_a_directory, "not a directory\n").map_err(|error| error.to_string())?;
+        let Err(error) = remove_temp_root(&not_a_directory) else {
+            return Err("removing a non-directory must report the failure".to_string());
+        };
+        assert_ne!(
+            error.kind(),
+            std::io::ErrorKind::NotFound,
+            "a present-but-unremovable path must not be reported as already gone"
+        );
+        assert!(
+            not_a_directory.exists(),
+            "the failing path must still be there for the operator the warning names"
+        );
+
+        let _ = std::fs::remove_file(&not_a_directory);
+        let _ = std::fs::remove_dir_all(&base);
         Ok(())
     }
 }
