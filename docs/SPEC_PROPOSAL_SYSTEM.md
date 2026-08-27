@@ -50,7 +50,7 @@ Each layer narrows the previous one.
 
 A **roadmap** says direction. A **proposal** says why. A **spec** says the
 behavior contract. An **ADR** says the architecture decision. An
-**implementation plan** says PR sequence. An **active goal manifest** says what
+**implementation plan** says PR sequence. GitHub and the local worktree show what
 is executing now. A **support-tier map** says what users may believe. A
 **policy ledger** says exceptions and obligations. A **closeout** says what
 actually happened.
@@ -239,7 +239,7 @@ Use stable, repo-specific IDs like `RIPR-SPEC-0001`.
 - specs -> proposal + proof commands
 - ADRs -> dependent specs
 - plan -> proposal/spec/ADR IDs
-- active goal -> plan work items
+- GitHub issue/PR -> plan work items
 - PRs -> plan/spec/proposal
 - closeouts -> landed evidence
 
