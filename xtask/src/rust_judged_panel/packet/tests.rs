@@ -934,6 +934,74 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("sha256:{:x}", sha2::Sha256::digest(bytes))
 }
 
+
+
+fn repository_root() -> Result<PathBuf, String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .map_err(|error| format!("failed to run git rev-parse: {error}"))?;
+    if !output.status.success() {
+        return Err("git rev-parse --show-toplevel failed".to_string());
+    }
+    let root = std::str::from_utf8(&output.stdout)
+        .map_err(|error| format!("invalid utf-8 in git output: {error}"))?
+        .trim();
+    if root.is_empty() {
+        return Err("git rev-parse --show-toplevel returned an empty path".to_string());
+    }
+    Ok(PathBuf::from(root))
+}
+
+fn snapshot_tree(root: &Path) -> Result<Option<Vec<(String, bool, Vec<u8>)>>, String> {
+    if !root.exists() {
+        return Ok(None);
+    }
+
+    fn visit(
+        root: &Path,
+        path: &Path,
+        entries: &mut Vec<(String, bool, Vec<u8>)>,
+    ) -> Result<(), String> {
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|error| format!("snapshot path outside root: {error}"))?
+            .to_string_lossy()
+            .replace('\\', "/");
+        let metadata = fs::symlink_metadata(path).map_err(|error| error.to_string())?;
+        if metadata.is_dir() {
+            entries.push((relative, true, Vec::new()));
+            for entry in fs::read_dir(path).map_err(|error| error.to_string())? {
+                visit(root, &entry.map_err(|error| error.to_string())?.path(), entries)?;
+            }
+        } else {
+            entries.push((
+                relative,
+                false,
+                fs::read(path).map_err(|error| error.to_string())?,
+            ));
+        }
+        Ok(())
+    }
+
+    let mut entries = Vec::new();
+    visit(root, root, &mut entries)?;
+    entries.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok(Some(entries))
+}
+
+fn assert_tree_unchanged(
+    root: &Path,
+    before: &Option<Vec<(String, bool, Vec<u8>)>>,
+    label: &str,
+) -> Result<(), String> {
+    let after = snapshot_tree(root)?;
+    if &after != before {
+        return Err(format!("{label} changed the portable tree"));
+    }
+    Ok(())
+}
+
 fn write_json_bytes(path: &Path, value: &serde_json::Value) -> Result<Vec<u8>, String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -962,9 +1030,7 @@ fn copy_panel_authority(repository: &Path, root: &Path) -> Result<(), String> {
 fn on_disk_host_fixture(name: &str) -> Result<HostDiskFixture, String> {
     use crate::rust_judged_panel::subject::{self, ReplaySubjectFile};
 
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .ok_or_else(|| "xtask manifest lacks repository parent".to_string())?;
+    let repository = repository_root()?;
     let root = TestRoot(scratch(name)?);
     copy_panel_authority(repository, &root.0)?;
     let manifest = crate::rust_judged_panel::load_and_validate_at(
@@ -1275,18 +1341,20 @@ fn judgment_sidecar_public_publish_fails_closed_without_a_valid_host_run() -> Re
     // Absent sidecar: publish must fail closed without writing any portable
     // artifact when the referenced host current does not exist.
     let absent = on_disk_host_fixture("absent-sidecar")?;
-    if super::publish(
+    let absent_portable = absent._root.0.join("metrics/rust-judged-behavior-panel/portable");
+    let absent_before = snapshot_tree(&absent_portable)?;
+    match super::publish(
         &absent._root.0,
         &absent.manifest,
         "target/ripr/judged-panel-fixture/current-missing.json",
-    )
-    .is_ok()
-    {
-        return Err("publish accepted an absent host current".to_string());
+    ) {
+        Ok(()) => return Err("publish accepted an absent host current".to_string()),
+        Err(error) if !error.contains("resolve host current") => {
+            return Err(format!("absent host current failed for the wrong reason: {error}"))
+        }
+        Err(_) => {}
     }
-    if absent._root.0.join(CURRENT_PATH).exists() {
-        return Err("failed publication wrote a portable current pointer".to_string());
-    }
+    assert_tree_unchanged(&absent_portable, &absent_before, "absent publication")?;
 
     // Stale/tampered sidecar: flipping retained raw bytes after the digests
     // were bound must fail closed and leave the portable tree untouched.
@@ -1309,17 +1377,22 @@ fn judgment_sidecar_public_publish_fails_closed_without_a_valid_host_run() -> Re
         b"{\"tampered\": true}\n",
     )
     .map_err(|error| error.to_string())?;
-    if super::publish(
+    let tampered_portable = tampered
+        ._root
+        .0
+        .join("metrics/rust-judged-behavior-panel/portable");
+    let tampered_before = snapshot_tree(&tampered_portable)?;
+    match super::publish(
         &tampered._root.0,
         &tampered.manifest,
         &tampered.host_current,
-    )
-    .is_ok()
-    {
-        return Err("publish accepted tampered retained raw evidence".to_string());
+    ) {
+        Ok(()) => return Err("publish accepted tampered retained raw evidence".to_string()),
+        Err(error) if !error.contains("host receipt raw stdout identity mismatch") => {
+            return Err(format!("tampered evidence failed for the wrong reason: {error}"))
+        }
+        Err(_) => {}
     }
-    if tampered._root.0.join(CURRENT_PATH).exists() {
-        return Err("tampered publication wrote a portable current pointer".to_string());
-    }
+    assert_tree_unchanged(&tampered_portable, &tampered_before, "tampered publication")?;
     Ok(())
 }
