@@ -142,8 +142,10 @@ pub use output::suppressions::CheckSuppressionOutcome;
 pub use output::suppressions::SuppressedCheckFinding;
 pub use provider_contract::{
     RIPR_ANALYSIS_RECEIPT_SCHEMA_VERSION, RIPR_ANALYSIS_REQUEST_SCHEMA_VERSION,
-    RIPR_PROVIDER_CAPABILITY_SCHEMA_VERSION, RiprAnalysisReceiptV1, RiprAnalysisRequestV1,
+    RIPR_PROVIDER_CAPABILITY_SCHEMA_VERSION, RIPR_PROVIDER_CLAIM_BOUNDARY,
+    RIPR_REQUIRED_EXCLUDED_CLAIMS, RiprAnalysisReceiptV1, RiprAnalysisRequestV1,
     RiprEvidenceSubjectV1, RiprProviderCapabilityDescriptorV1, RiprProviderCapabilitySetV1,
+    RiprProviderEvidenceEntryV1, RiprProviderEvidenceSummaryV1,
     RiprProviderCapabilityV1, RiprProviderContractErrorCodeV1, RiprProviderContractErrorV1,
     RiprProviderDiagnosticV1, RiprProviderNativeStatusV1, RiprProviderResultClassV1,
     RiprRepositorySnapshotV1, RiprSourceViewV1,
