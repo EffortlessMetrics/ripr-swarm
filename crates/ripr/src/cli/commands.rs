@@ -13,6 +13,7 @@ use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_f
 use crate::output;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use crate::cli::commands_agent_support::{
     agent_brief_lines_from_diff, agent_brief_owners_for_lines,
@@ -29,8 +30,27 @@ fn record_review_comments_error(
     error: String,
 ) -> String {
     receipt.failed(phase, &error);
-    let _ = receipt.write_atomic(receipt_path);
-    error
+    match receipt.write_atomic(receipt_path) {
+        Ok(()) => error,
+        Err(receipt_error) => format!("{error}; failed to persist terminal receipt: {receipt_error}"),
+    }
+}
+
+fn enforce_review_comments_deadline(
+    receipt: &mut crate::output::review_comments_receipt::ReviewCommentsRunReceipt,
+    receipt_path: &Path,
+    started: Instant,
+    timeout_ms: u64,
+    phase: &str,
+) -> Result<(), String> {
+    if started.elapsed() < Duration::from_millis(timeout_ms) {
+        return Ok(());
+    }
+    receipt.limited_timeout(phase);
+    receipt.write_atomic(receipt_path).map_err(|error| {
+        format!("review-comments timed out during {phase}; failed to persist terminal receipt: {error}")
+    })?;
+    Err(format!("review-comments timed out during {phase}"))
 }
 
 fn load_review_comments_analysis_outcome(
@@ -1280,6 +1300,7 @@ fn review_comments_with_diff_loader(
         output::outcome::display_path(&options.out),
         output::outcome::display_path(&markdown_path),
     ];
+    let started = Instant::now();
     let mut receipt = output::review_comments_receipt::ReviewCommentsRunReceipt::new(
         &input.root,
         &options.base,
@@ -1347,6 +1368,13 @@ fn review_comments_with_diff_loader(
 
     receipt.phase("configuration", "diff_discovery");
     receipt.write_atomic(&receipt_path)?;
+    enforce_review_comments_deadline(
+        &mut receipt,
+        &receipt_path,
+        started,
+        options.timeout_ms,
+        "diff_discovery",
+    )?;
     let diff_text = load_diff(&input.root, &options.base, &options.head).map_err(|error| {
         record_review_comments_error(&mut receipt, &receipt_path, "diff_discovery", error)
     })?;
@@ -1358,10 +1386,24 @@ fn review_comments_with_diff_loader(
         );
     }
     receipt.phase("diff_discovery", "language_facts");
+    enforce_review_comments_deadline(
+        &mut receipt,
+        &receipt_path,
+        started,
+        options.timeout_ms,
+        "language_facts",
+    )?;
     receipt.write_atomic(&receipt_path)?;
     let changed_lines = agent_brief_lines_from_diff(&input.root, &diff_text);
     let changed_owners = agent_brief_owners_for_lines(&input.root, &changed_lines);
     receipt.phase("language_facts", "canonical_analysis");
+    enforce_review_comments_deadline(
+        &mut receipt,
+        &receipt_path,
+        started,
+        options.timeout_ms,
+        "canonical_analysis",
+    )?;
     receipt.write_atomic(&receipt_path)?;
     let working_set = AgentBriefResolvedWorkingSet::base(options.base.clone(), changed_lines)
         .with_changed_owners(changed_owners);
@@ -1380,6 +1422,13 @@ fn review_comments_with_diff_loader(
         record_review_comments_error(&mut receipt, &receipt_path, "canonical_analysis", error)
     })?;
     receipt.phase("canonical_analysis", "route_construction");
+    enforce_review_comments_deadline(
+        &mut receipt,
+        &receipt_path,
+        started,
+        options.timeout_ms,
+        "route_construction",
+    )?;
     receipt.write_atomic(&receipt_path)?;
     let selection = select_agent_brief_seams(
         &scoped_inventory.classified,
@@ -1388,6 +1437,13 @@ fn review_comments_with_diff_loader(
         AgentBriefPolicy::from_config(&config),
     );
     receipt.phase("route_construction", "static_rendering");
+    enforce_review_comments_deadline(
+        &mut receipt,
+        &receipt_path,
+        started,
+        options.timeout_ms,
+        "static_rendering",
+    )?;
     receipt.write_atomic(&receipt_path)?;
     let analysis_scope = output::review_comments::ReviewCommentsAnalysisScope::limited_diff_scope(
         &working_set,
