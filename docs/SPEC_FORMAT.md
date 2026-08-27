@@ -53,15 +53,19 @@ Spec IDs are source-of-truth identifiers, not generated runtime counts. The
 helper only prevents stale numbering assumptions; humans still author the spec
 contract.
 
-## Proposed-spec review age
+## Separate concerns
 
-A spec with `Status: proposed` is subject to the 90-day review-age check.
-The check uses the Unix timestamp of the most recent Git commit that changed
-the exact spec path, passed as a separate path argument after `--`. It never
-uses filesystem modification time. If Git cannot prove a tracked path and a
-parseable timestamp, the result is `not_proven` and the check fails closed.
+`Status` records the document's disposition in the legacy spec dialect. It does
+not assert implementation, evidence, support, or live work. Requirement-level
+lifecycle and ancestry belong to the RIPR-SPEC v2 dialect; one-PR implementation
+claims belong to `ImplementationSliceV1`; evidence currentness belongs to
+traceability and exact receipts; support claims belong to
+`docs/status/SUPPORT_TIERS.md`; and maintenance attention belongs to the
+advisory maintenance report and review receipts.
 
-Accepted and deprecated specs are outside this proposed-age check.
+A document may deserve maintenance attention without being invalid. The
+maintenance report is advisory and must not change this format check's status
+validation or merge eligibility.
 ## Checks
 
 Run:
