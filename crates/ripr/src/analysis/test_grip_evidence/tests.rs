@@ -165,6 +165,130 @@ fn outer_after() {
 }
 
 #[test]
+fn module_import_aliases_follow_nested_lexical_scopes() -> Result<(), String> {
+    let aliases = module_import_aliases(
+        r#"
+use crate::outer_owner as pipe;
+use crate::only_here as unique;
+
+fn outer_before() {
+    pipe::compute();
+}
+
+mod nested {
+    use crate::nested_owner as pipe;
+
+    fn nested_call() {
+        pipe::compute();
+    }
+}
+
+fn outer_after() {
+    pipe::compute();
+}
+"#,
+    );
+    let pipe = aliases
+        .get("pipe")
+        .ok_or_else(|| "pipe alias should be indexed".to_string())?;
+    assert_eq!(
+        pipe.module_path_at(6),
+        Some("outer_owner"),
+        "outer binding before the nested module"
+    );
+    assert_eq!(
+        pipe.module_path_at(13),
+        Some("nested_owner"),
+        "nested module resolves its nearest binding"
+    );
+    assert_eq!(
+        pipe.module_path_at(18),
+        Some("outer_owner"),
+        "outer binding after the nested module"
+    );
+    assert_eq!(
+        aliases
+            .get("unique")
+            .and_then(|alias| alias.module_path_at(13)),
+        Some("only_here"),
+        "a unique outer alias stays credited inside a nested module"
+    );
+
+    let conflicts = module_import_aliases(
+        "use crate::child as pipe;\nuse crate::other as pipe;\nfn call() { pipe::compute(); }",
+    );
+    assert!(
+        conflicts
+            .get("pipe")
+            .and_then(|alias| alias.module_path_at(3))
+            .is_none(),
+        "same-scope conflicting module aliases must fail closed"
+    );
+
+    let platform_gated = module_import_aliases(
+        "#[cfg(unix)]\nuse crate::unix_owner as pipe;\n#[cfg(windows)]\nuse crate::windows_owner as pipe;\nfn call() { pipe::compute(); }",
+    );
+    assert!(
+        platform_gated
+            .get("pipe")
+            .and_then(|alias| alias.module_path_at(5))
+            .is_none(),
+        "cfg-gated platform imports of one alias must stay unresolved"
+    );
+
+    let repeated =
+        module_import_aliases("use crate::child as pipe;\nuse crate::child as pipe;\nfn call() {}");
+    assert_eq!(
+        repeated
+            .get("pipe")
+            .and_then(|alias| alias.module_path_at(3)),
+        Some("child"),
+        "a repeated identical import is not an ambiguity"
+    );
+
+    let sibling_modules = module_import_aliases(
+        "mod first {\n    use crate::child as pipe;\n    fn call() { pipe::compute(); }\n}\nmod second {\n    use crate::other as pipe;\n    fn call() { pipe::compute(); }\n}",
+    );
+    let sibling_pipe = sibling_modules
+        .get("pipe")
+        .ok_or_else(|| "sibling module alias should be indexed".to_string())?;
+    assert_eq!(sibling_pipe.module_path_at(3), Some("child"));
+    assert_eq!(sibling_pipe.module_path_at(7), Some("other"));
+    Ok(())
+}
+
+#[test]
+fn direct_helper_import_aliases_fail_closed_on_same_scope_alias_conflicts() {
+    let allowed =
+        std::collections::BTreeSet::from(["outer_owner".to_string(), "nested_owner".to_string()]);
+    let conflicting = direct_helper_import_aliases(
+        "use crate::outer_owner::compute as run;\nuse crate::nested_owner::compute as run;\n",
+        &allowed,
+    );
+    assert!(
+        !conflicting.contains_key("run"),
+        "two file-scope imports of one alias name different targets: {conflicting:?}"
+    );
+    let repeated = direct_helper_import_aliases(
+        "use crate::outer_owner::compute as run;\nuse crate::outer_owner::compute as run;\n",
+        &allowed,
+    );
+    assert!(
+        repeated.contains_key("run"),
+        "a repeated identical helper import is not an ambiguity: {repeated:?}"
+    );
+    let distinct = direct_helper_import_aliases(
+        "use crate::outer_owner::compute as run;\nuse crate::nested_owner::compute as other;\n",
+        &allowed,
+    );
+    assert_eq!(
+        distinct.len(),
+        2,
+        "distinct aliases stay credited: {distinct:?}"
+    );
+}
+
+#[test]
 fn call_arguments_uses_identifier_boundary_for_callee_name() {
     let text =
         "fn borrowed_amount_matches() { let amount = 100; let actual = amount_matches(&amount); }";
@@ -3863,6 +3987,132 @@ fn aliased_wrapper_observes_pipeline_call_target() {
         "aliased target-affinity wrapper activation must not invent values: {:?}",
         evidence.observed_values
     );
+    Ok(())
+}
+
+#[test]
+fn given_call_presence_when_nested_test_module_rebinds_a_module_alias_then_each_relation_keeps_its_own_target()
+-> Result<(), String> {
+    let pipeline = PathBuf::from("src/pipeline.rs");
+    let pipeline_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+pub fn exercise_pipeline() -> String {
+    render_pipeline("alpha")
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+"#;
+    let report = PathBuf::from("src/report.rs");
+    let report_src = r#"
+pub fn render_report(input: &str) -> String {
+    format_report(input)
+}
+
+pub fn exercise_pipeline() -> String {
+    render_report("beta")
+}
+
+fn format_report(input: &str) -> String {
+    input.to_string()
+}
+"#;
+    let tests = PathBuf::from("tests/contract_tests.rs");
+    // #3413: the outer alias binds `pipe` to `report`; the nested test module
+    // rebinds the same alias to `pipeline`. Neither binding may overwrite the
+    // other, and neither test may be credited against the other's target.
+    let tests_src = r#"
+use crate::report as pipe;
+
+#[test]
+fn outer_module_test_observes_report_target() {
+    let format_report = pipe::exercise_pipeline();
+    assert_eq!(format_report, "beta");
+}
+
+mod nested {
+    use crate::pipeline as pipe;
+
+    #[test]
+    fn nested_module_test_observes_pipeline_target() {
+        let format_output = pipe::exercise_pipeline();
+        assert_eq!(format_output, "alpha");
+    }
+}
+"#;
+    let index = index_from_files(&[
+        (pipeline, pipeline_src),
+        (report, report_src),
+        (tests.clone(), tests_src),
+    ])?;
+
+    let pipeline_seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+    let pipeline_call_presence = pipeline_seams
+        .iter()
+        .find(|s| {
+            s.kind() == SeamKind::CallPresence
+                && s.owner().ends_with("::render_pipeline")
+                && s.expression().contains("format_output")
+        })
+        .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+    let pipeline_evidence = evidence_for_seam(pipeline_call_presence, &index);
+    let pipeline_related = pipeline_evidence
+        .related_tests
+        .iter()
+        .filter(|test| test.relation_reason == RelationReason::HelperOwnerCall)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        pipeline_related
+            .iter()
+            .map(|test| test.test_name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["nested_module_test_observes_pipeline_target"],
+        "only the nested rebinding may reach the pipeline owner: {:?}",
+        pipeline_evidence.related_tests
+    );
+    let nested_related = pipeline_related
+        .first()
+        .ok_or_else(|| "expected nested pipeline helper owner-call relation".to_string())?;
+    assert_eq!(nested_related.file, tests);
+    let nested_target = nested_related
+        .test_target
+        .as_ref()
+        .ok_or_else(|| "nested pipeline relation lost its indexed test target".to_string())?;
+    let nested_function = index
+        .tests
+        .iter()
+        .find(|test| test.name == "nested_module_test_observes_pipeline_target")
+        .ok_or_else(|| "nested test must be indexed".to_string())?;
+    assert_eq!(nested_target.line(), nested_function.start_line);
+    assert_eq!(nested_target.file(), nested_function.file);
+    assert_eq!(pipeline_evidence.activate.state, StageState::Yes);
+
+    let report_seams = inventory_seams_from_index(&[PathBuf::from("src/report.rs")], &index);
+    let report_call_presence = report_seams
+        .iter()
+        .find(|s| {
+            s.kind() == SeamKind::CallPresence
+                && s.owner().ends_with("::render_report")
+                && s.expression().contains("format_report")
+        })
+        .ok_or_else(|| "expected render_report call_presence seam".to_string())?;
+    let report_evidence = evidence_for_seam(report_call_presence, &index);
+    assert_eq!(
+        report_evidence
+            .related_tests
+            .iter()
+            .filter(|test| test.relation_reason == RelationReason::HelperOwnerCall)
+            .map(|test| test.test_name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["outer_module_test_observes_report_target"],
+        "the outer alias must stay bound to the report owner: {:?}",
+        report_evidence.related_tests
+    );
+    assert_eq!(report_evidence.activate.state, StageState::Yes);
     Ok(())
 }
 
