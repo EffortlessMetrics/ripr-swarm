@@ -105,7 +105,8 @@ impl ReviewCommentsRunReceipt {
             category: "analysis_failed".to_string(),
             repair_route: error.to_string(),
         });
-        self.non_claims.push("no complete route inventory".to_string());
+        self.non_claims
+            .push("no complete route inventory".to_string());
         self.non_claims.push("no all-clear".to_string());
     }
 
