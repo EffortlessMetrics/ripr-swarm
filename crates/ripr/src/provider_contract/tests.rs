@@ -15,7 +15,7 @@ fn error_code(
 }
 
 fn json_error(message: impl Into<String>) -> serde_json::Error {
-    serde_json::Error::io(std::io::Error::other(message.into()))
+    std::io::Error::other(message.into()).into()
 }
 
 fn required_excluded_claims() -> Vec<String> {
@@ -685,7 +685,7 @@ fn summaries_validate_every_field_and_related_test_entry() {
     }
     assert_eq!(
         error_code(absolute_file.validate()),
-        Some(RiprProviderContractErrorCodeV1::UnsafeOutputRoot)
+        Some(RiprProviderContractErrorCodeV1::MalformedIdentity)
     );
 
     let mut zero_line = receipt();
@@ -779,7 +779,7 @@ fn diagnostics_require_identity_and_a_coherent_source_position() {
         diagnostic_with(|diagnostic| diagnostic.source_path = Some("/abs/src/lib.rs".into()));
     assert_eq!(
         error_code(absolute_path.validate()),
-        Some(RiprProviderContractErrorCodeV1::UnsafeOutputRoot)
+        Some(RiprProviderContractErrorCodeV1::MalformedIdentity)
     );
 
     for (line, column) in [
