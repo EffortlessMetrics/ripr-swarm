@@ -3,16 +3,37 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex};
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct WorkspaceRootAuthority {
     pub(crate) root: PathBuf,
     pub(crate) workspace_identity: String,
     pub(crate) files: BTreeMap<PathBuf, WorkspaceFileAuthority>,
     #[serde(skip, default)]
-    current_files: OnceLock<BTreeMap<PathBuf, bool>>,
+    current_files: Arc<Mutex<BTreeMap<PathBuf, (String, bool)>>>,
 }
+
+impl Clone for WorkspaceRootAuthority {
+    fn clone(&self) -> Self {
+        Self {
+            root: self.root.clone(),
+            workspace_identity: self.workspace_identity.clone(),
+            files: self.files.clone(),
+            current_files: Arc::new(Mutex::new(BTreeMap::new())),
+        }
+    }
+}
+
+impl PartialEq for WorkspaceRootAuthority {
+    fn eq(&self, other: &Self) -> bool {
+        self.root == other.root
+            && self.workspace_identity == other.workspace_identity
+            && self.files == other.files
+    }
+}
+
+impl Eq for WorkspaceRootAuthority {}
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct WorkspaceFileAuthority {
@@ -66,7 +87,7 @@ impl WorkspaceRootAuthority {
             root: canonical_root,
             workspace_identity: source_digest(canonical.as_bytes()),
             files: authorities,
-            current_files: OnceLock::new(),
+            current_files: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
@@ -85,29 +106,73 @@ impl WorkspaceRootAuthority {
         if !file.valid || !seam.valid || file.package_identity != seam.package_identity {
             return false;
         }
-        let current_files = self.current_files.get_or_init(|| {
-            self.files
-                .iter()
-                .map(|(path, authority)| {
-                    let current = authority.valid
-                        && self.root.join(path).canonicalize().is_ok_and(|full| {
-                            full.starts_with(&self.root)
-                                && std::fs::read(&full)
-                                    .map(|bytes| source_digest(&bytes) == authority.source_digest)
-                                    .unwrap_or(false)
-                                && matches!(
-                                    resolve_package_identity(&self.root, path),
-                                    PackageIdentity::Known(ref identity)
-                                        if identity == &authority.package_identity
-                                )
-                        });
-                    (path.clone(), current)
-                })
-                .collect()
-        });
-        current_files.get(test_file).copied().unwrap_or(false)
-            && current_files.get(seam_file).copied().unwrap_or(false)
+        let test_current = self.current_file_is_current(test_file, file);
+        let seam_authority = self.files.get(seam_file)?;
+        let seam_current = self.current_file_is_current(seam_file, seam_authority);
+        test_current && seam_current
             && source_digest(source.as_bytes()) == file.source_digest
+
+    }
+
+    fn current_file_is_current(&self, path: &Path, authority: &WorkspaceFileAuthority) -> bool {
+        let fingerprint = filesystem_fingerprint(&self.root, path);
+        if let Ok(cache) = self.current_files.lock() {
+            if let Some((cached_fingerprint, valid)) = cache.get(path) {
+                if cached_fingerprint == &fingerprint {
+                    return *valid;
+                }
+            }
+        }
+        let valid = authority.valid
+            && self.root.join(path).canonicalize().is_ok_and(|full| {
+                full.starts_with(&self.root)
+                    && std::fs::read(&full)
+                        .map(|bytes| source_digest(&bytes) == authority.source_digest)
+                        .unwrap_or(false)
+                    && matches!(
+                        resolve_package_identity(&self.root, path),
+                        PackageIdentity::Known(ref identity)
+                            if identity == &authority.package_identity
+                    )
+            });
+        if let Ok(mut cache) = self.current_files.lock() {
+            cache.insert(path.to_path_buf(), (fingerprint, valid));
+        }
+        valid
+    }
+}
+
+fn filesystem_fingerprint(root: &Path, relative: &Path) -> String {
+    let mut fingerprint = String::new();
+    let source = root.join(relative);
+    append_metadata_fingerprint(&mut fingerprint, &source);
+    let mut cursor = source.parent().map(Path::to_path_buf);
+    while let Some(directory) = cursor {
+        append_metadata_fingerprint(&mut fingerprint, &directory.join("Cargo.toml"));
+        if directory == root {
+            break;
+        }
+        cursor = directory.parent().map(Path::to_path_buf);
+    }
+    fingerprint
+}
+
+fn append_metadata_fingerprint(output: &mut String, path: &Path) {
+    match std::fs::metadata(path) {
+        Ok(metadata) => {
+            use std::time::UNIX_EPOCH;
+            let modified = metadata
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(UNIX_EPOCH).ok());
+            output.push_str(&format!(
+                "{}:{}:{:?};",
+                path.display(),
+                metadata.len(),
+                modified.map(|time| (time.as_secs(), time.subsec_nanos()))
+            ));
+        }
+        Err(error) => output.push_str(&format!("{}:{:?};", path.display(), error.kind())),
     }
 }
 
@@ -492,5 +557,37 @@ mod tests {
         Ok(())
     }
 
+
+    #[test]
+    fn source_change_invalidates_cached_currentness() -> Result<(), Box<dyn std::error::Error>>
+    {
+        struct FixtureCleanup(PathBuf);
+        impl Drop for FixtureCleanup {
+            fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
+        }
+
+        let root = std::env::temp_dir().join(format!(
+            "ripr-authority-cache-invalidation-{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+        ));
+        let _cleanup = FixtureCleanup(root.clone());
+        std::fs::create_dir_all(root.join("pkg/src"))?;
+        std::fs::create_dir_all(root.join("pkg/tests"))?;
+        std::fs::write(root.join("pkg/Cargo.toml"), "[package]\nname = \"pkg\"\n")?;
+        let sources = [
+            (PathBuf::from("pkg/src/lib.rs"), "pub fn source() -> i32 { 1 }\n"),
+            (PathBuf::from("pkg/tests/lib.rs"), "#[test]\nfn source_test() { assert_eq!(1, 1); }\n"),
+        ];
+        let files = sources.iter().map(|(path, source)| (path.clone(), FileFacts {
+            path: path.clone(), source: (*source).to_string(), ..FileFacts::default()
+        })).collect();
+        let authority = WorkspaceRootAuthority::from_index(&root, &files);
+        let test = Path::new("pkg/tests/lib.rs");
+        let source = Path::new("pkg/src/lib.rs");
+        assert!(authority.validates_target(test, source, sources[1].1));
+        std::fs::write(root.join("pkg/tests/lib.rs"), "changed\n")?;
+        assert!(!authority.validates_target(test, source, sources[1].1));
+        Ok(())
+    }
 
 }
