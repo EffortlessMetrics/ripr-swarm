@@ -26,7 +26,15 @@ pub fn probes_for_repo_file(root: &Path, path: &Path, index: &RustIndex) -> Vec<
         if owner_function.is_some_and(|function| function.is_test) {
             continue;
         }
-        let owner = owner_function.map(|function| function.id.clone());
+        // Include facts keep their fragment path for source locations, while
+        // `facts::resolve_repository_local_includes` rebases the symbol
+        // identity to the parent compilation unit. Normalize that identity
+        // here so repo probes remain stable across host path separators.
+        let owner = owner_function.map(|function| {
+            let mut owner = function.id.clone();
+            owner.0 = owner.0.replace('\\', "/");
+            owner
+        });
         let norm_expr = normalize_expression(&shape.text);
         // Ordinal 1 here; post-hoc dedup below handles collisions.
         let id = repo_probe_id(path, &family, owner.as_ref(), &norm_expr, 1);
@@ -146,6 +154,54 @@ mod tests {
             &RustIndex::default(),
         );
         assert!(probes.is_empty());
+    }
+
+    #[test]
+    fn probes_for_included_file_keep_fragment_location_and_parent_owner() {
+        let fragment = PathBuf::from("src/parser_fragment.rs");
+        let index = RustIndex {
+            files: BTreeMap::from([(
+                fragment.clone(),
+                FileFacts {
+                    path: fragment.clone(),
+                    functions: vec![FunctionFact {
+                        id: SymbolId(r"src\lib.rs::impl Parser::clamp".to_string()),
+                        name: "clamp".to_string(),
+                        file: fragment.clone(),
+                        start_line: 1,
+                        end_line: 4,
+                        body: "fn clamp(&self, value: i32) -> i32 { value }".to_string(),
+                        calls: vec![],
+                        returns: vec![],
+                        literals: vec![],
+                        is_test: false,
+                        attrs: vec![],
+                    }],
+                    probe_shapes: vec![ProbeShapeFact {
+                        start_line: 2,
+                        end_line: 2,
+                        start_byte: 36,
+                        kind: PROBE_SHAPE_ERROR_PATH.to_string(),
+                        text: "value > self.limit".to_string(),
+                    }],
+                    ..FileFacts::default()
+                },
+            )]),
+            ..RustIndex::default()
+        };
+
+        let probes = probes_for_repo_file(Path::new("workspace"), &fragment, &index);
+
+        assert_eq!(probes.len(), 1);
+        assert_eq!(
+            probes[0].location.file,
+            PathBuf::from("workspace/src/parser_fragment.rs")
+        );
+        assert_eq!(probes[0].location.line, 2);
+        assert_eq!(
+            probes[0].owner,
+            Some(SymbolId("src/lib.rs::impl Parser::clamp".to_string()))
+        );
     }
 }
 
