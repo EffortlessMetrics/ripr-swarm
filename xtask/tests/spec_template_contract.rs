@@ -41,7 +41,7 @@ fn materialize_template(root: &Path) -> Result<(), String> {
 #[test]
 fn canonical_template_materializes_into_a_valid_spec() -> Result<(), String> {
     let root = temp_root()?;
-    materialize_template(&root)?;
+    materialize_template(&root.0)?;
     let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
         .arg("check-spec-format")
         .current_dir(&root.0)
