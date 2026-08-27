@@ -82,6 +82,9 @@ impl ReviewCommentsRunReceipt {
         self.missing_artifacts.clear();
     }
 
+    // These transitions are introduced before deadline/error orchestration wires them in.
+    // Keep the staged API lint-clean without weakening the crate-wide dead-code policy.
+    #[allow(dead_code)]
     pub(crate) fn limited_timeout(&mut self, active_phase: &str) {
         self.status = "limited_timeout";
         self.active_phase = Some(active_phase.to_string());
