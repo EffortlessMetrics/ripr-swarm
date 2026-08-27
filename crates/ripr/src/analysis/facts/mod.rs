@@ -10,3 +10,5 @@ pub use model::{
     CallFact, FileFacts, FunctionFact, FunctionSummary, LiteralFact, OracleFact, ProbeShapeFact,
     ReturnFact, RustIncludeLimitation, RustIndex, TestFact, TestSummary,
 };
+#[cfg(test)]
+pub(crate) use model::{WorkspaceFileAuthority, WorkspaceRootAuthority};
