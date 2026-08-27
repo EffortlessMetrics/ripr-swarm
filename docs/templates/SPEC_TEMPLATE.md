@@ -70,7 +70,7 @@ Which commands and CI lanes prove it?
 
 -
 
-## Metrics / Promotion Rule
+## Metrics
 
 What moves this from experimental to stabilizing or stable?
 
