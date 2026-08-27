@@ -82,10 +82,6 @@ impl ReviewCommentsRunReceipt {
         self.missing_artifacts.clear();
     }
 
-    #[allow(
-        dead_code,
-        reason = "terminal transition is wired by the follow-up deadline orchestration slice"
-    )]
     pub fn limited_timeout(&mut self, active_phase: &str) {
         self.status = "limited_timeout";
         self.active_phase = Some(active_phase.to_string());
@@ -96,10 +92,6 @@ impl ReviewCommentsRunReceipt {
         self.terminalize_non_claims();
     }
 
-    #[allow(
-        dead_code,
-        reason = "terminal transition is wired by the follow-up error orchestration slice"
-    )]
     pub fn failed(&mut self, active_phase: &str, error: &str) {
         self.status = "failed";
         self.active_phase = Some(active_phase.to_string());
