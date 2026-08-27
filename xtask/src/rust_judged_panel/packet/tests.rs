@@ -951,7 +951,10 @@ fn repository_root() -> Result<PathBuf, String> {
     Ok(PathBuf::from(root))
 }
 
-fn snapshot_tree(root: &Path) -> Result<Option<Vec<(String, bool, Vec<u8>)>>, String> {
+type TreeSnapshotEntries = Vec<(String, bool, Vec<u8>)>;
+type TreeSnapshot = Option<TreeSnapshotEntries>;
+
+fn snapshot_tree(root: &Path) -> Result<TreeSnapshot, String> {
     if !root.exists() {
         return Ok(None);
     }
@@ -959,7 +962,7 @@ fn snapshot_tree(root: &Path) -> Result<Option<Vec<(String, bool, Vec<u8>)>>, St
     fn visit(
         root: &Path,
         path: &Path,
-        entries: &mut Vec<(String, bool, Vec<u8>)>,
+        entries: &mut TreeSnapshotEntries,
     ) -> Result<(), String> {
         let relative = path
             .strip_prefix(root)
@@ -994,7 +997,7 @@ fn snapshot_tree(root: &Path) -> Result<Option<Vec<(String, bool, Vec<u8>)>>, St
 
 fn assert_tree_unchanged(
     root: &Path,
-    before: &Option<Vec<(String, bool, Vec<u8>)>>,
+    before: &TreeSnapshot,
     label: &str,
 ) -> Result<(), String> {
     let after = snapshot_tree(root)?;
