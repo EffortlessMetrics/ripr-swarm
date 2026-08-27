@@ -264,10 +264,11 @@ Policy impact:
 
 ## 7. Status lifecycle
 
-- Proposals/specs/ADRs: `draft`, `proposed`, `accepted`, `implemented`,
-  `superseded`, `rejected`
-- Plan items: `ready`, `active`, `blocked`, `done`, `superseded`
-- Active goals: `active`, `paused`, `complete`, `archived`
+- Legacy specs: `proposed`, `planned`, `accepted`, `deprecated`
+- Proposals and ADRs: use their own documented disposition vocabulary.
+- Requirement-level v2 lifecycle: governed by the RIPR-SPEC v2 dialect.
+- Plan items: `ready`, `active`, `blocked`, `done`, `superseded`.
+- Live execution: represented by GitHub issues/PRs/checks/reviews and the local worktree; it is not a document status.
 
 ---
 
@@ -346,9 +347,8 @@ and rollback.
 1. Define docs model.
 2. Add doc artifact ledger.
 3. Add doc artifact validation.
-4. Add active goal manifest.
-5. Add goal validation.
-6. Add first proposal.
+4. Add live issue/PR tracking and implementation-slice validation.
+5. Add first proposal.
 7. Add first spec.
 8. Add support tiers.
 9. Add package/CI/policy ledgers.
@@ -363,7 +363,7 @@ Proposal = why.
 Spec = what.
 ADR = durable decision.
 Plan = how.
-Active goal = what Codex is doing now.
+Live work = what GitHub and the local worktree show now.
 Support tiers = what users may believe.
 Policy ledgers = what exceptions and proof obligations exist.
 CI = what proved it.
