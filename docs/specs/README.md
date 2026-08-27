@@ -7,6 +7,12 @@ Use specs for behavior that users, integrations, or future agents need to rely
 on. Keep implementation details in architecture docs or ADRs unless they affect
 observable behavior.
 
+The `Status` field is the document's legacy disposition: `proposed`, `planned`,
+`accepted`, or `deprecated`. It does not claim implementation, current
+evidence, support, or live work. Those claims belong to their respective
+implementation mappings, evidence receipts, support-tier records, and GitHub
+issues/PRs/checks/reviews.
+
 ## Index
 
 | Spec | Status | Topic |
