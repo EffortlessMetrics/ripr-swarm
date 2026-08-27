@@ -13784,9 +13784,19988 @@ fn dogfood_python_no_action_eval_rejects_actionable_overclaiming() {
     scenario.stop_reasons.clear();
     scenario.claim_boundary.clear();
 
-    let report = dogfo
-... 764454 bytes omitted ...
- .any(|action| action["kind"] == "fix_raw_evidence_refs")
+    let report = dogfood_python_no_action_eval_run(&scenario)
+        .errors
+        .join("\n");
+
+    assert!(report.contains("no-action evals must not emit repair cards"));
+    assert!(report.contains("no-action evals must not emit agent packets"));
+    assert!(report.contains("verify_result=not_applicable"));
+    assert!(report.contains("receipt_result=not_applicable"));
+    assert!(report.contains("gap_movement=no_receipt"));
+    assert!(report.contains("stop_reasons must explain the no-action decision"));
+    assert!(report.contains("claim_boundary must include No repair packet emitted"));
+}
+
+#[test]
+fn dogfood_python_ranked_finding_parser_defaults_missing_reason() {
+    let case = serde_json::json!({
+        "ranked_top_3_findings": [
+            {
+                "rank": 1,
+                "canonical_gap_id": "gap:python:app/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold",
+                "repair_card_present": true,
+                "usability": "usable",
+                "missing_discriminator": "amount == threshold",
+                "suggested_test_file": "tests/test_pricing.py",
+                "verify_command": "pytest tests/test_pricing.py::test_calculate_discount_smoke",
+                "false_positive_notes": "none observed"
+            }
+        ]
+    });
+
+    let findings = super::dogfood_python_ranked_findings(&case);
+
+    assert_eq!(findings.len(), 1);
+    assert_eq!(
+        findings[0].reason,
+        "ranked Python finding did not document a reason"
+    );
+}
+
+#[test]
+fn dogfood_python_ranked_findings_json_separates_multiple_entries() {
+    let findings = vec![
+        valid_python_ranked_finding(1),
+        valid_python_ranked_finding(2),
+    ];
+    let mut body = String::new();
+
+    super::dogfood_push_python_ranked_findings_json(&mut body, &findings);
+
+    assert!(body.contains("}, {"));
+    assert!(body.contains("\"rank\": 1"));
+    assert!(body.contains("\"rank\": 2"));
+}
+
+fn valid_python_real_repo_eval_scenario() -> DogfoodPythonRealRepoEvalScenario {
+    DogfoodPythonRealRepoEvalScenario {
+            name: "tiny_controlled_pytest_boundary_receipt".to_string(),
+            repo_shape: "tiny_controlled_pytest".to_string(),
+            source_kind: "scratch_repo".to_string(),
+            source_ref: "target/ripr/python-real-repo-evals/tiny-controlled-pytest-receipt"
+                .to_string(),
+            command: "ripr check --root target/ripr/python-real-repo-evals/tiny-controlled-pytest-receipt --base HEAD~1 --format json".to_string(),
+            runtime_ms: 114,
+            top_finding_summary:
+                "Python predicate-boundary repair card for calculate_discount amount >= threshold"
+                    .to_string(),
+            canonical_gap_id:
+                "gap:python:app/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold"
+                    .to_string(),
+            repair_card_present: true,
+            repair_action: "strengthen_existing_test".to_string(),
+            agent_packet_present: true,
+            agent_packet_task:
+                "Strengthen the existing pytest boundary test for amount == threshold."
+                    .to_string(),
+            agent_packet_command: "ripr agent packet --root target/ripr/python-real-repo-evals/tiny-controlled-pytest-receipt --gap-ledger gap-ledger.json --gap-id gap:python:app/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold --json".to_string(),
+            agent_packet_allowed_files: vec!["tests/test_pricing.py".to_string()],
+            agent_packet_forbidden_files: vec!["app/pricing.py".to_string()],
+            agent_packet_stop_if: vec![
+                "import cannot be resolved".to_string(),
+                "expected boundary value is ambiguous".to_string(),
+                "production code edit appears necessary".to_string(),
+            ],
+            changed_owner: "python:app/pricing.py::calculate_discount".to_string(),
+            missing_discriminator: "amount == threshold".to_string(),
+            suggested_test_file: "tests/test_pricing.py".to_string(),
+            suggested_test_name: "test_calculate_discount_smoke".to_string(),
+            verify_command: "pytest tests/test_pricing.py::test_calculate_discount_smoke"
+                .to_string(),
+            verify_result: "pass".to_string(),
+            verify_summary: "1 passed in 0.30s".to_string(),
+            after_command: "ripr check --root target/ripr/python-real-repo-evals/tiny-controlled-pytest-receipt --base HEAD~1 --format json".to_string(),
+            after_runtime_ms: 58,
+            receipt_command:
+                "ripr outcome --before before-check.json --after after-check.json --format json"
+                    .to_string(),
+            receipt_result: "pass".to_string(),
+            gap_movement: "closed".to_string(),
+            closed_gaps: 1,
+            usability: "usable".to_string(),
+            false_positive_notes: "none observed".to_string(),
+            limitation_notes:
+                "scoped repair routing is usable alpha; broader Python static facts remain preview/advisory"
+                    .to_string(),
+            unsupported_limitations: Vec::new(),
+            ranked_top_3_findings: vec![super::DogfoodPythonRankedFinding {
+                rank: 1,
+                canonical_gap_id:
+                    "gap:python:app/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold"
+                        .to_string(),
+                repair_card_present: true,
+                usability: "usable".to_string(),
+                missing_discriminator: "amount == threshold".to_string(),
+                suggested_test_file: "tests/test_pricing.py".to_string(),
+                verify_command: "pytest tests/test_pricing.py::test_calculate_discount_smoke"
+                    .to_string(),
+                false_positive_notes: "none observed".to_string(),
+                reason: "rank 1 repair card matched the closed Python receipt".to_string(),
+            }],
+            ranked_top_3_limit_reason: Some(
+                "focused eval emitted one Python repair card; no rank 2 or 3 repairable finding was present"
+                    .to_string(),
+            ),
+            claim_boundary: vec![
+                "Broader Python static facts remain preview/advisory".to_string(),
+                "No arbitrary imports or tests were run by RIPR".to_string(),
+                "No support-tier promotion".to_string(),
+            ],
+            reason: "tiny controlled repo proved one Python repair card closes with receipt"
+                .to_string(),
+        }
+}
+
+fn valid_python_ranked_finding(rank: usize) -> super::DogfoodPythonRankedFinding {
+    let mut finding = valid_python_real_repo_eval_scenario().ranked_top_3_findings[0].clone();
+    finding.rank = rank;
+    if rank > 1 {
+        finding.canonical_gap_id =
+            format!("gap:python:app/pricing.py:calculate_discount:return_value:rank-{rank}");
+        finding.missing_discriminator = format!("amount == threshold + {rank}");
+        finding.verify_command =
+            format!("pytest tests/test_pricing.py::test_calculate_discount_rank_{rank}");
+        finding.reason = format!("rank {rank} repair card remained usable in dogfood capture");
+    }
+    finding
+}
+
+fn valid_python_static_limit_eval_scenario() -> DogfoodPythonStaticLimitEvalScenario {
+    DogfoodPythonStaticLimitEvalScenario {
+            name: "dynamic_dispatch_no_packet_eval".to_string(),
+            repo_shape: "dynamic_dispatch_pytest".to_string(),
+            source_kind: "scratch_repo".to_string(),
+            source_ref: "target/ripr/python-real-repo-evals/dynamic-dispatch-limit".to_string(),
+            command: "ripr check --root target/ripr/python-real-repo-evals/dynamic-dispatch-limit --base HEAD~1 --format json".to_string(),
+            runtime_ms: 233,
+            finding_id: "probe:src_runtime.py:2:python_preview".to_string(),
+            changed_owner: "python:src/runtime.py::dispatch".to_string(),
+            static_limit_kind: "dynamic_dispatch".to_string(),
+            classification: "static_unknown".to_string(),
+            stop_reasons: vec!["dynamic_dispatch_unresolved".to_string()],
+            related_test_file: "tests/test_runtime.py".to_string(),
+            related_test_name: "test_dispatch_total".to_string(),
+            why_not_actionable:
+                "static limit `dynamic_dispatch` prevents bounded repair routing".to_string(),
+            repair_card_present: false,
+            agent_packet_present: false,
+            verify_command: "not_applicable_static_limit".to_string(),
+            verify_result: "not_applicable".to_string(),
+            receipt_command: "not_applicable_static_limit".to_string(),
+            receipt_result: "not_applicable".to_string(),
+            gap_movement: "no_receipt".to_string(),
+            false_positive_notes: "none observed".to_string(),
+            limitation_notes: "dynamic dispatch stays visible as a no-packet static limitation"
+                .to_string(),
+            claim_boundary: vec![
+                "Broader Python static facts remain preview/advisory".to_string(),
+                "No repair packet emitted".to_string(),
+                "No support-tier promotion".to_string(),
+            ],
+            reason:
+                "dynamic dispatch dogfood records an honest no-action result instead of a repair card"
+                    .to_string(),
+        }
+}
+
+fn valid_python_unresolved_fixture_static_limit_eval_scenario()
+-> DogfoodPythonStaticLimitEvalScenario {
+    DogfoodPythonStaticLimitEvalScenario {
+            name: "unresolved_fixture_no_packet_eval".to_string(),
+            repo_shape: "fixture_sourced_pytest".to_string(),
+            source_kind: "scratch_repo".to_string(),
+            source_ref: "target/ripr/python-real-repo-evals/unresolved-fixture-limit".to_string(),
+            command: "ripr check --root target/ripr/python-real-repo-evals/unresolved-fixture-limit --base HEAD~1 --format json".to_string(),
+            runtime_ms: 7700,
+            finding_id: "probe:src_pricing.py:2:python_preview".to_string(),
+            changed_owner: "python:src/pricing.py::apply_discount".to_string(),
+            static_limit_kind: "unresolved_pytest_fixture".to_string(),
+            classification: "static_unknown".to_string(),
+            stop_reasons: vec!["static_probe_unknown".to_string()],
+            related_test_file: "tests/test_pricing.py".to_string(),
+            related_test_name: "test_apply_discount_fixture_case".to_string(),
+            why_not_actionable:
+                "static limit unresolved_pytest_fixture prevents bounded repair routing"
+                    .to_string(),
+            repair_card_present: false,
+            agent_packet_present: false,
+            verify_command: "not_applicable_static_limit".to_string(),
+            verify_result: "not_applicable".to_string(),
+            receipt_command: "not_applicable_static_limit".to_string(),
+            receipt_result: "not_applicable".to_string(),
+            gap_movement: "no_receipt".to_string(),
+            false_positive_notes: "none observed".to_string(),
+            limitation_notes:
+                "pytest fixture-sourced values stay visible as a no-packet static limitation"
+                    .to_string(),
+            claim_boundary: vec![
+                "Broader Python static facts remain preview/advisory".to_string(),
+                "No repair packet emitted".to_string(),
+                "No support-tier promotion".to_string(),
+            ],
+            reason: "unresolved pytest fixture dogfood records an honest no-action result instead of a repair card".to_string(),
+        }
+}
+
+fn valid_python_no_action_eval_scenario() -> DogfoodPythonNoActionEvalScenario {
+    DogfoodPythonNoActionEvalScenario {
+            name: "no_related_test_no_packet_eval".to_string(),
+            repo_shape: "unrelated_pytest_text_mention".to_string(),
+            source_kind: "local_repo".to_string(),
+            source_ref: "fixtures/python_unrelated_test_mention".to_string(),
+            command: "ripr check --root fixtures/python_unrelated_test_mention/input --diff fixtures/python_unrelated_test_mention/diff.patch --format json".to_string(),
+            runtime_ms: 7181,
+            finding_id: "probe:src_pricing.py:2:python_preview".to_string(),
+            changed_owner: "python:src/pricing.py::apply_discount".to_string(),
+            no_action_kind: "no_related_test".to_string(),
+            classification: "no_static_path".to_string(),
+            stop_reasons: vec!["no_related_test".to_string()],
+            related_test_file: "not_applicable_no_related_test".to_string(),
+            related_test_name: "not_applicable_no_related_test".to_string(),
+            why_not_actionable: "no_action no_related_test prevents bounded repair routing because no related pytest or unittest test statically calls the changed owner".to_string(),
+            repair_card_present: false,
+            agent_packet_present: false,
+            verify_command: "not_applicable_no_action".to_string(),
+            verify_result: "not_applicable".to_string(),
+            receipt_command: "not_applicable_no_action".to_string(),
+            receipt_result: "not_applicable".to_string(),
+            gap_movement: "no_receipt".to_string(),
+            false_positive_notes: "none observed".to_string(),
+            limitation_notes: "no related static test path stays visible as no_static_path with no repair-card, packet, verify, or receipt success claim".to_string(),
+            claim_boundary: vec![
+                "Broader Python static facts remain preview/advisory".to_string(),
+                "No repair packet emitted".to_string(),
+                "No support-tier promotion".to_string(),
+                "No arbitrary imports or tests were run by RIPR".to_string(),
+            ],
+            reason: "no-related-test dogfood records an ordinary no-action result instead of a repair card".to_string(),
+        }
+}
+
+fn valid_python_already_observed_no_action_eval_scenario() -> DogfoodPythonNoActionEvalScenario {
+    DogfoodPythonNoActionEvalScenario {
+            name: "already_observed_no_packet_eval".to_string(),
+            repo_shape: "strong_pytest_oracle".to_string(),
+            source_kind: "local_repo".to_string(),
+            source_ref: "fixtures/python_strong_oracle".to_string(),
+            command: "ripr check --root fixtures/python_strong_oracle/input --diff fixtures/python_strong_oracle/diff.patch --format json".to_string(),
+            runtime_ms: 327,
+            finding_id: "probe:src_discount.py:2:python_preview".to_string(),
+            changed_owner: "python:src/discount.py::apply_discount".to_string(),
+            no_action_kind: "already_observed".to_string(),
+            classification: "exposed".to_string(),
+            stop_reasons: vec!["already_observed_strong_oracle".to_string()],
+            related_test_file: "tests/test_discount.py".to_string(),
+            related_test_name: "test_apply_discount_boundary".to_string(),
+            why_not_actionable: "no_action already_observed prevents bounded repair routing because the related pytest test already carries an exact-value oracle for the changed behavior".to_string(),
+            repair_card_present: false,
+            agent_packet_present: false,
+            verify_command: "not_applicable_no_action".to_string(),
+            verify_result: "not_applicable".to_string(),
+            receipt_command: "not_applicable_no_action".to_string(),
+            receipt_result: "not_applicable".to_string(),
+            gap_movement: "no_receipt".to_string(),
+            false_positive_notes: "none observed".to_string(),
+            limitation_notes: "strong related pytest evidence stays visible as exposed/already-observed with no repair-card, packet, verify success, or receipt movement claim".to_string(),
+            claim_boundary: vec![
+                "Broader Python static facts remain preview/advisory".to_string(),
+                "No repair packet emitted".to_string(),
+                "No support-tier promotion".to_string(),
+                "No arbitrary imports or tests were run by RIPR".to_string(),
+            ],
+            reason: "already-observed dogfood records an ordinary no-action result: exact current test evidence means there is no missing proof to route.".to_string(),
+        }
+}
+
+fn valid_python_heuristic_no_action_eval_scenario() -> DogfoodPythonNoActionEvalScenario {
+    DogfoodPythonNoActionEvalScenario {
+            name: "heuristic_only_no_packet_eval".to_string(),
+            repo_shape: "pytest_test_name_similarity".to_string(),
+            source_kind: "local_repo".to_string(),
+            source_ref: "fixtures/python_related_test_name_similarity".to_string(),
+            command: "ripr check --root fixtures/python_related_test_name_similarity/input --diff fixtures/python_related_test_name_similarity/diff.patch --format json".to_string(),
+            runtime_ms: 361,
+            finding_id: "probe:src_pricing.py:2:python_preview".to_string(),
+            changed_owner: "python:src/pricing.py::apply_discount".to_string(),
+            no_action_kind: "heuristic_only".to_string(),
+            classification: "weakly_exposed".to_string(),
+            stop_reasons: vec!["heuristic_only_related_test_link".to_string()],
+            related_test_file: "tests/test_checkout.py".to_string(),
+            related_test_name: "test_apply_discount_boundary_case".to_string(),
+            why_not_actionable: "no_action heuristic_only prevents bounded repair routing because the related pytest test is linked only by test-name similarity and does not statically call the changed owner".to_string(),
+            repair_card_present: false,
+            agent_packet_present: false,
+            verify_command: "not_applicable_no_action".to_string(),
+            verify_result: "not_applicable".to_string(),
+            receipt_command: "not_applicable_no_action".to_string(),
+            receipt_result: "not_applicable".to_string(),
+            gap_movement: "no_receipt".to_string(),
+            false_positive_notes: "none observed".to_string(),
+            limitation_notes: "heuristic test-name similarity stays visible as weakly_exposed evidence with no repair-card, packet, verify success, or receipt movement claim".to_string(),
+            claim_boundary: vec![
+                "Broader Python static facts remain preview/advisory".to_string(),
+                "No repair packet emitted".to_string(),
+                "No support-tier promotion".to_string(),
+                "No arbitrary imports or tests were run by RIPR".to_string(),
+            ],
+            reason: "heuristic-only dogfood records an ordinary no-action result: uncertain related-test proximity is not safe enough to route human or agent test-repair work.".to_string(),
+        }
+}
+
+#[test]
+fn dogfood_python_real_repo_eval_rejects_overclaiming() {
+    let mut scenario = valid_python_real_repo_eval_scenario();
+    scenario.canonical_gap_id = "gap:rust:src/lib.rs:predicate_boundary".to_string();
+    scenario.changed_owner = "app/pricing.py::calculate_discount".to_string();
+    scenario.repair_card_present = false;
+    scenario.gap_movement = "closed".to_string();
+    scenario.closed_gaps = 0;
+    scenario.verify_result = "not_run".to_string();
+    scenario.limitation_notes = "dynamic routing remains unsupported".to_string();
+    scenario.claim_boundary.clear();
+
+    let report = dogfood_python_real_repo_eval_run(&scenario)
+        .errors
+        .join("\n");
+
+    assert!(report.contains("canonical_gap_id must use gap:python"));
+    assert!(report.contains("changed_owner must use python: identity"));
+    assert!(report.contains("repair_card_present must be true"));
+    assert!(report.contains("closed gap movement must record closed_gaps > 0"));
+    assert!(report.contains("closed gap movement requires verify_result=pass"));
+    assert!(report.contains(
+        "limitation_notes mention unsupported behavior but unsupported_limitations is empty"
+    ));
+    assert!(report.contains("claim_boundary must keep preview boundary denials visible"));
+}
+
+#[test]
+fn dogfood_python_real_repo_eval_rejects_unranked_top_3_capture() {
+    let mut scenario = valid_python_real_repo_eval_scenario();
+    scenario.ranked_top_3_findings.clear();
+    scenario.ranked_top_3_limit_reason = None;
+
+    let report = dogfood_python_real_repo_eval_run(&scenario)
+        .errors
+        .join("\n");
+
+    assert!(report.contains("ranked_top_3_findings must capture at least the top Python finding"));
+
+    let mut malformed = valid_python_real_repo_eval_scenario();
+    malformed.ranked_top_3_findings[0].rank = 4;
+    malformed.ranked_top_3_findings[0].canonical_gap_id =
+        "gap:rust:src/lib.rs:predicate_boundary".to_string();
+    malformed.ranked_top_3_findings[0].usability = "needs_review".to_string();
+    malformed.ranked_top_3_findings[0].missing_discriminator = "uncertain".to_string();
+    malformed.ranked_top_3_findings[0].suggested_test_file = "src/pricing.py".to_string();
+    malformed.ranked_top_3_findings[0].verify_command = "tox".to_string();
+    malformed.ranked_top_3_findings[0].false_positive_notes =
+        "possible false actionability".to_string();
+
+    let report = dogfood_python_real_repo_eval_run(&malformed)
+        .errors
+        .join("\n");
+
+    assert!(report.contains("ranked_top_3_findings rank must be between 1 and 3"));
+    assert!(report.contains("ranked_top_3_findings rank 4 canonical_gap_id must use gap:python"));
+    assert!(report.contains(
+            "ranked_top_3_findings rank 4 must be usable, concrete, placed, verifiable, and false-positive clean"
+        ));
+    assert!(report.contains("ranked_top_3_findings must include rank 1"));
+
+    let mut too_many = valid_python_real_repo_eval_scenario();
+    too_many.ranked_top_3_findings = vec![
+        valid_python_ranked_finding(1),
+        valid_python_ranked_finding(2),
+        valid_python_ranked_finding(3),
+        valid_python_ranked_finding(4),
+    ];
+
+    let report = dogfood_python_real_repo_eval_run(&too_many)
+        .errors
+        .join("\n");
+
+    assert!(report.contains("ranked_top_3_findings must capture at most three findings"));
+
+    let mut missing_limit_reason = valid_python_real_repo_eval_scenario();
+    missing_limit_reason.ranked_top_3_limit_reason = Some(" ".to_string());
+
+    let report = dogfood_python_real_repo_eval_run(&missing_limit_reason)
+        .errors
+        .join("\n");
+
+    assert!(
+        report.contains("ranked_top_3_limit_reason must explain fewer-than-three ranked findings")
+    );
+
+    let mut duplicate_rank = valid_python_real_repo_eval_scenario();
+    duplicate_rank.ranked_top_3_findings = vec![
+        valid_python_ranked_finding(1),
+        valid_python_ranked_finding(1),
+    ];
+
+    let report = dogfood_python_real_repo_eval_run(&duplicate_rank)
+        .errors
+        .join("\n");
+
+    assert!(report.contains("ranked_top_3_findings rank 1 is duplicated"));
+
+    let mut missing_card = valid_python_real_repo_eval_scenario();
+    missing_card.ranked_top_3_findings[0].repair_card_present = false;
+
+    let report = dogfood_python_real_repo_eval_run(&missing_card)
+        .errors
+        .join("\n");
+
+    assert!(report.contains("ranked_top_3_findings rank 1 must be repair-card-backed"));
+
+    let mut missing_reason = valid_python_real_repo_eval_scenario();
+    missing_reason.ranked_top_3_findings[0].reason.clear();
+
+    let report = dogfood_python_real_repo_eval_run(&missing_reason)
+        .errors
+        .join("\n");
+
+    assert!(report.contains("ranked_top_3_findings rank 1 must document a reason"));
+
+    let mut verify_mismatch = valid_python_real_repo_eval_scenario();
+    verify_mismatch.ranked_top_3_findings[0].verify_command =
+        "pytest tests/test_pricing.py::test_calculate_discount_boundary".to_string();
+
+    let report = dogfood_python_real_repo_eval_run(&verify_mismatch)
+        .errors
+        .join("\n");
+
+    assert!(report.contains(
+        "ranked_top_3_findings rank 1 verify_command must match the recorded top finding"
+    ));
+}
+
+#[test]
+fn dogfood_python_real_repo_eval_accepts_unittest_ranked_verify_command() {
+    let mut scenario = valid_python_real_repo_eval_scenario();
+    let verify_command =
+        "python -m unittest tests.test_pricing.PricingTests.test_calculate_discount_smoke";
+    scenario.verify_command = verify_command.to_string();
+    scenario.ranked_top_3_findings[0].verify_command = verify_command.to_string();
+
+    let run = dogfood_python_real_repo_eval_run(&scenario);
+
+    assert!(
+        run.errors.is_empty(),
+        "unittest verify commands should validate for ranked Python dogfood findings: {:?}",
+        run.errors
+    );
+}
+
+#[test]
+fn dogfood_python_real_repo_eval_checks_ranked_top_3_boundaries() {
+    let mut valid_top_3 = valid_python_real_repo_eval_scenario();
+    let mut second = valid_top_3.ranked_top_3_findings[0].clone();
+    second.rank = 2;
+    second.canonical_gap_id = "gap:python:app/cart.py:total:return_value:total".to_string();
+    second.missing_discriminator = "cart total includes tax".to_string();
+    second.suggested_test_file = "cart_test.py".to_string();
+    second.verify_command = "python -m unittest cart_test.CartTotalTest".to_string();
+    second.false_positive_notes = "none".to_string();
+    second.reason = "rank 2 uses unittest verification and a module-level test file".to_string();
+
+    let mut third = valid_top_3.ranked_top_3_findings[0].clone();
+    third.rank = 3;
+    third.canonical_gap_id = "gap:python:app/orders.py:submit:side_effect:email".to_string();
+    third.missing_discriminator = "submission sends confirmation email".to_string();
+    third.suggested_test_file = "app/tests/test_orders.py".to_string();
+    third.reason = "rank 3 uses a package-local test path".to_string();
+
+    valid_top_3.ranked_top_3_findings.push(second);
+    valid_top_3.ranked_top_3_findings.push(third);
+    valid_top_3.ranked_top_3_limit_reason = None;
+
+    assert!(
+        dogfood_python_real_repo_eval_run(&valid_top_3)
+            .errors
+            .is_empty()
+    );
+    let quality =
+        dogfood_python_repair_routing_quality_summary(&[dogfood_python_real_repo_eval_run(
+            &valid_top_3,
+        )]);
+    assert_eq!(quality.full_top_3_capture_cases, 1);
+    assert_eq!(quality.gate_status, "pass");
+
+    let mut missing_limit_reason = valid_python_real_repo_eval_scenario();
+    missing_limit_reason.ranked_top_3_limit_reason = None;
+    let report = dogfood_python_real_repo_eval_run(&missing_limit_reason)
+        .errors
+        .join("\n");
+    assert!(
+        report.contains("ranked_top_3_limit_reason must explain fewer-than-three ranked findings")
+    );
+
+    let mut malformed = valid_top_3;
+    malformed
+        .ranked_top_3_findings
+        .push(malformed.ranked_top_3_findings[0].clone());
+    malformed.ranked_top_3_findings[3].rank = 2;
+    malformed.ranked_top_3_findings[3].reason.clear();
+    let report = dogfood_python_real_repo_eval_run(&malformed)
+        .errors
+        .join("\n");
+    assert!(report.contains("ranked_top_3_findings must capture at most three findings"));
+    assert!(report.contains("ranked_top_3_findings rank 2 is duplicated"));
+    assert!(report.contains("ranked_top_3_findings rank 2 must document a reason"));
+}
+
+#[test]
+fn typescript_bun_ub_calibration_cases_are_checked() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let cases = super::typescript_bun_ub_calibration_cases();
+        for required in TYPESCRIPT_BUN_UB_CALIBRATION_REQUIRED_CASES {
+            assert!(
+                cases
+                    .iter()
+                    .any(|case| { case.name == required.0 && case.expected_verdict == required.1 }),
+                "{} TypeScript Bun UB calibration case should be checked as {}",
+                required.0,
+                required.1
+            );
+        }
+
+        let verdicts = cases
+            .iter()
+            .map(|case| case.expected_verdict.as_str())
+            .collect::<BTreeSet<_>>();
+        for required in [
+            "ts_discriminated",
+            "ts_missing_shared",
+            "ts_missing_resizable",
+            "ts_missing_external_oracle",
+            "ts_mention_not_observer",
+            "bridge_unknown",
+        ] {
+            assert!(
+                verdicts.contains(required),
+                "TypeScript Bun UB calibration should include {required}"
+            );
+        }
+
+        for case in cases {
+            let errors = super::typescript_bun_ub_calibration_case_errors(&case);
+            assert!(
+                errors.is_empty(),
+                "{} TypeScript Bun UB calibration case should validate: {:?}",
+                case.name,
+                errors
+            );
+        }
+
+        Ok(())
+    })
+}
+
+#[test]
+fn bun_ub_calibration_report_summarizes_calibrated_states() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let report = super::bun_ub_calibration_report_value(Path::new(
+            super::TYPESCRIPT_BUN_UB_CALIBRATION_CORPUS,
+        ));
+        assert_eq!(report["schema_version"], "0.1");
+        assert_eq!(report["report"], "bun-ub-calibration");
+        assert_eq!(report["status"], "pass");
+        assert_eq!(report["summary"]["cases_total"], serde_json::Value::from(7));
+        assert_eq!(
+            report["summary"]["ts_discriminated_cases"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            report["summary"]["ts_missing_resizable_cases"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            report["summary"]["ts_missing_shared_cases"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            report["summary"]["ts_missing_shared_and_resizable_cases"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            report["summary"]["ts_missing_external_oracle_cases"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            report["summary"]["ts_mention_not_observer_cases"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            report["summary"]["bridge_unknown_cases"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            report["summary"]["repair_packet_ready_cases"],
+            serde_json::Value::from(0)
+        );
+
+        let rows = report["rows"]
+            .as_array()
+            .ok_or_else(|| "Bun UB calibration rows must be an array".to_string())?;
+        let known_good = rows
+            .iter()
+            .find(|row| row["case_id"] == "bun_blob_shared_and_resizable_present")
+            .ok_or_else(|| "missing known-good Bun Blob row".to_string())?;
+        assert_eq!(known_good["observed_state"], "ts_discriminated");
+        assert_eq!(known_good["status"], "pass");
+        assert_eq!(known_good["repair_packet_ready"], false);
+
+        let missing_resizable = rows
+            .iter()
+            .find(|row| row["case_id"] == "bun_blob_resizable_missing")
+            .ok_or_else(|| "missing stripped-resizable row".to_string())?;
+        assert_eq!(missing_resizable["observed_state"], "ts_missing_resizable");
+        assert!(
+            missing_resizable["missing_discriminators"]
+                .as_array()
+                .is_some_and(|missing| missing.iter().any(|item| item == "resizable_array_buffer"))
+        );
+        assert!(
+            missing_resizable["missing_graph_legs"]
+                .as_array()
+                .is_some_and(|legs| {
+                    legs.iter()
+                        .any(|item| item == "boundary_discriminator:resizable_array_buffer")
+                })
+        );
+        assert_eq!(
+            missing_resizable["suggested_test_file"],
+            super::BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE
+        );
+
+        let mention_only = rows
+            .iter()
+            .find(|row| row["case_id"] == "bun_blob_max_byte_length_mention_not_observer")
+            .ok_or_else(|| "missing mention-only row".to_string())?;
+        assert_eq!(mention_only["observed_state"], "ts_mention_not_observer");
+        assert!(
+            mention_only["missing_graph_legs"]
+                .as_array()
+                .is_some_and(|legs| {
+                    legs.iter()
+                        .any(|item| item == "external_blob_or_stable_byte_observer")
+                })
+        );
+
+        let missing_external_oracle = rows
+            .iter()
+            .find(|row| row["case_id"] == "bun_blob_partial_observer_missing_external_oracle")
+            .ok_or_else(|| "missing partial-observer row".to_string())?;
+        assert_eq!(
+            missing_external_oracle["observed_state"],
+            "ts_missing_external_oracle"
+        );
+        assert_eq!(
+            missing_external_oracle["suggested_test_file"],
+            "not_applicable"
+        );
+        assert!(
+            missing_external_oracle["missing_graph_legs"]
+                .as_array()
+                .is_some_and(|legs| legs
+                    .iter()
+                    .any(|item| item == "external_oracle:stable_byte_copy"))
+        );
+
+        let bridge_unknown = rows
+            .iter()
+            .find(|row| row["case_id"] == "bun_blob_bridge_unknown_without_hint")
+            .ok_or_else(|| "missing bridge-unknown row".to_string())?;
+        assert_eq!(bridge_unknown["observed_state"], "bridge_unknown");
+        assert!(
+            bridge_unknown["missing_graph_legs"]
+                .as_array()
+                .is_some_and(|legs| legs.iter().any(|item| item == "binding_or_ffi_edge"))
+        );
+
+        let markdown = super::bun_ub_calibration_report_markdown(&report);
+        assert!(markdown.contains("# Bun UB TypeScript Calibration"));
+        assert!(markdown.contains("Bun UB TypeScript calibration is preview/advisory only"));
+        assert!(markdown.contains("bun_blob_resizable_missing"));
+        assert!(markdown.contains("Missing external oracle cases"));
+        assert!(markdown.contains("binding_or_ffi_edge"));
+        assert!(markdown.contains("Repair-packet-ready cases"));
+        Ok(())
+    })
+}
+
+#[test]
+fn bun_ub_calibration_command_writes_markdown_and_json() -> Result<(), String> {
+    with_temp_cwd("bun-ub-calibration-report", |_root| {
+        let out = PathBuf::from("target/ripr/reports/bun-ub-calibration.json");
+        let out_md = PathBuf::from("target/ripr/reports/bun-ub-calibration.md");
+        let corpus = repo_root()?.join(super::TYPESCRIPT_BUN_UB_CALIBRATION_CORPUS);
+        super::bun_ub_calibration_impl(&[
+            "--corpus".to_string(),
+            corpus.to_string_lossy().into_owned(),
+            "--out".to_string(),
+            out.to_string_lossy().into_owned(),
+            "--out-md".to_string(),
+            out_md.to_string_lossy().into_owned(),
+        ])?;
+
+        let json = fs::read_to_string(&out)
+            .map_err(|err| format!("failed to read Bun UB calibration JSON: {err}"))?;
+        let value: Value =
+            serde_json::from_str(&json).map_err(|err| format!("invalid JSON: {err}"))?;
+        assert_eq!(value["report"], "bun-ub-calibration");
+        assert_eq!(value["summary"]["cases_total"], serde_json::Value::from(7));
+        assert_eq!(
+            value["summary"]["repair_packet_ready_cases"],
+            serde_json::Value::from(0)
+        );
+
+        let markdown = fs::read_to_string(&out_md)
+            .map_err(|err| format!("failed to read Bun UB calibration Markdown: {err}"))?;
+        assert!(markdown.contains("# Bun UB TypeScript Calibration"));
+        assert!(markdown.contains("bridge_unknown"));
+        Ok(())
+    })
+}
+
+#[test]
+fn bun_ub_preview_summary_summarizes_existing_cross_language_state() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let report = super::bun_ub_preview_summary_report_value(&super::BunUbPreviewSummaryArgs {
+            calibration_corpus: PathBuf::from(super::TYPESCRIPT_BUN_UB_CALIBRATION_CORPUS),
+            graph_corpus: super::cross_language_oracle_graph_corpus_path(),
+            dogfood_corpus: PathBuf::from(super::BUN_UB_CROSS_LANGUAGE_DOGFOOD_CORPUS),
+            out: PathBuf::from("target/ripr/reports/bun-ub-preview-summary.json"),
+            out_md: PathBuf::from("target/ripr/reports/bun-ub-preview-summary.md"),
+        });
+        assert_eq!(report["schema_version"], "0.1");
+        assert_eq!(report["report"], "bun-ub-preview-summary");
+        assert_eq!(report["status"], "pass");
+        assert_eq!(report["authority"], "preview_advisory_only");
+        assert_eq!(report["authority_boundary"], "preview_advisory_only");
+        assert_eq!(report["repair_packet_ready"], false);
+        assert_eq!(
+            report["summary"]["route_state_counts"]["rust_ungripped_ts_discriminated"],
+            serde_json::Value::from(3)
+        );
+        assert_eq!(
+            report["summary"]["route_state_counts"]["rust_ungripped_ts_missing_discriminator"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            report["summary"]["route_state_counts"]["bridge_unknown"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            report["summary"]["route_state_counts"]["ts_mention_not_observer"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            report["summary"]["route_state_counts"]["named_static_limitation"],
+            serde_json::Value::from(2)
+        );
+        assert_eq!(
+            report["summary"]["repair_packet_ready_cases"],
+            serde_json::Value::from(0)
+        );
+
+        let limitations = report["summary"]["named_static_limitations"]
+            .as_array()
+            .ok_or_else(|| "named_static_limitations must be an array".to_string())?;
+        let categories = limitations
+            .iter()
+            .filter_map(|row| row["category"].as_str())
+            .collect::<BTreeSet<_>>();
+        for required in [
+            "cross_language_oracle_visibility_unresolved",
+            "cross_language_target_unresolved",
+            "cross_language_panic_boundary_visibility_unresolved",
+            "cross_language_profile_manifest_only",
+        ] {
+            assert!(
+                categories.contains(required),
+                "Bun UB preview summary should include limitation category {required}"
+            );
+        }
+
+        let routes = report["calibrated_routes"]
+            .as_array()
+            .ok_or_else(|| "calibrated_routes must be an array".to_string())?;
+        for required in [
+            "bun_markdown_resizable_array_buffer_configured_bridge_advisory",
+            "bun_ffi_negative_offset_panic_boundary_limitation",
+            "bun_node_fs_scalar_write_manifest_only_profile",
+            "bun_write_helper_gated_manifest_only_profile",
+        ] {
+            assert!(
+                routes.iter().any(|row| row["route_label"] == required),
+                "Bun UB preview summary should include route {required}"
+            );
+        }
+        let missing_resizable = routes
+            .iter()
+            .find(|row| row["route_label"] == "bun_blob_missing_resizable_oracle_limitation")
+            .ok_or_else(|| "missing resizable route should be summarized".to_string())?;
+        assert_eq!(
+            missing_resizable["suggested_test_file"],
+            super::BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE
+        );
+        assert_eq!(missing_resizable["repair_packet_ready"], false);
+
+        let markdown = super::bun_ub_preview_summary_markdown(&report);
+        assert!(markdown.contains("# Bun UB Preview Summary"));
+        assert!(markdown.contains("authority = preview_advisory_only"));
+        assert!(markdown.contains("repair_packet_ready: false"));
+        assert!(markdown.contains("rust_ungripped_ts_discriminated"));
+        assert!(markdown.contains("rust_ungripped_ts_missing_discriminator"));
+        assert!(markdown.contains("bridge_unknown"));
+        assert!(markdown.contains("ts_mention_not_observer"));
+        assert!(markdown.contains("named_static_limitation"));
+        assert!(markdown.contains("cross_language_oracle_visibility_unresolved"));
+        assert!(markdown.contains("cross_language_profile_manifest_only"));
+        Ok(())
+    })
+}
+
+#[test]
+fn bun_ub_preview_summary_command_writes_markdown_and_json() -> Result<(), String> {
+    with_temp_cwd("bun-ub-preview-summary-report", |_root| {
+        let out = PathBuf::from("target/ripr/reports/bun-ub-preview-summary.json");
+        let out_md = PathBuf::from("target/ripr/reports/bun-ub-preview-summary.md");
+        super::bun_ub_preview_summary_impl(&[])?;
+
+        let json = fs::read_to_string(&out)
+            .map_err(|err| format!("failed to read Bun UB preview summary JSON: {err}"))?;
+        let value: Value =
+            serde_json::from_str(&json).map_err(|err| format!("invalid JSON: {err}"))?;
+        assert_eq!(value["report"], "bun-ub-preview-summary");
+        assert_eq!(value["authority"], "preview_advisory_only");
+        assert_eq!(
+            value["summary"]["repair_packet_ready_cases"],
+            serde_json::Value::from(0)
+        );
+
+        let markdown = fs::read_to_string(&out_md)
+            .map_err(|err| format!("failed to read Bun UB preview summary Markdown: {err}"))?;
+        assert!(markdown.contains("# Bun UB Preview Summary"));
+        assert!(markdown.contains("authority = preview_advisory_only"));
+        assert!(markdown.contains("repair_packet_ready: false"));
+        Ok(())
+    })
+}
+
+#[test]
+fn bun_ub_preview_summary_accepts_custom_paths_and_rejects_bad_args() -> Result<(), String> {
+    let args = super::parse_bun_ub_preview_summary_args(&[
+        "--calibration-corpus".to_string(),
+        "calibration.json".to_string(),
+        "--graph-corpus".to_string(),
+        "graph.json".to_string(),
+        "--dogfood-corpus".to_string(),
+        "dogfood.json".to_string(),
+        "--out".to_string(),
+        "summary.json".to_string(),
+        "--out-md".to_string(),
+        "summary.md".to_string(),
+    ])?;
+    assert_eq!(args.calibration_corpus, PathBuf::from("calibration.json"));
+    assert_eq!(args.graph_corpus, PathBuf::from("graph.json"));
+    assert_eq!(args.dogfood_corpus, PathBuf::from("dogfood.json"));
+    assert_eq!(args.out, PathBuf::from("summary.json"));
+    assert_eq!(args.out_md, PathBuf::from("summary.md"));
+
+    let missing_value =
+        super::parse_bun_ub_preview_summary_args(&["--out".to_string()]).unwrap_err();
+    assert!(missing_value.contains("missing value for `--out`"));
+    assert!(missing_value.contains("usage: cargo xtask bun-ub-preview-summary"));
+
+    let unknown = super::parse_bun_ub_preview_summary_args(&["--unknown".to_string()]).unwrap_err();
+    assert!(unknown.contains("unknown bun-ub-preview-summary argument `--unknown`"));
+
+    let help = super::parse_bun_ub_preview_summary_args(&["--help".to_string()]).unwrap_err();
+    assert!(help.contains("usage: cargo xtask bun-ub-preview-summary"));
+    Ok(())
+}
+
+#[test]
+fn bun_ub_preview_summary_fails_closed_on_public_repair_claims() {
+    let report = serde_json::json!({
+        "status": "fail",
+        "authority": "preview_advisory_only",
+        "authority_boundary": "preview_advisory_only",
+        "repair_packet_ready": false,
+        "source_paths": {},
+        "summary": {
+            "calibration_cases_total": 0,
+            "route_quality_cases_total": 0,
+            "dogfood_receipts_total": 0,
+            "route_state_counts": {"future_state": 2},
+            "dogfood_state_counts": {"future_state": 1},
+            "named_static_limitations": [],
+            "public_packet_exclusions": 0,
+            "repair_packet_ready_cases": 1
+        },
+        "calibrated_routes": [],
+        "dogfood_receipts": [],
+        "non_claims": [],
+        "errors": ["repair_packet_ready_cases must remain 0, got 1"]
+    });
+    let markdown = super::bun_ub_preview_summary_markdown(&report);
+    assert!(markdown.contains("Status: `fail`"));
+    assert!(markdown.contains("| `future_state` | 2 | 1 |"));
+    assert!(markdown.contains("| none | 0 | none | none |"));
+    assert!(markdown.contains("| none |  |  |  |  |  |  |"));
+    assert!(markdown.contains("- none"));
+    assert_eq!(
+        report["errors"][0],
+        "repair_packet_ready_cases must remain 0, got 1"
+    );
+}
+
+#[test]
+fn configured_bridge_inventory_reports_missing_future_surfaces() -> Result<(), String> {
+    fn assert_inventory_rows_are_non_repair(rows: &[Value]) {
+        for row in rows {
+            assert_eq!(row["inventory_action"], "inventory_only");
+            assert_eq!(row["repair_packet_ready"], false);
+            assert_eq!(row["public_projection_eligible"], false);
+            assert_eq!(row["repair_target"], "not_applicable");
+            assert_eq!(row["verify_command"], "not_applicable");
+            assert_eq!(row["receipt_command"], "not_applicable");
+            assert!(
+                row["allowed_edit_surface"]
+                    .as_array()
+                    .is_some_and(Vec::is_empty),
+                "inventory row should not expose an edit surface: {row:?}"
+            );
+        }
+    }
+
+    with_repo_cwd(|| {
+        let report = super::configured_bridge_inventory_report_value(
+            &super::ConfiguredBridgeInventoryArgs {
+                graph_corpus: super::cross_language_oracle_graph_corpus_path(),
+                out: PathBuf::from("target/ripr/reports/configured-bridge-inventory.json"),
+                out_md: PathBuf::from("target/ripr/reports/configured-bridge-inventory.md"),
+            },
+        );
+        assert_eq!(report["schema_version"], "0.1");
+        assert_eq!(report["report"], "configured-bridge-inventory");
+        assert_eq!(report["status"], "pass");
+        assert_eq!(report["authority"], "preview_advisory_only");
+        assert_eq!(report["authority_boundary"], "preview_advisory_only");
+        assert_eq!(report["repair_packet_ready"], false);
+        assert_eq!(
+            report["summary"]["configured_bridge_profiles"],
+            serde_json::Value::from(3)
+        );
+        assert_eq!(
+            report["summary"]["future_or_missing_surfaces"],
+            serde_json::Value::from(2)
+        );
+        assert_eq!(
+            report["summary"]["bridge_unknown_profiles"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            report["summary"]["repair_packet_ready_cases"],
+            serde_json::Value::from(0)
+        );
+        assert_eq!(
+            report["summary"]["s3_surfaces_backed_by_corpus"],
+            serde_json::Value::Bool(false)
+        );
+
+        let configured = report["configured_bridges"]
+            .as_array()
+            .ok_or_else(|| "configured_bridges must be an array".to_string())?;
+        let configured_profiles = configured
+            .iter()
+            .filter_map(|row| row["profile"].as_str())
+            .collect::<BTreeSet<_>>();
+        for required in [
+            "bun_blob_array_buffer",
+            "bun_array_buffer_copy_to_unshared",
+            "bun_markdown_resizable_array_buffer",
+        ] {
+            assert!(
+                configured_profiles.contains(required),
+                "configured bridge inventory should list {required}"
+            );
+        }
+        assert_inventory_rows_are_non_repair(configured);
+
+        let future = report["future_or_missing_surfaces"]
+            .as_array()
+            .ok_or_else(|| "future_or_missing_surfaces must be an array".to_string())?;
+        let future_profiles = future
+            .iter()
+            .filter_map(|row| row["profile"].as_str())
+            .collect::<BTreeSet<_>>();
+        for required in ["bun_node_fs_scalar_write", "bun_write_helper_gated"] {
+            assert!(
+                future_profiles.contains(required),
+                "configured bridge inventory should list future surface {required}"
+            );
+        }
+        assert!(
+            !future_profiles.iter().any(|profile| profile.contains("s3")),
+            "S3 should not be listed without corpus metadata"
+        );
+        let bun_write = future
+            .iter()
+            .find(|row| row["profile"] == "bun_write_helper_gated")
+            .ok_or_else(|| "missing Bun.write helper-gated future surface".to_string())?;
+        assert_eq!(bun_write["surface_state"], "manifest_only");
+        assert!(
+            bun_write["missing_graph_legs"]
+                .as_array()
+                .is_some_and(|legs| legs
+                    .iter()
+                    .any(|item| item == "helper:bun_write_fixture_helper"))
+        );
+        assert_eq!(bun_write["inventory_action"], "inventory_only");
+        assert_inventory_rows_are_non_repair(future);
+
+        let unknown = report["bridge_unknown"]
+            .as_array()
+            .ok_or_else(|| "bridge_unknown must be an array".to_string())?;
+        assert!(unknown.iter().any(|row| {
+            row["profile"] == "bun_blob_array_buffer"
+                && row["surface_state"] == "bridge_unknown"
+                && row["missing_graph_legs"]
+                    .as_array()
+                    .is_some_and(|legs| legs.iter().any(|item| item == "binding_or_ffi_edge"))
+        }));
+        assert_inventory_rows_are_non_repair(unknown);
+
+        let limitations = report["named_static_limitations"]
+            .as_array()
+            .ok_or_else(|| "named_static_limitations must be an array".to_string())?;
+        assert_inventory_rows_are_non_repair(limitations);
+
+        let markdown = super::configured_bridge_inventory_markdown(&report);
+        assert!(markdown.contains("# Configured Bridge Inventory"));
+        assert!(markdown.contains("Blob ArrayBuffer"));
+        assert!(markdown.contains("copy_to_unshared"));
+        assert!(markdown.contains("MarkdownObject"));
+        assert!(markdown.contains("node:fs scalar write sink"));
+        assert!(markdown.contains("Bun.write sink"));
+        assert!(markdown.contains("S3 surfaces backed by corpus"));
+        assert!(markdown.contains("no inferred reachability"));
+        assert!(markdown.contains("no public repair packet"));
+        assert!(markdown.contains("repair_packet_ready: false"));
+        assert!(!markdown.contains("bun_s3_stable_byte_sink"));
+        Ok(())
+    })
+}
+
+#[test]
+fn configured_bridge_inventory_command_writes_markdown_and_json() -> Result<(), String> {
+    with_temp_cwd("configured-bridge-inventory-report", |_root| {
+        let out = PathBuf::from("target/ripr/reports/configured-bridge-inventory.json");
+        let out_md = PathBuf::from("target/ripr/reports/configured-bridge-inventory.md");
+        super::configured_bridge_inventory_impl(&[])?;
+
+        let json = fs::read_to_string(&out)
+            .map_err(|err| format!("failed to read configured bridge inventory JSON: {err}"))?;
+        let value: Value =
+            serde_json::from_str(&json).map_err(|err| format!("invalid JSON: {err}"))?;
+        assert_eq!(value["report"], "configured-bridge-inventory");
+        assert_eq!(value["status"], "pass");
+        assert_eq!(value["authority"], "preview_advisory_only");
+        assert_eq!(
+            value["summary"]["repair_packet_ready_cases"],
+            serde_json::Value::from(0)
+        );
+
+        let markdown = fs::read_to_string(&out_md)
+            .map_err(|err| format!("failed to read configured bridge inventory Markdown: {err}"))?;
+        assert!(markdown.contains("# Configured Bridge Inventory"));
+        assert!(markdown.contains("Future Or Missing Surfaces"));
+        assert!(markdown.contains("bun_node_fs_scalar_write"));
+        assert!(markdown.contains("repair_packet_ready: false"));
+        Ok(())
+    })
+}
+
+#[test]
+fn configured_bridge_inventory_accepts_custom_paths_and_rejects_bad_args() -> Result<(), String> {
+    let args = super::parse_configured_bridge_inventory_args(&[
+        "--graph-corpus".to_string(),
+        "graph.json".to_string(),
+        "--out".to_string(),
+        "inventory.json".to_string(),
+        "--out-md".to_string(),
+        "inventory.md".to_string(),
+    ])?;
+    assert_eq!(args.graph_corpus, PathBuf::from("graph.json"));
+    assert_eq!(args.out, PathBuf::from("inventory.json"));
+    assert_eq!(args.out_md, PathBuf::from("inventory.md"));
+
+    let missing_value =
+        super::parse_configured_bridge_inventory_args(&["--out".to_string()]).unwrap_err();
+    assert!(missing_value.contains("missing value for `--out`"));
+    assert!(missing_value.contains("usage: cargo xtask configured-bridge-inventory"));
+
+    let unknown =
+        super::parse_configured_bridge_inventory_args(&["--unknown".to_string()]).unwrap_err();
+    assert!(unknown.contains("unknown configured-bridge-inventory argument `--unknown`"));
+
+    let help = super::parse_configured_bridge_inventory_args(&["--help".to_string()]).unwrap_err();
+    assert!(help.contains("usage: cargo xtask configured-bridge-inventory"));
+    Ok(())
+}
+
+#[test]
+fn cross_language_oracle_graph_corpus_cases_are_checked() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let cases = super::cross_language_oracle_graph_cases();
+        for required in super::CROSS_LANGUAGE_ORACLE_GRAPH_REQUIRED_CASES {
+            assert!(
+                cases
+                    .iter()
+                    .any(|case| { case.name == required.0 && case.expected_state == required.1 }),
+                "{} cross-language oracle graph case should be checked as {}",
+                required.0,
+                required.1
+            );
+        }
+
+        let states = cases
+            .iter()
+            .map(|case| case.expected_state.as_str())
+            .collect::<BTreeSet<_>>();
+        for required in [
+            "rust_ungripped_ts_discriminated",
+            "rust_ungripped_ts_missing_discriminator",
+            "rust_ungripped_ts_missing_external_oracle",
+            "ts_mention_not_observer",
+            "bridge_unknown",
+            "cross_language_target_unresolved",
+            "public_reachable_panic_boundary_unrevealed",
+            "named_static_limitation",
+        ] {
+            assert!(
+                states.contains(required),
+                "cross-language oracle graph should include {required}"
+            );
+        }
+
+        for case in cases {
+            let errors = super::cross_language_oracle_graph_case_errors(&case);
+            assert!(
+                errors.is_empty(),
+                "{} cross-language oracle graph case should validate: {:?}",
+                case.name,
+                errors
+            );
+        }
+
+        Ok(())
+    })
+}
+
+#[test]
+fn cross_language_oracle_graph_corpus_path_is_repo_rooted_for_parallel_cwd_safety()
+-> Result<(), String> {
+    let path = super::cross_language_oracle_graph_corpus_path();
+    assert!(
+        path.is_absolute(),
+        "corpus read path should not depend on process cwd: {}",
+        path.display()
+    );
+    assert!(
+        path.ends_with(super::CROSS_LANGUAGE_ORACLE_GRAPH_CORPUS),
+        "corpus read path should keep the canonical fixture suffix: {}",
+        path.display()
+    );
+    assert!(
+        path.exists(),
+        "corpus read path should exist: {}",
+        path.display()
+    );
+    Ok(())
+}
+
+#[test]
+fn cross_language_oracle_route_quality_summarizes_corpus_cases() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let value = super::cross_language_oracle_route_quality_report_value();
+        assert_eq!(value["status"], "pass");
+        assert_eq!(value["cases_total"], serde_json::Value::from(11));
+        assert_eq!(
+            value["cross_language_oracle_graph_complete_advisory_witnesses"],
+            serde_json::Value::from(3)
+        );
+        assert_eq!(
+            value["cross_language_oracle_graph_missing_discriminator_limitations"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            value["cross_language_oracle_graph_missing_external_oracle_limitations"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            value["cross_language_oracle_graph_bridge_unknown_limitations"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            value["cross_language_oracle_graph_mention_only_limitations"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            value["cross_language_oracle_graph_panic_boundary_limitations"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            value["cross_language_oracle_graph_manifest_only_profiles"],
+            serde_json::Value::from(2)
+        );
+        assert_eq!(
+            value["cross_language_oracle_graph_public_packet_exclusions"],
+            serde_json::Value::from(11)
+        );
+        assert_eq!(
+            value["repair_packet_ready_cases"],
+            serde_json::Value::from(0)
+        );
+
+        let rows = value["rows"]
+            .as_array()
+            .ok_or_else(|| "route-quality rows must be an array".to_string())?;
+        let missing_resizable = rows
+            .iter()
+            .find(|row| row["case_id"] == "bun_blob_missing_resizable_oracle_limitation")
+            .ok_or_else(|| "missing resizable route-quality row".to_string())?;
+        assert_eq!(
+            missing_resizable["observed_state"],
+            "rust_ungripped_ts_missing_discriminator"
+        );
+        assert!(
+            missing_resizable["missing_discriminators"]
+                .as_array()
+                .is_some_and(|missing| {
+                    missing.iter().any(|item| item == "resizable_array_buffer")
+                })
+        );
+        assert_eq!(
+            missing_resizable["suggested_test_file"],
+            super::BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE
+        );
+        let missing_external_oracle = rows
+            .iter()
+            .find(|row| row["case_id"] == "bun_blob_missing_external_oracle_limitation")
+            .ok_or_else(|| "missing external oracle route-quality row".to_string())?;
+        assert_eq!(
+            missing_external_oracle["observed_state"],
+            "rust_ungripped_ts_missing_external_oracle"
+        );
+        assert!(
+            missing_external_oracle["missing_graph_legs"]
+                .as_array()
+                .is_some_and(|legs| legs
+                    .iter()
+                    .any(|item| item == "external_oracle:stable_byte_copy"))
+        );
+        let bridge_unknown = rows
+            .iter()
+            .find(|row| row["case_id"] == "bun_blob_bridge_unknown_limitation")
+            .ok_or_else(|| "missing bridge_unknown route-quality row".to_string())?;
+        assert!(
+            bridge_unknown["missing_graph_legs"]
+                .as_array()
+                .is_some_and(|legs| legs.iter().any(|item| item == "binding_or_ffi_edge"))
+        );
+        let copy_to_unshared = rows
+            .iter()
+            .find(|row| {
+                row["case_id"] == "bun_array_buffer_copy_to_unshared_configured_bridge_advisory"
+            })
+            .ok_or_else(|| "missing copy_to_unshared configured bridge row".to_string())?;
+        assert_eq!(
+            copy_to_unshared["profile"],
+            "bun_array_buffer_copy_to_unshared"
+        );
+        assert_eq!(
+            copy_to_unshared["observed_state"],
+            "rust_ungripped_ts_discriminated"
+        );
+        assert_eq!(
+            copy_to_unshared["binding_edge_confidence"],
+            "configured_hint"
+        );
+        assert!(
+            copy_to_unshared["missing_graph_legs"]
+                .as_array()
+                .is_some_and(Vec::is_empty)
+        );
+        assert_eq!(copy_to_unshared["suggested_test_file"], "not_applicable");
+        assert_eq!(copy_to_unshared["repair_packet_ready"], false);
+        assert_eq!(copy_to_unshared["public_projection_eligible"], false);
+        assert_eq!(
+            copy_to_unshared["repair_route"],
+            "manual-review/cross-language-advisory-witness"
+        );
+        let markdown_resizable = rows
+            .iter()
+            .find(|row| {
+                row["case_id"] == "bun_markdown_resizable_array_buffer_configured_bridge_advisory"
+            })
+            .ok_or_else(|| "missing Bun markdown configured bridge row".to_string())?;
+        assert_eq!(
+            markdown_resizable["profile"],
+            "bun_markdown_resizable_array_buffer"
+        );
+        assert_eq!(
+            markdown_resizable["observed_state"],
+            "rust_ungripped_ts_discriminated"
+        );
+        assert_eq!(
+            markdown_resizable["binding_edge_confidence"],
+            "configured_hint"
+        );
+        assert!(
+            markdown_resizable["missing_graph_legs"]
+                .as_array()
+                .is_some_and(Vec::is_empty)
+        );
+        assert_eq!(markdown_resizable["suggested_test_file"], "not_applicable");
+        assert_eq!(markdown_resizable["repair_packet_ready"], false);
+        assert_eq!(markdown_resizable["public_projection_eligible"], false);
+        assert_eq!(
+            markdown_resizable["repair_route"],
+            "manual-review/cross-language-advisory-witness"
+        );
+        let panic_boundary = rows
+            .iter()
+            .find(|row| row["case_id"] == "bun_ffi_negative_offset_panic_boundary_limitation")
+            .ok_or_else(|| "missing Bun FFI panic-boundary limitation row".to_string())?;
+        assert_eq!(
+            panic_boundary["profile"],
+            "bun_ffi_negative_offset_panic_boundary"
+        );
+        assert_eq!(
+            panic_boundary["observed_state"],
+            "public_reachable_panic_boundary_unrevealed"
+        );
+        assert_eq!(
+            panic_boundary["limitation_category"],
+            "cross_language_panic_boundary_visibility_unresolved"
+        );
+        assert_eq!(
+            panic_boundary["repair_route"],
+            "analysis/cross-language-panic-boundary-visibility"
+        );
+        assert_eq!(panic_boundary["suggested_test_file"], "not_applicable");
+        assert_eq!(panic_boundary["repair_packet_ready"], false);
+        assert_eq!(panic_boundary["public_projection_eligible"], false);
+        assert!(
+            panic_boundary["missing_discriminators"]
+                .as_array()
+                .is_some_and(|missing| missing.iter().any(|item| item == "negative_offset"))
+        );
+        assert!(
+            panic_boundary["missing_graph_legs"]
+                .as_array()
+                .is_some_and(|legs| legs
+                    .iter()
+                    .any(|item| item == "external_oracle:negative_offset_panic_boundary"))
+        );
+        let node_fs = rows
+            .iter()
+            .find(|row| row["case_id"] == "bun_node_fs_scalar_write_manifest_only_profile")
+            .ok_or_else(|| "missing node:fs scalar write manifest-only row".to_string())?;
+        assert_eq!(node_fs["profile"], "bun_node_fs_scalar_write");
+        assert_eq!(node_fs["profile_status"], "manifest_only");
+        assert_eq!(node_fs["observed_state"], "named_static_limitation");
+        assert_eq!(node_fs["proof_mode"], "observable_red_green");
+        assert_eq!(node_fs["suggested_test_file"], "test/js/node/fs/fs.test.ts");
+        assert_eq!(node_fs["repair_packet_ready"], false);
+        assert_eq!(node_fs["public_projection_eligible"], false);
+        assert!(
+            node_fs["missing_graph_legs"]
+                .as_array()
+                .is_some_and(|legs| legs
+                    .iter()
+                    .any(|item| item == "binding_or_ffi_edge:node_fs_scalar_write"))
+        );
+        assert!(
+            node_fs["missing_graph_legs"]
+                .as_array()
+                .is_some_and(|legs| legs
+                    .iter()
+                    .any(|item| item == "external_oracle:stable_byte_scalar_write"))
+        );
+        let bun_write = rows
+            .iter()
+            .find(|row| row["case_id"] == "bun_write_helper_gated_manifest_only_profile")
+            .ok_or_else(|| "missing Bun.write helper-gated manifest-only row".to_string())?;
+        assert_eq!(bun_write["profile"], "bun_write_helper_gated");
+        assert_eq!(bun_write["profile_status"], "manifest_only");
+        assert_eq!(bun_write["observed_state"], "named_static_limitation");
+        assert_eq!(bun_write["proof_mode"], "helper_gated");
+        assert_eq!(bun_write["suggested_test_file"], "not_applicable");
+        assert_eq!(bun_write["repair_packet_ready"], false);
+        assert_eq!(bun_write["public_projection_eligible"], false);
+        assert!(
+            bun_write["missing_graph_legs"]
+                .as_array()
+                .is_some_and(|legs| legs
+                    .iter()
+                    .any(|item| item == "helper:bun_write_fixture_helper"))
+        );
+        assert!(
+            bun_write["missing_graph_legs"]
+                .as_array()
+                .is_some_and(|legs| legs
+                    .iter()
+                    .any(|item| item == "binding_or_ffi_edge:bun_write_sink"))
+        );
+
+        let mut markdown = String::new();
+        super::cross_language_oracle_route_quality_push_markdown(&mut markdown, &value);
+        assert!(markdown.contains("## Cross-Language Oracle Route Quality"));
+        assert!(markdown.contains("Complete advisory witnesses"));
+        assert!(markdown.contains("bun_blob_missing_resizable_oracle_limitation"));
+        assert!(
+            markdown.contains("bun_markdown_resizable_array_buffer_configured_bridge_advisory")
+        );
+        assert!(markdown.contains("Panic boundary limitations"));
+        assert!(markdown.contains("bun_ffi_negative_offset_panic_boundary_limitation"));
+        assert!(markdown.contains("Manifest-only profiles"));
+        assert!(markdown.contains("bun_node_fs_scalar_write_manifest_only_profile"));
+        assert!(markdown.contains("bun_write_helper_gated_manifest_only_profile"));
+        assert!(markdown.contains("Missing external oracle limitations"));
+        assert!(markdown.contains("binding_or_ffi_edge"));
+        assert!(markdown.contains("preview/advisory route-quality evidence only"));
+        Ok(())
+    })
+}
+
+#[test]
+fn cross_language_oracle_graph_rejects_malformed_corpus_files() -> Result<(), String> {
+    let root = temp_dir("cross-language-oracle-graph-malformed");
+    let missing_path = root.join("missing.json");
+    let mut violations = Vec::new();
+    super::validate_cross_language_oracle_graph_fixture_corpus_at(&missing_path, &mut violations)?;
+    assert_contains_error(&violations, "Cross-language oracle graph corpus is missing");
+
+    for (name, body, reason) in [
+        (
+            "bad-schema",
+            r#"{"schema_version":"0.2","kind":"cross_language_oracle_graph_corpus","spec":"RIPR-SPEC-0062","cases":[]}"#,
+            "schema_version must be 0.1",
+        ),
+        (
+            "bad-kind",
+            r#"{"schema_version":"0.1","kind":"other","spec":"RIPR-SPEC-0062","cases":[]}"#,
+            "kind must be cross_language_oracle_graph_corpus",
+        ),
+        (
+            "bad-spec",
+            r#"{"schema_version":"0.1","kind":"cross_language_oracle_graph_corpus","spec":"RIPR-SPEC-9999","cases":[]}"#,
+            "spec must be RIPR-SPEC-0062",
+        ),
+        (
+            "missing-cases",
+            r#"{"schema_version":"0.1","kind":"cross_language_oracle_graph_corpus","spec":"RIPR-SPEC-0062"}"#,
+            "missing cases array",
+        ),
+    ] {
+        let path = root.join(format!("{name}.json"));
+        write(&path, body);
+        let cases = super::cross_language_oracle_graph_cases_at(&path);
+        assert_contains_error(std::slice::from_ref(&cases[0].reason), reason);
+
+        let mut violations = Vec::new();
+        super::validate_cross_language_oracle_graph_fixture_corpus_at(&path, &mut violations)?;
+        assert_contains_error(
+            &violations,
+            "Cross-language oracle graph case corpus: source must be present",
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn cross_language_oracle_graph_rejects_duplicate_and_required_state_drift() -> Result<(), String> {
+    let root = temp_dir("cross-language-oracle-graph-required-cases");
+    let mut duplicate = valid_cross_language_oracle_graph_case();
+    duplicate.name = "duplicated".to_string();
+    let duplicate_case = cross_language_oracle_graph_case_json(&duplicate);
+    let duplicate_path = root.join("duplicate.json");
+    write(
+        &duplicate_path,
+        &cross_language_oracle_graph_corpus_json(&[duplicate_case.clone(), duplicate_case]),
+    );
+
+    let mut violations = Vec::new();
+    super::validate_cross_language_oracle_graph_fixture_corpus_at(
+        &duplicate_path,
+        &mut violations,
+    )?;
+    assert_contains_error(&violations, "case duplicated is duplicated");
+    assert_contains_error(
+        &violations,
+        "Cross-language oracle graph corpus is missing case bun_blob_complete_ts_discriminated_advisory",
+    );
+    assert_contains_error(
+        &violations,
+        "Cross-language oracle graph corpus must include state bridge_unknown",
+    );
+
+    let wrong_required_path = root.join("wrong-required.json");
+    let mut wrong_required = valid_cross_language_oracle_graph_case();
+    wrong_required.name = "bun_blob_complete_ts_discriminated_advisory".to_string();
+    wrong_required.expected_state = "bridge_unknown".to_string();
+    wrong_required.gap_state = "static_limitation".to_string();
+    wrong_required.limitation_category = "cross_language_oracle_visibility_unresolved".to_string();
+    wrong_required.repair_route = "analysis/cross-language-oracle-visibility".to_string();
+    wrong_required.binding_edge_kind = "unresolved".to_string();
+    wrong_required.binding_edge_confidence = "unknown".to_string();
+    wrong_required
+        .missing_graph_legs
+        .push("binding_or_ffi_edge".to_string());
+    wrong_required
+        .raw_evidence_refs
+        .retain(|raw_ref| raw_ref.leg != "binding_edge");
+    write(
+        &wrong_required_path,
+        &cross_language_oracle_graph_corpus_json(&[cross_language_oracle_graph_case_json(
+            &wrong_required,
+        )]),
+    );
+
+    let mut violations = Vec::new();
+    super::validate_cross_language_oracle_graph_fixture_corpus_at(
+        &wrong_required_path,
+        &mut violations,
+    )?;
+    assert_contains_error(
+        &violations,
+        "case bun_blob_complete_ts_discriminated_advisory must have expected_state rust_ungripped_ts_discriminated, got bridge_unknown",
+    );
+
+    Ok(())
+}
+
+#[test]
+fn cross_language_oracle_graph_rejects_actionability_and_location_holes() {
+    let mut case = valid_cross_language_oracle_graph_case();
+    case.name = " ".to_string();
+    case.source.clear();
+    case.language = "javascript".to_string();
+    case.language_status = "stable".to_string();
+    case.authority_boundary = "gate_ready".to_string();
+    case.repair_packet_ready = true;
+    case.public_projection_eligible = true;
+    case.suggested_test_file = "src/jsc/Blob.rs".to_string();
+    case.allowed_edit_surface
+        .push("test/js/web/fetch/blob.test.ts".to_string());
+    case.verify_command = Some("bun test test/js/web/fetch/blob.test.ts".to_string());
+    case.receipt_command = Some("cargo xtask receipts check".to_string());
+    case.rust_file = "src/lib.rs".to_string();
+    case.rust_line = None;
+    case.rust_owner = "Blob::from_js".to_string();
+    case.rust_boundary = "array_buffer.shared".to_string();
+    case.external_callsite_file = "test/js/web/fetch/blob.test.js".to_string();
+    case.external_callsite_line = None;
+    case.external_oracle_file = "test/js/web/fetch/blob.test.js".to_string();
+    case.external_oracle_line = None;
+    case.external_entrypoints.clear();
+    case.raw_evidence_refs.clear();
+    case.non_claims.clear();
+    case.reason.clear();
+
+    let errors = super::cross_language_oracle_graph_case_errors(&case);
+    for expected in [
+        "case id must be present",
+        "source must be present",
+        "reason must be present",
+        "rust line must be present",
+        "external_callsite line must be present",
+        "external_oracle line must be present",
+        "language must be typescript",
+        "language_status must be preview",
+        "authority_boundary must be preview_advisory_only",
+        "repair_packet_ready must remain false",
+        "public_projection_eligible must remain false",
+        "suggested_test_file must be not_applicable, the configured Bun Blob TypeScript test file for missing-discriminator rows, or the typed node:fs manifest placement",
+        "allowed_edit_surface must remain empty",
+        "verify_command must be omitted",
+        "receipt_command must be omitted",
+        "rust_file must identify the Bun Blob Rust seam",
+        "rust_owner must pin Blob::from_js_without_defer_gc",
+        "rust_boundary must include array_buffer.shared and array_buffer.resizable",
+        "external_callsite_file must be a Bun test/js TypeScript test path",
+        "external_oracle_file must be a Bun test/js TypeScript test path",
+        "external_entrypoints must name at least one external callsite",
+        "non_claims must keep cross-language preview denials visible",
+        "raw_evidence_refs must include structured graph refs",
+    ] {
+        assert_contains_error(&errors, expected);
+    }
+}
+
+#[test]
+fn cross_language_oracle_graph_rejects_invalid_state_shapes() {
+    let mut advisory = valid_cross_language_oracle_graph_case();
+    advisory.shared_array_buffer = false;
+    advisory.max_byte_length_mention_only = true;
+    advisory.binding_edge_confidence = "unknown".to_string();
+    advisory
+        .missing_discriminators
+        .push("shared_array_buffer".to_string());
+    advisory
+        .missing_graph_legs
+        .push("external_discriminator:shared_array_buffer".to_string());
+    advisory.unlock_condition = "needs more evidence".to_string();
+    let errors = super::cross_language_oracle_graph_case_errors(&advisory);
+    assert_contains_error(
+        &errors,
+        "rust_ungripped_ts_discriminated requires either the Blob shared/resizable stable-byte facts or the Bun markdown resizable strong-oracle profile facts",
+    );
+    assert_contains_error(
+        &errors,
+        "rust_ungripped_ts_discriminated must not be mention-only evidence",
+    );
+    assert_contains_error(
+        &errors,
+        "rust_ungripped_ts_discriminated requires configured bridge confidence",
+    );
+    assert_contains_error(
+        &errors,
+        "rust_ungripped_ts_discriminated must not name missing discriminators",
+    );
+    assert_contains_error(
+        &errors,
+        "rust_ungripped_ts_discriminated must not name missing graph legs",
+    );
+    assert_contains_error(
+        &errors,
+        "rust_ungripped_ts_discriminated must use unlock_condition not_applicable",
+    );
+
+    let mut missing = valid_cross_language_oracle_graph_case();
+    missing.name = "bun_blob_missing_resizable_oracle_limitation".to_string();
+    missing.expected_state = "rust_ungripped_ts_missing_discriminator".to_string();
+    missing.gap_state = "static_limitation".to_string();
+    missing.limitation_category = "cross_language_oracle_visibility_unresolved".to_string();
+    missing.repair_route = "analysis/cross-language-oracle-visibility".to_string();
+    missing.missing_discriminators.clear();
+    missing.missing_graph_legs.clear();
+    missing.unlock_condition = "Name missing discriminator".to_string();
+    let errors = super::cross_language_oracle_graph_case_errors(&missing);
+    assert_contains_error(
+        &errors,
+        "rust_ungripped_ts_missing_discriminator must name missing discriminators",
+    );
+    assert_contains_error(
+        &errors,
+        "bun_blob_missing_resizable case must name resizable_array_buffer",
+    );
+    assert_contains_error(
+        &errors,
+        "rust_ungripped_ts_missing_discriminator must name the missing boundary discriminator leg",
+    );
+    assert_contains_error(
+        &errors,
+        "rust_ungripped_ts_missing_discriminator must suggest the configured Bun Blob TypeScript test file",
+    );
+
+    let mut missing_external_oracle = valid_cross_language_oracle_graph_case();
+    missing_external_oracle.expected_state =
+        "rust_ungripped_ts_missing_external_oracle".to_string();
+    missing_external_oracle.gap_state = "static_limitation".to_string();
+    missing_external_oracle.limitation_category =
+        "cross_language_oracle_visibility_unresolved".to_string();
+    missing_external_oracle.repair_route = "analysis/cross-language-oracle-visibility".to_string();
+    missing_external_oracle.missing_discriminators = vec!["resizable_array_buffer".to_string()];
+    missing_external_oracle.missing_graph_legs.clear();
+    missing_external_oracle.view_backed_blob_input = true;
+    missing_external_oracle.stable_byte_copy_oracle = true;
+    missing_external_oracle.unlock_condition = "Name external oracle".to_string();
+    let errors = super::cross_language_oracle_graph_case_errors(&missing_external_oracle);
+    assert_contains_error(
+        &errors,
+        "rust_ungripped_ts_missing_external_oracle requires a missing Blob input or stable-byte oracle",
+    );
+    assert_contains_error(
+        &errors,
+        "rust_ungripped_ts_missing_external_oracle must not name missing boundary discriminators",
+    );
+    assert_contains_error(
+        &errors,
+        "rust_ungripped_ts_missing_external_oracle must name the missing external observer graph leg",
+    );
+
+    let mut mention = valid_cross_language_oracle_graph_case();
+    mention.expected_state = "ts_mention_not_observer".to_string();
+    mention.gap_state = "static_limitation".to_string();
+    mention.limitation_category = "cross_language_oracle_visibility_unresolved".to_string();
+    mention.repair_route = "analysis/cross-language-oracle-visibility".to_string();
+    mention.max_byte_length_mention_only = false;
+    mention.view_backed_blob_input = true;
+    mention.stable_byte_copy_oracle = true;
+    mention.missing_graph_legs.clear();
+    mention.unlock_condition = "Name stable observer".to_string();
+    let errors = super::cross_language_oracle_graph_case_errors(&mention);
+    assert_contains_error(
+        &errors,
+        "ts_mention_not_observer must record max_byte_length_mention_only=true",
+    );
+    assert_contains_error(
+        &errors,
+        "ts_mention_not_observer must not count Blob input or stable-byte oracle facts",
+    );
+    assert_contains_error(
+        &errors,
+        "ts_mention_not_observer must name the missing external Blob callsite graph leg",
+    );
+
+    let mut bridge = valid_cross_language_oracle_graph_case();
+    bridge.expected_state = "bridge_unknown".to_string();
+    bridge.gap_state = "static_limitation".to_string();
+    bridge.limitation_category = "cross_language_oracle_visibility_unresolved".to_string();
+    bridge.repair_route = "analysis/cross-language-oracle-visibility".to_string();
+    bridge.binding_edge_kind = "configured_bridge".to_string();
+    bridge.binding_edge_confidence = "configured_hint".to_string();
+    bridge.missing_graph_legs.clear();
+    bridge.unlock_condition = "Name bridge".to_string();
+    let errors = super::cross_language_oracle_graph_case_errors(&bridge);
+    assert_contains_error(
+        &errors,
+        "rows with missing binding_or_ffi_edge must not claim a binding_edge raw ref",
+    );
+    assert_contains_error(
+        &errors,
+        "bridge_unknown requires unresolved binding edge and unknown confidence",
+    );
+    assert_contains_error(
+        &errors,
+        "bridge_unknown must name binding_or_ffi_edge as missing",
+    );
+
+    let mut target = valid_cross_language_oracle_graph_case();
+    target.expected_state = "cross_language_target_unresolved".to_string();
+    target.gap_state = "static_limitation".to_string();
+    target.limitation_category = "cross_language_target_unresolved".to_string();
+    target.repair_route = "analysis/cross-language-test-target-inference".to_string();
+    target.missing_graph_legs.clear();
+    target.unlock_condition = "Name target".to_string();
+    let errors = super::cross_language_oracle_graph_case_errors(&target);
+    assert_contains_error(
+        &errors,
+        "cross_language_target_unresolved must name safe_external_observer_target as missing",
+    );
+
+    let mut panic_boundary = valid_cross_language_oracle_graph_case();
+    panic_boundary.profile = "bun_ffi_negative_offset_panic_boundary".to_string();
+    panic_boundary.rust_file = "src/bun.js/bindings/FFIObject.rs".to_string();
+    panic_boundary.rust_line = Some(277);
+    panic_boundary.rust_owner = "FFIObject::read".to_string();
+    panic_boundary.rust_boundary = "usize::try_from(to_int32()).expect(\"int cast\")".to_string();
+    panic_boundary.binding_edge_kind = "ffi_binding".to_string();
+    panic_boundary.binding_edge_confidence = "heuristic".to_string();
+    panic_boundary.external_callsite_file = "unresolved:typescript-test-surface".to_string();
+    panic_boundary.external_callsite_line = None;
+    panic_boundary.external_entrypoints = vec!["read.u8(ptr, -1)".to_string()];
+    panic_boundary.external_oracle_file = "unresolved:negative-offset-panic-oracle".to_string();
+    panic_boundary.external_oracle_line = None;
+    panic_boundary.expected_state = "public_reachable_panic_boundary_unrevealed".to_string();
+    panic_boundary.gap_state = "static_limitation".to_string();
+    panic_boundary.limitation_category =
+        "cross_language_panic_boundary_visibility_unresolved".to_string();
+    panic_boundary.repair_route = "analysis/cross-language-panic-boundary-visibility".to_string();
+    panic_boundary.suggested_test_file = "test/js/bun/ffi/ffi.test.ts".to_string();
+    panic_boundary.missing_discriminators.clear();
+    panic_boundary.missing_graph_legs.clear();
+    panic_boundary.external_oracle_kind = "wrong_oracle".to_string();
+    panic_boundary.oracle_strength = "weak".to_string();
+    panic_boundary.unlock_condition = "Name panic oracle".to_string();
+    let errors = super::cross_language_oracle_graph_case_errors(&panic_boundary);
+    assert_contains_error(
+        &errors,
+        "public_reachable_panic_boundary_unrevealed must name negative_offset as the missing discriminator",
+    );
+    assert_contains_error(
+        &errors,
+        "public_reachable_panic_boundary_unrevealed must name the missing negative-offset panic oracle leg",
+    );
+    assert_contains_error(
+        &errors,
+        "public_reachable_panic_boundary_unrevealed must name safe_external_observer_target as missing",
+    );
+    assert_contains_error(
+        &errors,
+        "public_reachable_panic_boundary_unrevealed must not suggest a test file",
+    );
+    assert_contains_error(
+        &errors,
+        "public_reachable_panic_boundary_unrevealed must use negative_offset_panic_oracle_unresolved oracle kind",
+    );
+    assert_contains_error(
+        &errors,
+        "public_reachable_panic_boundary_unrevealed must use missing_boundary oracle strength",
+    );
+}
+
+#[test]
+fn cross_language_oracle_graph_validates_copy_to_unshared_profile() {
+    let mut case = valid_cross_language_oracle_graph_case();
+    case.name = "bun_array_buffer_copy_to_unshared_configured_bridge_advisory".to_string();
+    case.source = "#910-copy-to-unshared".to_string();
+    case.profile = "bun_array_buffer_copy_to_unshared".to_string();
+    case.rust_file = "src/jsc/array_buffer.rs".to_string();
+    case.rust_line = Some(341);
+    case.rust_owner = "copy_to_unshared".to_string();
+    case.rust_boundary = "SharedArrayBuffer and resizable ArrayBuffer copy semantics".to_string();
+
+    let errors = super::cross_language_oracle_graph_case_errors(&case);
+    assert!(
+        errors.is_empty(),
+        "copy_to_unshared configured bridge profile should validate: {errors:?}"
+    );
+
+    let mut bridge_unknown = case.clone();
+    bridge_unknown.name = "bun_array_buffer_copy_to_unshared_bridge_unknown_limitation".to_string();
+    bridge_unknown.expected_state = "bridge_unknown".to_string();
+    bridge_unknown.gap_state = "static_limitation".to_string();
+    bridge_unknown.limitation_category = "cross_language_oracle_visibility_unresolved".to_string();
+    bridge_unknown.repair_route = "analysis/cross-language-oracle-visibility".to_string();
+    bridge_unknown.binding_edge_kind = "unresolved".to_string();
+    bridge_unknown.binding_edge_confidence = "unknown".to_string();
+    bridge_unknown.missing_graph_legs = vec!["binding_or_ffi_edge:copy_to_unshared".to_string()];
+    bridge_unknown.unlock_condition = "Name the copy_to_unshared bridge".to_string();
+    bridge_unknown
+        .raw_evidence_refs
+        .retain(|raw_ref| raw_ref.leg != "binding_edge");
+    let errors = super::cross_language_oracle_graph_case_errors(&bridge_unknown);
+    assert!(
+        errors.is_empty(),
+        "copy_to_unshared bridge-unknown profile should still validate without a binding edge: {errors:?}"
+    );
+
+    let mut unproven_credit = case.clone();
+    unproven_credit.binding_edge_kind = "unresolved".to_string();
+    unproven_credit.binding_edge_confidence = "unknown".to_string();
+    let errors = super::cross_language_oracle_graph_case_errors(&unproven_credit);
+    assert_contains_error(
+        &errors,
+        "bun_array_buffer_copy_to_unshared configured route requires configured or generated binding edge evidence",
+    );
+
+    let mut wrong_shape = case.clone();
+    wrong_shape.rust_file = "src/jsc/Blob.rs".to_string();
+    wrong_shape.rust_owner = "Blob::from_js_without_defer_gc".to_string();
+    wrong_shape.rust_boundary = "array_buffer.shared || array_buffer.resizable".to_string();
+    let errors = super::cross_language_oracle_graph_case_errors(&wrong_shape);
+    assert_contains_error(
+        &errors,
+        "rust_file must identify the Bun array_buffer Rust seam",
+    );
+    assert_contains_error(
+        &errors,
+        "rust_owner must pin copy_to_unshared for the Bun array_buffer route",
+    );
+    assert_contains_error(
+        &errors,
+        "rust_boundary must name SharedArrayBuffer and resizable ArrayBuffer copy semantics",
+    );
+
+    let mut unknown_profile = case;
+    unknown_profile.profile = "unknown_profile".to_string();
+    let errors = super::cross_language_oracle_graph_case_errors(&unknown_profile);
+    assert_contains_error(
+        &errors,
+        "profile must be bun_blob_array_buffer, bun_array_buffer_copy_to_unshared, bun_markdown_resizable_array_buffer, bun_ffi_negative_offset_panic_boundary, bun_node_fs_scalar_write, or bun_write_helper_gated",
+    );
+}
+
+#[test]
+fn cross_language_oracle_graph_validates_bun_ffi_negative_offset_profile() {
+    let mut case = valid_cross_language_oracle_graph_case();
+    case.name = "bun_ffi_negative_offset_panic_boundary_limitation".to_string();
+    case.source = "#950-ffi-negative-offset-public-reachable-panic-boundary".to_string();
+    case.profile = "bun_ffi_negative_offset_panic_boundary".to_string();
+    case.rust_file = "src/bun.js/bindings/FFIObject.rs".to_string();
+    case.rust_line = Some(277);
+    case.rust_owner = "FFIObject::read".to_string();
+    case.rust_boundary = "usize::try_from(to_int32()).expect(\"int cast\")".to_string();
+    case.binding_edge_kind = "ffi_binding".to_string();
+    case.binding_edge_confidence = "heuristic".to_string();
+    case.external_callsite_file = "unresolved:typescript-test-surface".to_string();
+    case.external_callsite_line = None;
+    case.external_entrypoints = vec!["read.u8(ptr, -1)".to_string()];
+    case.shared_array_buffer = false;
+    case.resizable_array_buffer = false;
+    case.view_backed_blob_input = false;
+    case.stable_byte_copy_oracle = false;
+    case.external_oracle_file = "unresolved:negative-offset-panic-oracle".to_string();
+    case.external_oracle_line = None;
+    case.external_oracle_kind = "negative_offset_panic_oracle_unresolved".to_string();
+    case.oracle_strength = "missing_boundary".to_string();
+    case.expected_state = "public_reachable_panic_boundary_unrevealed".to_string();
+    case.gap_state = "static_limitation".to_string();
+    case.limitation_category = "cross_language_panic_boundary_visibility_unresolved".to_string();
+    case.repair_route = "analysis/cross-language-panic-boundary-visibility".to_string();
+    case.missing_discriminators = vec!["negative_offset".to_string()];
+    case.missing_graph_legs = vec![
+        "external_oracle:negative_offset_panic_boundary".to_string(),
+        "safe_external_observer_target".to_string(),
+    ];
+    case.unlock_condition =
+        "Trace and resolve the negative-offset panic oracle before actionability".to_string();
+    case.raw_evidence_refs = vec![
+        super::CrossLanguageOracleGraphRawRef {
+            leg: "rust_seam".to_string(),
+            file: "src/bun.js/bindings/FFIObject.rs".to_string(),
+            line: Some(277),
+            kind: "rust_panic_boundary".to_string(),
+            source_id: "#950".to_string(),
+            sample: "FFIObject.rs negative-offset conversion panic boundary".to_string(),
+        },
+        super::CrossLanguageOracleGraphRawRef {
+            leg: "boundary_discriminator".to_string(),
+            file: "issue:#950".to_string(),
+            line: Some(1),
+            kind: "negative_offset_discriminator_missing".to_string(),
+            source_id: "#950".to_string(),
+            sample: "read.u8(ptr, -1) is the boundary discriminator shape".to_string(),
+        },
+        super::CrossLanguageOracleGraphRawRef {
+            leg: "binding_edge".to_string(),
+            file: "src/bun.js/bindings/FFIObject.rs".to_string(),
+            line: Some(277),
+            kind: "ffi_binding".to_string(),
+            source_id: "#950".to_string(),
+            sample: "Bun FFI read reaches the Rust owner through an FFI binding".to_string(),
+        },
+        super::CrossLanguageOracleGraphRawRef {
+            leg: "external_callsite".to_string(),
+            file: "issue:#950".to_string(),
+            line: Some(1),
+            kind: "typescript_ffi_callsite".to_string(),
+            source_id: "#950".to_string(),
+            sample: "read.u8(ptr, -1) is the external callsite sample".to_string(),
+        },
+        super::CrossLanguageOracleGraphRawRef {
+            leg: "external_oracle".to_string(),
+            file: "issue:#950".to_string(),
+            line: Some(1),
+            kind: "typescript_assertion_missing".to_string(),
+            source_id: "#950".to_string(),
+            sample: "no external assertion is proven for the panic boundary".to_string(),
+        },
+    ];
+
+    let errors = super::cross_language_oracle_graph_case_errors(&case);
+    assert!(
+        errors.is_empty(),
+        "Bun FFI negative-offset panic-boundary profile should validate: {errors:?}"
+    );
+
+    let mut wrong_shape = case.clone();
+    wrong_shape.rust_file = "src/jsc/Blob.rs".to_string();
+    wrong_shape.rust_owner = "Blob::from_js_without_defer_gc".to_string();
+    wrong_shape.rust_boundary = "array_buffer.shared || array_buffer.resizable".to_string();
+    wrong_shape.binding_edge_kind = "configured_bridge".to_string();
+    wrong_shape.external_entrypoints = vec!["read.u32(ptr, 0)".to_string()];
+    let errors = super::cross_language_oracle_graph_case_errors(&wrong_shape);
+    assert_contains_error(
+        &errors,
+        "rust_file must identify the Bun FFIObject Rust seam",
+    );
+    assert_contains_error(
+        &errors,
+        "rust_owner must pin FFIObject::read for the Bun FFI negative-offset route",
+    );
+    assert_contains_error(
+        &errors,
+        "rust_boundary must include usize::try_from and expect(\"int cast\")",
+    );
+    assert_contains_error(
+        &errors,
+        "bun_ffi_negative_offset_panic_boundary requires FFI binding edge evidence",
+    );
+    assert_contains_error(
+        &errors,
+        "bun_ffi_negative_offset_panic_boundary must name read.u8 as an external entrypoint",
+    );
+
+    let mut wrong_state = case;
+    wrong_state.expected_state = "rust_ungripped_ts_discriminated".to_string();
+    wrong_state.gap_state = "already_observed".to_string();
+    wrong_state.limitation_category = "not_applicable".to_string();
+    wrong_state.repair_route = "manual-review/cross-language-advisory-witness".to_string();
+    wrong_state.missing_discriminators.clear();
+    wrong_state.missing_graph_legs.clear();
+    wrong_state.unlock_condition = "not_applicable".to_string();
+    let errors = super::cross_language_oracle_graph_case_errors(&wrong_state);
+    assert_contains_error(
+        &errors,
+        "bun_ffi_negative_offset_panic_boundary profile currently only supports public_reachable_panic_boundary_unrevealed",
+    );
+}
+
+#[test]
+fn cross_language_profile_intake_requires_manifest_rows() {
+    let mut case = valid_cross_language_oracle_graph_case();
+    case.name = "bun_node_fs_scalar_write_manifest_only_profile".to_string();
+    case.source = "profile-intake-node-fs-scalar-write".to_string();
+    case.profile = "bun_node_fs_scalar_write".to_string();
+    case.profile_status = "manifest_only".to_string();
+    case.rust_file = "unresolved:node-fs-scalar-write-rust-seam".to_string();
+    case.rust_line = None;
+    case.rust_owner = "node:fs scalar write sink".to_string();
+    case.rust_boundary =
+        "JS-owned bytes must be copied before native write scalar sinks".to_string();
+    case.binding_edge_kind = "manifest_only".to_string();
+    case.binding_edge_confidence = "manifest_only".to_string();
+    case.external_callsite_file = "test/js/node/fs/fs.test.ts".to_string();
+    case.external_callsite_line = Some(1);
+    case.external_entrypoints = vec![
+        "node:fs scalar write".to_string(),
+        "fs.writeFileSync".to_string(),
+        "fs.writeSync".to_string(),
+    ];
+    case.shared_array_buffer = false;
+    case.resizable_array_buffer = false;
+    case.view_backed_blob_input = false;
+    case.stable_byte_copy_oracle = false;
+    case.max_byte_length_mention_only = false;
+    case.external_oracle_file = "test/js/node/fs/fs.test.ts".to_string();
+    case.external_oracle_line = Some(1);
+    case.external_oracle_kind = "stable_byte_scalar_write_oracle_manifest_only".to_string();
+    case.oracle_strength = "manifest_only".to_string();
+    case.expected_state = "named_static_limitation".to_string();
+    case.gap_state = "static_limitation".to_string();
+    case.limitation_category = "cross_language_profile_manifest_only".to_string();
+    case.repair_route = "analysis/cross-language-profile-intake".to_string();
+    case.suggested_test_file = "test/js/node/fs/fs.test.ts".to_string();
+    case.missing_graph_legs = vec![
+        "binding_or_ffi_edge:node_fs_scalar_write".to_string(),
+        "external_oracle:stable_byte_scalar_write".to_string(),
+    ];
+    case.unlock_condition =
+            "Audit the node:fs scalar write Rust sink and bridge/oracle evidence before analyzer projection."
+                .to_string();
+    case.proof_mode = "observable_red_green".to_string();
+    case.raw_evidence_refs = vec![
+        super::CrossLanguageOracleGraphRawRef {
+            leg: "rust_seam".to_string(),
+            file: "issue:node-fs-scalar-write-profile".to_string(),
+            line: Some(1),
+            kind: "rust_seam_unresolved".to_string(),
+            source_id: "profile-intake-node-fs-scalar-write".to_string(),
+            sample:
+                "node:fs scalar write Rust sink remains unresolved in the manifest-only profile"
+                    .to_string(),
+        },
+        super::CrossLanguageOracleGraphRawRef {
+            leg: "boundary_discriminator".to_string(),
+            file: "issue:node-fs-scalar-write-profile".to_string(),
+            line: Some(1),
+            kind: "stable_byte_scalar_write_discriminator".to_string(),
+            source_id: "profile-intake-node-fs-scalar-write".to_string(),
+            sample: "scalar write is the stable-byte boundary shape under intake".to_string(),
+        },
+        super::CrossLanguageOracleGraphRawRef {
+            leg: "external_callsite".to_string(),
+            file: "test/js/node/fs/fs.test.ts".to_string(),
+            line: Some(1),
+            kind: "typescript_node_fs_callsite".to_string(),
+            source_id: "profile-intake-node-fs-scalar-write".to_string(),
+            sample: "node:fs scalar writes are expected to be witnessed in fs.test.ts".to_string(),
+        },
+        super::CrossLanguageOracleGraphRawRef {
+            leg: "external_oracle".to_string(),
+            file: "test/js/node/fs/fs.test.ts".to_string(),
+            line: Some(1),
+            kind: "typescript_assertion_manifest_only".to_string(),
+            source_id: "profile-intake-node-fs-scalar-write".to_string(),
+            sample: "stable-byte scalar write assertion shape is manifest-only".to_string(),
+        },
+        super::CrossLanguageOracleGraphRawRef {
+            leg: "placement".to_string(),
+            file: "test/js/node/fs/fs.test.ts".to_string(),
+            line: Some(1),
+            kind: "typed_test_placement".to_string(),
+            source_id: "profile-intake-node-fs-scalar-write".to_string(),
+            sample: "typed node:fs placement is pinned without actionability".to_string(),
+        },
+    ];
+    let errors = super::cross_language_oracle_graph_case_errors(&case);
+    assert!(
+        errors.is_empty(),
+        "node:fs manifest-only profile should validate: {errors:?}"
+    );
+
+    let mut active = case.clone();
+    active.profile_status = "active".to_string();
+    let errors = super::cross_language_oracle_graph_case_errors(&active);
+    assert_contains_error(
+        &errors,
+        "named_static_limitation profile intake rows must be manifest_only",
+    );
+    assert_contains_error(&errors, "bun_node_fs_scalar_write must be manifest_only");
+
+    let mut no_placement_ref = case.clone();
+    no_placement_ref
+        .raw_evidence_refs
+        .retain(|raw_ref| raw_ref.leg != "placement");
+    let errors = super::cross_language_oracle_graph_case_errors(&no_placement_ref);
+    assert_contains_error(
+        &errors,
+        "suggested_test_file must be not_applicable, the configured Bun Blob TypeScript test file for missing-discriminator rows, or the typed node:fs manifest placement",
+    );
+
+    let mut binding_credit = case.clone();
+    binding_credit
+        .raw_evidence_refs
+        .push(super::CrossLanguageOracleGraphRawRef {
+            leg: "binding_edge".to_string(),
+            file: "src/node/fs.rs".to_string(),
+            line: Some(1),
+            kind: "configured_bridge".to_string(),
+            source_id: "profile-intake-node-fs-scalar-write".to_string(),
+            sample: "manifest-only node:fs intake must not claim a binding edge".to_string(),
+        });
+    let errors = super::cross_language_oracle_graph_case_errors(&binding_credit);
+    assert_contains_error(
+        &errors,
+        "rows with missing binding_or_ffi_edge must not claim a binding_edge raw ref",
+    );
+
+    let mut wrong_proof = case;
+    wrong_proof.proof_mode = "mutation_plus_miri".to_string();
+    let errors = super::cross_language_oracle_graph_case_errors(&wrong_proof);
+    assert_contains_error(
+        &errors,
+        "bun_node_fs_scalar_write must record proof_mode observable_red_green",
+    );
+}
+
+#[test]
+fn cross_language_profile_intake_requires_helper_gated_rows() {
+    let mut case = valid_cross_language_oracle_graph_case();
+    case.name = "bun_write_helper_gated_manifest_only_profile".to_string();
+    case.source = "profile-intake-bun-write-helper-gated".to_string();
+    case.profile = "bun_write_helper_gated".to_string();
+    case.profile_status = "manifest_only".to_string();
+    case.rust_file = "unresolved:bun-write-stable-byte-rust-seam".to_string();
+    case.rust_line = None;
+    case.rust_owner = "Bun.write stable-byte sink".to_string();
+    case.rust_boundary =
+        "JS-owned bytes must not cross Bun.write native sinks without a helper".to_string();
+    case.binding_edge_kind = "manifest_only".to_string();
+    case.binding_edge_confidence = "manifest_only".to_string();
+    case.external_callsite_file = "test/js/bun/write.test.ts".to_string();
+    case.external_callsite_line = Some(1);
+    case.external_entrypoints = vec![
+        "Bun.write".to_string(),
+        "Bun.write stable-byte sink".to_string(),
+    ];
+    case.shared_array_buffer = false;
+    case.resizable_array_buffer = false;
+    case.view_backed_blob_input = false;
+    case.stable_byte_copy_oracle = false;
+    case.max_byte_length_mention_only = false;
+    case.external_oracle_file = "test/js/bun/write.test.ts".to_string();
+    case.external_oracle_line = Some(1);
+    case.external_oracle_kind = "stable_byte_write_oracle_helper_gated".to_string();
+    case.oracle_strength = "helper_gated".to_string();
+    case.expected_state = "named_static_limitation".to_string();
+    case.gap_state = "static_limitation".to_string();
+    case.limitation_category = "cross_language_profile_manifest_only".to_string();
+    case.repair_route = "analysis/cross-language-profile-intake".to_string();
+    case.suggested_test_file = "not_applicable".to_string();
+    case.missing_graph_legs = vec![
+        "binding_or_ffi_edge:bun_write_sink".to_string(),
+        "helper:bun_write_fixture_helper".to_string(),
+        "external_oracle:stable_byte_write".to_string(),
+    ];
+    case.unlock_condition =
+            "Land or identify bun_write_fixture_helper and audit the Bun.write bridge/oracle before analyzer projection."
+                .to_string();
+    case.proof_mode = "helper_gated".to_string();
+    case.raw_evidence_refs = vec![
+        super::CrossLanguageOracleGraphRawRef {
+            leg: "rust_seam".to_string(),
+            file: "issue:bun-write-helper-gated-profile".to_string(),
+            line: Some(1),
+            kind: "rust_seam_unresolved".to_string(),
+            source_id: "profile-intake-bun-write-helper-gated".to_string(),
+            sample:
+                "Bun.write stable-byte Rust sink remains unresolved in the manifest-only profile"
+                    .to_string(),
+        },
+        super::CrossLanguageOracleGraphRawRef {
+            leg: "boundary_discriminator".to_string(),
+            file: "issue:bun-write-helper-gated-profile".to_string(),
+            line: Some(1),
+            kind: "stable_byte_write_discriminator".to_string(),
+            source_id: "profile-intake-bun-write-helper-gated".to_string(),
+            sample: "Bun.write is the helper-gated stable-byte boundary shape under intake"
+                .to_string(),
+        },
+        super::CrossLanguageOracleGraphRawRef {
+            leg: "external_callsite".to_string(),
+            file: "test/js/bun/write.test.ts".to_string(),
+            line: Some(1),
+            kind: "typescript_bun_write_callsite".to_string(),
+            source_id: "profile-intake-bun-write-helper-gated".to_string(),
+            sample: "Bun.write callsites are expected to be witnessed in write.test.ts".to_string(),
+        },
+        super::CrossLanguageOracleGraphRawRef {
+            leg: "external_oracle".to_string(),
+            file: "test/js/bun/write.test.ts".to_string(),
+            line: Some(1),
+            kind: "typescript_assertion_helper_gated".to_string(),
+            source_id: "profile-intake-bun-write-helper-gated".to_string(),
+            sample: "stable-byte write assertion shape is blocked on bun_write_fixture_helper"
+                .to_string(),
+        },
+    ];
+
+    let errors = super::cross_language_oracle_graph_case_errors(&case);
+    assert!(
+        errors.is_empty(),
+        "Bun.write helper-gated profile should validate: {errors:?}"
+    );
+
+    let mut wrong_seam = case.clone();
+    wrong_seam.rust_file = "src/bun.js/bindings/BunWrite.rs".to_string();
+    let errors = super::cross_language_oracle_graph_case_errors(&wrong_seam);
+    assert_contains_error(
+        &errors,
+        "rust_file must keep the Bun.write stable-byte Rust seam unresolved",
+    );
+
+    let mut wrong_owner = case.clone();
+    wrong_owner.rust_owner = "Bun.write resolved sink".to_string();
+    let errors = super::cross_language_oracle_graph_case_errors(&wrong_owner);
+    assert_contains_error(
+        &errors,
+        "rust_owner must pin the manifest-only Bun.write stable-byte sink",
+    );
+
+    let mut wrong_boundary = case.clone();
+    wrong_boundary.rust_boundary = "native write helper".to_string();
+    let errors = super::cross_language_oracle_graph_case_errors(&wrong_boundary);
+    assert_contains_error(
+        &errors,
+        "rust_boundary must describe JS-owned bytes crossing the Bun.write boundary",
+    );
+
+    let mut active = case.clone();
+    active.expected_state = "rust_ungripped_ts_discriminated".to_string();
+    active.profile_status = "active".to_string();
+    let errors = super::cross_language_oracle_graph_case_errors(&active);
+    assert_contains_error(
+        &errors,
+        "bun_write_helper_gated profile is manifest_only and must stay a named_static_limitation",
+    );
+    assert_contains_error(&errors, "bun_write_helper_gated must be manifest_only");
+
+    let mut wrong_proof = case.clone();
+    wrong_proof.proof_mode = "observable_red_green".to_string();
+    let errors = super::cross_language_oracle_graph_case_errors(&wrong_proof);
+    assert_contains_error(
+        &errors,
+        "bun_write_helper_gated must record proof_mode helper_gated",
+    );
+
+    let mut bridge_credit = case.clone();
+    bridge_credit.binding_edge_kind = "configured_bridge".to_string();
+    bridge_credit.binding_edge_confidence = "configured_hint".to_string();
+    let errors = super::cross_language_oracle_graph_case_errors(&bridge_credit);
+    assert_contains_error(
+        &errors,
+        "bun_write_helper_gated must keep bridge evidence manifest_only",
+    );
+
+    let mut missing_entrypoint = case.clone();
+    missing_entrypoint.external_entrypoints = vec!["writeFile".to_string()];
+    let errors = super::cross_language_oracle_graph_case_errors(&missing_entrypoint);
+    assert_contains_error(
+        &errors,
+        "bun_write_helper_gated must name Bun.write as an external entrypoint",
+    );
+
+    let mut wrong_witness_path = case.clone();
+    wrong_witness_path.external_callsite_file = "test/js/node/fs/fs.test.ts".to_string();
+    wrong_witness_path.external_oracle_file = "test/js/node/fs/fs.test.ts".to_string();
+    let errors = super::cross_language_oracle_graph_case_errors(&wrong_witness_path);
+    assert_contains_error(
+        &errors,
+        "bun_write_helper_gated must record test/js/bun/write.test.ts as the manifest witness path",
+    );
+
+    let mut wrong_oracle = case.clone();
+    wrong_oracle.external_oracle_kind = "stable_byte_write_oracle".to_string();
+    wrong_oracle.oracle_strength = "manifest_only".to_string();
+    let errors = super::cross_language_oracle_graph_case_errors(&wrong_oracle);
+    assert_contains_error(
+        &errors,
+        "bun_write_helper_gated must keep write-oracle evidence helper_gated",
+    );
+
+    let mut missing_helper = case.clone();
+    missing_helper
+        .missing_graph_legs
+        .retain(|leg| leg != "helper:bun_write_fixture_helper");
+    let errors = super::cross_language_oracle_graph_case_errors(&missing_helper);
+    assert_contains_error(
+        &errors,
+        "bun_write_helper_gated must name helper:bun_write_fixture_helper as missing",
+    );
+
+    let mut suggested = case.clone();
+    suggested.suggested_test_file = "test/js/bun/write.test.ts".to_string();
+    let errors = super::cross_language_oracle_graph_case_errors(&suggested);
+    assert_contains_error(
+        &errors,
+        "bun_write_helper_gated must not suggest placement while helper-gated",
+    );
+
+    let mut binding_credit = case;
+    binding_credit
+        .raw_evidence_refs
+        .push(super::CrossLanguageOracleGraphRawRef {
+            leg: "binding_edge".to_string(),
+            file: "src/bun.js/bindings/BunWrite.rs".to_string(),
+            line: Some(1),
+            kind: "configured_bridge".to_string(),
+            source_id: "profile-intake-bun-write-helper-gated".to_string(),
+            sample: "helper-gated Bun.write intake must not claim a binding edge".to_string(),
+        });
+    let errors = super::cross_language_oracle_graph_case_errors(&binding_credit);
+    assert_contains_error(
+        &errors,
+        "rows with missing binding_or_ffi_edge must not claim a binding_edge raw ref",
+    );
+}
+
+#[test]
+fn typescript_bun_ub_calibration_rejects_malformed_corpus_files() -> Result<(), String> {
+    let root = temp_dir("typescript-bun-ub-calibration-malformed");
+    let missing_path = root.join("missing.json");
+    let mut violations = Vec::new();
+    super::validate_typescript_bun_ub_calibration_fixture_corpus_at(
+        &missing_path,
+        &mut violations,
+    )?;
+    assert_contains_error(
+        &violations,
+        "TypeScript Bun UB calibration corpus is missing",
+    );
+
+    for (name, body, reason) in [
+        (
+            "bad-schema",
+            r#"{"schema_version":"0.2","kind":"typescript_bun_ub_calibration_corpus","spec":"RIPR-SPEC-0027","cases":[]}"#,
+            "schema_version must be 0.1",
+        ),
+        (
+            "bad-kind",
+            r#"{"schema_version":"0.1","kind":"other","spec":"RIPR-SPEC-0027","cases":[]}"#,
+            "kind must be typescript_bun_ub_calibration_corpus",
+        ),
+        (
+            "bad-spec",
+            r#"{"schema_version":"0.1","kind":"typescript_bun_ub_calibration_corpus","spec":"RIPR-SPEC-9999","cases":[]}"#,
+            "spec must be RIPR-SPEC-0027",
+        ),
+        (
+            "missing-cases",
+            r#"{"schema_version":"0.1","kind":"typescript_bun_ub_calibration_corpus","spec":"RIPR-SPEC-0027"}"#,
+            "missing cases array",
+        ),
+    ] {
+        let path = root.join(format!("{name}.json"));
+        write(&path, body);
+        let cases = super::typescript_bun_ub_calibration_cases_at(&path);
+        assert_contains_error(std::slice::from_ref(&cases[0].reason), reason);
+
+        let mut violations = Vec::new();
+        super::validate_typescript_bun_ub_calibration_fixture_corpus_at(&path, &mut violations)?;
+        assert_contains_error(
+            &violations,
+            "TypeScript Bun UB calibration case corpus: language must be present",
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn typescript_bun_ub_calibration_rejects_duplicate_and_required_case_drift() -> Result<(), String> {
+    let root = temp_dir("typescript-bun-ub-calibration-required-cases");
+    let mut duplicate = valid_typescript_bun_ub_calibration_case();
+    duplicate.name = "duplicated".to_string();
+    let duplicate_case = typescript_bun_ub_calibration_case_json(&duplicate);
+    let duplicate_path = root.join("duplicate.json");
+    write(
+        &duplicate_path,
+        &typescript_bun_ub_calibration_corpus_json(&[duplicate_case.clone(), duplicate_case]),
+    );
+
+    let mut violations = Vec::new();
+    super::validate_typescript_bun_ub_calibration_fixture_corpus_at(
+        &duplicate_path,
+        &mut violations,
+    )?;
+    assert_contains_error(&violations, "case duplicated is duplicated");
+    assert_contains_error(
+        &violations,
+        "TypeScript Bun UB calibration corpus is missing case bun_blob_shared_and_resizable_present",
+    );
+    assert_contains_error(
+        &violations,
+        "TypeScript Bun UB calibration corpus must include verdict ts_missing_resizable",
+    );
+
+    let wrong_required_path = root.join("wrong-required.json");
+    let mut wrong_required = valid_typescript_bun_ub_calibration_case();
+    wrong_required.name = "bun_blob_shared_and_resizable_present".to_string();
+    wrong_required.expected_verdict = "ts_missing_resizable".to_string();
+    wrong_required.resizable_array_buffer = false;
+    wrong_required
+        .expected_missing_discriminators
+        .push("resizable_array_buffer".to_string());
+    wrong_required.suggested_test_file = "test/js/web/fetch/blob.test.ts".to_string();
+    write(
+        &wrong_required_path,
+        &typescript_bun_ub_calibration_corpus_json(&[typescript_bun_ub_calibration_case_json(
+            &wrong_required,
+        )]),
+    );
+
+    let mut violations = Vec::new();
+    super::validate_typescript_bun_ub_calibration_fixture_corpus_at(
+        &wrong_required_path,
+        &mut violations,
+    )?;
+    assert_contains_error(
+        &violations,
+        "case bun_blob_shared_and_resizable_present must have expected_verdict ts_discriminated, got ts_missing_resizable",
+    );
+
+    Ok(())
+}
+
+#[test]
+fn typescript_bun_ub_calibration_rejects_invalid_case_fields() {
+    let mut case = valid_typescript_bun_ub_calibration_case();
+    case.name = " ".to_string();
+    case.language = "javascript".to_string();
+    case.language_status = "stable".to_string();
+    case.authority_boundary = "gate_ready".to_string();
+    case.repair_packet_ready = true;
+    case.expected_verdict = "not_a_verdict".to_string();
+    case.bridge_confidence = "guessed".to_string();
+    case.rust_file = "src/lib.rs".to_string();
+    case.rust_owner = "Blob::from_js".to_string();
+    case.rust_boundary = "array_buffer.shared".to_string();
+    case.ts_test_file = "test/js/web/fetch/blob.test.js".to_string();
+    case.suggested_test_file = "src/jsc/Blob.rs".to_string();
+    case.reason.clear();
+    case.non_claims.clear();
+
+    let errors = super::typescript_bun_ub_calibration_case_errors(&case);
+    for expected in [
+        "case id must be present",
+        "reason must be present",
+        "language must be typescript",
+        "language_status must be preview",
+        "authority_boundary must be preview_advisory_only",
+        "repair_packet_ready must remain false",
+        "expected_verdict must be a Bun UB calibration verdict",
+        "bridge_confidence must be configured_hint, heuristic, or unknown",
+        "rust_file must identify the Bun Blob Rust seam",
+        "rust_owner must pin Blob::from_js_without_defer_gc",
+        "rust_boundary must include array_buffer.shared and array_buffer.resizable",
+        "ts_test_file must be a Bun test/js TypeScript test path",
+        "suggested_test_file must be not_applicable or a Bun test/js path",
+        "non_claims must keep preview boundary denials visible",
+        "non_claims must deny provider",
+    ] {
+        assert_contains_error(&errors, expected);
+    }
+}
+
+#[test]
+fn typescript_bun_ub_calibration_rejects_invalid_verdict_shapes() {
+    let mut discriminated = valid_typescript_bun_ub_calibration_case();
+    discriminated.shared_array_buffer = false;
+    discriminated
+        .expected_missing_discriminators
+        .push("shared_array_buffer".to_string());
+    discriminated.suggested_test_file = "test/js/web/fetch/blob.test.ts".to_string();
+    let errors = super::typescript_bun_ub_calibration_case_errors(&discriminated);
+    assert_contains_error(
+        &errors,
+        "ts_discriminated requires shared, resizable, Blob input, and stable-byte oracle facts",
+    );
+    assert_contains_error(
+        &errors,
+        "ts_discriminated must not name missing discriminators",
+    );
+    assert_contains_error(&errors, "ts_discriminated must not suggest a new test file");
+
+    let mut missing_resizable = valid_typescript_bun_ub_calibration_case();
+    missing_resizable.expected_verdict = "ts_missing_resizable".to_string();
+    missing_resizable.shared_array_buffer = false;
+    missing_resizable.resizable_array_buffer = true;
+    missing_resizable.suggested_test_file = "test/js/web/fetch/blob.test.ts".to_string();
+    let errors = super::typescript_bun_ub_calibration_case_errors(&missing_resizable);
+    assert_contains_error(
+        &errors,
+        "ts_missing_resizable requires shared present and resizable absent",
+    );
+    assert_contains_error(
+        &errors,
+        "ts_missing_resizable must include missing discriminator resizable_array_buffer",
+    );
+
+    let mut missing_shared = valid_typescript_bun_ub_calibration_case();
+    missing_shared.expected_verdict = "ts_missing_shared".to_string();
+    missing_shared.shared_array_buffer = true;
+    missing_shared.resizable_array_buffer = false;
+    missing_shared.suggested_test_file = "test/js/web/fetch/blob.test.ts".to_string();
+    let errors = super::typescript_bun_ub_calibration_case_errors(&missing_shared);
+    assert_contains_error(
+        &errors,
+        "ts_missing_shared requires shared absent and resizable present",
+    );
+    assert_contains_error(
+        &errors,
+        "ts_missing_shared must include missing discriminator shared_array_buffer",
+    );
+
+    let mut missing_both = valid_typescript_bun_ub_calibration_case();
+    missing_both.expected_verdict = "ts_missing_shared_and_resizable".to_string();
+    missing_both.shared_array_buffer = true;
+    missing_both.resizable_array_buffer = true;
+    missing_both.suggested_test_file = "not_applicable".to_string();
+    let errors = super::typescript_bun_ub_calibration_case_errors(&missing_both);
+    assert_contains_error(
+        &errors,
+        "ts_missing_shared_and_resizable requires both boundary facts absent",
+    );
+    assert_contains_error(
+        &errors,
+        "ts_missing_shared_and_resizable must include missing discriminator shared_array_buffer",
+    );
+    assert_contains_error(
+        &errors,
+        "ts_missing_shared_and_resizable must include missing discriminator resizable_array_buffer",
+    );
+    assert_contains_error(
+        &errors,
+        "ts_missing_shared_and_resizable must keep suggested_test_file=test/js/web/fetch/blob.test.ts",
+    );
+
+    let mut missing_external_oracle = valid_typescript_bun_ub_calibration_case();
+    missing_external_oracle.expected_verdict = "ts_missing_external_oracle".to_string();
+    missing_external_oracle.expected_missing_discriminators =
+        vec!["resizable_array_buffer".to_string()];
+    missing_external_oracle.view_backed_blob_input = true;
+    missing_external_oracle.stable_byte_copy_oracle = true;
+    missing_external_oracle.suggested_test_file = "test/js/web/fetch/blob.test.ts".to_string();
+    let errors = super::typescript_bun_ub_calibration_case_errors(&missing_external_oracle);
+    assert_contains_error(
+        &errors,
+        "ts_missing_external_oracle requires a missing Blob input or stable-byte oracle",
+    );
+    assert_contains_error(
+        &errors,
+        "ts_missing_external_oracle must not name boundary discriminators",
+    );
+    assert_contains_error(
+        &errors,
+        "ts_missing_external_oracle must keep suggested_test_file=not_applicable",
+    );
+
+    let mut mention_only = valid_typescript_bun_ub_calibration_case();
+    mention_only.expected_verdict = "ts_mention_not_observer".to_string();
+    mention_only.max_byte_length_mention_only = false;
+    mention_only.view_backed_blob_input = true;
+    mention_only.stable_byte_copy_oracle = true;
+    mention_only.suggested_test_file = super::BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE.to_string();
+    let errors = super::typescript_bun_ub_calibration_case_errors(&mention_only);
+    assert_contains_error(
+        &errors,
+        "ts_mention_not_observer must record max_byte_length_mention_only=true",
+    );
+    assert_contains_error(
+        &errors,
+        "ts_mention_not_observer must not count Blob input or stable-byte oracle facts",
+    );
+    assert_contains_error(
+        &errors,
+        "ts_mention_not_observer must keep suggested_test_file=not_applicable",
+    );
+
+    let mut bridge_unknown = valid_typescript_bun_ub_calibration_case();
+    bridge_unknown.expected_verdict = "bridge_unknown".to_string();
+    bridge_unknown.bridge_confidence = "configured_hint".to_string();
+    bridge_unknown.suggested_test_file = super::BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE.to_string();
+    let errors = super::typescript_bun_ub_calibration_case_errors(&bridge_unknown);
+    assert_contains_error(&errors, "bridge_unknown requires bridge_confidence=unknown");
+    assert_contains_error(
+        &errors,
+        "bridge_unknown must keep suggested_test_file=not_applicable",
+    );
+}
+
+fn valid_typescript_bun_ub_calibration_case() -> super::TypeScriptBunUbCalibrationCase {
+    super::TypeScriptBunUbCalibrationCase {
+        name: "valid".to_string(),
+        source: "#31648-valid".to_string(),
+        language: "typescript".to_string(),
+        language_status: "preview".to_string(),
+        rust_file: "src/jsc/Blob.rs".to_string(),
+        rust_owner: "Blob::from_js_without_defer_gc".to_string(),
+        rust_boundary: "array_buffer.shared || array_buffer.resizable".to_string(),
+        ts_test_file: "test/js/web/fetch/blob.test.ts".to_string(),
+        ts_entrypoints: vec!["new Blob".to_string(), "blob.arrayBuffer".to_string()],
+        shared_array_buffer: true,
+        resizable_array_buffer: true,
+        view_backed_blob_input: true,
+        stable_byte_copy_oracle: true,
+        max_byte_length_mention_only: false,
+        expected_verdict: "ts_discriminated".to_string(),
+        expected_missing_discriminators: Vec::new(),
+        bridge_confidence: "configured_hint".to_string(),
+        expected_action: "no_missing_bridge_discriminator".to_string(),
+        suggested_test_file: "not_applicable".to_string(),
+        suggested_shape: None,
+        repair_packet_ready: false,
+        authority_boundary: "preview_advisory_only".to_string(),
+        non_claims: vec![
+            "provider evidence not asserted".to_string(),
+            "source edits not suggested".to_string(),
+            "generated tests not emitted".to_string(),
+            "runtime Bun execution not required".to_string(),
+            "mutation execution not run".to_string(),
+            "default gates unchanged".to_string(),
+            "public badge unchanged".to_string(),
+            "baseline unchanged".to_string(),
+            "RIPR Zero unchanged".to_string(),
+            "support-tier promotion unchanged".to_string(),
+        ],
+        reason: "valid calibration case".to_string(),
+    }
+}
+
+fn valid_cross_language_oracle_graph_case() -> super::CrossLanguageOracleGraphCase {
+    super::CrossLanguageOracleGraphCase {
+        name: "valid".to_string(),
+        source: "#910-valid".to_string(),
+        profile: "bun_blob_array_buffer".to_string(),
+        profile_status: "active".to_string(),
+        language: "typescript".to_string(),
+        language_status: "preview".to_string(),
+        rust_file: "src/jsc/Blob.rs".to_string(),
+        rust_line: Some(3420),
+        rust_owner: "Blob::from_js_without_defer_gc".to_string(),
+        rust_boundary: "array_buffer.shared || array_buffer.resizable".to_string(),
+        binding_edge_kind: "configured_bridge".to_string(),
+        binding_edge_confidence: "configured_hint".to_string(),
+        external_callsite_file: "test/js/web/fetch/blob.test.ts".to_string(),
+        external_callsite_line: Some(1280),
+        external_entrypoints: vec!["new Blob".to_string(), "blob.arrayBuffer".to_string()],
+        shared_array_buffer: true,
+        resizable_array_buffer: true,
+        view_backed_blob_input: true,
+        stable_byte_copy_oracle: true,
+        max_byte_length_mention_only: false,
+        external_oracle_file: "test/js/web/fetch/blob.test.ts".to_string(),
+        external_oracle_line: Some(1286),
+        external_oracle_kind: "stable_byte_copy".to_string(),
+        oracle_strength: "strong".to_string(),
+        expected_state: "rust_ungripped_ts_discriminated".to_string(),
+        gap_state: "already_observed".to_string(),
+        limitation_category: "not_applicable".to_string(),
+        repair_route: "manual-review/cross-language-advisory-witness".to_string(),
+        authority_boundary: "preview_advisory_only".to_string(),
+        public_projection_eligible: false,
+        repair_packet_ready: false,
+        suggested_test_file: "not_applicable".to_string(),
+        allowed_edit_surface: Vec::new(),
+        verify_command: None,
+        receipt_command: None,
+        missing_discriminators: Vec::new(),
+        missing_graph_legs: Vec::new(),
+        unlock_condition: "not_applicable".to_string(),
+        proof_mode: "observable_red_green".to_string(),
+        raw_evidence_refs: valid_cross_language_oracle_graph_raw_refs(true),
+        non_claims: vec![
+            "no provider calls".to_string(),
+            "no source edits".to_string(),
+            "no generated tests".to_string(),
+            "no runtime Bun execution".to_string(),
+            "no mutation execution".to_string(),
+            "no default gates".to_string(),
+            "no public badge contribution".to_string(),
+            "no baseline authority".to_string(),
+            "no RIPR Zero authority".to_string(),
+            "no support-tier promotion".to_string(),
+            "no public repair packet".to_string(),
+            "no TypeScript Rust parity claim".to_string(),
+            "no full cross-language proof".to_string(),
+            "no verify command".to_string(),
+            "no receipt command".to_string(),
+            "no allowed edit surface".to_string(),
+        ],
+        reason: "valid cross-language oracle graph case".to_string(),
+    }
+}
+
+fn valid_cross_language_oracle_graph_raw_refs(
+    include_binding: bool,
+) -> Vec<super::CrossLanguageOracleGraphRawRef> {
+    let mut raw_refs = vec![
+        super::CrossLanguageOracleGraphRawRef {
+            leg: "rust_seam".to_string(),
+            file: "src/jsc/Blob.rs".to_string(),
+            line: Some(3420),
+            kind: "rust_owner".to_string(),
+            source_id: "#910".to_string(),
+            sample: "Blob::from_js_without_defer_gc checks the ArrayBuffer boundary".to_string(),
+        },
+        super::CrossLanguageOracleGraphRawRef {
+            leg: "boundary_discriminator".to_string(),
+            file: "test/js/web/fetch/blob.test.ts".to_string(),
+            line: Some(1282),
+            kind: "typescript_discriminator".to_string(),
+            source_id: "#910".to_string(),
+            sample: "SharedArrayBuffer and resizable ArrayBuffer samples are visible".to_string(),
+        },
+        super::CrossLanguageOracleGraphRawRef {
+            leg: "external_callsite".to_string(),
+            file: "test/js/web/fetch/blob.test.ts".to_string(),
+            line: Some(1280),
+            kind: "typescript_callsite".to_string(),
+            source_id: "#910".to_string(),
+            sample: "new Blob and blob.arrayBuffer are visible".to_string(),
+        },
+        super::CrossLanguageOracleGraphRawRef {
+            leg: "external_oracle".to_string(),
+            file: "test/js/web/fetch/blob.test.ts".to_string(),
+            line: Some(1286),
+            kind: "typescript_assertion".to_string(),
+            source_id: "#910".to_string(),
+            sample: "stable copied bytes are asserted".to_string(),
+        },
+    ];
+    if include_binding {
+        raw_refs.push(super::CrossLanguageOracleGraphRawRef {
+            leg: "binding_edge".to_string(),
+            file: "src/jsc/Blob.rs".to_string(),
+            line: Some(3420),
+            kind: "configured_bridge".to_string(),
+            source_id: "profiles.bun_ub".to_string(),
+            sample: "configured bridge maps Blob tests to the Rust owner".to_string(),
+        });
+    }
+    raw_refs
+}
+
+fn assert_contains_error(errors: &[String], expected: &str) {
+    assert!(
+        errors.iter().any(|error| error.contains(expected)),
+        "expected error containing {expected:?}; got {errors:?}"
+    );
+}
+
+fn typescript_bun_ub_calibration_corpus_json(cases: &[String]) -> String {
+    format!(
+        r#"{{
+  "schema_version": "0.1",
+  "kind": "typescript_bun_ub_calibration_corpus",
+  "spec": "RIPR-SPEC-0027",
+  "authority_boundary": "preview_advisory_only",
+  "cases": [{}]
+}}"#,
+        cases.join(",")
+    )
+}
+
+fn typescript_bun_ub_calibration_case_json(case: &super::TypeScriptBunUbCalibrationCase) -> String {
+    let missing_json = case
+        .expected_missing_discriminators
+        .iter()
+        .map(|discriminator| format!(r#""{discriminator}""#))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let non_claims_json = case
+        .non_claims
+        .iter()
+        .map(|non_claim| format!(r#""{non_claim}""#))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        r#"{{
+  "id": "{id}",
+  "language": "{language}",
+  "language_status": "{language_status}",
+  "rust_seam": {{
+    "file": "{rust_file}",
+    "line": 3420,
+    "owner": "{rust_owner}",
+    "boundary": "{rust_boundary}"
+  }},
+  "ts_test_file": "{ts_test_file}",
+  "observed_ts_facts": {{
+    "shared_array_buffer": {shared},
+    "resizable_array_buffer": {resizable},
+    "view_backed_blob_input": {view_backed_blob_input},
+    "stable_byte_copy_oracle": {stable_byte_copy_oracle},
+    "max_byte_length_mention_only": {max_byte_length_mention_only}
+  }},
+  "expected_verdict": "{expected_verdict}",
+  "expected_missing_discriminators": [{missing_json}],
+  "bridge_confidence": "{bridge_confidence}",
+  "suggested_test_file": "{suggested_test_file}",
+  "repair_packet_ready": {repair_packet_ready},
+  "authority_boundary": "{authority_boundary}",
+  "non_claims": [{non_claims_json}],
+  "reason": "{reason}"
+}}"#,
+        id = case.name,
+        language = case.language,
+        language_status = case.language_status,
+        rust_file = case.rust_file,
+        rust_owner = case.rust_owner,
+        rust_boundary = case.rust_boundary,
+        ts_test_file = case.ts_test_file,
+        shared = case.shared_array_buffer,
+        resizable = case.resizable_array_buffer,
+        view_backed_blob_input = case.view_backed_blob_input,
+        stable_byte_copy_oracle = case.stable_byte_copy_oracle,
+        max_byte_length_mention_only = case.max_byte_length_mention_only,
+        expected_verdict = case.expected_verdict,
+        bridge_confidence = case.bridge_confidence,
+        suggested_test_file = case.suggested_test_file,
+        repair_packet_ready = case.repair_packet_ready,
+        authority_boundary = case.authority_boundary,
+        reason = case.reason
+    )
+}
+
+fn cross_language_oracle_graph_corpus_json(cases: &[String]) -> String {
+    format!(
+        r#"{{
+  "schema_version": "0.1",
+  "kind": "cross_language_oracle_graph_corpus",
+  "spec": "RIPR-SPEC-0062",
+  "authority_boundary": "preview_advisory_only",
+  "cases": [{}]
+}}"#,
+        cases.join(",")
+    )
+}
+
+fn cross_language_oracle_graph_case_json(case: &super::CrossLanguageOracleGraphCase) -> String {
+    let entrypoints_json = test_json_string_array(&case.external_entrypoints);
+    let allowed_edit_surface_json = test_json_string_array(&case.allowed_edit_surface);
+    let missing_discriminators_json = test_json_string_array(&case.missing_discriminators);
+    let missing_graph_legs_json = test_json_string_array(&case.missing_graph_legs);
+    let raw_refs_json = cross_language_oracle_graph_raw_refs_json(&case.raw_evidence_refs);
+    let non_claims_json = test_json_string_array(&case.non_claims);
+    let verify_command_json = case
+        .verify_command
+        .as_ref()
+        .map(|command| {
+            format!(
+                r#",
+        "verify_command": "{command}""#
+            )
+        })
+        .unwrap_or_default();
+    let receipt_command_json = case
+        .receipt_command
+        .as_ref()
+        .map(|command| {
+            format!(
+                r#",
+        "receipt_command": "{command}""#
+            )
+        })
+        .unwrap_or_default();
+    format!(
+        r#"{{
+  "id": "{id}",
+  "source": "{source}",
+  "profile": "{profile}",
+  "profile_status": "{profile_status}",
+  "language": "{language}",
+  "language_status": "{language_status}",
+  "rust_seam": {{
+    "file": "{rust_file}",
+    "line": {rust_line},
+    "owner": "{rust_owner}",
+    "boundary": "{rust_boundary}"
+  }},
+  "binding_edge": {{
+    "kind": "{binding_edge_kind}",
+    "confidence": "{binding_edge_confidence}"
+  }},
+  "external_callsite": {{
+    "file": "{external_callsite_file}",
+    "line": {external_callsite_line},
+    "entrypoints": [{entrypoints_json}]
+  }},
+  "observed_ts_facts": {{
+    "shared_array_buffer": {shared_array_buffer},
+    "resizable_array_buffer": {resizable_array_buffer},
+    "view_backed_blob_input": {view_backed_blob_input},
+    "stable_byte_copy_oracle": {stable_byte_copy_oracle},
+    "max_byte_length_mention_only": {max_byte_length_mention_only}
+  }},
+  "external_oracle": {{
+    "file": "{external_oracle_file}",
+    "line": {external_oracle_line},
+    "kind": "{external_oracle_kind}",
+    "strength": "{oracle_strength}"
+  }},
+  "expected": {{
+    "state": "{expected_state}",
+    "gap_state": "{gap_state}",
+    "limitation_category": "{limitation_category}",
+    "repair_route": "{repair_route}",
+    "authority_boundary": "{authority_boundary}",
+    "public_projection_eligible": {public_projection_eligible},
+    "repair_packet_ready": {repair_packet_ready},
+    "suggested_test_file": "{suggested_test_file}",
+    "allowed_edit_surface": [{allowed_edit_surface_json}]{verify_command_json}{receipt_command_json},
+    "missing_discriminators": [{missing_discriminators_json}],
+    "missing_graph_legs": [{missing_graph_legs_json}],
+    "unlock_condition": "{unlock_condition}",
+    "proof_mode": "{proof_mode}"
+  }},
+  "raw_evidence_refs": [{raw_refs_json}],
+  "non_claims": [{non_claims_json}],
+  "reason": "{reason}"
+}}"#,
+        id = case.name,
+        source = case.source,
+        profile = case.profile,
+        profile_status = case.profile_status,
+        language = case.language,
+        language_status = case.language_status,
+        rust_file = case.rust_file,
+        rust_line = case.rust_line.unwrap_or(0),
+        rust_owner = case.rust_owner,
+        rust_boundary = case.rust_boundary,
+        binding_edge_kind = case.binding_edge_kind,
+        binding_edge_confidence = case.binding_edge_confidence,
+        external_callsite_file = case.external_callsite_file,
+        external_callsite_line = case.external_callsite_line.unwrap_or(0),
+        shared_array_buffer = case.shared_array_buffer,
+        resizable_array_buffer = case.resizable_array_buffer,
+        view_backed_blob_input = case.view_backed_blob_input,
+        stable_byte_copy_oracle = case.stable_byte_copy_oracle,
+        max_byte_length_mention_only = case.max_byte_length_mention_only,
+        external_oracle_file = case.external_oracle_file,
+        external_oracle_line = case.external_oracle_line.unwrap_or(0),
+        external_oracle_kind = case.external_oracle_kind,
+        oracle_strength = case.oracle_strength,
+        expected_state = case.expected_state,
+        gap_state = case.gap_state,
+        limitation_category = case.limitation_category,
+        repair_route = case.repair_route,
+        authority_boundary = case.authority_boundary,
+        public_projection_eligible = case.public_projection_eligible,
+        repair_packet_ready = case.repair_packet_ready,
+        suggested_test_file = case.suggested_test_file,
+        unlock_condition = case.unlock_condition,
+        proof_mode = case.proof_mode,
+        reason = case.reason
+    )
+}
+
+fn cross_language_oracle_graph_raw_refs_json(
+    raw_refs: &[super::CrossLanguageOracleGraphRawRef],
+) -> String {
+    raw_refs
+        .iter()
+        .map(|raw_ref| {
+            format!(
+                r#"{{
+      "leg": "{leg}",
+      "file": "{file}",
+      "line": {line},
+      "kind": "{kind}",
+      "source_id": "{source_id}",
+      "sample": "{sample}"
+    }}"#,
+                leg = raw_ref.leg,
+                file = raw_ref.file,
+                line = raw_ref.line.unwrap_or(0),
+                kind = raw_ref.kind,
+                source_id = raw_ref.source_id,
+                sample = raw_ref.sample
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn test_json_string_array(values: &[String]) -> String {
+    values
+        .iter()
+        .map(|value| format!(r#""{value}""#))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+#[test]
+fn dogfood_typescript_preview_repair_loop_receipts_are_checked() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let scenarios = dogfood_typescript_preview_repair_loop_scenarios();
+        for required in TYPESCRIPT_PREVIEW_REPAIR_LOOP_REQUIRED_CASES {
+            assert!(
+                scenarios.iter().any(|scenario| {
+                    scenario.name == required.0 && scenario.outcome == required.1
+                }),
+                "{} TypeScript preview repair-loop receipt should be checked as {}",
+                required.0,
+                required.1
+            );
+        }
+        assert!(
+            scenarios
+                .iter()
+                .any(|scenario| scenario.language == "typescript"),
+            "TypeScript preview repair-loop receipts should include TypeScript"
+        );
+        assert!(
+            scenarios
+                .iter()
+                .any(|scenario| scenario.language == "javascript"),
+            "TypeScript preview repair-loop receipts should include JavaScript"
+        );
+        assert!(
+            scenarios
+                .iter()
+                .any(|scenario| scenario.gap_state == "static_limitation"),
+            "TypeScript preview repair-loop receipts should include a static limitation"
+        );
+        assert!(
+            scenarios
+                .iter()
+                .any(|scenario| scenario.outcome == "weak_oracle_downgraded"),
+            "TypeScript preview repair-loop receipts should include a weak-oracle downgrade"
+        );
+        assert!(
+            scenarios.iter().any(|scenario| {
+                scenario.name == "typescript_complete_boundary_packet_closed"
+                    && scenario.repair_packet_ready
+                    && scenario.gap_state == "actionable"
+                    && scenario.actionability_category == "complete_repair_packet"
+                    && scenario.outcome == "resolved"
+                    && scenario.verify_result == "pass"
+            }),
+            "TypeScript preview repair-loop receipts should include the closed complete advisory packet"
+        );
+        assert!(
+            scenarios.iter().any(|scenario| {
+                scenario.must_have_verify_command
+                    && scenario.must_have_receipt_command
+                    && scenario.must_not_invent_verify_command
+                    && scenario.must_not_emit_repair_packet
+            }),
+            "TypeScript preview repair-loop receipts should pin operator commands without source packet authority"
+        );
+
+        for scenario in scenarios {
+            let run = dogfood_typescript_preview_repair_loop_run(&scenario);
+            assert!(
+                run.errors.is_empty(),
+                "{} TypeScript preview repair-loop receipt should validate: {:?}",
+                run.name,
+                run.errors
+            );
+        }
+
+        Ok(())
+    })
+}
+
+#[test]
+fn dogfood_bun_ub_cross_language_receipts_are_checked() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let scenarios = dogfood_bun_ub_cross_language_scenarios();
+        for required in BUN_UB_CROSS_LANGUAGE_DOGFOOD_REQUIRED_CASES {
+            assert!(
+                scenarios.iter().any(|scenario| {
+                    scenario.name == required.0 && scenario.observed_state == required.1
+                }),
+                "{} Bun UB cross-language dogfood receipt should be checked as {}",
+                required.0,
+                required.1
+            );
+        }
+        assert!(
+            scenarios
+                .iter()
+                .all(|scenario| !scenario.repair_packet_ready),
+            "Bun UB cross-language dogfood receipts must not claim repair packets"
+        );
+        assert!(
+            scenarios.iter().any(|scenario| {
+                scenario.observed_state == "rust_ungripped_ts_missing_discriminator"
+                    && scenario
+                        .missing_discriminators
+                        .contains(&"resizable_array_buffer".to_string())
+                    && scenario.suggested_test_file == super::BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE
+            }),
+            "Bun UB dogfood should suggest blob.test.ts for stripped resizable"
+        );
+        assert!(
+            scenarios.iter().any(|scenario| {
+                scenario.observed_state == "ts_mention_not_observer"
+                    && scenario.operator_action == "reject_token_mention"
+                    && scenario.suggested_test_file == "not_applicable"
+            }),
+            "Bun UB dogfood should reject mention-only token evidence"
+        );
+        assert!(
+            scenarios.iter().any(|scenario| {
+                scenario.observed_state == "public_reachable_panic_boundary_unrevealed"
+                    && scenario
+                        .missing_discriminators
+                        .contains(&"negative_offset".to_string())
+                    && scenario
+                        .missing_graph_legs
+                        .iter()
+                        .any(|missing| missing == "external_oracle:negative_offset_panic_boundary")
+                    && scenario
+                        .missing_graph_legs
+                        .iter()
+                        .any(|missing| missing == "safe_external_observer_target")
+                    && scenario.suggested_test_file == "not_applicable"
+                    && scenario.operator_action == "keep_panic_boundary_limitation"
+            }),
+            "Bun UB dogfood should keep the FFI panic boundary as a limitation"
+        );
+
+        for scenario in scenarios {
+            let run = dogfood_bun_ub_cross_language_run(&scenario);
+            assert!(
+                run.errors.is_empty(),
+                "{} Bun UB cross-language dogfood receipt should validate: {:?}",
+                run.name,
+                run.errors
+            );
+        }
+
+        Ok(())
+    })
+}
+
+#[test]
+fn live_bun_stable_byte_dogfood_receipts_are_checked() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let scenarios = dogfood_bun_ub_cross_language_scenarios();
+        let runs = scenarios
+            .iter()
+            .map(super::dogfood_bun_ub_cross_language_run)
+            .collect::<Vec<_>>();
+
+        for run in &runs {
+            assert!(
+                run.errors.is_empty(),
+                "{} live Bun stable-byte receipt should validate: {:?}",
+                run.name,
+                run.errors
+            );
+            assert_eq!(
+                run.manual_verdict, "agrees",
+                "{} should record a manual verdict",
+                run.name
+            );
+            assert_eq!(
+                run.authority_boundary, "preview_advisory_only",
+                "{} should stay preview/advisory",
+                run.name
+            );
+            assert!(
+                !run.repair_packet_ready,
+                "{} should not become repair-packet-ready",
+                run.name
+            );
+            assert_ne!(
+                run.review_before, run.review_after,
+                "{} should record what changed in the review loop",
+                run.name
+            );
+            assert!(
+                !run.suggested_test_file.ends_with(".rs"),
+                "{} should not suggest Rust test placement",
+                run.name
+            );
+        }
+
+        assert!(
+            runs.iter().any(|run| {
+                run.name == "bun_array_buffer_copy_to_unshared_live_receipt"
+                    && run.observed_state == "rust_ungripped_ts_discriminated"
+                    && run.bridge_verdict.contains("credited")
+                    && run.suggested_test_file == "not_applicable"
+            }),
+            "live dogfood should credit the configured copy_to_unshared witness"
+        );
+        assert!(
+            runs.iter().any(|run| {
+                run.name == "bun_markdown_resizable_array_buffer_live_receipt"
+                    && run.observed_state == "rust_ungripped_ts_discriminated"
+                    && run.ts_test_file == super::BUN_MARKDOWN_TS_TEST_FILE
+                    && run.bridge_verdict.contains("credited")
+            }),
+            "live dogfood should credit the configured MarkdownObject witness"
+        );
+        assert!(
+            runs.iter().any(|run| {
+                run.observed_state == "rust_ungripped_ts_missing_discriminator"
+                    && run
+                        .missing_discriminators
+                        .contains(&"resizable_array_buffer".to_string())
+                    && run.suggested_test_file == super::BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE
+            }),
+            "live dogfood should retain the missing resizable placement receipt"
+        );
+        assert!(
+            runs.iter().any(|run| {
+                run.observed_state == "ts_mention_not_observer"
+                    && run.operator_action == "reject_token_mention"
+                    && run.suggested_test_file == "not_applicable"
+            }),
+            "live dogfood should reject mention-only token evidence"
+        );
+        assert!(
+            runs.iter().any(|run| {
+                run.name == "bun_blob_bridge_unknown_live_receipt"
+                    && run.observed_state == "bridge_unknown"
+                    && run
+                        .missing_graph_legs
+                        .contains(&"binding_or_ffi_edge".to_string())
+                    && run.operator_action == "inspect_or_add_bridge_evidence"
+                    && run.suggested_test_file == "not_applicable"
+            }),
+            "live dogfood should stop at bridge inspection when the bridge is unknown"
+        );
+        assert!(
+            runs.iter().any(|run| {
+                run.name == "bun_node_fs_scalar_write_manifest_only_receipt"
+                    && run.observed_state == "named_static_limitation"
+                    && run.proof_mode == "observable_red_green"
+                    && run.suggested_test_file == super::BUN_NODE_FS_TS_TEST_FILE
+                    && run.placement_verdict.contains("not_actionable")
+            }),
+            "live dogfood should keep node:fs scalar write manifest-only and non-actionable"
+        );
+        assert!(
+            runs.iter().any(|run| {
+                run.name == "bun_write_helper_gated_manifest_only_receipt"
+                    && run.observed_state == "named_static_limitation"
+                    && run.proof_mode == "helper_gated"
+                    && run
+                        .missing_graph_legs
+                        .contains(&"helper:bun_write_fixture_helper".to_string())
+                    && run.suggested_test_file == "not_applicable"
+            }),
+            "live dogfood should keep Bun.write helper-gated"
+        );
+        assert!(
+            runs.iter().any(|run| {
+                run.observed_state == "public_reachable_panic_boundary_unrevealed"
+                    && run.operator_action == "keep_panic_boundary_limitation"
+                    && run.suggested_test_file == "not_applicable"
+            }),
+            "live dogfood should retain the FFI panic-boundary named limitation"
+        );
+
+        Ok(())
+    })
+}
+
+fn valid_bun_ub_cross_language_dogfood_scenario() -> DogfoodBunUbCrossLanguageScenario {
+    DogfoodBunUbCrossLanguageScenario {
+            name: "bun_blob_31648_known_good".to_string(),
+            source_case: "bun_blob_shared_and_resizable_present".to_string(),
+            route_quality_case: "bun_blob_complete_ts_discriminated_advisory".to_string(),
+            rust_file: "src/jsc/Blob.rs".to_string(),
+            rust_owner: "Blob::from_js_without_defer_gc".to_string(),
+            rust_boundary: "array_buffer.shared || array_buffer.resizable".to_string(),
+            ts_test_file: super::BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE.to_string(),
+            expected_state: "rust_ungripped_ts_discriminated".to_string(),
+            observed_state: "rust_ungripped_ts_discriminated".to_string(),
+            missing_discriminators: Vec::new(),
+            missing_graph_legs: Vec::new(),
+            suggested_test_file: "not_applicable".to_string(),
+            manual_verdict: "agrees".to_string(),
+            operator_action: "no_missing_bridge_discriminator".to_string(),
+            review_before:
+                "Rust-only review would manually grep test/js for SharedArrayBuffer and maxByteLength"
+                    .to_string(),
+            review_after:
+                "TypeScript/Bun preview credits the configured Blob stable-byte witness"
+                    .to_string(),
+            bridge_verdict: "configured_binding_edge_credited".to_string(),
+            placement_verdict: "not_needed".to_string(),
+            proof_mode: "advisory_cross_language_preview".to_string(),
+            receipt_state: "closed".to_string(),
+            repair_packet_ready: false,
+            authority_boundary: "preview_advisory_only".to_string(),
+            raw_evidence_refs: vec![
+                "fixtures/typescript-bun-ub-calibration/corpus.json#bun_blob_shared_and_resizable_present".to_string(),
+                "fixtures/cross-language-oracle-graph-corpus/corpus.json#bun_blob_complete_ts_discriminated_advisory".to_string(),
+            ],
+            non_claims: vec![
+                "no source edits".to_string(),
+                "no generated tests".to_string(),
+                "no runtime Bun execution".to_string(),
+                "no mutation execution".to_string(),
+                "no default gates".to_string(),
+                "no public badge contribution".to_string(),
+                "no baseline authority".to_string(),
+                "no RIPR Zero authority".to_string(),
+                "no support-tier promotion".to_string(),
+                "no public repair packet".to_string(),
+                "no full cross-language proof".to_string(),
+            ],
+            reason: "sample Bun UB cross-language dogfood receipt".to_string(),
+        }
+}
+
+#[test]
+fn dogfood_bun_ub_cross_language_rejects_overclaiming() {
+    let mut scenario = valid_bun_ub_cross_language_dogfood_scenario();
+    scenario.expected_state = "rust_ungripped_ts_missing_discriminator".to_string();
+    scenario.authority_boundary = "gate_eligible".to_string();
+    scenario.repair_packet_ready = true;
+    scenario.non_claims.clear();
+
+    let report = dogfood_bun_ub_cross_language_run(&scenario)
+        .errors
+        .join("\n");
+    assert!(report.contains("expected_state and observed_state must match"));
+    assert!(report.contains("authority_boundary must be preview_advisory_only"));
+    assert!(report.contains("repair_packet_ready must remain false"));
+    assert!(report.contains("non_claims must keep preview boundary denials visible"));
+
+    let mut missing = valid_bun_ub_cross_language_dogfood_scenario();
+    missing.observed_state = "rust_ungripped_ts_missing_discriminator".to_string();
+    missing.expected_state = "rust_ungripped_ts_missing_discriminator".to_string();
+    missing.operator_action = "suggest_shared_case".to_string();
+    missing.placement_verdict = "not_applicable".to_string();
+    let missing_report = dogfood_bun_ub_cross_language_run(&missing)
+        .errors
+        .join("\n");
+    assert!(missing_report.contains("must name resizable_array_buffer"));
+    assert!(missing_report.contains("must suggest the configured Bun Blob TypeScript test file"));
+    assert!(missing_report.contains("action must name the missing resizable case"));
+
+    let mut mention = valid_bun_ub_cross_language_dogfood_scenario();
+    mention.observed_state = "ts_mention_not_observer".to_string();
+    mention.expected_state = "ts_mention_not_observer".to_string();
+    mention.operator_action = "suggest_typescript_blob_case".to_string();
+    mention.suggested_test_file = super::BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE.to_string();
+    mention.missing_discriminators = vec!["resizable_array_buffer".to_string()];
+    mention.bridge_verdict = "configured_binding_edge_credited".to_string();
+    let mention_report = dogfood_bun_ub_cross_language_run(&mention)
+        .errors
+        .join("\n");
+    assert!(mention_report.contains("must not turn token text into a missing discriminator"));
+    assert!(mention_report.contains("must not suggest placement"));
+    assert!(mention_report.contains("must reject the token mention"));
+    assert!(mention_report.contains("cannot credit a token mention"));
+
+    let mut panic_boundary = valid_bun_ub_cross_language_dogfood_scenario();
+    panic_boundary.name = "bun_ffi_negative_offset_panic_boundary".to_string();
+    panic_boundary.source_case = "bun_ffi_negative_offset_panic_boundary_limitation".to_string();
+    panic_boundary.route_quality_case =
+        "bun_ffi_negative_offset_panic_boundary_limitation".to_string();
+    panic_boundary.rust_file = "src/bun.js/bindings/FFIObject.rs".to_string();
+    panic_boundary.rust_owner = "FFIObject::read".to_string();
+    panic_boundary.rust_boundary = "usize::try_from(to_int32()).expect(\"int cast\")".to_string();
+    panic_boundary.ts_test_file = super::BUN_FFI_NEGATIVE_OFFSET_TS_TEST_SURFACE.to_string();
+    panic_boundary.expected_state = "public_reachable_panic_boundary_unrevealed".to_string();
+    panic_boundary.observed_state = "public_reachable_panic_boundary_unrevealed".to_string();
+    panic_boundary.missing_discriminators.clear();
+    panic_boundary.missing_graph_legs.clear();
+    panic_boundary.suggested_test_file = super::BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE.to_string();
+    panic_boundary.operator_action = "suggest_ffi_test".to_string();
+    panic_boundary.placement_verdict =
+        "suggested_test_file:test/js/bun/ffi/ffi.test.ts".to_string();
+    panic_boundary.bridge_verdict = "unknown".to_string();
+    panic_boundary.proof_mode = "repair_packet_preview".to_string();
+    let panic_boundary_report = dogfood_bun_ub_cross_language_run(&panic_boundary)
+        .errors
+        .join("\n");
+    assert!(panic_boundary_report.contains("must name negative_offset as missing"));
+    assert!(panic_boundary_report.contains("negative-offset oracle unresolved"));
+    assert!(panic_boundary_report.contains("safe external observer target unresolved"));
+    assert!(panic_boundary_report.contains("must not suggest placement"));
+    assert!(panic_boundary_report.contains("must keep the named limitation"));
+    assert!(panic_boundary_report.contains("placement must remain not_applicable"));
+    assert!(panic_boundary_report.contains("must document the FFI bridge"));
+    assert!(panic_boundary_report.contains("proof mode must stay a limitation receipt"));
+}
+
+#[test]
+fn dogfood_bun_ub_cross_language_rejects_live_profile_drift() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let scenarios = dogfood_bun_ub_cross_language_scenarios();
+        let scenario = |name: &str| -> Result<DogfoodBunUbCrossLanguageScenario, String> {
+            let Some(found) = scenarios.iter().find(|scenario| scenario.name == name) else {
+                return Err(format!("{name} should exist in Bun UB dogfood corpus"));
+            };
+            Ok(found.clone())
+        };
+
+        let mut copy_to_unshared = scenario("bun_array_buffer_copy_to_unshared_live_receipt")?;
+        copy_to_unshared.source_case = "wrong".to_string();
+        copy_to_unshared.route_quality_case = "wrong".to_string();
+        copy_to_unshared.rust_file = "src/jsc/Blob.rs".to_string();
+        copy_to_unshared.rust_owner = "Blob::from_js_without_defer_gc".to_string();
+        copy_to_unshared.rust_boundary = "wrong".to_string();
+        copy_to_unshared.ts_test_file = "test/js/bun/write.test.ts".to_string();
+        let copy_report = dogfood_bun_ub_cross_language_run(&copy_to_unshared)
+            .errors
+            .join("\n");
+        assert!(copy_report.contains("copy_to_unshared route-quality case"));
+        assert!(copy_report.contains("copy_to_unshared Rust seam"));
+        assert!(copy_report.contains("rust_owner must stay on copy_to_unshared"));
+        assert!(copy_report.contains("copy_to_unshared stable-byte boundary"));
+        assert!(copy_report.contains("Blob TypeScript witness file"));
+
+        let mut markdown = scenario("bun_markdown_resizable_array_buffer_live_receipt")?;
+        markdown.source_case = "wrong".to_string();
+        markdown.route_quality_case = "wrong".to_string();
+        markdown.rust_file = "src/jsc/Blob.rs".to_string();
+        markdown.rust_owner = "Blob::from_js_without_defer_gc".to_string();
+        markdown.rust_boundary = "wrong".to_string();
+        markdown.ts_test_file = super::BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE.to_string();
+        let markdown_report = dogfood_bun_ub_cross_language_run(&markdown)
+            .errors
+            .join("\n");
+        assert!(markdown_report.contains("MarkdownObject route-quality case"));
+        assert!(markdown_report.contains("MarkdownObject Rust seam"));
+        assert!(markdown_report.contains("MarkdownObject::to_string"));
+        assert!(markdown_report.contains("MarkdownObject resizable boundary"));
+        assert!(markdown_report.contains("Bun markdown TypeScript test file"));
+
+        let mut bridge_unknown = scenario("bun_blob_bridge_unknown_live_receipt")?;
+        bridge_unknown.missing_discriminators = vec!["resizable_array_buffer".to_string()];
+        bridge_unknown.missing_graph_legs.clear();
+        bridge_unknown.suggested_test_file = super::BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE.to_string();
+        bridge_unknown.operator_action = "suggest_blob_test".to_string();
+        bridge_unknown.placement_verdict =
+            "suggested_test_file:test/js/web/fetch/blob.test.ts".to_string();
+        bridge_unknown.bridge_verdict = "configured_binding_edge_credited".to_string();
+        bridge_unknown.proof_mode = "observable_red_green".to_string();
+        let bridge_report = dogfood_bun_ub_cross_language_run(&bridge_unknown)
+            .errors
+            .join("\n");
+        assert!(bridge_report.contains("bridge_unknown must not report missing discriminators"));
+        assert!(bridge_report.contains("missing binding_or_ffi_edge"));
+        assert!(bridge_report.contains("must not suggest TypeScript placement"));
+        assert!(bridge_report.contains("must route to bridge inspection"));
+        assert!(bridge_report.contains("placement must remain not_applicable"));
+        assert!(bridge_report.contains("must document the missing bridge leg"));
+        assert!(bridge_report.contains("proof mode must stay bridge_unknown"));
+
+        let mut node_fs = scenario("bun_node_fs_scalar_write_manifest_only_receipt")?;
+        node_fs.missing_discriminators = vec!["scalar_write".to_string()];
+        node_fs.missing_graph_legs.clear();
+        node_fs.bridge_verdict = "configured_binding_edge_credited".to_string();
+        node_fs.suggested_test_file = "not_applicable".to_string();
+        node_fs.placement_verdict = "actionable".to_string();
+        node_fs.proof_mode = "helper_gated".to_string();
+        let node_fs_report = dogfood_bun_ub_cross_language_run(&node_fs)
+            .errors
+            .join("\n");
+        assert!(node_fs_report.contains("must not invent missing discriminators"));
+        assert!(node_fs_report.contains("must name missing graph legs"));
+        assert!(node_fs_report.contains("manifest-only bridge evidence uncredited"));
+        assert!(node_fs_report.contains("node_fs_scalar_write bridge leg missing"));
+        assert!(node_fs_report.contains("scalar-write oracle leg missing"));
+        assert!(node_fs_report.contains("typed witness path"));
+        assert!(node_fs_report.contains("placement must remain non-actionable"));
+        assert!(node_fs_report.contains("proof mode must be observable_red_green"));
+
+        let mut bun_write = scenario("bun_write_helper_gated_manifest_only_receipt")?;
+        bun_write.missing_graph_legs.clear();
+        bun_write.bridge_verdict = "configured_binding_edge_credited".to_string();
+        bun_write.suggested_test_file = super::BUN_WRITE_TS_TEST_FILE.to_string();
+        bun_write.placement_verdict = "suggested_test_file:test/js/bun/write.test.ts".to_string();
+        bun_write.proof_mode = "observable_red_green".to_string();
+        let bun_write_report = dogfood_bun_ub_cross_language_run(&bun_write)
+            .errors
+            .join("\n");
+        assert!(bun_write_report.contains("must name missing graph legs"));
+        assert!(bun_write_report.contains("manifest-only bridge evidence uncredited"));
+        assert!(bun_write_report.contains("binding_or_ffi_edge:bun_write_sink"));
+        assert!(bun_write_report.contains("helper:bun_write_fixture_helper"));
+        assert!(bun_write_report.contains("external_oracle:stable_byte_write"));
+        assert!(bun_write_report.contains("must not suggest placement"));
+        assert!(bun_write_report.contains("placement must remain not_applicable"));
+        assert!(bun_write_report.contains("proof mode must stay helper_gated"));
+
+        let mut unsupported = valid_bun_ub_cross_language_dogfood_scenario();
+        unsupported.observed_state = "named_static_limitation".to_string();
+        unsupported.expected_state = "named_static_limitation".to_string();
+        unsupported.bridge_verdict = "manifest_only_bridge_not_credited".to_string();
+        unsupported.missing_graph_legs = vec!["binding_or_ffi_edge:unknown".to_string()];
+        let unsupported_report = dogfood_bun_ub_cross_language_run(&unsupported)
+            .errors
+            .join("\n");
+        assert!(unsupported_report.contains("supported manifest-only profile"));
+
+        Ok(())
+    })
+}
+
+#[test]
+fn typescript_preview_false_actionable_audit_cases_are_checked() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let cases = super::typescript_preview_false_actionable_audit_cases();
+        for required in TYPESCRIPT_PREVIEW_FALSE_ACTIONABLE_AUDIT_REQUIRED_CASES {
+            assert!(
+                cases
+                    .iter()
+                    .any(|case| { case.name == required.0 && case.disposition == required.1 }),
+                "{} TypeScript preview false-actionable audit case should be checked as {}",
+                required.0,
+                required.1
+            );
+        }
+
+        let dispositions = cases
+            .iter()
+            .map(|case| case.disposition.as_str())
+            .collect::<BTreeSet<_>>();
+        for required in [
+            "safe_advisory",
+            "named_static_limitation",
+            "candidate_future_support",
+            "must_remain_non_actionable",
+        ] {
+            assert!(
+                dispositions.contains(required),
+                "TypeScript preview false-actionable audit should include {required}"
+            );
+        }
+
+        for case in cases {
+            let errors = super::typescript_preview_false_actionable_audit_case_errors(&case);
+            assert!(
+                errors.is_empty(),
+                "{} TypeScript preview false-actionable audit case should validate: {:?}",
+                case.name,
+                errors
+            );
+        }
+
+        Ok(())
+    })
+}
+
+#[test]
+fn dogfood_typescript_false_actionable_audit_summary_flags_packet_ready_rows() -> Result<(), String>
+{
+    with_repo_cwd(|| {
+        let cases = super::typescript_preview_false_actionable_audit_cases();
+        let summary = super::dogfood_typescript_false_actionable_audit_summary(&cases);
+        assert_eq!(summary.gate_status, "pass");
+        assert_eq!(summary.cases, 14);
+        assert_eq!(summary.must_remain_non_actionable, 14);
+        assert_eq!(summary.false_actionable, 0);
+        assert_eq!(summary.repair_packet_ready_true, 0);
+
+        let mut noisy_cases = cases;
+        noisy_cases[0].repair_packet_ready = true;
+        let noisy_summary = super::dogfood_typescript_false_actionable_audit_summary(&noisy_cases);
+        assert_eq!(noisy_summary.gate_status, "review");
+        assert_eq!(noisy_summary.false_actionable, 1);
+        assert_eq!(noisy_summary.repair_packet_ready_true, 1);
+        Ok(())
+    })
+}
+
+fn valid_typescript_preview_repair_loop_scenario() -> DogfoodTypescriptPreviewRepairLoopScenario {
+    DogfoodTypescriptPreviewRepairLoopScenario {
+            name: "typescript_boundary_predicate_proof".to_string(),
+            source_fixture: "fixtures/typescript_boundary_gap".to_string(),
+            source_finding_id: "probe:src_discount.ts:typescript_preview:2396aec1".to_string(),
+            language: "typescript".to_string(),
+            language_status: "preview".to_string(),
+            classification: "weakly_exposed".to_string(),
+            changed_owner: "applyDiscount".to_string(),
+            probe_family: "predicate".to_string(),
+            oracle_kind: "unknown".to_string(),
+            oracle_strength: "unknown".to_string(),
+            gap_state: "advisory".to_string(),
+            actionability_category: "incomplete_repair_packet".to_string(),
+            static_limit_kind: None,
+            repair_packet_ready: false,
+            must_have_verify_command: true,
+            must_have_receipt_command: true,
+            must_not_invent_verify_command: true,
+            must_not_emit_repair_packet: true,
+            authority_boundary: "preview_advisory_only".to_string(),
+            expected_test_or_observer_shape: "exact equality-boundary assertion".to_string(),
+            verify_command: "npm test -- discount".to_string(),
+            verify_result: "not_run".to_string(),
+            receipt_command: "ripr agent receipt --source fixtures/typescript_boundary_gap"
+                .to_string(),
+            receipt_state: "fixture_receipt_recorded".to_string(),
+            outcome: "proof_improved".to_string(),
+            why_not_actionable: "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract".to_string(),
+            repair_route: "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available".to_string(),
+            operator_note: "proof stays advisory".to_string(),
+            must_not_change: vec![
+                "production behavior".to_string(),
+                "default gate or badge policy".to_string(),
+            ],
+            raw_evidence_refs: vec![
+                "fixtures/typescript_boundary_gap/expected/check.json#probe:src_discount.ts:typescript_preview:2396aec1".to_string(),
+            ],
+            non_claims: vec![
+                "no provider calls".to_string(),
+                "no source edits".to_string(),
+                "no generated tests".to_string(),
+                "no runtime Jest/Vitest execution".to_string(),
+                "no mutation execution".to_string(),
+                "no default gates".to_string(),
+                "no public badge contribution".to_string(),
+                "no baseline authority".to_string(),
+                "no RIPR Zero authority".to_string(),
+                "no support-tier promotion".to_string(),
+            ],
+            reason: "sample TypeScript preview repair-loop receipt".to_string(),
+        }
+}
+
+#[test]
+fn dogfood_typescript_preview_repair_loop_rejects_overclaiming() {
+    let mut scenario = valid_typescript_preview_repair_loop_scenario();
+    scenario.language_status = "alpha".to_string();
+    scenario.authority_boundary = "gate_eligible".to_string();
+    scenario.gap_state = "actionable".to_string();
+    scenario.outcome = "resolved".to_string();
+    scenario.non_claims.clear();
+
+    let report = dogfood_typescript_preview_repair_loop_run(&scenario)
+        .errors
+        .join("\n");
+
+    assert!(report.contains("language_status must be preview"));
+    assert!(report.contains("authority_boundary must be preview_advisory_only"));
+    assert!(report.contains("repair_packet_ready=false must not be paired"));
+    assert!(report.contains("repair_packet_ready=false must not claim resolved"));
+    assert!(report.contains("non_claims must keep preview boundary denials visible"));
+
+    let mut static_limit = valid_typescript_preview_repair_loop_scenario();
+    static_limit.static_limit_kind = Some("mocked_module".to_string());
+    static_limit.gap_state = "advisory".to_string();
+    let static_report = dogfood_typescript_preview_repair_loop_run(&static_limit)
+        .errors
+        .join("\n");
+    assert!(static_report.contains("static_limit_kind requires gap_state=static_limitation"));
+
+    let mut weak_overclaim = valid_typescript_preview_repair_loop_scenario();
+    weak_overclaim.outcome = "weak_oracle_downgraded".to_string();
+    weak_overclaim.oracle_kind = "exact_value".to_string();
+    weak_overclaim.oracle_strength = "strong".to_string();
+    weak_overclaim.gap_state = "already_observed".to_string();
+    weak_overclaim.actionability_category = "strong_oracle_observed".to_string();
+    let weak_report = dogfood_typescript_preview_repair_loop_run(&weak_overclaim)
+        .errors
+        .join("\n");
+    assert!(weak_report.contains("weak_oracle_downgraded must not use a strong oracle"));
+    assert!(
+        weak_report
+            .contains("weak_oracle_downgraded must not claim already-observed actionability")
+    );
+
+    let mut placeholder_command = valid_typescript_preview_repair_loop_scenario();
+    placeholder_command.verify_command = "verify_command_unknown".to_string();
+    placeholder_command.receipt_command = "receipt_command_unknown".to_string();
+    let placeholder_report = dogfood_typescript_preview_repair_loop_run(&placeholder_command)
+        .errors
+        .join("\n");
+    assert!(
+        placeholder_report
+            .contains("must_have_verify_command requires a concrete operator verify_command")
+    );
+    assert!(
+        placeholder_report
+            .contains("must_have_receipt_command requires a concrete operator receipt_command")
+    );
+
+    let mut packet_overclaim = valid_typescript_preview_repair_loop_scenario();
+    packet_overclaim.repair_packet_ready = true;
+    let packet_report = dogfood_typescript_preview_repair_loop_run(&packet_overclaim)
+        .errors
+        .join("\n");
+    assert!(
+        packet_report.contains("must_not_emit_repair_packet requires repair_packet_ready=false")
+    );
+}
+
+#[test]
+fn dogfood_typescript_preview_repair_loop_rejects_invented_source_verify_command() {
+    with_temp_cwd(
+        "typescript-preview-repair-loop-invented-source-verify",
+        |root| {
+            let fixture = root.join("fixtures/ts/expected/check.json");
+            write(
+                &fixture,
+                r#"{
+  "findings": [
+    {
+      "id": "probe:src_discount.ts:typescript_preview:2396aec1",
+      "classification": "weakly_exposed",
+      "language": "typescript",
+      "language_status": "preview",
+      "oracle_kind": "unknown",
+      "oracle_strength": "unknown",
+      "static_limit_kind": null,
+      "evidence": [
+        "typescript_verify_command: npm test -- invented"
+      ],
+      "probe": {
+        "family": "predicate",
+        "owner": "fixture::applyDiscount"
+      },
+      "preview_actionability": {
+        "gap_state": "advisory",
+        "actionability_category": "incomplete_repair_packet",
+        "authority_boundary": "preview_advisory_only",
+        "repair_packet_ready": false,
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract",
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"
+      },
+      "typescript_preview_card": {
+        "repair_packet_ready": false,
+        "verify": {
+          "command": "npm test -- invented"
+        }
+      }
+    }
+  ]
+}
+"#,
+            );
+
+            let mut scenario = valid_typescript_preview_repair_loop_scenario();
+            scenario.source_fixture = "fixtures/ts".to_string();
+            let report = dogfood_typescript_preview_repair_loop_run(&scenario)
+                .errors
+                .join("\n");
+
+            assert!(report.contains(
+                "must_not_invent_verify_command rejects source typescript_verify_command evidence"
+            ));
+            assert!(report.contains(
+                "must_not_invent_verify_command requires source preview card verify.command to stay absent"
+            ));
+        },
+    );
+}
+
+#[test]
+fn dogfood_user_surface_projection_alignment_receipts_are_checked() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let scenarios = dogfood_user_surface_projection_scenarios();
+        let surfaces = scenarios
+            .iter()
+            .map(|scenario| scenario.surface.as_str())
+            .collect::<BTreeSet<_>>();
+        for required in USER_SURFACE_PROJECTION_REQUIRED_SURFACES {
+            assert!(
+                surfaces.contains(required),
+                "{required} user surface projection receipt should be checked"
+            );
+        }
+        let run_statuses = scenarios
+            .iter()
+            .map(|scenario| scenario.run_status.as_str())
+            .collect::<BTreeSet<_>>();
+        for required in USER_SURFACE_PROJECTION_REQUIRED_RUN_STATUSES {
+            assert!(
+                run_statuses.contains(required),
+                "{required} user surface projection receipt should be checked"
+            );
+        }
+
+        for scenario in scenarios {
+            let run = dogfood_user_surface_projection_run(&scenario);
+            assert!(
+                run.errors.is_empty(),
+                "{} user surface projection receipt should validate: {:?}",
+                run.name,
+                run.errors
+            );
+        }
+
+        Ok(())
+    })
+}
+
+#[test]
+fn dogfood_user_surface_projection_alignment_requires_limited_and_stale_statuses() {
+    let scenarios = vec![valid_user_surface_projection_scenario()];
+    let report = user_surface_projection_required_run_status_violations(&scenarios).join("\n");
+
+    assert!(!report.contains("run_status full"));
+    assert!(report.contains("run_status limited_large_cache_skip"));
+    assert!(report.contains("run_status limited_incomplete_input"));
+    assert!(report.contains("run_status limited_sampled_input"));
+    assert!(report.contains("run_status limited_stale_input"));
+}
+
+fn valid_user_surface_projection_scenario() -> DogfoodUserSurfaceProjectionScenario {
+    DogfoodUserSurfaceProjectionScenario {
+            name: "badge_actionable_count_from_canonical_state".to_string(),
+            surface: "badge".to_string(),
+            artifact: "badge-basis".to_string(),
+            headline: "ripr: 8 actionable".to_string(),
+            run_status: "full".to_string(),
+            projection_basis: "canonical_actionable_gap".to_string(),
+            canonical_gap_id: "gap:boundary-discriminator-004".to_string(),
+            packet_id: "boundary-discriminator-004".to_string(),
+            repair_kind: "add_boundary_assertion".to_string(),
+            top_next_action_kind: "attempt_ready_packet".to_string(),
+            verify_command: "cargo test -p ripr-swarm boundary_discriminator_004".to_string(),
+            receipt_command: "cargo xtask receipts write --packet boundary-discriminator-004 --canonical-gap gap:boundary-discriminator-004".to_string(),
+            source_alignment_case: "receipt_improved_top_next_action_alignment".to_string(),
+            limitation_category: String::new(),
+            runtime_repair_command: String::new(),
+            actionable_count: 8,
+            raw_findings_total: 312,
+            consumes_canonical_state: true,
+            reinterprets_raw_findings: false,
+            raw_findings_headline: false,
+            advisory: true,
+            blocking_default: false,
+            limited_state_visible: true,
+            stale_state_visible: true,
+            reason: "badge projection should use canonical actionable state".to_string(),
+        }
+}
+
+#[test]
+fn dogfood_user_surface_projection_alignment_reports_contract_drift() {
+    let mut scenario = valid_user_surface_projection_scenario();
+    scenario.name.clear();
+    scenario.surface = "raw_dashboard".to_string();
+    scenario.run_status = "limited_stale_input".to_string();
+    scenario.projection_basis = "raw_findings".to_string();
+    scenario.canonical_gap_id = "boundary-discriminator-004".to_string();
+    scenario.raw_findings_total = scenario.actionable_count;
+    scenario.consumes_canonical_state = false;
+    scenario.reinterprets_raw_findings = true;
+    scenario.raw_findings_headline = true;
+    scenario.advisory = false;
+    scenario.blocking_default = true;
+    scenario.limited_state_visible = false;
+    scenario.stale_state_visible = false;
+    scenario.receipt_command = scenario.verify_command.clone();
+
+    let report = dogfood_user_surface_projection_run(&scenario)
+        .errors
+        .join("\n");
+
+    assert!(report.contains("case id must be present"));
+    assert!(report.contains("unsupported surface raw_dashboard"));
+    assert!(
+        report.contains("limited_stale_input projection_basis must be canonical_runtime_status")
+    );
+    assert!(report.contains("canonical_gap_id must use gap: identity"));
+    assert!(report.contains("surface must consume canonical state"));
+    assert!(report.contains("surface must not reinterpret raw findings"));
+    assert!(report.contains("surface must not headline raw findings"));
+    assert!(report.contains("surface must remain advisory"));
+    assert!(report.contains("surface must not be blocking by default"));
+    assert!(report.contains("surface must make limited state visible"));
+    assert!(report.contains("surface must make stale state visible"));
+    assert!(report.contains("receipt_command must stay distinct from verify_command"));
+    assert!(report.contains("limited or stale run_status must not carry packet identity"));
+    assert!(report.contains("limited or stale run_status must not carry packet repair commands"));
+    assert!(report.contains("limited or stale run_status must not carry source_alignment_case"));
+    assert!(report.contains("limited_stale_input must name a limitation_category"));
+    assert!(report.contains("limited_stale_input must provide a runtime_repair_command"));
+    assert!(report.contains("limited_stale_input must route resolve_limited_runtime_status"));
+    assert!(report.contains("limited_stale_input headline must make stale state visible"));
+    assert!(report.contains("limited or stale run_status must not headline an actionable count"));
+}
+
+#[test]
+fn dogfood_user_surface_projection_alignment_accepts_limited_runtime_status() {
+    let mut scenario = valid_user_surface_projection_scenario();
+    scenario.name = "badge_limited_state_from_canonical_runtime".to_string();
+    scenario.headline = "ripr: limited".to_string();
+    scenario.run_status = "limited_sampled_input".to_string();
+    scenario.projection_basis = "canonical_runtime_status".to_string();
+    scenario.canonical_gap_id.clear();
+    scenario.packet_id.clear();
+    scenario.repair_kind.clear();
+    scenario.top_next_action_kind = "resolve_limited_runtime_status".to_string();
+    scenario.verify_command.clear();
+    scenario.receipt_command.clear();
+    scenario.source_alignment_case.clear();
+    scenario.limitation_category = "lane1_repo_exposure_sampled".to_string();
+    scenario.runtime_repair_command = "cargo xtask lane1-evidence-audit".to_string();
+
+    let run = dogfood_user_surface_projection_run(&scenario);
+
+    assert!(run.errors.is_empty(), "{:?}", run.errors);
+}
+
+#[test]
+fn dogfood_user_surface_projection_alignment_rejects_wrong_runtime_repair_route() {
+    let mut scenario = valid_user_surface_projection_scenario();
+    scenario.name = "badge_limited_state_from_canonical_runtime".to_string();
+    scenario.headline = "ripr: limited".to_string();
+    scenario.run_status = "limited_large_cache_skip".to_string();
+    scenario.projection_basis = "canonical_runtime_status".to_string();
+    scenario.canonical_gap_id.clear();
+    scenario.packet_id.clear();
+    scenario.repair_kind.clear();
+    scenario.top_next_action_kind = "resolve_limited_runtime_status".to_string();
+    scenario.verify_command.clear();
+    scenario.receipt_command.clear();
+    scenario.source_alignment_case.clear();
+    scenario.limitation_category = "lane1_repo_exposure_sampled".to_string();
+    scenario.runtime_repair_command = "cargo xtask lane1-evidence-audit".to_string();
+
+    let report = dogfood_user_surface_projection_run(&scenario)
+        .errors
+        .join("\n");
+
+    assert!(
+        report.contains(
+            "limited_large_cache_skip limitation_category must be limited_large_cache_skip"
+        )
+    );
+    assert!(report.contains(
+            "limited_large_cache_skip runtime_repair_command must be cargo xtask cache report && cargo xtask cache gc --dry-run"
+        ));
+}
+
+#[test]
+fn dogfood_user_surface_projection_alignment_rejects_limited_static_limitation_backlog_projection()
+{
+    let mut scenario = valid_user_surface_projection_scenario();
+    scenario.name = "badge_limited_static_limitation_backlog_from_runtime".to_string();
+    scenario.headline = "ripr: limited".to_string();
+    scenario.run_status = "limited_sampled_input".to_string();
+    scenario.projection_basis = "canonical_limitation_backlog".to_string();
+    scenario.canonical_gap_id =
+        "gap:activation-owner-call-absent-assertion-target-affinity".to_string();
+    scenario.packet_id =
+        "limitation:activation-owner-call-absent-assertion-target-affinity".to_string();
+    scenario.repair_kind = "sharpen_static_limitation_route".to_string();
+    scenario.top_next_action_kind = "route_static_limitation_backlog".to_string();
+    scenario.verify_command =
+        "cargo test -p ripr evidence_record_splits_assertion_target_owner_call_absence_limitation"
+            .to_string();
+    scenario.receipt_command = "cargo xtask check-fixture-contracts".to_string();
+    scenario.source_alignment_case = "static_limitation_backlog_alignment".to_string();
+    scenario.limitation_category = "lane1_repo_exposure_sampled".to_string();
+    scenario.runtime_repair_command = "cargo xtask lane1-evidence-audit".to_string();
+
+    let report = dogfood_user_surface_projection_run(&scenario)
+        .errors
+        .join("\n");
+
+    assert!(
+        report.contains("limited_sampled_input projection_basis must be canonical_runtime_status")
+    );
+    assert!(report.contains("limited_sampled_input must route resolve_limited_runtime_status"));
+    assert!(report.contains("limited or stale run_status must not carry packet identity"));
+    assert!(report.contains("limited or stale run_status must not carry packet repair commands"));
+    assert!(report.contains("limited or stale run_status must not carry source_alignment_case"));
+    assert!(
+        !report.contains("limited_incomplete_input must name a limitation_category"),
+        "correct runtime limitation category should not be rejected: {report}"
+    );
+    assert!(
+        !report.contains("limited_incomplete_input must provide a runtime_repair_command"),
+        "correct runtime repair route should not be rejected: {report}"
+    );
+}
+
+#[test]
+fn dogfood_surface_projection_alignment_covers_route_quality_non_success() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let fixture = std::fs::read_to_string(super::SURFACE_PROJECTION_ALIGNMENT_CORPUS)
+            .map_err(|err| err.to_string())?;
+        let value: serde_json::Value =
+            serde_json::from_str(&fixture).map_err(|err| err.to_string())?;
+        let cases = value["cases"]
+            .as_array()
+            .ok_or("surface projection corpus cases must be an array")?;
+
+        let has_non_success_route_quality = cases.iter().any(|case| {
+            let outcome = case["expected"]["outcome"].as_str().unwrap_or("");
+            let top_next_action_kind = case["expected"]["top_next_action_kind"]
+                .as_str()
+                .unwrap_or("");
+            let route_quality_has_non_success =
+                case["artifacts"]["swarm_attempt_ledger"]["repair_route_quality"]
+                    .as_array()
+                    .is_some_and(|rows| {
+                        rows.iter().any(|row| {
+                            row["repair_kind_failure_count"].as_u64().unwrap_or(0) > 0
+                                || row["repair_kind_unchanged"].as_u64().unwrap_or(0) > 0
+                                || row["repair_kind_regressed"].as_u64().unwrap_or(0) > 0
+                                || row["repair_kind_attempted_no_receipt"]
+                                    .as_u64()
+                                    .unwrap_or(0)
+                                    > 0
+                        })
+                    });
+
+            matches!(outcome, "evidence_unchanged" | "attempted_no_receipt")
+                && top_next_action_kind != "attempt_ready_packet"
+                && route_quality_has_non_success
+        });
+
+        if has_non_success_route_quality {
+            Ok(())
+        } else {
+            Err(
+                "surface projection corpus must include a non-success route-quality case"
+                    .to_string(),
+            )
+        }
+    })
+}
+
+#[test]
+fn dogfood_surface_projection_alignment_covers_missing_receipt_route_quality() -> Result<(), String>
+{
+    with_repo_cwd(|| {
+        let fixture = std::fs::read_to_string(super::SURFACE_PROJECTION_ALIGNMENT_CORPUS)
+            .map_err(|err| err.to_string())?;
+        let value: serde_json::Value =
+            serde_json::from_str(&fixture).map_err(|err| err.to_string())?;
+        let cases = value["cases"]
+            .as_array()
+            .ok_or("surface projection corpus cases must be an array")?;
+
+        let has_missing_receipt_route_quality = cases.iter().any(|case| {
+            let expected = &case["expected"];
+            let route_quality = case["artifacts"]["swarm_attempt_ledger"]["repair_route_quality"]
+                .as_array()
+                .and_then(|rows| rows.first())
+                .unwrap_or(&serde_json::Value::Null);
+            let has_attempt_receipt_missing_field =
+                case["artifacts"]["swarm_attempt_ledger"]["top_missing_evidence_fields"]
+                    .as_array()
+                    .is_some_and(|rows| {
+                        rows.iter().any(|row| {
+                            row["label"].as_str() == Some("attempt_receipt")
+                                && row["count"].as_u64().unwrap_or(0) > 0
+                        })
+                    });
+
+            expected["outcome"].as_str() == Some("attempted_no_receipt")
+                && expected["top_next_action_kind"].as_str()
+                    == Some("collect_missing_attempt_receipts")
+                && route_quality["repair_kind_attempted_no_receipt"].as_u64() == Some(1)
+                && route_quality["repair_kind_failure_count"].as_u64() == Some(1)
+                && route_quality["repair_kind_dominant_failure_reason"].as_str()
+                    == Some("attempted_no_receipt")
+                && has_attempt_receipt_missing_field
+        });
+
+        if has_missing_receipt_route_quality {
+            Ok(())
+        } else {
+            Err(
+                "surface projection corpus must include an attempted_no_receipt route-quality case"
+                    .to_string(),
+            )
+        }
+    })
+}
+
+#[test]
+fn dogfood_user_surface_projection_alignment_matches_route_quality_non_success_source()
+-> Result<(), String> {
+    with_repo_cwd(|| {
+        let sources = super::dogfood_surface_projection_alignment_scenarios();
+        let mut scenario = valid_user_surface_projection_scenario();
+        scenario.name = "pr_comment_route_quality_degraded_from_canonical_outcome".to_string();
+        scenario.surface = "pr_comment".to_string();
+        scenario.artifact = "pr evidence summary".to_string();
+        scenario.headline =
+            "Repair route quality needs attention: add_output_observer unchanged".to_string();
+        scenario.canonical_gap_id = "gap:output-observer-009".to_string();
+        scenario.packet_id = "output-observer-009".to_string();
+        scenario.repair_kind = "add_output_observer".to_string();
+        scenario.top_next_action_kind = "improve_repair_route_quality".to_string();
+        scenario.verify_command = "cargo test -p ripr-swarm output_observer_009".to_string();
+        scenario.receipt_command =
+                "cargo xtask receipts write --packet output-observer-009 --canonical-gap gap:output-observer-009".to_string();
+        scenario.source_alignment_case = "receipt_unchanged_route_quality_alignment".to_string();
+        scenario.reason =
+            "PR comments should preserve canonical non-success route-quality state.".to_string();
+
+        let report = super::user_surface_projection_source_alignment_errors(&scenario, &sources);
+
+        assert!(
+            report.is_empty(),
+            "route-quality non-success source should align cleanly: {report:?}"
+        );
+
+        Ok(())
+    })
+}
+
+#[test]
+fn dogfood_user_surface_projection_alignment_matches_missing_receipt_source() -> Result<(), String>
+{
+    with_repo_cwd(|| {
+        let sources = super::dogfood_surface_projection_alignment_scenarios();
+        let scenarios = super::dogfood_user_surface_projection_scenarios();
+        let scenario = scenarios
+                .iter()
+                .find(|scenario| scenario.name == "pr_comment_missing_receipt_from_canonical_outcome")
+                .ok_or(
+                    "user-surface corpus must include pr_comment_missing_receipt_from_canonical_outcome",
+                )?;
+
+        if scenario.top_next_action_kind != "collect_missing_attempt_receipts" {
+            return Err(format!(
+                "missing-receipt user surface must preserve collect_missing_attempt_receipts, got {}",
+                scenario.top_next_action_kind
+            ));
+        }
+
+        let report = super::user_surface_projection_source_alignment_errors(scenario, &sources);
+
+        assert!(
+            report.is_empty(),
+            "missing-receipt source should align cleanly: {report:?}"
+        );
+
+        Ok(())
+    })
+}
+
+#[test]
+fn dogfood_user_surface_projection_alignment_covers_route_quality_non_success_all_surfaces()
+-> Result<(), String> {
+    with_repo_cwd(|| {
+        let scenarios = super::dogfood_user_surface_projection_scenarios();
+        let surfaces = scenarios
+            .iter()
+            .filter(|scenario| {
+                scenario.source_alignment_case == "receipt_unchanged_route_quality_alignment"
+                    && scenario.top_next_action_kind == "improve_repair_route_quality"
+                    && scenario.canonical_gap_id == "gap:output-observer-009"
+                    && scenario.packet_id == "output-observer-009"
+                    && scenario.repair_kind == "add_output_observer"
+            })
+            .map(|scenario| scenario.surface.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+
+        let missing = ["badge", "lsp", "pr_comment", "ci"]
+            .into_iter()
+            .filter(|surface| !surfaces.contains(surface))
+            .collect::<Vec<_>>();
+
+        if missing.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "route-quality non-success user-surface projection is missing consumers: {}",
+                missing.join(", ")
+            ))
+        }
+    })
+}
+
+#[test]
+fn dogfood_user_surface_projection_alignment_covers_static_limitation_backlog_all_surfaces()
+-> Result<(), String> {
+    with_repo_cwd(|| {
+        let scenarios = super::dogfood_user_surface_projection_scenarios();
+        let surfaces = scenarios
+                .iter()
+                .filter(|scenario| {
+                    scenario.source_alignment_case == "static_limitation_backlog_alignment"
+                        && scenario.top_next_action_kind == "route_static_limitation_backlog"
+                        && scenario.projection_basis == "canonical_limitation_backlog"
+                        && scenario.canonical_gap_id
+                            == "gap:activation-owner-call-absent-assertion-target-affinity"
+                        && scenario.packet_id
+                            == "limitation:activation-owner-call-absent-assertion-target-affinity:assertion-target-affinity-owner-call-tracing"
+                        && scenario.repair_kind == "sharpen_static_limitation_route"
+                })
+                .map(|scenario| scenario.surface.as_str())
+                .collect::<std::collections::BTreeSet<_>>();
+
+        let missing = ["badge", "lsp", "pr_comment", "ci"]
+            .into_iter()
+            .filter(|surface| !surfaces.contains(surface))
+            .collect::<Vec<_>>();
+
+        if missing.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "static-limitation backlog user-surface projection is missing consumers: {}",
+                missing.join(", ")
+            ))
+        }
+    })
+}
+
+#[test]
+fn dogfood_user_surface_projection_alignment_matches_surface_projection_source() {
+    let sources = vec![super::DogfoodSurfaceProjectionAlignmentScenario {
+            name: "receipt_improved_top_next_action_alignment".to_string(),
+            canonical_gap_id: "gap:boundary-discriminator-004".to_string(),
+            packet_id: "boundary-discriminator-004".to_string(),
+            evidence_class: "predicate_boundary".to_string(),
+            repair_kind: "add_boundary_assertion".to_string(),
+            verify_command: "cargo test -p ripr-swarm boundary_discriminator_004".to_string(),
+            receipt_command: "cargo xtask receipts write --packet boundary-discriminator-004 --canonical-gap gap:boundary-discriminator-004".to_string(),
+            receipt_state: "receipt_movement_improved".to_string(),
+            outcome: "evidence_improved".to_string(),
+            expected_top_next_action_kind: "attempt_ready_packet".to_string(),
+            advisory_consumers: vec![
+                "badge".to_string(),
+                "lsp".to_string(),
+                "pr_comment".to_string(),
+                "ci".to_string(),
+            ],
+            must_not_change: Vec::new(),
+            swarm_plan: serde_json::Value::Null,
+            actionable_gap_outcomes: serde_json::Value::Null,
+            attempt_ledger: serde_json::Value::Null,
+            reason: "unit source fixture".to_string(),
+        }];
+    let scenario = valid_user_surface_projection_scenario();
+
+    let errors = super::user_surface_projection_source_alignment_errors(&scenario, &sources);
+    assert!(errors.is_empty(), "{errors:?}");
+
+    let mut mismatched = scenario;
+    mismatched.packet_id = "boundary-discriminator-stale".to_string();
+    let report =
+        super::user_surface_projection_source_alignment_errors(&mismatched, &sources).join("\n");
+    assert!(report.contains(
+        "packet_id must match source_alignment_case receipt_improved_top_next_action_alignment"
+    ));
+
+    let mut missing_source = mismatched;
+    missing_source.packet_id = "boundary-discriminator-004".to_string();
+    missing_source.source_alignment_case = "missing-source-case".to_string();
+    let report = super::user_surface_projection_source_alignment_errors(&missing_source, &sources)
+        .join("\n");
+    assert!(report.contains(
+            "source_alignment_case missing-source-case must exist in surface projection alignment corpus"
+        ));
+}
+
+#[test]
+fn dogfood_generated_ci_cockpit_receipts_are_checked() {
+    let workflow = format!(
+            "\
+name: RIPR
+jobs:
+  ripr:
+    continue-on-error: ${{{{ vars.RIPR_GATE_MODE == '' || vars.RIPR_GATE_MODE == 'visible-only' }}}}
+    steps:
+      - uses: actions/upload-artifact@v7
+      - run: |
+          echo '### Start here'
+          echo '- Open `target/ripr/reports/start-here.md` first when it exists.'
+          echo 'name: Render RIPR first-pr start-here'
+          echo 'cat target/ripr/reports/start-here.md'
+          echo 'RIPR is advisory static evidence.'
+          echo 'Gate authority: `ripr gate evaluate` remains the pass/fail source.'
+          echo '{GENERATED_CI_FIRST_ACTION_REPAIR}'
+          echo '{GENERATED_CI_FIRST_PR_REPAIR}'
+          echo '{GENERATED_CI_FRONT_PANEL_REPAIR}'
+          echo '{GENERATED_CI_PACKET_INDEX_REPAIR}'
+          echo '### Language preview grouping'
+          echo 'if [ -n \"$preview_languages\" ]; then'
+          echo 'Grouped preview evidence languages'
+          echo 'grouped_preview_languages=\"$grouped_preview_languages javascript\"'
+          echo 'preview-language groups are advisory presentation only; `ripr gate evaluate` remains pass/fail authority when explicitly configured.'
+          echo 'missing_preview_status'
+          echo 'static_limit_kinds'
+          echo 'actionability_states'
+          echo 'actionability_categories'
+          echo 'repair_packet_ready_entries'
+          echo 'gate_impact=\\`none\\`'
+          echo 'target/ripr/reports'
+"
+        );
+
+    let run = dogfood_generated_ci_cockpit_run_from_workflow(
+        "generated-pr-ci-review-workflow",
+        "cargo run --quiet -p ripr -- init --ci github --dry-run",
+        10,
+        &workflow,
+    );
+    assert!(run.errors.is_empty(), "{:?}", run.errors);
+    assert!(run.start_here);
+    assert_eq!(run.repair_commands, 4);
+    assert!(run.gate_authority_boundary);
+    assert!(run.default_advisory);
+    assert!(run.artifact_upload);
+    assert_eq!(run.language_grouping_status, "checked");
+
+    let missing = dogfood_generated_ci_cockpit_run_from_workflow(
+        "missing",
+        "cargo run --quiet -p ripr -- init --ci github --dry-run",
+        10,
+        "name: RIPR",
+    );
+    assert!(
+        missing
+            .errors
+            .iter()
+            .any(|error| error.contains("Start here"))
+    );
+    assert!(
+        missing
+            .errors
+            .iter()
+            .any(|error| error.contains("regeneration commands"))
+    );
+}
+
+#[test]
+fn dogfood_language_preview_scenarios_cover_projection_boundaries() {
+    let scenarios = dogfood_language_preview_scenarios();
+    let names = scenarios
+        .iter()
+        .map(|scenario| scenario.name.as_str())
+        .collect::<BTreeSet<_>>();
+
+    assert!(names.contains("typescript_mocked_module_limit"));
+    assert!(names.contains("javascript_js_preview"));
+    assert!(names.contains("python_missing_import_graph_limit"));
+    assert!(names.contains("python_mixed_language_no_cross_route"));
+    assert!(names.contains("python_disabled"));
+
+    let javascript = scenarios
+        .iter()
+        .find(|scenario| scenario.name == "javascript_js_preview");
+    assert!(
+        javascript.is_some_and(|scenario| {
+            scenario.preview_enabled
+                && scenario.language == "javascript"
+                && scenario.expected_preview_findings == 1
+                && scenario.expected_related_tests == 1
+        }),
+        "javascript_js_preview must pin JavaScript preview metadata when TypeScript-family preview is enabled"
+    );
+
+    let disabled = scenarios
+        .iter()
+        .find(|scenario| scenario.name == "python_disabled");
+    assert!(
+        disabled.is_some_and(|scenario| {
+            !scenario.preview_enabled
+                && scenario.expected_findings == 0
+                && scenario.expected_preview_findings == 0
+        }),
+        "python_disabled must pin the Rust-default/no-preview boundary"
+    );
+
+    let mixed = scenarios
+        .iter()
+        .find(|scenario| scenario.name == "python_mixed_language_no_cross_route");
+    assert!(
+        mixed.is_some_and(|scenario| {
+            scenario.preview_enabled
+                && scenario.expected_related_tests == 0
+                && scenario
+                    .expected_classifications
+                    .contains(&"no_static_path".to_string())
+        }),
+        "mixed-language receipt must pin no cross-language related-test routing"
+    );
+}
+
+#[test]
+fn dogfood_language_preview_run_checks_static_limit_receipt() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let scenario = dogfood_language_preview_scenarios()
+            .into_iter()
+            .find(|scenario| scenario.name == "typescript_mocked_module_limit")
+            .ok_or_else(|| {
+                "typescript_mocked_module_limit dogfood scenario is missing".to_string()
+            })?;
+
+        let run = dogfood_language_preview_run(&scenario);
+
+        assert!(run.errors.is_empty(), "{:?}", run.errors);
+        assert_eq!(run.language, "typescript");
+        assert!(run.preview_enabled);
+        assert_eq!(run.findings, 1);
+        assert_eq!(run.language_findings, 1);
+        assert_eq!(run.preview_findings, 1);
+        assert_eq!(run.missing_preview_status, 0);
+        assert_eq!(run.related_tests, 1);
+        assert_eq!(run.classifications, vec!["exposed".to_string()]);
+        assert_eq!(run.static_limit_kinds, vec!["mocked_module".to_string()]);
+        assert!(run.json_path.exists());
+        assert!(run.human_path.exists());
+        Ok(())
+    })
+}
+
+#[test]
+fn dogfood_editor_gap_cockpit_scenarios_cover_fail_closed_states() {
+    let scenarios = dogfood_editor_gap_cockpit_scenarios();
+    let names = scenarios
+        .iter()
+        .map(|scenario| scenario.name.as_str())
+        .collect::<BTreeSet<_>>();
+
+    assert!(names.contains("rust_actionable"));
+    assert!(names.contains("typescript_preview_static_limit"));
+    assert!(names.contains("python_preview_static_limit"));
+    assert!(names.contains("disabled_language"));
+    assert!(names.contains("wrong_root"));
+    assert!(names.contains("stale_artifact"));
+    assert!(names.contains("no_actionable_gap"));
+
+    for name in [
+        "disabled_language",
+        "wrong_root",
+        "stale_artifact",
+        "no_actionable_gap",
+    ] {
+        let scenario = scenarios.iter().find(|scenario| scenario.name == name);
+        assert!(
+            scenario.is_some_and(|scenario| {
+                scenario.expected_fail_closed
+                    && scenario.expected_diagnostics == 0
+                    && scenario.expected_actions == vec!["refresh".to_string()]
+            }),
+            "{name} should fail closed with refresh only"
+        );
+    }
+}
+
+#[test]
+fn dogfood_editor_gap_cockpit_run_checks_static_limit_ordering() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let scenario = dogfood_editor_gap_cockpit_scenarios()
+            .into_iter()
+            .find(|scenario| scenario.name == "typescript_preview_static_limit")
+            .ok_or_else(|| {
+                "typescript_preview_static_limit editor gap scenario is missing".to_string()
+            })?;
+
+        let run = dogfood_editor_gap_cockpit_run(&scenario);
+
+        assert!(run.errors.is_empty(), "{:?}", run.errors);
+        assert_eq!(run.language.as_deref(), Some("typescript"));
+        assert_eq!(run.language_status.as_deref(), Some("preview"));
+        assert_eq!(run.diagnostics_projected, 1);
+        assert_eq!(run.actual_diagnostics, 1);
+        assert!(!run.fail_closed);
+        assert_eq!(run.static_limit_kind.as_deref(), Some("mocked_module"));
+        assert!(run.hover_static_before_action);
+        assert!(run.projection_path.exists());
+        assert!(run.hover_path.exists());
+        Ok(())
+    })
+}
+
+#[test]
+fn dogfood_editor_first_pr_bridge_scenarios_cover_fail_closed_states() {
+    let scenarios = dogfood_editor_first_pr_bridge_scenarios();
+    let names = scenarios
+        .iter()
+        .map(|scenario| scenario.name.as_str())
+        .collect::<BTreeSet<_>>();
+
+    for expected in [
+        "setup_ok",
+        "packet_missing",
+        "packet_found_repairable",
+        "packet_no_action",
+        "packet_stale",
+        "packet_wrong_root",
+        "packet_malformed",
+        "receipt_improved_packet_ready",
+        "receipt_unchanged_packet_ready",
+    ] {
+        assert!(names.contains(expected), "{expected} scenario is missing");
+    }
+
+    for name in [
+        "packet_missing",
+        "packet_stale",
+        "packet_wrong_root",
+        "packet_malformed",
+    ] {
+        let scenario = scenarios.iter().find(|scenario| scenario.name == name);
+        assert!(
+            scenario.is_some_and(|scenario| {
+                scenario.expected_fail_closed
+                    && scenario.expected_diagnostics == 0
+                    && scenario.expected_safe_actions
+                        == vec!["copy_regeneration_guidance".to_string()]
+            }),
+            "{name} should fail closed with regeneration guidance only"
+        );
+    }
+}
+
+#[test]
+fn dogfood_editor_first_pr_bridge_run_checks_repairable_packet() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let scenario = dogfood_editor_first_pr_bridge_scenarios()
+            .into_iter()
+            .find(|scenario| scenario.name == "packet_found_repairable")
+            .ok_or_else(|| "packet_found_repairable bridge scenario is missing".to_string())?;
+
+        let run = dogfood_editor_first_pr_bridge_run(&scenario);
+
+        assert!(run.errors.is_empty(), "{:?}", run.errors);
+        assert_eq!(run.packet_state, "top_repairable_gap");
+        assert_eq!(run.diagnostics, 1);
+        assert!(!run.fail_closed);
+        assert_eq!(
+            run.safe_actions,
+            vec![
+                "open_packet".to_string(),
+                "copy_summary".to_string(),
+                "copy_repair_packet".to_string(),
+                "copy_verify_command".to_string(),
+                "copy_receipt_command".to_string(),
+                "copy_regeneration_guidance".to_string()
+            ]
+        );
+        assert_eq!(run.first_pr_actions, run.safe_actions);
+        assert!(!run.runtime_adequacy_claim);
+        assert!(!run.mutation_proof_claim);
+        assert!(!run.policy_gate_claim);
+        assert!(!run.pr_ready_claim);
+        assert!(run.packet_path.exists());
+        assert!(run.diagnosis_path.exists());
+        Ok(())
+    })
+}
+
+#[test]
+fn dogfood_editor_first_pr_bridge_run_checks_receipt_movement() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let scenario = dogfood_editor_first_pr_bridge_scenarios()
+            .into_iter()
+            .find(|scenario| scenario.name == "receipt_improved_packet_ready")
+            .ok_or_else(|| {
+                "receipt_improved_packet_ready bridge scenario is missing".to_string()
+            })?;
+
+        let run = dogfood_editor_first_pr_bridge_run(&scenario);
+
+        assert!(run.errors.is_empty(), "{:?}", run.errors);
+        assert_eq!(run.packet_state, "top_repairable_gap");
+        assert_eq!(run.receipt_movement.as_deref(), Some("improved"));
+        assert!(!run.pr_ready_claim);
+        Ok(())
+    })
+}
+
+#[test]
+fn dogfood_gate_adoption_scenarios_have_checked_receipts() -> Result<(), String> {
+    with_repo_cwd(|| {
+        for scenario in dogfood_gate_adoption_scenarios() {
+            assert!(
+                Path::new(scenario.pr_guidance).exists(),
+                "{} PR guidance input missing",
+                scenario.name
+            );
+            for input in [
+                scenario.labels_json,
+                scenario.baseline,
+                scenario.recommendation_calibration,
+                scenario.mutation_calibration,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                assert!(
+                    Path::new(input).exists(),
+                    "{} input missing: {}",
+                    scenario.name,
+                    input
+                );
+            }
+
+            let expected_dir = Path::new(scenario.expected_dir);
+            let json_text = fs::read_to_string(expected_dir.join("gate-decision.json"))
+                .map_err(|err| format!("{} gate-decision.json missing: {err}", scenario.name))?;
+            let markdown = fs::read_to_string(expected_dir.join("gate-decision.md"))
+                .map_err(|err| format!("{} gate-decision.md missing: {err}", scenario.name))?;
+            let value: Value = serde_json::from_str(&json_text)
+                .map_err(|err| format!("{} gate-decision.json invalid: {err}", scenario.name))?;
+
+            assert_eq!(
+                value.get("status").and_then(Value::as_str),
+                Some(scenario.expected_status),
+                "{} expected status should be pinned",
+                scenario.name
+            );
+            assert_eq!(
+                json_summary_count(&value, "blocking"),
+                scenario.expected_blocking,
+                "{} expected blocking count should be pinned",
+                scenario.name
+            );
+            assert_eq!(
+                json_summary_count(&value, "acknowledged"),
+                scenario.expected_acknowledged,
+                "{} expected acknowledged count should be pinned",
+                scenario.name
+            );
+            assert_eq!(
+                json_summary_count(&value, "advisory"),
+                scenario.expected_advisory,
+                "{} expected advisory count should be pinned",
+                scenario.name
+            );
+            assert!(
+                markdown.contains(&format!("Decision: {}", scenario.expected_status)),
+                "{} Markdown should pin decision status",
+                scenario.name
+            );
+        }
+
+        Ok(())
+    })
+}
+
+#[test]
+fn dogfood_blocking_gate_report_is_self_contained() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let scenario = dogfood_gate_adoption_scenarios()
+            .into_iter()
+            .find(|scenario| scenario.name == "calibrated-high-confidence-new-gap")
+            .ok_or_else(|| "calibrated blocking gate scenario is missing".to_string())?;
+        let run = dogfood_gate_adoption_run(&scenario)?;
+        if !run.errors.is_empty() {
+            return Err(format!(
+                "calibrated blocking gate dogfood drifted: {:?}",
+                run.errors
+            ));
+        }
+        let markdown = fs::read_to_string(&run.markdown_path).map_err(|err| {
+            format!(
+                "failed to read calibrated gate Markdown {}: {err}",
+                normalize_path(&run.markdown_path)
+            )
+        })?;
+        for required in [
+            "Decision: blocked",
+            "  - Gap state: `actionable`",
+            "  - Gap: `gap:",
+            "  - Seam: `",
+            "  - Classification: `weakly_gripped`",
+            "  - Changed owner:",
+            "  - Changed behavior:",
+            "  - Why it remains open:",
+            "  - Near test:",
+            "  - Add:",
+            "  - Verify:",
+            "  - Receipt:",
+            "  - Inspect: `ripr agent brief --root . --seam-id",
+            "  - Boundary: `static_ripr_evidence_only`",
+        ] {
+            if !markdown.contains(required) {
+                return Err(format!(
+                    "blocking gate Markdown is not self-contained; missing {required:?}"
+                ));
+            }
+        }
+        for forbidden in ["gh run download", "pr-guidance"] {
+            if markdown.contains(forbidden) {
+                return Err(format!(
+                    "blocking gate Markdown still requires artifact archaeology: {forbidden:?}"
+                ));
+            }
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn dogfood_first_action_scenarios_have_checked_receipts() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let scenarios = dogfood_first_action_scenarios();
+        assert!(
+            scenarios
+                .iter()
+                .any(|scenario| scenario.name == "actionable"),
+            "actionable first-action receipt should be checked"
+        );
+        assert!(
+            scenarios
+                .iter()
+                .any(|scenario| scenario.name == "baseline-only"),
+            "baseline-only first-action receipt should be checked"
+        );
+        assert!(
+            scenarios.iter().any(|scenario| scenario.name == "stale")
+                || scenarios
+                    .iter()
+                    .any(|scenario| scenario.name == "missing-required-artifact"),
+            "stale or missing-input first-action receipt should be checked"
+        );
+        assert!(
+            scenarios
+                .iter()
+                .any(|scenario| scenario.name == "unchanged-after-attempt"),
+            "unchanged-after-attempt first-action receipt should be checked"
+        );
+        assert!(
+            scenarios
+                .iter()
+                .any(|scenario| scenario.name == "no-actionable-seam"),
+            "no-actionable-seam first-action receipt should be checked"
+        );
+
+        for scenario in scenarios {
+            let expected_dir = Path::new(scenario.expected_dir);
+            let json_text = fs::read_to_string(expected_dir.join("first-useful-action.json"))
+                .map_err(|err| {
+                    format!("{} first-useful-action.json missing: {err}", scenario.name)
+                })?;
+            let markdown = fs::read_to_string(expected_dir.join("first-useful-action.md"))
+                .map_err(|err| {
+                    format!("{} first-useful-action.md missing: {err}", scenario.name)
+                })?;
+            let value: Value = serde_json::from_str(&json_text).map_err(|err| {
+                format!("{} first-useful-action.json invalid: {err}", scenario.name)
+            })?;
+
+            assert_eq!(
+                value.get("status").and_then(Value::as_str),
+                Some(scenario.expected_status),
+                "{} expected status should be pinned",
+                scenario.name
+            );
+            assert_eq!(
+                value.get("action_kind").and_then(Value::as_str),
+                Some(scenario.expected_action_kind),
+                "{} expected action should be pinned",
+                scenario.name
+            );
+            assert_eq!(
+                value.get("audience").and_then(Value::as_str),
+                Some(scenario.expected_audience),
+                "{} expected audience should be pinned",
+                scenario.name
+            );
+            assert_eq!(
+                value.get("selected").is_some_and(|value| !value.is_null()),
+                scenario.expected_selected,
+                "{} selected presence should be pinned",
+                scenario.name
+            );
+            assert_eq!(
+                value
+                    .get("evidence")
+                    .and_then(|evidence| evidence.get("static_movement"))
+                    .and_then(Value::as_str),
+                Some(scenario.expected_static_movement),
+                "{} static movement should be pinned",
+                scenario.name
+            );
+            assert!(
+                markdown.contains(&format!("Status: {}", scenario.expected_status)),
+                "{} Markdown should pin status",
+                scenario.name
+            );
+            assert!(
+                markdown.contains(&format!("Action: {}", scenario.expected_action_kind)),
+                "{} Markdown should pin action",
+                scenario.name
+            );
+        }
+
+        Ok(())
+    })
+}
+
+#[test]
+fn dogfood_first_pr_scenarios_have_checked_receipts() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let scenarios = dogfood_first_pr_scenarios();
+        for required in [
+            ("boundary-gap", "actionable", "top_gap"),
+            ("output-contract-gap", "actionable", "top_gap"),
+            ("empty-diff", "no_action", "empty_diff"),
+            ("blocked-ledger", "blocked", "blocked_artifact"),
+        ] {
+            assert!(
+                scenarios.iter().any(|scenario| {
+                    scenario.name == required.0
+                        && scenario.expected_status == required.1
+                        && scenario.expected_state == required.2
+                }),
+                "{} first successful PR receipt should be checked as {}/{}",
+                required.0,
+                required.1,
+                required.2
+            );
+        }
+
+        for scenario in scenarios {
+            let run = dogfood_first_pr_run(&scenario);
+            assert!(
+                run.errors.is_empty(),
+                "{} first successful PR receipt should validate: {:?}",
+                run.name,
+                run.errors
+            );
+            if run.expected_status == "actionable" {
+                assert!(
+                    run.verify_command.is_some(),
+                    "{} actionable receipt should name a verify command",
+                    run.name
+                );
+            }
+            if run.expected_status == "blocked" {
+                assert!(
+                    run.next_command.is_some(),
+                    "{} blocked receipt should name a next command",
+                    run.name
+                );
+            }
+        }
+
+        Ok(())
+    })
+}
+
+#[test]
+fn dogfood_pr_review_front_panel_scenarios_have_checked_receipts() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let scenarios = dogfood_pr_review_front_panel_scenarios();
+        for required in [
+            ("actionable", "actionable"),
+            ("acknowledged", "actionable"),
+            ("suppressed", "baseline_only"),
+            ("baseline_resolved", "already_improved"),
+            ("blocked", "actionable"),
+            ("missing_proof", "missing_required_input"),
+            ("advisory_only", "no_actionable_seam"),
+            ("coverage_flat_grip_improved", "already_improved"),
+        ] {
+            assert!(
+                scenarios.iter().any(|scenario| {
+                    scenario.name == required.0 && scenario.expected_top_issue_state == required.1
+                }),
+                "{} front-panel receipt should be checked as {}",
+                required.0,
+                required.1
+            );
+        }
+
+        for scenario in scenarios {
+            let run = dogfood_pr_review_front_panel_run(&scenario);
+            assert!(
+                run.errors.is_empty(),
+                "{} front-panel receipt should validate: {:?}",
+                run.name,
+                run.errors
+            );
+        }
+
+        Ok(())
+    })
+}
+
+#[test]
+fn dogfood_report_packet_index_scenarios_have_checked_receipts() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let scenarios = dogfood_report_packet_index_scenarios();
+        for required in [
+            ("complete_packet", "pass"),
+            ("sparse_advisory", "warn"),
+            ("missing_front_panel", "warn"),
+            ("blocked_gate", "fail"),
+            ("missing_assistant_proof", "warn"),
+            ("missing_receipts", "warn"),
+            ("coverage_grip_present", "pass"),
+        ] {
+            assert!(
+                scenarios.iter().any(|scenario| scenario.name == required.0
+                    && scenario.expected_status == required.1),
+                "{} report-packet index receipt should be checked as {}",
+                required.0,
+                required.1
+            );
+        }
+
+        for scenario in scenarios {
+            let run = dogfood_report_packet_index_run(&scenario)?;
+            assert!(
+                run.errors.is_empty(),
+                "{} report-packet index receipt should validate: {:?}",
+                run.name,
+                run.errors
+            );
+        }
+
+        Ok(())
+    })
+}
+
+#[test]
+fn dogfood_pr_inline_comment_scenarios_have_checked_receipts() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let scenarios = dogfood_pr_inline_comment_scenarios();
+        for required in [
+            ("publishable_changed_line", "plan"),
+            ("summary_only_excluded", "plan"),
+            ("cap_overflow", "plan"),
+            ("dedupe_upsert", "plan"),
+            ("stale_existing", "plan"),
+            ("fork_or_no_token", "inline"),
+            ("missing_input", "plan"),
+        ] {
+            assert!(
+                scenarios
+                    .iter()
+                    .any(|scenario| scenario.name == required.0
+                        && scenario.expected_mode == required.1),
+                "{} PR inline comment receipt should be checked in {} mode",
+                required.0,
+                required.1
+            );
+        }
+
+        for scenario in scenarios {
+            let run = dogfood_pr_inline_comment_run(&scenario)?;
+            assert!(
+                run.errors.is_empty(),
+                "{} PR inline comment receipt should validate: {:?}",
+                run.name,
+                run.errors
+            );
+        }
+
+        Ok(())
+    })
+}
+
+fn duplicate_entry(
+    name: &str,
+    line: usize,
+    class: &'static str,
+    oracle_kind: &str,
+    oracle_strength: &'static str,
+    owners: &[&str],
+    activations: &[(&'static str, &str)],
+) -> TestEfficiencyEntry {
+    TestEfficiencyEntry {
+        path: Path::new("tests/example.rs").to_path_buf(),
+        name: name.to_string(),
+        line,
+        class,
+        oracle_kind: oracle_kind.to_string(),
+        oracle_strength,
+        reached_owners: owners.iter().map(|s| s.to_string()).collect(),
+        observed_values: activations
+            .iter()
+            .enumerate()
+            .map(|(index, (context, value))| TestEfficiencyValue {
+                line: line + index,
+                context,
+                value: (*value).to_string(),
+                text: (*value).to_string(),
+            })
+            .collect(),
+        reasons: Vec::new(),
+        static_limitations: Vec::new(),
+        duplicate_group_id: None,
+        declared_intent: None,
+    }
+}
+
+#[test]
+fn duplicate_grouping_groups_structurally_identical_eligible_tests() {
+    let mut entries = vec![
+        duplicate_entry(
+            "discount_above_threshold",
+            10,
+            "strong_discriminator",
+            "exact assertion",
+            "strong",
+            &["pricing::discounted_total"],
+            &[("function_argument", "100"), ("assertion_argument", "90")],
+        ),
+        duplicate_entry(
+            "vip_discount_above_threshold",
+            30,
+            "strong_discriminator",
+            "exact assertion",
+            "strong",
+            &["pricing::discounted_total"],
+            &[("function_argument", "100"), ("assertion_argument", "90")],
+        ),
+    ];
+
+    let groups = apply_duplicate_discriminator_groups(&mut entries);
+
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0].id, "duplicate_group_1");
+    assert_eq!(groups[0].members.len(), 2);
+    for entry in &entries {
+        assert_eq!(entry.class, "duplicative");
+        assert!(
+            entry
+                .reasons
+                .contains(&"duplicate_activation_and_oracle_shape".to_string())
+        );
+        assert_eq!(
+            entry.duplicate_group_id.as_deref(),
+            Some("duplicate_group_1")
+        );
+    }
+}
+
+#[test]
+fn duplicate_grouping_does_not_group_different_owners() {
+    let mut entries = vec![
+        duplicate_entry(
+            "a",
+            10,
+            "strong_discriminator",
+            "exact assertion",
+            "strong",
+            &["pricing::a"],
+            &[("function_argument", "1")],
+        ),
+        duplicate_entry(
+            "b",
+            30,
+            "strong_discriminator",
+            "exact assertion",
+            "strong",
+            &["pricing::b"],
+            &[("function_argument", "1")],
+        ),
+    ];
+
+    let groups = apply_duplicate_discriminator_groups(&mut entries);
+
+    assert!(groups.is_empty());
+    for entry in &entries {
+        assert_eq!(entry.class, "strong_discriminator");
+        assert!(entry.duplicate_group_id.is_none());
+    }
+}
+
+#[test]
+fn duplicate_grouping_does_not_group_different_activation_values() {
+    let mut entries = vec![
+        duplicate_entry(
+            "a",
+            10,
+            "strong_discriminator",
+            "exact assertion",
+            "strong",
+            &["pricing::p"],
+            &[("function_argument", "1")],
+        ),
+        duplicate_entry(
+            "b",
+            30,
+            "strong_discriminator",
+            "exact assertion",
+            "strong",
+            &["pricing::p"],
+            &[("function_argument", "2")],
+        ),
+    ];
+
+    let groups = apply_duplicate_discriminator_groups(&mut entries);
+
+    assert!(groups.is_empty());
+}
+
+#[test]
+fn duplicate_grouping_does_not_group_swapped_function_and_assertion_values() {
+    let mut entries = vec![
+        duplicate_entry(
+            "score_two_equals_three",
+            10,
+            "strong_discriminator",
+            "exact assertion",
+            "strong",
+            &["pricing::score"],
+            &[("function_argument", "2"), ("assertion_argument", "3")],
+        ),
+        duplicate_entry(
+            "score_three_equals_two",
+            30,
+            "strong_discriminator",
+            "exact assertion",
+            "strong",
+            &["pricing::score"],
+            &[("function_argument", "3"), ("assertion_argument", "2")],
+        ),
+    ];
+
+    let groups = apply_duplicate_discriminator_groups(&mut entries);
+
+    assert!(
+        groups.is_empty(),
+        "swapped activation/expected values must not group: same raw value set, different roles"
+    );
+}
+
+#[test]
+fn duplicate_grouping_does_not_group_swapped_function_argument_order() {
+    let mut entries = vec![
+        duplicate_entry(
+            "f_one_two",
+            10,
+            "strong_discriminator",
+            "exact assertion",
+            "strong",
+            &["pricing::f"],
+            &[("function_argument", "1"), ("function_argument", "2")],
+        ),
+        duplicate_entry(
+            "f_two_one",
+            30,
+            "strong_discriminator",
+            "exact assertion",
+            "strong",
+            &["pricing::f"],
+            &[("function_argument", "2"), ("function_argument", "1")],
+        ),
+    ];
+
+    let groups = apply_duplicate_discriminator_groups(&mut entries);
+
+    assert!(groups.is_empty(), "argument order must matter");
+}
+
+#[test]
+fn duplicate_grouping_does_not_group_different_oracle_kind() {
+    let mut entries = vec![
+        duplicate_entry(
+            "a",
+            10,
+            "strong_discriminator",
+            "exact assertion",
+            "strong",
+            &["pricing::p"],
+            &[("function_argument", "1")],
+        ),
+        duplicate_entry(
+            "b",
+            30,
+            "useful_but_broad",
+            "broad predicate",
+            "strong",
+            &["pricing::p"],
+            &[("function_argument", "1")],
+        ),
+    ];
+
+    let groups = apply_duplicate_discriminator_groups(&mut entries);
+
+    assert!(groups.is_empty());
+}
+
+#[test]
+fn duplicate_grouping_does_not_group_different_oracle_strength() {
+    let mut entries = vec![
+        duplicate_entry(
+            "a",
+            10,
+            "strong_discriminator",
+            "exact assertion",
+            "strong",
+            &["pricing::p"],
+            &[("function_argument", "1")],
+        ),
+        duplicate_entry(
+            "b",
+            30,
+            "useful_but_broad",
+            "exact assertion",
+            "weak",
+            &["pricing::p"],
+            &[("function_argument", "1")],
+        ),
+    ];
+
+    let groups = apply_duplicate_discriminator_groups(&mut entries);
+
+    assert!(groups.is_empty());
+}
+
+#[test]
+fn duplicate_grouping_excludes_opaque_entries() {
+    let mut entries = vec![
+        duplicate_entry(
+            "a",
+            10,
+            "opaque",
+            "exact assertion",
+            "strong",
+            &[],
+            &[("function_argument", "1")],
+        ),
+        duplicate_entry(
+            "b",
+            30,
+            "opaque",
+            "exact assertion",
+            "strong",
+            &[],
+            &[("function_argument", "1")],
+        ),
+    ];
+
+    let groups = apply_duplicate_discriminator_groups(&mut entries);
+
+    assert!(groups.is_empty());
+    for entry in &entries {
+        assert_eq!(entry.class, "opaque");
+        assert!(entry.duplicate_group_id.is_none());
+    }
+}
+
+#[test]
+fn duplicate_grouping_keeps_likely_vacuous_priority() {
+    let mut a = duplicate_entry(
+        "a",
+        10,
+        "likely_vacuous",
+        "exact assertion",
+        "strong",
+        &["pricing::p"],
+        &[("function_argument", "1")],
+    );
+    a.reasons.push("no_assertion_detected".to_string());
+    let mut b = duplicate_entry(
+        "b",
+        30,
+        "likely_vacuous",
+        "exact assertion",
+        "strong",
+        &["pricing::p"],
+        &[("function_argument", "1")],
+    );
+    b.reasons.push("no_assertion_detected".to_string());
+    let mut entries = vec![a, b];
+
+    let groups = apply_duplicate_discriminator_groups(&mut entries);
+
+    assert!(groups.is_empty());
+    for entry in &entries {
+        assert_eq!(entry.class, "likely_vacuous");
+    }
+}
+
+#[test]
+fn duplicate_grouping_keeps_possibly_circular_priority() {
+    let mut a = duplicate_entry(
+        "a",
+        10,
+        "possibly_circular",
+        "exact assertion",
+        "strong",
+        &["pricing::p"],
+        &[("function_argument", "1")],
+    );
+    a.reasons
+        .push("expected_value_computed_from_detected_owner_path".to_string());
+    let mut b = duplicate_entry(
+        "b",
+        30,
+        "possibly_circular",
+        "exact assertion",
+        "strong",
+        &["pricing::p"],
+        &[("function_argument", "1")],
+    );
+    b.reasons
+        .push("expected_value_computed_from_detected_owner_path".to_string());
+    let mut entries = vec![a, b];
+
+    let groups = apply_duplicate_discriminator_groups(&mut entries);
+
+    assert!(groups.is_empty());
+    for entry in &entries {
+        assert_eq!(entry.class, "possibly_circular");
+    }
+}
+
+#[test]
+fn duplicate_grouping_promotes_smoke_duplicates_and_keeps_smoke_reason() {
+    let mut a = duplicate_entry(
+        "a",
+        10,
+        "smoke_only",
+        "smoke only",
+        "smoke",
+        &["pricing::p"],
+        &[("function_argument", "1")],
+    );
+    a.reasons.push("smoke_oracle_only".to_string());
+    let mut b = duplicate_entry(
+        "b",
+        30,
+        "smoke_only",
+        "smoke only",
+        "smoke",
+        &["pricing::p"],
+        &[("function_argument", "1")],
+    );
+    b.reasons.push("smoke_oracle_only".to_string());
+    let mut entries = vec![a, b];
+
+    let groups = apply_duplicate_discriminator_groups(&mut entries);
+
+    assert_eq!(groups.len(), 1);
+    for entry in &entries {
+        assert_eq!(entry.class, "duplicative");
+        assert!(
+            entry.reasons.contains(&"smoke_oracle_only".to_string()),
+            "smoke duplicate must retain smoke_oracle_only reason"
+        );
+        assert!(
+            entry
+                .reasons
+                .contains(&"duplicate_activation_and_oracle_shape".to_string()),
+            "smoke duplicate must add duplicate reason"
+        );
+    }
+}
+
+#[test]
+fn duplicate_grouping_ignores_single_candidate() {
+    let mut entries = vec![duplicate_entry(
+        "a",
+        10,
+        "strong_discriminator",
+        "exact assertion",
+        "strong",
+        &["pricing::p"],
+        &[("function_argument", "1")],
+    )];
+
+    let groups = apply_duplicate_discriminator_groups(&mut entries);
+
+    assert!(groups.is_empty());
+    assert_eq!(entries[0].class, "strong_discriminator");
+    assert!(entries[0].duplicate_group_id.is_none());
+}
+
+#[test]
+fn duplicate_grouping_excludes_entries_with_no_activation_literals() {
+    let mut entries = vec![
+        duplicate_entry(
+            "a",
+            10,
+            "strong_discriminator",
+            "exact assertion",
+            "strong",
+            &["pricing::p"],
+            &[],
+        ),
+        duplicate_entry(
+            "b",
+            30,
+            "strong_discriminator",
+            "exact assertion",
+            "strong",
+            &["pricing::p"],
+            &[],
+        ),
+    ];
+
+    let groups = apply_duplicate_discriminator_groups(&mut entries);
+
+    assert!(
+        groups.is_empty(),
+        "tests with no activation literals must not group; signature would be empty"
+    );
+}
+
+#[test]
+fn duplicate_grouping_assigns_deterministic_group_ids() {
+    let build = || {
+        vec![
+            duplicate_entry(
+                "a",
+                10,
+                "strong_discriminator",
+                "exact assertion",
+                "strong",
+                &["pricing::a"],
+                &[("function_argument", "1")],
+            ),
+            duplicate_entry(
+                "b",
+                20,
+                "strong_discriminator",
+                "exact assertion",
+                "strong",
+                &["pricing::a"],
+                &[("function_argument", "1")],
+            ),
+            duplicate_entry(
+                "c",
+                30,
+                "strong_discriminator",
+                "exact assertion",
+                "strong",
+                &["pricing::b"],
+                &[("function_argument", "1")],
+            ),
+            duplicate_entry(
+                "d",
+                40,
+                "strong_discriminator",
+                "exact assertion",
+                "strong",
+                &["pricing::b"],
+                &[("function_argument", "1")],
+            ),
+        ]
+    };
+
+    let mut first = build();
+    let groups_first = apply_duplicate_discriminator_groups(&mut first);
+    let mut second = build();
+    let groups_second = apply_duplicate_discriminator_groups(&mut second);
+
+    assert_eq!(groups_first.len(), 2);
+    assert_eq!(groups_first[0].id, "duplicate_group_1");
+    assert_eq!(groups_first[1].id, "duplicate_group_2");
+    for (a, b) in groups_first.iter().zip(groups_second.iter()) {
+        assert_eq!(a.id, b.id);
+        let names_a: Vec<_> = a.members.iter().map(|m| &m.name).collect();
+        let names_b: Vec<_> = b.members.iter().map(|m| &m.name).collect();
+        assert_eq!(names_a, names_b);
+    }
+}
+
+#[test]
+fn duplicate_grouping_emits_per_test_id_linked_to_top_level_groups() {
+    let mut entries = vec![
+        duplicate_entry(
+            "a",
+            10,
+            "strong_discriminator",
+            "exact assertion",
+            "strong",
+            &["pricing::p"],
+            &[("function_argument", "1")],
+        ),
+        duplicate_entry(
+            "b",
+            30,
+            "strong_discriminator",
+            "exact assertion",
+            "strong",
+            &["pricing::p"],
+            &[("function_argument", "1")],
+        ),
+    ];
+    let groups = apply_duplicate_discriminator_groups(&mut entries);
+    let json = test_efficiency_report_json(&entries, &groups, &TestIntentReportSummary::default());
+
+    assert!(json.contains("\"duplicate_group_id\": \"duplicate_group_1\""));
+    assert!(json.contains("\"duplicate_groups\": ["));
+    assert!(json.contains("\"id\": \"duplicate_group_1\""));
+    assert!(json.contains("\"duplicative\": 2"));
+    assert!(json.contains("\"duplicate_activation_and_oracle_shape\": 2"));
+}
+
+#[test]
+fn duplicate_grouping_markdown_renders_groups_without_deletion_language() {
+    let mut entries = vec![
+        duplicate_entry(
+            "a",
+            10,
+            "strong_discriminator",
+            "exact assertion",
+            "strong",
+            &["pricing::p"],
+            &[("function_argument", "1")],
+        ),
+        duplicate_entry(
+            "b",
+            30,
+            "strong_discriminator",
+            "exact assertion",
+            "strong",
+            &["pricing::p"],
+            &[("function_argument", "1")],
+        ),
+    ];
+    let groups = apply_duplicate_discriminator_groups(&mut entries);
+    let markdown =
+        test_efficiency_report_markdown(&entries, &groups, &TestIntentReportSummary::default());
+
+    assert!(markdown.contains("## Duplicate Discriminator Groups"));
+    assert!(markdown.contains("duplicate_group_1"));
+    assert!(markdown.contains("Duplicate discriminator groups: 1"));
+    assert!(
+        !markdown.to_ascii_lowercase().contains("delete"),
+        "report must not recommend deleting tests"
+    );
+}
+
+#[test]
+fn metrics_helper_counts_all_seven_classes_with_zero_default() {
+    let entries = vec![
+        duplicate_entry(
+            "strong",
+            10,
+            "strong_discriminator",
+            "exact assertion",
+            "strong",
+            &["pricing::p"],
+            &[("function_argument", "1")],
+        ),
+        duplicate_entry(
+            "broad",
+            20,
+            "useful_but_broad",
+            "broad predicate",
+            "weak",
+            &["pricing::p"],
+            &[("function_argument", "2")],
+        ),
+        duplicate_entry("opaque", 30, "opaque", "smoke only", "smoke", &[], &[]),
+    ];
+    let metrics = test_efficiency_metrics(&entries, &[]);
+
+    assert_eq!(metrics.tests_scanned, 3);
+    // Every class is present with a zero default, even unused ones.
+    for class in [
+        "strong_discriminator",
+        "useful_but_broad",
+        "smoke_only",
+        "likely_vacuous",
+        "possibly_circular",
+        "duplicative",
+        "opaque",
+    ] {
+        assert!(
+            metrics.class_counts.contains_key(class),
+            "metrics.class_counts is missing `{class}`"
+        );
+    }
+    assert_eq!(metrics.class_counts["strong_discriminator"], 1);
+    assert_eq!(metrics.class_counts["useful_but_broad"], 1);
+    assert_eq!(metrics.class_counts["opaque"], 1);
+    assert_eq!(metrics.class_counts["smoke_only"], 0);
+    assert_eq!(metrics.class_counts["duplicative"], 0);
+}
+
+#[test]
+fn metrics_helper_counts_reason_strings_from_entries() {
+    let mut a = duplicate_entry(
+        "a",
+        10,
+        "useful_but_broad",
+        "broad predicate",
+        "weak",
+        &["pricing::p"],
+        &[("function_argument", "1")],
+    );
+    a.reasons.push("broad_oracle".to_string());
+    a.reasons
+        .push("assertion_may_not_match_detected_owner".to_string());
+    let mut b = duplicate_entry(
+        "b",
+        20,
+        "useful_but_broad",
+        "broad predicate",
+        "weak",
+        &["pricing::p"],
+        &[("function_argument", "2")],
+    );
+    b.reasons.push("broad_oracle".to_string());
+
+    let metrics = test_efficiency_metrics(&[a, b], &[]);
+
+    assert_eq!(metrics.reason_counts["broad_oracle"], 2);
+    assert_eq!(
+        metrics.reason_counts["assertion_may_not_match_detected_owner"],
+        1
+    );
+    assert!(!metrics.reason_counts.contains_key("nonexistent_reason"));
+}
+
+#[test]
+fn metrics_helper_distinguishes_duplicative_test_count_from_group_count() {
+    // Two disjoint groups, each with two members + one with three members.
+    // Total duplicative tests = 2 + 2 + 3 = 7. Total groups = 3.
+    let mut entries = Vec::new();
+    for owner in &["pricing::a", "pricing::b"] {
+        for index in 0..2 {
+            entries.push(duplicate_entry(
+                owner,
+                10 + index,
+                "strong_discriminator",
+                "exact assertion",
+                "strong",
+                &[owner],
+                &[("function_argument", "1")],
+            ));
+        }
+    }
+    for index in 0..3 {
+        entries.push(duplicate_entry(
+            "pricing::c",
+            100 + index,
+            "strong_discriminator",
+            "exact assertion",
+            "strong",
+            &["pricing::c"],
+            &[("function_argument", "9")],
+        ));
+    }
+
+    let groups = apply_duplicate_discriminator_groups(&mut entries);
+    let metrics = test_efficiency_metrics(&entries, &groups);
+
+    assert_eq!(groups.len(), 3, "three distinct duplicate groups");
+    assert_eq!(
+        metrics.duplicate_discriminator_group_count, 3,
+        "duplicate_discriminator_group_count must count groups"
+    );
+    assert_eq!(
+        metrics.class_counts["duplicative"], 7,
+        "class_counts.duplicative must count tests, not groups"
+    );
+}
+
+#[test]
+fn metrics_json_contains_metrics_object_with_exact_keys() {
+    let entries = vec![duplicate_entry(
+        "alone",
+        10,
+        "strong_discriminator",
+        "exact assertion",
+        "strong",
+        &["pricing::p"],
+        &[("function_argument", "1")],
+    )];
+    let json = test_efficiency_report_json(&entries, &[], &TestIntentReportSummary::default());
+
+    assert!(json.contains("\"metrics\": {"));
+    assert!(json.contains("\"tests_scanned\": 1"));
+    assert!(json.contains("\"class_counts\": {"));
+    // Every required class key is present in the metrics.class_counts.
+    for class in [
+        "strong_discriminator",
+        "useful_but_broad",
+        "smoke_only",
+        "likely_vacuous",
+        "possibly_circular",
+        "duplicative",
+        "opaque",
+    ] {
+        assert!(
+            json.contains(&format!("\"{class}\":")),
+            "metrics JSON is missing class `{class}`"
+        );
+    }
+    assert!(json.contains("\"duplicate_discriminator_group_count\": 0"));
+}
+
+#[test]
+fn metrics_json_keeps_existing_top_level_counts_and_reason_counts() {
+    let mut entry = duplicate_entry(
+        "x",
+        10,
+        "useful_but_broad",
+        "broad predicate",
+        "weak",
+        &["pricing::p"],
+        &[("function_argument", "1")],
+    );
+    entry.reasons.push("broad_oracle".to_string());
+    let json = test_efficiency_report_json(&[entry], &[], &TestIntentReportSummary::default());
+
+    // Existing top-level surfaces must remain for backward compatibility.
+    assert!(json.contains("\"counts\": {"));
+    assert!(json.contains("\"reason_counts\": {"));
+    // The new metrics object lives alongside, not instead.
+    assert!(json.contains("\"metrics\": {"));
+    // Both surfaces report the same broad_oracle count.
+    let broad_oracle_count = json.matches("\"broad_oracle\": 1").count();
+    assert!(
+        broad_oracle_count >= 2,
+        "expected `broad_oracle: 1` to appear in both top-level reason_counts and metrics.reason_counts; saw {broad_oracle_count}"
+    );
+}
+
+#[test]
+fn metrics_markdown_contains_metrics_table_with_group_count_separate_from_test_count() {
+    let mut entries = vec![
+        duplicate_entry(
+            "a",
+            10,
+            "strong_discriminator",
+            "exact assertion",
+            "strong",
+            &["pricing::p"],
+            &[("function_argument", "1")],
+        ),
+        duplicate_entry(
+            "b",
+            30,
+            "strong_discriminator",
+            "exact assertion",
+            "strong",
+            &["pricing::p"],
+            &[("function_argument", "1")],
+        ),
+    ];
+    let groups = apply_duplicate_discriminator_groups(&mut entries);
+    let markdown =
+        test_efficiency_report_markdown(&entries, &groups, &TestIntentReportSummary::default());
+
+    assert!(markdown.contains("## Metrics"));
+    assert!(markdown.contains("| Metric | Value |"));
+    assert!(markdown.contains("| Tests scanned | 2 |"));
+    assert!(markdown.contains("| Duplicative | 2 |"));
+    assert!(
+        markdown.contains("| Duplicate discriminator groups | 1 |"),
+        "metrics table must distinguish group count from duplicative test count"
+    );
+}
+
+#[test]
+fn metrics_report_uses_only_emitted_vocabulary_strings() {
+    let entries = vec![duplicate_entry(
+        "x",
+        10,
+        "strong_discriminator",
+        "exact assertion",
+        "strong",
+        &["pricing::p"],
+        &[("function_argument", "1")],
+    )];
+    let json = test_efficiency_report_json(&entries, &[], &TestIntentReportSummary::default());
+
+    // Aliases that must NOT appear in the metrics surface — ensures we
+    // do not introduce a parallel vocabulary.
+    for forbidden in [
+        "\"broad\":",
+        "\"circular\":",
+        "\"vacuous\":",
+        "\"smoke\":",
+        "\"duplicate\":",
+        "\"duplicate_discriminator\":",
+        "\"discriminator\":",
+    ] {
+        assert!(
+            !json.contains(forbidden),
+            "metrics JSON must not contain alias `{forbidden}`"
+        );
+    }
+}
+
+#[test]
+fn metrics_report_has_no_coverage_or_denominator_language() {
+    let entries = vec![duplicate_entry(
+        "x",
+        10,
+        "strong_discriminator",
+        "exact assertion",
+        "strong",
+        &["pricing::p"],
+        &[("function_argument", "1")],
+    )];
+    let markdown =
+        test_efficiency_report_markdown(&entries, &[], &TestIntentReportSummary::default());
+    let json = test_efficiency_report_json(&entries, &[], &TestIntentReportSummary::default());
+
+    for body in [&markdown, &json] {
+        let lower = body.to_ascii_lowercase();
+        assert!(
+            !lower.contains("coverage"),
+            "test-efficiency report must not use coverage framing"
+        );
+        // The badge contract is inbox-zero; no denominators in this report.
+        assert!(
+            !lower.contains("uncovered"),
+            "test-efficiency report must not use uncovered framing"
+        );
+    }
+}
+
+// -------- test-intent v1 --------
+
+fn intent_entry(name: &str, path: &str, line: usize, class: &'static str) -> TestEfficiencyEntry {
+    TestEfficiencyEntry {
+        path: Path::new(path).to_path_buf(),
+        name: name.to_string(),
+        line,
+        class,
+        oracle_kind: "exact assertion".to_string(),
+        oracle_strength: "strong",
+        reached_owners: Vec::new(),
+        observed_values: Vec::new(),
+        reasons: Vec::new(),
+        static_limitations: Vec::new(),
+        duplicate_group_id: None,
+        declared_intent: None,
+    }
+}
+
+fn declaration(test: &str, path: Option<&str>, intent: TestIntentKind) -> TestIntentDeclaration {
+    TestIntentDeclaration {
+        test: test.to_string(),
+        path: path.map(|p| p.to_string()),
+        intent,
+        owner: "team".to_string(),
+        reason: "stated reason".to_string(),
+        block_line: 10,
+    }
+}
+
+#[test]
+fn test_intent_parses_valid_reasoned_entries() {
+    let text = r#"
+schema_version = 1
+
+[[test_intent]]
+test = "cli_prints_help"
+intent = "smoke"
+reason = "CLI startup and help text smoke test."
+owner = "devtools"
+
+[[test_intent]]
+test = "escapes_json"
+path = "crates/ripr/src/output/json/mod.rs"
+intent = "business_case_duplicate"
+reason = "These duplicate-looking tests document distinct escaping cases."
+owner = "output"
+"#;
+    let (entries, violations) = parse_test_intent_manifest(text);
+    assert!(
+        violations.is_empty(),
+        "unexpected violations: {violations:?}"
+    );
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].test, "cli_prints_help");
+    assert_eq!(entries[0].intent, TestIntentKind::Smoke);
+    assert_eq!(entries[0].owner, "devtools");
+    assert!(entries[0].path.is_none());
+    assert_eq!(entries[1].intent, TestIntentKind::BusinessCaseDuplicate);
+    assert_eq!(
+        entries[1].path.as_deref(),
+        Some("crates/ripr/src/output/json/mod.rs")
+    );
+}
+
+#[test]
+fn test_intent_requires_schema_version() {
+    let text = r#"
+[[test_intent]]
+test = "cli_prints_help"
+intent = "smoke"
+reason = "CLI startup and help text smoke test."
+owner = "devtools"
+"#;
+    let (_, violations) = parse_test_intent_manifest(text);
+    assert!(
+        violations.iter().any(|v| v.contains("schema_version = 1")),
+        "expected schema_version violation, got {violations:?}"
+    );
+}
+
+#[test]
+fn test_intent_requires_test_field() {
+    let text = r#"
+schema_version = 1
+
+[[test_intent]]
+intent = "smoke"
+reason = "..."
+owner = "devtools"
+"#;
+    let (entries, violations) = parse_test_intent_manifest(text);
+    assert!(entries.is_empty());
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("missing required `test`")),
+        "expected missing-test violation, got {violations:?}"
+    );
+}
+
+#[test]
+fn test_intent_requires_intent_field() {
+    let text = r#"
+schema_version = 1
+
+[[test_intent]]
+test = "x"
+reason = "y"
+owner = "z"
+"#;
+    let (entries, violations) = parse_test_intent_manifest(text);
+    assert!(entries.is_empty());
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("missing required `intent`")),
+        "expected missing-intent violation, got {violations:?}"
+    );
+}
+
+#[test]
+fn test_intent_requires_owner_and_reason() {
+    let missing_owner = r#"
+schema_version = 1
+
+[[test_intent]]
+test = "x"
+intent = "smoke"
+reason = "y"
+"#;
+    let (entries, violations) = parse_test_intent_manifest(missing_owner);
+    assert!(entries.is_empty());
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("missing required `owner`")),
+        "expected missing-owner violation, got {violations:?}"
+    );
+
+    let missing_reason = r#"
+schema_version = 1
+
+[[test_intent]]
+test = "x"
+intent = "smoke"
+owner = "z"
+"#;
+    let (entries, violations) = parse_test_intent_manifest(missing_reason);
+    assert!(entries.is_empty());
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("missing required `reason`")),
+        "expected missing-reason violation, got {violations:?}"
+    );
+}
+
+#[test]
+fn test_intent_rejects_blank_owner_or_reason() {
+    let text = r#"
+schema_version = 1
+
+[[test_intent]]
+test = "x"
+intent = "smoke"
+owner = "  "
+reason = "  "
+"#;
+    let (entries, violations) = parse_test_intent_manifest(text);
+    assert!(entries.is_empty());
+    assert!(violations.iter().any(|v| v.contains("`owner` is blank")));
+    assert!(violations.iter().any(|v| v.contains("`reason` is blank")));
+}
+
+#[test]
+fn test_intent_rejects_unknown_intent_value() {
+    let text = r#"
+schema_version = 1
+
+[[test_intent]]
+test = "x"
+intent = "vibe_check"
+owner = "z"
+reason = "y"
+"#;
+    let (entries, violations) = parse_test_intent_manifest(text);
+    assert!(entries.is_empty());
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("unsupported intent `vibe_check`")),
+        "expected unsupported-intent violation, got {violations:?}"
+    );
+}
+
+#[test]
+fn test_intent_rejects_unknown_fields() {
+    let text = r#"
+schema_version = 1
+
+[[test_intent]]
+test = "x"
+intent = "smoke"
+owner = "z"
+reason = "y"
+priority = "high"
+"#;
+    let (_, violations) = parse_test_intent_manifest(text);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("unsupported `[[test_intent]]` field `priority`")),
+        "expected unknown-field violation, got {violations:?}"
+    );
+}
+
+#[test]
+fn test_intent_rejects_absolute_and_backslash_paths() {
+    let abs_unix = r#"
+schema_version = 1
+
+[[test_intent]]
+test = "x"
+path = "/abs/path.rs"
+intent = "smoke"
+owner = "z"
+reason = "y"
+"#;
+    let (_, violations) = parse_test_intent_manifest(abs_unix);
+    assert!(
+        violations.iter().any(|v| v.contains("is absolute")),
+        "expected absolute-path violation, got {violations:?}"
+    );
+
+    let drive = "Z";
+    let sep = ":/";
+    let win = format!(
+        r#"
+schema_version = 1
+
+[[test_intent]]
+test = "x"
+path = "{drive}{sep}abs/path.rs"
+intent = "smoke"
+owner = "z"
+reason = "y"
+"#
+    );
+    let (_, violations) = parse_test_intent_manifest(&win);
+    assert!(violations.iter().any(|v| v.contains("is absolute")));
+
+    let backslash = r#"
+schema_version = 1
+
+[[test_intent]]
+test = "x"
+path = "crates\\ripr\\src\\lib.rs"
+intent = "smoke"
+owner = "z"
+reason = "y"
+"#;
+    let (_, violations) = parse_test_intent_manifest(backslash);
+    assert!(
+        violations.iter().any(|v| v.contains("backslashes")),
+        "expected backslash-path violation, got {violations:?}"
+    );
+}
+
+#[test]
+fn test_intent_rejects_duplicate_selector() {
+    let text = r#"
+schema_version = 1
+
+[[test_intent]]
+test = "cli_prints_help"
+intent = "smoke"
+owner = "devtools"
+reason = "first"
+
+[[test_intent]]
+test = "cli_prints_help"
+intent = "smoke"
+owner = "devtools"
+reason = "second"
+"#;
+    let (_, violations) = parse_test_intent_manifest(text);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("duplicate selector `cli_prints_help`")),
+        "expected duplicate-selector violation, got {violations:?}"
+    );
+}
+
+#[test]
+fn test_intent_matches_by_test_name_when_unique() {
+    let mut entries = vec![intent_entry(
+        "cli_prints_help",
+        "tests/cli.rs",
+        12,
+        "smoke_only",
+    )];
+    let decls = vec![declaration("cli_prints_help", None, TestIntentKind::Smoke)];
+
+    let violations = apply_test_intent_to_entries(&mut entries, &decls);
+
+    assert!(
+        violations.is_empty(),
+        "unexpected violations: {violations:?}"
+    );
+    assert_eq!(
+        entries[0].declared_intent.as_ref().map(|i| i.intent),
+        Some(TestIntentKind::Smoke)
+    );
+    assert_eq!(
+        entries[0]
+            .declared_intent
+            .as_ref()
+            .map(|i| i.source.as_str()),
+        Some(".ripr/test_intent.toml")
+    );
+}
+
+#[test]
+fn test_intent_matches_by_test_name_and_path() {
+    let mut entries = vec![
+        intent_entry(
+            "escapes_json",
+            "crates/ripr/src/output/json/mod.rs",
+            22,
+            "useful_but_broad",
+        ),
+        intent_entry(
+            "escapes_json",
+            "crates/ripr/src/output/json/formatter.rs",
+            74,
+            "useful_but_broad",
+        ),
+    ];
+    let decls = vec![declaration(
+        "escapes_json",
+        Some("crates/ripr/src/output/json/formatter.rs"),
+        TestIntentKind::BusinessCaseDuplicate,
+    )];
+
+    let violations = apply_test_intent_to_entries(&mut entries, &decls);
+
+    assert!(
+        violations.is_empty(),
+        "unexpected violations: {violations:?}"
+    );
+    assert!(entries[0].declared_intent.is_none());
+    assert_eq!(
+        entries[1].declared_intent.as_ref().map(|i| i.intent),
+        Some(TestIntentKind::BusinessCaseDuplicate)
+    );
+}
+
+#[test]
+fn test_intent_rejects_unmatched_selector() {
+    let mut entries = vec![intent_entry("real_test", "tests/a.rs", 1, "smoke_only")];
+    let decls = vec![declaration(
+        "test_that_does_not_exist",
+        None,
+        TestIntentKind::Smoke,
+    )];
+
+    let violations = apply_test_intent_to_entries(&mut entries, &decls);
+
+    assert_eq!(violations.len(), 1);
+    assert!(violations[0].contains("did not match any test"));
+    assert!(entries[0].declared_intent.is_none());
+}
+
+#[test]
+fn test_intent_rejects_ambiguous_name_only_selector() {
+    let mut entries = vec![
+        intent_entry("escapes_json", "crates/a/mod.rs", 1, "useful_but_broad"),
+        intent_entry("escapes_json", "crates/b/mod.rs", 1, "useful_but_broad"),
+    ];
+    let decls = vec![declaration(
+        "escapes_json",
+        None,
+        TestIntentKind::BusinessCaseDuplicate,
+    )];
+
+    let violations = apply_test_intent_to_entries(&mut entries, &decls);
+
+    assert_eq!(violations.len(), 1);
+    assert!(violations[0].contains("matched multiple tests"));
+    assert!(violations[0].contains("add `path`"));
+    assert!(violations[0].contains("crates/a/mod.rs"));
+    assert!(violations[0].contains("crates/b/mod.rs"));
+    assert!(entries[0].declared_intent.is_none());
+    assert!(entries[1].declared_intent.is_none());
+}
+
+#[test]
+fn test_intent_keeps_declared_tests_visible_with_original_class() {
+    let mut entries = vec![intent_entry(
+        "cli_prints_help",
+        "tests/cli.rs",
+        12,
+        "smoke_only",
+    )];
+    let decls = vec![declaration("cli_prints_help", None, TestIntentKind::Smoke)];
+
+    let violations = apply_test_intent_to_entries(&mut entries, &decls);
+    assert!(violations.is_empty());
+
+    // Class is preserved — intent is additive metadata, not a replacement.
+    assert_eq!(entries[0].class, "smoke_only");
+    assert!(entries[0].declared_intent.is_some());
+}
+
+#[test]
+fn test_intent_json_marks_declared_test_with_full_metadata() {
+    let mut entries = vec![intent_entry(
+        "cli_prints_help",
+        "tests/cli.rs",
+        12,
+        "smoke_only",
+    )];
+    let decls = vec![declaration("cli_prints_help", None, TestIntentKind::Smoke)];
+    let violations = apply_test_intent_to_entries(&mut entries, &decls);
+    assert!(violations.is_empty());
+
+    let json = test_efficiency_report_json(
+        &entries,
+        &[],
+        &TestIntentReportSummary {
+            declared: 1,
+            matched: 1,
+        },
+    );
+
+    assert!(json.contains("\"declared_intent\":"));
+    assert!(json.contains("\"intent\": \"smoke\""));
+    assert!(json.contains("\"owner\": \"team\""));
+    assert!(json.contains("\"reason\": \"stated reason\""));
+    assert!(json.contains("\"source\": \".ripr/test_intent.toml\""));
+    assert!(json.contains("\"test_intent\":"));
+    assert!(json.contains("\"declared\": 1"));
+    assert!(json.contains("\"matched\": 1"));
+    // Original class is preserved.
+    assert!(json.contains("\"class\": \"smoke_only\""));
+}
+
+#[test]
+fn test_intent_markdown_lists_declared_intent_section() {
+    let mut entries = vec![intent_entry(
+        "cli_prints_help",
+        "tests/cli.rs",
+        12,
+        "smoke_only",
+    )];
+    let decls = vec![declaration("cli_prints_help", None, TestIntentKind::Smoke)];
+    let _ = apply_test_intent_to_entries(&mut entries, &decls);
+
+    let markdown = test_efficiency_report_markdown(
+        &entries,
+        &[],
+        &TestIntentReportSummary {
+            declared: 1,
+            matched: 1,
+        },
+    );
+
+    assert!(markdown.contains("## Declared Test Intent"));
+    assert!(markdown.contains("declared: 1 \u{00b7} matched: 1"));
+    assert!(markdown.contains("`cli_prints_help`"));
+    assert!(markdown.contains("`smoke`"));
+    assert!(markdown.contains("`team`"));
+    assert!(markdown.contains("stated reason"));
+}
+
+#[test]
+fn test_intent_report_with_no_file_has_zero_declared_summary() {
+    let entries: Vec<TestEfficiencyEntry> = Vec::new();
+    let summary = TestIntentReportSummary::default();
+    assert_eq!(summary.declared, 0);
+    assert_eq!(summary.matched, 0);
+
+    let json = test_efficiency_report_json(&entries, &[], &summary);
+    assert!(json.contains("\"test_intent\":"));
+    assert!(json.contains("\"declared\": 0"));
+    assert!(json.contains("\"matched\": 0"));
+
+    let markdown = test_efficiency_report_markdown(&entries, &[], &summary);
+    assert!(markdown.contains("## Declared Test Intent"));
+    assert!(markdown.contains("None declared."));
+}
+
+#[test]
+fn test_intent_does_not_mutate_existing_class_strings() {
+    let mut entries = vec![
+        intent_entry("smoke_test", "tests/a.rs", 1, "smoke_only"),
+        intent_entry("dup_test", "tests/b.rs", 1, "duplicative"),
+        intent_entry("opaque_test", "tests/c.rs", 1, "opaque"),
+    ];
+    let decls = vec![
+        declaration("smoke_test", None, TestIntentKind::Smoke),
+        declaration("dup_test", None, TestIntentKind::BusinessCaseDuplicate),
+        declaration("opaque_test", None, TestIntentKind::OpaqueExternalOracle),
+    ];
+    let violations = apply_test_intent_to_entries(&mut entries, &decls);
+    assert!(violations.is_empty());
+
+    assert_eq!(entries[0].class, "smoke_only");
+    assert_eq!(entries[1].class, "duplicative");
+    assert_eq!(entries[2].class, "opaque");
+    for entry in &entries {
+        assert!(entry.declared_intent.is_some());
+    }
+
+    let intent_strings: Vec<&'static str> = entries
+        .iter()
+        .filter_map(|e| e.declared_intent.as_ref().map(|i| i.intent.as_str()))
+        .collect();
+    assert_eq!(
+        intent_strings,
+        vec!["smoke", "business_case_duplicate", "opaque_external_oracle"]
+    );
+
+    let _ = DeclaredIntent {
+        intent: TestIntentKind::IntegrationContract,
+        owner: "x".to_string(),
+        reason: "y".to_string(),
+        source: ".ripr/test_intent.toml".to_string(),
+    };
+}
+
+const STUB_RIPR_NATIVE_JSON: &str = r#"{
+  "schema_version": "0.1",
+  "kind": "ripr",
+  "label": "ripr",
+  "message": "3",
+  "status": "warn",
+  "color": "yellow",
+  "counts": {
+    "unsuppressed_exposure_gaps": 3,
+    "unsuppressed_test_efficiency_findings": 0,
+    "intentional_test_efficiency_findings": 0,
+    "suppressed_exposure_gaps": 1,
+    "suppressed_test_efficiency_findings": 0,
+    "unknowns": 0,
+    "unknowns_test_efficiency": 0,
+    "analyzed_findings": 4,
+    "analyzed_tests": 0
+  },
+  "reason_counts": {
+    "no_assertion_detected": 0,
+    "smoke_oracle_only": 0,
+    "relational_oracle": 0,
+    "broad_oracle": 0,
+    "assertion_may_not_match_detected_owner": 0,
+    "opaque_helper_or_fixture_boundary": 0,
+    "no_activation_literal_detected": 0,
+    "expected_value_computed_from_detected_owner_path": 0,
+    "duplicate_activation_and_oracle_shape": 0
+  },
+  "policy": {
+    "include_unknowns": false,
+    "fail_on_nonzero": false,
+    "test_intent_path": ".ripr/test_intent.toml",
+    "suppressions_path": ".ripr/suppressions.toml"
+  },
+  "warnings": ["first warning", "second warning"]
+}"#;
+
+const STUB_RIPR_PLUS_NATIVE_JSON: &str = r#"{
+  "schema_version": "0.1",
+  "kind": "ripr_plus",
+  "label": "ripr+",
+  "message": "7",
+  "status": "warn",
+  "color": "orange",
+  "counts": {
+    "unsuppressed_exposure_gaps": 0,
+    "unsuppressed_test_efficiency_findings": 7,
+    "intentional_test_efficiency_findings": 2,
+    "suppressed_exposure_gaps": 0,
+    "suppressed_test_efficiency_findings": 1,
+    "unknowns": 0,
+    "unknowns_test_efficiency": 3,
+    "analyzed_findings": 0,
+    "analyzed_tests": 308
+  },
+  "reason_counts": {
+    "no_assertion_detected": 1,
+    "smoke_oracle_only": 1,
+    "relational_oracle": 1,
+    "broad_oracle": 4,
+    "assertion_may_not_match_detected_owner": 0,
+    "opaque_helper_or_fixture_boundary": 3,
+    "no_activation_literal_detected": 3,
+    "expected_value_computed_from_detected_owner_path": 0,
+    "duplicate_activation_and_oracle_shape": 1
+  },
+  "policy": {
+    "include_unknowns": false,
+    "fail_on_nonzero": false,
+    "test_intent_path": ".ripr/test_intent.toml",
+    "suppressions_path": ".ripr/suppressions.toml"
+  },
+  "warnings": []
+}"#;
+
+#[test]
+fn badge_artifacts_summary_markdown_includes_counts_and_warnings() -> Result<(), String> {
+    let markdown =
+        badge_artifacts_summary_markdown(STUB_RIPR_NATIVE_JSON, STUB_RIPR_PLUS_NATIVE_JSON);
+
+    let expectations = [
+        "## ripr",
+        "## ripr+",
+        "- message: 3",
+        "- message: 7",
+        "- color: yellow",
+        "- color: orange",
+        "  - unsuppressed_exposure_gaps: 3",
+        "  - unsuppressed_test_efficiency_findings: 7",
+        "  - broad_oracle: 4",
+        "  - first warning",
+        "  - second warning",
+    ];
+    for expected in expectations {
+        if !markdown.contains(expected) {
+            return Err(format!(
+                "expected '{expected}' in markdown, got:\n{markdown}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn badge_artifacts_summary_markdown_omits_forbidden_terms() -> Result<(), String> {
+    let markdown =
+        badge_artifacts_summary_markdown(STUB_RIPR_NATIVE_JSON, STUB_RIPR_PLUS_NATIVE_JSON);
+
+    let forbidden = ["/", "coverage", "uncovered", "killed", "proven", "adequate"];
+    let lower = markdown.to_lowercase();
+    for term in forbidden {
+        if lower.contains(&term.to_lowercase()) {
+            return Err(format!(
+                "forbidden term '{term}' found in markdown:\n{markdown}"
+            ));
+        }
+    }
+    // The "survived" check is intentionally substring-strict: the badge
+    // schema's `unsuppressed_*` keys legitimately contain neither
+    // "killed" nor "survived", but a future schema change could add
+    // mutation-runtime language. Guard with a word-boundary heuristic
+    // by requiring the leading character to be alphabetic-or-start.
+    for forbidden_word in ["survived", "untested"] {
+        for window in lower.split(|c: char| !c.is_alphanumeric() && c != '_') {
+            if window == forbidden_word {
+                return Err(format!(
+                    "forbidden word '{forbidden_word}' found in markdown:\n{markdown}"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn badge_artifacts_summary_markdown_is_deterministic_with_sorted_keys() -> Result<(), String> {
+    let unsorted_ripr = r#"{
+  "label": "ripr",
+  "message": "0",
+  "color": "brightgreen",
+  "counts": {
+    "unsuppressed_test_efficiency_findings": 0,
+    "analyzed_tests": 0,
+    "unsuppressed_exposure_gaps": 0,
+    "intentional_test_efficiency_findings": 0,
+    "suppressed_exposure_gaps": 0,
+    "unknowns": 0,
+    "analyzed_findings": 0,
+    "suppressed_test_efficiency_findings": 0,
+    "unknowns_test_efficiency": 0
+  },
+  "reason_counts": {
+    "smoke_oracle_only": 0,
+    "no_assertion_detected": 0,
+    "broad_oracle": 0,
+    "relational_oracle": 0
+  },
+  "warnings": []
+}"#;
+    let unsorted_ripr_plus = r#"{
+  "label": "ripr+",
+  "message": "0",
+  "color": "brightgreen",
+  "counts": {
+    "analyzed_tests": 308,
+    "unsuppressed_test_efficiency_findings": 0,
+    "unknowns_test_efficiency": 0,
+    "analyzed_findings": 0,
+    "suppressed_test_efficiency_findings": 0,
+    "unsuppressed_exposure_gaps": 0,
+    "unknowns": 0,
+    "intentional_test_efficiency_findings": 0,
+    "suppressed_exposure_gaps": 0
+  },
+  "reason_counts": {
+    "smoke_oracle_only": 0,
+    "broad_oracle": 0,
+    "no_assertion_detected": 0,
+    "relational_oracle": 0
+  },
+  "warnings": []
+}"#;
+
+    let markdown_a = badge_artifacts_summary_markdown(unsorted_ripr, unsorted_ripr_plus);
+    let markdown_b = badge_artifacts_summary_markdown(unsorted_ripr, unsorted_ripr_plus);
+    if markdown_a != markdown_b {
+        return Err(format!(
+            "markdown not deterministic across calls:\nA:\n{markdown_a}\nB:\n{markdown_b}"
+        ));
+    }
+
+    // Within each `counts:` and `reason_counts:` block, bullet lines
+    // (those starting with "  - ") must appear in lexicographic order.
+    let mut in_block = false;
+    let mut prev: Option<String> = None;
+    for line in markdown_a.lines() {
+        if line.starts_with("- counts:") || line.starts_with("- reason_counts:") {
+            in_block = true;
+            prev = None;
+            continue;
+        }
+        if line.starts_with("- ") {
+            in_block = false;
+            prev = None;
+            continue;
+        }
+        if in_block && line.starts_with("  - ") {
+            let curr = line.to_string();
+            if let Some(prior) = &prev
+                && prior > &curr
+            {
+                return Err(format!(
+                    "block keys not lexicographically sorted:\n{prior}\n{curr}"
+                ));
+            }
+            prev = Some(curr);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn extract_json_string_returns_value_for_present_key() -> Result<(), String> {
+    let json = r#"{"label": "ripr", "color": "brightgreen"}"#;
+    match extract_json_string(json, "\"color\":") {
+        Some(value) if value == "brightgreen" => Ok(()),
+        other => Err(format!("expected Some(\"brightgreen\"), got {other:?}")),
+    }
+}
+
+#[test]
+fn extract_json_string_returns_none_for_missing_key() -> Result<(), String> {
+    let json = r#"{"label": "ripr"}"#;
+    match extract_json_string(json, "\"color\":") {
+        None => Ok(()),
+        other => Err(format!("expected None, got {other:?}")),
+    }
+}
+
+#[test]
+fn extract_json_string_returns_none_for_unterminated_value() -> Result<(), String> {
+    let json = r#"{"label": "ripr"#;
+    match extract_json_string(json, "\"label\":") {
+        None => Ok(()),
+        other => Err(format!(
+            "expected None for unterminated value, got {other:?}"
+        )),
+    }
+}
+
+#[test]
+fn extract_json_object_usize_map_reads_flat_object() -> Result<(), String> {
+    let json = r#"{"counts": {"a": 1, "b": 2, "c": 3}}"#;
+    let map = extract_json_object_usize_map(json, "\"counts\":");
+    let expected: std::collections::BTreeMap<String, usize> = [("a", 1), ("b", 2), ("c", 3)]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+    if map == expected {
+        Ok(())
+    } else {
+        Err(format!("expected {expected:?}, got {map:?}"))
+    }
+}
+
+#[test]
+fn extract_json_object_usize_map_returns_empty_for_missing_key() -> Result<(), String> {
+    let json = r#"{"label": "ripr"}"#;
+    let map = extract_json_object_usize_map(json, "\"counts\":");
+    if map.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("expected empty map, got {map:?}"))
+    }
+}
+
+#[test]
+fn extract_json_object_usize_map_skips_non_numeric_values() -> Result<(), String> {
+    let json = r#"{"counts": {"a": 1, "b": "two", "c": 3}}"#;
+    let map = extract_json_object_usize_map(json, "\"counts\":");
+    if map.contains_key("b") {
+        return Err(format!(
+            "non-numeric value 'two' should be skipped: {map:?}"
+        ));
+    }
+    if map.get("a") != Some(&1) || map.get("c") != Some(&3) {
+        return Err(format!("expected a=1 and c=3, got {map:?}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn extract_json_object_usize_map_orders_keys_lexicographically() -> Result<(), String> {
+    let json = r#"{"counts": {"zeta": 1, "alpha": 2, "mu": 3}}"#;
+    let map = extract_json_object_usize_map(json, "\"counts\":");
+    let keys: Vec<String> = map.keys().cloned().collect();
+    let expected = vec!["alpha".to_string(), "mu".to_string(), "zeta".to_string()];
+    if keys == expected {
+        Ok(())
+    } else {
+        Err(format!(
+            "expected lexicographic order {expected:?}, got {keys:?}"
+        ))
+    }
+}
+
+#[test]
+fn extract_json_warnings_returns_empty_for_empty_array() -> Result<(), String> {
+    let json = r#"{"warnings": []}"#;
+    let warnings = extract_json_warnings(json);
+    if warnings.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("expected empty Vec, got {warnings:?}"))
+    }
+}
+
+#[test]
+fn extract_json_warnings_returns_empty_for_missing_key() -> Result<(), String> {
+    let json = r#"{"label": "ripr"}"#;
+    let warnings = extract_json_warnings(json);
+    if warnings.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("expected empty Vec, got {warnings:?}"))
+    }
+}
+
+#[test]
+fn extract_json_warnings_returns_all_entries() -> Result<(), String> {
+    let json = r#"{"warnings": ["first", "second", "third"]}"#;
+    let warnings = extract_json_warnings(json);
+    let expected = vec![
+        "first".to_string(),
+        "second".to_string(),
+        "third".to_string(),
+    ];
+    if warnings == expected {
+        Ok(())
+    } else {
+        Err(format!("expected {expected:?}, got {warnings:?}"))
+    }
+}
+
+#[test]
+fn extract_json_warnings_unescapes_backslash_pairs() -> Result<(), String> {
+    // The substring extractor consumes the backslash-escape and keeps the
+    // following character — so `\"` becomes a literal quote inside the
+    // captured warning, and `\\` becomes a single backslash.
+    let json = r#"{"warnings": ["with \"quote\"", "with \\path"]}"#;
+    let warnings = extract_json_warnings(json);
+    let expected = vec!["with \"quote\"".to_string(), "with \\path".to_string()];
+    if warnings == expected {
+        Ok(())
+    } else {
+        Err(format!("expected {expected:?}, got {warnings:?}"))
+    }
+}
+
+#[test]
+fn badge_artifact_jobs_has_exactly_four_entries_in_documented_order() -> Result<(), String> {
+    let jobs = badge_artifact_jobs();
+    let expected = vec![
+        BadgeArtifactJob {
+            format: "badge-json",
+            output_file: "ripr-badge.json",
+        },
+        BadgeArtifactJob {
+            format: "badge-shields",
+            output_file: "ripr-badge-shields.json",
+        },
+        BadgeArtifactJob {
+            format: "badge-plus-json",
+            output_file: "ripr-plus-badge.json",
+        },
+        BadgeArtifactJob {
+            format: "badge-plus-shields",
+            output_file: "ripr-plus-badge-shields.json",
+        },
+    ];
+    if jobs == expected {
+        Ok(())
+    } else {
+        Err(format!("expected {expected:?}, got {jobs:?}"))
+    }
+}
+
+#[test]
+fn badge_artifact_command_args_matches_documented_invocation() -> Result<(), String> {
+    let args = badge_artifact_command_args("badge-plus-json");
+    let expected: Vec<String> = [
+        "check",
+        "--root",
+        ".",
+        "--diff",
+        "target/ripr/badge-input.diff",
+        "--format",
+        "badge-plus-json",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    if args == expected {
+        Ok(())
+    } else {
+        Err(format!("expected {expected:?}, got {args:?}"))
+    }
+}
+
+#[test]
+fn badge_artifact_command_args_substitutes_format_only() -> Result<(), String> {
+    for format in ["badge-json", "badge-shields", "badge-plus-shields"] {
+        let args = badge_artifact_command_args(format);
+        let last = args.last().cloned().unwrap_or_default();
+        if last != format {
+            return Err(format!(
+                "expected last arg to be {format:?}, got {last:?} (full args: {args:?})"
+            ));
+        }
+        // The static prefix must be byte-identical across formats.
+        let prefix = &args[..args.len() - 1];
+        let expected_prefix: Vec<String> = [
+            "check",
+            "--root",
+            ".",
+            "--diff",
+            "target/ripr/badge-input.diff",
+            "--format",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        if prefix != expected_prefix.as_slice() {
+            return Err(format!(
+                "static arg prefix changed for {format:?}: expected {expected_prefix:?}, got {prefix:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn badge_artifacts_impl_with_runners_writes_diff_and_uses_built_binary() -> Result<(), String> {
+    with_temp_cwd("badge-artifacts-impl-with-runners", |_root| {
+        let diff = "diff --git a/fixture.json b/fixture.json\n+large fixture\n".to_string();
+        let expected_binary = ripr_debug_binary();
+        let mut build_calls = 0;
+        let mut formats = Vec::new();
+
+        badge_artifacts_impl_with_runners(
+            || Ok(diff.clone()),
+            |timeout| {
+                build_calls += 1;
+                assert_eq!(timeout.as_millis(), 90_000);
+                Ok(TimedOutput {
+                    status: Some(success_exit_status()),
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    duration: Duration::from_millis(12),
+                    timed_out: false,
+                })
+            },
+            |binary, format, args, timeout| {
+                formats.push(format.to_string());
+                assert_eq!(binary, expected_binary.as_path());
+                assert_eq!(args, badge_artifact_command_args(format).as_slice());
+                assert_eq!(timeout.as_millis(), 90_000);
+                let stdout = match format {
+                    "badge-json" => STUB_RIPR_NATIVE_JSON,
+                    "badge-plus-json" => STUB_RIPR_PLUS_NATIVE_JSON,
+                    _ => r#"{"label":"stub","message":"0","color":"brightgreen"}"#,
+                };
+                Ok(TimedOutput {
+                    status: Some(success_exit_status()),
+                    stdout: stdout.to_string(),
+                    stderr: String::new(),
+                    duration: Duration::from_millis(12),
+                    timed_out: false,
+                })
+            },
+        )?;
+
+        assert_eq!(build_calls, 1);
+        assert_eq!(
+            formats,
+            vec![
+                "badge-json",
+                "badge-shields",
+                "badge-plus-json",
+                "badge-plus-shields"
+            ]
+        );
+        assert_eq!(
+            fs::read_to_string("target/ripr/badge-input.diff").unwrap(),
+            diff
+        );
+        assert!(Path::new("target/ripr/reports/ripr-badge.json").exists());
+        assert!(Path::new("target/ripr/reports/ripr-plus-badge.json").exists());
+        assert!(!Path::new("target/ripr/reports/badge-artifacts-limitation.json").exists());
+        Ok(())
+    })
+}
+
+#[test]
+fn badge_artifacts_timeout_writes_named_limitation_artifacts() -> Result<(), String> {
+    with_temp_cwd("badge-artifacts-timeout", |_root| {
+        write(
+            Path::new("target/ripr/reports/ripr-badge.json"),
+            "stale badge",
+        );
+        write_badge_artifacts_from_diff(
+            "diff --git a/fixture.json b/fixture.json\n+large fixture\n",
+            Path::new("target/debug/ripr"),
+            Duration::from_secs(90),
+            |binary, format, args, timeout| {
+                assert_eq!(binary, Path::new("target/debug/ripr"));
+                assert_eq!(format, "badge-json");
+                assert_eq!(timeout.as_millis(), 90_000);
+                assert_eq!(
+                    badge_artifact_command_label(binary, args),
+                    "target/debug/ripr check --root . --diff target/ripr/badge-input.diff --format badge-json"
+                );
+                Ok(TimedOutput {
+                    status: None,
+                    stdout: "partial stdout".to_string(),
+                    stderr: "still analyzing large fixture diff\n".to_string(),
+                    duration: Duration::from_millis(90_001),
+                    timed_out: true,
+                })
+            },
+        )?;
+
+        let json_path = Path::new("target/ripr/reports/badge-artifacts-limitation.json");
+        let json = fs::read_to_string(json_path).map_err(|err| err.to_string())?;
+        let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(value["status"], "warn");
+        assert_eq!(value["phase"], "badge_artifacts");
+        assert_eq!(value["format"], "badge-json");
+        assert_eq!(
+            value["limitation"]["category"],
+            "badge_artifacts_diff_analysis_timeout"
+        );
+        assert_eq!(value["generation"]["timed_out"], true);
+        assert_eq!(value["input"]["diff_bytes"], 56);
+        assert_eq!(
+            value["non_claims"][0],
+            "no badge count claimed from this limited run"
+        );
+
+        let markdown = fs::read_to_string("target/ripr/reports/ripr-badges.md")
+            .map_err(|err| err.to_string())?;
+        assert!(markdown.contains("Status: warn"));
+        assert!(markdown.contains("badge_artifacts_diff_analysis_timeout"));
+        assert!(markdown.contains("No badge count is claimed"));
+        assert!(markdown.contains("still analyzing large fixture diff"));
+        assert!(
+            !Path::new("target/ripr/reports/ripr-badge.json").exists(),
+            "limited badge artifact generation must not leave stale diff badge output"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn badge_artifacts_build_timeout_writes_limitation_without_running_artifacts() -> Result<(), String>
+{
+    with_temp_cwd("badge-artifacts-build-timeout", |_root| {
+        write(
+            Path::new("target/ripr/reports/ripr-badge.json"),
+            "stale badge",
+        );
+        write_badge_artifacts_after_build(
+            "diff --git a/fixture.json b/fixture.json\n+large fixture\n",
+            Path::new("target/debug/ripr"),
+            Duration::from_secs(90),
+            |_timeout| {
+                Ok(TimedOutput {
+                    status: Some(failure_exit_status()),
+                    stdout: String::new(),
+                    stderr: "build still compiling\n".to_string(),
+                    duration: Duration::from_millis(90_001),
+                    timed_out: true,
+                })
+            },
+            |_binary, _format, _args, _timeout| {
+                Err("artifact runner should not run after build timeout".to_string())
+            },
+        )?;
+
+        let json_path = Path::new("target/ripr/reports/badge-artifacts-limitation.json");
+        let json = fs::read_to_string(json_path).map_err(|err| err.to_string())?;
+        let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(value["format"], "badge-build");
+        assert_eq!(
+            value["limitation"]["category"],
+            "badge_artifacts_build_timeout"
+        );
+        assert_eq!(
+            value["limitation"]["summary"],
+            "Badge artifact generation timed out while building the ripr binary before diff analysis could run."
+        );
+        assert!(
+            value["limitation"]["repair_route"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("cargo build output")
+        );
+        assert!(
+            !value["limitation"]["repair_route"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("narrow the diff input")
+        );
+        assert_eq!(value["generation"]["command"], "cargo build -p ripr");
+        assert_eq!(value["generation"]["timed_out"], true);
+        assert!(
+            !Path::new("target/ripr/reports/ripr-badge.json").exists(),
+            "limited build must not leave stale diff badge output"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn badge_artifacts_build_failure_writes_build_incomplete_limitation() -> Result<(), String> {
+    with_temp_cwd("badge-artifacts-build-failure", |_root| {
+        write_badge_artifacts_after_build(
+            "diff --git a/fixture.json b/fixture.json\n+large fixture\n",
+            Path::new("target/debug/ripr"),
+            Duration::from_secs(90),
+            |_timeout| {
+                Ok(TimedOutput {
+                    status: Some(failure_exit_status()),
+                    stdout: String::new(),
+                    stderr: "build failed\n".to_string(),
+                    duration: Duration::from_millis(120),
+                    timed_out: false,
+                })
+            },
+            |_binary, _format, _args, _timeout| {
+                Err("artifact runner should not run after build failure".to_string())
+            },
+        )?;
+
+        let json_path = Path::new("target/ripr/reports/badge-artifacts-limitation.json");
+        let json = fs::read_to_string(json_path).map_err(|err| err.to_string())?;
+        let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(value["format"], "badge-build");
+        assert_eq!(
+            value["limitation"]["category"],
+            "badge_artifacts_build_incomplete"
+        );
+        assert_eq!(
+            value["limitation"]["summary"],
+            "Badge artifact generation could not build the ripr binary before diff analysis could run."
+        );
+        assert_eq!(value["generation"]["timed_out"], false);
+        assert_eq!(value["generation"]["exit_code"], 1);
+        assert!(
+            value["limitation"]["repair_route"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("cargo build exit status")
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn badge_artifacts_successful_build_runs_direct_ripr_binary() -> Result<(), String> {
+    with_temp_cwd("badge-artifacts-build-success", |_root| {
+        let mut artifact_runner_called = false;
+        write_badge_artifacts_after_build(
+            "diff --git a/fixture.json b/fixture.json\n+large fixture\n",
+            Path::new("target/debug/ripr"),
+            Duration::from_secs(90),
+            |_timeout| {
+                Ok(TimedOutput {
+                    status: Some(success_exit_status()),
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    duration: Duration::from_millis(12),
+                    timed_out: false,
+                })
+            },
+            |binary, format, args, timeout| {
+                artifact_runner_called = true;
+                assert_eq!(binary, Path::new("target/debug/ripr"));
+                assert_eq!(format, "badge-json");
+                assert_eq!(timeout.as_millis(), 90_000);
+                assert_eq!(
+                    badge_artifact_command_label(binary, args),
+                    "target/debug/ripr check --root . --diff target/ripr/badge-input.diff --format badge-json"
+                );
+                Ok(TimedOutput {
+                    status: None,
+                    stdout: "partial stdout".to_string(),
+                    stderr: "analysis timed out\n".to_string(),
+                    duration: Duration::from_millis(90_001),
+                    timed_out: true,
+                })
+            },
+        )?;
+
+        if !artifact_runner_called {
+            return Err("expected successful build to run badge artifact command".to_string());
+        }
+        let json_path = Path::new("target/ripr/reports/badge-artifacts-limitation.json");
+        let json = fs::read_to_string(json_path).map_err(|err| err.to_string())?;
+        let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(value["format"], "badge-json");
+        assert_eq!(value["generation"]["timed_out"], true);
+        Ok(())
+    })
+}
+
+#[test]
+fn badge_artifacts_incomplete_output_names_limitation() -> Result<(), String> {
+    let output = TimedOutput {
+        status: None,
+        stdout: "partial stdout".to_string(),
+        stderr: "cargo failed before badge JSON\n".to_string(),
+        duration: Duration::from_millis(12),
+        timed_out: false,
+    };
+    let command = "cargo run -p ripr --quiet -- check --format badge-json";
+
+    let json = limited_badge_artifacts_json(
+        "badge-json",
+        command,
+        Duration::from_millis(90),
+        17,
+        &output,
+    )?;
+    let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["limitation"]["category"],
+        "badge_artifacts_generation_incomplete"
+    );
+    assert_eq!(value["generation"]["timed_out"], false);
+    assert_eq!(value["generation"]["stderr_bytes"], 31);
+    assert_eq!(
+        value["limitation"]["repair_route"],
+        "inspect the badge artifact command exit status, stdout/stderr, and diff input before claiming badge counts from this run"
+    );
+
+    let markdown = limited_badge_artifacts_markdown(
+        "badge-json",
+        command,
+        Duration::from_millis(90),
+        17,
+        &output,
+    );
+    assert!(markdown.contains("badge_artifacts_generation_incomplete"));
+    assert!(markdown.contains("cargo failed before badge JSON"));
+    assert!(markdown.contains("No badge count is claimed"));
+    Ok(())
+}
+
+#[test]
+fn badge_artifact_native_slot_maps_native_formats_only() -> Result<(), String> {
+    let cases = [
+        ("badge-json", Some(BadgeNativeSlot::Ripr)),
+        ("badge-plus-json", Some(BadgeNativeSlot::RiprPlus)),
+        ("badge-shields", None),
+        ("badge-plus-shields", None),
+        ("garbage", None),
+    ];
+    for (format, expected) in cases {
+        let actual = badge_artifact_native_slot(format);
+        if actual != expected {
+            return Err(format!(
+                "for format {format:?} expected {expected:?}, got {actual:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+// ============================================================================
+// Markdown link and local context tests
+// ============================================================================
+
+#[test]
+fn markdown_links_extracts_relative_targets() {
+    let text = "[link](relative/path.md) and [another](../sibling.md)";
+    let links = markdown_links_in_text(text);
+    assert!(links.iter().any(|l| l.target == "relative/path.md"));
+    assert!(links.iter().any(|l| l.target == "../sibling.md"));
+}
+
+#[test]
+fn markdown_links_extracts_all_link_targets_including_urls() {
+    let text = "[http](https://example.com) [anchor](#section) [mail](mailto:test@example.com)";
+    let links = markdown_links_in_text(text);
+    assert!(links.iter().any(|l| l.target == "https://example.com"));
+    assert!(links.iter().any(|l| l.target == "#section"));
+    assert!(links.iter().any(|l| l.target == "mailto:test@example.com"));
+}
+
+#[test]
+fn markdown_links_includes_line_numbers() {
+    let text = "Line 1\n[link](target.md)\nLine 3";
+    let links = markdown_links_in_text(text);
+    assert!(links.iter().any(|l| l.line == 2));
+}
+
+#[test]
+fn local_markdown_target_filters_absolute_urls() {
+    assert_eq!(local_markdown_target("https://example.com"), None);
+    assert_eq!(local_markdown_target("http://example.com"), None);
+    assert_eq!(local_markdown_target("mailto:test@example.com"), None);
+    assert_eq!(local_markdown_target("#anchor"), None);
+}
+
+#[test]
+fn local_markdown_target_returns_relative_local_paths() {
+    let target = local_markdown_target("relative/path.md");
+    assert_eq!(target, Some("relative/path.md".to_string()));
+
+    let target = local_markdown_target("../sibling.md");
+    assert_eq!(target, Some("../sibling.md".to_string()));
+}
+
+fn write_doc_artifact_fixture(root: &Path, path: &str, id: &str) {
+    write(&root.join(path), &format!("# {id}\n"));
+}
+
+fn write_doc_artifact_ledger_fixture(root: &Path, body: &str) {
+    write(&root.join(DOC_ARTIFACT_LEDGER), body);
+}
+
+fn write_support_tier_fixture(root: &Path, rows: &str) {
+    write(
+        &root.join(SUPPORT_TIERS_PATH),
+        &format!(
+            r#"# Support Tiers
+
+## Current Support Map
+
+| Capability | Tier | Surface | Proof | Known limits |
+| --- | --- | --- | --- | --- |
+{rows}
+"#
+        ),
+    );
+    write(
+        &root.join("README.md"),
+        "See [Support tiers](docs/status/SUPPORT_TIERS.md).\n",
+    );
+    write(
+        &root.join("docs/specs/RIPR-SPEC-0001-alpha.md"),
+        "# RIPR-SPEC-0001: Alpha\n\nSupport-tier impact:\n\n- See [SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md).\n",
+    );
+}
+
+fn write_repo_contract_report_fixture(root: &Path, include_active_goal: bool) {
+    write_doc_artifact_fixture(
+        root,
+        "docs/proposals/RIPR-PROP-0001-source-of-truth.md",
+        "RIPR-PROP-0001",
+    );
+    write_doc_artifact_fixture(
+        root,
+        "docs/proposals/RIPR-PROP-0002-old.md",
+        "RIPR-PROP-0002",
+    );
+    write_doc_artifact_fixture(root, "docs/adr/RIPR-ADR-0001-open.md", "RIPR-ADR-0001");
+    write_doc_artifact_fixture(
+        root,
+        "docs/specs/RIPR-SPEC-0001-source-of-truth.md",
+        "RIPR-SPEC-0001",
+    );
+    write_doc_artifact_fixture(
+        root,
+        "plans/source-of-truth/implementation-plan.md",
+        "PLAN-0001",
+    );
+    write_doc_artifact_ledger_fixture(
+        root,
+        r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-source-of-truth.md"
+status = "accepted"
+owner = "repo-infra"
+
+[[artifact]]
+id = "RIPR-PROP-0002"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0002-old.md"
+status = "superseded"
+owner = "repo-infra"
+replacement = "RIPR-PROP-0001"
+
+[[artifact]]
+id = "RIPR-ADR-0001"
+kind = "adr"
+path = "docs/adr/RIPR-ADR-0001-open.md"
+status = "proposed"
+owner = "repo-infra"
+linked_proposal = "RIPR-PROP-0001"
+
+[[artifact]]
+id = "RIPR-SPEC-0001"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0001-source-of-truth.md"
+status = "accepted"
+owner = "repo-infra"
+linked_proposal = "RIPR-PROP-0001"
+
+[[artifact]]
+id = "PLAN-0001"
+kind = "plan"
+path = "plans/source-of-truth/implementation-plan.md"
+status = "active"
+owner = "repo-infra"
+linked_proposal = "RIPR-PROP-0001"
+linked_spec = "RIPR-SPEC-0001"
+"#,
+    );
+    write(
+        &root.join("policy/workflow_allowlist.txt"),
+        "# workflow allowlist\n",
+    );
+    write_support_tier_fixture(
+        root,
+        "| Rust gap repair loop | `usable alpha` | CLI and editor | `cargo xtask rust-repair-trust-report` | Governed promotion authority is incomplete. |\n| Source-of-truth artifact graph | `stable building block` | docs | `cargo xtask check-doc-artifacts` | Registered graph only. |\n| Source-of-truth workflow | `stable building block` | CI | `cargo xtask check-doc-artifacts` | Workflow contract only. |\n",
+    );
+
+    if include_active_goal {
+        write(
+            &root.join("docs/IMPLEMENTATION_CAMPAIGNS.md"),
+            "# Campaigns\n\nsource-of-truth-control-plane\n\n| Work item | Status |\n| --- | --- |\n| `docs/ledger` | done |\n| `docs/report` | ready |\n| `docs/report-json` | ready |\n| `docs/wait` | blocked |\n| `docs/wait-dependent` | blocked |\n",
+        );
+        write(
+            &root.join(".ripr/goals/active.toml"),
+            r#"id = "source-of-truth-control-plane"
+title = "Source of Truth Control Plane"
+status = "active"
+end_state = [
+  "Repo carries a contract graph.",
+]
+
+[[work_item]]
+id = "docs/ledger"
+status = "done"
+branch = "docs-ledger"
+stackable = false
+acceptance = "Ledger exists."
+commands = ["cargo xtask check-doc-artifacts"]
+
+[[work_item]]
+id = "docs/report"
+status = "ready"
+branch = "xtask-repo-contract-report"
+stackable = false
+proposal = "RIPR-PROP-0001"
+spec = "RIPR-SPEC-0001"
+plan = "PLAN-0001"
+acceptance = "Generate graph report."
+commands = ["cargo xtask repo-contract-report"]
+
+[[work_item]]
+id = "docs/report-json"
+status = "ready"
+branch = "xtask-repo-contract-report-json"
+stackable = false
+acceptance = "Generate graph JSON."
+commands = ["cargo xtask repo-contract-report"]
+
+[[work_item]]
+id = "docs/wait"
+status = "blocked"
+branch = "docs-wait"
+stackable = false
+acceptance = "Blocked item is recorded."
+blocked_reason = "Waiting on runner proof."
+
+[[work_item]]
+id = "docs/wait-dependent"
+status = "blocked"
+branch = "docs-wait-dependent"
+stackable = false
+acceptance = "Blocked dependency item is recorded."
+blocked_by = ["docs/wait"]
+blocked_reason = "Waiting on docs/wait."
+"#,
+        );
+    }
+}
+
+#[test]
+fn doc_artifacts_rejects_duplicate_artifact_id() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-duplicate", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0001-alpha.md",
+            "RIPR-PROP-0001",
+        );
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0001-beta.md",
+            "RIPR-PROP-0001",
+        );
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "proposed"
+owner = "repo-infra"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-beta.md"
+status = "proposed"
+owner = "repo-infra"
+"#,
+        );
+
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("duplicate artifact id `RIPR-PROP-0001`")),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn doc_artifacts_rejects_duplicate_artifact_field() {
+    let error = parse_doc_artifact_ledger_text(
+        "policy/doc-artifacts.toml",
+        r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+id = "RIPR-PROP-0002"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "proposed"
+owner = "repo-infra"
+"#,
+    )
+    .expect_err("duplicate keys should be rejected");
+
+    assert!(error.contains("duplicate field `id`"), "{error}");
+}
+
+#[test]
+fn doc_artifacts_rejects_missing_artifact_file() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-missing-file", |root| {
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-missing.md"
+status = "proposed"
+owner = "repo-infra"
+"#,
+        );
+
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("points at missing file")),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn doc_artifacts_rejects_unknown_status() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-unknown-status", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0001-alpha.md",
+            "RIPR-PROP-0001",
+        );
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "maybe"
+owner = "repo-infra"
+"#,
+        );
+
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("unsupported status `maybe`")),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn doc_artifacts_rejects_missing_linked_proposal() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-missing-linked-proposal", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/specs/RIPR-SPEC-0001-source-of-truth.md",
+            "RIPR-SPEC-0001",
+        );
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-SPEC-0001"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0001-source-of-truth.md"
+status = "accepted"
+owner = "repo-infra"
+"#,
+        );
+
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert!(
+            violations.iter().any(|violation| {
+                violation.contains("must set linked_proposal or standalone_reason")
+            }),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn doc_artifacts_accepts_superseded_with_replacement() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-superseded", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0001-old.md",
+            "RIPR-PROP-0001",
+        );
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0002-new.md",
+            "RIPR-PROP-0002",
+        );
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-old.md"
+status = "superseded"
+owner = "repo-infra"
+superseded_by = "RIPR-PROP-0002"
+
+[[artifact]]
+id = "RIPR-PROP-0002"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0002-new.md"
+status = "accepted"
+owner = "repo-infra"
+"#,
+        );
+
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert_eq!(violations, Vec::<String>::new());
+        Ok(())
+    })
+}
+
+#[test]
+fn doc_artifacts_rejects_superseded_self_replacement() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-superseded-self", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0001-old.md",
+            "RIPR-PROP-0001",
+        );
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-old.md"
+status = "superseded"
+owner = "repo-infra"
+superseded_by = "RIPR-PROP-0001"
+"#,
+        );
+
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("must not replace itself")),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn doc_artifacts_rejects_bad_schema_version() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-bad-schema", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0001-alpha.md",
+            "RIPR-PROP-0001",
+        );
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "0.9"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "proposed"
+owner = "repo-infra"
+"#,
+        );
+
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("schema_version must be 1.0")),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn doc_artifacts_rejects_id_missing_from_file() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-id-missing-from-file", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0001-alpha.md",
+            "Different ID",
+        );
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "proposed"
+owner = "repo-infra"
+"#,
+        );
+
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("does not mention `RIPR-PROP-0001`")),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn doc_artifacts_rejects_kind_path_mismatch() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-kind-path", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/specs/RIPR-SPEC-0001-source-of-truth.md",
+            "RIPR-PROP-0001",
+        );
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/specs/RIPR-SPEC-0001-source-of-truth.md"
+status = "proposed"
+owner = "repo-infra"
+"#,
+        );
+
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("kind `proposal` does not match path")),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn doc_artifacts_rejects_unknown_linked_proposal() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-unknown-link", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/specs/RIPR-SPEC-0001-source-of-truth.md",
+            "RIPR-SPEC-0001",
+        );
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-SPEC-0001"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0001-source-of-truth.md"
+status = "accepted"
+owner = "repo-infra"
+linked_proposal = "RIPR-PROP-9999"
+"#,
+        );
+
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert!(
+            violations.iter().any(|violation| {
+                violation.contains("linked_proposal references unknown artifact `RIPR-PROP-9999`")
+            }),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn doc_artifacts_rejects_unknown_linked_plan() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-unknown-plan-link", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/specs/RIPR-SPEC-0001-source-of-truth.md",
+            "RIPR-SPEC-0001",
+        );
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-SPEC-0001"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0001-source-of-truth.md"
+status = "accepted"
+owner = "repo-infra"
+standalone_reason = "Repository invariant without a separate proposal."
+linked_plan = "PLAN-9999"
+"#,
+        );
+
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert!(
+            violations.iter().any(|violation| {
+                violation.contains("linked_plan references unknown artifact `PLAN-9999`")
+            }),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn doc_artifacts_rejects_path_traversal_before_kind_match() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-path-traversal", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-SPEC-0001-source-of-truth.md",
+            "RIPR-SPEC-0001",
+        );
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-SPEC-0001"
+kind = "spec"
+path = "docs/specs/../proposals/RIPR-SPEC-0001-source-of-truth.md"
+status = "accepted"
+owner = "repo-infra"
+standalone_reason = "Repository invariant without a separate proposal."
+"#,
+        );
+
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("must not contain `..` traversal")),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn doc_artifacts_accepts_accepted_spec_with_standalone_reason() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-standalone-spec", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/specs/RIPR-SPEC-0001-source-of-truth.md",
+            "RIPR-SPEC-0001",
+        );
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-SPEC-0001"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0001-source-of-truth.md"
+status = "accepted"
+owner = "repo-infra"
+standalone_reason = "Repository invariant without a separate proposal."
+"#,
+        );
+
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert_eq!(violations, Vec::<String>::new());
+        Ok(())
+    })
+}
+
+#[test]
+fn doc_artifacts_rejects_superseded_without_replacement() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-superseded-missing", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0001-old.md",
+            "RIPR-PROP-0001",
+        );
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-old.md"
+status = "superseded"
+owner = "repo-infra"
+"#,
+        );
+
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("must set superseded_by or replacement")),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn doc_artifacts_rejects_unknown_superseded_replacement() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-superseded-unknown", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0001-old.md",
+            "RIPR-PROP-0001",
+        );
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-old.md"
+status = "superseded"
+owner = "repo-infra"
+replacement = "RIPR-PROP-9999"
+"#,
+        );
+
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert!(
+            violations.iter().any(|violation| {
+                violation.contains("superseded_by references unknown artifact `RIPR-PROP-9999`")
+            }),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn doc_artifacts_rejects_active_plan_without_proposal_or_spec() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-active-plan-missing-link", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "plans/source-of-truth/implementation-plan.md",
+            "RIPR-PLAN-0001",
+        );
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PLAN-0001"
+kind = "plan"
+path = "plans/source-of-truth/implementation-plan.md"
+status = "active"
+owner = "repo-infra"
+"#,
+        );
+
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert!(
+            violations.iter().any(|violation| {
+                violation.contains("must link to at least one proposal or spec")
+            }),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn doc_artifacts_accepts_active_plan_with_spec_link() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-active-plan", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/specs/RIPR-SPEC-0001-source-of-truth.md",
+            "RIPR-SPEC-0001",
+        );
+        write_doc_artifact_fixture(
+            root,
+            "plans/source-of-truth/implementation-plan.md",
+            "RIPR-PLAN-0001",
+        );
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-SPEC-0001"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0001-source-of-truth.md"
+status = "accepted"
+owner = "repo-infra"
+standalone_reason = "Repository invariant without a separate proposal."
+
+[[artifact]]
+id = "RIPR-PLAN-0001"
+kind = "plan"
+path = "plans/source-of-truth/implementation-plan.md"
+status = "active"
+owner = "repo-infra"
+linked_spec = "RIPR-SPEC-0001"
+"#,
+        );
+
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert_eq!(violations, Vec::<String>::new());
+        Ok(())
+    })
+}
+
+#[test]
+fn doc_artifacts_rejects_unknown_artifact_field() {
+    with_temp_cwd("doc-artifacts-unknown-field", |root| {
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "proposed"
+owner = "repo-infra"
+surprise = "nope"
+"#,
+        );
+
+        let error = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))
+            .expect_err("unknown fields should be parse errors");
+        assert!(error.contains("unknown field `surprise`"));
+    });
+}
+
+#[test]
+fn doc_artifacts_rejects_unsupported_toml_section() {
+    with_temp_cwd("doc-artifacts-unsupported-section", |root| {
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[metadata]
+owner = "repo-infra"
+"#,
+        );
+
+        let error = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))
+            .expect_err("unsupported sections should be parse errors");
+        assert!(error.contains("unsupported TOML section `[metadata]`"));
+    });
+}
+
+#[test]
+fn doc_artifacts_rejects_unquoted_values() {
+    with_temp_cwd("doc-artifacts-unquoted", |root| {
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = RIPR-PROP-0001
+"#,
+        );
+
+        let error = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))
+            .expect_err("unquoted values should be parse errors");
+        assert!(error.contains("string value must be quoted"));
+    });
+}
+
+#[test]
+fn doc_artifacts_command_accepts_valid_fixture() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-command-valid", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0001-alpha.md",
+            "RIPR-PROP-0001",
+        );
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "accepted"
+owner = "repo-infra"
+"#,
+        );
+
+        check_doc_artifacts()
+    })
+}
+
+#[test]
+fn doc_artifacts_command_rejects_invalid_fixture() {
+    with_temp_cwd("doc-artifacts-command-invalid", |root| {
+        write_doc_artifact_ledger_fixture(root, "schema_version = \"1.0\"\n");
+
+        let error = check_doc_artifacts().expect_err("empty ledgers should fail the command");
+        assert!(error.contains("check-doc-artifacts failed"));
+        assert!(error.contains("has no [[artifact]] entries"));
+    });
+}
+
+#[test]
+fn doc_artifacts_command_reports_missing_ledger() {
+    with_temp_cwd("doc-artifacts-command-missing-ledger", |_root| {
+        let error = check_doc_artifacts().expect_err("missing ledgers should fail the command");
+        assert!(error.contains("failed to read policy/doc-artifacts.toml"));
+    });
+}
+
+#[test]
+fn doc_artifacts_rejects_missing_schema_and_empty_ledger() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-empty", |root| {
+        write_doc_artifact_ledger_fixture(root, "");
+
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("is missing schema_version")),
+            "{violations:#?}"
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("has no [[artifact]] entries")),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn doc_artifacts_rejects_missing_artifact_id() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-missing-id", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0001-alpha.md",
+            "RIPR-PROP-0001",
+        );
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "proposed"
+owner = "repo-infra"
+"#,
+        );
+
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("artifact is missing required field `id`")),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn doc_artifacts_rejects_missing_required_fields() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-missing-required", |root| {
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+"#,
+        );
+
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("missing required field `kind`")),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn doc_artifacts_rejects_missing_path_after_kind() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-missing-path", |root| {
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+"#,
+        );
+
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("missing required field `path`")),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn doc_artifacts_rejects_missing_status_after_path() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-missing-status", |root| {
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+"#,
+        );
+
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("missing required field `status`")),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn doc_artifacts_rejects_missing_owner() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-missing-owner", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0001-alpha.md",
+            "RIPR-PROP-0001",
+        );
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "proposed"
+"#,
+        );
+
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("missing required field `owner`")),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn doc_artifacts_rejects_unknown_kind() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-unknown-kind", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0001-alpha.md",
+            "RIPR-PROP-0001",
+        );
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "memo"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "proposed"
+owner = "repo-infra"
+"#,
+        );
+
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("unsupported kind `memo`")),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn doc_artifacts_rejects_absolute_path() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-absolute-path", |root| {
+        let absolute_path = root
+            .join("docs/proposals/RIPR-PROP-0001-alpha.md")
+            .display()
+            .to_string()
+            .replace('\\', "\\\\");
+        write_doc_artifact_ledger_fixture(
+            root,
+            &format!(
+                r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "{absolute_path}"
+status = "proposed"
+owner = "repo-infra"
+"#
+            ),
+        );
+
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("path must be repo-relative")),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn doc_artifacts_reports_unreadable_artifact_path() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-unreadable-path", |root| {
+        fs::create_dir_all(root.join("docs/proposals/RIPR-PROP-0001-alpha.md"))
+            .map_err(|err| format!("failed to create fixture directory: {err}"))?;
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "proposed"
+owner = "repo-infra"
+"#,
+        );
+
+        let error = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))
+            .expect_err("directories should fail artifact reads");
+        assert!(error.contains("failed to read"));
+        assert!(error.contains("docs/proposals/RIPR-PROP-0001-alpha.md"));
+        Ok(())
+    })
+}
+
+#[test]
+fn doc_artifacts_rejects_key_value_before_artifact() {
+    with_temp_cwd("doc-artifacts-key-before-artifact", |root| {
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+owner = "repo-infra"
+"#,
+        );
+
+        let error = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))
+            .expect_err("artifact fields before a section should be parse errors");
+        assert!(error.contains("`owner` must appear inside [[artifact]]"));
+    });
+}
+
+#[test]
+fn doc_artifacts_rejects_malformed_line() {
+    with_temp_cwd("doc-artifacts-malformed-line", |root| {
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+not a key value
+"#,
+        );
+
+        let error = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))
+            .expect_err("malformed lines should be parse errors");
+        assert!(error.contains("expected `key = \"value\"`"));
+    });
+}
+
+#[test]
+fn doc_artifacts_accepts_adr_links_and_ignored_metadata_fields() -> Result<(), String> {
+    with_temp_cwd("doc-artifacts-adr-links", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0001-alpha.md",
+            "RIPR-PROP-0001",
+        );
+        write_doc_artifact_fixture(root, "docs/adr/RIPR-ADR-0001-alpha.md", "RIPR-ADR-0001");
+        write_doc_artifact_fixture(root, "docs/specs/RIPR-SPEC-0001-alpha.md", "RIPR-SPEC-0001");
+        write_doc_artifact_fixture(
+            root,
+            "plans/source-of-truth/implementation-plan.md",
+            "PLAN-0001",
+        );
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-alpha.md"
+status = "accepted"
+owner = "repo-infra"
+notes = "metadata ignored by validator"
+reason = "policy context"
+review_posture = "advisory"
+
+[[artifact]]
+id = "RIPR-ADR-0001"
+kind = "adr"
+path = "docs/adr/RIPR-ADR-0001-alpha.md"
+status = "accepted"
+owner = "repo-infra"
+linked_proposal = "RIPR-PROP-0001"
+
+[[artifact]]
+id = "RIPR-SPEC-0001"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0001-alpha.md"
+status = "accepted"
+owner = "repo-infra"
+linked_proposal = "RIPR-PROP-0001"
+linked_adr = "RIPR-ADR-0001"
+linked_plan = "PLAN-0001"
+
+[[artifact]]
+id = "PLAN-0001"
+kind = "plan"
+path = "plans/source-of-truth/implementation-plan.md"
+status = "active"
+owner = "repo-infra"
+linked_spec = "RIPR-SPEC-0001"
+"#,
+        );
+
+        let violations = doc_artifact_violations(root, &root.join(DOC_ARTIFACT_LEDGER))?;
+        assert!(violations.is_empty(), "{violations:#?}");
+        Ok(())
+    })
+}
+
+#[test]
+fn doc_artifact_kind_path_rules_cover_supported_surfaces() {
+    let cases = [
+        ("adr", "docs/adr/ADR-0001.md", true),
+        ("closeout", "docs/handoffs/2026-closeout.md", true),
+        ("closeout", "plans/source-of-truth/closeout.md", true),
+        ("goal", ".ripr/goals/active.toml", true),
+        ("plan", "plans/source-of-truth/implementation-plan.md", true),
+        ("policy-ledger", "policy/doc-artifacts.toml", true),
+        ("policy_ledger", "policy/doc-artifacts.toml", true),
+        ("support-tier", "docs/status/SUPPORT_TIERS.md", true),
+        ("support_tier", "docs/status/SUPPORT_TIERS.md", true),
+        ("support_tier", "docs/status/CLAIMS.md", true),
+        ("roadmap", "docs/ROADMAP.md", true),
+        ("roadmap", "ROADMAP.md", true),
+        ("unknown", "docs/ROADMAP.md", false),
+    ];
+
+    for (kind, path, expected) in cases {
+        assert_eq!(
+            doc_artifact_kind_matches_path(kind, path),
+            expected,
+            "{kind} {path}"
+        );
+    }
+}
+
+#[test]
+fn capabilities_accept_usable_alpha_status_with_fixture() -> Result<(), String> {
+    with_temp_cwd("capabilities-usable-alpha", |root| {
+        write(
+            &root.join("docs/specs/RIPR-SPEC-0028-python.md"),
+            "Status: accepted\n",
+        );
+        write(
+            &root.join("fixtures/python-real-repo-evals/SPEC.md"),
+            "Python real-repo eval fixture\n",
+        );
+        let manifest = r#"
+[[capability]]
+id = "python_repair_routing_loop"
+name = "Python repair routing loop"
+status = "usable alpha"
+spec = "RIPR-SPEC-0028"
+evidence = ["fixture-backed repair routing proof"]
+fixtures = ["fixtures/python-real-repo-evals"]
+next = "dogfood/python-stability-evals-v1"
+metric = "language_adapter_python_repair_routing_quality_metrics"
+"#;
+
+        let (capabilities, parse_violations) =
+            super::parse_capabilities_manifest_text("metrics/capabilities.toml", manifest);
+        assert!(parse_violations.is_empty(), "{parse_violations:#?}");
+        let mut violations = Vec::new();
+        super::validate_capabilities(&capabilities, &mut violations)?;
+        assert!(violations.is_empty(), "{violations:#?}");
+        Ok(())
+    })
+}
+
+#[test]
+fn capabilities_require_fixture_for_usable_alpha_status() -> Result<(), String> {
+    with_temp_cwd("capabilities-usable-alpha-fixture", |root| {
+        write(
+            &root.join("docs/specs/RIPR-SPEC-0028-python.md"),
+            "Status: accepted\n",
+        );
+        let manifest = r#"
+[[capability]]
+id = "python_repair_routing_loop"
+name = "Python repair routing loop"
+status = "usable alpha"
+spec = "RIPR-SPEC-0028"
+evidence = ["fixture-backed repair routing proof"]
+next = "dogfood/python-stability-evals-v1"
+metric = "language_adapter_python_repair_routing_quality_metrics"
+"#;
+
+        let (capabilities, parse_violations) =
+            super::parse_capabilities_manifest_text("metrics/capabilities.toml", manifest);
+        assert!(parse_violations.is_empty(), "{parse_violations:#?}");
+        let mut violations = Vec::new();
+        super::validate_capabilities(&capabilities, &mut violations)?;
+        assert!(
+            violations.iter().any(|violation| {
+                violation.contains("usable alpha or stable but has no fixture entries")
+            }),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn capability_matrix_accepts_manifest_names() -> Result<(), String> {
+    with_temp_cwd("capability-matrix-aligned", |root| {
+        write(
+            &root.join("docs/CAPABILITY_MATRIX.md"),
+            "| Capability | Status | Spec | Current evidence | Next checkpoint | Metric |\n| --- | --- | --- | --- | --- | --- |\n| Static exposure loop | `alpha` | `RIPR-SPEC-0001` | fixture | `next` | metric |\n\n| Unknown stop reasons | `alpha` | `RIPR-SPEC-0001` | fixture | `next` | metric |\n",
+        );
+        let capabilities = vec![
+            Capability {
+                name: Some("Static exposure loop".to_string()),
+                ..Capability::default()
+            },
+            Capability {
+                name: Some("Unknown stop reasons".to_string()),
+                ..Capability::default()
+            },
+        ];
+        let mut violations = Vec::new();
+        super::validate_capability_matrix(&capabilities, &mut violations)?;
+        assert!(violations.is_empty(), "{violations:#?}");
+        Ok(())
+    })
+}
+
+#[test]
+fn capability_matrix_rejects_stale_or_duplicate_names() -> Result<(), String> {
+    with_temp_cwd("capability-matrix-drift", |root| {
+        write(
+            &root.join("docs/CAPABILITY_MATRIX.md"),
+            "| Capability | Status | Spec | Current evidence | Next checkpoint | Metric |\n| --- | --- | --- | --- | --- | --- |\n| Static exposure loop | `alpha` | `RIPR-SPEC-0001` | fixture | `next` | metric |\n| Static exposure loop | `alpha` | `RIPR-SPEC-0001` | fixture | `next` | metric |\n| Retired capability | `alpha` | `RIPR-SPEC-0001` | fixture | `next` | metric |\n",
+        );
+        let capabilities = vec![
+            Capability {
+                name: Some("Static exposure loop".to_string()),
+                ..Capability::default()
+            },
+            Capability {
+                name: Some("Unknown stop reasons".to_string()),
+                ..Capability::default()
+            },
+        ];
+        let mut violations = Vec::new();
+        super::validate_capability_matrix(&capabilities, &mut violations)?;
+        assert!(
+            violations.iter().any(|violation| {
+                violation.contains("missing capability `Unknown stop reasons`")
+            }),
+            "{violations:#?}"
+        );
+        assert!(
+            violations.iter().any(|violation| {
+                violation.contains("contains capability `Retired capability` absent")
+            }),
+            "{violations:#?}"
+        );
+        assert!(
+            violations.iter().any(|violation| {
+                violation.contains("contains capability `Static exposure loop` 2 times")
+            }),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn capability_matrix_reports_missing_structure() -> Result<(), String> {
+    with_temp_cwd("capability-matrix-missing", |_root| -> Result<(), String> {
+        let capabilities = vec![Capability {
+            name: Some("Static exposure loop".to_string()),
+            ..Capability::default()
+        }];
+        let mut violations = Vec::new();
+        super::validate_capability_matrix(&capabilities, &mut violations)?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("docs/CAPABILITY_MATRIX.md is missing")),
+            "{violations:#?}"
+        );
+        Ok(())
+    })?;
+
+    with_temp_cwd(
+        "capability-matrix-missing-header",
+        |root| -> Result<(), String> {
+            write(
+                &root.join("docs/CAPABILITY_MATRIX.md"),
+                "not a capability table\n",
+            );
+            let capabilities = vec![Capability {
+                name: Some("Static exposure loop".to_string()),
+                ..Capability::default()
+            }];
+            let mut violations = Vec::new();
+            super::validate_capability_matrix(&capabilities, &mut violations)?;
+            assert!(
+                violations.iter().any(|violation| violation
+                    .contains("docs/CAPABILITY_MATRIX.md is missing the capability table header")),
+                "{violations:#?}"
+            );
+            Ok(())
+        },
+    )?;
+
+    with_temp_cwd(
+        "capability-matrix-nameless-row",
+        |root| -> Result<(), String> {
+            write(
+                &root.join("docs/CAPABILITY_MATRIX.md"),
+                "| Capability | Status | Spec | Current evidence | Next checkpoint | Metric |\n| --- | --- | --- | --- | --- | --- |\n| | `alpha` | `RIPR-SPEC-0001` | fixture | `next` | metric |\n",
+            );
+            let mut violations = Vec::new();
+            super::validate_capability_matrix(&[], &mut violations)?;
+            assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("contains a capability row without a name")),
+            "{violations:#?}"
+        );
+            Ok(())
+        },
+    )
+}
+
+#[test]
+fn support_tiers_accept_valid_fixture() -> Result<(), String> {
+    with_temp_cwd("support-tiers-valid", |root| {
+        write_support_tier_fixture(
+            root,
+            "| Rust gap repair loop | `usable alpha` | CLI and editor | `cargo xtask rust-repair-trust-report` | Governed promotion authority is incomplete. |\n| Source-of-truth artifact graph | `stable building block` | docs | `cargo xtask check-doc-artifacts` | Registered graph only. |\n",
+        );
+
+        let violations = super::support_tier_violations(root, &root.join(SUPPORT_TIERS_PATH))?;
+        assert!(violations.is_empty(), "{violations:#?}");
+        Ok(())
+    })
+}
+
+#[test]
+fn support_tiers_command_accepts_valid_fixture() -> Result<(), String> {
+    with_temp_cwd("support-tiers-command-valid", |root| {
+        write_support_tier_fixture(
+            root,
+            "| Rust gap repair loop | `usable alpha` | CLI and editor | `cargo xtask rust-repair-trust-report` | Governed promotion authority is incomplete. |\n| Source-of-truth artifact graph | `stable building block` | docs | `cargo xtask check-doc-artifacts` | Registered graph only. |\n",
+        );
+
+        check_support_tiers()
+    })
+}
+
+#[test]
+fn support_tiers_reject_stable_claim_without_proof() -> Result<(), String> {
+    with_temp_cwd("support-tiers-missing-proof", |root| {
+        write_support_tier_fixture(
+            root,
+            "| Rust gap repair loop | `usable` | CLI |  | Missing proof should fail. |\n",
+        );
+
+        let violations = super::support_tier_violations(root, &root.join(SUPPORT_TIERS_PATH))?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("empty `Proof`")),
+            "{violations:#?}"
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("with tier `usable` must name proof")),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn support_tiers_reject_stable_claim_with_only_markdown_links() -> Result<(), String> {
+    with_temp_cwd("support-tiers-link-only-proof", |root| {
+        write_support_tier_fixture(
+            root,
+            "| Rust gap repair loop | `usable` | CLI | [workflow](../FIRST_PR_WORKFLOW.md), [capability matrix](../CAPABILITY_MATRIX.md) | Links alone are not proof commands. |\n",
+        );
+
+        let violations = super::support_tier_violations(root, &root.join(SUPPORT_TIERS_PATH))?;
+        assert!(
+            violations.iter().any(|violation| {
+                violation.contains("must name a known proof command or proof artifact")
+            }),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn support_tiers_reject_usable_rust_repair_claim_without_promotion_authority() -> Result<(), String>
+{
+    with_temp_cwd("support-tiers-rust-repair-no-promotion-authority", |root| {
+        write_support_tier_fixture(
+            root,
+            "| Rust gap repair loop | `usable` | CLI and editor | `cargo xtask rust-repair-trust-report` | Governed evidence required. |\n",
+        );
+
+        let violations = super::support_tier_violations(root, &root.join(SUPPORT_TIERS_PATH))?;
+        assert!(
+            violations.iter().any(|violation| {
+                violation.contains("Rust gap repair loop")
+                    && violation.contains("cannot claim `usable`")
+                    && violation.contains("trust report alone is not promotion authority")
+            }),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn rust_repair_complete_report_with_real_movement_does_not_bypass_interim_cap() {
+    let report = serde_json::json!({
+        "status": "complete",
+        "eligible_attempt_count": 20,
+        "requirements": {"minimum_attempts": 20},
+        "movement_counts": {"closed": 1, "improved": 4}
+    });
+    let violation = super::rust_gap_repair_interim_cap_violation("usable", Some(&report));
+    assert!(
+        violation.as_deref().is_some_and(|violation| {
+            violation.contains("exceeds the interim `usable alpha` cap")
+                && violation.contains("`complete` with 20 eligible, 4 improved, and 1 closed")
+                && violation.contains("trust report alone is not promotion authority")
+                && violation.contains("#1702")
+        }),
+        "{violation:#?}"
+    );
+}
+
+#[test]
+fn support_tiers_reject_stronger_rust_repair_tier_bypass() -> Result<(), String> {
+    with_temp_cwd("support-tiers-rust-repair-stable-bypass", |root| {
+        write_support_tier_fixture(
+            root,
+            "| Rust gap repair loop | `stable building block` | CLI and editor | `cargo xtask rust-repair-trust-report` | Interim cap applies. |\n",
+        );
+        let violations = super::support_tier_violations(root, &root.join(SUPPORT_TIERS_PATH))?;
+        assert!(
+            violations.iter().any(|violation| violation
+                .contains("`stable building block` exceeds the interim `usable alpha` cap")),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn support_tiers_require_unique_canonical_rust_repair_row() -> Result<(), String> {
+    for (name, rows, expected) in [
+        (
+            "missing",
+            "| Source-of-truth artifact graph | `stable building block` | docs | `cargo xtask check-doc-artifacts` | Registered graph only. |\n",
+            "row is missing or renamed",
+        ),
+        (
+            "renamed",
+            "| Rust repair loop | `usable alpha` | CLI | `cargo xtask rust-repair-trust-report` | Renamed identity. |\n",
+            "row is missing or renamed",
+        ),
+        (
+            "duplicate",
+            "| Rust gap repair loop | `usable alpha` | CLI | `cargo xtask rust-repair-trust-report` | First. |\n| Rust gap repair loop | `usable alpha` | editor | `cargo xtask rust-repair-trust-report` | Second. |\n",
+            "found 2 rows",
+        ),
+    ] {
+        with_temp_cwd(
+            &format!("support-tiers-rust-repair-{name}"),
+            |root| -> Result<(), String> {
+                write_support_tier_fixture(root, rows);
+                let violations =
+                    super::support_tier_violations(root, &root.join(SUPPORT_TIERS_PATH))?;
+                assert!(
+                    violations.iter().any(|violation| {
+                        violation.contains("exactly one canonical support-tier row")
+                            && violation.contains(expected)
+                    }),
+                    "{name}: {violations:#?}"
+                );
+                Ok(())
+            },
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn support_tiers_reject_unknown_xtask_proof_command() -> Result<(), String> {
+    with_temp_cwd("support-tiers-unknown-command", |root| {
+        write_support_tier_fixture(
+            root,
+            "| Source-of-truth artifact graph | `stable building block` | docs | `cargo xtask nope` | Registered graph only. |\n",
+        );
+
+        let violations = super::support_tier_violations(root, &root.join(SUPPORT_TIERS_PATH))?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("unknown xtask command `nope`")),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn support_tiers_resolve_workflow_proof_relative_to_root() -> Result<(), String> {
+    with_temp_cwd("support-tiers-root-relative-proof", |root| {
+        let nested = root.join("nested-repo");
+        write_support_tier_fixture(
+            &nested,
+            "| Rust gap repair loop | `usable alpha` | CLI and editor | `cargo xtask rust-repair-trust-report` | Governed promotion authority is incomplete. |\n| Source-of-truth workflow | `stable building block` | CI | `.github/workflows/source-of-truth.yml` | Workflow file exists in repo. |\n",
+        );
+        write(
+            &nested.join(".github/workflows/source-of-truth.yml"),
+            "name: Source of Truth\n",
+        );
+
+        let violations = super::support_tier_violations(&nested, &nested.join(SUPPORT_TIERS_PATH))?;
+        assert!(violations.is_empty(), "{violations:#?}");
+        Ok(())
+    })
+}
+
+#[test]
+fn support_tiers_require_specs_with_impact_to_link_status_doc() -> Result<(), String> {
+    with_temp_cwd("support-tiers-spec-link", |root| {
+        write_support_tier_fixture(
+            root,
+            "| Rust gap repair loop | `usable alpha` | CLI and editor | `cargo xtask rust-repair-trust-report` | Governed promotion authority is incomplete. |\n| Source-of-truth artifact graph | `stable building block` | docs | `cargo xtask check-doc-artifacts` | Registered graph only. |\n",
+        );
+        write(
+            &root.join("docs/specs/RIPR-SPEC-0001-alpha.md"),
+            "# RIPR-SPEC-0001: Alpha\n\nSupport-tier impact:\n\n- Stable claim changes.\n",
+        );
+
+        let violations = super::support_tier_violations(root, &root.join(SUPPORT_TIERS_PATH))?;
+        // Gate-feedback contract: the violation names the offending spec, the
+        // missing SUPPORT_TIERS.md reference, a reason code, and a next action.
+        assert!(
+            violations.iter().any(|violation| {
+                violation.contains("RIPR-SPEC-0001")
+                    && violation.contains("docs/status/SUPPORT_TIERS.md")
+                    && violation.contains("spec_support_tier_reference_missing")
+                    && violation.contains("next:")
+            }),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn support_tiers_allow_specs_with_no_support_tier_impact() -> Result<(), String> {
+    with_temp_cwd("support-tiers-spec-none", |root| {
+        write_support_tier_fixture(
+            root,
+            "| Rust gap repair loop | `usable alpha` | CLI and editor | `cargo xtask rust-repair-trust-report` | Governed promotion authority is incomplete. |\n| Source-of-truth artifact graph | `stable building block` | docs | `cargo xtask check-doc-artifacts` | Registered graph only. |\n",
+        );
+        write(
+            &root.join("docs/specs/RIPR-SPEC-0001-alpha.md"),
+            "# RIPR-SPEC-0001: Alpha\n\nSupport-tier impact:\n\n- None.\n",
+        );
+
+        let violations = super::support_tier_violations(root, &root.join(SUPPORT_TIERS_PATH))?;
+        assert!(violations.is_empty(), "{violations:#?}");
+        Ok(())
+    })
+}
+
+#[test]
+fn support_tiers_require_readme_support_language_to_link_status_doc() -> Result<(), String> {
+    with_temp_cwd("support-tiers-readme-link", |root| {
+        write_support_tier_fixture(
+            root,
+            "| Source-of-truth artifact graph | `stable building block` | docs | `cargo xtask check-doc-artifacts` | Registered graph only. |\n",
+        );
+        write(
+            &root.join("README.md"),
+            "This stable building block is ready for users.\n",
+        );
+
+        let violations = super::support_tier_violations(root, &root.join(SUPPORT_TIERS_PATH))?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("README.md names support-tier language")),
+            "{violations:#?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn repo_contract_report_command_writes_indexable_report_files() -> Result<(), String> {
+    with_temp_cwd("repo-contract-report-command", |root| {
+        write_repo_contract_report_fixture(root, true);
+
+        dispatch::execute(XtaskCommand::RepoContractReport)?;
+
+        let markdown_path = root
+            .join(super::reports_dir())
+            .join("source-of-truth-graph.md");
+        let json_path = root
+            .join(super::reports_dir())
+            .join("source-of-truth-graph.json");
+        let markdown = fs::read_to_string(markdown_path)
+            .map_err(|err| format!("failed to read graph markdown: {err}"))?;
+        let json = fs::read_to_string(json_path)
+            .map_err(|err| format!("failed to read graph json: {err}"))?;
+        assert!(markdown.contains("Mode: advisory"));
+        let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(value["schema_version"], "0.1");
+        assert_eq!(value["report_id"], "source_of_truth_graph");
+        assert_eq!(value["status"], "pass");
+        let rust_repair_rows = value["support_tiers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|row| row["capability"] == "Rust gap repair loop")
+            .collect::<Vec<_>>();
+        assert_eq!(rust_repair_rows.len(), 1, "{value:#}");
+        assert_eq!(
+            rust_repair_rows
+                .first()
+                .and_then(|row| row.get("tier"))
+                .and_then(Value::as_str),
+            Some("`usable alpha`")
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn repo_contract_report_treats_goal_manifest_as_optional_historical() -> Result<(), String> {
+    with_temp_cwd("repo-contract-report-missing-active-goal", |root| {
+        write_repo_contract_report_fixture(root, false);
+
+        let summary = super::repo_contract_summary(root)?;
+        if summary
+            .missing_links
+            .iter()
+            .any(|link| link.contains(".ripr/goals/active.toml"))
+        {
+            return Err(format!(
+                "missing historical goal manifest must not be a violation: {:#?}",
+                summary.missing_links
+            ));
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn repo_contract_report_requires_support_tier_file() {
+    with_temp_cwd("repo-contract-report-missing-support-tier", |root| {
+        write_doc_artifact_fixture(
+            root,
+            "docs/proposals/RIPR-PROP-0001-source-of-truth.md",
+            "RIPR-PROP-0001",
+        );
+        write_doc_artifact_ledger_fixture(
+            root,
+            r#"schema_version = "1.0"
+
+[[artifact]]
+id = "RIPR-PROP-0001"
+kind = "proposal"
+path = "docs/proposals/RIPR-PROP-0001-source-of-truth.md"
+status = "accepted"
+owner = "repo-infra"
+"#,
+        );
+
+        let error = super::repo_contract_summary(root)
+            .expect_err("missing support tiers should fail summary generation");
+        assert!(error.contains(SUPPORT_TIERS_PATH), "{error}");
+    });
+}
+
+fn slice_test_repo_root() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
+}
+
+#[test]
+fn spec_system_profile_is_current_v2_without_goal_root() -> Result<(), String> {
+    let profile =
+        std::fs::read_to_string(slice_test_repo_root().join(".allow/profiles/spec-system.toml"))
+            .map_err(|err| format!("read spec-system profile: {err}"))?;
+    if !profile.contains("generation = \"current-v2\"") {
+        return Err("profile must declare current-v2 generation".to_string());
+    }
+    if profile.lines().any(|line| line.starts_with("goals =")) {
+        return Err("current-v2 profile must not declare a goals root".to_string());
+    }
+    if profile.contains("active_goal_required") {
+        return Err("current-v2 profile must not require an active goal".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn implementation_slices_validate_and_coexist() -> Result<(), String> {
+    fn validate_slice(text: &str) -> Result<(), String> {
+        for required in [
+            "schema_version = \"2.0\"",
+            "id = \"",
+            "generation = ",
+            "source_issue = \"",
+            "design_reference = \"",
+            "change_class = \"",
+            "claim_boundary",
+            "non_goals",
+            "return_conditions",
+            "owned_seams",
+            "shared_seams",
+            "forbidden_seams",
+            "[[requirement_delta]]",
+            "requirement_id = \"",
+            "[implementation_claim]",
+            "[evidence]",
+            "[support_claim]",
+        ] {
+            if !text.contains(required) {
+                return Err(format!("slice is missing {required}"));
+            }
+        }
+        for line in text.lines() {
+            let key = line.split('=').next().unwrap_or_default().trim();
+            for forbidden in [
+                "branch",
+                "worktree",
+                "pull_request",
+                "pr_number",
+                "ci_status",
+                "reviewer",
+                "worker",
+                "assignee",
+                "priority",
+                "timing",
+                "schedule",
+                "progress",
+                "percent_complete",
+                "session",
+                "model",
+            ] {
+                if key == forbidden {
+                    return Err(format!("slice carries live state field `{forbidden}`"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    let slice_dir = slice_test_repo_root().join(".allow/spec-system/slices");
+    let mut validated = 0;
+    let entries =
+        std::fs::read_dir(&slice_dir).map_err(|err| format!("read slices directory: {err}"))?;
+    for entry in entries {
+        let path = entry.map_err(|err| format!("slice entry: {err}"))?.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("toml") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path)
+            .map_err(|err| format!("read slice {}: {err}", path.display()))?;
+        validate_slice(&text).map_err(|err| format!("{}: {err}", path.display()))?;
+        validated += 1;
+    }
+    if validated == 0 {
+        return Err("expected at least one checked-in slice".to_string());
+    }
+
+    // Coexistence: a second, unrelated slice validates alongside the
+    // checked-in one; no slice acts as a current or active pointer.
+    let second = r#"schema_version = "2.0"
+id = "ripr.slice.unrelated-change.v1"
+generation = 1
+source_issue = "issue:9999"
+design_reference = "RIPR-SPEC-9999#example"
+change_class = "behavior_change"
+claim_boundary = "One bounded change only."
+non_goals = ["unrelated refactoring"]
+return_conditions = ["Return to root if the requirement is stale."]
+owned_seams = ["seam:ripr:xtask:example"]
+shared_seams = []
+forbidden_seams = []
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-9999#example"
+requirement_generation = 1
+[implementation_claim]
+status = "implemented"
+[evidence]
+state = "outstanding"
+[support_claim]
+state = "unchanged"
+"#;
+    validate_slice(second)?;
+    let with_live_state = second.replace(
+        "change_class = \"behavior_change\"",
+        "change_class = \"behavior_change\"\nbranch = \"codex/unrelated\"",
+    );
+    if validate_slice(&with_live_state).is_ok() {
+        return Err("slice carrying branch state must be rejected".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn local_context_findings_are_sorted_deterministically() {
+    let mut findings = [
+        LocalContextFinding {
+            path: "b.rs".to_string(),
+            line: Some(2),
+            pattern: "pat".to_string(),
+            problem: "prob".to_string(),
+        },
+        LocalContextFinding {
+            path: "a.rs".to_string(),
+            line: Some(1),
+            pattern: "pat".to_string(),
+            problem: "prob".to_string(),
+        },
+    ];
+    findings.sort();
+    assert_eq!(findings[0].path, "a.rs");
+    assert_eq!(findings[1].path, "b.rs");
+}
+
+#[test]
+fn traceability_symbol_suffix_is_advisory_without_blocking() -> Result<(), String> {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/main.rs");
+    let references = vec![format!("{}::tests::example", source.display())];
+    let mut violations = Vec::new();
+    let mut advisories = Vec::new();
+
+    super::validate_trace_paths(
+        "RIPR-SPEC-9999",
+        "tests",
+        &references,
+        &mut violations,
+        &mut advisories,
+    );
+
+    if !violations.is_empty() {
+        return Err(format!(
+            "existing-file symbol suffix should not block: {violations:?}"
+        ));
+    }
+    if advisories.len() != 1 || !advisories[0].contains("symbol suffix") {
+        return Err(format!(
+            "expected one visible symbol advisory, got {advisories:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn traceability_missing_path_remains_blocking() -> Result<(), String> {
+    let references = vec!["xtask/path-that-does-not-exist.rs::tests::example".to_string()];
+    let mut violations = Vec::new();
+    let mut advisories = Vec::new();
+
+    super::validate_trace_paths(
+        "RIPR-SPEC-9999",
+        "tests",
+        &references,
+        &mut violations,
+        &mut advisories,
+    );
+
+    if violations.len() != 1 || !violations[0].contains("path does not exist") {
+        return Err(format!(
+            "missing path should remain blocking, got {violations:?}"
+        ));
+    }
+    if !advisories.is_empty() {
+        return Err(format!(
+            "missing path should not also emit an advisory: {advisories:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn deprecated_traceability_entry_may_omit_runtime_metrics() -> Result<(), String> {
+    with_temp_cwd("traceability-deprecated-without-metrics", |root| {
+        let spec = root.join("docs/specs/RIPR-SPEC-9998-deprecated.md");
+        write(
+            &spec,
+            "# RIPR-SPEC-9998: Deprecated\n\nStatus: deprecated\n",
+        );
+
+        let behavior = super::TraceBehavior {
+            line: 1,
+            id: Some("RIPR-SPEC-9998".to_string()),
+            name: Some("deprecated documentation contract".to_string()),
+            spec: Some(spec.to_string_lossy().replace('\\', "/")),
+            outputs: vec![spec.to_string_lossy().replace('\\', "/")],
+            ..Default::default()
+        };
+        let mut behavior_ids = BTreeSet::new();
+        let mut violations = Vec::new();
+        let mut advisories = Vec::new();
+
+        super::validate_trace_behavior(
+            &behavior,
+            &mut behavior_ids,
+            &mut violations,
+            &mut advisories,
+        )?;
+
+        if !violations.is_empty() {
+            return Err(format!(
+                "deprecated documentation entry should not require a runtime metric: {violations:?}"
+            ));
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn local_context_allow_entries_track_path_pattern_and_max_count() {
+    let entry = LocalContextAllow {
+        path: "crates/ripr/src/analysis/classifier.rs".to_string(),
+        pattern: "unwrap()".to_string(),
+        max_count: 3,
+        line: 42,
+    };
+    assert_eq!(entry.path, "crates/ripr/src/analysis/classifier.rs");
+    assert_eq!(entry.pattern, "unwrap()");
+    assert_eq!(entry.max_count, 3);
+}
+
+// ============================================================================
+// Test efficiency and declared intent tests
+// ============================================================================
+
+#[test]
+fn declared_intent_structure_holds_intent_and_metadata() {
+    let intent = DeclaredIntent {
+        intent: TestIntentKind::Smoke,
+        owner: "docs".to_string(),
+        reason: "example".to_string(),
+        source: "docs/example.md".to_string(),
+    };
+    assert_eq!(intent.intent, TestIntentKind::Smoke);
+    assert_eq!(intent.owner, "docs");
+    assert_eq!(intent.reason, "example");
+}
+
+#[test]
+fn test_efficiency_entry_structure_matches_expected_shape() {
+    let entry = TestEfficiencyEntry {
+        path: PathBuf::from("tests/test.rs"),
+        name: "test_foo".to_string(),
+        line: 5,
+        class: "smoke_only",
+        oracle_kind: "assert".to_string(),
+        oracle_strength: "smoke",
+        reached_owners: vec!["parse".to_string()],
+        observed_values: vec![],
+        reasons: vec!["no explicit discriminator".to_string()],
+        static_limitations: vec![],
+        duplicate_group_id: None,
+        declared_intent: None,
+    };
+    assert_eq!(entry.class, "smoke_only");
+    assert_eq!(entry.oracle_strength, "smoke");
+}
+
+#[test]
+fn test_efficiency_value_tracks_context_and_line() {
+    let value = TestEfficiencyValue {
+        line: 10,
+        context: "activation",
+        value: "foo()".to_string(),
+        text: "let x = foo();".to_string(),
+    };
+    assert_eq!(value.line, 10);
+    assert_eq!(value.context, "activation");
+    assert_eq!(value.value, "foo()");
+}
+
+// ============================================================================
+// Report rendering and status tests
+// ============================================================================
+
+#[test]
+fn report_index_entries_contain_file_path_and_status() {
+    let entry = ReportIndexEntry {
+        file: "shape.md".to_string(),
+        path: "target/ripr/reports/shape.md".to_string(),
+        status: "pass".to_string(),
+    };
+    assert_eq!(entry.file, "shape.md");
+    assert_eq!(entry.path, "target/ripr/reports/shape.md");
+    assert_eq!(entry.status, "pass");
+}
+
+#[test]
+fn report_index_repo_ops_status_preserves_actionable() {
+    let artifacts = vec![ReportIndexRepoOpsArtifact {
+        path: "target/ripr/reports/pr-ready.md".to_string(),
+        available: true,
+        status: "actionable".to_string(),
+    }];
+    assert_eq!(report_index_repo_ops_status(&artifacts), "actionable");
+}
+
+#[test]
+fn check_status_enum_distinguishes_pass_warn_fail() {
+    let statuses = [CheckStatus::Pass, CheckStatus::Warn, CheckStatus::Fail];
+    for status in &statuses {
+        let debug_str = format!("{:?}", status);
+        assert!(!debug_str.is_empty());
+    }
+}
+
+#[test]
+fn repo_badge_artifact_jobs_has_exactly_four_entries_with_repo_prefix() -> Result<(), String> {
+    let jobs = repo_badge_artifact_jobs();
+    let expected = vec![
+        BadgeArtifactJob {
+            format: "repo-badge-json",
+            output_file: "repo-ripr-badge.json",
+        },
+        BadgeArtifactJob {
+            format: "repo-badge-shields",
+            output_file: "repo-ripr-badge-shields.json",
+        },
+        BadgeArtifactJob {
+            format: "repo-badge-plus-json",
+            output_file: "repo-ripr-plus-badge.json",
+        },
+        BadgeArtifactJob {
+            format: "repo-badge-plus-shields",
+            output_file: "repo-ripr-plus-badge-shields.json",
+        },
+    ];
+    if jobs == expected {
+        Ok(())
+    } else {
+        Err(format!("expected {expected:?}, got {jobs:?}"))
+    }
+}
+
+#[test]
+fn check_violation_structure_holds_check_path_and_message() {
+    let violation = CheckViolation {
+        check: "test-coverage".to_string(),
+        path: Some(PathBuf::from("src/lib.rs")),
+        line: Some(42),
+        severity: CheckStatus::Fail,
+        category: "coverage".to_string(),
+        message: "Missing test".to_string(),
+        why_it_matters: "Ensures code quality".to_string(),
+        fix_kind: FixKind::AuthorDecisionRequired,
+        suggested_commands: vec!["cargo test".to_string()],
+        suggested_patch: Some("patch content".to_string()),
+        exception_template: None,
+    };
+    assert_eq!(violation.check, "test-coverage");
+    assert_eq!(violation.line, Some(42));
+    assert_eq!(violation.message, "Missing test");
+}
+
+#[test]
+fn check_report_aggregates_violations_and_status() {
+    let report = CheckReport {
+        check: "coverage".to_string(),
+        status: CheckStatus::Fail,
+        violations: vec![],
+    };
+    assert_eq!(report.check, "coverage");
+    assert!(
+        matches!(report.status, CheckStatus::Fail),
+        "expected Fail status"
+    );
+}
+
+// ============================================================================
+// Identifier validation tests
+// ============================================================================
+
+#[test]
+fn is_spec_id_matches_expected_format() {
+    assert!(is_spec_id("RIPR-SPEC-0001"));
+    assert!(is_spec_id("RIPR-SPEC-9999"));
+    assert!(is_spec_id("RIPR-SPEC-0000"));
+
+    assert!(!is_spec_id("RIPR-SPEC-001")); // too short
+    assert!(!is_spec_id("RIPR-SPEC-00001")); // too long
+    assert!(!is_spec_id("RIPR-SPEC-abc1")); // non-digits
+    assert!(!is_spec_id("ripr-spec-0001")); // lowercase
+    assert!(!is_spec_id("RIPR-0001")); // missing SPEC
+    assert!(!is_spec_id(""));
+}
+
+#[test]
+fn is_snake_case_id_validates_naming_rules() {
+    assert!(is_snake_case_id("valid_id"));
+    assert!(is_snake_case_id("also_valid_123"));
+    assert!(is_snake_case_id("a"));
+    assert!(is_snake_case_id("test123test"));
+
+    assert!(!is_snake_case_id("")); // empty
+    assert!(!is_snake_case_id("_starts_with")); // starts with underscore
+    assert!(!is_snake_case_id("ends_with_")); // ends with underscore
+    assert!(!is_snake_case_id("double__underscore")); // double underscore
+    assert!(!is_snake_case_id("CamelCase")); // uppercase
+    assert!(!is_snake_case_id("with-dash")); // non-alphanumeric
+}
+
+#[test]
+fn is_bdd_test_name_matches_given_when_then_pattern() {
+    assert!(is_bdd_test_name(
+        "given_a_user_when_logged_in_then_access_granted"
+    ));
+    assert!(is_bdd_test_name(
+        "Given_Some_Context_When_Something_Happens_Then_Result"
+    ));
+    assert!(is_bdd_test_name("given_x_when_y_then_z"));
+
+    assert!(!is_bdd_test_name("when_no_given")); // missing given
+    assert!(!is_bdd_test_name("given_no_when_then")); // missing when
+    assert!(!is_bdd_test_name("given_when_no_then")); // missing then
+    assert!(!is_bdd_test_name("given__when__then")); // missing content between parts
+    assert!(!is_bdd_test_name("regular_test_name")); // not BDD format
+    assert!(!is_bdd_test_name(""));
+}
+
+#[test]
+fn repo_badge_artifact_command_args_does_not_use_git_diff() -> Result<(), String> {
+    // Load-bearing regression: repo-scope artifacts MUST NOT depend on
+    // `git diff origin/main...HEAD`. On `main`, that diff is empty, so a
+    // diff-driven repo badge would always report 0 regardless of repo
+    // state. badge_artifacts_summary_markdown_includes the diff in
+    // diff-scope, so this test pins the absence here.
+    for format in [
+        "repo-badge-json",
+        "repo-badge-shields",
+        "repo-badge-plus-json",
+        "repo-badge-plus-shields",
+    ] {
+        let args = repo_badge_artifact_command_args(format, None);
+        for arg in &args {
+            if arg == "--diff" || arg == "--base" {
+                return Err(format!(
+                    "repo-scope command args must not contain `--diff` or `--base` for {format:?}: {args:?}"
+                ));
+            }
+            if arg.contains("origin/main") || arg.contains("badge-input.diff") {
+                return Err(format!(
+                    "repo-scope command args must not reference origin/main or the diff input for {format:?}: {args:?}"
+                ));
+            }
+        }
+        if args.last().map(String::as_str) != Some(format) {
+            return Err(format!(
+                "expected last arg to be {format:?}, got {:?}",
+                args.last()
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn repo_badge_artifact_command_args_can_use_gap_ledger_without_diff() -> Result<(), String> {
+    let args =
+        repo_badge_artifact_command_args("repo-badge-json", Some(Path::new("gap-ledger.json")));
+    if args.iter().any(|arg| arg == "--diff" || arg == "--base") {
+        return Err(format!(
+            "gap-ledger repo-scope command args must remain diff-free: {args:?}"
+        ));
+    }
+    let gap_arg = args
+        .windows(2)
+        .find(|window| window[0] == "--gap-ledger")
+        .map(|window| window[1].as_str());
+    if gap_arg != Some("gap-ledger.json") {
+        return Err(format!(
+            "expected --gap-ledger gap-ledger.json in repo args, got {args:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn repo_badge_artifact_timeout_reports_no_public_endpoint_claim() -> Result<(), String> {
+    let args = repo_badge_artifact_command_args("repo-badge-json", None);
+    let message = repo_badge_artifact_stdout_from_output(
+        "cargo",
+        &args,
+        "repo-badge-json",
+        Duration::from_millis(12),
+        TimedOutput {
+            status: None,
+            stdout: "partial badge output".to_string(),
+            stderr: "still scanning repo seams".to_string(),
+            duration: Duration::from_millis(13),
+            timed_out: true,
+        },
+    )
+    .expect_err("timeout should fail closed");
+
+    assert!(message.contains("timed out after 12 ms"));
+    assert!(message.contains("repo-badge-json"));
+    assert!(message.contains("no public badge endpoint was refreshed"));
+    assert!(message.contains("no public badge count is claimed"));
+    assert!(message.contains(REPO_BADGE_ARTIFACT_TIMEOUT_ENV));
+    Ok(())
+}
+
+#[test]
+fn repo_badge_artifact_nonzero_status_carries_stdout_and_stderr() -> Result<(), String> {
+    let args = repo_badge_artifact_command_args("repo-badge-json", None);
+    let message = repo_badge_artifact_stdout_from_output(
+        "cargo",
+        &args,
+        "repo-badge-json",
+        Duration::from_secs(90),
+        TimedOutput {
+            status: Some(failure_exit_status()),
+            stdout: "partial stdout".to_string(),
+            stderr: "repo badge failure".to_string(),
+            duration: Duration::from_millis(13),
+            timed_out: false,
+        },
+    )
+    .expect_err("non-zero status should fail closed");
+
+    assert!(message.contains("failed with"));
+    assert!(message.contains("partial stdout"));
+    assert!(message.contains("repo badge failure"));
+    Ok(())
+}
+
+#[test]
+fn repo_badge_artifact_stdout_returns_stdout_on_success() -> Result<(), String> {
+    let args = repo_badge_artifact_command_args("repo-badge-json", None);
+    let stdout = repo_badge_artifact_stdout_from_output(
+        "cargo",
+        &args,
+        "repo-badge-json",
+        Duration::from_secs(90),
+        TimedOutput {
+            status: Some(success_exit_status()),
+            stdout: "badge json\n".to_string(),
+            stderr: String::new(),
+            duration: Duration::from_millis(13),
+            timed_out: false,
+        },
+    )?;
+
+    assert_eq!(stdout, "badge json\n");
+    Ok(())
+}
+
+#[test]
+fn repo_badge_artifact_command_runs_with_timeout() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let args = vec!["--version".to_string()];
+        let stdout = run_repo_badge_artifact_command(
+            "rustc",
+            &args,
+            "repo-badge-json",
+            Duration::from_secs(30),
+        )?;
+
+        assert!(stdout.contains("rustc"));
+        Ok(())
+    })
+}
+
+#[test]
+fn repo_badge_artifact_missing_status_reports_format() -> Result<(), String> {
+    let args = repo_badge_artifact_command_args("repo-badge-shields", None);
+    let message = repo_badge_artifact_stdout_from_output(
+        "cargo",
+        &args,
+        "repo-badge-shields",
+        Duration::from_secs(90),
+        TimedOutput {
+            status: None,
+            stdout: String::new(),
+            stderr: String::new(),
+            duration: Duration::from_millis(13),
+            timed_out: false,
+        },
+    )
+    .expect_err("missing status should fail closed");
+
+    assert!(message.contains("finished without an exit status"));
+    assert!(message.contains("repo-badge-shields"));
+    Ok(())
+}
+
+#[test]
+fn repo_badge_artifact_timeout_ms_uses_positive_env_override_only() -> Result<(), String> {
+    assert_eq!(
+        repo_badge_artifact_timeout_ms_from_env(None),
+        REPO_BADGE_ARTIFACT_DEFAULT_TIMEOUT_MS
+    );
+    assert_eq!(
+        repo_badge_artifact_timeout_ms_from_env(Some(String::new())),
+        REPO_BADGE_ARTIFACT_DEFAULT_TIMEOUT_MS
+    );
+    assert_eq!(
+        repo_badge_artifact_timeout_ms_from_env(Some("0".to_string())),
+        REPO_BADGE_ARTIFACT_DEFAULT_TIMEOUT_MS
+    );
+    assert_eq!(
+        repo_badge_artifact_timeout_ms_from_env(Some("not-a-timeout".to_string())),
+        REPO_BADGE_ARTIFACT_DEFAULT_TIMEOUT_MS
+    );
+    assert_eq!(
+        repo_badge_artifact_timeout_ms_from_env(Some("120000".to_string())),
+        120_000
+    );
+    Ok(())
+}
+
+#[test]
+fn repo_exposure_summary_report_timeout_ms_uses_positive_env_override_only() -> Result<(), String> {
+    assert_eq!(
+        repo_exposure_summary_report_timeout_ms_from_env(None),
+        REPO_EXPOSURE_SUMMARY_REPORT_DEFAULT_TIMEOUT_MS
+    );
+    assert_eq!(
+        repo_exposure_summary_report_timeout_ms_from_env(Some(String::new())),
+        REPO_EXPOSURE_SUMMARY_REPORT_DEFAULT_TIMEOUT_MS
+    );
+    assert_eq!(
+        repo_exposure_summary_report_timeout_ms_from_env(Some("0".to_string())),
+        REPO_EXPOSURE_SUMMARY_REPORT_DEFAULT_TIMEOUT_MS
+    );
+    assert_eq!(
+        repo_exposure_summary_report_timeout_ms_from_env(Some("not-a-timeout".to_string())),
+        REPO_EXPOSURE_SUMMARY_REPORT_DEFAULT_TIMEOUT_MS
+    );
+    assert_eq!(
+        repo_exposure_summary_report_timeout_ms_from_env(Some("300000".to_string())),
+        300_000
+    );
+    Ok(())
+}
+
+#[test]
+fn repo_exposure_summary_report_timeout_writes_non_consumable_limitation() -> Result<(), String> {
+    with_temp_cwd("repo-exposure-summary-timeout", |_root| {
+        let args = repo_seam_inventory_command_args_for_root("repo-exposure-summary-json", ".");
+        let output_path = Path::new("target/ripr/reports/repo-exposure-summary.json");
+        write(output_path, "stale summary");
+
+        write_repo_exposure_summary_report_with_runner(
+            &args,
+            Duration::from_millis(7),
+            |_args, _timeout| {
+                Ok(TimedOutput {
+                        status: None,
+                        stdout: "{\"format\":\"repo-exposure-summary-json\"".to_string(),
+                        stderr: concat!(
+                            "ripr_repo_exposure_latency phase=inventory_seams status=ok duration_ms=3\n",
+                            "ripr_repo_exposure_latency phase=evidence_for_seams_progress status=processed_500_of_39021 duration_ms=7\n",
+                        )
+                        .to_string(),
+                        duration: Duration::from_millis(8),
+                        timed_out: true,
+                    })
+            },
+        )?;
+
+        let json_text = fs::read_to_string(output_path).map_err(|err| err.to_string())?;
+        let value: Value = serde_json::from_str(&json_text).map_err(|err| err.to_string())?;
+        assert_eq!(value["status"], "warn");
+        assert_eq!(value["basis"], "limited_runtime_status");
+        assert_eq!(value["run_status"], "limited_timeout");
+        assert_eq!(value["runtime_status"]["downstream_consumable"], false);
+        assert_eq!(
+            value["runtime_status"]["limitation_category"],
+            "repo_exposure_summary_timeout"
+        );
+        assert_eq!(value["generation"]["status"], "timeout");
+        assert_eq!(value["generation"]["timed_out"], true);
+        assert_eq!(value["generation"]["latency_trace_events_total"], 2);
+        assert_eq!(
+            value["generation"]["latency_trace_tail"][1]["status"],
+            "processed_500_of_39021"
+        );
+        assert!(
+            value["metrics"]
+                .as_object()
+                .is_some_and(|map| map.is_empty())
+        );
+        assert!(value["top_files"].as_array().is_some_and(Vec::is_empty));
+        assert_eq!(value["run_limitations"][0]["downstream_consumable"], false);
+        assert!(
+            value["run_limitations"][0]["repair_route"]
+                .as_str()
+                .unwrap_or_default()
+                .contains(REPO_EXPOSURE_SUMMARY_REPORT_TIMEOUT_ENV)
+        );
+        assert!(!json_text.contains("stale summary"));
+        assert!(!json_text.contains("unsuppressed_exposure_gaps"));
+        Ok(())
+    })
+}
+
+#[test]
+fn repo_exposure_summary_report_success_writes_complete_summary() -> Result<(), String> {
+    with_temp_cwd("repo-exposure-summary-success", |_root| {
+        let args = repo_seam_inventory_command_args_for_root("repo-exposure-summary-json", ".");
+        let output_path = Path::new("target/ripr/reports/repo-exposure-summary.json");
+        let summary = r#"{
+  "schema_version": "0.1",
+  "format": "repo-exposure-summary-json",
+  "scope": "repo",
+  "basis": "canonical_actionable_gap",
+  "metrics": {
+    "raw_seams": 5,
+    "unsuppressed_exposure_gaps": 2
+  },
+  "reason_breakdown": {
+    "actionability": {
+      "upgrade_assertion": 2
+    }
+  },
+  "limits": {
+    "top_files_limit": 25,
+    "top_files_total": 0,
+    "top_files_truncated": false
+  },
+  "top_files": []
+}
+"#;
+
+        write_repo_exposure_summary_report_with_runner(
+            &args,
+            Duration::from_millis(7),
+            |_args, _timeout| {
+                Ok(TimedOutput {
+                    status: Some(success_exit_status()),
+                    stdout: summary.to_string(),
+                    stderr: String::new(),
+                    duration: Duration::from_millis(6),
+                    timed_out: false,
+                })
+            },
+        )?;
+
+        let json_text = fs::read_to_string(output_path).map_err(|err| err.to_string())?;
+        let value: Value = serde_json::from_str(&json_text).map_err(|err| err.to_string())?;
+        assert_eq!(value["format"], "repo-exposure-summary-json");
+        assert_eq!(value["basis"], "canonical_actionable_gap");
+        assert_eq!(value["metrics"]["unsuppressed_exposure_gaps"], 2);
+        assert!(value.get("runtime_status").is_none());
+        Ok(())
+    })
+}
+
+#[test]
+fn diff_badge_artifact_command_args_still_use_git_diff_input() -> Result<(), String> {
+    // Companion to the repo regression: the diff-scope contract is that
+    // the args DO consult `git diff origin/main...HEAD` (captured to
+    // target/ripr/badge-input.diff before render). Pinning this here
+    // catches any accidental drift to a unified scope path.
+    for format in [
+        "badge-json",
+        "badge-shields",
+        "badge-plus-json",
+        "badge-plus-shields",
+    ] {
+        let args = badge_artifact_command_args(format);
+        if !args.iter().any(|arg| arg == "--diff") {
+            return Err(format!(
+                "diff-scope command args must contain `--diff` for {format:?}: {args:?}"
+            ));
+        }
+        if !args.iter().any(|arg| arg.contains("badge-input.diff")) {
+            return Err(format!(
+                "diff-scope command args must reference badge-input.diff for {format:?}: {args:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn repo_badge_artifact_native_slot_reuses_diff_mapping() -> Result<(), String> {
+    // The native-slot mapping is keyed on the format's `*-json` suffix,
+    // not on diff-vs-repo prefix; repo formats reuse it so badge_artifacts
+    // / repo_badge_artifacts share the same slotting helper.
+    let cases = [
+        ("repo-badge-json", Some(BadgeNativeSlot::Ripr)),
+        ("repo-badge-plus-json", Some(BadgeNativeSlot::RiprPlus)),
+        ("repo-badge-shields", None),
+        ("repo-badge-plus-shields", None),
+    ];
+    for (format, expected) in cases {
+        let actual = badge_artifact_native_slot(format);
+        if actual != expected {
+            return Err(format!(
+                "for format {format:?} expected {expected:?}, got {actual:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn ripr_plus_receipt_counts_canonical_gaps_not_raw_inventory() -> Result<(), String> {
+    let fixture = r#"{
+            "schema_version": "0.1",
+            "format": "repo-exposure-summary-json",
+            "tool": "ripr",
+            "ripr_version": "0.8.0",
+            "scope": "repo",
+            "basis": "canonical_actionable_gap",
+            "metadata": {
+                "root": ".",
+                "base": "origin/main",
+                "head": "HEAD",
+                "mode": "draft"
+            },
+            "metrics": {
+                "raw_seams": 5,
+                "headline_eligible_seams": 4,
+                "canonical_gap_records": 2,
+                "raw_actionable_seam_records": 3,
+                "unsuppressed_exposure_gaps": 2,
+                "suppressed_exposure_gaps": 1,
+                "grip_class": {
+                    "weakly_gripped": 2
+                }
+            },
+            "reason_breakdown": {
+                "actionability": {
+                    "upgrade_assertion": 2
+                },
+                "gap_state": {
+                    "actionable": 3
+                },
+                "seam_kind": {
+                    "predicate_boundary": 2
+                },
+                "grip_class": {
+                    "weakly_gripped": 2
+                }
+            },
+            "limits": {
+                "top_files_limit": 25,
+                "top_files_total": 1,
+                "top_files_truncated": false
+            },
+            "top_files": [
+                {
+                    "file": "src/lib.rs",
+                    "raw_seams": 5,
+                    "headline_eligible_seams": 4,
+                    "canonical_gap_records": 2,
+                    "unsuppressed_exposure_gaps": 2,
+                    "suppressed_exposure_gaps": 1,
+                    "reason_breakdown": {
+                        "actionability": {
+                            "upgrade_assertion": 2
+                        },
+                        "grip_class": {
+                            "weakly_gripped": 2
+                        }
+                    }
+                }
+            ]
+        }"#;
+    let receipt = ripr_plus_receipt_from_repo_exposure_summary_json(fixture, "HEAD")?;
+
+    assert_eq!(receipt["basis"], "canonical_actionable_gap");
+    assert_eq!(receipt["source_format"], "repo-exposure-summary-json");
+    assert_eq!(receipt["unresolved"], 2);
+    assert_ne!(receipt["unresolved"], receipt["raw_inventory"]["raw_seams"]);
+    assert_eq!(receipt["raw_inventory"]["raw_seams"], 5);
+    assert_eq!(receipt["raw_inventory"]["headline_eligible_seams"], 4);
+    assert_eq!(receipt["raw_inventory"]["canonical_gap_records"], 2);
+    assert_eq!(receipt["raw_inventory"]["raw_actionable_seam_records"], 3);
+    assert_eq!(receipt["raw_inventory"]["debt_basis"], false);
+    assert_eq!(receipt["suppressed"], 1);
+    assert_eq!(receipt["reason_counts"]["upgrade_assertion"], 2);
+    assert_eq!(receipt["counts"]["unsuppressed_exposure_gaps"], 2);
+    assert_eq!(receipt["top_files"].as_array().map(Vec::len), Some(1));
+    assert_eq!(receipt["top_files"][0]["file"], "src/lib.rs");
+    Ok(())
+}
+
+#[test]
+fn ripr_plus_receipt_rejects_non_canonical_basis() {
+    let badge = BadgeNativeAuditSnapshot {
+        label: "ripr".to_string(),
+        kind: "ripr".to_string(),
+        scope: "repo".to_string(),
+        basis: "seam_native".to_string(),
+        message: "5".to_string(),
+        status: "warn".to_string(),
+        color: "orange".to_string(),
+        counts: BTreeMap::from([
+            ("raw_seams".to_string(), 5),
+            ("unsuppressed_exposure_gaps".to_string(), 2),
+        ]),
+        reason_counts: BTreeMap::new(),
+        warnings: Vec::new(),
+    };
+
+    let err = ripr_plus_receipt_from_badge(&badge, "HEAD", None)
+        .expect_err("seam-native inventory must not become RIPR+ debt");
+    assert!(err.contains("canonical actionable or gap decision ledger basis"));
+}
+
+#[test]
+fn ripr_plus_receipt_accepts_gap_decision_ledger_basis() -> Result<(), String> {
+    let badge = BadgeNativeAuditSnapshot {
+        label: "ripr".to_string(),
+        kind: "ripr".to_string(),
+        scope: "repo".to_string(),
+        basis: "gap_decision_ledger".to_string(),
+        message: "1".to_string(),
+        status: "warn".to_string(),
+        color: "yellow".to_string(),
+        counts: BTreeMap::from([
+            ("analyzed_gap_records".to_string(), 18),
+            ("unsuppressed_exposure_gaps".to_string(), 1),
+        ]),
+        reason_counts: BTreeMap::new(),
+        warnings: Vec::new(),
+    };
+
+    let receipt = ripr_plus_receipt_from_badge(
+        &badge,
+        "HEAD",
+        Some(Path::new("fixtures/gap-decision-ledger/corpus.json")),
+    )?;
+    assert_eq!(receipt["basis"], "gap_decision_ledger");
+    assert_eq!(receipt["unresolved"], 1);
+    assert_eq!(receipt["counts"]["analyzed_gap_records"], 18);
+    Ok(())
+}
+
+#[test]
+fn ripr_plus_receipt_markdown_names_bounded_top_file_behavior() -> Result<(), String> {
+    let fixture = r#"{
+            "schema_version": "0.1",
+            "format": "repo-exposure-summary-json",
+            "scope": "repo",
+            "basis": "canonical_actionable_gap",
+            "metrics": {
+                "raw_seams": 5,
+                "headline_eligible_seams": 4,
+                "canonical_gap_records": 2,
+                "raw_actionable_seam_records": 2,
+                "unsuppressed_exposure_gaps": 2,
+                "suppressed_exposure_gaps": 0
+            },
+            "reason_breakdown": {
+                "actionability": {
+                    "upgrade_assertion": 2
+                }
+            },
+            "limits": {
+                "top_files_limit": 25,
+                "top_files_total": 1,
+                "top_files_truncated": false
+            },
+            "top_files": [
+                {
+                    "file": "src/lib.rs",
+                    "raw_seams": 5,
+                    "headline_eligible_seams": 4,
+                    "canonical_gap_records": 2,
+                    "unsuppressed_exposure_gaps": 2,
+                    "suppressed_exposure_gaps": 0
+                }
+            ]
+        }"#;
+    let receipt = ripr_plus_receipt_from_repo_exposure_summary_json(fixture, "HEAD")?;
+    let markdown = ripr_plus_receipt_markdown(&receipt);
+
+    assert!(markdown.contains("canonical_actionable_gap"));
+    assert!(markdown.contains("| Unresolved | 2 |"));
+    assert!(markdown.contains("repo-exposure-summary-json"));
+    assert!(markdown.contains("src/lib.rs"));
+    assert!(markdown.contains("| `src/lib.rs` | 2 | 2 | 4 | 5 |"));
+    assert!(markdown.contains("does not run full `repo-exposure-json`"));
+    Ok(())
+}
+
+#[test]
+fn ripr_plus_receipt_source_command_names_gap_ledger() -> Result<(), String> {
+    let fixture = r#"{
+            "schema_version": "0.5",
+            "label": "ripr",
+            "kind": "ripr",
+            "scope": "repo",
+            "basis": "canonical_actionable_gap",
+            "message": "2",
+            "status": "warn",
+            "color": "orange",
+            "counts": {
+                "unsuppressed_exposure_gaps": 2,
+                "suppressed_exposure_gaps": 0
+            },
+            "reason_counts": {},
+            "warnings": []
+        }"#;
+    let receipt = ripr_plus_receipt_from_repo_badge_json(
+        fixture,
+        "HEAD",
+        Some(Path::new("target/ripr/reports/gap-decision-ledger.json")),
+    )?;
+
+    assert_eq!(
+        receipt["source_command"],
+        "ripr check --root . --format repo-badge-json --gap-ledger target/ripr/reports/gap-decision-ledger.json"
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_plus_receipt_source_command_names_summary_artifact() -> Result<(), String> {
+    let fixture = r#"{
+            "schema_version": "0.1",
+            "format": "repo-exposure-summary-json",
+            "scope": "repo",
+            "basis": "canonical_actionable_gap",
+            "metrics": {
+                "raw_seams": 5,
+                "headline_eligible_seams": 4,
+                "canonical_gap_records": 2,
+                "raw_actionable_seam_records": 2,
+                "unsuppressed_exposure_gaps": 2,
+                "suppressed_exposure_gaps": 0
+            },
+            "reason_breakdown": {
+                "actionability": {
+                    "upgrade_assertion": 2
+                }
+            },
+            "limits": {
+                "top_files_limit": 25,
+                "top_files_total": 0,
+                "top_files_truncated": false
+            },
+            "top_files": []
+        }"#;
+
+    let receipt = ripr_plus_receipt_from_repo_exposure_summary_json_with_source(
+        fixture,
+        "HEAD",
+        "cargo xtask ripr-plus --repo-exposure-summary target/ripr/reports/repo-exposure-summary.json",
+        Some(Path::new("target/ripr/reports/repo-exposure-summary.json")),
+    )?;
+
+    assert_eq!(
+        receipt["source_command"],
+        "cargo xtask ripr-plus --repo-exposure-summary target/ripr/reports/repo-exposure-summary.json"
+    );
+    assert_eq!(
+        receipt["source_artifact"],
+        "target/ripr/reports/repo-exposure-summary.json"
+    );
+    assert_eq!(receipt["unresolved"], 2);
+    Ok(())
+}
+
+#[test]
+fn ripr_plus_receipt_from_options_reuses_summary_artifact() -> Result<(), String> {
+    let dir = badge_endpoint_tempdir("summary-reuse")?;
+    let path = dir.join("repo-exposure-summary.json");
+    std::fs::write(
+        &path,
+        r#"{
+                "schema_version": "0.1",
+                "format": "repo-exposure-summary-json",
+                "scope": "repo",
+                "basis": "canonical_actionable_gap",
+                "metrics": {
+                    "raw_seams": 5,
+                    "headline_eligible_seams": 4,
+                    "canonical_gap_records": 2,
+                    "raw_actionable_seam_records": 2,
+                    "unsuppressed_exposure_gaps": 2,
+                    "suppressed_exposure_gaps": 0
+                },
+                "reason_breakdown": {
+                    "actionability": {
+                        "upgrade_assertion": 2
+                    }
+                },
+                "limits": {
+                    "top_files_limit": 25,
+                    "top_files_total": 0,
+                    "top_files_truncated": false
+                },
+                "top_files": []
+            }"#,
+    )
+    .map_err(|err| format!("write summary fixture: {err}"))?;
+    let options = RepoBadgeArtifactOptions {
+        gap_ledger: None,
+        repo_exposure_summary: Some(path.clone()),
+        include_seam_classes: false,
+    };
+
+    let receipt = ripr_plus_receipt_from_options(&options, "HEAD")?;
+
+    assert_eq!(receipt["basis"], "canonical_actionable_gap");
+    assert_eq!(receipt["source_format"], "repo-exposure-summary-json");
+    assert_eq!(
+        receipt["source_command"],
+        format!(
+            "cargo xtask ripr-plus --repo-exposure-summary {}",
+            normalize_path(&path)
+        )
+    );
+    assert_eq!(receipt["source_artifact"], normalize_path(&path));
+    assert_eq!(receipt["unresolved"], 2);
+    Ok(())
+}
+
+#[test]
+fn error_ripr_plus_receipt_timeout_has_indeterminate_status_and_null_unresolved()
+-> Result<(), String> {
+    let receipt = error_ripr_plus_receipt(
+        "abc1234def5678abc1234def5678abc1234def5678",
+        "cargo run --format repo-exposure-summary-json timed out after 1 ms while generating repo-exposure-summary-json for ripr-plus; no RIPR+ receipt is claimed.",
+    );
+
+    assert_eq!(
+        receipt["status"], "indeterminate",
+        "timeout error must produce indeterminate status"
+    );
+    assert_eq!(
+        receipt["machine_readable_cause"], "evaluation_timeout",
+        "timeout error string must map to evaluation_timeout"
+    );
+    assert!(
+        receipt
+            .get("unresolved")
+            .is_some_and(serde_json::Value::is_null),
+        "unresolved must be null on an indeterminate receipt"
+    );
+    let warnings = receipt
+        .get("warnings")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    assert!(
+        warnings > 0,
+        "warnings must be non-empty on an error receipt"
+    );
+    let head = receipt.get("head").and_then(Value::as_str).unwrap_or("");
+    assert!(
+        !head.is_empty(),
+        "head must be non-empty on an error receipt"
+    );
+    assert_eq!(receipt["schema_version"], "0.1");
+    Ok(())
+}
+
+#[test]
+fn ripr_plus_receipt_markdown_indeterminate_does_not_claim_zero_unresolved() -> Result<(), String> {
+    let receipt = error_ripr_plus_receipt(
+        "abc1234def5678abc1234def5678abc1234def5678",
+        "cargo run --format repo-exposure-summary-json timed out after 1 ms while generating repo-exposure-summary-json for ripr-plus; no RIPR+ receipt is claimed.",
+    );
+    let markdown = ripr_plus_receipt_markdown(&receipt);
+
+    assert!(
+        !markdown.contains("| Unresolved | 0 |"),
+        "indeterminate markdown must not claim zero unresolved gaps"
+    );
+    assert!(
+        markdown.contains("N/A") || markdown.contains("unknown"),
+        "indeterminate markdown must contain an indeterminate/unknown marker"
+    );
+    assert!(
+        markdown.contains("indeterminate") || markdown.contains("Indeterminate"),
+        "indeterminate markdown must name the indeterminate state"
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_plus_receipt_happy_path_regression_pass_status() -> Result<(), String> {
+    let fixture = r#"{
+            "schema_version": "0.1",
+            "format": "repo-exposure-summary-json",
+            "tool": "ripr",
+            "ripr_version": "0.7.0",
+            "scope": "repo",
+            "basis": "canonical_actionable_gap",
+            "metadata": {
+                "root": ".",
+                "base": "origin/main",
+                "head": "HEAD",
+                "mode": "draft"
+            },
+            "metrics": {
+                "raw_seams": 3,
+                "headline_eligible_seams": 2,
+                "canonical_gap_records": 0,
+                "raw_actionable_seam_records": 0,
+                "unsuppressed_exposure_gaps": 0,
+                "suppressed_exposure_gaps": 0
+            },
+            "reason_breakdown": {
+                "actionability": {}
+            },
+            "limits": {
+                "top_files_limit": 25,
+                "top_files_total": 0,
+                "top_files_truncated": false
+            },
+            "top_files": []
+        }"#;
+    let receipt = ripr_plus_receipt_from_repo_exposure_summary_json(fixture, "abc1234")?;
+
+    let status = receipt["status"].as_str().unwrap_or("");
+    assert!(
+        status == "pass" || status == "warn",
+        "happy-path receipt must have pass or warn status, got {status:?}"
+    );
+    let unresolved = receipt.get("unresolved").and_then(Value::as_u64);
+    assert!(
+        unresolved.is_some(),
+        "happy-path receipt must have a concrete unresolved count, not null"
+    );
+    assert_eq!(unresolved, Some(0));
+    Ok(())
+}
+
+#[test]
+fn read_repo_exposure_summary_artifact_accepts_canonical_summary() -> Result<(), String> {
+    let dir = badge_endpoint_tempdir("canonical-summary")?;
+    let path = dir.join("repo-exposure-summary.json");
+    let body = r#"{
+            "schema_version": "0.1",
+            "format": "repo-exposure-summary-json",
+            "basis": "canonical_actionable_gap",
+            "metrics": {
+                "unsuppressed_exposure_gaps": 0
+            },
+            "top_files": []
+        }"#;
+    std::fs::write(&path, body).map_err(|err| format!("write summary fixture: {err}"))?;
+
+    let read = read_repo_exposure_summary_artifact(&path)?;
+
+    assert!(read.contains("canonical_actionable_gap"));
+    Ok(())
+}
+
+#[test]
+fn read_repo_exposure_summary_artifact_rejects_limited_runtime_status() -> Result<(), String> {
+    let dir = badge_endpoint_tempdir("limited-summary")?;
+    let path = dir.join("repo-exposure-summary.json");
+    std::fs::write(
+        &path,
+        r#"{
+                "schema_version": "0.1",
+                "format": "repo-exposure-summary-json",
+                "basis": "limited_runtime_status",
+                "run_status": "limited_timeout",
+                "runtime_status": {
+                    "downstream_consumable": false
+                },
+                "metrics": {},
+                "top_files": []
+            }"#,
+    )
+    .map_err(|err| format!("write limited summary fixture: {err}"))?;
+
+    let err = read_repo_exposure_summary_artifact(&path)
+        .expect_err("limited summary artifacts must not feed ripr-plus receipts");
+    assert!(err.contains("not downstream consumable"));
+    assert!(err.contains("limited_runtime_status"));
+    assert!(err.contains("limited_timeout"));
+    Ok(())
+}
+
+#[test]
+fn read_repo_exposure_summary_artifact_reports_missing_and_malformed_inputs() -> Result<(), String>
+{
+    let dir = badge_endpoint_tempdir("bad-summary")?;
+    let missing = dir.join("missing.json");
+    let missing_err = read_repo_exposure_summary_artifact(&missing)
+        .expect_err("missing summary artifacts should fail clearly");
+    assert!(missing_err.contains("failed to read"));
+
+    let malformed = dir.join("malformed.json");
+    std::fs::write(&malformed, "{not json")
+        .map_err(|err| format!("write malformed summary fixture: {err}"))?;
+    let malformed_err = read_repo_exposure_summary_artifact(&malformed)
+        .expect_err("malformed summary artifacts should fail clearly");
+    assert!(malformed_err.contains("failed to parse repo exposure summary artifact"));
+    Ok(())
+}
+
+#[test]
+fn parse_ripr_plus_options_accepts_repo_exposure_summary_path() -> Result<(), String> {
+    let options = parse_repo_badge_artifact_options(
+        &[
+            "--repo-exposure-summary".to_string(),
+            "target/ripr/reports/repo-exposure-summary.json".to_string(),
+        ],
+        "ripr-plus",
+    )?;
+
+    assert_eq!(
+        options.repo_exposure_summary,
+        Some(PathBuf::from(
+            "target/ripr/reports/repo-exposure-summary.json"
+        ))
+    );
+    assert_eq!(options.gap_ledger, None);
+    Ok(())
+}
+
+#[test]
+fn parse_ripr_plus_options_rejects_missing_empty_and_unsupported_summary_path() {
+    let missing =
+        parse_repo_badge_artifact_options(&["--repo-exposure-summary".to_string()], "ripr-plus")
+            .expect_err("missing summary path must fail");
+    assert!(missing.contains("--repo-exposure-summary requires a path"));
+
+    let empty = parse_repo_badge_artifact_options(
+        &["--repo-exposure-summary".to_string(), "".to_string()],
+        "ripr-plus",
+    )
+    .expect_err("empty summary path must fail");
+    assert!(empty.contains("--repo-exposure-summary requires a non-empty path"));
+
+    let unsupported = parse_repo_badge_artifact_options(
+        &[
+            "--repo-exposure-summary".to_string(),
+            "target/ripr/reports/repo-exposure-summary.json".to_string(),
+        ],
+        "badges",
+    )
+    .expect_err("other badge artifact commands must reject summary reuse");
+    assert!(unsupported.contains("does not support --repo-exposure-summary"));
+}
+
+#[test]
+fn parse_ripr_plus_options_rejects_ambiguous_receipt_sources() {
+    let err = parse_repo_badge_artifact_options(
+        &[
+            "--gap-ledger".to_string(),
+            "target/ripr/reports/gap-decision-ledger.json".to_string(),
+            "--repo-exposure-summary".to_string(),
+            "target/ripr/reports/repo-exposure-summary.json".to_string(),
+        ],
+        "ripr-plus",
+    )
+    .expect_err("ripr-plus must use exactly one receipt source override");
+
+    assert!(err.contains("either --gap-ledger or --repo-exposure-summary"));
+}
+
+#[test]
+fn badge_basis_default_derives_repo_plus_without_second_badge_job() {
+    assert!(!badge_basis_needs_repo_badge_plus_job(
+        &RepoBadgeArtifactOptions::default()
+    ));
+    assert!(badge_basis_needs_repo_badge_plus_job(
+        &RepoBadgeArtifactOptions {
+            gap_ledger: Some(PathBuf::from(
+                "target/ripr/reports/gap-decision-ledger.json"
+            )),
+            repo_exposure_summary: None,
+            include_seam_classes: false,
+        }
+    ));
+}
+
+#[test]
+fn badge_basis_derived_repo_plus_keeps_canonical_headline_and_te_context() {
+    let ripr = BadgeNativeAuditSnapshot {
+        label: "ripr".to_string(),
+        kind: "ripr".to_string(),
+        scope: "repo".to_string(),
+        basis: "canonical_actionable_gap".to_string(),
+        message: "149".to_string(),
+        status: "warn".to_string(),
+        color: "orange".to_string(),
+        counts: BTreeMap::from([
+            ("unsuppressed_exposure_gaps".to_string(), 149),
+            ("analyzed_gap_records".to_string(), 200),
+        ]),
+        reason_counts: BTreeMap::new(),
+        warnings: vec!["advisory".to_string()],
+    };
+    let test_efficiency = serde_json::json!({
+        "reason_counts": {
+            "broad_oracle": 3
+        },
+        "metrics": {
+            "tests_scanned": 7
+        }
+    });
+
+    let ripr_plus = badge_basis_derived_ripr_plus_snapshot(&ripr, Some(&test_efficiency));
+
+    assert_eq!(ripr_plus.label, "ripr+");
+    assert_eq!(ripr_plus.kind, "ripr_plus");
+    assert_eq!(ripr_plus.basis, "canonical_actionable_gap");
+    assert_eq!(ripr_plus.message, "149");
+    assert_eq!(
+        ripr_plus.counts.get("unsuppressed_exposure_gaps"),
+        Some(&149)
+    );
+    assert_eq!(
+        ripr_plus
+            .counts
+            .get("unsuppressed_test_efficiency_findings"),
+        Some(&0)
+    );
+    assert_eq!(ripr_plus.counts.get("analyzed_tests"), Some(&7));
+    assert_eq!(ripr_plus.reason_counts.get("broad_oracle"), Some(&3));
+    assert_eq!(ripr_plus.warnings, vec!["advisory".to_string()]);
+}
+
+#[test]
+fn badge_basis_derived_repo_plus_handles_missing_test_efficiency_context() {
+    let ripr = BadgeNativeAuditSnapshot {
+        label: "ripr".to_string(),
+        kind: "ripr".to_string(),
+        scope: "repo".to_string(),
+        basis: "canonical_actionable_gap".to_string(),
+        message: "4".to_string(),
+        status: "warn".to_string(),
+        color: "orange".to_string(),
+        counts: BTreeMap::from([("unsuppressed_exposure_gaps".to_string(), 4)]),
+        reason_counts: BTreeMap::new(),
+        warnings: Vec::new(),
+    };
+
+    let ripr_plus = badge_basis_derived_ripr_plus_snapshot(&ripr, None);
+
+    assert_eq!(ripr_plus.label, "ripr+");
+    assert_eq!(ripr_plus.kind, "ripr_plus");
+    assert_eq!(ripr_plus.message, "4");
+    assert_eq!(
+        ripr_plus
+            .counts
+            .get("unsuppressed_test_efficiency_findings"),
+        Some(&0)
+    );
+    assert_eq!(
+        ripr_plus.counts.get("intentional_test_efficiency_findings"),
+        Some(&0)
+    );
+    assert_eq!(
+        ripr_plus.counts.get("suppressed_test_efficiency_findings"),
+        Some(&0)
+    );
+    assert_eq!(ripr_plus.counts.get("unknowns_test_efficiency"), Some(&0));
+    assert!(!ripr_plus.counts.contains_key("analyzed_tests"));
+    assert!(ripr_plus.reason_counts.is_empty());
+}
+
+#[test]
+fn badge_basis_seam_native_counts_are_internal_when_public_basis_is_canonical() {
+    let ripr = BadgeNativeAuditSnapshot {
+        label: "ripr".to_string(),
+        kind: "ripr".to_string(),
+        scope: "repo".to_string(),
+        basis: "canonical_actionable_gap".to_string(),
+        message: "12".to_string(),
+        status: "warn".to_string(),
+        color: "orange".to_string(),
+        counts: BTreeMap::from([
+            ("analyzed_seams".to_string(), 100),
+            ("unsuppressed_exposure_gaps".to_string(), 12),
+        ]),
+        reason_counts: BTreeMap::new(),
+        warnings: Vec::new(),
+    };
+
+    let counts = badge_basis_seam_native_counts(false, &ripr);
+
+    assert_eq!(counts.status, "not_collected");
+    assert!(counts.counts.is_empty());
+    assert!(counts.note.contains("canonical_actionable_gap"));
+    assert!(counts.source.contains("--include-seam-classes"));
+}
+
+#[test]
+fn badge_basis_canonical_projection_names_static_repair_gaps() {
+    let ripr = BadgeNativeAuditSnapshot {
+        label: "ripr".to_string(),
+        kind: "ripr".to_string(),
+        scope: "repo".to_string(),
+        basis: "canonical_actionable_gap".to_string(),
+        message: "12".to_string(),
+        status: "warn".to_string(),
+        color: "orange".to_string(),
+        counts: BTreeMap::new(),
+        reason_counts: BTreeMap::new(),
+        warnings: Vec::new(),
+    };
+    let ripr_plus = BadgeNativeAuditSnapshot {
+        label: "ripr+".to_string(),
+        kind: "ripr_plus".to_string(),
+        scope: "repo".to_string(),
+        basis: "canonical_actionable_gap".to_string(),
+        message: "14".to_string(),
+        status: "warn".to_string(),
+        color: "orange".to_string(),
+        counts: BTreeMap::new(),
+        reason_counts: BTreeMap::new(),
+        warnings: Vec::new(),
+    };
+
+    let projection =
+        badge_basis_canonical_projection(&RepoBadgeArtifactOptions::default(), &ripr, &ripr_plus);
+
+    assert_eq!(projection.status, "available");
+    assert_eq!(projection.ripr_count, Some(12));
+    assert_eq!(projection.ripr_plus_count, Some(14));
+    assert!(projection.detail.contains("canonical_actionable_gap"));
+    assert!(
+        projection
+            .detail
+            .contains("unresolved actionable static repair gaps")
+    );
+}
+
+#[test]
+fn badge_basis_report_json_names_public_projection_rule() -> Result<(), String> {
+    let report = BadgeBasisReport {
+        status: "pass".to_string(),
+        current_public_endpoints: vec![],
+        current_repo_badges: vec![],
+        seam_native_counts: BadgeCountBreakdown {
+            status: "not_collected".to_string(),
+            source: "badge-basis".to_string(),
+            counts: BTreeMap::new(),
+            note: "supporting inventory".to_string(),
+        },
+        test_efficiency_counts: BadgeCountBreakdown {
+            status: "pass".to_string(),
+            source: "test-efficiency".to_string(),
+            counts: BTreeMap::new(),
+            note: "available".to_string(),
+        },
+        canonical_actionable_gap: BadgeCanonicalProjection {
+            status: "available".to_string(),
+            source: "repo-badge-artifacts".to_string(),
+            ripr_count: Some(3),
+            ripr_plus_count: Some(3),
+            detail: "canonical_actionable_gap basis".to_string(),
+        },
+        raw_alignment_signals: BadgeBasisSignal {
+            status: "supporting".to_string(),
+            source: "finding alignment".to_string(),
+            count: None,
+            detail: "supporting evidence".to_string(),
+        },
+        canonical_evidence_items: BadgeBasisSignal {
+            status: "supporting".to_string(),
+            source: "repo exposure".to_string(),
+            count: None,
+            detail: "supporting context".to_string(),
+        },
+        static_limitations: BadgeBasisSignal {
+            status: "available".to_string(),
+            source: "repo exposure".to_string(),
+            count: Some(0),
+            detail: "supporting inventory".to_string(),
+        },
+        suppressed_or_intentional_items: BadgeBasisSignal {
+            status: "available".to_string(),
+            source: "badge counts".to_string(),
+            count: Some(0),
+            detail: "out of headline".to_string(),
+        },
+        no_action_items: BadgeBasisSignal {
+            status: "requires_gap_decision_ledger".to_string(),
+            source: "none".to_string(),
+            count: None,
+            detail: "requires gap records".to_string(),
+        },
+        recommended_public_projection: "canonical_actionable_gap".to_string(),
+        warnings: Vec::new(),
+    };
+
+    let json: Value =
+        serde_json::from_str(&badge_basis_report_json(&report)?).map_err(|err| err.to_string())?;
+    let rule = json
+        .pointer("/recommended_public_projection/rule")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "missing recommended public projection rule".to_string())?;
+
+    assert!(rule.contains("unresolved actionable static repair gaps"));
+    assert!(rule.contains("canonical_actionable_gap"));
+    assert!(rule.contains("repair, verify, and receipt model"));
+    assert!(rule.contains("supporting/internal"));
+    Ok(())
+}
+
+#[test]
+fn repo_badge_artifacts_summary_markdown_carries_baseline_disclaimer() -> Result<(), String> {
+    let markdown = repo_badge_artifacts_summary_markdown(
+        STUB_RIPR_NATIVE_JSON,
+        STUB_RIPR_PLUS_NATIVE_JSON,
+        None,
+    );
+
+    let must_contain = [
+        "# ripr repo badges",
+        "classified repo seams",
+        "not against `git diff origin/main...HEAD`",
+        "## ripr",
+        "## ripr+",
+        "- `repo-ripr-badge.json`",
+        "- `repo-ripr-plus-badge-shields.json`",
+    ];
+    for expected in must_contain {
+        if !markdown.contains(expected) {
+            return Err(format!(
+                "expected '{expected}' in repo markdown, got:\n{markdown}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn repo_badge_artifacts_summary_markdown_names_gap_ledger_basis() -> Result<(), String> {
+    let markdown = repo_badge_artifacts_summary_markdown(
+        STUB_RIPR_NATIVE_JSON,
+        STUB_RIPR_PLUS_NATIVE_JSON,
+        Some(Path::new("target/ripr/reports/gap-decision-ledger.json")),
+    );
+
+    for expected in [
+        "explicit gap decision ledger",
+        "policy-targeted `GapRecord` projection eligibility",
+        "target/ripr/reports/gap-decision-ledger.json",
+    ] {
+        if !markdown.contains(expected) {
+            return Err(format!(
+                "expected '{expected}' in repo markdown, got:\n{markdown}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn badge_native_audit_snapshot_reads_basis_and_counts() -> Result<(), String> {
+    let json = r#"{
+  "label": "ripr",
+  "kind": "ripr",
+  "scope": "repo",
+  "basis": "seam_native",
+  "message": "42",
+  "status": "warn",
+  "color": "orange",
+  "counts": {
+    "unsuppressed_exposure_gaps": 42,
+    "analyzed_seams": 99
+  },
+  "reason_counts": {
+    "broad_oracle": 3
+  },
+  "warnings": ["advisory"]
+}"#;
+    let snapshot = badge_native_audit_snapshot(json)?;
+    assert_eq!(snapshot.label, "ripr");
+    assert_eq!(snapshot.scope, "repo");
+    assert_eq!(snapshot.basis, "seam_native");
+    assert_eq!(snapshot.counts.get("analyzed_seams"), Some(&99));
+    assert_eq!(snapshot.reason_counts.get("broad_oracle"), Some(&3));
+    assert_eq!(snapshot.warnings, vec!["advisory".to_string()]);
+    Ok(())
+}
+
+#[test]
+fn parse_repo_exposure_summary_counts_reads_class_table() -> Result<(), String> {
+    let markdown = r#"# ripr repo exposure report
+
+## Summary
+
+| Class | Count |
+| --- | --- |
+| seams_total | 12 |
+| headline_eligible | 7 |
+| strongly_gripped | 5 |
+| weakly_gripped | 2 |
+| opaque | 1 |
+
+## Top gaps
+
+| Seam | Kind | Class |
+| --- | --- | --- |
+| a | b | c |
+"#;
+    let counts = parse_repo_exposure_summary_counts(markdown)?;
+    assert_eq!(counts.get("seams_total"), Some(&12));
+    assert_eq!(counts.get("headline_eligible"), Some(&7));
+    assert_eq!(counts.get("weakly_gripped"), Some(&2));
+    assert_eq!(counts.get("opaque"), Some(&1));
+    assert!(!counts.contains_key("Seam"));
+    Ok(())
+}
+
+#[test]
+fn badge_basis_report_markdown_names_actionable_recommendation() {
+    let report = BadgeBasisReport {
+        status: "warn".to_string(),
+        current_public_endpoints: vec![BadgeEndpointSnapshot {
+            path: "badges/ripr.json".to_string(),
+            label: "ripr".to_string(),
+            message: "24352".to_string(),
+            color: "orange".to_string(),
+        }],
+        current_repo_badges: vec![BadgeNativeAuditSnapshot {
+            label: "ripr".to_string(),
+            kind: "ripr".to_string(),
+            scope: "repo".to_string(),
+            basis: "seam_native".to_string(),
+            message: "24352".to_string(),
+            status: "warn".to_string(),
+            color: "orange".to_string(),
+            counts: BTreeMap::from([("unsuppressed_exposure_gaps".to_string(), 24352)]),
+            reason_counts: BTreeMap::new(),
+            warnings: Vec::new(),
+        }],
+        seam_native_counts: BadgeCountBreakdown {
+            status: "pass".to_string(),
+            source: "repo-exposure-md".to_string(),
+            counts: BTreeMap::from([("weakly_gripped".to_string(), 10)]),
+            note: "available".to_string(),
+        },
+        test_efficiency_counts: BadgeCountBreakdown {
+            status: "pass".to_string(),
+            source: "test-efficiency.json".to_string(),
+            counts: BTreeMap::from([("likely_vacuous".to_string(), 2)]),
+            note: "available".to_string(),
+        },
+        canonical_actionable_gap: BadgeCanonicalProjection {
+            status: "not_available".to_string(),
+            source: "canonical_actionable_gap generator path".to_string(),
+            ripr_count: None,
+            ripr_plus_count: None,
+            detail: "later PR".to_string(),
+        },
+        raw_alignment_signals: BadgeBasisSignal {
+            status: "not_in_current_badge_generator".to_string(),
+            source: "finding alignment".to_string(),
+            count: None,
+            detail: "supporting evidence".to_string(),
+        },
+        canonical_evidence_items: BadgeBasisSignal {
+            status: "not_in_current_badge_generator".to_string(),
+            source: "repo exposure".to_string(),
+            count: None,
+            detail: "supporting evidence".to_string(),
+        },
+        static_limitations: BadgeBasisSignal {
+            status: "available".to_string(),
+            source: "repo exposure".to_string(),
+            count: Some(1),
+            detail: "supporting inventory".to_string(),
+        },
+        suppressed_or_intentional_items: BadgeBasisSignal {
+            status: "available".to_string(),
+            source: "badge counts".to_string(),
+            count: Some(0),
+            detail: "out of headline".to_string(),
+        },
+        no_action_items: BadgeBasisSignal {
+            status: "requires_gap_decision_ledger".to_string(),
+            source: "none".to_string(),
+            count: None,
+            detail: "requires gap records".to_string(),
+        },
+        recommended_public_projection: "canonical_actionable_gap".to_string(),
+        warnings: vec!["seam-native public basis".to_string()],
+    };
+    let markdown = badge_basis_report_markdown(&report);
+    assert!(markdown.contains("# ripr Public Badge Basis Audit"));
+    assert!(markdown.contains("unresolved actionable static repair gaps"));
+    assert!(markdown.contains("`seam_native`"));
+    assert!(markdown.contains("`canonical_actionable_gap`"));
+    assert!(markdown.contains("supporting/internal diagnostics"));
+    assert!(markdown.contains("repair, verify, and receipt model"));
+    assert!(markdown.contains("badges/ripr.json"));
+}
+
+#[test]
+fn badge_endpoint_files_pair_committed_paths_with_repo_shields_sources() {
+    // Pin both the count and the (committed -> source) mapping so a
+    // future rename of either side trips the test, not the badge URL.
+    assert_eq!(super::BADGE_ENDPOINT_FILES.len(), 2);
+    let pairs: Vec<(&str, &str)> = super::BADGE_ENDPOINT_FILES.to_vec();
+    assert!(pairs.contains(&("badges/ripr.json", "repo-ripr-badge-shields.json")));
+    assert!(pairs.contains(&("badges/ripr-plus.json", "repo-ripr-plus-badge-shields.json")));
+}
+
+#[test]
+fn badge_endpoint_violation_reports_missing_committed_file() -> Result<(), String> {
+    let violation = super::badge_endpoint_violation(
+        "badges/ripr.json",
+        "target/ripr/reports/repo-ripr-badge-shields.json",
+        b"{\"schemaVersion\":1}",
+        None,
+    );
+    let message = violation.ok_or_else(|| "missing file should produce a violation".to_string())?;
+    assert!(
+        message.contains("missing badge endpoint file badges/ripr.json"),
+        "violation should name the missing file: {message}"
+    );
+    assert!(
+        message.contains("cargo xtask update-badge-endpoints"),
+        "violation should point at the refresh command: {message}"
+    );
+    Ok(())
+}
+
+#[test]
+fn badge_endpoint_violation_reports_stale_committed_file() -> Result<(), String> {
+    let violation = super::badge_endpoint_violation(
+        "badges/ripr-plus.json",
+        "target/ripr/reports/repo-ripr-plus-badge-shields.json",
+        b"{\"schemaVersion\":1,\"label\":\"ripr+\",\"message\":\"163\",\"color\":\"orange\"}",
+        Some(b"{\"schemaVersion\":1,\"label\":\"ripr+\",\"message\":\"317\",\"color\":\"orange\"}"),
+    );
+    let message = violation.ok_or_else(|| "stale file should produce a violation".to_string())?;
+    assert!(
+        message.contains("badges/ripr-plus.json is stale"),
+        "violation should describe the stale committed path: {message}"
+    );
+    assert!(
+        message.contains("repo-ripr-plus-badge-shields.json"),
+        "violation should name the source-of-truth file: {message}"
+    );
+    assert!(
+        message.contains("cargo xtask update-badge-endpoints"),
+        "violation should point at the refresh command: {message}"
+    );
+    assert!(
+        message.contains("commit the diff"),
+        "violation should remind the author to commit: {message}"
+    );
+    Ok(())
+}
+
+#[test]
+fn validate_shields_endpoint_bytes_accepts_minimal_shape() -> Result<(), String> {
+    super::validate_shields_endpoint_bytes(
+        b"{\"schemaVersion\":1,\"label\":\"ripr+\",\"message\":\"0\",\"color\":\"brightgreen\"}",
+        "ripr+",
+    )
+}
+
+#[test]
+fn validate_shields_endpoint_bytes_rejects_extra_fields() {
+    let err = super::validate_shields_endpoint_bytes(
+            b"{\"schemaVersion\":1,\"label\":\"ripr+\",\"message\":\"0\",\"color\":\"brightgreen\",\"extra\":true}",
+            "ripr+",
+        )
+        .expect_err("extra fields must be rejected");
+    assert!(err.contains("must contain only"));
+}
+
+#[test]
+fn badge_endpoint_violation_returns_none_when_committed_file_matches() {
+    let bytes =
+        b"{\"schemaVersion\":1,\"label\":\"ripr\",\"message\":\"0\",\"color\":\"brightgreen\"}";
+    let violation = super::badge_endpoint_violation(
+        "badges/ripr.json",
+        "target/ripr/reports/repo-ripr-badge-shields.json",
+        bytes,
+        Some(bytes),
+    );
+    assert!(
+        violation.is_none(),
+        "matching content must not produce a violation: {violation:?}"
+    );
+}
+
+fn badge_endpoint_tempdir(label: &str) -> Result<std::path::PathBuf, String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let pid = std::process::id();
+    let dir = std::env::temp_dir().join(format!("ripr-badge-endpoint-{label}-{stamp}-{pid}"));
+    std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir {label}: {err}"))?;
+    Ok(dir)
+}
+
+fn write_fixture_shields(dir: &std::path::Path, name: &str, body: &[u8]) -> Result<(), String> {
+    std::fs::write(dir.join(name), body).map_err(|err| format!("write {name}: {err}"))
+}
+
+#[test]
+fn copy_badge_endpoints_from_reports_writes_both_files() -> Result<(), String> {
+    let reports = badge_endpoint_tempdir("copy-reports")?;
+    let repo_root = badge_endpoint_tempdir("copy-root")?;
+    write_fixture_shields(
+        &reports,
+        "repo-ripr-badge-shields.json",
+        b"{\"schemaVersion\":1,\"label\":\"ripr\",\"message\":\"7\",\"color\":\"yellow\"}",
+    )?;
+    write_fixture_shields(
+        &reports,
+        "repo-ripr-plus-badge-shields.json",
+        b"{\"schemaVersion\":1,\"label\":\"ripr+\",\"message\":\"7\",\"color\":\"yellow\"}",
+    )?;
+
+    super::copy_badge_endpoints_from_reports(&reports, &repo_root)?;
+
+    let ripr = std::fs::read(repo_root.join("badges/ripr.json"))
+        .map_err(|err| format!("read written ripr.json: {err}"))?;
+    let ripr_plus = std::fs::read(repo_root.join("badges/ripr-plus.json"))
+        .map_err(|err| format!("read written ripr-plus.json: {err}"))?;
+    assert_eq!(
+        ripr,
+        b"{\"schemaVersion\":1,\"label\":\"ripr\",\"message\":\"7\",\"color\":\"yellow\"}"
+    );
+    assert_eq!(
+        ripr_plus,
+        b"{\"schemaVersion\":1,\"label\":\"ripr+\",\"message\":\"7\",\"color\":\"yellow\"}"
+    );
+
+    let _ = std::fs::remove_dir_all(&reports);
+    let _ = std::fs::remove_dir_all(&repo_root);
+    Ok(())
+}
+
+#[test]
+fn copy_badge_endpoints_from_reports_creates_badges_dir_when_missing() -> Result<(), String> {
+    let reports = badge_endpoint_tempdir("copy-mkdir-reports")?;
+    let repo_root = badge_endpoint_tempdir("copy-mkdir-root")?;
+    write_fixture_shields(
+        &reports,
+        "repo-ripr-badge-shields.json",
+        b"{\"schemaVersion\":1,\"label\":\"ripr\",\"message\":\"0\",\"color\":\"brightgreen\"}",
+    )?;
+    write_fixture_shields(
+        &reports,
+        "repo-ripr-plus-badge-shields.json",
+        b"{\"schemaVersion\":1,\"label\":\"ripr+\",\"message\":\"0\",\"color\":\"brightgreen\"}",
+    )?;
+    // badges/ subdir does not exist yet; copy_badge_endpoints_from_reports must create it.
+    assert!(!repo_root.join("badges").exists());
+
+    super::copy_badge_endpoints_from_reports(&reports, &repo_root)?;
+
+    assert!(repo_root.join("badges").is_dir());
+    assert!(repo_root.join("badges/ripr.json").exists());
+    assert!(repo_root.join("badges/ripr-plus.json").exists());
+
+    let _ = std::fs::remove_dir_all(&reports);
+    let _ = std::fs::remove_dir_all(&repo_root);
+    Ok(())
+}
+
+#[test]
+fn copy_badge_endpoints_from_reports_errors_when_source_missing() -> Result<(), String> {
+    let reports = badge_endpoint_tempdir("copy-err-reports")?;
+    let repo_root = badge_endpoint_tempdir("copy-err-root")?;
+    // Write only the ripr source; ripr-plus is missing.
+    write_fixture_shields(
+        &reports,
+        "repo-ripr-badge-shields.json",
+        b"{\"schemaVersion\":1,\"label\":\"ripr\",\"message\":\"0\",\"color\":\"brightgreen\"}",
+    )?;
+
+    let result = super::copy_badge_endpoints_from_reports(&reports, &repo_root);
+    let err = result.err().ok_or_else(|| {
+        "missing source must produce an error from copy_badge_endpoints_from_reports".to_string()
+    })?;
+    assert!(
+        err.contains("repo-ripr-plus-badge-shields.json"),
+        "error should name the missing source file: {err}"
+    );
+    assert!(
+        err.contains("cargo xtask repo-badge-artifacts"),
+        "error should suggest regenerating the source: {err}"
+    );
+
+    let _ = std::fs::remove_dir_all(&reports);
+    let _ = std::fs::remove_dir_all(&repo_root);
+    Ok(())
+}
+
+#[test]
+fn compute_badge_endpoint_violations_returns_empty_when_in_sync() -> Result<(), String> {
+    let reports = badge_endpoint_tempdir("compute-sync-reports")?;
+    let repo_root = badge_endpoint_tempdir("compute-sync-root")?;
+    let ripr_body =
+        b"{\"schemaVersion\":1,\"label\":\"ripr\",\"message\":\"3\",\"color\":\"yellow\"}";
+    let plus_body =
+        b"{\"schemaVersion\":1,\"label\":\"ripr+\",\"message\":\"3\",\"color\":\"yellow\"}";
+    write_fixture_shields(&reports, "repo-ripr-badge-shields.json", ripr_body)?;
+    write_fixture_shields(&reports, "repo-ripr-plus-badge-shields.json", plus_body)?;
+    std::fs::create_dir_all(repo_root.join("badges"))
+        .map_err(|err| format!("mkdir badges: {err}"))?;
+    std::fs::write(repo_root.join("badges/ripr.json"), ripr_body)
+        .map_err(|err| format!("write committed ripr.json: {err}"))?;
+    std::fs::write(repo_root.join("badges/ripr-plus.json"), plus_body)
+        .map_err(|err| format!("write committed ripr-plus.json: {err}"))?;
+
+    let violations = super::compute_badge_endpoint_violations(&reports, &repo_root)?;
+    assert!(
+        violations.is_empty(),
+        "in-sync committed files must produce no violations: {violations:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&reports);
+    let _ = std::fs::remove_dir_all(&repo_root);
+    Ok(())
+}
+
+#[test]
+fn compute_badge_endpoint_violations_flags_missing_committed_file() -> Result<(), String> {
+    let reports = badge_endpoint_tempdir("compute-missing-reports")?;
+    let repo_root = badge_endpoint_tempdir("compute-missing-root")?;
+    write_fixture_shields(
+        &reports,
+        "repo-ripr-badge-shields.json",
+        b"{\"schemaVersion\":1,\"label\":\"ripr\",\"message\":\"0\",\"color\":\"brightgreen\"}",
+    )?;
+    write_fixture_shields(
+        &reports,
+        "repo-ripr-plus-badge-shields.json",
+        b"{\"schemaVersion\":1,\"label\":\"ripr+\",\"message\":\"0\",\"color\":\"brightgreen\"}",
+    )?;
+    // No committed badges/*.json files exist on the temp repo root.
+
+    let violations = super::compute_badge_endpoint_violations(&reports, &repo_root)?;
+    assert_eq!(
+        violations.len(),
+        2,
+        "both committed files missing must flag both: {violations:?}"
+    );
+    for violation in &violations {
+        assert!(
+            violation.contains("missing badge endpoint file"),
+            "violation should be the missing-file shape: {violation}"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&reports);
+    let _ = std::fs::remove_dir_all(&repo_root);
+    Ok(())
+}
+
+#[test]
+fn compute_badge_endpoint_violations_flags_stale_committed_file() -> Result<(), String> {
+    let reports = badge_endpoint_tempdir("compute-stale-reports")?;
+    let repo_root = badge_endpoint_tempdir("compute-stale-root")?;
+    let want = b"{\"schemaVersion\":1,\"label\":\"ripr\",\"message\":\"5\",\"color\":\"orange\"}";
+    let stale = b"{\"schemaVersion\":1,\"label\":\"ripr\",\"message\":\"99\",\"color\":\"orange\"}";
+    write_fixture_shields(&reports, "repo-ripr-badge-shields.json", want)?;
+    write_fixture_shields(
+        &reports,
+        "repo-ripr-plus-badge-shields.json",
+        b"{\"schemaVersion\":1,\"label\":\"ripr+\",\"message\":\"5\",\"color\":\"orange\"}",
+    )?;
+    std::fs::create_dir_all(repo_root.join("badges"))
+        .map_err(|err| format!("mkdir badges: {err}"))?;
+    // ripr.json is stale; ripr-plus.json is in sync.
+    std::fs::write(repo_root.join("badges/ripr.json"), stale)
+        .map_err(|err| format!("write stale ripr.json: {err}"))?;
+    std::fs::write(
+        repo_root.join("badges/ripr-plus.json"),
+        b"{\"schemaVersion\":1,\"label\":\"ripr+\",\"message\":\"5\",\"color\":\"orange\"}",
+    )
+    .map_err(|err| format!("write fresh ripr-plus.json: {err}"))?;
+
+    let violations = super::compute_badge_endpoint_violations(&reports, &repo_root)?;
+    assert_eq!(violations.len(), 1, "exactly one stale: {violations:?}");
+    assert!(
+        violations[0].contains("badges/ripr.json is stale"),
+        "violation should name the stale file: {}",
+        violations[0]
+    );
+
+    let _ = std::fs::remove_dir_all(&reports);
+    let _ = std::fs::remove_dir_all(&repo_root);
+    Ok(())
+}
+
+#[test]
+fn compute_badge_endpoint_violations_errors_when_source_missing() -> Result<(), String> {
+    let reports = badge_endpoint_tempdir("compute-noreport-reports")?;
+    let repo_root = badge_endpoint_tempdir("compute-noreport-root")?;
+    // No source files at all.
+
+    let result = super::compute_badge_endpoint_violations(&reports, &repo_root);
+    let err = result.err().ok_or_else(|| {
+        "missing reports directory contents should produce a hard error".to_string()
+    })?;
+    assert!(
+        err.contains("failed to read"),
+        "error should describe the read failure: {err}"
+    );
+
+    let _ = std::fs::remove_dir_all(&reports);
+    let _ = std::fs::remove_dir_all(&repo_root);
+    Ok(())
+}
+
+#[test]
+fn badge_endpoint_violation_treats_byte_diff_as_stale() {
+    // Even a single-byte difference (e.g. trailing newline) trips the
+    // staleness check so committed files stay byte-equal with the
+    // source-of-truth Shields JSON.
+    let want =
+        b"{\"schemaVersion\":1,\"label\":\"ripr\",\"message\":\"0\",\"color\":\"brightgreen\"}\n";
+    let got =
+        b"{\"schemaVersion\":1,\"label\":\"ripr\",\"message\":\"0\",\"color\":\"brightgreen\"}";
+    let violation = super::badge_endpoint_violation(
+        "badges/ripr.json",
+        "target/ripr/reports/repo-ripr-badge-shields.json",
+        want,
+        Some(got),
+    );
+    assert!(
+        violation.is_some(),
+        "trailing-byte difference must be flagged as stale"
+    );
+}
+
+#[test]
+fn repo_badge_artifacts_summary_markdown_omits_forbidden_terms() -> Result<(), String> {
+    let markdown = repo_badge_artifacts_summary_markdown(
+        STUB_RIPR_NATIVE_JSON,
+        STUB_RIPR_PLUS_NATIVE_JSON,
+        None,
+    );
+
+    // Repo badge output is public-facing: it must not borrow runtime
+    // mutation language ("killed", "survived", "proven", "adequate")
+    // and must not pretend to be a coverage metric.
+    let lower = markdown.to_lowercase();
+    for term in ["coverage", "uncovered", "killed", "proven", "adequate"] {
+        if lower.contains(term) {
+            return Err(format!(
+                "forbidden term '{term}' found in repo markdown:\n{markdown}"
+            ));
+        }
+    }
+    for forbidden_word in ["survived", "untested"] {
+        for window in lower.split(|c: char| !c.is_alphanumeric() && c != '_') {
+            if window == forbidden_word {
+                return Err(format!(
+                    "forbidden word '{forbidden_word}' found in repo markdown:\n{markdown}"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn strip_yaml_comment_removes_trailing_comment() {
+    assert_eq!(strip_yaml_comment("key: value # comment"), "key: value ");
+}
+
+#[test]
+fn strip_yaml_comment_preserves_hash_in_strings() {
+    assert_eq!(
+        strip_yaml_comment("key: \"value#with hash\""),
+        "key: \"value#with hash\""
+    );
+    assert_eq!(
+        strip_yaml_comment("key: 'value#with hash'"),
+        "key: 'value#with hash'"
+    );
+}
+
+#[test]
+fn strip_yaml_comment_handles_full_comment_line() {
+    assert_eq!(strip_yaml_comment("# this is a comment"), "");
+}
+
+#[test]
+fn strip_yaml_comment_preserves_line_without_comment() {
+    assert_eq!(
+        strip_yaml_comment("review_model: \"custom:MiniMax-M3-0\""),
+        "review_model: \"custom:MiniMax-M3-0\""
+    );
+}
+
+#[test]
+fn strip_yaml_comment_handles_escaped_quote() {
+    assert_eq!(
+        strip_yaml_comment("key: \"value\\\" # not a comment"),
+        "key: \"value\\\" # not a comment"
+    );
+}
+
+#[test]
+fn strip_yaml_comment_handles_double_backslash_before_quote() {
+    assert_eq!(
+        strip_yaml_comment("key: \"value\\\\\" # real comment"),
+        "key: \"value\\\\\" "
+    );
+}
+
+#[test]
+fn active_yaml_lines_strips_comments_and_blanks() {
+    let input = "\
+# commented out
+key: value
+  # indented comment
+
+active: true
+";
+    let lines = active_yaml_lines(input);
+    assert_eq!(lines, vec!["key: value", "active: true"]);
+}
+
+#[test]
+fn has_active_line_finds_active_content() {
+    let lines = active_yaml_lines("review_model: \"custom:MiniMax-M3-0\"");
+    assert!(has_active_line(
+        &lines,
+        "review_model: \"custom:MiniMax-M3-0\""
+    ));
+}
+
+#[test]
+fn has_active_line_ignores_commented_content() {
+    let lines = active_yaml_lines("# review_model: \"custom:MiniMax-M3-0\"");
+    assert!(!has_active_line(
+        &lines,
+        "review_model: \"custom:MiniMax-M3-0\""
+    ));
+}
+
+#[test]
+fn forbids_active_line_catches_active_forbidden_content() {
+    let lines = active_yaml_lines("settings: |");
+    assert!(forbids_active_line(&lines, "settings:"));
+}
+
+#[test]
+fn forbids_active_line_ignores_commented_forbidden_content() {
+    let lines = active_yaml_lines("# settings: |");
+    assert!(!forbids_active_line(&lines, "settings:"));
+}
+
+#[test]
+fn check_droid_action_refs_rejects_non_sha_refs() {
+    let mut violations = Vec::new();
+    check_droid_action_refs(
+        &mut violations,
+        "test.yml",
+        "      - uses: EffortlessMetrics/droid-action-safe@v5\n",
+    );
+    assert_eq!(violations.len(), 2);
+    assert!(violations[0].contains("immutable commit SHA"));
+}
+
+#[test]
+fn check_droid_action_refs_accepts_sha_refs() {
+    let mut violations = Vec::new();
+    check_droid_action_refs(
+        &mut violations,
+        "test.yml",
+        "      - uses: EffortlessMetrics/droid-action-safe@7c1377ccbacddc95560d1570547a5baa51de01ec\n",
+    );
+    assert!(violations.is_empty());
+}
+
+#[test]
+fn check_droid_action_refs_rejects_unsafe_upstream_ref() {
+    let mut violations = Vec::new();
+    check_droid_action_refs(
+        &mut violations,
+        "test.yml",
+        "      - uses: Factory-AI/droid-action@e3d1f5e7861c36fe4a9c4dca3edec87b964b2bc4\n",
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("unsafe upstream Droid action"))
+    );
+}
+
+#[test]
+fn check_droid_action_refs_rejects_unapproved_safe_sha() {
+    let mut violations = Vec::new();
+    check_droid_action_refs(
+        &mut violations,
+        "test.yml",
+        "      - uses: EffortlessMetrics/droid-action-safe@e3d1f5e7861c36fe4a9c4dca3edec87b964b2bc4\n",
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("approved safe action ref"))
+    );
+}
+
+#[test]
+fn check_droid_action_refs_ignores_commented_uses() {
+    let mut violations = Vec::new();
+    check_droid_action_refs(
+        &mut violations,
+        "test.yml",
+        "      # - uses: Factory-AI/droid-action@v5\n",
+    );
+    assert!(violations.is_empty());
+}
+
+#[test]
+fn check_droid_action_refs_rejects_main_ref() {
+    let mut violations = Vec::new();
+    check_droid_action_refs(
+        &mut violations,
+        "test.yml",
+        "      - uses: Factory-AI/droid-action@main\n",
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("immutable commit SHA"))
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("unsafe upstream Droid action"))
+    );
+}
+
+#[test]
+fn check_droid_common_flags_missing_same_repo_guard() {
+    let mut violations = Vec::new();
+    let yaml = "\
+review_model: \"custom:MiniMax-M3-0\"
+security_model: \"custom:MiniMax-M3-0\"
+";
+    check_droid_common(&mut violations, "test.yml", yaml, true, true);
+    assert!(violations.iter().any(|v| v.contains("same-repo guard")));
+}
+
+#[test]
+fn check_droid_common_flags_anthropic_tokens_on_active_lines_only() {
+    let mut violations = Vec::new();
+    let yaml = "\
+# ANTHROPIC_AUTH_TOKEN: something
+ANTHROPIC_AUTH_TOKEN: \"\"
+ANTHROPIC_BASE_URL: \"\"
+review_model: \"custom:MiniMax-M3-0\"
+security_model: \"custom:MiniMax-M3-0\"
+";
+    check_droid_common(&mut violations, "test.yml", yaml, true, true);
+    assert!(!violations.iter().any(|v| v.contains("ANTHROPIC")));
+}
+
+#[test]
+fn check_droid_common_flags_active_anthropic_tokens() {
+    let mut violations = Vec::new();
+    let yaml = "\
+ANTHROPIC_AUTH_TOKEN: something
+review_model: \"custom:MiniMax-M3-0\"
+security_model: \"custom:MiniMax-M3-0\"
+";
+    check_droid_common(&mut violations, "test.yml", yaml, true, true);
+    assert!(violations.iter().any(|v| v.contains("ANTHROPIC")));
+}
+
+#[test]
+fn check_droid_common_flags_settings_input_only_when_active() {
+    let mut violations = Vec::new();
+    let yaml = "\
+# settings: |
+review_model: \"custom:MiniMax-M3-0\"
+";
+    check_droid_common(&mut violations, "test.yml", yaml, true, true);
+    assert!(!violations.iter().any(|v| v.contains("settings:")));
+}
+
+#[test]
+fn check_droid_common_flags_active_settings_input() {
+    let mut violations = Vec::new();
+    let yaml = "\
+settings: |
+  some: config
+";
+    check_droid_common(&mut violations, "test.yml", yaml, true, true);
+    assert!(violations.iter().any(|v| v.contains("settings:")));
+}
+
+#[test]
+fn check_droid_common_flags_show_full_output_only_when_active() {
+    let mut violations = Vec::new();
+    let yaml = "# show_full_output: true\nshow_full_output: false\n";
+    check_droid_common(&mut violations, "test.yml", yaml, true, true);
+    assert!(!violations.iter().any(|v| v.contains("show_full_output")));
+}
+
+#[test]
+fn check_droid_common_flags_missing_review_model() {
+    let mut violations = Vec::new();
+    let yaml = "security_model: \"custom:MiniMax-M3-0\"\n";
+    check_droid_common(&mut violations, "test.yml", yaml, true, true);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("review_model must be custom:MiniMax-M3-0"))
+    );
+}
+
+#[test]
+fn check_droid_common_flags_missing_security_model() {
+    let mut violations = Vec::new();
+    let yaml = "review_model: \"custom:MiniMax-M3-0\"\n";
+    check_droid_common(&mut violations, "test.yml", yaml, true, true);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("security_model must be custom:MiniMax-M3-0"))
+    );
+}
+
+#[test]
+fn check_droid_common_flags_missing_settings_local_json() {
+    let mut violations = Vec::new();
+    let yaml = "review_model: \"custom:MiniMax-M3-0\"\n";
+    check_droid_common(&mut violations, "test.yml", yaml, true, true);
+    assert!(violations.iter().any(|v| v.contains("settings.json")));
+}
+
+#[test]
+fn check_droid_common_flags_missing_literal_minimax_key() {
+    let mut violations = Vec::new();
+    let yaml = "review_model: \"custom:MiniMax-M3-0\"\n";
+    check_droid_common(&mut violations, "test.yml", yaml, true, true);
+    assert!(violations.iter().any(|v| v.contains("${MINIMAX_API_KEY}")));
+}
+
+#[test]
+fn check_droid_common_flags_active_anthropic_base_url() {
+    let mut violations = Vec::new();
+    let yaml = "ANTHROPIC_BASE_URL: https://example.com\n";
+    check_droid_common(&mut violations, "test.yml", yaml, true, true);
+    assert!(violations.iter().any(|v| v.contains("ANTHROPIC")));
+}
+
+#[test]
+fn check_droid_common_flags_active_show_full_output() {
+    let mut violations = Vec::new();
+    let yaml = "show_full_output: true\n";
+    check_droid_common(&mut violations, "test.yml", yaml, true, true);
+    assert!(violations.iter().any(|v| v.contains("show_full_output")));
+}
+
+#[test]
+fn check_droid_common_flags_missing_show_full_output_false() {
+    let mut violations = Vec::new();
+    let yaml = "\
+security_model: \"custom:MiniMax-M3-0\"
+$HOME/.factory/settings.json
+${MINIMAX_API_KEY}
+";
+    check_droid_common(&mut violations, "test.yml", yaml, false, false);
+    assert!(violations.iter().any(|v| v.contains("show_full_output")));
+}
+
+#[test]
+fn check_droid_common_flags_missing_debug_artifact_disable() {
+    let mut violations = Vec::new();
+    let yaml = "\
+security_model: \"custom:MiniMax-M3-0\"
+$HOME/.factory/settings.json
+${MINIMAX_API_KEY}
+show_full_output: false
+";
+    check_droid_common(&mut violations, "test.yml", yaml, false, false);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("upload_debug_artifacts: false"))
+    );
+}
+
+#[test]
+fn check_droid_common_flags_missing_github_cli_bootstrap() {
+    let mut violations = Vec::new();
+    let yaml = "\
+security_model: \"custom:MiniMax-M3-0\"
+$HOME/.factory/settings.json
+${MINIMAX_API_KEY}
+show_full_output: false
+upload_debug_artifacts: false
+";
+    check_droid_common(&mut violations, "test.yml", yaml, false, false);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("must check for GitHub CLI"))
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("must install pinned GitHub CLI archive"))
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("must verify pinned GitHub CLI SHA256"))
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("must add the pinned GitHub CLI bin directory"))
+    );
+}
+
+#[test]
+fn check_droid_common_allows_security_scan_without_review_model_or_same_repo_guard() {
+    let mut violations = Vec::new();
+    let yaml = "\
+security_model: \"custom:MiniMax-M3-0\"
+$HOME/.factory/settings.json
+${MINIMAX_API_KEY}
+show_full_output: false
+upload_debug_artifacts: false
+";
+    check_droid_common(&mut violations, "test.yml", yaml, false, false);
+    assert!(
+        !violations
+            .iter()
+            .any(|v| v.contains("review_model must be custom:MiniMax-M3-0"))
+    );
+    assert!(!violations.iter().any(|v| v.contains("same-repo guard")));
+}
+
+fn valid_droid_security_scan_yaml() -> &'static str {
+    r#"
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 8 * * 1"
+concurrency:
+  group: droid-security-scan-${{ github.repository }}
+  cancel-in-progress: false
+jobs:
+  droid-security-scan:
+    env:
+      MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+    steps:
+      - name: Configure MiniMax BYOK for Factory Droid
+        run: |
+          cat > "$HOME/.factory/settings.json" <<'JSON'
+          {"apiKey": "${MINIMAX_API_KEY}"}
+          JSON
+      - name: Ensure GitHub CLI for Droid Action
+        run: |
+          if command -v gh >/dev/null 2>&1; then exit 0; fi
+          gh_archive="gh_2.82.1_linux_amd64.tar.gz"
+          gh_sha256="afada88676dfccea384e6cc28ae990b3e31bbc55f9d75c4697f902c757fa462b"
+          printf '%s  %s\n' "$gh_sha256" "$gh_archive" > gh.sha256
+          sha256sum -c gh.sha256
+          echo "/tmp/gh_2.82.1_linux_amd64/bin" >> "$GITHUB_PATH"
+      - uses: EffortlessMetrics/droid-action-safe@7c1377ccbacddc95560d1570547a5baa51de01ec
+        env:
+          ANTHROPIC_AUTH_TOKEN: ""
+          ANTHROPIC_BASE_URL: ""
+        with:
+          upload_debug_artifacts: false
+          security_scan_schedule: true
+          security_scan_days: 7
+          security_model: "custom:MiniMax-M3-0"
+          security_severity_threshold: medium
+          security_block_on_critical: true
+          security_block_on_high: false
+          show_full_output: false
+"#
+}
+
+fn droid_security_scan_violations(yaml: &str) -> Vec<String> {
+    let mut violations = Vec::new();
+    check_droid_security_scan_config(&mut violations, "security.yml", yaml);
+    violations
+}
+
+#[test]
+fn check_droid_security_scan_accepts_current_shape() {
+    let violations = droid_security_scan_violations(valid_droid_security_scan_yaml());
+    assert!(violations.is_empty());
+}
+
+#[test]
+fn check_droid_security_scan_flags_non_repo_scoped_concurrency() {
+    let yaml = valid_droid_security_scan_yaml().replace(
+        "droid-security-scan-${{ github.repository }}",
+        "droid-security-scan",
+    );
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(violations.iter().any(|v| v.contains("repository-scoped")));
+}
+
+#[test]
+fn check_droid_security_scan_flags_cancel_in_progress() {
+    let yaml = valid_droid_security_scan_yaml()
+        .replace("cancel-in-progress: false", "cancel-in-progress: true");
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(violations.iter().any(|v| v.contains("cancel-in-progress")));
+}
+
+#[test]
+fn check_droid_security_scan_flags_missing_workflow_dispatch() {
+    let yaml = valid_droid_security_scan_yaml().replace("  workflow_dispatch:\n", "");
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(violations.iter().any(|v| v.contains("workflow_dispatch")));
+}
+
+#[test]
+fn check_droid_security_scan_flags_wrong_weekly_schedule() {
+    let yaml =
+        valid_droid_security_scan_yaml().replace("cron: \"0 8 * * 1\"", "cron: \"0 8 * * *\"");
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(violations.iter().any(|v| v.contains("weekly")));
+}
+
+#[test]
+fn check_droid_security_scan_flags_missing_minimax_job_env() {
+    let yaml = valid_droid_security_scan_yaml().replace(
+        "      MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}\n",
+        "",
+    );
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(violations.iter().any(|v| v.contains("MINIMAX_API_KEY")));
+}
+
+#[test]
+fn check_droid_security_scan_flags_missing_schedule_mode() {
+    let yaml = valid_droid_security_scan_yaml().replace(
+        "security_scan_schedule: true",
+        "security_scan_schedule: false",
+    );
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("security_scan_schedule"))
+    );
+}
+
+#[test]
+fn check_droid_security_scan_flags_wrong_scan_days() {
+    let yaml =
+        valid_droid_security_scan_yaml().replace("security_scan_days: 7", "security_scan_days: 14");
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(violations.iter().any(|v| v.contains("security_scan_days")));
+}
+
+#[test]
+fn check_droid_security_scan_flags_wrong_threshold() {
+    let yaml = valid_droid_security_scan_yaml().replace(
+        "security_severity_threshold: medium",
+        "security_severity_threshold: high",
+    );
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("security_severity_threshold"))
+    );
+}
+
+#[test]
+fn check_droid_security_scan_flags_disabled_critical_block() {
+    let yaml = valid_droid_security_scan_yaml().replace(
+        "security_block_on_critical: true",
+        "security_block_on_critical: false",
+    );
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("security_block_on_critical"))
+    );
+}
+
+#[test]
+fn check_droid_security_scan_flags_enabled_high_block() {
+    let yaml = valid_droid_security_scan_yaml().replace(
+        "security_block_on_high: false",
+        "security_block_on_high: true",
+    );
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("security_block_on_high"))
+    );
+}
+
+#[test]
+fn check_droid_security_scan_flags_full_output() {
+    let yaml = valid_droid_security_scan_yaml()
+        .replace("show_full_output: false", "show_full_output: true");
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(violations.iter().any(|v| v.contains("show_full_output")));
+}
+
+#[test]
+fn check_droid_security_scan_flags_debug_artifact_upload() {
+    let yaml = valid_droid_security_scan_yaml().replace(
+        "upload_debug_artifacts: false",
+        "upload_debug_artifacts: true",
+    );
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("debug artifact upload"))
+    );
+}
+
+#[test]
+fn check_droid_action_refs_rejects_short_sha() {
+    let mut violations = Vec::new();
+    check_droid_action_refs(
+        &mut violations,
+        "test.yml",
+        "      - uses: actions/checkout@abc123\n",
+    );
+    assert_eq!(violations.len(), 1);
+    assert!(violations[0].contains("immutable commit SHA"));
+}
+
+#[test]
+fn check_droid_action_refs_handles_dash_uses_with_non_sha() {
+    let mut violations = Vec::new();
+    check_droid_action_refs(&mut violations, "test.yml", "- uses: some/action@v1.2.3\n");
+    assert_eq!(violations.len(), 1);
+}
+
+#[test]
+fn check_droid_action_refs_handles_bare_uses_with_sha() {
+    let mut violations = Vec::new();
+    check_droid_action_refs(
+        &mut violations,
+        "test.yml",
+        "        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd\n",
+    );
+    assert!(violations.is_empty());
+}
+
+#[test]
+fn check_droid_action_refs_ignores_line_without_at_sign() {
+    let mut violations = Vec::new();
+    check_droid_action_refs(&mut violations, "test.yml", "      - uses: local-action\n");
+    assert!(violations.is_empty());
+}
+
+#[test]
+fn check_droid_action_refs_strips_inline_comment_before_checking() {
+    let mut violations = Vec::new();
+    check_droid_action_refs(
+        &mut violations,
+        "test.yml",
+        "      - uses: actions/checkout@v5 # old ref\n",
+    );
+    assert_eq!(violations.len(), 1);
+}
+
+#[test]
+fn help_message_highlights_common_workflows_and_command_lookup() -> Result<(), String> {
+    let overview = help_message(&[])?;
+    assert!(overview.contains("Common starting points:"));
+    assert!(overview.contains("cargo xtask help <command>"));
+
+    let check_pr = help_message(&["check-pr".to_string()])?;
+    assert!(check_pr.contains("Usage: cargo xtask check-pr"));
+    assert!(check_pr.contains("Mutability: non_mutating_check"));
+    assert!(check_pr.contains("Writes: target/ripr/reports"));
+
+    let goldens = help_message(&["goldens".to_string()])?;
+    assert!(goldens.contains("Usage: cargo xtask goldens check"));
+    assert!(goldens.contains("Usage: cargo xtask goldens bless <name> --reason <reason>"));
+
+    Ok(())
+}
+
+#[test]
+fn help_message_for_unknown_command_reuses_suggestion_text() {
+    let err = help_message(&["chek-pr".to_string()]).expect_err("unknown help target");
+    assert!(err.contains("Did you mean `check-pr`?"));
+}
+
+#[test]
+fn unknown_command_message_suggests_nearest_match() {
+    let message = unknown_command_message("chek-pr");
+    assert!(message.contains("Did you mean `check-pr`?"));
+}
+
+#[test]
+fn unknown_command_message_includes_help_without_nearby_match() {
+    let message = unknown_command_message("totally-unknown-command");
+    assert!(!message.contains("Did you mean"));
+    assert!(message.contains("cargo xtask help"));
+}
+
+#[test]
+fn retired_command_message_keeps_scope_records_out_of_live_selection() {
+    let message = unknown_command_message("goals");
+    assert!(message.contains("GitHub issues, PRs, and checks"));
+    assert!(message.contains("implementation slices are scope records"));
+    assert!(!message.contains(".allow/spec-system/slices/"));
+}
+
+fn changed_path(path: &str, statuses: &[&str]) -> ChangedPath {
+    ChangedPath {
+        path: path.to_string(),
+        statuses: statuses
+            .iter()
+            .map(|status| (*status).to_string())
+            .collect::<BTreeSet<_>>(),
+    }
+}
+
+fn doctor_has_error(findings: &[WorktreeDoctorFinding], text: &str) -> bool {
+    findings.iter().any(|finding| {
+        finding.severity == WorktreeDoctorSeverity::Error && finding.message.contains(text)
+    })
+}
+
+fn doctor_has_warning(findings: &[WorktreeDoctorFinding], text: &str) -> bool {
+    findings.iter().any(|finding| {
+        finding.severity == WorktreeDoctorSeverity::Warning && finding.message.contains(text)
+    })
+}
+
+#[test]
+fn generated_clean_rejects_badge_endpoint_diff_outside_refresh_context() {
+    let changes = vec![changed_path("badges/ripr.json", &["M"])];
+    let violations = generated_clean_violations(&changes, false);
+    assert_eq!(violations.len(), 1);
+    assert!(violations[0].contains("generated badge endpoint changed"));
+    assert!(violations[0].contains("do not manually edit RIPR badge numbers"));
+}
+
+#[test]
+fn worktree_doctor_flags_dirty_main_and_behind_branch() {
+    let changes = vec![changed_path("docs/README.md", &["M"])];
+    let findings = worktree_doctor_findings("main", 2, &changes, false, false, false);
+
+    assert!(doctor_has_error(
+        &findings,
+        "main branch has uncommitted changes"
+    ));
+    assert!(doctor_has_error(
+        &findings,
+        "behind origin/main by 2 commit"
+    ));
+}
+
+#[test]
+fn worktree_doctor_rejects_detached_head() {
+    let findings = worktree_doctor_findings("HEAD", 0, &[], false, false, false);
+
+    assert!(doctor_has_error(&findings, "detached HEAD"));
+}
+
+#[test]
+fn worktree_doctor_rejects_badge_endpoint_outside_refresh_context() {
+    let changes = vec![changed_path("badges/ripr.json", &["M"])];
+    let findings = worktree_doctor_findings("badge/diff-policy", 0, &changes, false, false, false);
+
+    assert!(doctor_has_error(
+        &findings,
+        "generated badge endpoint is dirty"
+    ));
+
+    let refresh_findings =
+        worktree_doctor_findings("badge-refresh", 0, &changes, false, false, true);
+    assert!(
+        !doctor_has_error(&refresh_findings, "generated badge endpoint is dirty"),
+        "unexpected findings: {refresh_findings:?}"
+    );
+}
+
+#[test]
+fn worktree_doctor_warns_about_ignored_target_residue() {
+    let findings = worktree_doctor_findings("feature/x", 0, &[], true, true, false);
+
+    assert!(doctor_has_warning(&findings, "target/ripr exists"));
+    assert!(doctor_has_warning(
+        &findings,
+        "crates/ripr/examples/sample/target exists"
+    ));
+}
+
+#[test]
+fn worktree_doctor_rejects_dirty_generated_artifacts() {
+    let changes = vec![
+        changed_path("target/ripr/reports/policy-operations.json", &["A"]),
+        changed_path("crates/ripr/examples/sample/target/debug/sample", &["A"]),
+    ];
+    let findings = worktree_doctor_findings("feature/generated", 0, &changes, false, false, false);
+
+    assert!(doctor_has_error(
+        &findings,
+        "generated RIPR target artifact is dirty"
+    ));
+    assert!(doctor_has_error(
+        &findings,
+        "sample workspace target artifact is dirty"
+    ));
+
+    let deletion = vec![changed_path("target/ripr/reports/old.json", &["D"])];
+    let deletion_findings =
+        worktree_doctor_findings("feature/generated", 0, &deletion, false, false, false);
+    assert!(
+        !doctor_has_error(
+            &deletion_findings,
+            "generated RIPR target artifact is dirty"
+        ),
+        "unexpected findings: {deletion_findings:?}"
+    );
+}
+
+#[test]
+fn worktree_doctor_warns_about_broad_diff_without_work_item_marker() {
+    let changes = vec![
+        changed_path("docs/specs/RIPR-SPEC-9999-example.md", &["A"]),
+        changed_path(".ripr/traceability.toml", &["M"]),
+        changed_path("metrics/capabilities.toml", &["M"]),
+        changed_path("xtask/src/main.rs", &["M"]),
+    ];
+    let findings = worktree_doctor_findings("feature/broad", 0, &changes, false, false, false);
+    assert!(doctor_has_warning(
+        &findings,
+        "changes span multiple source-of-truth layers"
+    ));
+
+    let with_marker = vec![
+        changed_path("docs/specs/RIPR-SPEC-9999-example.md", &["A"]),
+        changed_path(".ripr/traceability.toml", &["M"]),
+        changed_path("metrics/capabilities.toml", &["M"]),
+        changed_path("xtask/src/main.rs", &["M"]),
+        changed_path(".ripr/goals/active.toml", &["M"]),
+    ];
+    let marker_findings =
+        worktree_doctor_findings("feature/broad", 0, &with_marker, false, false, false);
+    assert!(
+        !doctor_has_warning(
+            &marker_findings,
+            "changes span multiple source-of-truth layers"
+        ),
+        "unexpected findings: {marker_findings:?}"
+    );
+}
+
+#[test]
+fn worktree_command_rejects_missing_and_unknown_subcommands() -> Result<(), String> {
+    let Err(missing) = worktree(&[]) else {
+        return Err("missing subcommand should fail".to_string());
+    };
+    assert!(missing.contains("missing worktree command"));
+    assert!(missing.contains("cargo xtask worktree doctor"));
+
+    let Err(unknown) = worktree(&["inspect".to_string()]) else {
+        return Err("unknown subcommand should fail".to_string());
+    };
+    assert!(unknown.contains("unknown worktree command"));
+    assert!(unknown.contains("cargo xtask worktree doctor"));
+    Ok(())
+}
+
+#[test]
+fn worktree_doctor_command_writes_clean_report_in_git_worktree() -> Result<(), String> {
+    with_temp_cwd("worktree-doctor-command", |root| -> Result<(), String> {
+        run("git", &["init", "-b", "feature"])?;
+        worktree(&["doctor".to_string()])?;
+        let report_path = root.join("target/ripr/reports/worktree-doctor.md");
+        let report = fs::read_to_string(&report_path)
+            .map_err(|err| format!("failed to read {}: {err}", report_path.display()))?;
+
+        assert!(report.contains("Status: pass"));
+        assert!(report.contains("No findings."));
+        Ok(())
+    })
+}
+
+#[test]
+fn worktree_doctor_report_renders_warnings_and_errors() -> Result<(), String> {
+    with_temp_cwd("worktree-doctor-report", |root| -> Result<(), String> {
+        let warnings = vec![WorktreeDoctorFinding {
+            severity: WorktreeDoctorSeverity::Warning,
+            message: "target/ripr exists".to_string(),
+        }];
+        finish_worktree_doctor_report(&warnings)?;
+        let report_path = root.join("target/ripr/reports/worktree-doctor.md");
+        let warning_report = fs::read_to_string(&report_path)
+            .map_err(|err| format!("failed to read {}: {err}", report_path.display()))?;
+        assert!(warning_report.contains("Status: warn"));
+        assert!(warning_report.contains("Warnings:"));
+        assert!(warning_report.contains("Next actions:"));
+        assert!(warning_report.contains("remove local `target/ripr` report artifacts"));
+        assert!(warning_report.contains("rerun `cargo xtask worktree doctor`"));
+
+        let errors = vec![WorktreeDoctorFinding {
+            severity: WorktreeDoctorSeverity::Error,
+            message: "branch is behind origin/main".to_string(),
+        }];
+        let Err(err) = finish_worktree_doctor_report(&errors) else {
+            return Err("error findings should fail the doctor report".to_string());
+        };
+        assert!(err.contains("worktree doctor found blocking issues"));
+        let error_report = fs::read_to_string(&report_path)
+            .map_err(|err| format!("failed to read {}: {err}", report_path.display()))?;
+        assert!(error_report.contains("Status: fail"));
+        assert!(error_report.contains("Errors:"));
+        assert!(error_report.contains("refresh the branch from `origin/main`"));
+        Ok(())
+    })
+}
+
+#[test]
+fn worktree_doctor_clean_report_names_next_gate() -> Result<(), String> {
+    with_temp_cwd(
+        "worktree-doctor-clean-next-action",
+        |root| -> Result<(), String> {
+            finish_worktree_doctor_report(&[])?;
+            let report_path = root.join("target/ripr/reports/worktree-doctor.md");
+            let report = fs::read_to_string(&report_path)
+                .map_err(|err| format!("failed to read {}: {err}", report_path.display()))?;
+            assert!(report.contains("Status: pass"));
+            assert!(report.contains("Next actions:"));
+            assert!(report.contains("continue with `cargo xtask precommit`"));
+            Ok(())
+        },
+    )
+}
+
+#[test]
+fn badge_diff_policy_rejects_badge_endpoint_diff_outside_refresh_context() {
+    let changes = vec![changed_path("badges/ripr-plus.json", &["M"])];
+    let violations = badge_diff_policy_violations(&changes, false);
+    assert_eq!(violations.len(), 1);
+    assert!(violations[0].contains("generated badge endpoint changed"));
+    assert!(violations[0].contains("badge: refresh public endpoints"));
+}
+
+#[test]
+fn badge_diff_policy_allows_badge_endpoint_diff_in_refresh_context() {
+    let changes = vec![changed_path("badges/ripr.json", &["M"])];
+    let violations = badge_diff_policy_violations(&changes, true);
+    assert!(
+        violations.is_empty(),
+        "unexpected violations: {violations:?}"
+    );
+}
+
+#[test]
+fn badge_diff_policy_allows_readme_badge_layout_without_endpoint_diff() {
+    let changes = vec![changed_path("README.md", &["M"])];
+    let violations = badge_diff_policy_violations(&changes, false);
+    assert!(
+        violations.is_empty(),
+        "unexpected violations: {violations:?}"
+    );
+}
+
+#[test]
+fn badge_diff_policy_rejects_badge_endpoint_even_with_readme_change() {
+    let changes = vec![
+        changed_path("README.md", &["M"]),
+        changed_path("badges/ripr.json", &["M"]),
+    ];
+    let violations = badge_diff_policy_violations(&changes, false);
+    assert_eq!(violations.len(), 1);
+    assert!(violations[0].contains("badges/ripr.json"));
+}
+
+#[test]
+fn public_badge_basis_guard_rejects_seam_native_repair_badge_copy() {
+    let violations =
+        public_badge_basis_violations("README.md", "Public ripr badge basis: seam_native\n");
+    assert_eq!(violations.len(), 1);
+    assert!(violations[0].contains("README.md:1"));
+    assert!(violations[0].contains("canonical_actionable_gap"));
+    assert!(violations[0].contains("seam inventory"));
+}
+
+#[test]
+fn public_badge_basis_guard_allows_explicit_seam_inventory_badge_copy() {
+    let violations = public_badge_basis_violations(
+        "README.md",
+        "Internal seam inventory badge basis: seam_native\n",
+    );
+    assert!(
+        violations.is_empty(),
+        "unexpected violations: {violations:?}"
+    );
+}
+
+#[test]
+fn public_badge_basis_guard_ignores_policy_docs_seam_native_references() {
+    assert!(!is_public_badge_basis_surface("docs/BADGE_POLICY.md"));
+    let violations = public_badge_basis_violations(
+        "docs/BADGE_POLICY.md",
+        "`seam_native` is an internal inventory basis.\n",
+    );
+    assert!(
+        violations.is_empty(),
+        "unexpected violations: {violations:?}"
+    );
+}
+
+#[test]
+fn check_badge_diff_policy_rejects_endpoint_diff_from_git_status() -> Result<(), String> {
+    with_temp_cwd("badge-diff-policy-rejects", |root| {
+        run("git", &["init"])?;
+        std::fs::create_dir_all(root.join("badges")).map_err(|err| err.to_string())?;
+        std::fs::write(root.join("badges/ripr.json"), "{\"message\":\"1\"}\n")
+            .map_err(|err| err.to_string())?;
+        run("git", &["add", "-N", "badges/ripr.json"])?;
+
+        let message = check_badge_diff_policy_with_context(false)
+            .expect_err("badge endpoint diff should fail");
+        assert!(message.contains("generated badge endpoint changed"));
+        assert!(message.contains("badges/ripr.json"));
+        Ok(())
+    })
+}
+
+#[test]
+fn check_badge_diff_policy_rejects_public_surface_seam_native_from_git_status() -> Result<(), String>
+{
+    with_temp_cwd("badge-diff-policy-seam-native-public", |root| {
+        run("git", &["init"])?;
+        std::fs::write(root.join("README.md"), "ripr badge basis: seam_native\n")
+            .map_err(|err| err.to_string())?;
+
+        let message = check_badge_diff_policy_with_context(false)
+            .expect_err("public seam_native repair badge copy should fail");
+        assert!(message.contains("public badge surface uses `seam_native`"));
+        assert!(message.contains("canonical_actionable_gap"));
+        Ok(())
+    })
+}
+
+#[test]
+fn check_badge_diff_policy_allows_readme_only_git_status() -> Result<(), String> {
+    with_temp_cwd("badge-diff-policy-readme", |root| {
+        run("git", &["init"])?;
+        std::fs::write(root.join("README.md"), "[![ripr](badge)](link)\n")
+            .map_err(|err| err.to_string())?;
+
+        check_badge_diff_policy_with_context(false)
+    })
+}
+
+#[test]
+fn github_event_title_reader_accepts_pull_request_title() {
+    let title = github_event_pull_request_title_from_text(
+        r#"{"pull_request":{"title":"badge: refresh public endpoints"}}"#,
+    );
+    assert_eq!(title.as_deref(), Some("badge: refresh public endpoints"));
+}
+
+#[test]
+fn generated_clean_allows_badge_endpoint_diff_in_refresh_context() {
+    let changes = vec![
+        changed_path("badges/ripr.json", &["M"]),
+        changed_path("badges/ripr-plus.json", &["M"]),
+    ];
+    let violations = generated_clean_violations(&changes, true);
+    assert!(
+        violations.is_empty(),
+        "unexpected violations: {violations:?}"
+    );
+    assert!(is_badge_refresh_context("automation/badge-endpoints"));
+    assert!(is_badge_refresh_context("badge: refresh public endpoints"));
+    assert!(is_badge_refresh_context("refs/heads/badge-refresh-counts"));
+}
+
+#[test]
+fn generated_clean_rejects_target_residue() {
+    let changes = vec![
+        changed_path("target/ripr/reports/check-pr.md", &["A"]),
+        changed_path(
+            "crates/ripr/examples/sample/target/debug/.fingerprint",
+            &["??"],
+        ),
+    ];
+    let violations = generated_clean_violations(&changes, false);
+    assert_eq!(violations.len(), 2);
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("generated RIPR target artifact"))
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("sample workspace build output"))
+    );
+}
+
+#[test]
+fn generated_clean_allows_deleting_committed_target_residue() {
+    let changes = vec![changed_path("target/ripr/reports/old.md", &["D"])];
+    let violations = generated_clean_violations(&changes, false);
+    assert!(
+        violations.is_empty(),
+        "unexpected violations: {violations:?}"
+    );
+}
+
+fn triage_pr(number: u64, title: &str, files: &[&str]) -> PrTriagePullRequest {
+    PrTriagePullRequest {
+        number,
+        title: title.to_string(),
+        body: "Validation\n- cargo xtask check-pr\n".to_string(),
+        is_draft: false,
+        created_at: "2026-05-14T00:00:00Z".to_string(),
+        updated_at: "2026-05-14T00:00:00Z".to_string(),
+        merge_state_status: "CLEAN".to_string(),
+        head_ref_name: format!("branch-{number}"),
+        base_ref_name: "main".to_string(),
+        review_decision: String::new(),
+        labels: Vec::new(),
+        files: files.iter().map(|file| file.to_string()).collect(),
+        checks: vec![PrTriageCheck {
+            name: "rust".to_string(),
+            status: "COMPLETED".to_string(),
+            conclusion: "SUCCESS".to_string(),
+        }],
+    }
+}
+
+#[test]
+fn parse_pr_triage_pull_requests_reads_gh_json() -> Result<(), String> {
+    let prs = parse_pr_triage_pull_requests(
+        r#"[
+              {
+                "number": 10,
+                "title": "devex: report",
+                "body": "Validation\n- cargo xtask check-pr",
+                "isDraft": false,
+                "createdAt": "2026-05-14T00:00:00Z",
+                "updatedAt": "2026-05-14T01:00:00Z",
+                "mergeStateStatus": "CLEAN",
+                "headRefName": "devex-report",
+                "baseRefName": "main",
+                "reviewDecision": "",
+                "labels": [{"name": "devex"}],
+                "files": [{"path": "xtask/src/main.rs"}, {"path": "docs/PR_AUTOMATION.md"}],
+                "statusCheckRollup": [
+                  {"__typename": "CheckRun", "name": "rust", "status": "COMPLETED", "conclusion": "SUCCESS"},
+                  {"__typename": "StatusContext", "context": "CodeRabbit", "state": "SUCCESS"}
+                ]
+              }
+            ]"#,
+    )?;
+    assert_eq!(prs.len(), 1);
+    assert_eq!(prs[0].number, 10);
+    assert_eq!(prs[0].labels, vec!["devex".to_string()]);
+    assert_eq!(
+        prs[0].files,
+        vec![
+            "docs/PR_AUTOMATION.md".to_string(),
+            "xtask/src/main.rs".to_string()
+        ]
+    );
+    assert_eq!(prs[0].checks.len(), 2);
+    Ok(())
+}
+
+fn gh_pr_status_pr(checks: Vec<PrTriageCheck>) -> GhPrStatusPullRequest {
+    GhPrStatusPullRequest {
+        number: 42,
+        title: "devex: merge readiness".to_string(),
+        is_draft: false,
+        merge_state_status: "CLEAN".to_string(),
+        head_ref_name: "devex-gh-pr-status".to_string(),
+        base_ref_name: "main".to_string(),
+        review_decision: "APPROVED".to_string(),
+        checks,
+        reviews: vec![GhPrStatusReview {
+            author: "droid".to_string(),
+            state: "APPROVED".to_string(),
+        }],
+    }
+}
+
+fn gh_pr_status_check(name: &str, status: &str, conclusion: &str) -> PrTriageCheck {
+    PrTriageCheck {
+        name: name.to_string(),
+        status: status.to_string(),
+        conclusion: conclusion.to_string(),
+    }
+}
+
+#[test]
+fn gh_pr_status_args_parse_pr_number() -> Result<(), String> {
+    assert_eq!(
+        parse_gh_pr_status_args(&["--pr".to_string(), "905".to_string()])?,
+        905
+    );
+    assert_eq!(parse_gh_pr_status_args(&["905".to_string()])?, 905);
+    assert_gh_pr_status_arg_error(&[])?;
+    assert_gh_pr_status_arg_error(&["--pr".to_string()])?;
+    assert_gh_pr_status_arg_error(&["--pr".to_string(), "0".to_string()])?;
+    Ok(())
+}
+
+fn assert_gh_pr_status_arg_error(args: &[String]) -> Result<(), String> {
+    match parse_gh_pr_status_args(args) {
+        Ok(number) => Err(format!(
+            "expected gh-pr-status args to fail, parsed #{number}"
+        )),
+        Err(_) => Ok(()),
+    }
+}
+
+#[test]
+fn parse_gh_pr_status_reads_view_json() -> Result<(), String> {
+    let pr = parse_gh_pr_status_pull_request(
+        r#"{
+              "number": 42,
+              "title": "devex: merge readiness",
+              "isDraft": false,
+              "mergeStateStatus": "CLEAN",
+              "headRefName": "devex-gh-pr-status",
+              "baseRefName": "main",
+              "reviewDecision": "APPROVED",
+              "latestReviews": [
+                {"author": {"login": "droid"}, "state": "APPROVED"}
+              ],
+              "statusCheckRollup": [
+                {"__typename": "CheckRun", "name": "rust", "status": "COMPLETED", "conclusion": "SUCCESS"},
+                {"__typename": "StatusContext", "context": "droid/review", "state": "SUCCESS"}
+              ]
+            }"#,
+    )?;
+    assert_eq!(pr.number, 42);
+    assert_eq!(pr.title, "devex: merge readiness");
+    assert_eq!(pr.checks.len(), 2);
+    assert_eq!(pr.reviews.len(), 1);
+    assert_eq!(pr.reviews[0].author, "droid");
+    assert_eq!(
+        parse_required_status_contexts(r#"["rust","msrv","rust"]"#)?,
+        vec!["msrv".to_string(), "rust".to_string()]
+    );
+    Ok(())
+}
+
+#[test]
+fn gh_pr_status_readiness_selects_safe_next_action() {
+    let contexts = vec!["rust".to_string()];
+    let clean = gh_pr_status_pr(vec![gh_pr_status_check("rust", "COMPLETED", "SUCCESS")]);
+    let clean_readiness = gh_pr_status_readiness(&clean, &contexts, true, Vec::new());
+    assert_eq!(clean_readiness.safe_next_action, "merge");
+
+    let pending = gh_pr_status_pr(vec![gh_pr_status_check("rust", "IN_PROGRESS", "")]);
+    let pending_readiness = gh_pr_status_readiness(&pending, &contexts, true, Vec::new());
+    assert_eq!(pending_readiness.safe_next_action, "wait");
+    assert!(
+        pending_readiness
+            .required_checks_outstanding
+            .iter()
+            .any(|check| check.contains("rust"))
+    );
+
+    let failed = gh_pr_status_pr(vec![gh_pr_status_check("rust", "COMPLETED", "FAILURE")]);
+    let failed_readiness = gh_pr_status_readiness(&failed, &contexts, true, Vec::new());
+    assert_eq!(failed_readiness.safe_next_action, "inspect failure");
+
+    let mut behind = gh_pr_status_pr(vec![gh_pr_status_check("rust", "COMPLETED", "SUCCESS")]);
+    behind.merge_state_status = "BEHIND".to_string();
+    let behind_readiness = gh_pr_status_readiness(&behind, &contexts, true, Vec::new());
+    assert_eq!(gh_pr_safe_next_action(&behind, &behind_readiness), "rebase");
+}
+
+#[test]
+fn gh_pr_status_markdown_reports_reviews_checks_and_action() {
+    let pr = gh_pr_status_pr(vec![
+        gh_pr_status_check("rust", "COMPLETED", "SUCCESS"),
+        gh_pr_status_check("droid/review", "COMPLETED", "SUCCESS"),
+    ]);
+    let contexts = vec!["rust".to_string()];
+    let readiness = gh_pr_status_readiness(&pr, &contexts, true, Vec::new());
+    let markdown = gh_pr_status_markdown(&pr, &contexts, &readiness);
+    assert!(markdown.contains("# GitHub PR Status"));
+    assert!(markdown.contains("safe next action: `merge`"));
+    assert!(markdown.contains("## Required Checks Outstanding"));
+    assert!(markdown.contains("## Reviews"));
+    assert!(markdown.contains("droid/review"));
+}
+
+#[test]
+fn gh_pr_status_json_reports_merge_readiness_packet() -> Result<(), String> {
+    let pr = gh_pr_status_pr(vec![
+        gh_pr_status_check("rust", "COMPLETED", "SUCCESS"),
+        gh_pr_status_check("droid/review", "COMPLETED", "SUCCESS"),
+    ]);
+    let contexts = vec!["rust".to_string()];
+    let readiness = gh_pr_status_readiness(&pr, &contexts, true, Vec::new());
+    let json: Value = serde_json::from_str(&gh_pr_status_json(&pr, &contexts, &readiness))
+        .map_err(|err| format!("gh-pr-status JSON should parse: {err}"))?;
+
+    assert_eq!(json["schema_version"], "0.1");
+    assert_eq!(json["mode"], "advisory");
+    assert_eq!(json["pr_number"], pr.number);
+    assert_eq!(json["merge_state"], "CLEAN");
+    assert_eq!(json["behind_main"], false);
+    assert_eq!(json["review_decision"], "APPROVED");
+    assert_eq!(json["safe_next_action"], "merge");
+    assert_eq!(
+        json["advisory_checks"][0],
+        "droid/review (status=COMPLETED, conclusion=SUCCESS)"
+    );
+    Ok(())
+}
+
+#[test]
+fn pr_triage_findings_flag_queue_risks() {
+    let mut first = triage_pr(
+        1,
+        "devex: split workflow renderer",
+        &["xtask/src/main.rs", "docs/PR_AUTOMATION.md"],
+    );
+    first.merge_state_status = "BEHIND".to_string();
+
+    let second = triage_pr(
+        2,
+        "devex: split workflow renderer",
+        &["xtask/src/main.rs", "docs/PR_AUTOMATION.md"],
+    );
+
+    let mut stale = triage_pr(3, "docs: old draft", &["docs/ROADMAP.md"]);
+    stale.is_draft = true;
+    stale.created_at = "2026-05-01T00:00:00Z".to_string();
+
+    let mut policy = triage_pr(
+        4,
+        "ci(policy): generated workflow",
+        &[".github/workflows/ci.yml"],
+    );
+    policy.body = "Validation\n- not run: cargo xtask check-pr\n".to_string();
+    policy.checks = vec![PrTriageCheck {
+        name: "rust".to_string(),
+        status: "COMPLETED".to_string(),
+        conclusion: "FAILURE".to_string(),
+    }];
+
+    let today = days_from_civil(2026, 5, 14);
+    let prs = vec![first, second, stale, policy];
+    let findings = pr_triage_findings(&prs, today);
+    let categories = findings
+        .iter()
+        .map(|finding| finding.category.as_str())
+        .collect::<BTreeSet<_>>();
+    assert!(categories.contains("same title family"));
+    assert!(categories.contains("same changed file set"));
+    assert!(categories.contains("stale draft"));
+    assert!(categories.contains("behind main"));
+    assert!(categories.contains("incomplete validation"));
+    assert!(categories.contains("policy-sensitive surface"));
+
+    let dispositions = pr_triage_queue_dispositions(&prs, &findings)
+        .into_iter()
+        .map(|item| (item.pr_number, item.disposition))
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(
+        dispositions.get(&1).map(String::as_str),
+        Some("needs_owner_decision")
+    );
+    assert_eq!(
+        dispositions.get(&2).map(String::as_str),
+        Some("needs_owner_decision")
+    );
+    assert_eq!(
+        dispositions.get(&3).map(String::as_str),
+        Some("needs_owner_decision")
+    );
+    assert_eq!(
+        dispositions.get(&4).map(String::as_str),
+        Some("do_not_touch_wrong_lane")
+    );
+}
+
+#[test]
+fn pr_triage_queue_dispositions_name_actionable_queue_state() {
+    let mergeable = triage_pr(1, "devex: ready", &["xtask/src/main.rs"]);
+    let mut behind = triage_pr(2, "devex: behind", &["docs/CI.md"]);
+    behind.merge_state_status = "BEHIND".to_string();
+    let mut pending = triage_pr(3, "devex: pending", &["docs/PR_AUTOMATION.md"]);
+    pending.checks = vec![PrTriageCheck {
+        name: "rust".to_string(),
+        status: "IN_PROGRESS".to_string(),
+        conclusion: String::new(),
+    }];
+    let mut duplicate = triage_pr(4, "devex: duplicate cleanup", &["docs/README.md"]);
+    duplicate.labels = vec!["duplicate".to_string()];
+    let mut superseded = triage_pr(5, "devex: old approach", &["docs/OLD.md"]);
+    superseded.body.push_str("\nSuperseded by #6.\n");
+    let mut duplicate_body = triage_pr(6, "devex: refresh", &["docs/REFRESH.md"]);
+    duplicate_body.body.push_str("\nDuplicate of #4.\n");
+
+    let prs = vec![
+        mergeable,
+        behind,
+        pending,
+        duplicate,
+        superseded,
+        duplicate_body,
+    ];
+    let findings = pr_triage_findings(&prs, days_from_civil(2026, 5, 14));
+    let dispositions = pr_triage_queue_dispositions(&prs, &findings)
+        .into_iter()
+        .map(|item| (item.pr_number, item.disposition))
+        .collect::<BTreeMap<_, _>>();
+
+    assert_eq!(
+        dispositions.get(&1).map(String::as_str),
+        Some("merge_candidate")
+    );
+    assert_eq!(
+        dispositions.get(&2).map(String::as_str),
+        Some("needs_rebase")
+    );
+    assert_eq!(
+        dispositions.get(&3).map(String::as_str),
+        Some("needs_fresh_validation")
+    );
+    assert_eq!(
+        dispositions.get(&4).map(String::as_str),
+        Some("close_duplicate")
+    );
+    assert_eq!(dispositions.get(&5).map(String::as_str), Some("superseded"));
+    assert_eq!(
+        dispositions.get(&6).map(String::as_str),
+        Some("close_duplicate")
+    );
+}
+
+#[test]
+fn pr_triage_helpers_classify_validation_and_sensitive_paths() {
+    assert_eq!(
+        pr_title_family("WIP devex: split workflow renderer v2"),
+        "devex split workflow renderer"
+    );
+    assert_eq!(
+        pr_body_validation_warning("Summary\n\nValidation\n- cargo xtask check-pr\n"),
+        None
+    );
+    assert!(
+        pr_body_validation_warning("Summary only")
+            .is_some_and(|warning| warning.contains("no validation"))
+    );
+    assert_eq!(
+        pr_sensitive_file_reason(".github/workflows/ci.yml"),
+        Some("workflow behavior can alter generated CI or branch checks")
+    );
+    assert_eq!(
+        pr_checks_summary(&[PrTriageCheck {
+            name: "rust".to_string(),
+            status: "IN_PROGRESS".to_string(),
+            conclusion: String::new(),
+        }]),
+        "1 pending"
+    );
+    assert_eq!(
+        pr_checks_summary(&[PrTriageCheck {
+            name: "CodeRabbit".to_string(),
+            status: "SUCCESS".to_string(),
+            conclusion: "SUCCESS".to_string(),
+        }]),
+        "1 passed"
+    );
+}
+
+#[test]
+fn pr_triage_markdown_lists_findings_and_open_prs() {
+    let pr = triage_pr(9, "devex: report", &["xtask/src/main.rs"]);
+    let finding = PrTriageFinding {
+        category: "same title family".to_string(),
+        severity: "warn".to_string(),
+        message: "#9 shares a title family".to_string(),
+        prs: vec![9],
+        details: vec!["#9 devex: report".to_string()],
+        recommended_action: "Choose a canonical PR.".to_string(),
+    };
+    let markdown = pr_triage_markdown(&[pr], &[finding], days_from_civil(2026, 5, 14));
+    assert!(markdown.contains("# ripr PR triage report"));
+    assert!(markdown.contains("Status: warn"));
+    assert!(markdown.contains("## Queue Disposition"));
+    assert!(markdown.contains("needs_owner_decision"));
+    assert!(markdown.contains("## Open PRs"));
+    assert!(markdown.contains("cargo xtask pr-triage-report"));
+}
+
+#[test]
+fn pr_triage_json_lists_prs_findings_and_actions() -> Result<(), String> {
+    let pr = triage_pr(9, "devex: report", &["xtask/src/main.rs"]);
+    let finding = PrTriageFinding {
+        category: "same title family".to_string(),
+        severity: "warn".to_string(),
+        message: "#9 shares a title family".to_string(),
+        prs: vec![9],
+        details: vec!["#9 devex: report".to_string()],
+        recommended_action: "Choose a canonical PR.".to_string(),
+    };
+    let json = pr_triage_json(&[pr], &[finding], days_from_civil(2026, 5, 14), "unix_ms:1");
+    let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+
+    assert_eq!(value["schema_version"], "0.1");
+    assert_eq!(value["mode"], "advisory");
+    assert_eq!(value["generated_at"], "unix_ms:1");
+    assert_eq!(value["open_prs"][0]["number"], 9);
+    assert_eq!(
+        value["queue_disposition"][0]["disposition"],
+        "needs_owner_decision"
+    );
+    assert_eq!(value["findings"][0]["category"], "same title family");
+    assert_eq!(
+        value["recommended_actions"][0]["action"],
+        "Choose a canonical PR."
+    );
+    Ok(())
+}
+
+#[test]
+fn specs_next_id_is_mechanical() {
+    assert_eq!(
+        next_spec_id_from_ids(["RIPR-SPEC-0001", "RIPR-SPEC-0046"].into_iter()),
+        "RIPR-SPEC-0047"
+    );
+    assert_eq!(
+        next_spec_id_from_ids(std::iter::empty::<&str>()),
+        "RIPR-SPEC-0001"
+    );
+}
+
+#[test]
+fn specs_command_rejects_missing_or_unknown_subcommand() {
+    let missing = match specs(&[]) {
+        Ok(()) => "unexpected pass".to_string(),
+        Err(err) => err,
+    };
+    assert!(missing.contains("cargo xtask specs next"));
+
+    let unknown = match specs(&["current".to_string()]) {
+        Ok(()) => "unexpected pass".to_string(),
+        Err(err) => err,
+    };
+    assert!(unknown.contains("unknown specs command"));
+    assert!(unknown.contains("cargo xtask specs next"));
+}
+
+#[test]
+fn traceability_recommended_fixes_explain_spec_allocation_and_format() {
+    let fixes = traceability_recommended_fixes();
+    assert!(
+        fixes
+            .iter()
+            .any(|fix| fix.contains("cargo xtask specs next"))
+    );
+    assert!(fixes.iter().any(|fix| fix.contains("exactly 4 digits")));
+    assert!(fixes.iter().any(|fix| fix.contains("docs/specs/README.md")));
+}
+
+#[test]
+fn traceability_failure_report_renders_recommended_fixes() -> Result<(), String> {
+    with_temp_cwd("traceability-recommended-fixes-report", |_| {
+        let error = finish_traceability_report(&["invalid spec reference".to_string()], &[])
+            .expect_err("violations should fail the traceability report");
+        let report = fs::read_to_string("target/ripr/reports/traceability.md")
+            .map_err(|err| format!("read traceability report: {err}"))?;
+
+        assert!(error.contains("check-traceability failed"));
+        assert!(report.contains("cargo xtask specs next"));
+        assert!(report.contains("docs/specs/README.md"));
+        assert!(report.contains("valid RIPR-SPEC-NNNN IDs (exactly 4 digits)"));
+        Ok(())
+    })
+}
+
+#[test]
+fn spec_ids_in_text_extracts_four_digit_ids_only() {
+    let ids = spec_ids_in_text(
+        "RIPR-SPEC-0001 RIPR-SPEC-001 RIPR-SPEC-9999 RIPR-SPEC-abcd RIPR-SPEC-12345",
+    );
+    assert!(ids.contains("RIPR-SPEC-0001"));
+    assert!(ids.contains("RIPR-SPEC-9999"));
+    assert!(!ids.contains("RIPR-SPEC-001"));
+    assert!(!ids.contains("RIPR-SPEC-1234"));
+}
+
+#[test]
+fn spec_numbering_detects_missing_index_and_reference_drift() -> Result<(), String> {
+    let root = temp_dir("spec-numbering-drift");
+    write(
+        &root.join("docs/specs/RIPR-SPEC-0001-one.md"),
+        "# RIPR-SPEC-0001: One\n",
+    );
+    write(
+        &root.join("docs/specs/RIPR-SPEC-0002-two.md"),
+        "# RIPR-SPEC-0002: Two\n",
+    );
+    write(
+        &root.join("docs/specs/README.md"),
+        "| Spec | Status | Title |\n| --- | --- | --- |\n| [RIPR-SPEC-0001](RIPR-SPEC-0001-one.md) | proposed | One |\n| [RIPR-SPEC-9999](missing.md) | proposed | Missing |\n",
+    );
+    write(
+        &root.join(".ripr/traceability.toml"),
+        "spec = \"RIPR-SPEC-9998\"\n",
+    );
+    write(
+        &root.join("metrics/capabilities.toml"),
+        "spec = \"RIPR-SPEC-9997\"\n",
+    );
+    write(
+        &root.join("docs/CAPABILITY_MATRIX.md"),
+        "| Capability | RIPR-SPEC-9996 |\n",
+    );
+
+    let violations = spec_numbering_violations(&root)?;
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("missing index link `[RIPR-SPEC-0002]"))
+    );
+    assert!(violations.iter().any(|violation| {
+        violation.contains("README.md references missing spec `RIPR-SPEC-9999`")
+    }));
+    assert!(violations.iter().any(|violation| {
+        violation.contains(".ripr/traceability.toml references missing spec `RIPR-SPEC-9998`")
+    }));
+    assert!(violations.iter().any(|violation| {
+        violation.contains("metrics/capabilities.toml references missing spec `RIPR-SPEC-9997`")
+    }));
+    assert!(violations.iter().any(|violation| {
+        violation.contains("docs/CAPABILITY_MATRIX.md references missing spec `RIPR-SPEC-9996`")
+    }));
+    Ok(())
+}
+
+#[test]
+fn spec_numbering_detects_duplicate_spec_ids() -> Result<(), String> {
+    let root = temp_dir("spec-numbering-duplicate");
+    write(
+        &root.join("docs/specs/RIPR-SPEC-0001-one.md"),
+        "# RIPR-SPEC-0001: One\n",
+    );
+    write(
+        &root.join("docs/specs/RIPR-SPEC-0001-two.md"),
+        "# RIPR-SPEC-0001: Two\n",
+    );
+    write(
+        &root.join("docs/specs/README.md"),
+        "| Spec | Status | Title |\n| --- | --- | --- |\n| [RIPR-SPEC-0001](RIPR-SPEC-0001-one.md) | proposed | One |\n",
+    );
+
+    let violations = spec_numbering_violations(&root)?;
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("RIPR-SPEC-0001 is used by multiple spec files"))
+    );
+    Ok(())
+}
+
+#[test]
+fn report_commands_dispatch_through_report_facades() -> Result<(), String> {
+    with_temp_cwd("report-dispatch", |_| {
+        let commands = vec![
+            XtaskCommand::PrSummary,
+            XtaskCommand::Fixtures(vec!["missing".to_string()]),
+            XtaskCommand::Goldens(vec!["unknown".to_string()]),
+            XtaskCommand::Metrics,
+            XtaskCommand::TestOracleReport,
+            XtaskCommand::TestEfficiencyReport,
+            XtaskCommand::ActionableGapOutcomes(Vec::new()),
+            XtaskCommand::AgentSeamPackets(Some(".".to_string())),
+            XtaskCommand::LspCockpitReport,
+            XtaskCommand::OperatorCockpitReport,
+            XtaskCommand::ReleaseReadiness(vec!["--version".to_string(), "0.5.0".to_string()]),
+            XtaskCommand::TargetedTestOutcome(Vec::new()),
+            XtaskCommand::MutationCalibration(Vec::new()),
+            XtaskCommand::BunUbCalibration(Vec::new()),
+            XtaskCommand::BunUbPreviewSummary(Vec::new()),
+            XtaskCommand::ConfiguredBridgeInventory(Vec::new()),
+            XtaskCommand::SarifPolicy(Vec::new()),
+            XtaskCommand::Dogfood,
+            XtaskCommand::Critic,
+            XtaskCommand::Reports(vec!["index".to_string()]),
+            XtaskCommand::Receipts(Vec::new()),
+            XtaskCommand::GoldenDrift,
+        ];
+        let live_repo_analysis_commands = [
+            "badge-artifacts",
+            "repo-badge-artifacts",
+            "repo-seam-inventory",
+            "repo-exposure-report",
+            "repo-exposure-latency-report",
+            "evidence-health",
+            "lane1-evidence-audit",
+            "evidence-quality-scorecard",
+            "evidence-quality-trend",
+            "check-badge-endpoints",
+        ];
+
+        for command in commands {
+            let label = format!("{command:?}");
+            match dispatch::execute(command) {
+                Ok(()) => {}
+                Err(message) if !message.is_empty() => {}
+                Err(_) => {
+                    return Err(format!(
+                        "{label} should either succeed or return an actionable error"
+                    ));
+                }
+            }
+        }
+        for command_name in live_repo_analysis_commands {
+            if !known_xtask_command(command_name) {
+                return Err(format!(
+                    "{command_name} should remain a known xtask command"
+                ));
+            }
+        }
+
+        Ok(())
+    })
+}
+
+#[test]
+fn xtask_run_helpers_report_success_failure_and_optional_output() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let program = "rustc";
+        let invalid_flag = "--definitely-not-a-real-rustc-flag";
+
+        let version = run_output(program, &["--version"])?;
+        if !version.contains("rustc") {
+            return Err(format!("expected rustc version output, got {version:?}"));
+        }
+
+        let owned_version = run_output_owned(program, &["--version".to_string()])?;
+        if !owned_version.contains("rustc") {
+            return Err(format!(
+                "expected owned rustc version output, got {owned_version:?}"
+            ));
+        }
+
+        let status = run(program, &["--version"])?;
+        if !status.success() {
+            return Err(format!("expected rustc --version to succeed, got {status}"));
+        }
+
+        let captured = capture_output(program, &["--version"], "rustc version")?;
+        if !captured.status.success() || !captured.stdout.contains("rustc") {
+            return Err(format!(
+                "expected captured rustc version output, got status={} stdout={:?}",
+                captured.status, captured.stdout
+            ));
+        }
+
+        let failed_capture = capture_output(program, &[invalid_flag], "rustc invalid flag")?;
+        if failed_capture.status.success() {
+            return Err("expected invalid rustc flag to fail".to_string());
+        }
+
+        let optional = run_output_optional(program, &[invalid_flag])?;
+        if !optional.is_empty() {
+            return Err(format!(
+                "expected optional failure to return empty output, got {optional:?}"
+            ));
+        }
+
+        let failure = run_output(program, &[invalid_flag]).is_err();
+        if !failure {
+            return Err("expected run_output to report non-zero exit".to_string());
+        }
+
+        let owned_failure = run_output_owned(program, &[invalid_flag.to_string()]).is_err();
+        if !owned_failure {
+            return Err("expected run_output_owned to report non-zero exit".to_string());
+        }
+
+        let missing_program = capture_output(
+            "definitely-missing-ripr-test-binary",
+            &[],
+            "missing test binary",
+        );
+        if missing_program.is_ok() {
+            return Err("expected missing executable to report spawn error".to_string());
+        }
+
+        Ok(())
+    })
+}
+
+#[test]
+fn policy_checker_facade_runs_current_repo_checks() -> Result<(), String> {
+    with_repo_cwd(|| {
+        check_static_language()?;
+        check_no_panic_family()?;
+        check_allow_attributes()?;
+        check_local_context()?;
+        check_file_policy()?;
+        check_executable_files()?;
+        check_workflows()?;
+        check_droid_review_config()?;
+        check_process_policy()?;
+        check_network_policy()
+    })
+}
+
+#[test]
+fn network_policy_candidate_extensions_cover_supported_script_sources() {
+    for path in [
+        "src/client.rs",
+        "src/client.ts",
+        "src/client.tsx",
+        "src/client.py",
+        "src/client.js",
+        "src/client.jsx",
+        "scripts/check.sh",
+        "scripts/check.ps1",
+        ".github/workflows/check.yml",
+        ".github/workflows/check.yaml",
+    ] {
+        assert!(
+            is_network_policy_candidate(path),
+            "expected network-policy candidate: {path}"
+        );
+    }
+
+    assert!(!is_network_policy_candidate("docs/network-policy.md"));
+}
+
+#[test]
+fn network_policy_rejects_fetch_in_tsx_and_accepts_clean_jsx() -> Result<(), String> {
+    with_temp_cwd("network-policy-jsx-tsx", |root| {
+        write(&root.join("policy/network_allowlist.txt"), "");
+        write(
+            &root.join("src/networked.tsx"),
+            concat!("export const load = () => fet", "ch('/api/data');\n"),
+        );
+        write(
+            &root.join("src/presentational.jsx"),
+            "export const Label = () => <span>ready</span>;\n",
+        );
+
+        let init = run("git", &["init", "--quiet"])?;
+        if !init.success() {
+            return Err(format!("temporary git init failed with {init}"));
+        }
+        let add = run(
+            "git",
+            &[
+                "add",
+                "policy/network_allowlist.txt",
+                "src/networked.tsx",
+                "src/presentational.jsx",
+            ],
+        )?;
+        if !add.success() {
+            return Err(format!("temporary git add failed with {add}"));
+        }
+
+        let failure = check_network_policy()
+            .expect_err("an unallowlisted fetch in tracked TSX must fail network policy");
+        assert!(
+            failure.contains(concat!(
+                "src/networked.tsx contains `fet",
+                "ch(` 1 time(s), allowed 0"
+            )),
+            "unexpected network-policy failure: {failure}"
+        );
+        assert!(
+            !failure.contains("src/presentational.jsx"),
+            "clean JSX control must not be reported: {failure}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn file_policy_allowlist_toml_parser_requires_governed_fields() -> Result<(), String> {
+    with_temp_cwd("file-policy-allowlist", |root| {
+        let path = root.join("allowlist.toml");
+        write(
+            &path,
+            r#"schema_version = "1.0"
+policy = "non-rust-allowlist"
+status = "active"
+
+[[allow]]
+glob = "editors/vscode/**/*.ts"
+kind = "editor_extension"
+owner = "lsp/editor"
+surface = "editor"
+classification = "production"
+reason = "VS Code extensions are authored against the TypeScript VS Code API."
+covered_by = ["npm run compile"]
+"#,
+        );
+
+        let path = path.to_string_lossy().to_string();
+        let entries = parse_file_policy_allowlist(&path)?;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].glob.as_deref(), Some("editors/vscode/**/*.ts"));
+        assert_eq!(entries[0].surface.as_deref(), Some("editor"));
+        Ok(())
+    })
+}
+
+#[test]
+fn file_policy_allowlist_toml_parser_rejects_ungoverned_entries() -> Result<(), String> {
+    with_temp_cwd("file-policy-allowlist-missing-field", |root| {
+        let path = root.join("allowlist.toml");
+        write(
+            &path,
+            r#"[[allow]]
+glob = "scripts/*.sh"
+kind = "script"
+owner = "release"
+surface = "ci"
+classification = "tooling"
+covered_by = ["cargo xtask check-file-policy"]
+"#,
+        );
+
+        let path = path.to_string_lossy().to_string();
+        let err = match parse_file_policy_allowlist(&path) {
+            Ok(_) => return Err("expected missing reason to fail".to_string()),
+            Err(err) => err,
+        };
+        assert!(err.contains("requires `reason`"));
+        Ok(())
+    })
+}
+
+#[test]
+fn known_xtask_command_accepts_every_help_catalog_root() {
+    let commands = known_commands();
+    assert!(
+        commands
+            .iter()
+            .map(|command| command.split_once(' ').map_or(*command, |(root, _)| root))
+            .all(known_xtask_command)
+    );
+}
+
+#[test]
+fn known_commands_has_no_duplicate_entries() {
+    let commands = known_commands();
+    let unique = commands.iter().collect::<BTreeSet<_>>();
+    assert_eq!(commands.len(), unique.len());
+}
+
+#[test]
+fn command_catalog_covers_help_catalog_roots() {
+    let catalog = command_catalog();
+    let catalog_roots = catalog
+        .iter()
+        .map(|entry| {
+            entry
+                .command
+                .split_once(' ')
+                .map_or(entry.command, |(root, _)| root)
+        })
+        .collect::<BTreeSet<_>>();
+
+    for command in known_commands() {
+        let root = command.split_once(' ').map_or(command, |(root, _)| root);
+        assert!(
+            catalog_roots.contains(root),
+            "command catalog missing help root `{root}`"
+        );
+    }
+}
+
+#[test]
+fn command_catalog_has_no_duplicate_entries() {
+    let catalog = command_catalog();
+    let unique = catalog
+        .iter()
+        .map(|entry| entry.command)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(catalog.len(), unique.len());
+}
+
+#[test]
+fn command_catalog_check_accepts_current_catalog() {
+    let commands = known_commands();
+    let catalog = command_catalog();
+
+    assert_eq!(
+        command_catalog_violations(&commands, &catalog),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn command_catalog_check_reports_drift_and_missing_classification() {
+    let commands = vec!["shape", "missing-command", "arg-command"];
+    let catalog = vec![
+        CommandCatalogEntry {
+            command: "shape",
+            mutability: "mutating",
+            writes: "",
+            judgment_required: false,
+            ci_enforced: false,
+            notes: "Writes local files.",
+        },
+        CommandCatalogEntry {
+            command: "removed-command",
+            mutability: "external_state_mutating",
+            writes: "GitHub",
+            judgment_required: false,
+            ci_enforced: false,
+            notes: "Uploads artifacts.",
+        },
+        CommandCatalogEntry {
+            command: "arg-command",
+            mutability: "argument_dependent",
+            writes: "target/ripr/reports",
+            judgment_required: false,
+            ci_enforced: false,
+            notes: "May write.",
+        },
+    ];
+
+    let report = command_catalog_violations(&commands, &catalog).join("\n");
+
+    assert!(report.contains("missing from the command mutability catalog"));
+    assert!(report.contains("does not match any known xtask command"));
+    assert!(report.contains("command `shape` must document writes"));
+    assert!(report.contains("must be judgment-required"));
+    assert!(report.contains("must explain when it writes"));
+}
+
+#[test]
+fn command_catalog_check_reports_order_drift() {
+    let commands = vec!["shape", "check-pr"];
+    let catalog = vec![
+        CommandCatalogEntry {
+            command: "check-pr",
+            mutability: "non_mutating_check",
+            writes: "target/ripr/reports",
+            judgment_required: false,
+            ci_enforced: false,
+            notes: "Review-ready gate.",
+        },
+        CommandCatalogEntry {
+            command: "shape",
+            mutability: "mutating",
+            writes: "source files",
+            judgment_required: false,
+            ci_enforced: false,
+            notes: "Runs deterministic shaping.",
+        },
+    ];
+
+    let report = command_catalog_violations(&commands, &catalog).join("\n");
+
+    assert!(report.contains("must follow the xtask help catalog order"));
+}
+
+#[test]
+fn command_catalog_check_reports_order_drift_for_commands_with_shared_roots() {
+    let commands = vec!["goldens check", "goldens bless <name> --reason <reason>"];
+    let catalog = vec![
+        CommandCatalogEntry {
+            command: "goldens bless <name> --reason <reason>",
+            mutability: "mutating",
+            writes: "fixtures/**/expected/**",
+            judgment_required: true,
+            ci_enforced: false,
+            notes: "Updates golden expected outputs.",
+        },
+        CommandCatalogEntry {
+            command: "goldens check",
+            mutability: "non_mutating_check",
+            writes: "target/ripr/reports/goldens.md",
+            judgment_required: false,
+            ci_enforced: false,
+            notes: "Checks golden drift.",
+        },
+    ];
+
+    let report = command_catalog_violations(&commands, &catalog).join("\n");
+
+    assert!(report.contains("must follow the xtask help catalog order"));
+}
+
+#[test]
+fn command_catalog_classifies_core_workflow_commands() -> Result<(), String> {
+    let catalog = command_catalog();
+    let find = |command: &str| {
+        catalog
+            .iter()
+            .find(|entry| entry.command == command)
+            .ok_or_else(|| format!("missing command catalog entry `{command}`"))
+    };
+
+    assert_eq!(find("shape")?.mutability, "mutating");
+    assert_eq!(find("check-pr")?.mutability, "non_mutating_check");
+    assert_eq!(find("pr-ready")?.mutability, "report_only");
+    assert_eq!(find("cockpit")?.mutability, "external_state_read");
+    assert_eq!(
+        find("check-command-catalog")?.mutability,
+        "non_mutating_check"
+    );
+    assert_eq!(find("badges")?.mutability, "mutating");
+    assert_eq!(find("badges --check")?.mutability, "non_mutating_check");
+    assert!(find("goldens bless <name> --reason <reason>")?.judgment_required);
+    assert_eq!(
+        find("release-upload-assets --version <version>")?.mutability,
+        "external_state_mutating"
+    );
+    assert!(find("release-upload-assets --version <version>")?.judgment_required);
+    Ok(())
+}
+
+#[test]
+fn commands_report_json_and_markdown_are_structured() -> Result<(), String> {
+    let catalog = command_catalog();
+    let json = commands_report_json(&catalog);
+    let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(value["schema_version"], "0.1");
+    assert_eq!(value["mode"], "advisory");
+    assert!(
+        value["commands"]
+            .as_array()
+            .ok_or("commands must be an array")?
+            .iter()
+            .any(|entry| entry["command"] == "check-pr"
+                && entry["mutability"] == "non_mutating_check")
+    );
+
+    let markdown = commands_report_markdown(&catalog);
+    assert!(markdown.contains("# ripr command mutability catalog"));
+    assert!(markdown.contains("Status: pass"));
+    assert!(markdown.contains("| `check-pr` | `non_mutating_check` |"));
+    Ok(())
+}
+
+#[test]
+fn command_catalog_pins_ci_enforced_classification() -> Result<(), String> {
+    let catalog = command_catalog();
+    let ci_enforced = |command: &str| {
+        catalog
+            .iter()
+            .find(|entry| entry.command == command)
+            .map(|entry| entry.ci_enforced)
+            .ok_or_else(|| format!("missing catalog entry for {command}"))
+    };
+    assert!(ci_enforced("check-static-language")?);
+    assert!(ci_enforced("goldens check")?);
+    assert!(ci_enforced("check-doc-index")?);
+    assert!(ci_enforced("release-upload-assets --version <version>")?);
+    assert!(ci_enforced("release-readiness --version <version>")?);
+    // Issue #2258: the routed-rust lanes invoke `cargo xtask precommit` as the
+    // shared required gate table, so precommit and every gate it runs are
+    // CI-enforced.
+    assert!(ci_enforced("precommit")?);
+    assert!(ci_enforced("check-architecture")?);
+    assert!(ci_enforced("check-doc-artifacts")?);
+    assert!(ci_enforced("markdown-links")?);
+    assert!(!ci_enforced("goldens bless <name> --reason <reason>")?);
+    assert!(!ci_enforced("check-supply-chain")?);
+    Ok(())
+}
+
+#[test]
+fn ci_enforced_xtask_invocations_separates_enforced_from_advisory() {
+    let workflow = r#"
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: cargo xtask check-static-language
+      - name: Required Rust gates
+        run: |
+          cargo fmt --check
+          cargo xtask check-network-policy
+          cargo xtask goldens check
+          cargo xtask ripr-pr --base "$BASE_SHA" --head "$HEAD_SHA"
+          cargo xtask test-efficiency-report || true
+      - name: Badge refresh
+        continue-on-error: true
+        run: cargo xtask badges
+      - name: Advisory step
+        run: cargo xtask check-support-tiers
+        continue-on-error: true
+  docs:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - run: cargo xtask check-doc-artifacts
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Package
+        run: cargo xtask release-server-archive --version "${{ github.ref_name }}"
+      - name: Open PR
+        uses: peter-evans/create-pull-request@v8
+        with:
+          body: |
+            ```bash
+            cargo xtask badges
+            ```
+"#;
+    let enforced = ci_enforced_xtask_invocations(workflow);
+    let has_root = |root: &str| enforced.iter().any(|(command, _)| command == root);
+    assert!(enforced.contains(&("check-static-language".to_string(), String::new())));
+    assert!(enforced.contains(&("check-network-policy".to_string(), String::new())));
+    assert!(enforced.contains(&("goldens".to_string(), "check".to_string())));
+    assert!(enforced.contains(&("ripr-pr".to_string(), String::new())));
+    assert!(enforced.contains(&("release-server-archive".to_string(), String::new())));
+    assert!(!has_root("test-efficiency-report"));
+    assert!(!has_root("badges"));
+    assert!(!has_root("check-support-tiers"));
+    assert!(!has_root("check-doc-artifacts"));
+    assert!(!has_root("fmt"));
+}
+
+#[test]
+fn command_catalog_ci_drift_reports_both_directions() {
+    let catalog = vec![
+        CommandCatalogEntry {
+            command: "check-static-language",
+            mutability: "non_mutating_check",
+            writes: "target/ripr/reports",
+            judgment_required: false,
+            ci_enforced: false,
+            notes: "Checks static language policy.",
+        },
+        CommandCatalogEntry {
+            command: "check-supply-chain",
+            mutability: "non_mutating_check",
+            writes: "target/ripr/reports",
+            judgment_required: false,
+            ci_enforced: true,
+            notes: "Checks supply-chain policy.",
+        },
+        CommandCatalogEntry {
+            command: "goldens check",
+            mutability: "non_mutating_check",
+            writes: "target/ripr/reports/goldens.md",
+            judgment_required: false,
+            ci_enforced: false,
+            notes: "Checks golden drift.",
+        },
+        CommandCatalogEntry {
+            command: "goldens bless <name> --reason <reason>",
+            mutability: "mutating",
+            writes: "fixtures/**/expected/**",
+            judgment_required: true,
+            ci_enforced: false,
+            notes: "Updates golden expected outputs.",
+        },
+    ];
+    let enforced = std::collections::BTreeSet::from([
+        ("check-static-language".to_string(), String::new()),
+        ("goldens".to_string(), "check".to_string()),
+    ]);
+
+    let violations = command_catalog_ci_drift_violations(&catalog, &enforced);
+    let report = violations.join("\n");
+    assert_eq!(violations.len(), 3);
+    assert!(report.contains(
+            "`check-static-language` is invoked by a CI workflow without advisory shielding but the catalog marks ci_enforced=false"
+        ));
+    assert!(
+        report.contains("`goldens check` is invoked by a CI workflow without advisory shielding")
+    );
+    assert!(
+        report.contains(
+            "`check-supply-chain` is marked ci_enforced=true but no CI workflow invokes it"
+        )
+    );
+    assert!(!report.contains("goldens bless"));
+}
+
+#[test]
+fn command_catalog_ci_enforced_flags_match_repo_workflows() -> Result<(), String> {
+    let workflows_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(".github/workflows");
+    let mut enforced = std::collections::BTreeSet::new();
+    for entry in std::fs::read_dir(&workflows_dir).map_err(|err| err.to_string())? {
+        let path = entry.map_err(|err| err.to_string())?.path();
+        let name = path.file_name().map(|name| name.to_string_lossy());
+        if !name.is_some_and(|name| name.ends_with(".yml") || name.ends_with(".yaml")) {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).map_err(|err| err.to_string())?;
+        enforced.extend(ci_enforced_xtask_invocations(&text));
+    }
+    super::expand_precommit_ci_invocations(&mut enforced);
+    let catalog = command_catalog();
+    assert_eq!(
+        command_catalog_ci_drift_violations(&catalog, &enforced),
+        Vec::<String>::new()
+    );
+    Ok(())
+}
+
+#[test]
+fn pr_ready_packet_marks_required_failure_as_fail() -> Result<(), String> {
+    let steps = vec![
+        PrReadyStep {
+            id: "worktree_doctor",
+            command: "cargo xtask worktree doctor",
+            report: "target/ripr/reports/worktree-doctor.md",
+            required: true,
+            status: "fail".to_string(),
+            summary: "branch is behind origin/main".to_string(),
+        },
+        PrReadyStep {
+            id: "receipts_check",
+            command: "cargo xtask receipts check",
+            report: "target/ripr/reports/receipts.md",
+            required: false,
+            status: "needs_attention".to_string(),
+            summary: "missing receipt".to_string(),
+        },
+    ];
+
+    assert_eq!(pr_ready_status(&steps), "fail");
+    let json = pr_ready_json(&steps);
+    let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(value["schema_version"], "0.1");
+    assert_eq!(value["mode"], "advisory");
+    assert_eq!(value["status"], "fail");
+    assert_eq!(value["steps"][0]["id"], "worktree_doctor");
+    assert_eq!(value["steps"][0]["required"], true);
+    assert!(
+        value["judgment_required"]
+            .as_array()
+            .ok_or("judgment_required must be an array")?
+            .iter()
+            .any(|entry| entry == "golden blessing")
+    );
+
+    let markdown = pr_ready_markdown(&steps);
+    assert!(markdown.contains("# ripr PR Ready"));
+    assert!(markdown.contains("Status: fail"));
+    assert!(markdown.contains("## Stop / Judgment Required"));
+    assert!(markdown.contains("## Start-Here Language"));
+    assert!(
+        markdown.contains("missing artifact / stale evidence / wrong root / malformed artifact")
+    );
+    assert!(markdown.contains("verify command / receipt command / receipt path"));
+    Ok(())
+}
+
+#[test]
+fn pr_ready_packet_keeps_nonblocking_items_actionable() {
+    let steps = vec![
+        PrReadyStep {
+            id: "worktree_doctor",
+            command: "cargo xtask worktree doctor",
+            report: "target/ripr/reports/worktree-doctor.md",
+            required: true,
+            status: "pass".to_string(),
+            summary: "completed".to_string(),
+        },
+        PrReadyStep {
+            id: "receipts_check",
+            command: "cargo xtask receipts check",
+            report: "target/ripr/reports/receipts.md",
+            required: false,
+            status: "needs_attention".to_string(),
+            summary: "missing receipt".to_string(),
+        },
+    ];
+
+    assert_eq!(pr_ready_status(&steps), "actionable");
+    assert_eq!(
+        pr_ready_next_action(&steps),
+        "review the attention items, then run cargo xtask check-pr for full gate receipts"
+    );
+}
+
+#[test]
+fn pr_ready_report_status_maps_warnings_to_attention() {
+    assert_eq!(
+        pr_ready_status_from_report_status("warn"),
+        Some("needs_attention")
+    );
+    assert_eq!(
+        pr_ready_status_from_report_status("actionable"),
+        Some("needs_attention")
+    );
+    assert_eq!(pr_ready_status_from_report_status("fail"), Some("fail"));
+    assert_eq!(pr_ready_status_from_report_status("pass"), None);
+}
+
+#[test]
+fn pr_ready_status_does_not_fail_required_warning() {
+    let steps = vec![PrReadyStep {
+        id: "worktree_doctor",
+        command: "cargo xtask worktree doctor",
+        report: "target/ripr/reports/worktree-doctor.md",
+        required: true,
+        status: "needs_attention".to_string(),
+        summary: "report status: warn; see target/ripr/reports/worktree-doctor.md".to_string(),
+    }];
+
+    assert_eq!(pr_ready_status(&steps), "actionable");
+}
+
+#[test]
+fn cockpit_packet_reports_action_queue_and_boundaries() -> Result<(), String> {
+    let steps = vec![
+        PrReadyStep {
+            id: "command_catalog_check",
+            command: "cargo xtask check-command-catalog",
+            report: "target/ripr/reports/command-catalog.md",
+            required: true,
+            status: "pass".to_string(),
+            summary: "completed".to_string(),
+        },
+        PrReadyStep {
+            id: "pr_triage",
+            command: "cargo xtask pr-triage-report",
+            report: "target/ripr/reports/pr-triage.md",
+            required: false,
+            status: "needs_attention".to_string(),
+            summary: "stale duplicate PRs detected".to_string(),
+        },
+    ];
+
+    assert_eq!(pr_ready_status(&steps), "actionable");
+    let json = cockpit_json(&steps);
+    let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(value["schema_version"], "0.1");
+    assert_eq!(value["mode"], "advisory");
+    assert_eq!(value["status"], "actionable");
+    assert!(
+        value["action_queue"]
+            .as_array()
+            .ok_or("action_queue must be an array")?
+            .iter()
+            .any(|entry| entry
+                .as_str()
+                .is_some_and(|text| text.contains("stale, duplicate")))
+    );
+    assert!(
+        value["judgment_required"]
+            .as_array()
+            .ok_or("judgment_required must be an array")?
+            .iter()
+            .any(|entry| entry == "baseline adoption")
+    );
+
+    let markdown = cockpit_markdown(&steps);
+    assert!(markdown.contains("# ripr Repo Cockpit"));
+    assert!(markdown.contains("Status: actionable"));
+    assert!(markdown.contains("## Action Queue"));
+    assert!(markdown.contains("## Generated Only"));
+    assert!(markdown.contains("## Start-Here Language"));
+    assert!(markdown.contains("preview-limited evidence"));
+    Ok(())
+}
+
+#[test]
+fn known_commands_include_current_report_and_policy_commands() {
+    let commands = known_commands();
+    assert!(commands.contains(&"commands"));
+    assert!(commands.contains(&"install-hooks"));
+    assert!(commands.contains(&"repo-seam-inventory"));
+    assert!(commands.contains(&"repo-exposure-report"));
+    assert!(commands.contains(&"repo-exposure-latency-report"));
+    assert!(commands.contains(&"lane1-evidence-audit"));
+    assert!(commands.contains(&"evidence-quality-audit"));
+    assert!(commands.contains(&"evidence-quality-scorecard"));
+    assert!(commands.contains(&"evidence-quality-trend [--current <path>] [--previous <path>]"));
+    assert!(commands.contains(&"agent-seam-packets [root]"));
+    assert!(commands.contains(&"lsp-cockpit-report"));
+    assert!(commands.contains(&"operator-cockpit"));
+    assert!(commands.contains(&"operator-cockpit-report"));
+    assert!(commands.contains(&"pr-ready"));
+    assert!(commands.contains(&"cockpit"));
+    assert!(commands.contains(&"release-readiness --version <version>"));
+    assert!(commands.contains(&"targeted-test-outcome --before <path> --after <path>"));
+    assert!(commands.contains(&"mutation-calibration [root] --mutants-json <path>"));
+    assert!(
+        commands.contains(&"bun-ub-calibration [--corpus <path>] [--out <path>] [--out-md <path>]")
+    );
+    assert!(commands.contains(&"bun-ub-preview-summary [--calibration-corpus <path>] [--graph-corpus <path>] [--dogfood-corpus <path>] [--out <path>] [--out-md <path>]"));
+    assert!(commands.contains(
+        &"configured-bridge-inventory [--graph-corpus <path>] [--out <path>] [--out-md <path>]"
+    ));
+    assert!(commands.contains(&"sarif-policy --current <path> [--baseline <path>]"));
+    assert!(commands.contains(&"badges [--check] [--gap-ledger <path>]"));
+    assert!(commands.contains(&"pr-triage-report"));
+    assert!(commands.contains(&"gh-pr-status --pr <number>"));
+    assert!(commands.contains(&"check-badge-diff-policy"));
+    assert!(commands.contains(&"check-command-catalog"));
+    assert!(commands.contains(&"worktree doctor"));
+    assert!(commands.contains(&"check-droid-review-config"));
+    assert!(commands.contains(&"check-ci-lane-whitelist"));
+    assert!(commands.contains(&"check-proof-packs"));
+    assert!(commands.contains(&"vscode-compile"));
+    assert!(commands.contains(&"vscode-package"));
+    assert!(commands.contains(&"vscode-test"));
+    assert!(commands.contains(&"vscode-test-e2e"));
+}
+
+#[test]
+fn lane1_repo_exposure_file_completion_check_requires_seams_and_closing_brace() -> Result<(), String>
+{
+    let root = temp_dir("lane1-repo-exposure-complete");
+    let complete = root.join("complete.json");
+    write(
+        &complete,
+        r#"{
+  "schema_version": "0.3",
+  "seams": []
+}
+"#,
+    );
+    if !super::lane1_repo_exposure_file_looks_complete(&complete)? {
+        return Err("complete repo-exposure JSON should be accepted".to_string());
+    }
+
+    let missing_seams = root.join("missing-seams.json");
+    write(
+        &missing_seams,
+        r#"{
+  "schema_version": "0.3"
+}
+"#,
+    );
+    if super::lane1_repo_exposure_file_looks_complete(&missing_seams)? {
+        return Err("repo-exposure JSON without seams should be rejected".to_string());
+    }
+
+    let truncated = root.join("truncated.json");
+    write(
+        &truncated,
+        r#"{
+  "schema_version": "0.3",
+  "seams": [
+"#,
+    );
+    if super::lane1_repo_exposure_file_looks_complete(&truncated)? {
+        return Err("truncated repo-exposure JSON should be rejected".to_string());
+    }
+
+    Ok(())
+}
+
+#[test]
+fn lane1_evidence_audit_repo_exposure_generation_times_out_with_trace() -> Result<(), String> {
+    let root = temp_dir("lane1-repo-exposure-timeout");
+    let output_path = root.join("repo-exposure.json");
+    write(&output_path, "stale");
+    let timeout = Duration::from_millis(5);
+    let outcome = write_lane1_evidence_audit_repo_exposure_with_runner(
+        &output_path,
+        Path::new("ripr"),
+        timeout,
+        |binary, args, output_path_seen, timeout_seen| {
+            assert_eq!(binary, Path::new("ripr"));
+            assert_eq!(timeout_seen, timeout);
+            assert_eq!(args, lane1_evidence_audit_repo_exposure_args().as_slice());
+            assert_eq!(output_path_seen, output_path.as_path());
+            Ok(TimedFileOutput {
+                    status: None,
+                    stderr: "ripr_repo_exposure_latency phase=evidence_for_seams_progress status=processed_500_of_37361 duration_ms=9983\n".to_string(),
+                    duration: timeout,
+                    timed_out: true,
+                    stdout_bytes: 0,
+                })
+        },
+    )?;
+
+    let Lane1EvidenceAuditRepoExposureOutcome::TimedOut(diagnostics) = outcome else {
+        return Err("timeout should produce a bounded timeout outcome".to_string());
+    };
+    assert_eq!(diagnostics.status, "timeout");
+    assert_eq!(diagnostics.timeout_ms, 5);
+    assert_eq!(diagnostics.latency_trace_events_total, 1);
+    assert_eq!(
+        diagnostics.latency_trace_tail[0],
+        RepoExposureLatencyTrace {
+            phase: "evidence_for_seams_progress".to_string(),
+            status: "processed_500_of_37361".to_string(),
+            duration_ms: 9983,
+        }
+    );
+    assert!(
+        !output_path.exists(),
+        "timed-out repo exposure generation should remove stale or partial output"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn lane1_evidence_audit_repo_exposure_generation_accepts_complete_json_after_timeout()
+-> Result<(), String> {
+    let root = temp_dir("lane1-repo-exposure-timeout-complete");
+    let output_path = root.join("repo-exposure.json");
+    let timeout = Duration::from_millis(5);
+    let stdout = "{\n  \"schema_version\": \"0.3\",\n  \"seams\": []\n}\n";
+    let stderr = concat!(
+        "ripr_repo_exposure_latency phase=evidence_for_seams status=ok duration_ms=112847\n",
+        "ripr_repo_exposure_latency phase=total status=sampled_computed duration_ms=115904\n",
+    );
+
+    let outcome = write_lane1_evidence_audit_repo_exposure_with_runner(
+        &output_path,
+        Path::new("ripr"),
+        timeout,
+        |_binary, _args, output_path_seen, _timeout_seen| {
+            write(output_path_seen, stdout);
+            Ok(TimedFileOutput {
+                status: Some(failure_exit_status()),
+                stderr: stderr.to_string(),
+                duration: Duration::from_millis(8),
+                timed_out: true,
+                stdout_bytes: stdout.len(),
+            })
+        },
+    )?;
+
+    let Lane1EvidenceAuditRepoExposureOutcome::Complete(diagnostics) = outcome else {
+        return Err("complete timeout capture should remain downstream-consumable".to_string());
+    };
+    assert_eq!(diagnostics.status, "timeout_complete");
+    assert_eq!(diagnostics.timeout_ms, 5);
+    assert_eq!(diagnostics.stdout_bytes, stdout.len());
+    assert_eq!(diagnostics.exit_code, failure_exit_status().code());
+    assert_eq!(
+        fs::read_to_string(&output_path).map_err(|err| err.to_string())?,
+        stdout
+    );
+    assert_eq!(diagnostics.latency_trace_events_total, 2);
+    assert_eq!(
+        diagnostics.latency_trace_tail[1],
+        RepoExposureLatencyTrace {
+            phase: "total".to_string(),
+            status: "sampled_computed".to_string(),
+            duration_ms: 115904,
+        }
+    );
+
+    Ok(())
+}
+
+#[test]
+fn lane1_evidence_audit_default_timeout_preempts_live_abort_window() {
+    assert_eq!(super::LANE1_EVIDENCE_AUDIT_DEFAULT_TIMEOUT_MS, 240_000);
+}
+
+#[test]
+fn lane1_evidence_audit_timeout_ms_uses_positive_env_override_only() {
+    assert_eq!(
+        super::lane1_evidence_audit_timeout_ms_from_env(None),
+        super::LANE1_EVIDENCE_AUDIT_DEFAULT_TIMEOUT_MS
+    );
+    assert_eq!(
+        super::lane1_evidence_audit_timeout_ms_from_env(Some(String::new())),
+        super::LANE1_EVIDENCE_AUDIT_DEFAULT_TIMEOUT_MS
+    );
+    assert_eq!(
+        super::lane1_evidence_audit_timeout_ms_from_env(Some("0".to_string())),
+        super::LANE1_EVIDENCE_AUDIT_DEFAULT_TIMEOUT_MS
+    );
+    assert_eq!(
+        super::lane1_evidence_audit_timeout_ms_from_env(Some("not-a-timeout".to_string())),
+        super::LANE1_EVIDENCE_AUDIT_DEFAULT_TIMEOUT_MS
+    );
+    assert_eq!(
+        super::lane1_evidence_audit_timeout_ms_from_env(Some("300000".to_string())),
+        300_000
+    );
+}
+
+#[test]
+fn lane1_evidence_audit_sample_limit_parser_accepts_positive_integer_only() {
+    assert_eq!(
+        super::parse_lane1_evidence_audit_sample_seam_limit("5000"),
+        Some(5000)
+    );
+    assert_eq!(
+        super::parse_lane1_evidence_audit_sample_seam_limit(" 7 "),
+        Some(7)
+    );
+    assert_eq!(
+        super::parse_lane1_evidence_audit_sample_seam_limit("0"),
+        None
+    );
+    assert_eq!(
+        super::parse_lane1_evidence_audit_sample_seam_limit("not-a-number"),
+        None
+    );
+}
+
+#[test]
+fn lane1_evidence_audit_repo_exposure_generation_writes_success_json() -> Result<(), String> {
+    let root = temp_dir("lane1-repo-exposure-success");
+    let output_path = root.join("repo-exposure.json");
+    let timeout = Duration::from_millis(50);
+    let stdout = "{\n  \"schema_version\": \"0.3\",\n  \"seams\": []\n}\n";
+
+    let outcome = write_lane1_evidence_audit_repo_exposure_with_runner(
+        &output_path,
+        Path::new("ripr"),
+        timeout,
+        |binary, args, output_path_seen, timeout_seen| {
+            assert_eq!(binary, Path::new("ripr"));
+            assert_eq!(timeout_seen, timeout);
+            assert_eq!(args, lane1_evidence_audit_repo_exposure_args().as_slice());
+            assert_eq!(output_path_seen, output_path.as_path());
+            write(output_path_seen, stdout);
+            Ok(TimedFileOutput {
+                status: Some(success_exit_status()),
+                stderr:
+                    "ripr_repo_exposure_latency phase=evidence_for_seams status=ok duration_ms=42\n"
+                        .to_string(),
+                duration: Duration::from_millis(1),
+                timed_out: false,
+                stdout_bytes: stdout.len(),
+            })
+        },
+    )?;
+    let Lane1EvidenceAuditRepoExposureOutcome::Complete(diagnostics) = outcome else {
+        return Err("success should produce a complete repo-exposure outcome".to_string());
+    };
+
+    assert_eq!(
+        fs::read_to_string(&output_path).map_err(|err| err.to_string())?,
+        stdout
+    );
+    assert_eq!(diagnostics.status, "pass");
+    assert_eq!(diagnostics.duration_ms, 1);
+    assert_eq!(diagnostics.timeout_ms, 50);
+    assert_eq!(diagnostics.latency_trace_events_total, 1);
+    assert_eq!(
+        diagnostics.latency_trace_tail[0],
+        RepoExposureLatencyTrace {
+            phase: "evidence_for_seams".to_string(),
+            status: "ok".to_string(),
+            duration_ms: 42,
+        }
+    );
+
+    Ok(())
+}
+
+#[test]
+fn lane1_evidence_audit_repo_exposure_generation_limits_incomplete_success_json()
+-> Result<(), String> {
+    let root = temp_dir("lane1-repo-exposure-success-incomplete");
+    let output_path = root.join("repo-exposure.json");
+    let partial = "{\n  \"schema_version\": \"0.3\",\n  \"seams\": [\n";
+
+    let outcome = write_lane1_evidence_audit_repo_exposure_with_runner(
+        &output_path,
+        Path::new("ripr"),
+        Duration::from_millis(50),
+        |_binary, _args, output_path_seen, _timeout_seen| {
+            write(output_path_seen, partial);
+            Ok(TimedFileOutput {
+                status: Some(success_exit_status()),
+                stderr:
+                    "ripr_repo_exposure_latency phase=total status=computed duration_ms=867012\n"
+                        .to_string(),
+                duration: Duration::from_millis(867),
+                timed_out: false,
+                stdout_bytes: partial.len(),
+            })
+        },
+    )?;
+
+    let diagnostics =
+        lane1_failed_incomplete_outcome(outcome, "incomplete success repo-exposure JSON")?;
+    assert_eq!(diagnostics.status, "pass_incomplete");
+    assert_eq!(
+        diagnostics.failure_reason.as_deref(),
+        Some("repo exposure exited successfully but captured JSON was incomplete")
+    );
+    assert_eq!(diagnostics.exit_code, Some(0));
+    assert_eq!(diagnostics.stdout_bytes, partial.len());
+    assert!(
+        !output_path.exists(),
+        "incomplete success capture should be removed"
+    );
+
+    let report = lane1_evidence_audit_limited_report(".", diagnostics);
+    let json = lane1_evidence_audit_json(&report)?;
+    let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(value["status"], "advisory");
+    assert_eq!(value["run_status"], "limited_incomplete_input");
+    assert_eq!(
+        value["runtime_status"]["limitation_category"],
+        "lane1_repo_exposure_incomplete"
+    );
+    assert_eq!(value["runtime_status"]["downstream_consumable"], false);
+    assert_eq!(
+        value["run_limitations"][0]["category"],
+        "lane1_repo_exposure_incomplete"
+    );
+    assert_eq!(
+        value["run_limitations"][0]["run_status"],
+        "limited_incomplete_input"
+    );
+    assert_eq!(
+        value["inputs"]["repo_exposure_generation"]["status"],
+        "pass_incomplete"
+    );
+    assert_eq!(value["summary"]["raw_headline_gaps"], 0);
+
+    let packets_json = lane1_actionable_gap_packets_json(&report)?;
+    let packets: Value = serde_json::from_str(&packets_json).map_err(|err| err.to_string())?;
+    assert_eq!(packets["run_status"], "limited_incomplete_input");
+    assert_eq!(packets["summary"]["actionable_gaps"], 0);
+    let packets_markdown = lane1_actionable_gap_packets_markdown(&report);
+    assert!(packets_markdown.contains("## Runtime Status"));
+    assert!(packets_markdown.contains("| State | `limited_incomplete_input` |"));
+    assert!(
+        packets_markdown.contains("| Limitation category | `lane1_repo_exposure_incomplete` |")
+    );
+    assert!(packets_markdown.contains("| Downstream consumable | `false` |"));
+
+    let markdown = lane1_evidence_audit_markdown(&report);
+    assert!(markdown.contains("Run Limitations"));
+    assert!(markdown.contains("lane1_repo_exposure_incomplete"));
+    Ok(())
+}
+
+#[test]
+fn lane1_evidence_audit_repo_exposure_generation_limits_missing_success_json() -> Result<(), String>
+{
+    let root = temp_dir("lane1-repo-exposure-success-missing");
+    let output_path = root.join("repo-exposure.json");
+
+    let outcome = write_lane1_evidence_audit_repo_exposure_with_runner(
+        &output_path,
+        Path::new("ripr"),
+        Duration::from_millis(50),
+        |_binary, _args, _output_path_seen, _timeout_seen| {
+            Ok(TimedFileOutput {
+                status: Some(success_exit_status()),
+                stderr: String::new(),
+                duration: Duration::from_millis(2),
+                timed_out: false,
+                stdout_bytes: 0,
+            })
+        },
+    )?;
+
+    let diagnostics =
+        lane1_failed_incomplete_outcome(outcome, "missing success repo-exposure JSON")?;
+    assert_eq!(diagnostics.status, "pass_incomplete");
+    assert!(
+        diagnostics.failure_reason.is_some(),
+        "missing success capture should record an inspection failure"
+    );
+    let reason = diagnostics.failure_reason.as_deref().unwrap_or("");
+    assert!(
+        reason.contains("failed to open captured repo exposure"),
+        "unexpected inspection failure reason: {reason}"
+    );
+    assert_eq!(diagnostics.exit_code, Some(0));
+    assert!(!output_path.exists());
+
+    let report = lane1_evidence_audit_limited_report(".", diagnostics);
+    assert_eq!(
+        report.run_limitations[0].category,
+        "lane1_repo_exposure_incomplete"
+    );
+    Ok(())
+}
+
+fn lane1_failed_incomplete_outcome(
+    outcome: Lane1EvidenceAuditRepoExposureOutcome,
+    context: &str,
+) -> Result<Lane1EvidenceAuditRepoExposureGeneration, String> {
+    match outcome {
+        Lane1EvidenceAuditRepoExposureOutcome::FailedIncomplete(diagnostics) => Ok(diagnostics),
+        _ => Err(format!(
+            "{context} should produce a bounded incomplete limitation"
+        )),
+    }
+}
+
+#[test]
+fn lane1_repo_exposure_cache_store_skip_becomes_named_run_limitation() -> Result<(), String> {
+    let generation = Lane1EvidenceAuditRepoExposureGeneration {
+        command: "target/debug/ripr check --format repo-exposure-json".to_string(),
+        timeout_ms: 1_200_000,
+        status: "pass".to_string(),
+        failure_reason: None,
+        duration_ms: 1_086_312,
+        exit_code: Some(0),
+        stdout_bytes: 1_234,
+        stderr_bytes: 456,
+        latency_trace_events_total: 4,
+        latency_trace_tail: vec![
+            RepoExposureLatencyTrace {
+                phase: "cold_compute".to_string(),
+                status: "ok".to_string(),
+                duration_ms: 1_001_581,
+            },
+            RepoExposureLatencyTrace {
+                phase: "cache_store".to_string(),
+                status: "start_classified_38927_limit_20000".to_string(),
+                duration_ms: 0,
+            },
+            RepoExposureLatencyTrace {
+                phase: "cache_store".to_string(),
+                status: "ignored_skipped_large_entry_seams_38927_limit_20000".to_string(),
+                duration_ms: 12,
+            },
+            RepoExposureLatencyTrace {
+                phase: "total".to_string(),
+                status: "computed".to_string(),
+                duration_ms: 1_086_312,
+            },
+        ],
+    };
+
+    let Some(limitation) = super::lane1_repo_exposure_cache_store_limitation(&generation) else {
+        return Err("cache-store skip trace should produce a named limitation".to_string());
+    };
+    assert_eq!(
+        limitation.category,
+        "lane1_repo_exposure_cache_store_skipped_large_entry"
+    );
+    assert_eq!(limitation.phase, "repo_exposure_cache_store");
+    assert_eq!(limitation.input, "classified_seams_38927_limit_20000");
+    assert_eq!(limitation.observed_seams, Some(38_927));
+    assert_eq!(limitation.cache_limit, Some(20_000));
+    assert!(
+        limitation
+            .repair_route
+            .contains("RIPR_REPO_SEAM_CACHE_LIMIT=38927"),
+        "repair route should name the configurable cache limit, got {}",
+        limitation.repair_route
+    );
+    Ok(())
+}
+
+#[test]
+fn lane1_cache_store_skip_status_parser_rejects_malformed_statuses() {
+    for status in [
+        "ignored_skipped_large_entry_seams_38927",
+        "ignored_skipped_large_entry_seams_38927_limit_",
+        "ignored_skipped_large_entry_seams_not-a-number_limit_20000",
+        "skipped_large_entry_seams_38927_limit_20000",
+    ] {
+        assert_eq!(
+            super::lane1_parse_cache_store_skip_status(status),
+            None,
+            "malformed cache-store skip status should not parse: {status}"
+        );
+    }
+}
+
+#[test]
+fn lane1_repo_exposure_large_cache_preflight_skip_becomes_named_run_limitation()
+-> Result<(), String> {
+    let root = temp_dir("lane1-large-cache-preflight");
+    let cache_file = root
+        .join("target")
+        .join("ripr")
+        .join("cache")
+        .join("repo-seam-facts")
+        .join("v1")
+        .join("large.json");
+    if let Some(parent) = cache_file.parent() {
+        fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+    fs::write(&cache_file, vec![0_u8; 11]).map_err(|err| err.to_string())?;
+
+    let Some(limitation) =
+        super::lane1_repo_exposure_large_cache_preflight_limitation_for_root(&root, 10)?
+    else {
+        return Err("oversized Lane 1 cache should produce a named limitation".to_string());
+    };
+
+    assert_eq!(
+        limitation.category,
+        "lane1_repo_exposure_large_cache_preflight_skip"
+    );
+    assert_eq!(limitation.phase, "repo_seam_facts_cache");
+    assert!(
+        limitation.input.ends_with("target/ripr/cache"),
+        "input should name target/ripr/cache, got {}",
+        limitation.input
+    );
+    assert!(
+        limitation.repair_route.contains("cargo xtask cache report")
+            && limitation
+                .repair_route
+                .contains("cargo xtask cache gc --dry-run"),
+        "repair route should point at cache report/gc, got {}",
+        limitation.repair_route
+    );
+
+    let report = super::lane1_evidence_audit_limited_report_from_run_limitation(".", limitation);
+    let json = lane1_evidence_audit_json(&report)?;
+    let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+
+    assert_eq!(value["run_status"], "limited_large_cache_skip");
+    assert_eq!(value["runtime_status"]["downstream_consumable"], false);
+    assert_eq!(
+        value["runtime_status"]["input_kind"],
+        "repo-seam-facts-cache"
+    );
+    assert!(
+        value["runtime_status"]["input_path"]
+            .as_str()
+            .is_some_and(|path| path.ends_with("target/ripr/cache"))
+    );
+    assert_eq!(value["summary"]["static_limitations_total"], 1);
+    assert_eq!(
+        value["run_limitations"][0]["category"],
+        "lane1_repo_exposure_large_cache_preflight_skip"
+    );
+    assert_eq!(
+        value["run_limitations"][0]["repair_route"],
+        "run cargo xtask cache report && cargo xtask cache gc --dry-run --max-size-gb 1 --ttl-days 14, then review and rerun without --dry-run before lane1-evidence-audit"
+    );
+    Ok(())
+}
+
+#[test]
+fn lane1_repo_exposure_large_cache_preflight_ignores_missing_cache() -> Result<(), String> {
+    let root = temp_dir("lane1-large-cache-preflight-missing");
+    let limitation =
+        super::lane1_repo_exposure_large_cache_preflight_limitation_for_root(&root, 10)?;
+    assert!(limitation.is_none());
+    Ok(())
+}
+
+#[test]
+fn lane1_evidence_audit_complete_report_counts_cache_store_run_limitation() -> Result<(), String> {
+    let root = temp_dir("lane1-repo-exposure-cache-store-limitation");
+    let output_path = root.join("repo-exposure.json");
+    write(
+        &output_path,
+        r#"{
+  "schema_version": "0.3",
+  "scope": "repo",
+  "seams": [
+    {
+      "evidence_record": {"schema_version":"0.1","seam_id":"seam-cache","location":{"file":"src/cache.rs","line":10},"seam_kind":"predicate_boundary","headline_eligible":true,"related_tests_total":0,"related_tests":[],"static_limitations":[],"raw_findings":[]}
+    }
+  ]
+}"#,
+    );
+    let generation = Lane1EvidenceAuditRepoExposureGeneration {
+        command: "target/debug/ripr check --format repo-exposure-json".to_string(),
+        timeout_ms: 1_200_000,
+        status: "pass".to_string(),
+        failure_reason: None,
+        duration_ms: 1_086_312,
+        exit_code: Some(0),
+        stdout_bytes: 1_234,
+        stderr_bytes: 456,
+        latency_trace_events_total: 2,
+        latency_trace_tail: vec![
+            RepoExposureLatencyTrace {
+                phase: "cache_store".to_string(),
+                status: "ignored_skipped_large_entry_seams_38927_limit_20000".to_string(),
+                duration_ms: 12,
+            },
+            RepoExposureLatencyTrace {
+                phase: "total".to_string(),
+                status: "computed".to_string(),
+                duration_ms: 1_086_312,
+            },
+        ],
+    };
+
+    let report =
+        lane1_evidence_audit_report_from_complete_repo_exposure(".", &output_path, generation);
+    let json = lane1_evidence_audit_json(&report)?;
+    let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+
+    assert_eq!(value["run_status"], "limited_large_cache_skip");
+    assert_eq!(value["runtime_status"]["downstream_consumable"], true);
+    assert_eq!(value["summary"]["static_limitations_total"], 1);
+    assert_eq!(
+        value["static_limitations"]["by_category"]["lane1_repo_exposure_cache_store_skipped_large_entry"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["static_limitations"]["repair_routes"]["report/lane1-audit-bounded-diagnostics"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["run_limitations"][0]["category"],
+        "lane1_repo_exposure_cache_store_skipped_large_entry"
+    );
+    assert_eq!(
+        value["run_limitations"][0]["run_status"],
+        "limited_large_cache_skip"
+    );
+    assert_eq!(
+        value["run_limitations"][0]["input_kind"],
+        "repo-seam-facts-cache"
+    );
+    assert_eq!(
+        value["run_limitations"][0]["input"],
+        "classified_seams_38927_limit_20000"
+    );
+    assert_eq!(
+        value["run_limitations"][0]["observed_seams"],
+        serde_json::Value::from(38_927)
+    );
+    assert_eq!(
+        value["run_limitations"][0]["cache_limit"],
+        serde_json::Value::from(20_000)
+    );
+    assert!(
+        value["run_limitations"][0]["repair_route"]
+            .as_str()
+            .is_some_and(|route| route.contains("RIPR_REPO_SEAM_CACHE_LIMIT=38927"))
+    );
+    assert_eq!(
+        value["inputs"]["repo_exposure_generation"]["status"],
+        "pass"
+    );
+    Ok(())
+}
+
+#[test]
+fn lane1_evidence_audit_sampled_report_keeps_counts_and_names_limits() -> Result<(), String> {
+    let root = temp_dir("lane1-repo-exposure-sampled-report");
+    let output_path = root.join("repo-exposure.json");
+    write(
+        &output_path,
+        r#"{
+  "schema_version": "0.3",
+  "scope": "repo",
+  "seams": [
+    {
+      "evidence_record": {"schema_version":"0.1","seam_id":"seam-sampled","canonical_gap_id":"gap-sampled","canonical_gap_group_size":1,"raw_findings":[{"file":"src/lib.rs","line":10,"kind":"reachable_unrevealed","expression":"amount >= threshold","probe_kind":"predicate_boundary","source_id":"seam-sampled","evidence_record_ref":"seam-sampled"}],"canonical_item":{"canonical_gap_id":"gap-sampled","raw_group_size":1,"canonical_item_kind":"gap","evidence_class":"predicate_boundary","gap_state":"actionable","actionability":"add_boundary_assertion","primary_anchor":{"file":"src/lib.rs","line":10,"kind":"reachable_unrevealed","source_id":"seam-sampled","reason":"record_location"},"raw_spans":[{"file":"src/lib.rs","start_line":10,"end_line":10,"kind":"reachable_unrevealed","source_id":"seam-sampled"}],"why":"Missing equality boundary assertion.","recommended_repair":"Add exact boundary assertion.","repair_route":{"repair_kind":"add_boundary_assertion","target_test_type":"boundary_discriminator","suggested_assertion":"assert_eq!(price(100, 100), 90)"},"related_test":null,"verify_command":"ripr agent verify --root . --json","receipt_command":"cargo xtask receipts emit --kind lane1-actionable-gap","confidence":{"basis":"static_only","notes":[]}},"owner":"pricing::price","location":{"file":"src/lib.rs","line":10},"seam_kind":"predicate_boundary","grip_class":"reachable_unrevealed","headline_eligible":true,"evidence_path":{"reach":{"state":"yes","confidence":"high","summary":"related owner reachable"},"activate":{"state":"unknown","confidence":"low","summary":"missing equality"},"propagate":{"state":"yes","confidence":"medium","summary":"return value"},"observe":{"state":"yes","confidence":"medium","summary":"assertion exists"},"discriminate":{"state":"no","confidence":"medium","summary":"equality missing"}},"missing_discriminators":[{"value":"100","reason":"missing_boundary_equality","flow_sink":{"kind":"return_value","text":"amount - 10","line":11}}],"related_tests_total":0,"related_tests":[],"recommendation":{"action":"add_or_strengthen_test","reason":"missing boundary","assertion_shape":{"kind":"exact_return_value","example":"assert_eq!(price(100, 100), 90)"},"verify_command":"ripr agent verify --root . --json"},"static_limitations":[]}
+    }
+  ]
+}"#,
+    );
+    let generation = Lane1EvidenceAuditRepoExposureGeneration {
+        command: "target/debug/ripr check --format repo-exposure-json".to_string(),
+        timeout_ms: 120_000,
+        status: "pass".to_string(),
+        failure_reason: None,
+        duration_ms: 65_000,
+        exit_code: Some(0),
+        stdout_bytes: 4_096,
+        stderr_bytes: 512,
+        latency_trace_events_total: 1,
+        latency_trace_tail: vec![RepoExposureLatencyTrace {
+            phase: "repo_exposure_seam_limit".to_string(),
+            status: "limit_5000_of_39663".to_string(),
+            duration_ms: 0,
+        }],
+    };
+
+    let report =
+        lane1_evidence_audit_report_from_complete_repo_exposure(".", &output_path, generation);
+    let json = lane1_evidence_audit_json(&report)?;
+    let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+
+    assert_eq!(
+        value["inputs"]["repo_exposure_generation"]["status"],
+        "pass"
+    );
+    assert_eq!(value["run_status"], "limited_sampled_input");
+    assert_eq!(value["runtime_status"]["state"], "limited_sampled_input");
+    assert_eq!(value["finding_alignment"]["summary"]["actionable_gaps"], 1);
+    assert_eq!(
+        value["run_limitations"][0]["run_status"],
+        "limited_sampled_input"
+    );
+    assert_eq!(
+        value["run_limitations"][0]["category"],
+        "lane1_repo_exposure_sampled"
+    );
+    assert_eq!(
+        value["run_limitations"][0]["input"],
+        "repo-exposure-json:limit_5000_of_39663"
+    );
+    let backlog = super::lane1_static_limitation_backlog_json(&report);
+    let backlog_packets = backlog["limitation_backlog_packets"]
+        .as_array()
+        .ok_or_else(|| "expected limitation backlog packets".to_string())?;
+    assert!(
+        backlog_packets
+            .iter()
+            .all(|packet| packet["repair_route"] != "report/lane1-audit-bounded-diagnostics"),
+        "runtime diagnostics should remain in run_limitations, not packet backlog: {backlog_packets:?}"
+    );
+    let top_routes = backlog["top_repair_routes"]
+        .as_array()
+        .ok_or_else(|| "expected top repair routes".to_string())?;
+    assert!(
+        top_routes
+            .iter()
+            .all(|route| route["repair_route"] != "report/lane1-audit-bounded-diagnostics"),
+        "runtime diagnostics should stay out of packet-backed top repair routes: {top_routes:?}"
+    );
+    assert!(lane1_evidence_audit_markdown(&report).contains("lane1_repo_exposure_sampled"));
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+fn lane1_evidence_audit_limits_incomplete_success_repo_exposure_artifact() -> Result<(), String> {
+    let root = temp_dir("lane1-repo-exposure-complete-parse-failed");
+    let output_path = root.join("repo-exposure.json");
+    write(&output_path, "");
+    let generation = Lane1EvidenceAuditRepoExposureGeneration {
+        command: "ripr check --format repo-exposure-json".to_string(),
+        timeout_ms: 50,
+        status: "pass".to_string(),
+        failure_reason: None,
+        duration_ms: 218,
+        exit_code: Some(0),
+        stdout_bytes: 0,
+        stderr_bytes: 123,
+        latency_trace_events_total: 1,
+        latency_trace_tail: vec![RepoExposureLatencyTrace {
+            phase: "evidence_for_seams_progress".to_string(),
+            status: "processed_18500_of_38654".to_string(),
+            duration_ms: 218802,
+        }],
+    };
+
+    let report =
+        lane1_evidence_audit_report_from_complete_repo_exposure(".", &output_path, generation);
+    assert_eq!(
+        report
+            .repo_exposure_generation
+            .as_ref()
+            .map(|generation| generation.status.as_str()),
+        Some("pass_incomplete")
+    );
+    assert_eq!(report.run_limitations.len(), 1);
+    assert_eq!(
+        report.run_limitations[0].category,
+        "lane1_repo_exposure_incomplete"
+    );
+    assert_eq!(report.run_limitations[0].exit_code, Some(0));
+    assert_eq!(report.run_limitations[0].stdout_bytes, Some(0));
+    assert_eq!(
+        report.run_limitations[0].latency_trace_tail[0].status,
+        "processed_18500_of_38654"
+    );
+    Ok(())
+}
+
+#[test]
+fn lane1_evidence_audit_repo_exposure_generation_limits_runner_error() -> Result<(), String> {
+    let root = temp_dir("lane1-repo-exposure-runner-error");
+    let output_path = root.join("repo-exposure.json");
+    write(&output_path, "stale");
+
+    let outcome = write_lane1_evidence_audit_repo_exposure_with_runner(
+        &output_path,
+        Path::new("ripr"),
+        Duration::from_millis(50),
+        |_binary, _args, _output_path_seen, _timeout_seen| {
+            Err("failed to spawn repo exposure".to_string())
+        },
+    )?;
+
+    let Lane1EvidenceAuditRepoExposureOutcome::FailedIncomplete(diagnostics) = outcome else {
+        return Err("runner error should produce a bounded limitation".to_string());
+    };
+    assert_eq!(diagnostics.status, "runner_error");
+    assert_eq!(
+        diagnostics.failure_reason.as_deref(),
+        Some("failed to spawn repo exposure")
+    );
+    assert!(
+        !output_path.exists(),
+        "runner errors should not leave stale repo exposure input"
+    );
+
+    let report = lane1_evidence_audit_limited_report(".", diagnostics);
+    let json = lane1_evidence_audit_json(&report)?;
+    let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["run_limitations"][0]["category"],
+        "lane1_repo_exposure_runner_error"
+    );
+    assert_eq!(
+        value["inputs"]["repo_exposure_generation"]["failure_reason"],
+        "failed to spawn repo exposure"
+    );
+    assert_eq!(
+        value["static_limitations"]["by_category"]["lane1_repo_exposure_runner_error"],
+        1
+    );
+
+    let packets_json = lane1_actionable_gap_packets_json(&report)?;
+    let packets: Value = serde_json::from_str(&packets_json).map_err(|err| err.to_string())?;
+    assert_eq!(packets["summary"]["actionable_gaps"], 0);
+
+    let markdown = lane1_evidence_audit_markdown(&report);
+    assert!(markdown.contains("lane1_repo_exposure_runner_error"));
+    assert!(markdown.contains("failed to spawn repo exposure"));
+    Ok(())
+}
+
+#[test]
+fn lane1_evidence_audit_repo_exposure_generation_accepts_complete_json_from_nonzero_status()
+-> Result<(), String> {
+    let root = temp_dir("lane1-repo-exposure-nonzero-complete");
+    let output_path = root.join("repo-exposure.json");
+    let stdout = "{\n  \"schema_version\": \"0.3\",\n  \"seams\": []\n}\n";
+
+    let outcome = write_lane1_evidence_audit_repo_exposure_with_runner(
+        &output_path,
+        Path::new("ripr"),
+        Duration::from_millis(50),
+        |_binary, _args, output_path_seen, _timeout_seen| {
+            write(output_path_seen, stdout);
+            Ok(TimedFileOutput {
+                status: Some(failure_exit_status()),
+                stderr: "nonfatal stderr after full JSON".to_string(),
+                duration: Duration::from_millis(1),
+                timed_out: false,
+                stdout_bytes: stdout.len(),
+            })
+        },
+    )?;
+    let Lane1EvidenceAuditRepoExposureOutcome::Complete(diagnostics) = outcome else {
+        return Err(
+            "complete nonzero repo-exposure output should produce a complete outcome".to_string(),
+        );
+    };
+
+    assert_eq!(diagnostics.status, "nonzero_complete");
+    assert_eq!(
+        fs::read_to_string(&output_path).map_err(|err| err.to_string())?,
+        stdout
+    );
+
+    Ok(())
+}
+
+#[test]
+fn lane1_evidence_audit_repo_exposure_generation_limits_incomplete_nonzero_json()
+-> Result<(), String> {
+    let root = temp_dir("lane1-repo-exposure-nonzero-incomplete");
+    let output_path = root.join("repo-exposure.json");
+    let outcome = write_lane1_evidence_audit_repo_exposure_with_runner(
+        &output_path,
+        Path::new("ripr"),
+        Duration::from_millis(50),
+        |_binary, _args, output_path_seen, _timeout_seen| {
+            let partial = "{\n  \"schema_version\": \"0.3\",\n  \"seams\": [\n";
+            write(output_path_seen, partial);
+            Ok(TimedFileOutput {
+                status: Some(failure_exit_status()),
+                stderr: "repo exposure failed".to_string(),
+                duration: Duration::from_millis(1),
+                timed_out: false,
+                stdout_bytes: partial.len(),
+            })
+        },
+    )?;
+
+    let Lane1EvidenceAuditRepoExposureOutcome::FailedIncomplete(diagnostics) = outcome else {
+        return Err(
+            "incomplete nonzero repo-exposure JSON should produce a bounded limitation".to_string(),
+        );
+    };
+    assert_eq!(diagnostics.status, "fail");
+    assert_eq!(diagnostics.exit_code, failure_exit_status().code());
+    assert_eq!(diagnostics.stderr_bytes, "repo exposure failed".len());
+    assert!(
+        !output_path.exists(),
+        "incomplete nonzero repo exposure should remove partial output"
+    );
+    Ok(())
+}
+
+#[test]
+fn lane1_evidence_audit_repo_exposure_generation_limits_missing_exit_status() -> Result<(), String>
+{
+    let root = temp_dir("lane1-repo-exposure-no-status");
+    let output_path = root.join("repo-exposure.json");
+    let outcome = write_lane1_evidence_audit_repo_exposure_with_runner(
+        &output_path,
+        Path::new("ripr"),
+        Duration::from_millis(50),
+        |_binary, _args, output_path_seen, _timeout_seen| {
+            let stdout = "{\n  \"schema_version\": \"0.3\",\n  \"seams\": []\n}\n";
+            write(output_path_seen, stdout);
+            Ok(TimedFileOutput {
+                status: None,
+                stderr: "missing status stderr".to_string(),
+                duration: Duration::from_millis(1),
+                timed_out: false,
+                stdout_bytes: stdout.len(),
+            })
+        },
+    )?;
+
+    let Lane1EvidenceAuditRepoExposureOutcome::FailedIncomplete(diagnostics) = outcome else {
+        return Err("missing exit status should produce a bounded limitation".to_string());
+    };
+    assert_eq!(diagnostics.status, "missing_exit_status");
+    assert_eq!(diagnostics.exit_code, None);
+    assert_eq!(diagnostics.stderr_bytes, "missing status stderr".len());
+    assert!(
+        !output_path.exists(),
+        "missing exit status should remove captured repo exposure"
+    );
+    Ok(())
+}
+
+#[test]
+fn lane1_evidence_audit_timeout_error_uses_stderr_tail_without_trace() {
+    let output = TimedFileOutput {
+        status: None,
+        stderr: "first\nsecond\nthird\n".to_string(),
+        duration: Duration::from_millis(10),
+        timed_out: true,
+        stdout_bytes: 0,
+    };
+    let err = lane1_evidence_audit_timeout_error(
+        Path::new("ripr"),
+        &lane1_evidence_audit_repo_exposure_args(),
+        Duration::from_millis(10),
+        &output,
+    );
+    assert!(err.contains("timed out after 10 ms"));
+    assert!(err.contains("stderr tail:"));
+    assert!(err.contains("first\nsecond\nthird"));
+}
+
+#[test]
+fn lane1_evidence_audit_limited_report_names_timeout_limitation() -> Result<(), String> {
+    let generation = Lane1EvidenceAuditRepoExposureGeneration {
+        command: "ripr check --format repo-exposure-json".to_string(),
+        timeout_ms: 12,
+        status: "timeout".to_string(),
+        failure_reason: None,
+        duration_ms: 13,
+        exit_code: None,
+        stdout_bytes: 0,
+        stderr_bytes: 91,
+        latency_trace_events_total: 1,
+        latency_trace_tail: vec![RepoExposureLatencyTrace {
+            phase: "evidence_for_seams_progress".to_string(),
+            status: "processed_500_of_38445".to_string(),
+            duration_ms: 11,
+        }],
+    };
+    let report = lane1_evidence_audit_limited_report(".", generation);
+    let json = lane1_evidence_audit_json(&report)?;
+    let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+
+    assert_eq!(
+        value["run_limitations"][0]["category"],
+        "lane1_repo_exposure_timeout"
+    );
+    assert_eq!(
+        value["run_limitations"][0]["repair_route"],
+        "inspect repo-exposure latency trace, increase RIPR_LANE1_EVIDENCE_AUDIT_TIMEOUT_MS for slower machines, or add fixture-backed analyzer narrowing for the slow phase"
+    );
+    assert_eq!(
+        value["static_limitations"]["by_category"]["lane1_repo_exposure_timeout"],
+        1
+    );
+    let backlog = super::lane1_static_limitation_backlog_json(&report);
+    assert_eq!(
+        backlog["top_categories"][0]["repair_route"],
+        "report/lane1-audit-bounded-diagnostics"
+    );
+    let top_routes = backlog["top_repair_routes"]
+        .as_array()
+        .ok_or_else(|| "expected top repair routes".to_string())?;
+    assert!(
+        top_routes
+            .iter()
+            .all(|route| route["repair_route"] != "report/lane1-audit-bounded-diagnostics"),
+        "report-only runtime diagnostics should stay out of packet-backed top repair routes: {top_routes:?}"
+    );
+    assert_eq!(value["summary"]["static_limitations_total"], 1);
+    assert_eq!(
+        value["inputs"]["repo_exposure_generation"]["latency_trace_tail"][0]["phase"],
+        "evidence_for_seams_progress"
+    );
+
+    let markdown = lane1_evidence_audit_markdown(&report);
+    assert!(markdown.contains("Run Limitations"));
+    assert!(markdown.contains("| Static limitations | 1 |"));
+    assert!(markdown.contains("lane1_repo_exposure_timeout"));
+    assert!(markdown.contains("processed_500_of_38445"));
+    Ok(())
+}
+
+#[test]
+fn lane1_evidence_audit_limited_report_names_incomplete_limitation() -> Result<(), String> {
+    let generation = Lane1EvidenceAuditRepoExposureGeneration {
+        command: "ripr check --format repo-exposure-json".to_string(),
+        timeout_ms: 1200,
+        status: "fail".to_string(),
+        failure_reason: None,
+        duration_ms: 540,
+        exit_code: Some(1),
+        stdout_bytes: 0,
+        stderr_bytes: 91,
+        latency_trace_events_total: 1,
+        latency_trace_tail: vec![RepoExposureLatencyTrace {
+            phase: "evidence_for_seams_progress".to_string(),
+            status: "processed_28500_of_38521".to_string(),
+            duration_ms: 537,
+        }],
+    };
+    let report = lane1_evidence_audit_limited_report(".", generation);
+    let json = lane1_evidence_audit_json(&report)?;
+    let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+
+    assert_eq!(
+        value["run_limitations"][0]["category"],
+        "lane1_repo_exposure_incomplete"
+    );
+    assert_eq!(
+        value["run_limitations"][0]["summary"],
+        "Lane 1 repo-exposure generation ended before producing complete repo-exposure JSON; partial repo-exposure JSON was discarded and no user test debt is claimed from this limited artifact."
+    );
+    assert_eq!(
+        value["static_limitations"]["by_category"]["lane1_repo_exposure_incomplete"],
+        1
+    );
+    assert_eq!(value["summary"]["static_limitations_total"], 1);
+
+    let markdown = lane1_evidence_audit_markdown(&report);
+    assert!(markdown.contains("| Static limitations | 1 |"));
+    assert!(markdown.contains("lane1_repo_exposure_incomplete"));
+    assert!(markdown.contains("processed_28500_of_38521"));
+    Ok(())
+}
+
+#[test]
+fn evidence_health_build_timeout_writes_named_limitation_reports() -> Result<(), String> {
+    with_temp_cwd("evidence-health-build-timeout", |_root| {
+        let timeout = Duration::from_millis(7);
+        let args = evidence_health_args();
+        let stale_json = Path::new("target/ripr/reports/evidence-health.json");
+        let stale_md = Path::new("target/ripr/reports/evidence-health.md");
+        write(stale_json, "stale json");
+        write(stale_md, "stale markdown");
+
+        write_evidence_health_report_with_runners(
+            Path::new("ripr"),
+            &args,
+            timeout,
+            |_timeout| {
+                Ok(TimedOutput {
+                    status: None,
+                    stdout: "partial build stdout".to_string(),
+                    stderr: "Compiling ripr\n".to_string(),
+                    duration: Duration::from_millis(8),
+                    timed_out: true,
+                })
+            },
+            |_binary, _args, _timeout| {
+                Err("evidence-health generation should not run after build timeout".to_string())
+            },
+        )?;
+
+        let json_text = fs::read_to_string(stale_json).map_err(|err| err.to_string())?;
+        let value: Value = serde_json::from_str(&json_text).map_err(|err| err.to_string())?;
+        assert_eq!(value["schema_version"], "0.2");
+        assert_eq!(value["status"], "warn");
+        assert_eq!(
+            value["run_limitations"][0]["category"],
+            "evidence_health_timeout"
+        );
+        assert_eq!(
+            value["run_limitations"][0]["phase"],
+            "evidence_health_build"
+        );
+        assert_eq!(
+            value["run_limitations"][0]["command"],
+            "cargo build -p ripr"
+        );
+        assert_eq!(
+            value["inputs"]["generation"]["command"],
+            "cargo build -p ripr"
+        );
+        assert_eq!(
+            value["inputs"]["generation"]["phase"],
+            "evidence_health_build"
+        );
+        assert_eq!(
+            value["inputs"]["generation"]["status"],
+            serde_json::Value::from("timeout")
+        );
+        assert_eq!(
+            value["inputs"]["generation"]["stderr_excerpt"],
+            "Compiling ripr"
+        );
+        assert!(!json_text.contains("stale json"));
+
+        let markdown = fs::read_to_string(stale_md).map_err(|err| err.to_string())?;
+        assert!(markdown.contains("Status: warn"));
+        assert!(markdown.contains("evidence_health_timeout"));
+        assert!(markdown.contains("evidence_health_build"));
+        assert!(markdown.contains("cargo build -p ripr"));
+        assert!(!markdown.contains("stale markdown"));
+        Ok(())
+    })
+}
+
+#[test]
+fn evidence_health_build_runner_error_writes_named_limitation_reports() -> Result<(), String> {
+    with_temp_cwd("evidence-health-build-runner-error", |_root| {
+        let timeout = Duration::from_millis(7);
+        let args = evidence_health_args();
+        let stale_json = Path::new("target/ripr/reports/evidence-health.json");
+        let stale_md = Path::new("target/ripr/reports/evidence-health.md");
+        write(stale_json, "stale json");
+        write(stale_md, "stale markdown");
+
+        write_evidence_health_report_with_runners(
+            Path::new("ripr"),
+            &args,
+            timeout,
+            |_timeout| Err("failed to spawn cargo build".to_string()),
+            |_binary, _args, _timeout| {
+                Err(
+                    "evidence-health generation should not run after build runner error"
+                        .to_string(),
+                )
+            },
+        )?;
+
+        let json_text = fs::read_to_string(stale_json).map_err(|err| err.to_string())?;
+        let value: Value = serde_json::from_str(&json_text).map_err(|err| err.to_string())?;
+        assert_eq!(value["schema_version"], "0.2");
+        assert_eq!(value["status"], "warn");
+        assert_eq!(
+            value["run_limitations"][0]["category"],
+            "evidence_health_runner_error"
+        );
+        assert_eq!(
+            value["run_limitations"][0]["phase"],
+            "evidence_health_build"
+        );
+        assert_eq!(
+            value["inputs"]["generation"]["status"],
+            serde_json::Value::from("runner_error")
+        );
+        assert!(
+            value["inputs"]["generation"]["failure_reason"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("failed to spawn cargo build")
+        );
+        assert!(!json_text.contains("stale json"));
+
+        let markdown = fs::read_to_string(stale_md).map_err(|err| err.to_string())?;
+        assert!(markdown.contains("Status: warn"));
+        assert!(markdown.contains("evidence_health_runner_error"));
+        assert!(markdown.contains("failed to spawn cargo build"));
+        assert!(!markdown.contains("stale markdown"));
+        Ok(())
+    })
+}
+
+#[test]
+fn evidence_health_timeout_writes_named_limitation_reports() -> Result<(), String> {
+    with_temp_cwd("evidence-health-timeout", |_root| {
+        let timeout = Duration::from_millis(7);
+        let args = evidence_health_args();
+        let stale_json = Path::new("target/ripr/reports/evidence-health.json");
+        let stale_md = Path::new("target/ripr/reports/evidence-health.md");
+        write(stale_json, "stale json");
+        write(stale_md, "stale markdown");
+
+        write_evidence_health_report_with_runner(
+            Path::new("ripr"),
+            &args,
+            timeout,
+            |_binary, _args, _timeout| {
+                Ok(TimedOutput {
+                        status: None,
+                        stdout: "partial stdout".to_string(),
+                        stderr: concat!(
+                            "ripr_repo_exposure_latency phase=inventory_seams status=ok duration_ms=3\n",
+                            "ripr_repo_exposure_latency phase=evidence_for_seams_progress status=processed_500_of_39021 duration_ms=7\n",
+                        )
+                        .to_string(),
+                        duration: Duration::from_millis(8),
+                        timed_out: true,
+                    })
+            },
+        )?;
+
+        let json_text = fs::read_to_string(stale_json).map_err(|err| err.to_string())?;
+        let value: Value = serde_json::from_str(&json_text).map_err(|err| err.to_string())?;
+        assert_eq!(value["schema_version"], "0.2");
+        assert_eq!(value["status"], "warn");
+        assert_eq!(
+            value["run_limitations"][0]["category"],
+            "evidence_health_timeout"
+        );
+        assert_eq!(
+            value["inputs"]["generation"]["phase"],
+            "evidence_health_generation"
+        );
+        assert_eq!(
+            value["inputs"]["generation"]["status"],
+            serde_json::Value::from("timeout")
+        );
+        assert_eq!(
+            value["run_limitations"][0]["stderr_excerpt"],
+            concat!(
+                "ripr_repo_exposure_latency phase=inventory_seams status=ok duration_ms=3\n",
+                "ripr_repo_exposure_latency phase=evidence_for_seams_progress status=processed_500_of_39021 duration_ms=7"
+            )
+        );
+        assert_eq!(
+            value["inputs"]["generation"]["latency_trace_events_total"],
+            2
+        );
+        assert_eq!(
+            value["inputs"]["generation"]["latency_trace_tail"][1]["phase"],
+            "evidence_for_seams_progress"
+        );
+        assert_eq!(
+            value["inputs"]["generation"]["latency_trace_tail"][1]["status"],
+            "processed_500_of_39021"
+        );
+        assert_eq!(value["run_limitations"][0]["latency_trace_events_total"], 2);
+        assert_eq!(
+            value["run_limitations"][0]["latency_trace_tail"][0]["phase"],
+            "inventory_seams"
+        );
+        assert_eq!(
+            value["top_static_limitations"][0]["repair_route"],
+            "inspect evidence-health runtime, increase RIPR_EVIDENCE_HEALTH_TIMEOUT_MS for slower machines, or add a narrower fixture-backed analyzer path"
+        );
+        assert!(!json_text.contains("stale json"));
+
+        let markdown = fs::read_to_string(stale_md).map_err(|err| err.to_string())?;
+        assert!(markdown.contains("Status: warn"));
+        assert!(markdown.contains("evidence_health_timeout"));
+        assert!(markdown.contains("RIPR_EVIDENCE_HEALTH_TIMEOUT_MS"));
+        assert!(markdown.contains("Repo-exposure Latency Trace Tail"));
+        assert!(markdown.contains("processed_500_of_39021"));
+        assert!(!markdown.contains("stale markdown"));
+        Ok(())
+    })
+}
+
+#[test]
+fn evidence_health_generation_runner_error_writes_named_limitation_reports() -> Result<(), String> {
+    with_temp_cwd("evidence-health-generation-runner-error", |_root| {
+        let timeout = Duration::from_millis(7);
+        let args = evidence_health_args();
+        let stale_json = Path::new("target/ripr/reports/evidence-health.json");
+        let stale_md = Path::new("target/ripr/reports/evidence-health.md");
+        write(stale_json, "stale json");
+        write(stale_md, "stale markdown");
+
+        write_evidence_health_report_with_runner(
+            Path::new("ripr"),
+            &args,
+            timeout,
+            |_binary, _args, _timeout| {
+                Err("failed to read evidence-health child stdout".to_string())
+            },
+        )?;
+
+        let json_text = fs::read_to_string(stale_json).map_err(|err| err.to_string())?;
+        let value: Value = serde_json::from_str(&json_text).map_err(|err| err.to_string())?;
+        assert_eq!(value["schema_version"], "0.2");
+        assert_eq!(value["status"], "warn");
+        assert_eq!(
+            value["run_limitations"][0]["category"],
+            "evidence_health_runner_error"
+        );
+        assert_eq!(
+            value["run_limitations"][0]["phase"],
+            "evidence_health_generation"
+        );
+        assert_eq!(
+            value["inputs"]["generation"]["status"],
+            serde_json::Value::from("runner_error")
+        );
+        assert!(
+            value["inputs"]["generation"]["failure_reason"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("failed to read evidence-health child stdout")
+        );
+        assert!(!json_text.contains("stale json"));
+
+        let markdown = fs::read_to_string(stale_md).map_err(|err| err.to_string())?;
+        assert!(markdown.contains("Status: warn"));
+        assert!(markdown.contains("evidence_health_runner_error"));
+        assert!(markdown.contains("failed to read evidence-health child stdout"));
+        assert!(!markdown.contains("stale markdown"));
+        Ok(())
+    })
+}
+
+#[test]
+fn evidence_health_default_timeout_is_bounded_for_live_repo_pathologies() {
+    assert_eq!(super::EVIDENCE_HEALTH_DEFAULT_TIMEOUT_MS, 240_000);
+}
+
+#[test]
+fn evidence_health_child_envs_enable_latency_trace() {
+    assert_eq!(
+        super::evidence_health_child_envs(),
+        [(super::REPO_EXPOSURE_LATENCY_TRACE_ENV, "1")]
+    );
+}
+
+#[test]
+fn evidence_health_output_excerpt_is_bounded() -> Result<(), String> {
+    let text = (0..12)
+        .map(|line| format!("line-{line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(
+        super::evidence_health_output_excerpt(&text).as_deref(),
+        Some("line-4\nline-5\nline-6\nline-7\nline-8\nline-9\nline-10\nline-11")
+    );
+
+    let long_line = "x".repeat(super::EVIDENCE_HEALTH_OUTPUT_EXCERPT_CHARS + 8);
+    let excerpt = super::evidence_health_output_excerpt(&long_line)
+        .ok_or_else(|| "non-empty long line should produce excerpt".to_string())?;
+    assert!(excerpt.starts_with("[truncated]\n"));
+    assert!(excerpt.chars().count() <= super::EVIDENCE_HEALTH_OUTPUT_EXCERPT_CHARS + 12);
+    Ok(())
+}
+
+#[test]
+fn evidence_health_success_accepts_complete_report_artifacts() -> Result<(), String> {
+    with_temp_cwd("evidence-health-success-complete", |_root| {
+        let timeout = Duration::from_secs(30);
+        let args = evidence_health_args();
+        write_evidence_health_report_with_runner(
+            Path::new("ripr"),
+            &args,
+            timeout,
+            |_binary, _args, _timeout| {
+                write(
+                    Path::new("target/ripr/reports/evidence-health.json"),
+                    &complete_evidence_health_json_fixture(),
+                );
+                write(
+                    Path::new("target/ripr/reports/evidence-health.md"),
+                    "# RIPR evidence health report\n\n| Field | Value |\n| --- | --- |\n| Status | advisory |\n",
+                );
+                Ok(TimedOutput {
+                    status: Some(success_exit_status()),
+                    stdout: "ok".to_string(),
+                    stderr: String::new(),
+                    duration: Duration::from_secs(1),
+                    timed_out: false,
+                })
+            },
+        )?;
+
+        let json_text = fs::read_to_string("target/ripr/reports/evidence-health.json")
+            .map_err(|err| err.to_string())?;
+        let value: Value = serde_json::from_str(&json_text).map_err(|err| err.to_string())?;
+        assert_eq!(value["status"], "advisory");
+        assert!(value["metrics"]["grip_class_counts"].is_object());
+        assert!(value["evidence_quality"]["movement_availability"].is_object());
+        assert!(value["top_static_limitations"].is_array());
+        let markdown = fs::read_to_string("target/ripr/reports/evidence-health.md")
+            .map_err(|err| err.to_string())?;
+        assert!(markdown.contains("| Status | advisory |"));
+        Ok(())
+    })
+}
+
+#[test]
+fn evidence_health_success_with_status_only_stub_writes_named_limitation_reports()
+-> Result<(), String> {
+    with_temp_cwd("evidence-health-success-stub", |_root| {
+        let timeout = Duration::from_secs(30);
+        let args = evidence_health_args();
+        write_evidence_health_report_with_runner(
+            Path::new("ripr"),
+            &args,
+            timeout,
+            |_binary, _args, _timeout| {
+                write(
+                    Path::new("target/ripr/reports/evidence-health.json"),
+                    r#"{"schema_version":"0.2","status":"advisory"}"#,
+                );
+                write(
+                    Path::new("target/ripr/reports/evidence-health.md"),
+                    "# RIPR evidence health report\n\nStatus: advisory\n",
+                );
+                Ok(TimedOutput {
+                    status: Some(success_exit_status()),
+                    stdout: "ok".to_string(),
+                    stderr: String::new(),
+                    duration: Duration::from_secs(1),
+                    timed_out: false,
+                })
+            },
+        )?;
+
+        let json_text = fs::read_to_string("target/ripr/reports/evidence-health.json")
+            .map_err(|err| err.to_string())?;
+        let value: Value = serde_json::from_str(&json_text).map_err(|err| err.to_string())?;
+        assert_eq!(value["status"], "warn");
+        assert_eq!(
+            value["inputs"]["generation"]["status"],
+            serde_json::Value::from("pass_incomplete")
+        );
+        assert!(
+            value["run_limitations"][0]["failure_reason"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("is missing `inputs`")
+        );
+        let markdown = fs::read_to_string("target/ripr/reports/evidence-health.md")
+            .map_err(|err| err.to_string())?;
+        assert!(markdown.contains("Status: warn"));
+        assert!(markdown.contains("evidence_health_incomplete"));
+        Ok(())
+    })
+}
+
+#[test]
+fn evidence_health_success_without_artifacts_writes_named_limitation_reports() -> Result<(), String>
+{
+    with_temp_cwd("evidence-health-success-missing", |_root| {
+        let timeout = Duration::from_secs(30);
+        let args = evidence_health_args();
+        let stale_json = Path::new("target/ripr/reports/evidence-health.json");
+        let stale_md = Path::new("target/ripr/reports/evidence-health.md");
+        write(
+            stale_json,
+            r#"{"schema_version":"0.2","status":"advisory","marker":"stale"}"#,
+        );
+        write(stale_md, "Status: advisory\nstale markdown");
+
+        write_evidence_health_report_with_runner(
+            Path::new("ripr"),
+            &args,
+            timeout,
+            |_binary, _args, _timeout| {
+                Ok(TimedOutput {
+                    status: Some(success_exit_status()),
+                    stdout: "completed without files".to_string(),
+                    stderr: String::new(),
+                    duration: Duration::from_secs(2),
+                    timed_out: false,
+                })
+            },
+        )?;
+
+        let json_text = fs::read_to_string(stale_json).map_err(|err| err.to_string())?;
+        assert!(!json_text.contains("marker"));
+        let value: Value = serde_json::from_str(&json_text).map_err(|err| err.to_string())?;
+        assert_eq!(value["status"], "warn");
+        assert_eq!(
+            value["run_limitations"][0]["category"],
+            "evidence_health_incomplete"
+        );
+        assert_eq!(
+            value["inputs"]["generation"]["status"],
+            serde_json::Value::from("pass_incomplete")
+        );
+        assert!(
+            value["inputs"]["generation"]["failure_reason"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("failed to read evidence-health JSON artifact")
+        );
+
+        let markdown = fs::read_to_string(stale_md).map_err(|err| err.to_string())?;
+        assert!(markdown.contains("Status: warn"));
+        assert!(markdown.contains("evidence_health_incomplete"));
+        assert!(markdown.contains("Failure reason"));
+        assert!(!markdown.contains("stale markdown"));
+        Ok(())
+    })
+}
+
+#[test]
+fn evidence_health_report_artifact_completion_validator_names_bad_shapes() -> Result<(), String> {
+    with_temp_cwd("evidence-health-artifact-completion", |_root| {
+        let json_path = Path::new("target/ripr/reports/evidence-health.json");
+        let md_path = Path::new("target/ripr/reports/evidence-health.md");
+        write(md_path, "Status: advisory\n");
+
+        let cases = [
+            ("not json", "failed to parse evidence-health JSON artifact"),
+            (
+                r#"{"schema_version":"0.1","status":"advisory"}"#,
+                "did not use schema_version 0.2",
+            ),
+            (
+                r#"{"schema_version":"0.2","status":"warn"}"#,
+                "did not report advisory status",
+            ),
+            (
+                r#"{"schema_version":"0.2","status":"advisory"}"#,
+                "is missing `inputs`",
+            ),
+            (
+                r#"{"schema_version":"0.2","status":"advisory","inputs":{},"metrics":{},"evidence_quality":{},"calibration":{},"top_static_limitations":[]}"#,
+                "is missing `inputs.root`",
+            ),
+        ];
+        for (json, expected) in cases {
+            write(json_path, json);
+            let err = super::evidence_health_report_artifacts_are_complete()
+                .expect_err("bad JSON artifact shape should be rejected");
+            assert!(err.contains(expected), "expected {expected:?} in {err:?}");
+        }
+
+        write(json_path, &complete_evidence_health_json_fixture());
+        let _ = fs::remove_file(md_path);
+        let err = super::evidence_health_report_artifacts_are_complete()
+            .expect_err("missing Markdown artifact should be rejected");
+        assert!(err.contains("failed to read evidence-health Markdown artifact"));
+
+        write(md_path, "");
+        let err = super::evidence_health_report_artifacts_are_complete()
+            .expect_err("empty Markdown artifact should be rejected");
+        assert!(err.contains("was empty"));
+
+        write(md_path, "Status: warn\n");
+        let err = super::evidence_health_report_artifacts_are_complete()
+            .expect_err("warning Markdown artifact should be rejected as incomplete success");
+        assert!(err.contains("did not report advisory status"));
+
+        write(json_path, &complete_evidence_health_json_fixture());
+        write(md_path, "Status: advisory\n");
+        super::evidence_health_report_artifacts_are_complete()?;
+        Ok(())
+    })
+}
+
+fn complete_evidence_health_json_fixture() -> String {
+    serde_json::json!({
+        "schema_version": "0.2",
+        "tool": "ripr",
+        "scope": "repo",
+        "status": "advisory",
+        "inputs": {
+            "root": ".",
+            "mutation_calibration": Value::Null,
+        },
+        "metrics": {
+            "seams_total": 0,
+            "headline_eligible_total": 0,
+            "weakly_gripped_total": 0,
+            "ungripped_total": 0,
+            "grip_class_counts": {},
+            "stage_state_counts": {},
+            "unknown_stage_counts": {},
+            "unknown_stop_reason_counts": {},
+            "missing_discriminators_total": 0,
+            "seams_with_missing_discriminators": 0,
+            "missing_discriminator_counts": [],
+            "observed_values_total": 0,
+            "seams_with_observed_values": 0,
+            "observed_value_context_counts": {},
+            "related_tests_total": 0,
+            "seams_with_related_tests": 0,
+            "related_test_confidence_counts": {},
+            "oracle_strength_counts": {},
+            "oracle_kind_counts": {},
+            "opaque_oracle_count": 0,
+        },
+        "evidence_quality": {
+            "canonical_gap_groups_total": 0,
+            "duplicate_looking_groups_total": 0,
+            "largest_canonical_groups": [],
+            "actionability_class_counts": {},
+            "static_limitation_stage_counts": {},
+            "static_limitation_reason_counts": [],
+            "static_limitation_category_counts": {},
+            "calibration_availability_counts": {},
+            "movement_availability": {
+                "records_with_seam_id": 0,
+                "records_with_canonical_gap_id": 0,
+                "records_with_complete_evidence_path": 0,
+                "records_with_recommendation": 0,
+                "records_with_verify_command": 0,
+            },
+            "top_evidence_quality_risks": [],
+        },
+        "calibration": {
+            "status": "not_provided",
+            "source": Value::Null,
+            "matched_total": 0,
+            "static_without_runtime_total": 0,
+            "runtime_without_static_total": 0,
+            "ambiguous_file_line_total": 0,
+            "unmatched_runtime_total": 0,
+        },
+        "top_static_limitations": [],
+    })
+    .to_string()
+}
+
+#[test]
+fn evidence_health_incomplete_exit_writes_named_limitation_reports() -> Result<(), String> {
+    with_temp_cwd("evidence-health-incomplete", |_root| {
+        let timeout = Duration::from_mins(30);
+        let args = evidence_health_args();
+        let stale_json = Path::new("target/ripr/reports/evidence-health.json");
+        let stale_md = Path::new("target/ripr/reports/evidence-health.md");
+        write(stale_json, "stale json");
+        write(stale_md, "stale markdown");
+
+        write_evidence_health_report_with_runner(
+            Path::new("ripr"),
+            &args,
+            timeout,
+            |_binary, _args, _timeout| {
+                Ok(TimedOutput {
+                    status: None,
+                    stdout: "partial stdout".to_string(),
+                    stderr: "phase=inventory\nphase=evidence_health\n".to_string(),
+                    duration: Duration::from_secs(377),
+                    timed_out: false,
+                })
+            },
+        )?;
+
+        let json_text = fs::read_to_string(stale_json).map_err(|err| err.to_string())?;
+        let value: Value = serde_json::from_str(&json_text).map_err(|err| err.to_string())?;
+        assert_eq!(value["schema_version"], "0.2");
+        assert_eq!(value["status"], "warn");
+        assert_eq!(
+            value["run_limitations"][0]["category"],
+            "evidence_health_incomplete"
+        );
+        assert_eq!(
+            value["evidence_quality"]["static_limitation_category_counts"]["evidence_health_incomplete"],
+            serde_json::Value::from(1)
+        );
+        assert_eq!(
+            value["inputs"]["generation"]["status"],
+            serde_json::Value::from("fail")
+        );
+        assert_eq!(
+            value["inputs"]["generation"]["phase"],
+            "evidence_health_generation"
+        );
+        assert_eq!(
+            value["inputs"]["generation"]["stdout_excerpt"],
+            "partial stdout"
+        );
+        assert!(!json_text.contains("stale json"));
+
+        let markdown = fs::read_to_string(stale_md).map_err(|err| err.to_string())?;
+        assert!(markdown.contains("Status: warn"));
+        assert!(markdown.contains("evidence_health_incomplete"));
+        assert!(markdown.contains("stdout/stderr"));
+        assert!(!markdown.contains("stale markdown"));
+        Ok(())
+    })
+}
+
+#[test]
+fn evidence_health_nonzero_exit_writes_named_limitation_reports() -> Result<(), String> {
+    with_temp_cwd("evidence-health-nonzero", |_root| {
+        let timeout = Duration::from_secs(90);
+        let args = evidence_health_args();
+        let stale_json = Path::new("target/ripr/reports/evidence-health.json");
+        let stale_md = Path::new("target/ripr/reports/evidence-health.md");
+        write(stale_json, "stale json");
+        write(stale_md, "stale markdown");
+
+        write_evidence_health_report_with_runner(
+            Path::new("ripr"),
+            &args,
+            timeout,
+            |_binary, _args, _timeout| {
+                Ok(TimedOutput {
+                    status: Some(failure_exit_status()),
+                    stdout: "partial stdout".to_string(),
+                    stderr: "error: evidence health failed\n".to_string(),
+                    duration: Duration::from_secs(12),
+                    timed_out: false,
+                })
+            },
+        )?;
+
+        let json_text = fs::read_to_string(stale_json).map_err(|err| err.to_string())?;
+        let value: Value = serde_json::from_str(&json_text).map_err(|err| err.to_string())?;
+        assert_eq!(value["schema_version"], "0.2");
+        assert_eq!(value["status"], "warn");
+        assert_eq!(
+            value["run_limitations"][0]["category"],
+            "evidence_health_incomplete"
+        );
+        assert_eq!(
+            value["run_limitations"][0]["exit_code"].as_i64(),
+            failure_exit_status().code().map(i64::from)
+        );
+        assert_eq!(
+            value["inputs"]["generation"]["exit_code"].as_i64(),
+            failure_exit_status().code().map(i64::from)
+        );
+        assert_eq!(
+            value["inputs"]["generation"]["status"],
+            serde_json::Value::from("fail")
+        );
+        assert_eq!(
+            value["inputs"]["generation"]["phase"],
+            "evidence_health_generation"
+        );
+        assert_eq!(
+            value["inputs"]["generation"]["stderr_excerpt"],
+            "error: evidence health failed"
+        );
+        assert_eq!(
+            value["run_limitations"][0]["stderr_excerpt"],
+            "error: evidence health failed"
+        );
+        assert!(!json_text.contains("stale json"));
+
+        let markdown = fs::read_to_string(stale_md).map_err(|err| err.to_string())?;
+        assert!(markdown.contains("Status: warn"));
+        assert!(markdown.contains("evidence_health_incomplete"));
+        assert!(markdown.contains("error: evidence health failed"));
+        assert!(!markdown.contains("stale markdown"));
+        Ok(())
+    })
+}
+
+#[test]
+fn lane1_evidence_audit_preserves_case_variant_discriminator_values_as_rows() -> Result<(), String>
+{
+    let report = lane1_evidence_audit_from_repo_exposure(
+        ".",
+        r#"{
+              "schema_version": "0.3",
+              "scope": "repo",
+              "seams": [
+                {
+                  "seam_id": "path-upper",
+                  "headline_eligible": true,
+                  "file": "src/path.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "path-upper",
+                    "location": {"file": "src/path.rs", "line": 10},
+                    "seam_kind": "predicate_boundary",
+                    "missing_discriminators": [
+                      {"value": "Path (boundary value)", "reason": "boundary value not observed"}
+                    ],
+                    "related_tests_total": 0,
+                    "related_tests": [],
+                    "static_limitations": [],
+                    "raw_findings": []
+                  }
+                },
+                {
+                  "seam_id": "path-lower",
+                  "headline_eligible": true,
+                  "file": "src/path.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "path-lower",
+                    "location": {"file": "src/path.rs", "line": 20},
+                    "seam_kind": "predicate_boundary",
+                    "missing_discriminators": [
+                      {"value": "path (boundary value)", "reason": "boundary value not observed"}
+                    ],
+                    "related_tests_total": 0,
+                    "related_tests": [],
+                    "static_limitations": [],
+                    "raw_findings": []
+                  }
+                }
+              ]
+            }"#,
+    )?;
+    let json = lane1_evidence_audit_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    let by_value = &value["missing_discriminator_classes"]["by_value"];
+
+    assert!(
+        by_value.is_array(),
+        "missing discriminator values must be rows, not object keys"
+    );
+    assert_eq!(audit_count_row(by_value, "Path (boundary value)")?, 1);
+    assert_eq!(audit_count_row(by_value, "path (boundary value)")?, 1);
+    Ok(())
+}
+
+#[test]
+fn lane1_evidence_audit_counts_quality_gaps_from_evidence_record() -> Result<(), String> {
+    let report = lane1_evidence_audit_from_repo_exposure(".", lane1_audit_sample_json())?;
+    let json = lane1_evidence_audit_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+
+    assert_eq!(value["schema_version"], "0.1");
+    assert_eq!(value["summary"]["seams_total"], 4);
+    assert_eq!(value["summary"]["raw_headline_gaps"], 4);
+    assert_eq!(value["summary"]["evidence_records_total"], 3);
+    assert_eq!(value["summary"]["evidence_records_missing"], 1);
+    assert_eq!(value["summary"]["canonical_gap_groups_total"], 1);
+    assert_eq!(value["summary"]["duplicate_looking_groups_total"], 1);
+    assert_eq!(value["summary"]["missing_discriminators_total"], 2);
+    assert_eq!(value["summary"]["static_limitations_total"], 1);
+    assert_eq!(value["summary"]["low_or_opaque_top_related_tests"], 1);
+    assert_eq!(value["summary"]["calibrated_records"], 1);
+    assert_eq!(value["summary"]["uncalibrated_records"], 2);
+    assert_eq!(
+        value["canonical_gap_groups"]["largest"][0]["canonical_gap_id"],
+        "gap:shared"
+    );
+    assert_eq!(
+        value["canonical_gap_groups"]["largest"][0]["count"],
+        serde_json::Value::from(2)
+    );
+    assert_eq!(
+        audit_count_row(
+            &value["missing_discriminator_classes"]["by_reason"],
+            "boundary value not observed"
+        )?,
+        2
+    );
+    assert_eq!(
+        audit_count_row(
+            &value["missing_discriminator_classes"]["by_value"],
+            "amount == threshold"
+        )?,
+        2
+    );
+    assert_eq!(
+        audit_count_row(
+            &value["static_limitations"]["by_reason"],
+            "opaque helper value"
+        )?,
+        1
+    );
+    assert_eq!(
+        value["static_limitations"]["by_category"]["opaque_helper_call"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["static_limitations"]["repair_routes"]["analysis/oracle-semantics-audit-fixes"],
+        serde_json::Value::from(1)
+    );
+    let actionable_packets_json = lane1_actionable_gap_packets_json(&report)?;
+    let actionable_packets: serde_json::Value =
+        serde_json::from_str(&actionable_packets_json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        actionable_packets["static_limitation_backlog"]["top_categories"][0]["category"],
+        "opaque_helper_call"
+    );
+    assert_eq!(
+        actionable_packets["static_limitation_backlog"]["top_categories"][0]["repair_route"],
+        "analysis/oracle-semantics-audit-fixes"
+    );
+    assert_eq!(
+        actionable_packets["static_limitation_backlog"]["top_repair_routes"][0]["repair_route"],
+        "analysis/oracle-semantics-audit-fixes"
+    );
+    assert_eq!(
+        value["related_test_ranking"]["top_confidence_counts"]["low"],
+        serde_json::Value::from(1)
+    );
+    let alignment = &value["finding_alignment"]["summary"];
+    assert_eq!(alignment["raw_signals"], serde_json::Value::from(3));
+    assert_eq!(alignment["canonical_items"], serde_json::Value::from(3));
+    assert_eq!(
+        alignment["aligned_raw_findings"],
+        serde_json::Value::from(3)
+    );
+    assert_eq!(alignment["actionable_gaps"], serde_json::Value::from(2));
+    assert_eq!(alignment["static_limitations"], serde_json::Value::from(1));
+    assert_eq!(
+        alignment["calibrated_supported"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(alignment["uncalibrated"], serde_json::Value::from(2));
+    assert_eq!(
+        alignment["presentation_text_total"],
+        serde_json::Value::from(0)
+    );
+    assert_eq!(
+        alignment["finding_alignment_raw_signals_total"],
+        serde_json::Value::from(3)
+    );
+    let coverage = &value["finding_alignment"]["coverage"];
+    assert_eq!(
+        coverage["static_unknown_without_named_limitation"],
+        serde_json::Value::from(0)
+    );
+    assert_eq!(
+        coverage["canonical_items_without_repair_route"],
+        serde_json::Value::from(0)
+    );
+    assert_eq!(
+        coverage["canonical_items_without_verify_command"],
+        serde_json::Value::from(0)
+    );
+    let top_lists = &value["finding_alignment"]["actionable_gap_top_lists"];
+    assert_eq!(
+        top_lists["top_actionable_gap_classes"][0]["label"],
+        "predicate_boundary"
+    );
+    assert_eq!(
+        top_lists["top_actionable_gap_classes"][0]["count"],
+        serde_json::Value::from(2)
+    );
+    assert_eq!(top_lists["top_actionable_files"][0]["label"], "src/lib.rs");
+    assert_eq!(
+        top_lists["top_repair_kinds"][0]["label"],
+        "add_boundary_assertion"
+    );
+    assert_eq!(
+        top_lists["top_missing_discriminator_kinds"][0]["label"],
+        "return_value"
+    );
+    assert!(
+        top_lists["top_static_limitation_reasons"]
+            .as_array()
+            .is_some_and(Vec::is_empty),
+        "non-action static limitations should stay out of actionable top lists"
+    );
+    let runtime_rows = value["finding_alignment"]["runtime_confidence_by_class"]
+        .as_array()
+        .ok_or_else(|| "runtime confidence rows should be an array".to_string())?;
+    let predicate_runtime = runtime_rows
+        .iter()
+        .find(|row| row["evidence_class"] == "predicate_boundary")
+        .ok_or_else(|| "missing predicate_boundary runtime confidence row".to_string())?;
+    assert_eq!(
+        predicate_runtime["canonical_items"],
+        serde_json::Value::from(2)
+    );
+    assert_eq!(predicate_runtime["static_only"], serde_json::Value::from(2));
+    assert_eq!(
+        predicate_runtime["uncalibrated"],
+        serde_json::Value::from(2)
+    );
+    let call_runtime = runtime_rows
+        .iter()
+        .find(|row| row["evidence_class"] == "call_presence")
+        .ok_or_else(|| "missing call_presence runtime confidence row".to_string())?;
+    assert_eq!(
+        call_runtime["calibrated_supported"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(call_runtime["uncalibrated"], serde_json::Value::from(0));
+    assert_eq!(
+        value["calibration_availability"]["runtime_confidence_by_class"],
+        value["finding_alignment"]["runtime_confidence_by_class"]
+    );
+    let class_rows = coverage["alignment_coverage_by_class"]
+        .as_array()
+        .ok_or_else(|| "alignment coverage rows should be an array".to_string())?;
+    let predicate = class_rows
+        .iter()
+        .find(|row| row["evidence_class"] == "predicate_boundary")
+        .ok_or_else(|| "missing predicate_boundary coverage row".to_string())?;
+    assert_eq!(predicate["canonical_items"], serde_json::Value::from(2));
+    assert_eq!(predicate["actionable_items"], serde_json::Value::from(2));
+    let call_presence = class_rows
+        .iter()
+        .find(|row| row["evidence_class"] == "call_presence")
+        .ok_or_else(|| "missing call_presence coverage row".to_string())?;
+    assert_eq!(
+        call_presence["static_limitation_items"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        call_presence["static_limitation_categories"]["opaque_helper_call"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        call_presence["static_limitation_repair_routes"]["analysis/oracle-semantics-audit-fixes"],
+        serde_json::Value::from(1)
+    );
+    let work_queue = coverage["evidence_class_work_queue"]
+        .as_array()
+        .ok_or_else(|| "evidence class work queue should be an array".to_string())?;
+    let top_work_item = work_queue
+        .first()
+        .ok_or_else(|| "evidence class work queue should not be empty".to_string())?;
+    assert_eq!(top_work_item["evidence_class"], "predicate_boundary");
+    assert_eq!(
+        top_work_item["dominant_signal"],
+        "actionable_canonical_gaps"
+    );
+    assert_eq!(
+        top_work_item["next_repair"],
+        "dogfood/actionable-gap-repair-loop"
+    );
+
+    let fields = value["evidence_record_field_health"]
+        .as_array()
+        .ok_or_else(|| "field health should be an array".to_string())?;
+    let canonical = fields
+        .iter()
+        .find(|field| field["field"] == "canonical_gap_id")
+        .ok_or_else(|| "canonical_gap_id health missing".to_string())?;
+    assert_eq!(canonical["present"], serde_json::Value::from(2));
+    assert_eq!(canonical["null"], serde_json::Value::from(1));
+    Ok(())
+}
+
+#[test]
+fn evidence_class_work_queue_prefers_dominant_live_repair_signal() -> Result<(), String> {
+    let rows = vec![
+        super::Lane1EvidenceAuditAlignmentClassCoverage {
+            evidence_class: "predicate_boundary".to_string(),
+            raw_findings: 20,
+            canonical_items: 10,
+            aligned_raw_findings: 20,
+            unaligned_raw_findings: 0,
+            actionable_items: 3,
+            already_observed_items: 0,
+            internal_no_action_items: 0,
+            static_limitation_items: 0,
+            static_limitation_categories: BTreeMap::new(),
+            static_limitation_repair_routes: BTreeMap::new(),
+            unknown_items: 0,
+        },
+        super::Lane1EvidenceAuditAlignmentClassCoverage {
+            evidence_class: "call_presence".to_string(),
+            raw_findings: 30,
+            canonical_items: 25,
+            aligned_raw_findings: 30,
+            unaligned_raw_findings: 0,
+            actionable_items: 0,
+            already_observed_items: 0,
+            internal_no_action_items: 0,
+            static_limitation_items: 8,
+            static_limitation_categories: BTreeMap::from([(
+                "activation_owner_call_unresolved".to_string(),
+                8,
+            )]),
+            static_limitation_repair_routes: BTreeMap::from([(
+                "analysis/related-test-ranking-audit-fixes".to_string(),
+                8,
+            )]),
+            unknown_items: 0,
+        },
+    ];
+
+    let queue = super::audit_evidence_class_work_queue(&rows);
+    let top = queue
+        .first()
+        .ok_or_else(|| "work queue should contain scored rows".to_string())?;
+    assert_eq!(top.evidence_class, "call_presence");
+    assert_eq!(top.dominant_signal, "static_limitations");
+    assert_eq!(
+        top.dominant_static_limitation_category.as_deref(),
+        Some("activation_owner_call_unresolved")
+    );
+    assert_eq!(top.dominant_static_limitation_category_count, 8);
+    assert_eq!(
+        top.dominant_static_limitation_repair_route.as_deref(),
+        Some("analysis/related-test-ranking-audit-fixes")
+    );
+    assert_eq!(top.next_repair, "analysis/related-test-ranking-audit-fixes");
+    assert!(
+        queue
+            .iter()
+            .any(|row| row.evidence_class == "predicate_boundary"
+                && row.dominant_signal == "actionable_canonical_gaps"),
+        "actionable classes should remain visible even when static limitations dominate"
+    );
+    Ok(())
+}
+
+#[test]
+fn lane1_evidence_audit_reports_alignment_coverage_holes() -> Result<(), String> {
+    let report = lane1_evidence_audit_from_repo_exposure(
+        ".",
+        r#"{
+              "schema_version": "0.3",
+              "scope": "repo",
+              "seams": [
+                {
+                  "seam_id": "raw-config",
+                  "headline_eligible": true,
+                  "file": "src/policy.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "seam-config",
+                    "canonical_gap_id": null,
+                    "owner": "policy::labels",
+                    "location": {"file": "src/policy.rs", "line": 10},
+                    "seam_kind": "config_or_policy_constant",
+                    "grip_class": "static_unknown",
+                    "headline_eligible": true,
+                    "evidence_path": {},
+                    "observed_values": [],
+                    "missing_discriminators": [],
+                    "related_tests_total": 0,
+                    "related_tests": [],
+                    "recommendation": {"action": "inspect_static_limitation", "reason": "alignment missing", "verify_command": null},
+                    "actionability": {"class": "static_limitation"},
+                    "calibration": {"availability": "not_imported", "confidence": "unknown", "agreement": "no_runtime_data"},
+                    "static_limitations": [],
+                    "raw_findings": [
+                      {
+                        "file": "src/policy.rs",
+                        "line": 10,
+                        "kind": "exposed",
+                        "probe_kind": "config_or_policy_constant",
+                        "expression": "pub const POLICY_LABEL: &str ="
+                      },
+                      {
+                        "file": "src/policy.rs",
+                        "line": 10,
+                        "kind": "static_unknown",
+                        "probe_kind": "static_unknown",
+                        "expression": "pub const POLICY_LABEL: &str = \"internal\";"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }"#,
+    )?;
+    let json = lane1_evidence_audit_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    let coverage = &value["finding_alignment"]["coverage"];
+
+    assert_eq!(
+        coverage["unaligned_raw_findings_by_class"]["config_or_policy_constant"],
+        serde_json::Value::from(2)
+    );
+    assert_eq!(
+        coverage["alignment_coverage_by_class"][0]["unaligned_raw_findings"],
+        serde_json::Value::from(2)
+    );
+    assert_eq!(
+        coverage["top_unaligned_examples"][0]["evidence_class"],
+        "config_or_policy_constant"
+    );
+    assert_eq!(
+        coverage["top_unaligned_examples"][0]["file"],
+        "src/policy.rs"
+    );
+    assert_eq!(
+        coverage["top_unaligned_examples"][0]["line"],
+        serde_json::Value::from(10)
+    );
+    assert_eq!(coverage["top_unaligned_examples"][0]["kind"], "exposed");
+    assert_eq!(
+        coverage["top_unaligned_examples"][0]["expression"],
+        "pub const POLICY_LABEL: &str ="
+    );
+    assert_eq!(
+        coverage["top_unaligned_examples"][0]["reason"],
+        "missing canonical_item"
+    );
+    assert_eq!(
+        coverage["same_line_duplicate_groups"][0]["raw_findings"],
+        serde_json::Value::from(2)
+    );
+    assert_eq!(
+        coverage["same_line_duplicate_groups"][0]["file"],
+        "src/policy.rs"
+    );
+    assert_eq!(
+        coverage["same_line_duplicate_groups"][0]["line"],
+        serde_json::Value::from(10)
+    );
+    assert_eq!(
+        coverage["same_line_duplicate_groups"][0]["evidence_classes"][0],
+        "config_or_policy_constant"
+    );
+    assert_eq!(
+        coverage["same_line_duplicate_groups"][0]["example_expression"],
+        "pub const POLICY_LABEL: &str ="
+    );
+    assert_eq!(
+        coverage["same_line_duplicate_groups"][0]["kinds"][0],
+        "exposed"
+    );
+    assert_eq!(
+        coverage["same_line_duplicate_groups"][0]["kinds"][1],
+        "static_unknown"
+    );
+
+    let markdown = lane1_evidence_audit_markdown(&report);
+    assert!(markdown.contains("Unaligned raw finding class"));
+    assert!(markdown.contains("| Evidence class | File | Line | Kind | Reason | Expression |"));
+    assert!(markdown.contains(
+        "| File | Line | Raw findings | Evidence classes | Kinds | Example expression |"
+    ));
+    Ok(())
+}
+
+#[test]
+fn lane1_static_limitation_backlog_emits_analyzer_packets() -> Result<(), String> {
+    let report = lane1_evidence_audit_from_repo_exposure(
+        ".",
+        r#"{
+              "schema_version": "0.3",
+              "scope": "repo",
+              "seams": [
+                {
+                  "seam_id": "idx-offset-local",
+                  "headline_eligible": true,
+                  "file": "src/window.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "idx-offset-local",
+                    "canonical_gap_id": "gap:idx-offset-local",
+                    "owner": "window::read",
+                    "location": {"file": "src/window.rs", "line": 44},
+                    "seam_kind": "predicate_boundary",
+                    "grip_class": "static_unknown",
+                    "headline_eligible": true,
+                    "evidence_path": {},
+                    "observed_values": [],
+                    "missing_discriminators": [],
+                    "related_tests_total": 1,
+                    "related_tests": [],
+                    "recommendation": {"action": "inspect_static_limitation", "reason": "local boundary operand unresolved", "verify_command": null},
+                    "actionability": {"class": "static_limitation"},
+                    "calibration": {"availability": "not_imported", "confidence": "unknown", "agreement": "no_runtime_data"},
+                    "static_limitations": [
+                      {
+                        "stage": "activate",
+                        "state": "unknown",
+                        "reason": "local/computed operand cannot be mapped to a safe test input",
+                        "category": "activation_boundary_input_unresolved",
+                        "repair_route": "analysis/local-computed-boundary-operand-resolution"
+                      }
+                    ],
+                    "raw_findings": [
+                      {"file": "src/window.rs", "line": 44, "kind": "static_unknown", "probe_kind": "predicate_boundary", "expression": "idx >= offset"}
+                    ],
+                    "canonical_item": {
+                      "canonical_gap_id": "gap:idx-offset-local",
+                      "canonical_item_kind": "limitation",
+                      "evidence_class": "predicate_boundary",
+                      "gap_state": "static_limitation",
+                      "actionability": "static_limitation",
+                      "raw_findings": [
+                        {"file": "src/window.rs", "line": 44, "kind": "static_unknown", "expression": "idx >= offset"}
+                      ],
+                      "raw_group_size": 1,
+                      "why": "local/computed boundary operand cannot be mapped to a safe test input",
+                      "recommended_repair": "Improve local/computed operand resolution before emitting a repair packet.",
+                      "verify_command": null,
+                      "confidence": {"basis": "static_only", "notes": []}
+                    }
+                  }
+                }
+              ]
+            }"#,
+    )?;
+
+    let actionable_json = lane1_actionable_gap_packets_json(&report)?;
+    let value: serde_json::Value =
+        serde_json::from_str(&actionable_json).map_err(|err| err.to_string())?;
+    let audit_json = lane1_evidence_audit_json(&report)?;
+    let audit_value: serde_json::Value =
+        serde_json::from_str(&audit_json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        audit_value["static_limitation_backlog"]["limitation_backlog_packets"][0]["packet_id"],
+        "limitation:activation_boundary_input_unresolved:analysis-local-computed-boundary-operand-resolution"
+    );
+    let packet = &value["static_limitation_backlog"]["limitation_backlog_packets"][0];
+    assert_eq!(
+        packet["packet_id"],
+        "limitation:activation_boundary_input_unresolved:analysis-local-computed-boundary-operand-resolution"
+    );
+    assert_eq!(
+        packet["limitation_category"],
+        "activation_boundary_input_unresolved"
+    );
+    assert_eq!(
+        packet["repair_route"],
+        "analysis/local-computed-boundary-operand-resolution"
+    );
+    assert_eq!(
+        value["static_limitation_backlog"]["top_categories"][0]["repair_route"],
+        "analysis/local-computed-boundary-operand-resolution"
+    );
+    assert_eq!(packet["signal_count"], serde_json::Value::from(1));
+    assert_eq!(packet["dominant_evidence_class"], "predicate_boundary");
+    assert_eq!(
+        packet["sample_canonical_gap_ids"][0],
+        "gap:idx-offset-local"
+    );
+    assert_eq!(
+        packet["sample_sources"][0]["source_file"],
+        serde_json::Value::from("src/window.rs")
+    );
+    assert_eq!(
+        packet["sample_sources"][0]["line"],
+        serde_json::Value::from(44)
+    );
+    assert_eq!(
+        packet["sample_sources"][0]["expression"],
+        serde_json::Value::from("idx >= offset")
+    );
+    assert_eq!(
+        packet["sample_sources"][0]["limitation_reason"],
+        serde_json::Value::from("local/computed operand cannot be mapped to a safe test input")
+    );
+    assert!(
+        packet["why_not_actionable"]
+            .as_str()
+            .is_some_and(|why| why.contains("activation inputs"))
+    );
+    assert!(packet["unlock_condition"].as_str().is_some_and(|unlock| {
+        unlock.contains("analysis/local-computed-boundary-operand-resolution")
+    }));
+    assert!(packet["non_claims"].as_array().is_some_and(|claims| {
+        claims
+            .iter()
+            .any(|claim| claim == "do not invent exact candidate values")
+    }));
+    assert!(packet["non_claims"].as_array().is_some_and(|claims| {
+        claims
+            .iter()
+            .any(|claim| claim == "do not invent exact boundary candidate values")
+    }));
+    assert_eq!(
+        value["summary"]["actionable_gaps"],
+        serde_json::Value::from(0)
+    );
+    assert_eq!(value["packets"].as_array().map(Vec::len), Some(0));
+
+    let markdown = lane1_actionable_gap_packets_markdown(&report);
+    assert!(markdown.contains("### Backlog Packets"));
+    assert!(markdown.contains(
+            "limitation:activation_boundary_input_unresolved:analysis-local-computed-boundary-operand-resolution"
+        ));
+    assert!(markdown.contains("analysis/local-computed-boundary-operand-resolution"));
+    Ok(())
+}
+
+#[test]
+fn lane1_static_limitation_backlog_splits_same_category_by_repair_route() -> Result<(), String> {
+    let report = lane1_evidence_audit_from_repo_exposure(
+        ".",
+        r#"{
+              "schema_version": "0.3",
+              "scope": "repo",
+              "seams": [
+                {
+                  "seam_id": "idx-offset-local",
+                  "headline_eligible": true,
+                  "file": "src/window.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "idx-offset-local",
+                    "canonical_gap_id": "gap:idx-offset-local",
+                    "owner": "window::read",
+                    "location": {"file": "src/window.rs", "line": 44},
+                    "seam_kind": "predicate_boundary",
+                    "grip_class": "static_unknown",
+                    "headline_eligible": true,
+                    "evidence_path": {},
+                    "observed_values": [],
+                    "missing_discriminators": [],
+                    "related_tests_total": 1,
+                    "related_tests": [],
+                    "recommendation": {"action": "inspect_static_limitation", "reason": "local boundary operand unresolved", "verify_command": null},
+                    "actionability": {"class": "static_limitation"},
+                    "calibration": {"availability": "not_imported", "confidence": "unknown", "agreement": "no_runtime_data"},
+                    "static_limitations": [
+                      {
+                        "stage": "activate",
+                        "state": "unknown",
+                        "reason": "local/computed operand cannot be mapped to a safe test input",
+                        "category": "activation_boundary_input_unresolved",
+                        "repair_route": "analysis/local-computed-boundary-operand-resolution"
+                      }
+                    ],
+                    "raw_findings": [
+                      {"file": "src/window.rs", "line": 44, "kind": "static_unknown", "probe_kind": "predicate_boundary", "expression": "idx >= offset"}
+                    ],
+                    "canonical_item": {
+                      "canonical_gap_id": "gap:idx-offset-local",
+                      "canonical_item_kind": "limitation",
+                      "evidence_class": "predicate_boundary",
+                      "gap_state": "static_limitation",
+                      "actionability": "static_limitation",
+                      "raw_findings": [
+                        {"file": "src/window.rs", "line": 44, "kind": "static_unknown", "expression": "idx >= offset"}
+                      ],
+                      "raw_group_size": 1,
+                      "why": "local/computed boundary operand cannot be mapped to a safe test input",
+                      "recommended_repair": "Improve local/computed operand resolution before emitting a repair packet.",
+                      "verify_command": null,
+                      "confidence": {"basis": "static_only", "notes": []}
+                    }
+                  }
+                },
+                {
+                  "seam_id": "idx-offset-iterator",
+                  "headline_eligible": true,
+                  "file": "src/window.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "idx-offset-iterator",
+                    "canonical_gap_id": "gap:idx-offset-iterator",
+                    "owner": "window::scan",
+                    "location": {"file": "src/window.rs", "line": 77},
+                    "seam_kind": "predicate_boundary",
+                    "grip_class": "static_unknown",
+                    "headline_eligible": true,
+                    "evidence_path": {},
+                    "observed_values": [],
+                    "missing_discriminators": [],
+                    "related_tests_total": 1,
+                    "related_tests": [],
+                    "recommendation": {"action": "inspect_static_limitation", "reason": "iterator boundary operand unresolved", "verify_command": null},
+                    "actionability": {"class": "static_limitation"},
+                    "calibration": {"availability": "not_imported", "confidence": "unknown", "agreement": "no_runtime_data"},
+                    "static_limitations": [
+                      {
+                        "stage": "activate",
+                        "state": "unknown",
+                        "reason": "iterator operand cannot be mapped to a safe test input",
+                        "category": "activation_boundary_input_unresolved",
+                        "repair_route": "analysis/iterator-boundary-operand-resolution"
+                      }
+                    ],
+                    "raw_findings": [
+                      {"file": "src/window.rs", "line": 77, "kind": "static_unknown", "probe_kind": "predicate_boundary", "expression": "idx >= offset"}
+                    ],
+                    "canonical_item": {
+                      "canonical_gap_id": "gap:idx-offset-iterator",
+                      "canonical_item_kind": "limitation",
+                      "evidence_class": "predicate_boundary",
+                      "gap_state": "static_limitation",
+                      "actionability": "static_limitation",
+                      "raw_findings": [
+                        {"file": "src/window.rs", "line": 77, "kind": "static_unknown", "expression": "idx >= offset"}
+                      ],
+                      "raw_group_size": 1,
+                      "why": "iterator boundary operand cannot be mapped to a safe test input",
+                      "recommended_repair": "Improve iterator operand resolution before emitting a repair packet.",
+                      "verify_command": null,
+                      "confidence": {"basis": "static_only", "notes": []}
+                    }
+                  }
+                },
+                {
+                  "seam_id": "call-name-member",
+                  "headline_eligible": true,
+                  "file": "src/window.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "call-name-member",
+                    "canonical_gap_id": "gap:call-name-member",
+                    "owner": "window::filter_call",
+                    "location": {"file": "src/window.rs", "line": 88},
+                    "seam_kind": "predicate_boundary",
+                    "grip_class": "static_unknown",
+                    "headline_eligible": true,
+                    "evidence_path": {},
+                    "observed_values": [],
+                    "missing_discriminators": [],
+                    "related_tests_total": 1,
+                    "related_tests": [],
+                    "recommendation": {"action": "inspect_static_limitation", "reason": "member boundary operand unresolved", "verify_command": null},
+                    "actionability": {"class": "static_limitation"},
+                    "calibration": {"availability": "not_imported", "confidence": "unknown", "agreement": "no_runtime_data"},
+                    "static_limitations": [
+                      {
+                        "stage": "activate",
+                        "state": "unknown",
+                        "reason": "member boundary operand cannot be mapped to a safe test input",
+                        "category": "activation_boundary_input_unresolved",
+                        "repair_route": "analysis/local-member-boundary-operand-resolution"
+                      }
+                    ],
+                    "raw_findings": [
+                      {"file": "src/window.rs", "line": 88, "kind": "static_unknown", "probe_kind": "predicate_boundary", "expression": "call.name != owner_name"}
+                    ],
+                    "canonical_item": {
+                      "canonical_gap_id": "gap:call-name-member",
+                      "canonical_item_kind": "limitation",
+                      "evidence_class": "predicate_boundary",
+                      "gap_state": "static_limitation",
+                      "actionability": "static_limitation",
+                      "raw_findings": [
+                        {"file": "src/window.rs", "line": 88, "kind": "static_unknown", "expression": "call.name != owner_name"}
+                      ],
+                      "raw_group_size": 1,
+                      "why": "member boundary operand cannot be mapped to a safe test input",
+                      "recommended_repair": "Improve member operand resolution before emitting a repair packet.",
+                      "verify_command": null,
+                      "confidence": {"basis": "static_only", "notes": []}
+                    }
+                  }
+                }
+              ]
+            }"#,
+    )?;
+
+    let actionable_json = lane1_actionable_gap_packets_json(&report)?;
+    let value: serde_json::Value =
+        serde_json::from_str(&actionable_json).map_err(|err| err.to_string())?;
+    let packets = value["static_limitation_backlog"]["limitation_backlog_packets"]
+        .as_array()
+        .ok_or_else(|| "missing limitation backlog packets".to_string())?;
+
+    let local_packet = packets
+            .iter()
+            .find(|packet| {
+                packet["packet_id"]
+                    == "limitation:activation_boundary_input_unresolved:analysis-local-computed-boundary-operand-resolution"
+            })
+            .ok_or_else(|| "missing local/computed backlog packet".to_string())?;
+    let iterator_packet = packets
+            .iter()
+            .find(|packet| {
+                packet["packet_id"]
+                    == "limitation:activation_boundary_input_unresolved:analysis-iterator-boundary-operand-resolution"
+            })
+            .ok_or_else(|| "missing iterator backlog packet".to_string())?;
+    let member_packet = packets
+            .iter()
+            .find(|packet| {
+                packet["packet_id"]
+                    == "limitation:activation_boundary_input_unresolved:analysis-local-member-boundary-operand-resolution"
+            })
+            .ok_or_else(|| "missing member backlog packet".to_string())?;
+
+    assert_eq!(packets.len(), 3);
+    assert_eq!(
+        local_packet["limitation_category"],
+        "activation_boundary_input_unresolved"
+    );
+    assert_eq!(
+        iterator_packet["limitation_category"],
+        "activation_boundary_input_unresolved"
+    );
+    assert_eq!(
+        member_packet["limitation_category"],
+        "activation_boundary_input_unresolved"
+    );
+    assert_eq!(
+        local_packet["repair_route"],
+        "analysis/local-computed-boundary-operand-resolution"
+    );
+    assert_eq!(
+        iterator_packet["repair_route"],
+        "analysis/iterator-boundary-operand-resolution"
+    );
+    assert_eq!(
+        member_packet["repair_route"],
+        "analysis/local-member-boundary-operand-resolution"
+    );
+    assert_eq!(
+        local_packet["sample_canonical_gap_ids"][0],
+        "gap:idx-offset-local"
+    );
+    assert_eq!(
+        iterator_packet["sample_canonical_gap_ids"][0],
+        "gap:idx-offset-iterator"
+    );
+    assert_eq!(
+        member_packet["sample_canonical_gap_ids"][0],
+        "gap:call-name-member"
+    );
+    assert_eq!(value["packets"].as_array().map(Vec::len), Some(0));
+    Ok(())
+}
+
+#[test]
+fn lane1_static_limitation_backlog_splits_target_affinity_subroutes() -> Result<(), String> {
+    let report = lane1_evidence_audit_from_repo_exposure(
+        ".",
+        r#"{
+              "schema_version": "0.3",
+              "scope": "repo",
+              "seams": [
+                {
+                  "seam_id": "bare-alias-target-affinity",
+                  "headline_eligible": true,
+                  "file": "tests/target_affinity.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "bare-alias-target-affinity",
+                    "canonical_gap_id": "gap:bare-alias-target-affinity",
+                    "owner": "target_affinity::render_pipeline",
+                    "location": {"file": "tests/target_affinity.rs", "line": 12},
+                    "seam_kind": "call_presence",
+                    "grip_class": "static_unknown",
+                    "headline_eligible": true,
+                    "evidence_path": {},
+                    "observed_values": [],
+                    "missing_discriminators": [],
+                    "related_tests_total": 1,
+                    "related_tests": [
+                      {"test_name": "bare_alias_mentions_target", "file": "tests/target_affinity.rs", "line": 12, "relation_reason": "assertion_target_affinity", "relation_confidence": "medium", "oracle_kind": "exact", "oracle_strength": "strong"}
+                    ],
+                    "recommendation": {"action": "inspect_static_limitation", "reason": "bare alias target affinity cannot prove owner call", "verify_command": null},
+                    "actionability": {"class": "static_limitation"},
+                    "calibration": {"availability": "not_imported", "confidence": "unknown", "agreement": "no_runtime_data"},
+                    "static_limitations": [
+                      {
+                        "stage": "activate",
+                        "state": "unknown",
+                        "reason": "call-presence target affinity is present but the bare alias cannot be resolved",
+                        "category": "activation_owner_call_absent_call_presence_target_affinity",
+                        "limitation_subroute": "bare_alias_unsupported",
+                        "repair_route": "analysis/call-presence-target-affinity-owner-call-tracing"
+                      }
+                    ],
+                    "raw_findings": [
+                      {"file": "tests/target_affinity.rs", "line": 12, "kind": "static_unknown", "probe_kind": "call_presence", "expression": "format_output()"}
+                    ],
+                    "canonical_item": {
+                      "canonical_gap_id": "gap:bare-alias-target-affinity",
+                      "canonical_item_kind": "limitation",
+                      "evidence_class": "call_presence",
+                      "gap_state": "static_limitation",
+                      "actionability": "static_limitation",
+                      "raw_findings": [
+                        {"file": "tests/target_affinity.rs", "line": 12, "kind": "static_unknown", "expression": "format_output()"}
+                      ],
+                      "raw_group_size": 1,
+                      "why": "bare alias target affinity cannot prove owner call",
+                      "recommended_repair": "Keep this as analyzer backlog until alias resolution is explicit.",
+                      "verify_command": null,
+                      "confidence": {"basis": "static_only", "notes": []}
+                    }
+                  }
+                },
+                {
+                  "seam_id": "ambiguous-import-target-affinity",
+                  "headline_eligible": true,
+                  "file": "tests/target_affinity.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "ambiguous-import-target-affinity",
+                    "canonical_gap_id": "gap:ambiguous-import-target-affinity",
+                    "owner": "target_affinity::render_report",
+                    "location": {"file": "tests/target_affinity.rs", "line": 24},
+                    "seam_kind": "call_presence",
+                    "grip_class": "static_unknown",
+                    "headline_eligible": true,
+                    "evidence_path": {},
+                    "observed_values": [],
+                    "missing_discriminators": [],
+                    "related_tests_total": 1,
+                    "related_tests": [
+                      {"test_name": "ambiguous_import_mentions_target", "file": "tests/target_affinity.rs", "line": 24, "relation_reason": "assertion_target_affinity", "relation_confidence": "medium", "oracle_kind": "exact", "oracle_strength": "strong"}
+                    ],
+                    "recommendation": {"action": "inspect_static_limitation", "reason": "ambiguous import target affinity cannot prove owner call", "verify_command": null},
+                    "actionability": {"class": "static_limitation"},
+                    "calibration": {"availability": "not_imported", "confidence": "unknown", "agreement": "no_runtime_data"},
+                    "static_limitations": [
+                      {
+                        "stage": "activate",
+                        "state": "unknown",
+                        "reason": "call-presence target affinity is present but imported owner names are ambiguous",
+                        "category": "activation_owner_call_absent_call_presence_target_affinity",
+                        "limitation_subroute": "ambiguous_imported_owner",
+                        "repair_route": "analysis/call-presence-target-affinity-owner-call-tracing"
+                      }
+                    ],
+                    "raw_findings": [
+                      {"file": "tests/target_affinity.rs", "line": 24, "kind": "static_unknown", "probe_kind": "call_presence", "expression": "format_report()"}
+                    ],
+                    "canonical_item": {
+                      "canonical_gap_id": "gap:ambiguous-import-target-affinity",
+                      "canonical_item_kind": "limitation",
+                      "evidence_class": "call_presence",
+                      "gap_state": "static_limitation",
+                      "actionability": "static_limitation",
+                      "raw_findings": [
+                        {"file": "tests/target_affinity.rs", "line": 24, "kind": "static_unknown", "expression": "format_report()"}
+                      ],
+                      "raw_group_size": 1,
+                      "why": "ambiguous import target affinity cannot prove owner call",
+                      "recommended_repair": "Keep this as analyzer backlog until import resolution is explicit.",
+                      "verify_command": null,
+                      "confidence": {"basis": "static_only", "notes": []}
+                    }
+                  }
+                }
+              ]
+            }"#,
+    )?;
+
+    let actionable_json = lane1_actionable_gap_packets_json(&report)?;
+    let value: serde_json::Value =
+        serde_json::from_str(&actionable_json).map_err(|err| err.to_string())?;
+    let packets = value["static_limitation_backlog"]["limitation_backlog_packets"]
+        .as_array()
+        .ok_or_else(|| "missing limitation backlog packets".to_string())?;
+
+    assert_eq!(packets.len(), 2);
+    assert!(packets.iter().any(|packet| {
+            packet["limitation_subroute"] == "bare_alias_unsupported"
+                && packet["packet_id"]
+                    == "limitation:activation_owner_call_absent_call_presence_target_affinity:bare_alias_unsupported:analysis-call-presence-target-affinity-owner-call-tracing"
+        }));
+    assert!(packets.iter().any(|packet| {
+            packet["limitation_subroute"] == "ambiguous_imported_owner"
+                && packet["packet_id"]
+                    == "limitation:activation_owner_call_absent_call_presence_target_affinity:ambiguous_imported_owner:analysis-call-presence-target-affinity-owner-call-tracing"
+        }));
+    assert_eq!(
+        value["static_limitation_backlog"]["top_categories"][0]["count"],
+        serde_json::Value::from(2)
+    );
+    assert_eq!(
+        value["static_limitation_backlog"]["top_subroutes"]
+            .as_array()
+            .map(Vec::len),
+        Some(2)
+    );
+    assert_eq!(value["packets"].as_array().map(Vec::len), Some(0));
+
+    let markdown = lane1_actionable_gap_packets_markdown(&report);
+    assert!(markdown.contains("### Top Subroutes"));
+    assert!(markdown.contains("bare_alias_unsupported"));
+    assert!(markdown.contains("ambiguous_imported_owner"));
+    Ok(())
+}
+
+#[test]
+fn lane1_static_limitation_backlog_splits_call_presence_target_affinity_by_expression_shape() {
+    let limitation = serde_json::json!({});
+    let method_chain = serde_json::json!({
+        "raw_findings": [
+            {
+                "expression": "entry\n        .evidence\n        .missing_discriminators\n        .iter()"
+            }
+        ]
+    });
+    let associated_call = serde_json::json!({
+        "raw_findings": [
+            {
+                "expression": "u64::from(*byte)"
+            }
+        ]
+    });
+    let function_call = serde_json::json!({
+        "raw_findings": [
+            {
+                "expression": "missing_evidence(context.probe, &class)"
+            }
+        ]
+    });
+    let no_expression = serde_json::json!({});
+
+    assert_eq!(
+        crate::static_limitation_subroute(
+            &method_chain,
+            &limitation,
+            "activation_owner_call_absent_call_presence_target_affinity",
+            "analysis/call-presence-target-affinity-owner-call-tracing",
+            "call_presence"
+        ),
+        "call_presence_target_affinity_method_chain_missing_owner_call"
+    );
+    assert_eq!(
+        crate::static_limitation_subroute(
+            &associated_call,
+            &limitation,
+            "activation_owner_call_absent_call_presence_target_affinity",
+            "analysis/call-presence-target-affinity-owner-call-tracing",
+            "call_presence"
+        ),
+        "call_presence_target_affinity_associated_call_missing_owner_call"
+    );
+    assert_eq!(
+        crate::static_limitation_subroute(
+            &function_call,
+            &limitation,
+            "activation_owner_call_absent_call_presence_target_affinity",
+            "analysis/call-presence-target-affinity-owner-call-tracing",
+            "call_presence"
+        ),
+        "call_presence_target_affinity_function_call_missing_owner_call"
+    );
+    assert_eq!(
+        crate::static_limitation_subroute(
+            &no_expression,
+            &limitation,
+            "activation_owner_call_absent_call_presence_target_affinity",
+            "analysis/call-presence-target-affinity-owner-call-tracing",
+            "call_presence"
+        ),
+        "call_presence_target_affinity_missing_owner_call"
+    );
+}
+
+#[test]
+fn lane1_static_limitation_backlog_splits_related_test_affinity_call_presence_by_expression_shape()
+{
+    let limitation = serde_json::json!({});
+    fn affinity_record(reason: &str, expression: Option<&str>) -> Value {
+        let mut record = serde_json::json!({
+            "related_tests": [
+                {
+                    "relation_reason": reason
+                }
+            ]
+        });
+        if let Some(expression) = expression {
+            record["raw_findings"] = serde_json::json!([
+                {
+                    "expression": expression
+                }
+            ]);
+        }
+        record
+    }
+
+    assert_eq!(
+        crate::static_limitation_subroute(
+            &affinity_record(
+                "same_test_file",
+                Some("entry\n        .evidence\n        .missing_discriminators\n        .iter()"),
+            ),
+            &limitation,
+            "activation_owner_call_absent_affinity_only",
+            "analysis/related-test-affinity-owner-call-tracing",
+            "call_presence"
+        ),
+        "same_test_file_call_presence_method_chain_missing_owner_call"
+    );
+    assert_eq!(
+        crate::static_limitation_subroute(
+            &affinity_record("same_test_file", Some("u64::from(*byte)")),
+            &limitation,
+            "activation_owner_call_absent_affinity_only",
+            "analysis/related-test-affinity-owner-call-tracing",
+            "call_presence"
+        ),
+        "same_test_file_call_presence_associated_call_missing_owner_call"
+    );
+    assert_eq!(
+        crate::static_limitation_subroute(
+            &affinity_record(
+                "same_test_file",
+                Some("missing_evidence(context.probe, &class)"),
+            ),
+            &limitation,
+            "activation_owner_call_absent_affinity_only",
+            "analysis/related-test-affinity-owner-call-tracing",
+            "call_presence"
+        ),
+        "same_test_file_call_presence_function_call_missing_owner_call"
+    );
+    assert_eq!(
+        crate::static_limitation_subroute(
+            &affinity_record("owner_named_test", Some("Vec::new()")),
+            &limitation,
+            "activation_owner_call_absent_affinity_only",
+            "analysis/related-test-affinity-owner-call-tracing",
+            "return_value"
+        ),
+        "owner_named_test_missing_owner_call"
+    );
+    assert_eq!(
+        crate::static_limitation_subroute(
+            &affinity_record("same_test_file", None),
+            &limitation,
+            "activation_owner_call_absent_affinity_only",
+            "analysis/related-test-affinity-owner-call-tracing",
+            "call_presence"
+        ),
+        "same_test_file_missing_owner_call"
+    );
+}
+
+#[test]
+fn lane1_static_limitation_backlog_splits_same_file_owner_call_absence_by_expression_shape() {
+    let limitation = serde_json::json!({});
+    fn same_file_record(expression: Option<&str>) -> Value {
+        let mut record = serde_json::json!({
+            "related_tests": [
+                {
+                    "relation_reason": "same_test_file"
+                }
+            ]
+        });
+        if let Some(expression) = expression {
+            record["raw_findings"] = serde_json::json!([
+                {
+                    "expression": expression
+                }
+            ]);
+        }
+        record
+    }
+
+    assert_eq!(
+        crate::static_limitation_subroute(
+            &same_file_record(Some("entry.evidence.missing_discriminators.iter()")),
+            &limitation,
+            "activation_owner_call_absent_same_file_only",
+            "analysis/same-file-owner-call-tracing",
+            "call_presence"
+        ),
+        "same_file_only_call_presence_receiver_method_missing_owner_call"
+    );
+    assert_eq!(
+        crate::static_limitation_repair_route_for_subroute(
+            "activation_owner_call_absent_same_file_only",
+            "same_file_only_call_presence_receiver_method_missing_owner_call",
+            "analysis/same-file-owner-call-tracing",
+        ),
+        "analysis/same-file-receiver-method-owner-call-tracing"
+    );
+    assert_eq!(
+        crate::static_limitation_subroute(
+            &same_file_record(Some("entry.evidence.missing_discriminators")),
+            &limitation,
+            "activation_owner_call_absent_same_file_only",
+            "analysis/same-file-owner-call-tracing",
+            "call_presence"
+        ),
+        "same_file_only_missing_owner_call"
+    );
+    assert_eq!(
+        crate::static_limitation_repair_route_for_subroute(
+            "activation_owner_call_absent_same_file_only",
+            "same_file_only_missing_owner_call",
+            "analysis/same-file-owner-call-tracing",
+        ),
+        "analysis/same-file-owner-call-tracing"
+    );
+    assert_eq!(
+        crate::static_limitation_subroute(
+            &same_file_record(Some("u64::from(*byte)")),
+            &limitation,
+            "activation_owner_call_absent_same_file_only",
+            "analysis/same-file-owner-call-tracing",
+            "call_presence"
+        ),
+        "same_file_only_call_presence_associated_call_missing_owner_call"
+    );
+    assert_eq!(
+        crate::static_limitation_subroute(
+            &same_file_record(Some("missing_evidence(context.probe, &class)")),
+            &limitation,
+            "activation_owner_call_absent_same_file_only",
+            "analysis/same-file-owner-call-tracing",
+            "call_presence"
+        ),
+        "same_file_only_call_presence_function_call_missing_owner_call"
+    );
+    assert_eq!(
+        crate::static_limitation_subroute(
+            &same_file_record(Some("description.value")),
+            &limitation,
+            "activation_owner_call_absent_same_file_only",
+            "analysis/same-file-owner-call-tracing",
+            "call_presence"
+        ),
+        "same_file_only_missing_owner_call"
+    );
+    assert_eq!(
+        crate::static_limitation_subroute(
+            &same_file_record(Some("return Vec::new()")),
+            &limitation,
+            "activation_owner_call_absent_same_file_only",
+            "analysis/same-file-owner-call-tracing",
+            "return_value"
+        ),
+        "same_file_only_return_value_missing_owner_call"
+    );
+    assert_eq!(
+        crate::static_limitation_subroute(
+            &same_file_record(None),
+            &limitation,
+            "activation_owner_call_absent_same_file_only",
+            "analysis/same-file-owner-call-tracing",
+            "call_presence"
+        ),
+        "same_file_only_missing_owner_call"
+    );
+}
+
+#[test]
+fn lane1_static_limitation_backlog_specializes_same_file_affinity_unlock_condition() {
+    let unlock = crate::static_limitation_unlock_condition(
+        "activation_owner_call_absent_affinity_only",
+        "same_test_file_call_presence_function_call_missing_owner_call",
+        "analysis/related-test-affinity-owner-call-tracing",
+    );
+
+    assert!(unlock.contains("bounded production call graph"));
+    assert!(unlock.contains("keep the limitation non-actionable"));
+    assert!(unlock.contains("direct or helper owner call is demonstrated"));
+
+    let generic_unlock = crate::static_limitation_unlock_condition(
+        "activation_owner_call_absent_affinity_only",
+        "import_path_affinity_missing_owner_call",
+        "analysis/related-test-affinity-owner-call-tracing",
+    );
+    assert!(generic_unlock.contains("related tests can be tied to direct or helper owner calls"));
+    assert!(!generic_unlock.contains("bounded production call graph"));
+
+    let same_file_claims = crate::static_limitation_backlog_packet_non_claims(
+        "activation_owner_call_absent_affinity_only",
+        Some("same_test_file_call_presence_function_call_missing_owner_call"),
+    );
+    assert!(
+        same_file_claims
+            .iter()
+            .any(|claim| claim == "do not treat same-file affinity as owner-call evidence")
+    );
+
+    let generic_claims = crate::static_limitation_backlog_packet_non_claims(
+        "activation_owner_call_absent_affinity_only",
+        Some("import_path_affinity_missing_owner_call"),
+    );
+    assert!(
+        !generic_claims
+            .iter()
+            .any(|claim| claim == "do not treat same-file affinity as owner-call evidence")
+    );
+
+    let same_file_unlock = crate::static_limitation_unlock_condition(
+        "activation_owner_call_absent_same_file_only",
+        "same_file_only_call_presence_function_call_missing_owner_call",
+        "analysis/same-file-owner-call-tracing",
+    );
+    assert!(same_file_unlock.contains("bounded production call graph"));
+
+    let same_file_claims = crate::static_limitation_backlog_packet_non_claims(
+        "activation_owner_call_absent_same_file_only",
+        Some("same_file_only_call_presence_function_call_missing_owner_call"),
+    );
+    assert!(
+        same_file_claims
+            .iter()
+            .any(|claim| claim == "do not treat same-file proximity as owner-call evidence")
+    );
+
+    let receiver_method_unlock = crate::static_limitation_unlock_condition(
+        "activation_owner_call_absent_same_file_only",
+        "same_file_only_call_presence_receiver_method_missing_owner_call",
+        "analysis/same-file-receiver-method-owner-call-tracing",
+    );
+    assert!(receiver_method_unlock.contains("receiver method call"));
+    assert!(receiver_method_unlock.contains("bounded direct or helper owner-call path"));
+    assert!(receiver_method_unlock.contains("non-actionable"));
+
+    let receiver_method_claims = crate::static_limitation_backlog_packet_non_claims(
+        "activation_owner_call_absent_same_file_only",
+        Some("same_file_only_call_presence_receiver_method_missing_owner_call"),
+    );
+    assert!(
+        receiver_method_claims
+            .iter()
+            .any(|claim| claim == "do not treat receiver method text as owner-call evidence")
+    );
+}
+
+#[test]
+fn lane1_evidence_audit_reports_aligned_supported_class_coverage() -> Result<(), String> {
+    let report = lane1_evidence_audit_from_repo_exposure(
+        ".",
+        r#"{
+              "schema_version": "0.3",
+              "scope": "repo",
+              "seams": [
+                {
+                  "seam_id": "presentation-label",
+                  "headline_eligible": true,
+                  "file": "src/help.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "presentation-label",
+                    "canonical_gap_id": "presentation_text::HELP_LABEL",
+                    "owner": "HELP_LABEL",
+                    "location": {"file": "src/help.rs", "line": 8},
+                    "seam_kind": "presentation_text",
+                    "grip_class": "weakly_gripped",
+                    "headline_eligible": true,
+                    "evidence_path": {},
+                    "observed_values": [],
+                    "missing_discriminators": [],
+                    "related_tests_total": 0,
+                    "related_tests": [],
+                    "recommendation": {"action": "add_output_observer", "reason": "missing output observer", "verify_command": "cargo xtask evidence-quality-scorecard"},
+                    "actionability": {"class": "actionable_output_observer"},
+                    "calibration": {"availability": "not_imported", "confidence": "unknown", "agreement": "no_runtime_data"},
+                    "static_limitations": [],
+                    "raw_findings": [
+                      {"file": "src/help.rs", "line": 8, "kind": "exposed", "probe_kind": "presentation_text", "expression": "pub const HELP_LABEL: &str ="},
+                      {"file": "src/help.rs", "line": 9, "kind": "static_unknown", "probe_kind": "presentation_text", "expression": "\"help label\""}
+                    ],
+                    "canonical_item": {
+                      "canonical_gap_id": "presentation_text::HELP_LABEL",
+                      "canonical_item_kind": "gap",
+                      "evidence_class": "presentation_text",
+                      "gap_state": "actionable",
+                      "actionability": "add_output_observer",
+                      "raw_findings": [
+                        {"file": "src/help.rs", "line": 8, "kind": "exposed", "expression": "pub const HELP_LABEL: &str ="},
+                        {"file": "src/help.rs", "line": 9, "kind": "static_unknown", "expression": "\"help label\""}
+                      ],
+                      "raw_group_size": 2,
+                      "why": "changed user-visible help text has no output observer",
+                      "recommended_repair": "Add or update a help-output snapshot.",
+                      "repair_route": {
+                        "repair_kind": "output_observer",
+                        "target_test_type": "help_output_snapshot",
+                        "suggested_assertion": "Assert the rendered help output contains HELP_LABEL."
+                      },
+                      "verify_command": "cargo xtask evidence-quality-scorecard",
+                      "confidence": {"basis": "static_only", "notes": []}
+                    }
+                  }
+                },
+                {
+                  "seam_id": "internal-policy-label",
+                  "headline_eligible": true,
+                  "file": "src/policy.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "internal-policy-label",
+                    "canonical_gap_id": "config_or_policy_constant::INTERNAL_POLICY_LABEL",
+                    "owner": "INTERNAL_POLICY_LABEL",
+                    "location": {"file": "src/policy.rs", "line": 22},
+                    "seam_kind": "config_or_policy_constant",
+                    "grip_class": "weakly_gripped",
+                    "headline_eligible": true,
+                    "evidence_path": {},
+                    "observed_values": [],
+                    "missing_discriminators": [],
+                    "related_tests_total": 0,
+                    "related_tests": [],
+                    "recommendation": {"action": "no_action", "reason": "internal policy metadata", "verify_command": null},
+                    "actionability": {"class": "no_action_internal"},
+                    "calibration": {"availability": "not_imported", "confidence": "unknown", "agreement": "no_runtime_data"},
+                    "static_limitations": [],
+                    "raw_findings": [
+                      {"file": "src/policy.rs", "line": 22, "kind": "exposed", "probe_kind": "config_or_policy_constant", "expression": "pub const INTERNAL_POLICY_LABEL: &str ="},
+                      {"file": "src/policy.rs", "line": 23, "kind": "weakly_exposed", "probe_kind": "config_or_policy_constant", "expression": "\"internal\""}
+                    ],
+                    "canonical_item": {
+                      "canonical_gap_id": "config_or_policy_constant::INTERNAL_POLICY_LABEL",
+                      "canonical_item_kind": "no_action",
+                      "evidence_class": "config_or_policy_constant",
+                      "gap_state": "internal_only",
+                      "actionability": "no_action_internal",
+                      "raw_findings": [
+                        {"file": "src/policy.rs", "line": 22, "kind": "exposed", "expression": "pub const INTERNAL_POLICY_LABEL: &str ="},
+                        {"file": "src/policy.rs", "line": 23, "kind": "weakly_exposed", "expression": "\"internal\""}
+                      ],
+                      "raw_group_size": 2,
+                      "why": "changed policy label is internal metadata",
+                      "recommended_repair": "No user test action; internal policy metadata is not user-visible behavior.",
+                      "verify_command": null,
+                      "confidence": {"basis": "static_only", "notes": []}
+                    }
+                  }
+                },
+                {
+                  "seam_id": "predicate-boundary-repair-route",
+                  "headline_eligible": true,
+                  "file": "src/pricing.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "predicate-boundary-repair-route",
+                    "canonical_gap_id": "gap:predicate-boundary-repair-route",
+                    "owner": "pricing::discounted_total",
+                    "location": {"file": "src/pricing.rs", "line": 42},
+                    "seam_kind": "predicate_boundary",
+                    "grip_class": "weakly_gripped",
+                    "headline_eligible": true,
+                    "evidence_path": {},
+                    "observed_values": [],
+                    "missing_discriminators": [{"value": "discount_threshold (equality boundary)", "reason": "observed values do not include the equality-boundary case"}],
+                    "related_tests_total": 1,
+                    "related_tests": [],
+                    "recommendation": {"action": "write_targeted_test", "reason": "extend related test with boundary discriminator", "verify_command": "ripr agent verify --root . --before before.json --after after.json --json"},
+                    "actionability": {"class": "actionable_related_test_extension"},
+                    "calibration": {"availability": "not_imported", "confidence": "unknown", "agreement": "no_runtime_data"},
+                    "static_limitations": [],
+                    "raw_findings": [
+                      {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed", "probe_kind": "predicate_boundary", "expression": "amount >= discount_threshold"}
+                    ],
+                    "canonical_item": {
+                      "canonical_gap_id": "gap:predicate-boundary-repair-route",
+                      "canonical_item_kind": "gap",
+                      "evidence_class": "predicate_boundary",
+                      "gap_state": "actionable",
+                      "actionability": "extend_related_test",
+                      "raw_findings": [
+                        {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed", "expression": "amount >= discount_threshold"}
+                      ],
+                      "raw_group_size": 1,
+                      "why": "related tests reach the seam but miss the boundary discriminator",
+                      "recommended_repair": "Add an equality-boundary assertion for the changed predicate.",
+                      "repair_route": {
+                        "repair_kind": "add_boundary_assertion",
+                        "target_test_type": "boundary_discriminator",
+                        "suggested_assertion": "assert_eq!(discounted_total(/* discount_threshold (equality boundary) */), /* expected */)"
+                      },
+                      "related_test": {"name": "below_threshold_has_no_discount", "file": "tests/pricing.rs", "line": 10, "reason": "direct_owner_call"},
+                      "verify_command": "cargo xtask evidence-quality-scorecard",
+                      "confidence": {"basis": "static_only", "notes": []}
+                    }
+                  }
+                }
+              ]
+            }"#,
+    )?;
+    let json = lane1_evidence_audit_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    let coverage = &value["finding_alignment"]["coverage"];
+    let class_rows = coverage["alignment_coverage_by_class"]
+        .as_array()
+        .ok_or_else(|| "alignment coverage rows should be an array".to_string())?;
+    let presentation = class_rows
+        .iter()
+        .find(|row| row["evidence_class"] == "presentation_text")
+        .ok_or_else(|| "missing presentation_text coverage row".to_string())?;
+    assert_eq!(presentation["raw_findings"], serde_json::Value::from(2));
+    assert_eq!(
+        presentation["aligned_raw_findings"],
+        serde_json::Value::from(2)
+    );
+    assert_eq!(presentation["canonical_items"], serde_json::Value::from(1));
+    assert_eq!(presentation["actionable_items"], serde_json::Value::from(1));
+    let config_policy = class_rows
+        .iter()
+        .find(|row| row["evidence_class"] == "config_or_policy_constant")
+        .ok_or_else(|| "missing config_or_policy_constant coverage row".to_string())?;
+    assert_eq!(config_policy["raw_findings"], serde_json::Value::from(2));
+    assert_eq!(
+        config_policy["aligned_raw_findings"],
+        serde_json::Value::from(2)
+    );
+    assert_eq!(config_policy["canonical_items"], serde_json::Value::from(1));
+    assert_eq!(
+        config_policy["internal_no_action_items"],
+        serde_json::Value::from(1)
+    );
+    let predicate_boundary = class_rows
+        .iter()
+        .find(|row| row["evidence_class"] == "predicate_boundary")
+        .ok_or_else(|| "missing predicate_boundary coverage row".to_string())?;
+    assert_eq!(
+        predicate_boundary["raw_findings"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        predicate_boundary["canonical_items"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        predicate_boundary["actionable_items"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        coverage["canonical_items_without_repair_route"],
+        serde_json::Value::from(0)
+    );
+    assert_eq!(
+        coverage["canonical_items_without_verify_command"],
+        serde_json::Value::from(0)
+    );
+    let top_lists = &value["finding_alignment"]["actionable_gap_top_lists"];
+    assert_eq!(
+        top_lists["top_actionable_gap_classes"][0]["label"],
+        "predicate_boundary"
+    );
+    assert_eq!(
+        top_lists["top_actionable_gap_classes"][0]["count"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(top_lists["top_actionable_files"][0]["label"], "src/help.rs");
+    assert_eq!(
+        top_lists["top_repair_kinds"][0]["label"],
+        "add_boundary_assertion"
+    );
+    assert_eq!(
+        top_lists["top_missing_discriminator_kinds"][0]["label"],
+        "observed values do not include the equality-boundary case"
+    );
+    Ok(())
+}
+
+#[test]
+fn lane1_actionable_gap_packets_emit_agent_safe_work_items() -> Result<(), String> {
+    let root = temp_dir("lane1-agent-safe-work-items");
+    write(&root.join("tests/pricing.rs"), "");
+    let root = root.to_string_lossy().to_string();
+    let report = lane1_evidence_audit_from_repo_exposure(
+        &root,
+        r#"{
+              "schema_version": "0.3",
+              "scope": "repo",
+              "seams": [
+                {
+                  "seam_id": "packet-boundary-gap",
+                  "headline_eligible": true,
+                  "file": "src/pricing.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "packet-boundary-gap",
+                    "canonical_gap_id": "gap:packet-boundary-gap",
+                    "location": {"file": "src/pricing.rs", "line": 42},
+                    "missing_discriminators": [
+                      {"value": "discount_threshold (equality boundary)", "reason": "observed values do not include the equality-boundary case"}
+                    ],
+                    "recommendation": {
+                      "candidate_values": [
+                        {"value": "input that hits the boundary: amount >= discount_threshold", "reason": "predicate boundary expression"}
+                      ]
+                    },
+                    "raw_findings": [
+                      {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed", "expression": "amount >= discount_threshold"}
+                    ],
+                    "canonical_item": {
+                      "canonical_gap_id": "gap:packet-boundary-gap",
+                      "canonical_item_kind": "gap",
+                      "evidence_class": "predicate_boundary",
+                      "gap_state": "actionable",
+                      "actionability": "extend_related_test",
+                      "raw_findings": [
+                        {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed", "expression": "amount >= discount_threshold"}
+                      ],
+                      "why": "related tests reach the seam but miss equality at the threshold",
+                      "recommended_repair": "Add an equality-boundary assertion for the changed predicate.",
+                      "repair_route": {
+                        "repair_kind": "add_boundary_assertion",
+                        "target_test_type": "boundary_discriminator",
+                        "suggested_assertion": "assert_eq!(discounted_total(threshold), expected)"
+                      },
+                      "related_test": {"name": "below_threshold_has_no_discount", "file": "tests/pricing.rs", "line": 10, "reason": "direct_owner_call"},
+                      "verify_command": "cargo xtask evidence-quality-scorecard",
+                      "confidence": {"basis": "static_only", "notes": []}
+                    }
+                  }
+                }
+              ]
+            }"#,
+    )?;
+
+    let audit_json = lane1_evidence_audit_json(&report)?;
+    let audit_value: serde_json::Value =
+        serde_json::from_str(&audit_json).map_err(|err| err.to_string())?;
+    let embedded_packets = audit_value["finding_alignment"]["actionable_gap_packets"]
+        .as_array()
+        .ok_or_else(|| "audit JSON should include actionable gap packet array".to_string())?;
+    assert_eq!(embedded_packets.len(), 1);
+    assert_eq!(
+        embedded_packets[0]["raw_findings_supporting_only"],
+        serde_json::Value::Bool(true)
+    );
+    assert_eq!(
+        embedded_packets[0]["missing_discriminators"][0]["value"],
+        "discount_threshold (equality boundary)"
+    );
+    assert_eq!(
+        audit_value["finding_alignment"]["actionable_gap_packet_public_projection"]["public_projection_eligible_packets"],
+        serde_json::Value::from(0)
+    );
+    assert_eq!(
+        audit_value["finding_alignment"]["actionable_gap_packet_public_projection"]["projection_exclusion_reasons"]
+            [0]["label"],
+        "missing_receipt_command"
+    );
+
+    let packet_json = lane1_actionable_gap_packets_json(&report)?;
+    let packet_value: serde_json::Value =
+        serde_json::from_str(&packet_json).map_err(|err| err.to_string())?;
+    assert_eq!(packet_value["report"], "actionable-gaps");
+    assert_eq!(
+        packet_value["summary"]["actionable_gaps"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        packet_value["packets"][0]["canonical_gap_id"],
+        "gap:packet-boundary-gap"
+    );
+    assert_eq!(
+        packet_value["packets"][0]["repair_kind"],
+        "add_boundary_assertion"
+    );
+    assert_eq!(
+        packet_value["packets"][0]["verify_command"],
+        "cargo xtask evidence-quality-scorecard"
+    );
+    assert_eq!(
+        packet_value["packets"][0]["repair_route_source"],
+        "canonical_item.repair_route"
+    );
+    assert_eq!(
+        packet_value["packets"][0]["verify_command_source"],
+        "canonical_item.verify_command"
+    );
+    assert_eq!(packet_value["packets"][0]["receipt_source"], "missing");
+    assert_eq!(
+        packet_value["packets"][0]["public_projection_eligible"],
+        serde_json::Value::Bool(false)
+    );
+    assert_eq!(
+        packet_value["packets"][0]["projection_exclusion_reasons"][0],
+        "missing_receipt_command"
+    );
+    assert_eq!(
+        packet_value["summary"]["public_projection_eligible_packets"],
+        serde_json::Value::from(0)
+    );
+    assert_eq!(
+        packet_value["summary"]["public_projection_excluded_packets"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        packet_value["packets"][0]["candidate_value_or_observer"],
+        "input that hits the boundary: amount >= discount_threshold"
+    );
+    assert_eq!(
+        packet_value["packets"][0]["missing_discriminators"][0]["reason"],
+        "observed values do not include the equality-boundary case"
+    );
+    assert_eq!(
+        packet_value["packets"][0]["must_not_change"][0],
+        "Do not infer actionability from raw static class."
+    );
+
+    let markdown = lane1_actionable_gap_packets_markdown(&report);
+    assert!(markdown.contains("# Actionable Canonical Gap Packets"));
+    assert!(markdown.contains("gap:packet-boundary-gap"));
+    assert!(markdown.contains("discount_threshold (equality boundary)"));
+    assert!(markdown.contains("excluded: missing_receipt_command"));
+    assert!(markdown.contains("cargo xtask evidence-quality-scorecard"));
+    Ok(())
+}
+
+#[test]
+fn lane1_actionable_gap_packets_mark_public_projection_ready_with_receipt() -> Result<(), String> {
+    let root = temp_dir("lane1-public-projection-ready");
+    write(&root.join("tests/pricing.rs"), "");
+    let root = root.to_string_lossy().to_string();
+    let report = lane1_evidence_audit_from_repo_exposure(
+        &root,
+        r#"{
+              "schema_version": "0.3",
+              "scope": "repo",
+              "seams": [
+                {
+                  "seam_id": "packet-receipt-ready-gap",
+                  "headline_eligible": true,
+                  "file": "src/pricing.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "packet-receipt-ready-gap",
+                    "canonical_gap_id": "gap:packet-receipt-ready-gap",
+                    "location": {"file": "src/pricing.rs", "line": 42},
+                    "raw_findings": [
+                      {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed", "expression": "amount >= discount_threshold"}
+                    ],
+                    "canonical_item": {
+                      "canonical_gap_id": "gap:packet-receipt-ready-gap",
+                      "canonical_item_kind": "gap",
+                      "evidence_class": "predicate_boundary",
+                      "gap_state": "actionable",
+                      "actionability": "extend_related_test",
+                      "raw_findings": [
+                        {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed", "expression": "amount >= discount_threshold"}
+                      ],
+                      "why": "related tests reach the seam but miss equality at the threshold",
+                      "recommended_repair": "Add an equality-boundary assertion for the changed predicate.",
+                      "repair_route": {
+                        "repair_kind": "add_boundary_assertion",
+                        "target_test_type": "boundary_discriminator",
+                        "suggested_assertion": "assert_eq!(discounted_total(threshold), expected)"
+                      },
+                      "verify_command": "cargo xtask evidence-quality-scorecard",
+                      "receipt_command": "cargo xtask receipts check",
+                      "related_test": {"name": "below_threshold_has_no_discount", "file": "tests/pricing.rs", "line": 10, "reason": "direct_owner_call"},
+                      "confidence": {"basis": "fixture_backed", "notes": []}
+                    }
+                  }
+                }
+              ]
+            }"#,
+    )?;
+
+    let packet_json = lane1_actionable_gap_packets_json(&report)?;
+    let packet_value: serde_json::Value =
+        serde_json::from_str(&packet_json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        packet_value["summary"]["public_projection_eligible_packets"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        packet_value["summary"]["public_projection_excluded_packets"],
+        serde_json::Value::from(0)
+    );
+    assert_eq!(
+        packet_value["packets"][0]["public_projection_eligible"],
+        serde_json::Value::Bool(true)
+    );
+    assert_eq!(
+        packet_value["packets"][0]["projection_exclusion_reasons"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        packet_value["packets"][0]["receipt_command_or_path"],
+        "cargo xtask receipts check"
+    );
+    assert_eq!(
+        packet_value["packets"][0]["receipt_command"],
+        "cargo xtask receipts check"
+    );
+    assert_eq!(
+        packet_value["packets"][0]["receipt_source"],
+        "canonical_item.receipt_command"
+    );
+    assert_eq!(
+        packet_value["packets"][0]["target_test_shape"],
+        "boundary_discriminator: assert_eq!(discounted_total(threshold), expected)"
+    );
+    assert_eq!(
+        packet_value["packets"][0]["repair_route"]["repair_kind"],
+        "add_boundary_assertion"
+    );
+    assert_eq!(
+        packet_value["packets"][0]["repair_route"]["target_test_type"],
+        "boundary_discriminator"
+    );
+    assert_eq!(
+        packet_value["packets"][0]["repair_route"]["assertion_shape"],
+        "assert_eq!(discounted_total(threshold), expected)"
+    );
+    assert_eq!(
+        packet_value["packets"][0]["confidence"]["basis"],
+        "fixture_backed"
+    );
+    assert_eq!(
+        packet_value["packets"][0]["raw_evidence_refs"][0]["kind"],
+        "weakly_exposed"
+    );
+    assert_eq!(
+        packet_value["packets"][0]["allowed_edit_surface"][0],
+        "tests/pricing.rs"
+    );
+    let swarm_plan = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &packet_value,
+    );
+    let ready = ripr_swarm_plan_ready_packets(&swarm_plan);
+    assert_eq!(ready.len(), 1);
+    assert_eq!(ready[0].canonical_gap_id, "gap:packet-receipt-ready-gap");
+    Ok(())
+}
+
+#[test]
+fn lane1_actionable_gap_packets_use_recommended_test_as_related_target() -> Result<(), String> {
+    let root = temp_dir("lane1-recommended-test-target");
+    write(&root.join("tests/lsp_tests.rs"), "");
+    let root = root.to_string_lossy().to_string();
+    let report = lane1_evidence_audit_from_repo_exposure(
+        &root,
+        r#"{
+              "schema_version": "0.3",
+              "scope": "repo",
+              "seams": [
+                {
+                  "seam_id": "packet-recommended-test-target",
+                  "headline_eligible": true,
+                  "file": "src/lsp.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "packet-recommended-test-target",
+                    "canonical_gap_id": "gap:packet-recommended-test-target",
+                    "location": {"file": "src/lsp.rs", "line": 42},
+                    "raw_findings": [
+                      {"file": "src/lsp.rs", "line": 42, "kind": "ungripped", "expression": "tokio::io::stdin()"}
+                    ],
+                    "recommendation": {
+                      "recommended_test": {
+                        "file": "tests/lsp_tests.rs",
+                        "name": "serve_stdio_call_presence_observer",
+                        "reason": "recommended focused observer target"
+                      }
+                    },
+                    "canonical_item": {
+                      "canonical_gap_id": "gap:packet-recommended-test-target",
+                      "canonical_item_kind": "gap",
+                      "evidence_class": "call_presence",
+                      "gap_state": "actionable",
+                      "actionability": "add_focused_test",
+                      "raw_findings": [
+                        {"file": "src/lsp.rs", "line": 42, "kind": "ungripped", "expression": "tokio::io::stdin()"}
+                      ],
+                      "why": "write a focused test for the missing call observer",
+                      "recommended_repair": "Add a call observer in tests/lsp_tests.rs.",
+                      "repair_route": {
+                        "repair_kind": "add_call_observer",
+                        "target_test_type": "call_presence_observer",
+                        "suggested_assertion": "// assert that serve_stdio called the expected target"
+                      },
+                      "verify_command": "cargo xtask evidence-quality-scorecard",
+                      "receipt_command": "cargo xtask receipts check",
+                      "confidence": {"basis": "fixture_backed", "notes": []}
+                    }
+                  }
+                }
+              ]
+            }"#,
+    )?;
+
+    let packet_json = lane1_actionable_gap_packets_json(&report)?;
+    let packet_value: serde_json::Value =
+        serde_json::from_str(&packet_json).map_err(|err| err.to_string())?;
+
+    assert_eq!(
+        packet_value["packets"][0]["related_test_or_observer"]["file"],
+        "tests/lsp_tests.rs"
+    );
+    assert_eq!(
+        packet_value["packets"][0]["allowed_edit_surface"][0],
+        "tests/lsp_tests.rs"
+    );
+    assert_eq!(
+        packet_value["packets"][0]["public_projection_eligible"],
+        serde_json::Value::Bool(true)
+    );
+
+    let swarm_plan = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &packet_value,
+    );
+    let ready = ripr_swarm_plan_ready_packets(&swarm_plan);
+    assert_eq!(ready.len(), 1);
+    assert_eq!(
+        ready[0].canonical_gap_id,
+        "gap:packet-recommended-test-target"
+    );
+    Ok(())
+}
+
+#[test]
+fn lane1_actionable_gap_packets_exclude_missing_edit_surface_file() -> Result<(), String> {
+    let root = temp_dir("lane1-missing-edit-surface-file");
+    let root = root.to_string_lossy().to_string();
+    let report = lane1_evidence_audit_from_repo_exposure(
+        &root,
+        r#"{
+              "schema_version": "0.3",
+              "scope": "repo",
+              "seams": [
+                {
+                  "seam_id": "packet-missing-edit-surface-file",
+                  "headline_eligible": true,
+                  "file": "src/lsp.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "packet-missing-edit-surface-file",
+                    "canonical_gap_id": "gap:packet-missing-edit-surface-file",
+                    "location": {"file": "src/lsp.rs", "line": 42},
+                    "raw_findings": [
+                      {"file": "src/lsp.rs", "line": 42, "kind": "ungripped", "expression": "tokio::io::stdin()"}
+                    ],
+                    "recommendation": {
+                      "recommended_test": {
+                        "file": "tests/lsp_tests.rs",
+                        "name": "serve_stdio_call_presence_observer",
+                        "reason": "recommended focused observer target"
+                      }
+                    },
+                    "canonical_item": {
+                      "canonical_gap_id": "gap:packet-missing-edit-surface-file",
+                      "canonical_item_kind": "gap",
+                      "evidence_class": "call_presence",
+                      "gap_state": "actionable",
+                      "actionability": "add_focused_test",
+                      "raw_findings": [
+                        {"file": "src/lsp.rs", "line": 42, "kind": "ungripped", "expression": "tokio::io::stdin()"}
+                      ],
+                      "why": "write a focused test for the missing call observer",
+                      "recommended_repair": "Add a call observer in tests/lsp_tests.rs.",
+                      "repair_route": {
+                        "repair_kind": "add_call_observer",
+                        "target_test_type": "call_presence_observer",
+                        "suggested_assertion": "// assert that serve_stdio called the expected target"
+                      },
+                      "verify_command": "cargo xtask evidence-quality-scorecard",
+                      "receipt_command": "cargo xtask receipts check",
+                      "confidence": {"basis": "fixture_backed", "notes": []}
+                    }
+                  }
+                }
+              ]
+            }"#,
+    )?;
+
+    let packet_json = lane1_actionable_gap_packets_json(&report)?;
+    let packet_value: serde_json::Value =
+        serde_json::from_str(&packet_json).map_err(|err| err.to_string())?;
+
+    assert_eq!(
+        packet_value["packets"][0]["related_test_or_observer"]["file"],
+        "tests/lsp_tests.rs"
+    );
+    assert_eq!(
+        packet_value["packets"][0]["allowed_edit_surface"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        packet_value["packets"][0]["public_projection_eligible"],
+        serde_json::Value::Bool(false)
+    );
+    assert_eq!(
+        packet_value["packets"][0]["projection_exclusion_reasons"],
+        serde_json::json!(["missing_allowed_edit_surface"])
+    );
+
+    let swarm_plan = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &packet_value,
+    );
+    let blocked = ripr_swarm_plan_blocked_packets(&swarm_plan);
+    assert_eq!(blocked.len(), 1);
+    assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+    assert_eq!(
+        blocked[0].missing_context,
+        vec!["allowed_edit_surface".to_string()]
+    );
+    Ok(())
+}
+
+#[test]
+fn lane1_actionable_gap_packets_fail_closed_for_cross_language_target_unresolved()
+-> Result<(), String> {
+    let root = temp_dir("lane1-cross-language-target-unresolved");
+    write(&root.join("test/js/web/fetch/blob.test.ts"), "");
+    let root = root.to_string_lossy().to_string();
+    let report = lane1_evidence_audit_from_repo_exposure(
+        &root,
+        r#"{
+              "schema_version": "0.3",
+              "scope": "repo",
+              "seams": [
+                {
+                  "seam_id": "packet-cross-language-target-unresolved",
+                  "headline_eligible": true,
+                  "file": "src/jsc/Blob.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "packet-cross-language-target-unresolved",
+                    "canonical_gap_id": "gap:packet-cross-language-target-unresolved",
+                    "location": {"file": "src/jsc/Blob.rs", "line": 88},
+                    "raw_findings": [
+                      {"file": "src/jsc/Blob.rs", "line": 88, "kind": "weakly_exposed", "expression": "array_buffer.shared || array_buffer.resizable"}
+                    ],
+                    "canonical_item": {
+                      "canonical_gap_id": "gap:packet-cross-language-target-unresolved",
+                      "canonical_item_kind": "gap",
+                      "evidence_class": "predicate_boundary",
+                      "gap_state": "actionable",
+                      "actionability": "add_focused_test",
+                      "raw_findings": [
+                        {"file": "src/jsc/Blob.rs", "line": 88, "kind": "weakly_exposed", "expression": "array_buffer.shared || array_buffer.resizable"}
+                      ],
+                      "why": "binding seam has unresolved cross-language test target placement",
+                      "recommended_repair": "Route target inference before suggesting a test file.",
+                      "repair_route": {
+                        "repair_kind": "add_boundary_assertion",
+                        "target_test_type": "boundary_discriminator",
+                        "suggested_assertion": "assert_eq!(blob_behavior(), expected)"
+                      },
+                      "related_test_or_observer": {
+                        "file": "test/js/web/fetch/blob.test.ts",
+                        "name": "blob copies shared buffers",
+                        "line": 41
+                      },
+                      "verify_command": "cargo xtask evidence-quality-scorecard",
+                      "receipt_command": "cargo xtask receipts check",
+                      "confidence": {"basis": "fixture_backed", "notes": []},
+                      "static_limitations": [
+                        {
+                          "stage": "cross_language_test_target",
+                          "state": "unknown",
+                          "category": "cross_language_target_unresolved",
+                          "repair_route": "analysis/cross-language-test-target-inference",
+                          "reason": "external test target visibility is unresolved"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }"#,
+    )?;
+
+    let packet_json = lane1_actionable_gap_packets_json(&report)?;
+    let packet_value: serde_json::Value =
+        serde_json::from_str(&packet_json).map_err(|err| err.to_string())?;
+
+    assert_eq!(
+        packet_value["packets"][0]["related_test_or_observer"]["file"],
+        "test/js/web/fetch/blob.test.ts"
+    );
+    assert_eq!(
+        packet_value["packets"][0]["allowed_edit_surface"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        packet_value["packets"][0]["public_projection_eligible"],
+        serde_json::Value::Bool(false)
+    );
+    assert!(
+        packet_value["packets"][0]["projection_exclusion_reasons"]
+            .as_array()
+            .is_some_and(|reasons| reasons
+                .iter()
+                .any(|reason| reason == "cross_language_target_unresolved")),
+        "expected cross_language_target_unresolved in {}",
+        packet_value["packets"][0]["projection_exclusion_reasons"]
+    );
+
+    let swarm_plan = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &packet_value,
+    );
+    let blocked = ripr_swarm_plan_blocked_packets(&swarm_plan);
+    assert_eq!(blocked.len(), 1);
+    assert_eq!(blocked[0].swarm_state, "blocked_by_static_limitation");
+    assert_eq!(blocked[0].allowed_edit_surface, Vec::<String>::new());
+    assert!(
+        blocked[0]
+            .projection_exclusion_reasons
+            .iter()
+            .any(|reason| reason == "cross_language_target_unresolved")
+    );
+    Ok(())
+}
+
+#[test]
+fn lane1_actionable_gap_packets_exclude_missing_canonical_gap_id() -> Result<(), String> {
+    let root = temp_dir("lane1-missing-canonical-gap-id");
+    write(&root.join("tests/pricing.rs"), "");
+    let root = root.to_string_lossy().to_string();
+    let report = lane1_evidence_audit_from_repo_exposure(
+        &root,
+        r#"{
+              "schema_version": "0.3",
+              "scope": "repo",
+              "seams": [
+                {
+                  "seam_id": "packet-missing-canonical-gap-id",
+                  "headline_eligible": true,
+                  "file": "src/pricing.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "packet-missing-canonical-gap-id",
+                    "location": {"file": "src/pricing.rs", "line": 42},
+                    "raw_findings": [
+                      {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed", "expression": "amount >= discount_threshold"}
+                    ],
+                    "canonical_item": {
+                      "canonical_item_kind": "gap",
+                      "evidence_class": "predicate_boundary",
+                      "gap_state": "actionable",
+                      "actionability": "extend_related_test",
+                      "raw_findings": [
+                        {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed", "expression": "amount >= discount_threshold"}
+                      ],
+                      "why": "related tests reach the seam but miss equality at the threshold",
+                      "recommended_repair": "Add an equality-boundary assertion for the changed predicate.",
+                      "repair_route": {
+                        "repair_kind": "add_boundary_assertion",
+                        "target_test_type": "boundary_discriminator",
+                        "suggested_assertion": "assert_eq!(discounted_total(threshold), expected)"
+                      },
+                      "verify_command": "cargo xtask evidence-quality-scorecard",
+                      "receipt_command": "cargo xtask receipts check",
+                      "related_test": {"name": "below_threshold_has_no_discount", "file": "tests/pricing.rs", "line": 10, "reason": "direct_owner_call"},
+                      "confidence": {"basis": "fixture_backed", "notes": []}
+                    }
+                  }
+                }
+              ]
+            }"#,
+    )?;
+
+    let packet_json = lane1_actionable_gap_packets_json(&report)?;
+    let packet_value: serde_json::Value =
+        serde_json::from_str(&packet_json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        packet_value["packets"][0]["canonical_gap_id"],
+        "packet-missing-canonical-gap-id"
+    );
+    assert_eq!(
+        packet_value["packets"][0]["public_projection_eligible"],
+        serde_json::Value::Bool(false)
+    );
+    assert_eq!(
+        packet_value["packets"][0]["projection_exclusion_reasons"],
+        serde_json::json!(["missing_canonical_gap_id"])
+    );
+
+    let swarm_plan = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &packet_value,
+    );
+    let blocked = ripr_swarm_plan_blocked_packets(&swarm_plan);
+    assert_eq!(blocked.len(), 1);
+    assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+    assert_eq!(blocked[0].missing_context, vec!["canonical_gap_id"]);
+    Ok(())
+}
+
+#[test]
+fn lane1_actionable_gap_public_projection_requires_actionable_gap_state() {
+    let reasons = crate::audit_actionable_gap_projection_exclusion_reasons(
+        crate::AuditActionableGapProjectionInput {
+            canonical_gap_id: "gap:unresolved",
+            gap_state: "unresolved",
+            actionability: "extend_related_test",
+            repair_kind: "add_boundary_assertion",
+            target_test_type: "boundary_discriminator",
+            assertion_shape: "assert_eq!(value, expected)",
+            target_test_shape: "boundary_discriminator: assert_eq!(value, expected)",
+            repair_route_present: true,
+            repair_route_source: "canonical_item.repair_route",
+            verify_command: "cargo test unresolved_gap",
+            verify_command_source: "canonical_item.verify_command",
+            receipt_command_or_path: Some("cargo xtask receipts check"),
+            receipt_source: "canonical_item.receipt_command",
+            typed_related_target_available: true,
+            has_stable_canonical_gap_id: true,
+            confidence_basis: "fixture_backed",
+            must_not_change_count: 1,
+            allowed_edit_surface_count: 1,
+            raw_evidence_refs_count: 1,
+            static_limitations_count: 0,
+            cross_language_target_unresolved: false,
+        },
+    );
+
+    assert_eq!(reasons, vec!["not_actionable_gap_state"]);
+}
+
+#[test]
+fn lane1_actionable_gap_public_projection_requires_canonical_gap_id() {
+    let reasons = crate::audit_actionable_gap_projection_exclusion_reasons(
+        crate::AuditActionableGapProjectionInput {
+            canonical_gap_id: "packet-fallback-seam-id",
+            gap_state: "actionable",
+            actionability: "extend_related_test",
+            repair_kind: "add_boundary_assertion",
+            target_test_type: "boundary_discriminator",
+            assertion_shape: "assert_eq!(value, expected)",
+            target_test_shape: "boundary_discriminator: assert_eq!(value, expected)",
+            repair_route_present: true,
+            repair_route_source: "canonical_item.repair_route",
+            verify_command: "cargo test missing_canonical_gap_id",
+            verify_command_source: "canonical_item.verify_command",
+            receipt_command_or_path: Some("cargo xtask receipts check"),
+            receipt_source: "canonical_item.receipt_command",
+            typed_related_target_available: true,
+            has_stable_canonical_gap_id: false,
+            confidence_basis: "fixture_backed",
+            must_not_change_count: 1,
+            allowed_edit_surface_count: 1,
+            raw_evidence_refs_count: 1,
+            static_limitations_count: 0,
+            cross_language_target_unresolved: false,
+        },
+    );
+
+    assert_eq!(reasons, vec!["missing_canonical_gap_id"]);
+}
+
+#[test]
+fn lane1_actionable_gap_public_projection_requires_allowed_edit_surface() {
+    let reasons = crate::audit_actionable_gap_projection_exclusion_reasons(
+        crate::AuditActionableGapProjectionInput {
+            canonical_gap_id: "gap:missing-edit-surface",
+            gap_state: "actionable",
+            actionability: "extend_related_test",
+            repair_kind: "add_boundary_assertion",
+            target_test_type: "boundary_discriminator",
+            assertion_shape: "assert_eq!(value, expected)",
+            target_test_shape: "boundary_discriminator: assert_eq!(value, expected)",
+            repair_route_present: true,
+            repair_route_source: "canonical_item.repair_route",
+            verify_command: "cargo test missing_edit_surface",
+            verify_command_source: "canonical_item.verify_command",
+            receipt_command_or_path: Some("cargo xtask receipts check"),
+            receipt_source: "canonical_item.receipt_command",
+            typed_related_target_available: true,
+            has_stable_canonical_gap_id: true,
+            confidence_basis: "fixture_backed",
+            must_not_change_count: 1,
+            allowed_edit_surface_count: 0,
+            raw_evidence_refs_count: 1,
+            static_limitations_count: 0,
+            cross_language_target_unresolved: false,
+        },
+    );
+
+    assert_eq!(reasons, vec!["missing_allowed_edit_surface"]);
+}
+
+#[test]
+fn lane1_actionable_gap_public_projection_requires_repair_kind() {
+    let reasons = crate::audit_actionable_gap_projection_exclusion_reasons(
+        crate::AuditActionableGapProjectionInput {
+            canonical_gap_id: "gap:missing-repair-kind",
+            gap_state: "actionable",
+            actionability: "extend_related_test",
+            repair_kind: "repair_route_unknown",
+            target_test_type: "boundary_discriminator",
+            assertion_shape: "assert_eq!(value, expected)",
+            target_test_shape: "boundary_discriminator: assert_eq!(value, expected)",
+            repair_route_present: true,
+            repair_route_source: "canonical_item.repair_route",
+            verify_command: "cargo test missing_repair_kind",
+            verify_command_source: "canonical_item.verify_command",
+            receipt_command_or_path: Some("cargo xtask receipts check"),
+            receipt_source: "canonical_item.receipt_command",
+            typed_related_target_available: true,
+            has_stable_canonical_gap_id: true,
+            confidence_basis: "fixture_backed",
+            must_not_change_count: 1,
+            allowed_edit_surface_count: 1,
+            raw_evidence_refs_count: 1,
+            static_limitations_count: 0,
+            cross_language_target_unresolved: false,
+        },
+    );
+
+    assert_eq!(reasons, vec!["missing_repair_kind"]);
+}
+
+#[test]
+fn lane1_actionable_gap_public_projection_requires_target_test_shape() {
+    let reasons = crate::audit_actionable_gap_projection_exclusion_reasons(
+        crate::AuditActionableGapProjectionInput {
+            canonical_gap_id: "gap:missing-target-shape",
+            gap_state: "actionable",
+            actionability: "extend_related_test",
+            repair_kind: "add_boundary_assertion",
+            target_test_type: "boundary_discriminator",
+            assertion_shape: "assert_eq!(value, expected)",
+            target_test_shape: "target_test_shape_unknown",
+            repair_route_present: true,
+            repair_route_source: "canonical_item.repair_route",
+            verify_command: "cargo test missing_target_shape",
+            verify_command_source: "canonical_item.verify_command",
+            receipt_command_or_path: Some("cargo xtask receipts check"),
+            receipt_source: "canonical_item.receipt_command",
+            typed_related_target_available: true,
+            has_stable_canonical_gap_id: true,
+            confidence_basis: "fixture_backed",
+            must_not_change_count: 1,
+            allowed_edit_surface_count: 1,
+            raw_evidence_refs_count: 1,
+            static_limitations_count: 0,
+            cross_language_target_unresolved: false,
+        },
+    );
+
+    assert_eq!(reasons, vec!["missing_target_test_shape"]);
+}
+
+#[test]
+fn lane1_actionable_gap_public_projection_requires_confidence_basis() {
+    let reasons = crate::audit_actionable_gap_projection_exclusion_reasons(
+        crate::AuditActionableGapProjectionInput {
+            canonical_gap_id: "gap:missing-confidence",
+            gap_state: "actionable",
+            actionability: "extend_related_test",
+            repair_kind: "add_boundary_assertion",
+            target_test_type: "boundary_discriminator",
+            assertion_shape: "assert_eq!(value, expected)",
+            target_test_shape: "boundary_discriminator: assert_eq!(value, expected)",
+            repair_route_present: true,
+            repair_route_source: "canonical_item.repair_route",
+            verify_command: "cargo test missing_confidence",
+            verify_command_source: "canonical_item.verify_command",
+            receipt_command_or_path: Some("cargo xtask receipts check"),
+            receipt_source: "canonical_item.receipt_command",
+            typed_related_target_available: true,
+            has_stable_canonical_gap_id: true,
+            confidence_basis: "confidence_basis_unknown",
+            must_not_change_count: 1,
+            allowed_edit_surface_count: 1,
+            raw_evidence_refs_count: 1,
+            static_limitations_count: 0,
+            cross_language_target_unresolved: false,
+        },
+    );
+
+    assert_eq!(reasons, vec!["missing_confidence"]);
+}
+
+#[test]
+fn lane1_actionable_gap_verify_command_uses_bounded_related_target_over_unbounded_snapshot() {
+    let record = serde_json::json!({
+        "recommendation": {
+            "verify_command": "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json"
+        }
+    });
+    let canonical_item = serde_json::json!({
+        "verify_command": "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json",
+        "related_test_or_observer": {
+            "file": "crates/ripr/src/lsp/tests.rs",
+            "line": 1,
+            "name": "serve_stdio_call_presence_observer",
+            "reason": "recommended_test_target"
+        }
+    });
+
+    let (command, source) =
+        crate::audit_actionable_gap_verify_command_with_source(&record, &canonical_item);
+
+    assert_eq!(
+        command,
+        "cargo test -p ripr serve_stdio_call_presence_observer"
+    );
+    assert_eq!(source, "related_test_or_observer.name");
+    let reasons = crate::audit_actionable_gap_projection_exclusion_reasons(
+        crate::AuditActionableGapProjectionInput {
+            canonical_gap_id: "gap:bounded-verify",
+            gap_state: "actionable",
+            actionability: "extend_related_test",
+            repair_kind: "add_call_observer",
+            target_test_type: "call_presence_observer",
+            assertion_shape: "// assert that serve_stdio called the expected target",
+            target_test_shape: "call_presence_observer: // assert that serve_stdio called the expected target",
+            repair_route_present: true,
+            repair_route_source: "canonical_item.repair_route",
+            verify_command: &command,
+            verify_command_source: &source,
+            receipt_command_or_path: Some(
+                "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id seam-1 --json",
+            ),
+            receipt_source: "canonical_item.receipt_command",
+            typed_related_target_available: true,
+            has_stable_canonical_gap_id: true,
+            confidence_basis: "fixture_backed",
+            must_not_change_count: 1,
+            allowed_edit_surface_count: 1,
+            raw_evidence_refs_count: 1,
+            static_limitations_count: 0,
+            cross_language_target_unresolved: false,
+        },
+    );
+    assert!(reasons.is_empty());
+}
+
+#[test]
+fn lane1_actionable_gap_public_projection_rejects_unbounded_repo_exposure_verify_command() {
+    let reasons = crate::audit_actionable_gap_projection_exclusion_reasons(
+        crate::AuditActionableGapProjectionInput {
+            canonical_gap_id: "gap:unbounded-verify",
+            gap_state: "actionable",
+            actionability: "extend_related_test",
+            repair_kind: "add_call_observer",
+            target_test_type: "call_presence_observer",
+            assertion_shape: "// assert that serve_stdio called the expected target",
+            target_test_shape: "call_presence_observer: // assert that serve_stdio called the expected target",
+            repair_route_present: true,
+            repair_route_source: "canonical_item.repair_route",
+            verify_command: "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json",
+            verify_command_source: "canonical_item.verify_command",
+            receipt_command_or_path: Some(
+                "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id seam-1 --json",
+            ),
+            receipt_source: "canonical_item.receipt_command",
+            typed_related_target_available: true,
+            has_stable_canonical_gap_id: true,
+            confidence_basis: "fixture_backed",
+            must_not_change_count: 1,
+            allowed_edit_surface_count: 1,
+            raw_evidence_refs_count: 1,
+            static_limitations_count: 0,
+            cross_language_target_unresolved: false,
+        },
+    );
+
+    assert_eq!(reasons, vec!["unbounded_verify_command"]);
+}
+
+#[test]
+fn ripr_swarm_plan_preserves_limited_runtime_input_path() -> Result<(), String> {
+    let actionable_gaps = serde_json::json!({
+        "report": "actionable-gaps",
+        "run_status": "limited_sampled_input",
+        "runtime_status": {
+            "state": "limited_sampled_input",
+            "phase": "repo_exposure_generation",
+            "duration_ms": 79583,
+            "limit_ms": 120000,
+            "input_kind": "repo-exposure-json",
+            "input_path": null,
+            "limitation_category": "lane1_repo_exposure_sampled",
+            "repair_route": "use sampled queue",
+            "downstream_consumable": false
+        },
+        "summary": {
+            "actionable_gaps": 0,
+            "public_projection_eligible_packets": 0
+        },
+        "packets": []
+    });
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    let value: serde_json::Value =
+        serde_json::from_str(&ripr_swarm_plan_json(&report)?).map_err(|err| err.to_string())?;
+
+    assert_eq!(value["run_status"], "limited_sampled_input");
+    assert_eq!(
+        value["runtime_status"]["input_path"],
+        "target/ripr/reports/actionable-gaps.json"
+    );
+    assert_eq!(value["runtime_status"]["phase"], "repo_exposure_generation");
+    assert_eq!(
+        value["runtime_status"]["downstream_consumable"],
+        serde_json::Value::Bool(false)
+    );
+
+    let markdown = ripr_swarm_plan_markdown(&report);
+    assert!(markdown.contains("| Input path | `target/ripr/reports/actionable-gaps.json` |"));
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_plan_summarizes_static_limitation_backlog_without_repair_packets()
+-> Result<(), String> {
+    let actionable_gaps = serde_json::json!({
+        "report": "actionable-gaps",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "summary": {
+            "actionable_gaps": 0,
+            "public_projection_eligible_packets": 0
+        },
+        "static_limitation_backlog": {
+            "source": "lane1-evidence-audit.static_limitations",
+            "top_categories": [
+                {
+                    "category": "activation_owner_call_absent_affinity_only",
+                    "count": 10,
+                    "repair_route": "analysis/related-test-affinity-owner-call-tracing"
+                }
+            ],
+            "top_repair_routes": [
+                {
+                    "repair_route": "analysis/related-test-affinity-owner-call-tracing",
+                    "count": 10
+                }
+            ],
+            "limitation_backlog_packets": [
+                {
+                    "packet_id": "limitation:owner-call:first",
+                    "limitation_category": "activation_owner_call_absent_affinity_only",
+                    "repair_route": "analysis/related-test-affinity-owner-call-tracing",
+                    "signal_count": 3
+                },
+                {
+                    "packet_id": "limitation:owner-call:second",
+                    "limitation_category": "activation_owner_call_absent_affinity_only",
+                    "repair_route": "analysis/related-test-affinity-owner-call-tracing",
+                    "signal_count": 7
+                }
+            ]
+        },
+        "packets": []
+    });
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    let value: serde_json::Value =
+        serde_json::from_str(&ripr_swarm_plan_json(&report)?).map_err(|err| err.to_string())?;
+
+    assert_eq!(value["summary"]["static_limitation_packets"], 0);
+    assert_eq!(
+        value["summary"]["static_limitation_backlog_packets"],
+        serde_json::Value::from(2)
+    );
+    assert_eq!(
+        value["summary"]["static_limitation_backlog_signals"],
+        serde_json::Value::from(10)
+    );
+    assert_eq!(value["summary"]["swarm_ready_packets"], 0);
+    Ok(())
+}
+
+#[test]
+fn lane1_static_limitation_backlog_keeps_samples_for_each_top_repair_route() -> Result<(), String> {
+    let mut builder = super::Lane1EvidenceAuditBuilder::new(".");
+    let dominant_route = "analysis/same-file-owner-call-tracing";
+    for index in 0..=super::LANE1_EVIDENCE_AUDIT_TOP_LIMIT {
+        let subroute = format!("same_file_subroute_{index}");
+        for _ in 0..(super::LANE1_EVIDENCE_AUDIT_TOP_LIMIT + 1 - index) {
+            builder.ingest_static_limitation_backlog_packet_sample(
+                "activation_owner_call_absent_same_file_only",
+                &subroute,
+                dominant_route,
+                super::Lane1StaticLimitationBacklogSample {
+                    canonical_gap_id: Some(format!("gap:same-file-{index}")),
+                    evidence_class: "call_presence".to_string(),
+                    source_file: "crates/ripr/src/analysis/classify/activation.rs".to_string(),
+                    line: Some(196 + index),
+                    expression: Some("missing_boundary_discriminator(...)".to_string()),
+                    limitation_reason: Some(
+                        "same-file proximity is not owner-call proof".to_string(),
+                    ),
+                },
+            );
+        }
+    }
+    builder
+        .static_repair_route_counts
+        .insert(dominant_route.to_string(), 1000);
+
+    let sampled_route = "analysis/macro-generated-value-fixtures";
+    builder.ingest_static_limitation_backlog_packet_sample(
+        "macro_generated_value",
+        "macro_generated_value",
+        sampled_route,
+        super::Lane1StaticLimitationBacklogSample {
+            canonical_gap_id: Some("gap:macro-sample".to_string()),
+            evidence_class: "predicate_boundary".to_string(),
+            source_file: "crates/ripr/src/analysis/macros.rs".to_string(),
+            line: Some(88),
+            expression: Some("macro_generated_case!(input)".to_string()),
+            limitation_reason: Some("macro-generated value remains opaque".to_string()),
+        },
+    );
+    builder
+        .static_repair_route_counts
+        .insert(sampled_route.to_string(), 1);
+
+    let mut report = builder.finish(".".to_string(), None);
+    report
+        .static_limitation_repair_route_counts
+        .insert("report/lane1-audit-bounded-diagnostics".to_string(), 2);
+
+    let backlog = super::lane1_static_limitation_backlog_json(&report);
+    let top_routes = super::ripr_swarm_readiness_top_limitation_routes(&backlog);
+    assert!(
+        top_routes
+            .iter()
+            .all(|route| route.repair_route != "report/lane1-audit-bounded-diagnostics"),
+        "report-only runtime diagnostics should stay out of packet-backed top limitation routes: {top_routes:?}"
+    );
+    let sampled = top_routes
+        .iter()
+        .find(|route| route.repair_route == sampled_route)
+        .ok_or_else(|| "expected low-count route to remain in top route projection".to_string())?;
+
+    assert_eq!(
+        sampled.sample_canonical_gap_ids,
+        vec!["gap:macro-sample".to_string()]
+    );
+    assert_eq!(
+        sampled.sample_limitation_category.as_deref(),
+        Some("macro_generated_value")
+    );
+    assert_eq!(
+        sampled.dominant_evidence_class.as_deref(),
+        Some("predicate_boundary")
+    );
+    assert!(
+        sampled
+            .sample_packet_id
+            .as_deref()
+            .is_some_and(|packet| packet.contains("macro_generated_value")),
+        "route sample must keep an inspectable backlog packet id: {sampled:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_plan_blocks_legacy_unbounded_repo_exposure_verify_commands() -> Result<(), String> {
+    let actionable_gaps = serde_json::json!({
+        "report": "actionable-gaps",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "summary": {
+            "actionable_gaps": 1,
+            "public_projection_eligible_packets": 1
+        },
+        "packets": [
+            {
+                "packet_id": "gap:unbounded-verify",
+                "canonical_gap_id": "gap:unbounded-verify",
+                "evidence_class": "call_presence",
+                "gap_state": "actionable",
+                "actionability": "add_focused_test",
+                "source_file": "crates/ripr/src/lsp.rs",
+                "repair_kind": "add_call_observer",
+                "target_test_type": "call_presence_observer",
+                "assertion_shape": "// assert that serve_stdio called the expected target",
+                "repair_route": {
+                    "repair_kind": "add_call_observer",
+                    "target_test_type": "call_presence_observer",
+                    "assertion_shape": "// assert that serve_stdio called the expected target"
+                },
+                "related_test_or_observer": {
+                    "file": "crates/ripr/src/lsp/tests.rs",
+                    "name": "serve_stdio_call_presence_observer"
+                },
+                "verify_command": "ripr agent verify --root . --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --json",
+                "receipt_command": "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id c4abcb8dc04cf9c4 --json",
+                "confidence_basis": "fixture_backed",
+                "must_not_change": ["production behavior"],
+                "allowed_edit_surface": ["crates/ripr/src/lsp/tests.rs"],
+                "raw_evidence_refs": [
+                    {
+                        "file": "crates/ripr/src/lsp.rs",
+                        "kind": "call_presence",
+                        "source_id": "raw:lsp:serve_stdio"
+                    }
+                ],
+                "static_limitations": [],
+                "public_projection_eligible": true,
+                "projection_exclusion_reasons": []
+            }
+        ]
+    });
+
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    let value: serde_json::Value =
+        serde_json::from_str(&ripr_swarm_plan_json(&report)?).map_err(|err| err.to_string())?;
+
+    assert_eq!(
+        value["summary"]["swarm_ready_packets"],
+        serde_json::Value::from(0)
+    );
+    assert_eq!(
+        value["summary"]["blocked_by_missing_context_packets"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["summary"]["missing_verify_command"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(value["top_ready_packets"].as_array().map(Vec::len), Some(0));
+    assert_eq!(
+        value["top_blocked_packets"][0]["swarm_state"],
+        "blocked_by_missing_context"
+    );
+    assert_eq!(
+        value["top_blocked_packets"][0]["missing_context"],
+        serde_json::json!(["verify_command"])
+    );
+    assert_eq!(
+        value["top_blocked_packets"][0]["projection_exclusion_reasons"],
+        serde_json::json!(["unbounded_verify_command"])
+    );
+    Ok(())
+}
+
+#[test]
+fn lane1_actionable_gap_packets_exclude_structured_route_without_typed_target() -> Result<(), String>
+{
+    let report = lane1_evidence_audit_from_repo_exposure(
+        ".",
+        r#"{
+              "schema_version": "0.3",
+              "scope": "repo",
+              "seams": [
+                {
+                  "seam_id": "packet-route-without-target-gap",
+                  "headline_eligible": true,
+                  "file": "src/pricing.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "packet-route-without-target-gap",
+                    "canonical_gap_id": "gap:packet-route-without-target-gap",
+                    "location": {"file": "src/pricing.rs", "line": 42},
+                    "raw_evidence_refs": [
+                      {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed", "expression": "amount >= discount_threshold"}
+                    ],
+                    "raw_findings": [
+                      {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed", "expression": "amount >= discount_threshold"}
+                    ],
+                    "canonical_item": {
+                      "canonical_gap_id": "gap:packet-route-without-target-gap",
+                      "canonical_item_kind": "gap",
+                      "evidence_class": "predicate_boundary",
+                      "gap_state": "actionable",
+                      "actionability": "extend_related_test",
+                      "raw_evidence_refs": [
+                        {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed", "expression": "amount >= discount_threshold"}
+                      ],
+                      "raw_findings": [
+                        {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed", "expression": "amount >= discount_threshold"}
+                      ],
+                      "why": "related tests reach the seam but miss equality at the threshold",
+                      "recommended_repair": "Add an equality-boundary assertion for the changed predicate.",
+                      "repair_route": {
+                        "repair_kind": "add_boundary_assertion",
+                        "target_test_type": "boundary_discriminator",
+                        "suggested_assertion": "assert_eq!(discounted_total(threshold), expected)"
+                      },
+                      "candidate_value_or_observer": "input that hits the boundary branch",
+                      "verify_command": "cargo xtask evidence-quality-scorecard",
+                      "receipt_command": "cargo xtask receipts check",
+                      "confidence": {"basis": "fixture_backed", "notes": []}
+                    }
+                  }
+                }
+              ]
+            }"#,
+    )?;
+
+    let packet_json = lane1_actionable_gap_packets_json(&report)?;
+    let packet_value: serde_json::Value =
+        serde_json::from_str(&packet_json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        packet_value["packets"][0]["repair_route"]["repair_kind"],
+        "add_boundary_assertion"
+    );
+    assert_eq!(
+        packet_value["packets"][0]["public_projection_eligible"],
+        serde_json::Value::Bool(false)
+    );
+    assert_eq!(
+        packet_value["packets"][0]["projection_exclusion_reasons"],
+        serde_json::json!([
+            "missing_related_test_or_observer",
+            "missing_allowed_edit_surface"
+        ])
+    );
+    let swarm_plan = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &packet_value,
+    );
+    let blocked = ripr_swarm_plan_blocked_packets(&swarm_plan);
+    assert_eq!(blocked.len(), 1);
+    assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_plan_ranks_ready_packets_and_blocks_missing_context() -> Result<(), String> {
+    let actionable_gaps = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "actionable-gaps",
+        "summary": {
+            "raw_signals": 8,
+            "canonical_items": 5,
+            "actionable_gaps": 5
+        },
+        "static_limitation_backlog": {
+            "source": "lane1-evidence-audit.static_limitations",
+            "top_categories": [
+                {
+                    "category": "activation_owner_call_absent_affinity_only",
+                    "count": 3,
+                    "repair_route": "analysis/related-test-affinity-owner-call-tracing"
+                }
+            ],
+            "top_repair_routes": [
+                {
+                    "repair_route": "analysis/related-test-affinity-owner-call-tracing",
+                    "count": 3
+                }
+            ]
+        },
+        "packets": [
+            {
+                "packet_id": "packet:ready-boundary",
+                "canonical_gap_id": "gap:ready-boundary",
+                "evidence_class": "predicate_boundary",
+                "gap_state": "actionable",
+                "actionability": "extend_related_test",
+                "source_file": "src/pricing.rs",
+                "repair_kind": "add_boundary_assertion",
+                "target_test_type": "boundary_discriminator",
+                "assertion_shape": "assert_eq!(discounted_total(threshold), expected)",
+                "repair_route": {
+                    "repair_kind": "add_boundary_assertion",
+                    "target_test_type": "boundary_discriminator",
+                    "assertion_shape": "assert_eq!(discounted_total(threshold), expected)"
+                },
+                "repair_route_source": "canonical_item.repair_route",
+                "verify_command": "cargo xtask evidence-quality-scorecard",
+                "receipt_command": "cargo xtask receipts check",
+                "related_test_or_observer": {"file": "tests/pricing.rs", "name": "threshold"},
+                "confidence_basis": "fixture_backed",
+                "must_not_change": ["Do not edit production code by default."],
+                "raw_evidence_refs": [{"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed"}],
+                "raw_findings": [{"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed"}],
+                "static_limitations": [],
+                "public_projection_eligible": true
+            },
+            {
+                "packet_id": "packet:static-only-boundary",
+                "canonical_gap_id": "gap:static-only-boundary",
+                "evidence_class": "predicate_boundary",
+                "gap_state": "actionable",
+                "actionability": "extend_related_test",
+                "source_file": "src/pricing.rs",
+                "repair_kind": "add_boundary_assertion",
+                "target_test_type": "boundary_discriminator",
+                "assertion_shape": "assert_eq!(discounted_total(threshold), expected)",
+                "repair_route": {
+                    "repair_kind": "add_boundary_assertion",
+                    "target_test_type": "boundary_discriminator",
+                    "assertion_shape": "assert_eq!(discounted_total(threshold), expected)"
+                },
+                "repair_route_source": "canonical_item.repair_route",
+                "verify_command": "cargo xtask evidence-quality-scorecard",
+                "receipt_command": "cargo xtask receipts check",
+                "related_test_or_observer": {"file": "tests/pricing.rs", "name": "threshold"},
+                "confidence_basis": "static_only",
+                "must_not_change": ["Do not edit production code by default."],
+                "raw_evidence_refs": [{"file": "src/pricing.rs", "line": 48, "kind": "weakly_exposed"}],
+                "raw_findings": [{"file": "src/pricing.rs", "line": 48, "kind": "weakly_exposed"}],
+                "static_limitations": [],
+                "public_projection_eligible": true
+            },
+            {
+                "canonical_gap_id": "gap:missing-receipt",
+                "evidence_class": "error_path",
+                "gap_state": "actionable",
+                "actionability": "add_exact_error_variant",
+                "source_file": "src/parser.rs",
+                "repair_kind": "add_exact_error_variant",
+                "target_test_type": "error_variant",
+                "assertion_shape": "matches!(..., Err(Error::Missing))",
+                "repair_route": {
+                    "repair_kind": "add_exact_error_variant",
+                    "target_test_type": "error_variant",
+                    "assertion_shape": "matches!(..., Err(Error::Missing))"
+                },
+                "repair_route_source": "canonical_item.repair_route",
+                "verify_command": "cargo test parser_missing",
+                "related_test_or_observer": {"file": "tests/parser.rs", "name": "missing"},
+                "confidence_basis": "static_only",
+                "must_not_change": ["Do not edit production code by default."],
+                "raw_evidence_refs": [{"file": "src/parser.rs", "line": 10, "kind": "weakly_exposed"}],
+                "raw_findings": [{"file": "src/parser.rs", "line": 10, "kind": "weakly_exposed"}],
+                "static_limitations": []
+            },
+            {
+                "canonical_gap_id": "gap:missing-verify",
+                "evidence_class": "side_effect",
+                "gap_state": "actionable",
+                "actionability": "add_side_effect_observer",
+                "source_file": "src/events.rs",
+                "repair_kind": "add_side_effect_observer",
+                "target_test_type": "side_effect_observer",
+                "assertion_shape": "assert event emitted",
+                "repair_route": {
+                    "repair_kind": "add_side_effect_observer",
+                    "target_test_type": "side_effect_observer",
+                    "assertion_shape": "assert event emitted"
+                },
+                "repair_route_source": "canonical_item.repair_route",
+                "receipt_command": "cargo xtask receipts check",
+                "related_test_or_observer": {"file": "tests/events.rs", "name": "event"},
+                "confidence_basis": "static_only",
+                "must_not_change": ["Do not edit production code by default."],
+                "raw_evidence_refs": [{"file": "src/events.rs", "line": 7, "kind": "weakly_exposed"}],
+                "raw_findings": [{"file": "src/events.rs", "line": 7, "kind": "weakly_exposed"}],
+                "static_limitations": []
+            },
+            {
+                "canonical_gap_id": "gap:static-limit",
+                "evidence_class": "config_or_policy_constant",
+                "gap_state": "actionable",
+                "actionability": "inspect_visibility",
+                "source_file": "src/config.rs",
+                "repair_kind": "inspect_visibility",
+                "target_test_type": "output_observer",
+                "assertion_shape": "trace config label",
+                "repair_route": {
+                    "repair_kind": "inspect_visibility",
+                    "target_test_type": "output_observer",
+                    "assertion_shape": "trace config label"
+                },
+                "repair_route_source": "canonical_item.repair_route",
+                "verify_command": "cargo xtask evidence-quality-scorecard",
+                "receipt_command": "cargo xtask receipts check",
+                "related_test_or_observer": {"file": "tests/config.rs", "name": "config"},
+                "confidence_basis": "static_only",
+                "must_not_change": ["Do not edit production code by default."],
+                "raw_evidence_refs": [{"file": "src/config.rs", "line": 3, "kind": "static_unknown"}],
+                "raw_findings": [{"file": "src/config.rs", "line": 3, "kind": "static_unknown"}],
+                "static_limitations": [
+                    {"category": "opaque_helper_call", "repair_route": "add fixture-backed helper tracing"}
+                ]
+            }
+        ]
+    });
+
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    let json = ripr_swarm_plan_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+
+    assert_eq!(value["report"], "swarm-plan");
+    assert_eq!(value["run_status"], "full");
+    assert_eq!(
+        value["summary"]["packets_total"],
+        serde_json::Value::from(5)
+    );
+    assert_eq!(
+        value["summary"]["swarm_ready_packets"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["summary"]["blocked_packets"],
+        serde_json::Value::from(4)
+    );
+    assert_eq!(
+        value["summary"]["missing_verify_command"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["summary"]["missing_receipt_command"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["summary"]["static_limitation_packets"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["summary"]["high_confidence_packets"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["top_ready_packets"][0]["canonical_gap_id"],
+        "gap:ready-boundary"
+    );
+    assert_eq!(
+        value["top_ready_packets"][0]["receipt_command"],
+        "cargo xtask receipts check"
+    );
+    assert_eq!(
+        value["top_ready_packets"][0]["allowed_edit_surface"],
+        serde_json::json!(["tests/pricing.rs"])
+    );
+    assert_eq!(
+        value["top_ready_packets"][0]["must_not_change"],
+        serde_json::json!(["Do not edit production code by default."])
+    );
+    assert_eq!(value["top_ready_packets"][0]["swarm_state"], "queued");
+    assert_eq!(
+        value["static_limitation_backlog"]["top_categories"][0]["category"],
+        "activation_owner_call_absent_affinity_only"
+    );
+    assert_eq!(
+        value["static_limitation_backlog"]["top_repair_routes"][0]["repair_route"],
+        "analysis/related-test-affinity-owner-call-tracing"
+    );
+    assert_eq!(
+        value["top_blocked_packets"][0]["swarm_state"],
+        "blocked_by_missing_context"
+    );
+    let blocked_packets = value["top_blocked_packets"]
+        .as_array()
+        .ok_or_else(|| "top_blocked_packets must be an array".to_string())?;
+    assert!(
+        blocked_packets
+            .iter()
+            .any(|packet| packet["swarm_state"] == "blocked_by_static_limitation")
+    );
+    assert!(blocked_packets.iter().any(|packet| {
+        packet["swarm_state"] == "blocked_by_operator_judgment"
+            && packet["blocked_reasons"].as_array().is_some_and(|reasons| {
+                reasons.iter().any(|reason| {
+                    reason == "static_only_predicate_boundary_requires_operator_judgment"
+                })
+            })
+    }));
+    let missing_verify_or_receipt = value["top_missing_verify_or_receipt"]
+        .as_array()
+        .ok_or_else(|| "top_missing_verify_or_receipt must be an array".to_string())?;
+    assert_eq!(missing_verify_or_receipt.len(), 2);
+    let must_not_infer = value["must_not_infer"]
+        .as_array()
+        .ok_or_else(|| "must_not_infer must be an array".to_string())?;
+    assert!(
+            must_not_infer
+                .iter()
+                .any(|claim| claim == "do not rank static-only predicate-boundary packets as swarm-ready without stronger evidence")
+        );
+    assert!(
+        must_not_infer
+            .iter()
+            .any(|claim| claim == "do not rank packets without receipt_command as swarm-ready")
+    );
+
+    let markdown = ripr_swarm_plan_markdown(&report);
+    assert!(markdown.contains("# RIPR Swarm Plan"));
+    assert!(markdown.contains("## Static Limitation Backlog"));
+    assert!(markdown.contains("analysis/related-test-affinity-owner-call-tracing"));
+    assert!(markdown.contains("gap:ready-boundary"));
+    assert!(markdown.contains("gap:static-limit"));
+    assert!(markdown.contains(
+            "| Gap | State | Score | Repair | Allowed edit surface | Must not change | Verify | Receipt | Blocked reasons |"
+        ));
+    assert!(markdown.contains("tests/pricing.rs"));
+    assert!(markdown.contains("Do not edit production code by default."));
+    assert!(markdown.contains("Do not rank static limitations as repair-ready."));
+    assert!(
+            markdown.contains(
+                "Do not rank static-only predicate-boundary packets as swarm-ready without stronger evidence."
+            )
+        );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_plan_blocks_missing_context_before_static_only_operator_judgment()
+-> Result<(), String> {
+    let actionable_gaps = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "actionable-gaps",
+        "summary": {
+            "raw_signals": 1,
+            "canonical_items": 1,
+            "actionable_gaps": 1
+        },
+        "packets": [
+            {
+                "packet_id": "packet:static-only-boundary-missing-context",
+                "canonical_gap_id": "gap:static-only-boundary-missing-context",
+                "evidence_class": "predicate_boundary",
+                "gap_state": "actionable",
+                "actionability": "extend_related_test",
+                "source_file": "src/pricing.rs",
+                "repair_kind": "add_boundary_assertion",
+                "target_test_type": "boundary_discriminator",
+                "assertion_shape": "assert_eq!(discounted_total(threshold), expected)",
+                "repair_route": {
+                    "repair_kind": "add_boundary_assertion",
+                    "target_test_type": "boundary_discriminator",
+                    "assertion_shape": "assert_eq!(discounted_total(threshold), expected)"
+                },
+                "repair_route_source": "canonical_item.repair_route",
+                "related_test_or_observer": {
+                    "file": "tests/pricing.rs",
+                    "name": "threshold"
+                },
+                "confidence_basis": "static_only",
+                "must_not_change": ["Do not edit production code by default."],
+                "raw_evidence_refs": [
+                    {"file": "src/pricing.rs", "line": 48, "kind": "weakly_exposed"}
+                ],
+                "raw_findings": [
+                    {"file": "src/pricing.rs", "line": 48, "kind": "weakly_exposed"}
+                ],
+                "static_limitations": [],
+                "public_projection_eligible": true
+            }
+        ]
+    });
+
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    let packet = report
+        .packets
+        .first()
+        .ok_or_else(|| "expected one swarm-plan packet".to_string())?;
+
+    assert_eq!(packet.swarm_state, "blocked_by_missing_context");
+    assert!(
+        packet
+            .missing_context
+            .iter()
+            .any(|context| context == "verify_command")
+    );
+    assert!(
+        packet
+            .missing_context
+            .iter()
+            .any(|context| context == "receipt_command")
+    );
+    assert!(
+        packet
+            .blocked_reasons
+            .iter()
+            .any(|reason| reason == "missing_verify_command")
+    );
+    assert!(
+        packet
+            .blocked_reasons
+            .iter()
+            .any(|reason| reason == "missing_receipt_command")
+    );
+    assert!(
+        !packet.blocked_reasons.iter().any(|reason| {
+            reason == "static_only_predicate_boundary_requires_operator_judgment"
+        })
+    );
+
+    let json = ripr_swarm_plan_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["summary"]["swarm_ready_packets"],
+        serde_json::Value::from(0)
+    );
+    assert_eq!(
+        value["summary"]["blocked_packets"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["summary"]["missing_verify_command"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["summary"]["missing_receipt_command"],
+        serde_json::Value::from(1)
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_plan_blocks_public_projection_excluded_packets() -> Result<(), String> {
+    let actionable_gaps = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "actionable-gaps",
+        "summary": {
+            "raw_signals": 1,
+            "canonical_items": 1,
+            "actionable_gaps": 1
+        },
+        "packets": [
+            {
+                "packet_id": "packet:suppressed-but-complete",
+                "canonical_gap_id": "gap:suppressed-but-complete",
+                "evidence_class": "error_path",
+                "gap_state": "actionable",
+                "actionability": "suppressed_by_policy",
+                "source_file": "src/parser.rs",
+                "repair_kind": "add_exact_error_variant",
+                "target_test_type": "error_variant",
+                "assertion_shape": "matches!(..., Err(Error::Missing))",
+                "repair_route": {
+                    "repair_kind": "add_exact_error_variant",
+                    "target_test_type": "error_variant",
+                    "assertion_shape": "matches!(..., Err(Error::Missing))"
+                },
+                "repair_route_source": "canonical_item.repair_route",
+                "verify_command": "cargo test parser_missing",
+                "receipt_command": "cargo xtask receipts check",
+                "related_test_or_observer": {
+                    "file": "tests/parser.rs",
+                    "name": "missing"
+                },
+                "confidence_basis": "fixture_backed",
+                "must_not_change": ["Do not edit production code by default."],
+                "raw_evidence_refs": [
+                    {"file": "src/parser.rs", "line": 10, "kind": "weakly_exposed"}
+                ],
+                "raw_findings": [
+                    {"file": "src/parser.rs", "line": 10, "kind": "weakly_exposed"}
+                ],
+                "static_limitations": [],
+                "public_projection_eligible": false,
+                "projection_exclusion_reasons": ["suppressed"]
+            }
+        ]
+    });
+
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    let json = ripr_swarm_plan_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+
+    assert_eq!(
+        value["summary"]["swarm_ready_packets"],
+        serde_json::Value::from(0)
+    );
+    assert_eq!(
+        value["summary"]["blocked_packets"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["top_blocked_packets"][0]["swarm_state"],
+        "blocked_by_public_projection_exclusion"
+    );
+    assert!(
+        value["top_blocked_packets"][0]["blocked_reasons"]
+            .as_array()
+            .is_some_and(|reasons| {
+                reasons
+                    .iter()
+                    .any(|reason| reason == "public_projection_excluded")
+            })
+    );
+    assert!(
+        value["top_ready_packets"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_command_parses_plan_args() {
+    let command = XtaskCommand::parse([
+        "ripr-swarm".to_string(),
+        "plan".to_string(),
+        "--top".to_string(),
+        "3".to_string(),
+    ]);
+    assert_eq!(
+        command,
+        XtaskCommand::RiprSwarm(vec![
+            "plan".to_string(),
+            "--top".to_string(),
+            "3".to_string()
+        ])
+    );
+}
+
+#[test]
+fn ripr_swarm_command_parses_attempt_dry_run_args() -> Result<(), String> {
+    let command = XtaskCommand::parse([
+        "ripr-swarm".to_string(),
+        "attempt".to_string(),
+        "--packet".to_string(),
+        "gap:ready-boundary".to_string(),
+        "--dry-run".to_string(),
+    ]);
+    assert_eq!(
+        command,
+        XtaskCommand::RiprSwarm(vec![
+            "attempt".to_string(),
+            "--packet".to_string(),
+            "gap:ready-boundary".to_string(),
+            "--dry-run".to_string()
+        ])
+    );
+
+    let parsed = parse_ripr_swarm_args(&[
+        "attempt".to_string(),
+        "--packet".to_string(),
+        "gap:ready-boundary".to_string(),
+        "--dry-run".to_string(),
+    ])?;
+    let RiprSwarmCommand::Attempt(args) = parsed else {
+        return Err("expected ripr-swarm attempt args".to_string());
+    };
+    assert_eq!(args.packet_id, "gap:ready-boundary");
+    assert!(args.dry_run);
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_command_parses_attempt_ledger_real_attempts_arg() -> Result<(), String> {
+    let parsed = parse_ripr_swarm_args(&[
+        "attempt-ledger".to_string(),
+        "--real-repair-attempts".to_string(),
+        "fixtures/real-repair-attempts/corpus.json".to_string(),
+    ])?;
+    let RiprSwarmCommand::AttemptLedger(args) = parsed else {
+        return Err("expected ripr-swarm attempt-ledger args".to_string());
+    };
+    assert_eq!(
+        args.real_repair_attempts_path,
+        PathBuf::from("fixtures/real-repair-attempts/corpus.json")
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_command_parses_readiness_args() -> Result<(), String> {
+    let command = XtaskCommand::parse([
+        "ripr-swarm".to_string(),
+        "readiness".to_string(),
+        "--swarm-plan".to_string(),
+        "target/ripr/reports/swarm-plan.json".to_string(),
+        "--actionable-gap-outcomes".to_string(),
+        "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+    ]);
+    assert_eq!(
+        command,
+        XtaskCommand::RiprSwarm(vec![
+            "readiness".to_string(),
+            "--swarm-plan".to_string(),
+            "target/ripr/reports/swarm-plan.json".to_string(),
+            "--actionable-gap-outcomes".to_string(),
+            "target/ripr/reports/actionable-gap-outcomes.json".to_string()
+        ])
+    );
+
+    let parsed = parse_ripr_swarm_args(&[
+        "readiness".to_string(),
+        "--swarm-plan".to_string(),
+        "target/ripr/reports/swarm-plan.json".to_string(),
+        "--actionable-gap-outcomes".to_string(),
+        "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+    ])?;
+    let RiprSwarmCommand::Readiness(args) = parsed else {
+        return Err("expected ripr-swarm readiness args".to_string());
+    };
+    assert_eq!(
+        args.swarm_plan_path,
+        PathBuf::from("target/ripr/reports/swarm-plan.json")
+    );
+    assert_eq!(
+        args.actionable_gap_outcomes_path,
+        PathBuf::from("target/ripr/reports/actionable-gap-outcomes.json")
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_readiness_rolls_up_plan_and_outcomes() -> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "report": "swarm-plan",
+        "source_summary": {
+            "actionable_gaps": 162,
+            "public_projection_eligible_packets": 25
+        },
+        "summary": {
+            "swarm_ready_packets": 10,
+            "blocked_packets": 15,
+            "public_projection_excluded_packets": 0,
+            "missing_verify_command": 0,
+            "missing_receipt_command": 0,
+            "static_limitation_packets": 2,
+            "high_confidence_packets": 4
+        },
+        "top_ready_packets": [
+            {
+                "packet_id": "packet-boundary-001",
+                "canonical_gap_id": "gap:boundary",
+                "evidence_class": "predicate_boundary",
+                "repair_kind": "add_boundary_assertion"
+            }
+        ]
+    });
+    let outcomes = serde_json::json!({
+        "report": "actionable-gap-outcomes",
+        "summary": {
+            "outcomes_total": 25,
+            "not_attempted": 22,
+            "evidence_improved": 2,
+            "evidence_unchanged": 1,
+            "evidence_regressed": 0,
+            "resolved": 1,
+            "orphaned_receipts": 0
+        }
+    });
+    let attempt_ledger = serde_json::json!({
+        "report": "swarm-attempt-ledger",
+        "summary": {
+            "attempts_total": 25,
+            "not_attempted": 22,
+            "attempted_no_receipt": 1,
+            "receipt_present": 1,
+            "missing_verify_result": 1,
+            "evidence_improved": 2,
+            "evidence_unchanged": 1,
+            "evidence_regressed": 0,
+            "resolved": 1,
+            "orphaned_receipts": 0
+        },
+        "top_missing_evidence_fields": [
+            {
+                "label": "verify_result",
+                "count": 1,
+                "sample_packet_ids": ["packet-missing-verify"],
+                "sample_canonical_gap_ids": ["gap:missing-verify"],
+                "sample_repair_kinds": ["add_call_observer"]
+            },
+            {
+                "label": "attempt_receipt",
+                "count": 1,
+                "sample_packet_ids": ["packet-missing-receipt"],
+                "sample_canonical_gap_ids": ["gap:missing-receipt"],
+                "sample_repair_kinds": ["add_output_observer"]
+            }
+        ],
+        "latest_attempts": [
+            {
+                "packet_id": "packet-receipt-present",
+                "canonical_gap_id": "gap:receipt-present",
+                "attempt_id": "attempt-receipt-present",
+                "repair_kind": "add_exact_error_variant_observer",
+                "actor_kind": "human",
+                "receipt_path": "target/ripr/receipts/attempt-receipt-present.json",
+                "verify_command": "cargo test -p ripr exact_error_variant",
+                "verify_result": "pass",
+                "receipt_command": "cargo xtask receipts write --packet packet-receipt-present",
+                "before_gap_state": "actionable",
+                "after_gap_state": "actionable",
+                "outcome": "receipt_present",
+                "timestamp": "2026-05-29T00:00:00Z"
+            }
+        ]
+    });
+    let report = ripr_swarm_readiness_from_values(
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&attempt_ledger),
+        },
+    );
+
+    let json = ripr_swarm_readiness_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(value["report"], "swarm-readiness");
+    assert_eq!(value["run_status"], "full");
+    assert_eq!(
+        value["summary"]["actionable_gaps_total"],
+        serde_json::Value::from(162)
+    );
+    assert_eq!(
+        value["summary"]["public_projection_eligible_packets"],
+        serde_json::Value::from(25)
+    );
+    assert_eq!(
+        value["summary"]["swarm_ready_packets"],
+        serde_json::Value::from(10)
+    );
+    assert_eq!(
+        value["summary"]["public_projection_excluded_packets"],
+        serde_json::Value::from(0)
+    );
+    assert_eq!(
+        value["summary"]["attempted_packets"],
+        serde_json::Value::from(3)
+    );
+    assert_eq!(
+        value["summary"]["attempted_no_receipt_packets"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["summary"]["receipt_present_packets"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["summary"]["missing_verify_result"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["summary"]["improved_packets"],
+        serde_json::Value::from(2)
+    );
+    assert_eq!(
+        value["summary"]["unchanged_packets"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["summary"]["regressed_packets"],
+        serde_json::Value::from(0)
+    );
+    assert_eq!(
+        value["next_actions"][0]["kind"],
+        serde_json::Value::from("collect_missing_attempt_receipts")
+    );
+    assert_eq!(
+        value["next_actions"][0]["packet_id"],
+        serde_json::Value::from("packet-missing-receipt")
+    );
+    assert_eq!(
+        value["next_actions"][0]["canonical_gap_id"],
+        serde_json::Value::from("gap:missing-receipt")
+    );
+    assert_eq!(
+        value["next_actions"][0]["repair_kind"],
+        serde_json::Value::from("add_output_observer")
+    );
+    assert_eq!(
+        value["top_next_action"]["kind"],
+        serde_json::Value::from("collect_missing_attempt_receipts")
+    );
+    assert_eq!(
+        value["cross_language_oracle_route_quality"]["status"],
+        "pass"
+    );
+    assert_eq!(
+        value["cross_language_oracle_route_quality"]["cross_language_oracle_graph_complete_advisory_witnesses"],
+        serde_json::Value::from(3)
+    );
+    assert_eq!(
+        value["cross_language_oracle_route_quality"]["cross_language_oracle_graph_missing_discriminator_limitations"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["cross_language_oracle_route_quality"]["cross_language_oracle_graph_missing_external_oracle_limitations"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["cross_language_oracle_route_quality"]["cross_language_oracle_graph_bridge_unknown_limitations"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["cross_language_oracle_route_quality"]["cross_language_oracle_graph_panic_boundary_limitations"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["cross_language_oracle_route_quality"]["cross_language_oracle_graph_manifest_only_profiles"],
+        serde_json::Value::from(2)
+    );
+    assert_eq!(
+        value["cross_language_oracle_route_quality"]["cross_language_oracle_graph_public_packet_exclusions"],
+        serde_json::Value::from(11)
+    );
+    assert_eq!(
+        value["cross_language_oracle_route_quality"]["repair_packet_ready_cases"],
+        serde_json::Value::from(0)
+    );
+    assert_eq!(
+        value["next_actions"][1]["kind"],
+        serde_json::Value::from("inspect_missing_verify_results")
+    );
+    assert_eq!(
+        value["next_actions"][1]["packet_id"],
+        serde_json::Value::from("packet-missing-verify")
+    );
+    assert_eq!(
+        value["next_actions"][1]["canonical_gap_id"],
+        serde_json::Value::from("gap:missing-verify")
+    );
+    assert_eq!(
+        value["next_actions"][1]["repair_kind"],
+        serde_json::Value::from("add_call_observer")
+    );
+    assert_eq!(
+        value["next_actions"][2]["kind"],
+        serde_json::Value::from("join_receipt_evidence_movement")
+    );
+    assert_eq!(
+        value["next_actions"][2]["packet_id"],
+        serde_json::Value::from("packet-receipt-present")
+    );
+    assert_eq!(
+        value["next_actions"][2]["canonical_gap_id"],
+        serde_json::Value::from("gap:receipt-present")
+    );
+    assert_eq!(
+        value["next_actions"][2]["repair_kind"],
+        serde_json::Value::from("add_exact_error_variant_observer")
+    );
+    assert_eq!(
+        value["next_actions"][5]["kind"],
+        serde_json::Value::from("attempt_ready_packet")
+    );
+    assert_eq!(
+        value["next_actions"][5]["packet_id"],
+        serde_json::Value::from("packet-boundary-001")
+    );
+    let markdown = ripr_swarm_readiness_markdown(&report);
+    assert!(markdown.contains("# RIPR Swarm Readiness"));
+    assert!(markdown.contains("actionable gaps total"));
+    assert!(markdown.contains("## Cross-Language Oracle Route Quality"));
+    assert!(markdown.contains("bun_blob_bridge_unknown_limitation"));
+    assert!(markdown.contains("## Top Next Action"));
+    assert!(markdown.contains("## Next Actions"));
+    assert!(
+        markdown.contains("cargo xtask ripr-swarm attempt --packet packet-boundary-001 --dry-run")
+    );
+    assert!(markdown.contains("Readiness counts do not change public badge semantics."));
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_readiness_routes_operator_judgment_packets() -> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "report": "swarm-plan",
+        "source_summary": {
+            "actionable_gaps": 25,
+            "public_projection_eligible_packets": 25
+        },
+        "summary": {
+            "swarm_ready_packets": 0,
+            "blocked_packets": 25,
+            "public_projection_excluded_packets": 0,
+            "missing_verify_command": 0,
+            "missing_receipt_command": 0,
+            "static_limitation_packets": 0,
+            "high_confidence_packets": 0
+        },
+        "top_ready_packets": [],
+        "top_blocked_packets": [
+            {
+                "packet_id": "gap:static-only-boundary",
+                "canonical_gap_id": "gap:static-only-boundary",
+                "evidence_class": "predicate_boundary",
+                "repair_kind": "add_boundary_assertion",
+                "swarm_state": "blocked_by_operator_judgment",
+                "blocked_reasons": [
+                    "static_only_predicate_boundary_requires_operator_judgment"
+                ]
+            }
+        ]
+    });
+    let outcomes = serde_json::json!({
+        "report": "actionable-gap-outcomes",
+        "summary": {
+            "outcomes_total": 25,
+            "not_attempted": 25,
+            "evidence_improved": 0,
+            "evidence_unchanged": 0,
+            "evidence_regressed": 0,
+            "resolved": 0,
+            "orphaned_receipts": 0
+        }
+    });
+    let attempt_ledger = serde_json::json!({
+        "report": "swarm-attempt-ledger",
+        "summary": {
+            "attempts_total": 25,
+            "not_attempted": 25,
+            "evidence_improved": 0,
+            "evidence_unchanged": 0,
+            "evidence_regressed": 0,
+            "resolved": 0,
+            "orphaned_receipts": 0
+        }
+    });
+    let report = ripr_swarm_readiness_from_values(
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&attempt_ledger),
+        },
+    );
+
+    let json = ripr_swarm_readiness_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(value["run_status"], "full");
+    assert_eq!(
+        value["next_actions"][0]["kind"],
+        serde_json::Value::from("route_operator_judgment_packets")
+    );
+    assert_eq!(
+        value["next_actions"][0]["packet_id"],
+        serde_json::Value::from("gap:static-only-boundary")
+    );
+    assert!(
+        value["next_actions"][0]["reason"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("require operator judgment")
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_readiness_routes_public_projection_exclusions() -> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "report": "swarm-plan",
+        "source_summary": {
+            "actionable_gaps": 25,
+            "public_projection_eligible_packets": 24
+        },
+        "summary": {
+            "swarm_ready_packets": 0,
+            "blocked_packets": 1,
+            "public_projection_excluded_packets": 1,
+            "missing_verify_command": 0,
+            "missing_receipt_command": 0,
+            "static_limitation_packets": 0,
+            "high_confidence_packets": 0
+        },
+        "top_ready_packets": [],
+        "top_blocked_packets": [
+            {
+                "packet_id": "gap:suppressed",
+                "canonical_gap_id": "gap:suppressed",
+                "evidence_class": "error_path",
+                "repair_kind": "add_exact_error_variant",
+                "swarm_state": "blocked_by_public_projection_exclusion",
+                "blocked_reasons": [
+                    "public_projection_excluded"
+                ]
+            }
+        ]
+    });
+    let outcomes = serde_json::json!({
+        "report": "actionable-gap-outcomes",
+        "summary": {
+            "outcomes_total": 25,
+            "not_attempted": 25,
+            "evidence_improved": 0,
+            "evidence_unchanged": 0,
+            "evidence_regressed": 0,
+            "resolved": 0,
+            "orphaned_receipts": 0
+        }
+    });
+    let attempt_ledger = serde_json::json!({
+        "report": "swarm-attempt-ledger",
+        "summary": {
+            "attempts_total": 25,
+            "not_attempted": 25,
+            "evidence_improved": 0,
+            "evidence_unchanged": 0,
+            "evidence_regressed": 0,
+            "resolved": 0,
+            "orphaned_receipts": 0
+        }
+    });
+    let report = ripr_swarm_readiness_from_values(
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&attempt_ledger),
+        },
+    );
+
+    let json = ripr_swarm_readiness_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["summary"]["public_projection_excluded_packets"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["next_actions"][0]["kind"],
+        serde_json::Value::from("inspect_public_projection_exclusions")
+    );
+    assert!(
+        value["next_actions"][0]["reason"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("projection_exclusion_reasons")
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_readiness_audits_blocked_state_routes() -> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "report": "swarm-plan",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "source_summary": {
+            "actionable_gaps": 4,
+            "public_projection_eligible_packets": 0
+        },
+        "summary": {
+            "swarm_ready_packets": 0,
+            "blocked_packets": 4,
+            "blocked_by_missing_context_packets": 1,
+            "blocked_by_static_limitation_packets": 1,
+            "blocked_by_public_projection_exclusion_packets": 1,
+            "blocked_by_operator_judgment_packets": 1,
+            "public_projection_excluded_packets": 1,
+            "not_actionable_gap_state": 1,
+            "missing_verify_command": 1,
+            "missing_verify_result": 1,
+            "missing_receipt_command": 1,
+            "missing_repair_kind": 1,
+            "missing_repair_route": 1,
+            "missing_must_not_change": 1,
+            "missing_allowed_edit_surface": 1,
+            "missing_confidence": 1,
+            "missing_raw_evidence_refs": 1,
+            "missing_related_test_or_observer": 1,
+            "related_context_missing": 1,
+            "static_limitation_packets": 1,
+            "high_confidence_packets": 0,
+            "public_projection_exclusion_reasons": [
+                {
+                    "label": "suppressed_by_public_projection_policy",
+                    "count": 1
+                }
+            ]
+        },
+        "top_ready_packets": [],
+        "top_blocked_packets": [
+            {
+                "packet_id": "packet:missing-context",
+                "canonical_gap_id": "gap:missing-context",
+                "evidence_class": "predicate_boundary",
+                "repair_kind": "add_boundary_assertion",
+                "swarm_state": "blocked_by_missing_context",
+                "missing_context": [
+                    "actionable_gap_state",
+                    "repair_kind",
+                    "repair_route",
+                    "related_test_or_observer",
+                    "verify_command",
+                    "receipt_command",
+                    "must_not_change",
+                    "allowed_edit_surface",
+                    "confidence_basis",
+                    "raw_evidence_refs"
+                ],
+                "projection_exclusion_reasons": [
+                    "not_actionable_gap_state"
+                ],
+                "related_test_or_observer_available": false,
+                "blocked_reasons": [
+                    "missing_context"
+                ]
+            },
+            {
+                "packet_id": "packet:static-limit",
+                "canonical_gap_id": "gap:static-limit",
+                "evidence_class": "predicate_boundary",
+                "repair_kind": "add_boundary_assertion",
+                "swarm_state": "blocked_by_static_limitation",
+                "blocked_reasons": [
+                    "static_limitation_present"
+                ]
+            },
+            {
+                "packet_id": "packet:projection",
+                "canonical_gap_id": "gap:projection",
+                "evidence_class": "predicate_boundary",
+                "repair_kind": "add_boundary_assertion",
+                "swarm_state": "blocked_by_public_projection_exclusion",
+                "projection_exclusion_reasons": [
+                    "suppressed_by_public_projection_policy"
+                ],
+                "blocked_reasons": [
+                    "public_projection_exclusion"
+                ]
+            },
+            {
+                "packet_id": "packet:manual",
+                "canonical_gap_id": "gap:manual",
+                "evidence_class": "predicate_boundary",
+                "repair_kind": "add_boundary_assertion",
+                "swarm_state": "blocked_by_operator_judgment",
+                "blocked_reasons": [
+                    "static_only_predicate_boundary_requires_operator_judgment"
+                ]
+            }
+        ],
+        "static_limitation_backlog": {
+            "top_repair_routes": [
+                {
+                    "repair_route": "analysis/specific-static-limitation-route",
+                    "count": 42
+                }
+            ],
+            "limitation_backlog_packets": [
+                {
+                    "packet_id": "limitation:static-route",
+                    "limitation_category": "activation_owner_call_absent_assertion_target_affinity",
+                    "repair_route": "analysis/specific-static-limitation-route",
+                    "signal_count": 42,
+                    "sample_canonical_gap_ids": [
+                        "gap:static-route"
+                    ]
+                }
+            ]
+        }
+    });
+    let outcomes = serde_json::json!({
+        "report": "actionable-gap-outcomes",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "summary": {
+            "outcomes_total": 0,
+            "not_attempted": 0,
+            "orphaned_receipts": 0
+        }
+    });
+    let attempt_ledger = serde_json::json!({
+        "report": "swarm-attempt-ledger",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "summary": {
+            "attempts_total": 3,
+            "not_attempted": 0,
+            "attempted_no_receipt": 1,
+            "evidence_unchanged": 1,
+            "evidence_regressed": 1,
+            "orphaned_receipts": 1
+        },
+        "attempts": [
+            {
+                "packet_id": "packet:no-receipt",
+                "canonical_gap_id": "gap:no-receipt",
+                "attempt_id": "attempt:no-receipt",
+                "repair_kind": "add_boundary_assertion",
+                "actor_kind": "codex",
+                "verify_command": "cargo test -p foo no_receipt",
+                "outcome": "attempted_no_receipt",
+                "receipt_state": "missing"
+            },
+            {
+                "packet_id": "packet:unchanged",
+                "canonical_gap_id": "gap:unchanged",
+                "attempt_id": "attempt:unchanged",
+                "repair_kind": "add_output_observer",
+                "actor_kind": "codex",
+                "receipt_path": "target/ripr/receipts/unchanged.json",
+                "verify_command": "cargo test -p foo unchanged",
+                "verify_result": "passed",
+                "outcome": "evidence_unchanged",
+                "receipt_state": "found"
+            },
+            {
+                "packet_id": "packet:regressed",
+                "canonical_gap_id": "gap:regressed",
+                "attempt_id": "attempt:regressed",
+                "repair_kind": "add_output_observer",
+                "actor_kind": "codex",
+                "receipt_path": "target/ripr/receipts/regressed.json",
+                "verify_command": "cargo test -p foo regressed",
+                "verify_result": "failed",
+                "outcome": "evidence_regressed",
+                "receipt_state": "found"
+            }
+        ],
+        "orphaned_receipts": [
+            {
+                "packet_id": "packet:orphan",
+                "canonical_gap_id": "gap:orphan",
+                "repair_kind": "add_boundary_assertion",
+                "receipt_path": "target/ripr/receipts/orphan.json"
+            }
+        ]
+    });
+    let report = ripr_swarm_readiness_from_values(
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&attempt_ledger),
+        },
+    );
+
+    let json = ripr_swarm_readiness_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["summary"]["blocked_by_missing_context_packets"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["summary"]["blocked_by_static_limitation_packets"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["summary"]["blocked_by_public_projection_exclusion_packets"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["summary"]["blocked_by_operator_judgment_packets"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["summary"]["public_projection_exclusion_reasons"][0]["label"],
+        "suppressed_by_public_projection_policy"
+    );
+    assert_eq!(
+        value["summary"]["public_projection_exclusion_reasons"][0]["count"],
+        serde_json::Value::from(1)
+    );
+    for key in [
+        "not_actionable_gap_state",
+        "missing_verify_command",
+        "missing_verify_result",
+        "missing_receipt_command",
+        "missing_repair_kind",
+        "missing_repair_route",
+        "missing_must_not_change",
+        "missing_allowed_edit_surface",
+        "missing_confidence",
+        "missing_raw_evidence_refs",
+        "missing_related_test_or_observer",
+        "related_context_missing",
+        "attempted_no_receipt_packets",
+        "unchanged_packets",
+        "regressed_packets",
+        "orphaned_receipts",
+    ] {
+        assert_eq!(
+            value["summary"][key],
+            serde_json::Value::from(1),
+            "summary count for {key}"
+        );
+    }
+    let routes = value["blocked_state_routes"]
+        .as_array()
+        .ok_or("blocked_state_routes must be an array")?;
+    for (state, action, repair_route, packet_id, canonical_gap_id) in [
+        (
+            "blocked_by_missing_context",
+            "inspect_blocked_missing_context",
+            "cargo xtask lane1-evidence-audit",
+            "packet:missing-context",
+            "gap:missing-context",
+        ),
+        (
+            "blocked_by_static_limitation",
+            "route_static_limitations",
+            "analysis/specific-static-limitation-route",
+            "limitation:static-route",
+            "gap:static-route",
+        ),
+        (
+            "blocked_by_public_projection_exclusion",
+            "inspect_public_projection_exclusions",
+            "cargo xtask lane1-evidence-audit",
+            "packet:projection",
+            "gap:projection",
+        ),
+        (
+            "blocked_by_operator_judgment",
+            "route_operator_judgment_packets",
+            "cargo xtask ripr-swarm plan --top 10",
+            "packet:manual",
+            "gap:manual",
+        ),
+        (
+            "not_actionable_gap_state",
+            "inspect_non_actionable_gap_state",
+            "cargo xtask lane1-evidence-audit",
+            "packet:missing-context",
+            "gap:missing-context",
+        ),
+        (
+            "missing_verify_command",
+            "fix_verify_command_source",
+            "cargo xtask lane1-evidence-audit",
+            "packet:missing-context",
+            "gap:missing-context",
+        ),
+        (
+            "missing_receipt_command",
+            "fix_receipt_command_source",
+            "cargo xtask lane1-evidence-audit",
+            "packet:missing-context",
+            "gap:missing-context",
+        ),
+        (
+            "missing_repair_kind",
+            "fix_repair_kind_source",
+            "cargo xtask lane1-evidence-audit",
+            "packet:missing-context",
+            "gap:missing-context",
+        ),
+        (
+            "missing_repair_route",
+            "fix_repair_route_source",
+            "cargo xtask lane1-evidence-audit",
+            "packet:missing-context",
+            "gap:missing-context",
+        ),
+        (
+            "missing_related_test_or_observer",
+            "fix_related_test_or_observer",
+            "cargo xtask lane1-evidence-audit",
+            "packet:missing-context",
+            "gap:missing-context",
+        ),
+        (
+            "missing_must_not_change",
+            "fix_must_not_change_boundaries",
+            "cargo xtask lane1-evidence-audit",
+            "packet:missing-context",
+            "gap:missing-context",
+        ),
+        (
+            "missing_allowed_edit_surface",
+            "fix_allowed_edit_surface",
+            "cargo xtask lane1-evidence-audit",
+            "packet:missing-context",
+            "gap:missing-context",
+        ),
+        (
+            "missing_confidence",
+            "fix_confidence_basis",
+            "cargo xtask lane1-evidence-audit",
+            "packet:missing-context",
+            "gap:missing-context",
+        ),
+        (
+            "missing_raw_evidence_refs",
+            "fix_raw_evidence_refs",
+            "cargo xtask lane1-evidence-audit",
+            "packet:missing-context",
+            "gap:missing-context",
+        ),
+        (
+            "attempted_no_receipt",
+            "collect_missing_attempt_receipts",
+            "cargo xtask ripr-swarm attempt-ledger",
+            "packet:no-receipt",
+            "gap:no-receipt",
+        ),
+        (
+            "missing_verify_result",
+            "inspect_missing_verify_results",
+            "cargo xtask ripr-swarm attempt-ledger",
+            "packet:no-receipt",
+            "gap:no-receipt",
+        ),
+        (
+            "orphan_receipt",
+            "reconcile_orphaned_receipts",
+            "cargo xtask ripr-swarm attempt-ledger",
+            "packet:orphan",
+            "gap:orphan",
+        ),
+        (
+            "unchanged_attempt",
+            "inspect_unchanged_attempts",
+            "cargo xtask ripr-swarm attempt-ledger",
+            "packet:unchanged",
+            "gap:unchanged",
+        ),
+        (
+            "regressed_attempt",
+            "inspect_regressed_attempts",
+            "cargo xtask ripr-swarm attempt-ledger",
+            "packet:regressed",
+            "gap:regressed",
+        ),
+    ] {
+        let route = routes
+            .iter()
+            .find(|route| route["state"] == state)
+            .ok_or_else(|| format!("missing blocked route for {state}"))?;
+        assert_eq!(route["count"], serde_json::Value::from(1));
+        assert_eq!(route["next_action_kind"], action);
+        assert_eq!(route["repair_route"], repair_route);
+        assert_eq!(route["example_packet_id"], packet_id);
+        assert_eq!(route["example_canonical_gap_id"], canonical_gap_id);
+        assert!(
+            route["reason"]
+                .as_str()
+                .is_some_and(|reason| !reason.is_empty())
+        );
+    }
+    let actions = value["next_actions"]
+        .as_array()
+        .ok_or("next_actions must be an array")?;
+    for kind in [
+        "inspect_blocked_missing_context",
+        "route_static_limitations",
+        "inspect_public_projection_exclusions",
+        "route_operator_judgment_packets",
+        "inspect_non_actionable_gap_state",
+        "fix_repair_route_source",
+        "fix_related_test_or_observer",
+        "fix_must_not_change_boundaries",
+        "fix_allowed_edit_surface",
+        "fix_confidence_basis",
+        "fix_raw_evidence_refs",
+        "collect_missing_attempt_receipts",
+        "inspect_missing_verify_results",
+        "reconcile_orphaned_receipts",
+        "inspect_unchanged_attempts",
+        "inspect_regressed_attempts",
+    ] {
+        assert!(
+            actions.iter().any(|action| action["kind"] == kind),
+            "missing next action {kind}"
+        );
+    }
+    let projection_action = actions
+        .iter()
+        .find(|action| action["kind"] == "inspect_public_projection_exclusions")
+        .ok_or("missing public projection next action")?;
+    assert!(
+        projection_action["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("suppressed_by_public_projection_policy"))
+    );
+    let orphan_action = actions
+        .iter()
+        .find(|action| action["kind"] == "reconcile_orphaned_receipts")
+        .ok_or("missing orphan next action")?;
+    assert_eq!(
+        orphan_action["packet_id"],
+        serde_json::Value::from("packet:orphan")
+    );
+    assert_eq!(
+        orphan_action["canonical_gap_id"],
+        serde_json::Value::from("gap:orphan")
+    );
+    assert_eq!(
+        orphan_action["repair_kind"],
+        serde_json::Value::from("add_boundary_assertion")
+    );
+    let unchanged_action = actions
+        .iter()
+        .find(|action| action["kind"] == "inspect_unchanged_attempts")
+        .ok_or("missing unchanged next action")?;
+    assert_eq!(
+        unchanged_action["packet_id"],
+        serde_json::Value::from("packet:unchanged")
+    );
+    assert_eq!(
+        unchanged_action["canonical_gap_id"],
+        serde_json::Value::from("gap:unchanged")
+    );
+    assert_eq!(
+        unchanged_action["repair_kind"],
+        serde_json::Value::from("add_output_observer")
+    );
+    let regressed_action = actions
+        .iter()
+        .find(|action| action["kind"] == "inspect_regressed_attempts")
+        .ok_or("missing regressed next action")?;
+    assert_eq!(
+        regressed_action["packet_id"],
+        serde_json::Value::from("packet:regressed")
+    );
+    assert_eq!(
+        regressed_action["canonical_gap_id"],
+        serde_json::Value::from("gap:regressed")
+    );
+    assert_eq!(
+        regressed_action["repair_kind"],
+        serde_json::Value::from("add_output_observer")
+    );
+    let markdown = ripr_swarm_readiness_markdown(&report);
+    assert!(markdown.contains("## Blocked State Routes"));
+    assert!(markdown.contains("blocked_by_missing_context"));
+    assert!(markdown.contains("inspect_blocked_missing_context"));
+    assert!(markdown.contains("packet:missing-context"));
+    assert!(markdown.contains("gap:missing-context"));
+    assert!(markdown.contains("fix_allowed_edit_surface"));
+    assert!(markdown.contains("## Public Projection Exclusion Reasons"));
+    assert!(markdown.contains("suppressed_by_public_projection_policy"));
+    assert!(markdown.contains("target/ripr/receipts/orphan.json"));
+    assert!(markdown.contains("cargo xtask lane1-evidence-audit"));
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_readiness_routes_missing_allowed_edit_surface_projection_exclusion_without_missing_context()
+-> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "report": "swarm-plan",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "source_summary": {
+            "actionable_gaps": 1,
+            "public_projection_eligible_packets": 0
+        },
+        "summary": {
+            "swarm_ready_packets": 0,
+            "blocked_packets": 1,
+            "blocked_by_public_projection_exclusion_packets": 1,
+            "public_projection_excluded_packets": 1
+        },
+        "top_ready_packets": [],
+        "top_blocked_packets": [
+            {
+                "packet_id": "packet:stale-missing-edit-surface",
+                "canonical_gap_id": "gap:stale-missing-edit-surface",
+                "evidence_class": "error_path",
+                "repair_kind": "add_exact_error_variant",
+                "swarm_state": "blocked_by_public_projection_exclusion",
+                "missing_context": [],
+                "projection_exclusion_reasons": [
+                    "missing_allowed_edit_surface"
+                ],
+                "blocked_reasons": [
+                    "public_projection_excluded"
+                ]
+            }
+        ]
+    });
+    let outcomes = serde_json::json!({
+        "report": "actionable-gap-outcomes",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "summary": {
+            "outcomes_total": 0,
+            "not_attempted": 0
+        }
+    });
+    let attempt_ledger = serde_json::json!({
+        "report": "swarm-attempt-ledger",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "summary": {
+            "attempts_total": 0,
+            "not_attempted": 0
+        },
+        "attempts": []
+    });
+    let report = ripr_swarm_readiness_from_values(
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&attempt_ledger),
+        },
+    );
+
+    let json = ripr_swarm_readiness_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["summary"]["missing_allowed_edit_surface"],
+        serde_json::Value::from(1)
+    );
+    let routes = value["blocked_state_routes"]
+        .as_array()
+        .ok_or("blocked_state_routes must be an array")?;
+    let route = routes
+        .iter()
+        .find(|route| route["state"] == "missing_allowed_edit_surface")
+        .ok_or("missing allowed-edit-surface route")?;
+    assert_eq!(route["count"], serde_json::Value::from(1));
+    assert_eq!(
+        route["example_packet_id"],
+        serde_json::Value::from("packet:stale-missing-edit-surface")
+    );
+    assert_eq!(
+        route["example_canonical_gap_id"],
+        serde_json::Value::from("gap:stale-missing-edit-surface")
+    );
+    assert!(value["next_actions"].as_array().is_some_and(|actions| {
+        actions
+            .iter()
+            .any(|action| action["kind"] == "fix_allowed_edit_surface")
+    }));
+    let markdown = ripr_swarm_readiness_markdown(&report);
+    assert!(markdown.contains("missing_allowed_edit_surface"));
+    assert!(markdown.contains("packet:stale-missing-edit-surface"));
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_readiness_routes_missing_raw_evidence_refs_projection_exclusion_without_missing_context()
+-> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "report": "swarm-plan",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "source_summary": {
+            "actionable_gaps": 1,
+            "public_projection_eligible_packets": 0
+        },
+        "summary": {
+            "swarm_ready_packets": 0,
+            "blocked_packets": 1,
+            "blocked_by_public_projection_exclusion_packets": 1,
+            "public_projection_excluded_packets": 1
+        },
+        "top_ready_packets": [],
+        "top_blocked_packets": [
+            {
+                "packet_id": "packet:stale-missing-raw-evidence",
+                "canonical_gap_id": "gap:stale-missing-raw-evidence",
+                "evidence_class": "error_path",
+                "repair_kind": "add_exact_error_variant",
+                "swarm_state": "blocked_by_public_projection_exclusion",
+                "missing_context": [],
+                "projection_exclusion_reasons": [
+                    "missing_raw_evidence_refs"
+                ],
+                "blocked_reasons": [
+                    "public_projection_excluded"
+                ]
+            }
+        ]
+    });
+    let outcomes = serde_json::json!({
+        "report": "actionable-gap-outcomes",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "summary": {
+            "outcomes_total": 0,
+            "not_attempted": 0
+        }
+    });
+    let attempt_ledger = serde_json::json!({
+        "report": "swarm-attempt-ledger",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "summary": {
+            "attempts_total": 0,
+            "not_attempted": 0
+        },
+        "attempts": []
+    });
+    let report = ripr_swarm_readiness_from_values(
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&attempt_ledger),
+        },
+    );
+
+    let json = ripr_swarm_readiness_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["summary"]["missing_raw_evidence_refs"],
+        serde_json::Value::from(1)
+    );
+    let routes = value["blocked_state_routes"]
+        .as_array()
+        .ok_or("blocked_state_routes must be an array")?;
+    let route = routes
+        .iter()
+        .find(|route| route["state"] == "missing_raw_evidence_refs")
+        .ok_or("missing raw-evidence route")?;
+    assert_eq!(route["count"], serde_json::Value::from(1));
+    assert_eq!(
+        route["example_packet_id"],
+        serde_json::Value::from("packet:stale-missing-raw-evidence")
+    );
+    assert_eq!(
+        route["example_canonical_gap_id"],
+        serde_json::Value::from("gap:stale-missing-raw-evidence")
+    );
+    assert!(value["next_actions"].as_array().is_some_and(|actions| {
+        actions
+            .iter()
+            .any(|action| action["kind"] == "fix_raw_evidence_refs")
     }));
     let markdown = ripr_swarm_readiness_markdown(&report);
     assert!(markdown.contains("missing_raw_evidence_refs"));
