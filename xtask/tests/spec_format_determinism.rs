@@ -50,7 +50,29 @@ fn temp_root(label: &str) -> Result<PathBuf, String> {
         std::process::id()
     ));
     fs::create_dir_all(root.join("docs/specs")).map_err(|error| error.to_string())?;
-    Ok(root)
+    Ok(TempRoot(root))
+}
+
+struct TempRoot(PathBuf);
+
+impl TempRoot {
+    fn as_path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for TempRoot {
+    type Target = Path;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_path()
+    }
+}
+
+impl Drop for TempRoot {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
 }
 
 fn write_spec(root: &Path, text: &str) -> Result<(), String> {
@@ -60,7 +82,6 @@ fn write_spec(root: &Path, text: &str) -> Result<(), String> {
     )
     .map_err(|error| error.to_string())
 }
-
 
 fn backdate_spec(root: &Path) -> Result<(), String> {
     let path = root.join("docs/specs/RIPR-SPEC-9999-time-independent-fixture.md");
@@ -145,7 +166,6 @@ fn old_proposed_spec_remains_structurally_valid() -> Result<(), String> {
     }
 
     let output = run_check(&root)?;
-    fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
     if output.status.success() {
         Ok(())
     } else {
@@ -161,7 +181,6 @@ fn spec_format_does_not_require_git_history() -> Result<(), String> {
     let root = temp_root("no-git")?;
     write_spec(&root, VALID_SPEC)?;
     let output = run_check(&root)?;
-    fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
     if output.status.success() {
         Ok(())
     } else {
@@ -181,7 +200,6 @@ fn structural_spec_errors_remain_blocking() -> Result<(), String> {
     );
     write_spec(&root, &invalid)?;
     let output = run_check(&root)?;
-    fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
     let text = output_text(&output);
     if output.status.success() {
         return Err(format!(
