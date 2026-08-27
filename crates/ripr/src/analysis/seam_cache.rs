@@ -1699,6 +1699,9 @@ pub(crate) enum PathDependencyLimitationKind {
     /// A manifest's repo-relative path is not UTF-8, so no portable identity
     /// exists and edge capture was skipped for that manifest.
     NonUtf8ManifestPath,
+    /// A manifest could not be decoded as UTF-8 or parsed as TOML, so no
+    /// declarations were visible and edge capture was skipped for it.
+    ManifestUnparsed,
     /// A `[package] workspace = "..."` redirect was not followed: the
     /// manifest's `workspace = true` dependencies were resolved against the
     /// nearest ancestor workspace root instead of the redirected one, so the
@@ -1774,6 +1777,7 @@ pub(crate) fn workspace_graph_provenance(root: &Path) -> WorkspaceGraphProvenanc
     }
 
     let mut parse_errors = Vec::new();
+    let mut unparsed_manifests = Vec::new();
     let mut parsed_manifests = Vec::new();
     for (path, bytes) in &manifests {
         let path_text = path.to_string_lossy().replace('\\', "/");
@@ -1782,7 +1786,10 @@ pub(crate) fn workspace_graph_provenance(root: &Path) -> WorkspaceGraphProvenanc
             .and_then(|text| toml::from_str::<toml::Value>(text).map_err(|err| err.to_string()))
         {
             Ok(value) => parsed_manifests.push((path, path_text, value)),
-            Err(err) => parse_errors.push(format!("{path_text}: {err}")),
+            Err(err) => {
+                parse_errors.push(format!("{path_text}: {err}"));
+                unparsed_manifests.push((path_text.clone(), err));
+            }
         }
     }
 
@@ -1811,7 +1818,7 @@ pub(crate) fn workspace_graph_provenance(root: &Path) -> WorkspaceGraphProvenanc
                             .as_table()
                             .and_then(|dep_table| dep_table.get("path"))
                             .and_then(toml::Value::as_str)
-                            .map(|path| path.replace('\\', "/"));
+                            .map(str::to_string);
                         (name.clone(), declared)
                     })
                     .collect()
@@ -1921,6 +1928,13 @@ pub(crate) fn workspace_graph_provenance(root: &Path) -> WorkspaceGraphProvenanc
     feature_facts.sort();
     path_dep_edges.sort();
     path_dep_edges.dedup();
+    for (manifest, detail) in unparsed_manifests {
+        path_dep_limitations.push(PathDependencyLimitation {
+            manifest,
+            kind: PathDependencyLimitationKind::ManifestUnparsed,
+            detail: format!("path-dependency edges not captured: {detail}"),
+        });
+    }
     path_dep_limitations.sort();
     WorkspaceGraphProvenance {
         package_graph_status: package_graph_status.to_string(),
@@ -3931,7 +3945,7 @@ mod tests {
                 .find(|(name, _)| name == &edge.dependency_name)
                 .ok_or_else(|| format!("no cargo path for {}", edge.dependency_name))?;
             assert!(
-                cargo_path.ends_with(resolved),
+                cargo_path == resolved || cargo_path.ends_with(&format!("/{resolved}")),
                 "cargo path {cargo_path} must end with resolver identity {resolved}"
             );
         }
