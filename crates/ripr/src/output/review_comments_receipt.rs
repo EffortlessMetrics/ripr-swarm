@@ -82,6 +82,28 @@ impl ReviewCommentsRunReceipt {
         self.missing_artifacts.clear();
     }
 
+    pub(crate) fn limited_timeout(&mut self, active_phase: &str) {
+        self.status = "limited_timeout";
+        self.active_phase = Some(active_phase.to_string());
+        self.limitations.push(ReviewCommentsReceiptLimitation {
+            category: "analysis_timeout".to_string(),
+            repair_route: "rerun review-comments with a larger configured timeout".to_string(),
+        });
+        self.non_claims.push("no complete route inventory".to_string());
+        self.non_claims.push("no all-clear".to_string());
+    }
+
+    pub(crate) fn failed(&mut self, active_phase: &str, error: &str) {
+        self.status = "failed";
+        self.active_phase = Some(active_phase.to_string());
+        self.limitations.push(ReviewCommentsReceiptLimitation {
+            category: "analysis_failed".to_string(),
+            repair_route: error.to_string(),
+        });
+        self.non_claims.push("no complete route inventory".to_string());
+        self.non_claims.push("no all-clear".to_string());
+    }
+
     pub(crate) fn write_atomic(&mut self, path: &Path) -> Result<(), String> {
         let parent = path
             .parent()
@@ -198,6 +220,55 @@ mod tests {
             30_000,
             &["comments.json".to_string()],
         )
+    }
+
+    #[test]
+    fn terminal_setters_preserve_phase_and_write_atomic_receipts() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-receipt-terminal-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        fs::create_dir_all(&dir).map_err(|err| format!("create temp dir failed: {err}"))?;
+
+        let timeout_path = dir.join("timeout.json");
+        let mut timeout = sample_receipt();
+        timeout.limited_timeout("review_guidance");
+        assert_eq!(timeout.status, "limited_timeout");
+        assert_eq!(timeout.active_phase.as_deref(), Some("review_guidance"));
+        assert_eq!(timeout.last_completed_phase, None);
+        timeout.write_atomic(&timeout_path)?;
+        let timeout_json: Value = serde_json::from_slice(
+            &fs::read(&timeout_path).map_err(|err| format!("read timeout receipt failed: {err}"))?,
+        )
+        .map_err(|err| format!("parse timeout receipt failed: {err}"))?;
+        assert_eq!(timeout_json["status"], "limited_timeout");
+        assert_eq!(timeout_json["active_phase"], "review_guidance");
+        assert_eq!(timeout_json["atomic_write_status"], "committed");
+
+        let failure_path = dir.join("failed.json");
+        let mut failure = sample_receipt();
+        failure.failed("canonical_comparison", "canonical comparison failed");
+        assert_eq!(failure.status, "failed");
+        assert_eq!(failure.active_phase.as_deref(), Some("canonical_comparison"));
+        assert_eq!(
+            failure.limitations[0].repair_route,
+            "canonical comparison failed"
+        );
+        failure.write_atomic(&failure_path)?;
+        let failure_json: Value = serde_json::from_slice(
+            &fs::read(&failure_path).map_err(|err| format!("read failed receipt failed: {err}"))?,
+        )
+        .map_err(|err| format!("parse failed receipt failed: {err}"))?;
+        assert_eq!(failure_json["status"], "failed");
+        assert_eq!(failure_json["active_phase"], "canonical_comparison");
+        assert_eq!(failure_json["atomic_write_status"], "committed");
+
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
     }
 
     #[test]
