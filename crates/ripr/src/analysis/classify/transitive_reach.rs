@@ -200,7 +200,7 @@ pub(in crate::analysis) fn find_macro_reach_witness(
         let mut found: Vec<(String, MacroReachEdge)> = Vec::new();
 
         for macro_invocation in macro_invocations_in_text(&test.body, test.start_line) {
-            if let Some(edge) = sweep.macro_edge_for_invocation(
+            if let Some(edge) = ReachSweep::macro_edge_for_invocation(
                 &macro_invocation,
                 &test.file,
                 MACRO_WITNESS_TEST_BODY_HOST,
