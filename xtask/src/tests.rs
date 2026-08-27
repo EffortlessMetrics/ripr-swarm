@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 453258)
-... 764454 bytes omitted ...
-
 //! Tests for the xtask command surface, extracted from `main.rs` (#2119)
 //! as the first behavior-preserving decomposition slice: the module
 //! body moved verbatim; test names and module path (`crate::tests`) are
@@ -2517,7 +2514,22296 @@ fn evidence_promotion_semantic_assertions_reject_wrong_limitation_route() {
 }
 
 #[test]
-fn evidence_promot…212152 tokens truncated…  .parent()
+fn evidence_promotion_semantic_assertions_accept_scope_limited_empty_results() {
+    let no_scope = serde_json::json!({
+        "summary": {"findings": 0},
+        "findings": [],
+        "scope_disclosures": [
+            {"scope_status": "no_scope_provided", "category": "no_scope_disclosure"}
+        ]
+    });
+    let no_scope_assertions = vec![
+        super::EvidencePromotionSemanticAssertion::MustNotReportClean,
+        super::EvidencePromotionSemanticAssertion::MustDiscloseNoScope,
+    ];
+    let no_scope_violations = super::evidence_promotion_semantic_violations(
+        "no_scope",
+        Some("fixtures/scope_honesty_no_scope_empty"),
+        &no_scope_assertions,
+        &no_scope,
+        None,
+        false,
+    );
+    assert!(
+        no_scope_violations.is_empty(),
+        "no-scope disclosure should make the empty result non-clean: {no_scope_violations:?}"
+    );
+
+    let dirty_worktree = serde_json::json!({
+        "summary": {"findings": 0},
+        "findings": [],
+        "unanalyzed_working_tree": true
+    });
+    let dirty_assertions = vec![
+        super::EvidencePromotionSemanticAssertion::MustNotReportClean,
+        super::EvidencePromotionSemanticAssertion::MustDiscloseUnanalyzedWorkingTree,
+    ];
+    let dirty_violations = super::evidence_promotion_semantic_violations(
+        "dirty_worktree",
+        Some("fixtures/scope_honesty_unanalyzed_worktree_empty"),
+        &dirty_assertions,
+        &dirty_worktree,
+        None,
+        false,
+    );
+    assert!(
+        dirty_violations.is_empty(),
+        "unanalyzed_working_tree should make the empty result non-clean: {dirty_violations:?}"
+    );
+}
+
+#[test]
+fn evidence_promotion_semantic_assertions_reject_false_unanalyzed_worktree_disclosure() {
+    let assertions = vec![
+        super::EvidencePromotionSemanticAssertion::MustDiscloseScope,
+        super::EvidencePromotionSemanticAssertion::MustNotDiscloseUnanalyzedWorkingTree,
+    ];
+    let scoped_worktree = serde_json::json!({
+        "schema_version": "0.2",
+        "tool": "ripr",
+        "mode": "draft",
+        "root": ".",
+        "base": "HEAD",
+        "summary": {"findings": 1},
+        "findings": [
+            {
+                "id": "probe:src_lib.rs:predicate:4e6b5f28",
+                "classification": "no_static_path",
+                "probe": {"file": "src/lib.rs"}
+            }
+        ]
+    });
+
+    let scoped_violations = super::evidence_promotion_semantic_violations(
+        "scoped_worktree",
+        Some("fixtures/scope_worktree_analyzed_dirty"),
+        &assertions,
+        &scoped_worktree,
+        None,
+        false,
+    );
+    assert!(
+        scoped_violations.is_empty(),
+        "scoped worktree report without unanalyzed disclosure should pass: {scoped_violations:?}"
+    );
+
+    let false_exclusion = serde_json::json!({
+        "schema_version": "0.2",
+        "tool": "ripr",
+        "mode": "draft",
+        "root": ".",
+        "base": "HEAD",
+        "summary": {"findings": 1},
+        "findings": [
+            {
+                "id": "probe:src_lib.rs:predicate:4e6b5f28",
+                "classification": "no_static_path",
+                "probe": {"file": "src/lib.rs"}
+            }
+        ],
+        "unanalyzed_working_tree": true
+    });
+
+    let report = super::evidence_promotion_semantic_violations(
+        "false_exclusion",
+        Some("fixtures/scope_worktree_analyzed_dirty"),
+        &assertions,
+        &false_exclusion,
+        None,
+        false,
+    )
+    .join("\n");
+
+    assert!(
+        report.contains("must_not_disclose_unanalyzed_working_tree"),
+        "{report}"
+    );
+    assert!(
+        report.contains("working-tree draft was in scope"),
+        "{report}"
+    );
+}
+
+#[test]
+fn evidence_promotion_semantic_assertions_reject_false_no_scope_disclosure() {
+    let assertions = vec![
+        super::EvidencePromotionSemanticAssertion::MustDiscloseScope,
+        super::EvidencePromotionSemanticAssertion::MustNotDiscloseNoScope,
+    ];
+    let scoped_report = serde_json::json!({
+        "schema_version": "0.2",
+        "tool": "ripr",
+        "mode": "draft",
+        "root": ".",
+        "base": "HEAD",
+        "summary": {"findings": 1},
+        "findings": [
+            {
+                "id": "probe:src_lib.rs:predicate:4e6b5f28",
+                "classification": "no_static_path",
+                "probe": {"file": "src/lib.rs"}
+            }
+        ]
+    });
+
+    let scoped_violations = super::evidence_promotion_semantic_violations(
+        "scoped_report",
+        Some("fixtures/scope_worktree_analyzed_dirty"),
+        &assertions,
+        &scoped_report,
+        None,
+        false,
+    );
+    assert!(
+        scoped_violations.is_empty(),
+        "explicit scope report without no-scope disclosure should pass: {scoped_violations:?}"
+    );
+
+    let legacy_no_scope = serde_json::json!({
+        "schema_version": "0.2",
+        "tool": "ripr",
+        "mode": "draft",
+        "root": ".",
+        "base": "HEAD",
+        "summary": {"findings": 1},
+        "findings": [
+            {
+                "id": "probe:src_lib.rs:predicate:4e6b5f28",
+                "classification": "no_static_path",
+                "probe": {"file": "src/lib.rs"}
+            }
+        ],
+        "no_scope_provided": true
+    });
+    let legacy_report = super::evidence_promotion_semantic_violations(
+        "legacy_no_scope",
+        Some("fixtures/scope_worktree_analyzed_dirty"),
+        &assertions,
+        &legacy_no_scope,
+        None,
+        false,
+    )
+    .join("\n");
+    assert!(
+        legacy_report.contains("must_not_disclose_no_scope"),
+        "{legacy_report}"
+    );
+
+    let structured_no_scope = serde_json::json!({
+        "schema_version": "0.2",
+        "tool": "ripr",
+        "mode": "draft",
+        "root": ".",
+        "base": "HEAD",
+        "summary": {"findings": 1},
+        "findings": [
+            {
+                "id": "probe:src_lib.rs:predicate:4e6b5f28",
+                "classification": "no_static_path",
+                "probe": {"file": "src/lib.rs"}
+            }
+        ],
+        "scope_disclosures": [
+            {"scope_status": "no_scope_provided", "category": "no_scope_disclosure"}
+        ]
+    });
+    let structured_report = super::evidence_promotion_semantic_violations(
+        "structured_no_scope",
+        Some("fixtures/scope_worktree_analyzed_dirty"),
+        &assertions,
+        &structured_no_scope,
+        None,
+        false,
+    )
+    .join("\n");
+    assert!(
+        structured_report.contains("must_not_disclose_no_scope"),
+        "{structured_report}"
+    );
+    assert!(
+        structured_report.contains("explicit analysis scope"),
+        "{structured_report}"
+    );
+}
+
+#[test]
+fn evidence_promotion_semantic_assertions_reject_bare_empty_false_clean() {
+    let assertions = vec![super::EvidencePromotionSemanticAssertion::MustNotReportClean];
+    let bare_empty = serde_json::json!({
+        "summary": {"findings": 0},
+        "findings": []
+    });
+
+    let report = super::evidence_promotion_semantic_violations(
+        "bare_empty",
+        Some("fixtures/scope_honesty_bare_empty"),
+        &assertions,
+        &bare_empty,
+        None,
+        false,
+    )
+    .join("\n");
+
+    assert!(report.contains("must_not_report_clean"), "{report}");
+    assert!(report.contains("no non-clean signal"), "{report}");
+}
+
+fn semver_external_case_for_test() -> super::EvidencePromotionExternalCase {
+    super::EvidencePromotionExternalCase {
+            id: "rust_semver_matches_greater_external_limitation".to_string(),
+            language: "rust".to_string(),
+            external_repo: "https://github.com/dtolnay/semver".to_string(),
+            external_commit: "0123456789abcdef0123456789abcdef01234567".to_string(),
+            external_patch: PathBuf::from(
+                "fixtures/evidence-promotion-honesty-corpus/patches/semver-matches-greater.diff",
+            ),
+            external_command:
+                "ripr check --root {checkout} --diff {external_patch} --mode fast --json"
+                    .to_string(),
+            runtime_budget_seconds: 120,
+            artifact_budget_bytes: 10_485_760,
+            assertions: vec![
+                super::EvidencePromotionSemanticAssertion::MustSeeChangedFile {
+                    path: "src/eval.rs".to_string(),
+                },
+                super::EvidencePromotionSemanticAssertion::MustNotReportClean,
+                super::EvidencePromotionSemanticAssertion::MustDiscloseScope,
+                super::EvidencePromotionSemanticAssertion::MustEmitLimitation {
+                    expected_limit_kind: "rust_integration_public_api_path_unresolved"
+                        .to_string(),
+                },
+                super::EvidencePromotionSemanticAssertion::MustNotEmitRepairPacket,
+                super::EvidencePromotionSemanticAssertion::MustDiscloseWitness,
+                super::EvidencePromotionSemanticAssertion::MustDiscloseLimitationDetail,
+                super::EvidencePromotionSemanticAssertion::ExpectedLimitationDetail {
+                    last_established_edge:
+                        "test `test_basic` (tests/test_version_req.rs:38) -> entry `assert_match_all`"
+                            .to_string(),
+                    first_unresolved_edge:
+                        "entry `assert_match_all` -> owner `matches_greater` through a transitive Rust helper path"
+                            .to_string(),
+                    non_claim:
+                        "named limitation only; ripr cannot confirm or deny that this path observes the change"
+                            .to_string(),
+                },
+                super::EvidencePromotionSemanticAssertion::ExpectedLimitationRoute {
+                    route: "analysis/rust-public-api-transitive-reach".to_string(),
+                },
+                super::EvidencePromotionSemanticAssertion::MustNotPromote,
+                super::EvidencePromotionSemanticAssertion::MaximumClass {
+                    class: "no_static_path".to_string(),
+                },
+            ],
+        }
+}
+
+#[test]
+fn evidence_promotion_pinned_external_semantics_accept_semver_limitation_shape() {
+    let case = semver_external_case_for_test();
+    let check_json = serde_json::json!({
+        "schema_version": "0.2",
+        "tool": "ripr",
+        "mode": "fast",
+        "root": "target/ripr/evidence-promotion-honesty/checkouts/semver",
+        "base": "origin/main",
+        "summary": {"findings": 1},
+        "findings": [
+            {
+                "id": "probe:src_eval.rs:predicate:87a89f28",
+                "classification": "no_static_path",
+                "probe": {"file": "target/ripr/evidence-promotion-honesty/checkouts/semver/src/eval.rs"},
+                "static_limit_kind": "rust_integration_public_api_path_unresolved",
+                "static_limitation": {
+                    "kind": "rust_integration_public_api_path_unresolved",
+                    "last_established_edge": "test `test_basic` (tests/test_version_req.rs:38) -> entry `assert_match_all`",
+                    "first_unresolved_edge": "entry `assert_match_all` -> owner `matches_greater` through a transitive Rust helper path",
+                    "analyzer_route": "analysis/rust-public-api-transitive-reach",
+                    "non_claim": "named limitation only; ripr cannot confirm or deny that this path observes the change"
+                },
+                "evidence": [
+                    "ripr saw a test reaching public API that may call toward this change through a transitive path it does not fully trace.",
+                    "For example, the test `test_basic` (tests/test_version_req.rs:38) calls `assert_match_all`, an entry point that may lead here.",
+                    "limitation_last_established_edge: test `test_basic` (tests/test_version_req.rs:38) -> entry `assert_match_all`",
+                    "limitation_first_unresolved_edge: entry `assert_match_all` -> owner `matches_greater` through a transitive Rust helper path",
+                    "limitation_analyzer_route: analysis/rust-public-api-transitive-reach",
+                    "limitation_non_claim: named limitation only; ripr cannot confirm or deny that this path observes the change"
+                ]
+            }
+        ]
+    });
+
+    let violations = super::evidence_promotion_external_semantic_violations(&case, &check_json);
+    assert!(
+        violations.is_empty(),
+        "expected semver external limitation shape to pass, got {violations:?}"
+    );
+}
+
+#[test]
+fn evidence_promotion_pinned_external_semantics_reject_false_clean_and_packet() {
+    let case = semver_external_case_for_test();
+    let check_json = serde_json::json!({
+        "schema_version": "0.2",
+        "tool": "ripr",
+        "mode": "fast",
+        "root": "target/ripr/evidence-promotion-honesty/checkouts/semver",
+        "base": "origin/main",
+        "summary": {"findings": 0},
+        "findings": [
+            {
+                "id": "probe:src_eval.rs:predicate:87a89f28",
+                "classification": "exposed",
+                "probe": {"file": "target/ripr/evidence-promotion-honesty/checkouts/semver/src/eval.rs"},
+                "preview_actionability": {"repair_packet_ready": true},
+                "evidence": []
+            }
+        ]
+    });
+
+    let report =
+        super::evidence_promotion_external_semantic_violations(&case, &check_json).join("\n");
+    assert!(report.contains("expected static_limit_kind"), "{report}");
+    assert!(report.contains("repair_packet_ready=true"), "{report}");
+    assert!(report.contains("must_disclose_witness"), "{report}");
+    assert!(report.contains("promoted to exposed"), "{report}");
+}
+
+#[test]
+fn evidence_promotion_corpus_summary_report_writes_pure_and_not_run_external_cases()
+-> Result<(), String> {
+    with_temp_cwd("evidence-promotion-corpus-summary", |root| {
+        let corpus = root.join(super::EVIDENCE_PROMOTION_HONESTY_CORPUS);
+        let py_fixture = root.join("fixtures/py");
+        let ts_fixture = root.join("fixtures/ts");
+        let rust_fixture = root.join("fixtures/rust");
+        let rust_control_fixture = root.join("fixtures/rust-control");
+        let ts_control_fixture = root.join("fixtures/ts-control");
+        let patch_path =
+            root.join("fixtures/evidence-promotion-honesty-corpus/patches/semver-boundary.diff");
+
+        write(&patch_path, "diff --git a/src/lib.rs b/src/lib.rs\n");
+        for (fixture, classification) in [
+            (&py_fixture, "weakly_exposed"),
+            (&ts_fixture, "weakly_exposed"),
+            (&rust_fixture, "no_static_path"),
+            (&rust_control_fixture, "exposed"),
+            (&ts_control_fixture, "exposed"),
+        ] {
+            write_evidence_promotion_check(fixture, classification)?;
+        }
+
+        let corpus_json = serde_json::json!({
+            "cases": [
+                {
+                    "id": "py_non_promoted",
+                    "language": "python",
+                    "tier": "pure",
+                    "source_fixture": py_fixture,
+                    "must_remain_non_promoted": true
+                },
+                {
+                    "id": "ts_non_promoted",
+                    "language": "typescript",
+                    "tier": "pure",
+                    "source_fixture": ts_fixture,
+                    "must_remain_non_promoted": true
+                },
+                {
+                    "id": "rust_non_promoted",
+                    "language": "rust",
+                    "tier": "pure",
+                    "source_fixture": rust_fixture,
+                    "must_remain_non_promoted": true,
+                    "expected_max_class": "no_static_path"
+                },
+                {
+                    "id": "rust_semver_external",
+                    "language": "rust",
+                    "tier": "pinned_external",
+                    "external_repo": "https://github.com/dtolnay/semver",
+                    "external_command": "ripr check --root {checkout} --diff {external_patch} --mode fast --json",
+                    "external_commit": "0123456789abcdef0123456789abcdef01234567",
+                    "external_patch": "fixtures/evidence-promotion-honesty-corpus/patches/semver-boundary.diff",
+                    "runtime_budget_seconds": 120,
+                    "artifact_budget_bytes": 10485760,
+                    "must_not_report_clean": true
+                },
+                {
+                    "id": "rust_control",
+                    "language": "rust",
+                    "tier": "pure",
+                    "source_fixture": rust_control_fixture,
+                    "expected_promoted": true
+                },
+                {
+                    "id": "ts_control",
+                    "language": "typescript",
+                    "tier": "pure",
+                    "source_fixture": ts_control_fixture,
+                    "expected_promoted": true
+                }
+            ]
+        });
+        write(
+            &corpus,
+            &serde_json::to_string_pretty(&corpus_json).map_err(|err| err.to_string())?,
+        );
+
+        super::check_evidence_promotion_honesty(&[])?;
+        let summary_path = root.join("target/ripr/reports/corpus-summary.json");
+        let summary_text = fs::read_to_string(&summary_path)
+            .map_err(|err| format!("read {}: {err}", summary_path.display()))?;
+        let summary: Value = serde_json::from_str(&summary_text)
+            .map_err(|err| format!("parse corpus summary: {err}"))?;
+
+        assert_eq!(
+            summary.get("kind").and_then(Value::as_str),
+            Some("corpus_summary")
+        );
+        assert_eq!(summary.get("status").and_then(Value::as_str), Some("pass"));
+        assert_eq!(summary.get("cases_failed").and_then(Value::as_u64), Some(0));
+        assert_eq!(
+            summary.get("cases_not_run").and_then(Value::as_u64),
+            Some(1)
+        );
+        let cases = summary
+            .get("cases")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "corpus summary cases array missing".to_string())?;
+        let external = cases
+            .iter()
+            .find(|case| case.get("id").and_then(Value::as_str) == Some("rust_semver_external"))
+            .ok_or_else(|| "external case summary missing".to_string())?;
+        assert_eq!(
+            external.get("status").and_then(Value::as_str),
+            Some("not_run")
+        );
+        assert_eq!(
+            external.get("result_kind").and_then(Value::as_str),
+            Some("not_run")
+        );
+        let external_case = external
+            .get("external_case")
+            .and_then(Value::as_object)
+            .ok_or_else(|| "external case launch metadata missing".to_string())?;
+        assert_eq!(
+            external_case.get("repo").and_then(Value::as_str),
+            Some("https://github.com/dtolnay/semver")
+        );
+        assert_eq!(
+            external_case.get("commit").and_then(Value::as_str),
+            Some("0123456789abcdef0123456789abcdef01234567")
+        );
+        assert_eq!(
+            external_case.get("patch").and_then(Value::as_str),
+            Some("fixtures/evidence-promotion-honesty-corpus/patches/semver-boundary.diff")
+        );
+        assert_eq!(
+            external_case.get("command").and_then(Value::as_str),
+            Some("ripr check --root {checkout} --diff {external_patch} --mode fast --json")
+        );
+        assert_eq!(
+            external_case
+                .get("runtime_budget_seconds")
+                .and_then(Value::as_u64),
+            Some(120)
+        );
+        assert_eq!(
+            external_case
+                .get("artifact_budget_bytes")
+                .and_then(Value::as_u64),
+            Some(10_485_760)
+        );
+        assert!(
+            cases.iter().any(|case| {
+                case.get("id").and_then(Value::as_str) == Some("rust_non_promoted")
+                    && case.get("status").and_then(Value::as_str) == Some("pass")
+                    && case.get("result_kind").and_then(Value::as_str) == Some("pass")
+            }),
+            "expected passing pure rust case in {summary_text}"
+        );
+
+        let summary_md = fs::read_to_string(root.join("target/ripr/reports/corpus-summary.md"))
+            .map_err(|err| format!("read corpus summary markdown: {err}"))?;
+        assert!(summary_md.contains("Status: `pass`"));
+        assert!(summary_md.contains("`not_run`"));
+        assert!(summary_md.contains("## Pinned External Launches"));
+        assert!(summary_md.contains("https://github.com/dtolnay/semver"));
+        assert!(summary_md.contains("0123456789abcdef0123456789abcdef01234567"));
+        assert!(summary_md.contains("10485760"));
+        Ok(())
+    })
+}
+
+#[test]
+fn evidence_promotion_pinned_external_report_projects_launch_metadata() -> Result<(), String> {
+    with_temp_cwd("evidence-promotion-pinned-external-report", |root| {
+        let run = super::EvidencePromotionExternalRun {
+            id: "rust_semver_external".to_string(),
+            status: "pass".to_string(),
+            result_kind: "pass".to_string(),
+            runtime_ms: 321,
+            artifact_bytes: 654,
+            external_case: Some(super::EvidencePromotionExternalLaunch {
+                repo: "https://github.com/dtolnay/semver".to_string(),
+                commit: "0123456789abcdef0123456789abcdef01234567".to_string(),
+                patch: "fixtures/evidence-promotion-honesty-corpus/patches/semver-boundary.diff"
+                    .to_string(),
+                command: "ripr check --root {checkout} --diff {external_patch} --mode fast --json"
+                    .to_string(),
+                runtime_budget_seconds: 120,
+                artifact_budget_bytes: 10_485_760,
+            }),
+            checkout: "target/ripr/evidence-promotion-honesty/checkouts/rust_semver_external"
+                .to_string(),
+            violations: Vec::new(),
+        };
+
+        super::write_evidence_promotion_external_report(&[run], &[])?;
+
+        let report_path = root
+            .join("target/ripr/reports")
+            .join(super::EVIDENCE_PROMOTION_EXTERNAL_JSON);
+        let report_text = fs::read_to_string(&report_path)
+            .map_err(|err| format!("read {}: {err}", report_path.display()))?;
+        let report: Value = serde_json::from_str(&report_text)
+            .map_err(|err| format!("parse pinned external report: {err}"))?;
+        let launch = report
+            .get("runs")
+            .and_then(Value::as_array)
+            .and_then(|runs| runs.first())
+            .and_then(|run| run.get("external_case"))
+            .and_then(Value::as_object)
+            .ok_or_else(|| "pinned external launch metadata missing".to_string())?;
+        assert_eq!(
+            launch.get("repo").and_then(Value::as_str),
+            Some("https://github.com/dtolnay/semver")
+        );
+        assert_eq!(
+            launch.get("commit").and_then(Value::as_str),
+            Some("0123456789abcdef0123456789abcdef01234567")
+        );
+        assert_eq!(
+            launch.get("runtime_budget_seconds").and_then(Value::as_u64),
+            Some(120)
+        );
+        assert_eq!(
+            launch.get("artifact_budget_bytes").and_then(Value::as_u64),
+            Some(10_485_760)
+        );
+
+        let markdown_path = root
+            .join("target/ripr/reports")
+            .join(super::EVIDENCE_PROMOTION_EXTERNAL_MD);
+        let markdown = fs::read_to_string(&markdown_path)
+            .map_err(|err| format!("read {}: {err}", markdown_path.display()))?;
+        assert!(markdown.contains("## Launch Points"));
+        assert!(markdown.contains("https://github.com/dtolnay/semver"));
+        assert!(markdown.contains("0123456789abcdef0123456789abcdef01234567"));
+        assert!(markdown.contains("10485760"));
+        Ok(())
+    })
+}
+
+#[test]
+fn evidence_promotion_corpus_summary_reports_pinned_external_setup_failure() -> Result<(), String> {
+    with_temp_cwd("evidence-promotion-corpus-summary-setup-failure", |root| {
+        let corpus = root.join(super::EVIDENCE_PROMOTION_HONESTY_CORPUS);
+        let py_fixture = root.join("fixtures/py");
+        let ts_fixture = root.join("fixtures/ts");
+        let rust_fixture = root.join("fixtures/rust");
+        let rust_control_fixture = root.join("fixtures/rust-control");
+        let ts_control_fixture = root.join("fixtures/ts-control");
+        let patch_path =
+            root.join("fixtures/evidence-promotion-honesty-corpus/patches/semver-boundary.diff");
+
+        write(&patch_path, "diff --git a/src/lib.rs b/src/lib.rs\n");
+        for (fixture, classification) in [
+            (&py_fixture, "weakly_exposed"),
+            (&ts_fixture, "weakly_exposed"),
+            (&rust_fixture, "no_static_path"),
+            (&rust_control_fixture, "exposed"),
+            (&ts_control_fixture, "exposed"),
+        ] {
+            write_evidence_promotion_check(fixture, classification)?;
+        }
+
+        let corpus_json = serde_json::json!({
+            "cases": [
+                {
+                    "id": "py_non_promoted",
+                    "language": "python",
+                    "tier": "pure",
+                    "source_fixture": py_fixture,
+                    "must_remain_non_promoted": true
+                },
+                {
+                    "id": "ts_non_promoted",
+                    "language": "typescript",
+                    "tier": "pure",
+                    "source_fixture": ts_fixture,
+                    "must_remain_non_promoted": true
+                },
+                {
+                    "id": "rust_non_promoted",
+                    "language": "rust",
+                    "tier": "pure",
+                    "source_fixture": rust_fixture,
+                    "must_remain_non_promoted": true,
+                    "expected_max_class": "no_static_path"
+                },
+                {
+                    "id": "rust_bad_external",
+                    "language": "rust",
+                    "tier": "pinned_external",
+                    "external_command": "ripr check --root {checkout} --diff {external_patch} --mode fast --json",
+                    "external_commit": "0123456789abcdef0123456789abcdef01234567",
+                    "external_patch": "fixtures/evidence-promotion-honesty-corpus/patches/semver-boundary.diff",
+                    "runtime_budget_seconds": 120,
+                    "artifact_budget_bytes": 10485760,
+                    "must_not_report_clean": true
+                },
+                {
+                    "id": "rust_control",
+                    "language": "rust",
+                    "tier": "pure",
+                    "source_fixture": rust_control_fixture,
+                    "expected_promoted": true
+                },
+                {
+                    "id": "ts_control",
+                    "language": "typescript",
+                    "tier": "pure",
+                    "source_fixture": ts_control_fixture,
+                    "expected_promoted": true
+                }
+            ]
+        });
+        write(
+            &corpus,
+            &serde_json::to_string_pretty(&corpus_json).map_err(|err| err.to_string())?,
+        );
+
+        let err = super::check_evidence_promotion_honesty(&["--pinned-external".to_string()])
+            .expect_err("malformed pinned_external case should fail");
+        assert!(
+            err.contains("missing required string `external_repo`"),
+            "{err}"
+        );
+
+        let summary_path = root.join("target/ripr/reports/corpus-summary.json");
+        let summary_text = fs::read_to_string(&summary_path)
+            .map_err(|err| format!("read {}: {err}", summary_path.display()))?;
+        let summary: Value = serde_json::from_str(&summary_text)
+            .map_err(|err| format!("parse corpus summary: {err}"))?;
+        assert_eq!(summary.get("status").and_then(Value::as_str), Some("fail"));
+        let cases = summary
+            .get("cases")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "corpus summary cases array missing".to_string())?;
+        assert!(
+            cases.iter().any(|case| {
+                case.get("id").and_then(Value::as_str) == Some("rust_bad_external")
+                    && case.get("status").and_then(Value::as_str) == Some("fail")
+                    && case.get("result_kind").and_then(Value::as_str) == Some("setup_failure")
+            }),
+            "expected selected pinned_external case setup failure in {summary_text}"
+        );
+        assert!(
+            cases.iter().any(|case| {
+                case.get("id").and_then(Value::as_str) == Some("__runner__")
+                    && case.get("result_kind").and_then(Value::as_str) == Some("setup_failure")
+            }),
+            "expected runner setup failure in {summary_text}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn evidence_promotion_corpus_summary_classifies_failure_kinds() {
+    assert_eq!(
+        super::evidence_promotion_pure_failure_kind(&[
+            r#"case `pure_clean`: `must_not_report_clean` failed after a re-bless"#.to_string()
+        ]),
+        "golden_drift"
+    );
+    assert_eq!(
+        super::evidence_promotion_pure_failure_kind(&[
+            r#"case `pure_promoted`: finding has classification `exposed`"#.to_string()
+        ]),
+        "unexpected_promotion"
+    );
+    assert_eq!(
+        super::evidence_promotion_pure_failure_kind(&[
+            r#"case `pure_setup`: source_fixture `fixtures/missing` does not exist"#.to_string()
+        ]),
+        "setup_failure"
+    );
+    assert_eq!(
+        super::evidence_promotion_external_failure_kind(&[
+            "clone failed: could not resolve host".to_string()
+        ]),
+        "network_unavailable"
+    );
+    assert_eq!(
+        super::evidence_promotion_external_failure_kind(&[
+            "runtime budget exceeded by timeout after 120000ms".to_string()
+        ]),
+        "runtime_budget_exceeded"
+    );
+    assert_eq!(
+        super::evidence_promotion_external_failure_kind(&[
+            "artifact bytes 11 exceeded budget 10".to_string()
+        ]),
+        "artifact_budget_exceeded"
+    );
+    assert_eq!(
+        super::evidence_promotion_external_failure_kind(&[
+            "expected static_limit_kind `rust_transitive_reach_unresolved` was not emitted"
+                .to_string()
+        ]),
+        "unexpected_limitation"
+    );
+    assert_eq!(
+        super::evidence_promotion_external_failure_kind(&[
+            "finding `probe` promoted to exposed".to_string()
+        ]),
+        "unexpected_promotion"
+    );
+    assert_eq!(
+        super::evidence_promotion_external_failure_kind(&[
+            "must_not_report_clean requires findings".to_string()
+        ]),
+        "semantic_failure"
+    );
+}
+
+#[test]
+fn evidence_promotion_honesty_rejects_clean_report_for_clean_guard_case() -> Result<(), String> {
+    let root = temp_dir("evidence-promotion-honesty-clean-guard");
+    let corpus = root.join("corpus.json");
+    let py_fixture = root.join("fixtures/py");
+    let ts_fixture = root.join("fixtures/ts");
+    let rust_clean_fixture = root.join("fixtures/rust-clean");
+    let rust_control_fixture = root.join("fixtures/rust-control");
+    let ts_control_fixture = root.join("fixtures/ts-control");
+
+    for (fixture, summary_findings, findings) in [
+        (
+            &py_fixture,
+            1,
+            serde_json::json!([{"id":"py","classification":"weakly_exposed"}]),
+        ),
+        (
+            &ts_fixture,
+            1,
+            serde_json::json!([{"id":"ts","classification":"weakly_exposed"}]),
+        ),
+        (&rust_clean_fixture, 0, serde_json::json!([])),
+        (
+            &rust_control_fixture,
+            1,
+            serde_json::json!([{"id":"rust-control","classification":"exposed"}]),
+        ),
+        (
+            &ts_control_fixture,
+            1,
+            serde_json::json!([{"id":"ts-control","classification":"exposed"}]),
+        ),
+    ] {
+        let check_json = serde_json::json!({
+            "summary": {"findings": summary_findings},
+            "findings": findings
+        });
+        write(
+            &fixture.join("expected/check.json"),
+            &serde_json::to_string_pretty(&check_json).map_err(|err| err.to_string())?,
+        );
+    }
+
+    let corpus_json = serde_json::json!({
+        "cases": [
+            {
+                "id": "py_non_promoted",
+                "language": "python",
+                "tier": "pure",
+                "source_fixture": py_fixture,
+                "must_remain_non_promoted": true
+            },
+            {
+                "id": "ts_non_promoted",
+                "language": "typescript",
+                "tier": "pure",
+                "source_fixture": ts_fixture,
+                "must_remain_non_promoted": true
+            },
+            {
+                "id": "rust_clean_guard",
+                "language": "rust",
+                "tier": "pure",
+                "source_fixture": rust_clean_fixture,
+                "must_not_report_clean": true,
+                "must_remain_non_promoted": true,
+                "expected_max_class": "no_static_path"
+            },
+            {
+                "id": "rust_control",
+                "language": "rust",
+                "tier": "pure",
+                "source_fixture": rust_control_fixture,
+                "expected_promoted": true
+            },
+            {
+                "id": "ts_control",
+                "language": "typescript",
+                "tier": "pure",
+                "source_fixture": ts_control_fixture,
+                "expected_promoted": true
+            }
+        ]
+    });
+    write(
+        &corpus,
+        &serde_json::to_string_pretty(&corpus_json).map_err(|err| err.to_string())?,
+    );
+
+    let mut violations = Vec::new();
+    super::validate_evidence_promotion_honesty_corpus_at(&corpus, &mut violations)?;
+
+    assert!(
+        violations.iter().any(|violation| {
+            violation.contains("rust_clean_guard")
+                && violation.contains("must_not_report_clean")
+                && violation.contains("summary.findings=0")
+        }),
+        "expected clean-guard violation, got {violations:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn evidence_promotion_honesty_rejects_missing_scope_for_scope_guard_case() -> Result<(), String> {
+    let root = temp_dir("evidence-promotion-honesty-scope-guard");
+    let corpus = root.join("corpus.json");
+    let py_fixture = root.join("fixtures/py");
+    let ts_fixture = root.join("fixtures/ts");
+    let rust_scope_fixture = root.join("fixtures/rust-scope");
+    let rust_control_fixture = root.join("fixtures/rust-control");
+    let ts_control_fixture = root.join("fixtures/ts-control");
+
+    for (fixture, classification) in [
+        (&py_fixture, "weakly_exposed"),
+        (&ts_fixture, "weakly_exposed"),
+        (&rust_scope_fixture, "no_static_path"),
+        (&rust_control_fixture, "exposed"),
+        (&ts_control_fixture, "exposed"),
+    ] {
+        let check_json = serde_json::json!({
+            "summary": {"findings": 1},
+            "findings": [{"id": classification, "classification": classification}]
+        });
+        write(
+            &fixture.join("expected/check.json"),
+            &serde_json::to_string_pretty(&check_json).map_err(|err| err.to_string())?,
+        );
+    }
+
+    let corpus_json = serde_json::json!({
+        "cases": [
+            {
+                "id": "py_non_promoted",
+                "language": "python",
+                "tier": "pure",
+                "source_fixture": py_fixture,
+                "must_remain_non_promoted": true
+            },
+            {
+                "id": "ts_non_promoted",
+                "language": "typescript",
+                "tier": "pure",
+                "source_fixture": ts_fixture,
+                "must_remain_non_promoted": true
+            },
+            {
+                "id": "rust_scope_guard",
+                "language": "rust",
+                "tier": "pure",
+                "source_fixture": rust_scope_fixture,
+                "must_disclose_scope": true,
+                "must_remain_non_promoted": true,
+                "expected_max_class": "no_static_path"
+            },
+            {
+                "id": "rust_control",
+                "language": "rust",
+                "tier": "pure",
+                "source_fixture": rust_control_fixture,
+                "expected_promoted": true
+            },
+            {
+                "id": "ts_control",
+                "language": "typescript",
+                "tier": "pure",
+                "source_fixture": ts_control_fixture,
+                "expected_promoted": true
+            }
+        ]
+    });
+    write(
+        &corpus,
+        &serde_json::to_string_pretty(&corpus_json).map_err(|err| err.to_string())?,
+    );
+
+    let mut violations = Vec::new();
+    super::validate_evidence_promotion_honesty_corpus_at(&corpus, &mut violations)?;
+    let report = violations.join("\n");
+
+    assert!(
+        report.contains("rust_scope_guard") && report.contains("must_disclose_scope"),
+        "expected scope-guard violation, got {violations:?}"
+    );
+    assert!(report.contains("schema_version"));
+    assert!(report.contains("mode"));
+    assert!(report.contains("root"));
+    assert!(report.contains("base"));
+    Ok(())
+}
+
+#[test]
+fn evidence_promotion_honesty_rejects_packet_ready_limitation_case() -> Result<(), String> {
+    let root = temp_dir("evidence-promotion-honesty-no-packet-guard");
+    let corpus = root.join("corpus.json");
+    let py_fixture = root.join("fixtures/py");
+    let ts_fixture = root.join("fixtures/ts");
+    let rust_packet_fixture = root.join("fixtures/rust-packet");
+    let rust_control_fixture = root.join("fixtures/rust-control");
+    let ts_control_fixture = root.join("fixtures/ts-control");
+
+    for (fixture, findings) in [
+        (
+            &py_fixture,
+            serde_json::json!([{"id":"py","classification":"weakly_exposed"}]),
+        ),
+        (
+            &ts_fixture,
+            serde_json::json!([{"id":"ts","classification":"weakly_exposed"}]),
+        ),
+        (
+            &rust_packet_fixture,
+            serde_json::json!([{
+                "id": "rust-packet",
+                "classification": "no_static_path",
+                "preview_actionability": {
+                    "repair_packet_ready": true
+                }
+            }]),
+        ),
+        (
+            &rust_control_fixture,
+            serde_json::json!([{"id":"rust-control","classification":"exposed"}]),
+        ),
+        (
+            &ts_control_fixture,
+            serde_json::json!([{"id":"ts-control","classification":"exposed"}]),
+        ),
+    ] {
+        let check_json = serde_json::json!({
+            "summary": {"findings": 1},
+            "findings": findings
+        });
+        write(
+            &fixture.join("expected/check.json"),
+            &serde_json::to_string_pretty(&check_json).map_err(|err| err.to_string())?,
+        );
+    }
+
+    let corpus_json = serde_json::json!({
+        "cases": [
+            {
+                "id": "py_non_promoted",
+                "language": "python",
+                "tier": "pure",
+                "source_fixture": py_fixture,
+                "must_remain_non_promoted": true
+            },
+            {
+                "id": "ts_non_promoted",
+                "language": "typescript",
+                "tier": "pure",
+                "source_fixture": ts_fixture,
+                "must_remain_non_promoted": true
+            },
+            {
+                "id": "rust_packet_guard",
+                "language": "rust",
+                "tier": "pure",
+                "source_fixture": rust_packet_fixture,
+                "must_not_emit_repair_packet": true,
+                "must_remain_non_promoted": true,
+                "expected_max_class": "no_static_path"
+            },
+            {
+                "id": "rust_control",
+                "language": "rust",
+                "tier": "pure",
+                "source_fixture": rust_control_fixture,
+                "expected_promoted": true
+            },
+            {
+                "id": "ts_control",
+                "language": "typescript",
+                "tier": "pure",
+                "source_fixture": ts_control_fixture,
+                "expected_promoted": true
+            }
+        ]
+    });
+    write(
+        &corpus,
+        &serde_json::to_string_pretty(&corpus_json).map_err(|err| err.to_string())?,
+    );
+
+    let mut violations = Vec::new();
+    super::validate_evidence_promotion_honesty_corpus_at(&corpus, &mut violations)?;
+    let report = violations.join("\n");
+
+    assert!(
+        report.contains("rust_packet_guard")
+            && report.contains("must_not_emit_repair_packet")
+            && report.contains("findings[0].preview_actionability.repair_packet_ready"),
+        "expected packet-ready guard violation, got {violations:?}"
+    );
+    Ok(())
+}
+
+// RIPR-SPEC-0108 (#1729): prove the honesty gate actually ENFORCES the Perl
+// advisory corpus entry rather than letting it sit inert. The real charter
+// case `perl_preview_card_advisory_no_repair_packet` is a tier-`pure`,
+// `source_report` case whose typed assertions include `must_not_promote`
+// and `expected_class: weakly_exposed`; corpus iteration is language-
+// agnostic, so those assertions are evaluated on every default
+// `check-evidence-promotion-honesty` run. This pins that enforcement in
+// both directions: an honest advisory Perl report stays clean, and a
+// dishonest re-bless of the advisory finding to `exposed` is caught.
+#[test]
+fn evidence_promotion_honesty_catches_dishonest_perl_advisory_rebless() -> Result<(), String> {
+    let root = temp_dir("evidence-promotion-honesty-perl-advisory");
+    let corpus = root.join("corpus.json");
+    let py_fixture = root.join("fixtures/py");
+    let ts_fixture = root.join("fixtures/ts");
+    let rust_fixture = root.join("fixtures/rust");
+    let rust_control_fixture = root.join("fixtures/rust-control");
+    let ts_control_fixture = root.join("fixtures/ts-control");
+    let perl_report = root.join("reports/perl-preview-advisory.json");
+
+    // Honest {python, typescript, rust} non-promoted + rust/ts control
+    // cases so the corpus satisfies the language-parity requirements and
+    // only the Perl case can move the needle.
+    for (fixture, classification) in [
+        (&py_fixture, "weakly_exposed"),
+        (&ts_fixture, "weakly_exposed"),
+        (&rust_fixture, "weakly_exposed"),
+        (&rust_control_fixture, "exposed"),
+        (&ts_control_fixture, "exposed"),
+    ] {
+        write_evidence_promotion_check(fixture, classification)?;
+    }
+
+    // Mirror the real Perl charter case shape: a byte-pinned advisory-only
+    // `source_report` with a single `weakly_exposed` finding.
+    let perl_report_json = |classification: &str| {
+        serde_json::json!({
+            "schema_version": "0.2",
+            "tool": "ripr",
+            "mode": "draft",
+            "root": ".",
+            "base": "origin/main",
+            "summary": {"changed_perl_files": 1, "probes": 1, "findings": 1},
+            "findings": [{
+                "id": "perl:preview:discount-threshold",
+                "language": "perl",
+                "classification": classification,
+                "perl_preview_card": {
+                    "language_status": "preview",
+                    "authority_boundary": "preview_advisory_only",
+                    "repair_packet_ready": false
+                }
+            }]
+        })
+    };
+
+    let corpus_json = serde_json::json!({
+        "cases": [
+            {
+                "id": "py_non_promoted",
+                "language": "python",
+                "tier": "pure",
+                "source_fixture": py_fixture,
+                "must_remain_non_promoted": true
+            },
+            {
+                "id": "ts_non_promoted",
+                "language": "typescript",
+                "tier": "pure",
+                "source_fixture": ts_fixture,
+                "must_remain_non_promoted": true
+            },
+            {
+                "id": "rust_non_promoted",
+                "language": "rust",
+                "tier": "pure",
+                "source_fixture": rust_fixture,
+                "must_remain_non_promoted": true
+            },
+            {
+                "id": "rust_control",
+                "language": "rust",
+                "tier": "pure",
+                "source_fixture": rust_control_fixture,
+                "expected_promoted": true
+            },
+            {
+                "id": "ts_control",
+                "language": "typescript",
+                "tier": "pure",
+                "source_fixture": ts_control_fixture,
+                "expected_promoted": true
+            },
+            {
+                "id": "perl_advisory_dishonest_rebless",
+                "language": "perl",
+                "tier": "pure",
+                "source_report": perl_report,
+                "assertions": [
+                    {"type": "must_not_report_clean"},
+                    {"type": "must_not_promote"},
+                    {"type": "expected_class", "class": "weakly_exposed"}
+                ]
+            }
+        ]
+    });
+    write(
+        &corpus,
+        &serde_json::to_string_pretty(&corpus_json).map_err(|err| err.to_string())?,
+    );
+
+    // Green witness: an honest advisory Perl report yields no violation, so
+    // the caught case below is a real regression signal, not always-on.
+    write(
+        &perl_report,
+        &serde_json::to_string_pretty(&perl_report_json("weakly_exposed"))
+            .map_err(|err| err.to_string())?,
+    );
+    let mut honest_violations = Vec::new();
+    super::validate_evidence_promotion_honesty_corpus_at(&corpus, &mut honest_violations)?;
+    assert!(
+        honest_violations.is_empty(),
+        "honest Perl advisory corpus must be clean, got {honest_violations:?}"
+    );
+
+    // Caught: a dishonest re-bless of the Perl advisory finding to `exposed`
+    // trips the `must_not_promote` assertion the corpus entry carries.
+    write(
+        &perl_report,
+        &serde_json::to_string_pretty(&perl_report_json("exposed"))
+            .map_err(|err| err.to_string())?,
+    );
+    let mut dishonest_violations = Vec::new();
+    super::validate_evidence_promotion_honesty_corpus_at(&corpus, &mut dishonest_violations)?;
+    assert!(
+        dishonest_violations.iter().any(|violation| {
+            violation.contains("perl_advisory_dishonest_rebless")
+                && violation.contains("must_not_promote")
+                && violation.contains("promoted to exposed")
+        }),
+        "expected the dishonest Perl advisory re-bless to be caught, got {dishonest_violations:?}"
+    );
+    Ok(())
+}
+
+// Guard the *live* corpus (#1729): the mechanism test above proves the gate
+// catches a dishonest re-bless of a Perl advisory case, but only against a
+// synthetic corpus. This pins the other failure mode #1729 raised — the
+// real `perl_preview_card_advisory_no_repair_packet` charter case being
+// silently demoted or removed so the gate stops consuming it. It must stay
+// in the enforced path: tier `pure` (not clone/flag-gated), a byte-pinned
+// `source_report`, and the `must_not_promote` + `expected_class:
+// weakly_exposed` assertions. Complements CI's live gate run.
+#[test]
+fn perl_advisory_charter_case_stays_enforced_in_live_corpus() -> Result<(), String> {
+    let corpus_path = super::repo_rooted_fixture_path(super::EVIDENCE_PROMOTION_HONESTY_CORPUS);
+    let text = fs::read_to_string(&corpus_path)
+        .map_err(|err| format!("read live honesty corpus: {err}"))?;
+    let corpus: Value =
+        serde_json::from_str(&text).map_err(|err| format!("parse live honesty corpus: {err}"))?;
+    let cases = corpus
+        .get("cases")
+        .and_then(Value::as_array)
+        .ok_or("live honesty corpus has no `cases` array")?;
+    let perl_case = cases
+        .iter()
+        .find(|case| {
+            case.get("id").and_then(Value::as_str)
+                == Some("perl_preview_card_advisory_no_repair_packet")
+        })
+        .ok_or(
+            "live honesty corpus dropped the Perl advisory charter case \
+                 `perl_preview_card_advisory_no_repair_packet` — the gate would stop enforcing it",
+        )?;
+
+    assert_eq!(
+        perl_case.get("tier").and_then(Value::as_str),
+        Some("pure"),
+        "Perl charter case must stay tier `pure` so it runs on the default gate (not clone/flag-gated)"
+    );
+    assert!(
+        perl_case
+            .get("source_report")
+            .and_then(Value::as_str)
+            .is_some_and(|report| !report.trim().is_empty()),
+        "Perl charter case must keep a byte-pinned `source_report`"
+    );
+    let assertions = perl_case
+        .get("assertions")
+        .and_then(Value::as_array)
+        .ok_or("Perl charter case lost its typed `assertions` array")?;
+    assert!(
+        assertions.iter().any(|assertion| {
+            assertion.get("type").and_then(Value::as_str) == Some("must_not_promote")
+        }),
+        "Perl charter case must keep the `must_not_promote` assertion (cardinal-sin-seam invariant)"
+    );
+    assert!(
+        assertions.iter().any(|assertion| {
+            assertion.get("type").and_then(Value::as_str) == Some("expected_class")
+                && assertion.get("class").and_then(Value::as_str) == Some("weakly_exposed")
+        }),
+        "Perl charter case must keep `expected_class: weakly_exposed`"
+    );
+    Ok(())
+}
+
+#[test]
+fn evidence_promotion_honesty_pass_report_names_clean_guard() -> Result<(), String> {
+    with_temp_cwd("evidence-promotion-honesty-clean-guard-report", |root| {
+        let corpus = root.join(super::EVIDENCE_PROMOTION_HONESTY_CORPUS);
+        let py_fixture = root.join("fixtures/py");
+        let ts_fixture = root.join("fixtures/ts");
+        let rust_guard_fixture = root.join("fixtures/rust-guard");
+        let rust_control_fixture = root.join("fixtures/rust-control");
+        let ts_control_fixture = root.join("fixtures/ts-control");
+
+        for (fixture, classification) in [
+            (&py_fixture, "weakly_exposed"),
+            (&ts_fixture, "weakly_exposed"),
+            (&rust_guard_fixture, "no_static_path"),
+            (&rust_control_fixture, "exposed"),
+            (&ts_control_fixture, "exposed"),
+        ] {
+            let check_json = serde_json::json!({
+                "summary": {"findings": 1},
+                "findings": [{"id": classification, "classification": classification}]
+            });
+            write(
+                &fixture.join("expected/check.json"),
+                &serde_json::to_string_pretty(&check_json).map_err(|err| err.to_string())?,
+            );
+        }
+
+        let corpus_json = serde_json::json!({
+            "cases": [
+                {
+                    "id": "py_non_promoted",
+                    "language": "python",
+                    "tier": "pure",
+                    "source_fixture": py_fixture,
+                    "must_remain_non_promoted": true
+                },
+                {
+                    "id": "ts_non_promoted",
+                    "language": "typescript",
+                    "tier": "pure",
+                    "source_fixture": ts_fixture,
+                    "must_remain_non_promoted": true
+                },
+                {
+                    "id": "rust_clean_guard",
+                    "language": "rust",
+                    "tier": "pure",
+                    "source_fixture": rust_guard_fixture,
+                    "must_not_report_clean": true,
+                    "must_remain_non_promoted": true,
+                    "expected_max_class": "no_static_path"
+                },
+                {
+                    "id": "rust_control",
+                    "language": "rust",
+                    "tier": "pure",
+                    "source_fixture": rust_control_fixture,
+                    "expected_promoted": true
+                },
+                {
+                    "id": "ts_control",
+                    "language": "typescript",
+                    "tier": "pure",
+                    "source_fixture": ts_control_fixture,
+                    "expected_promoted": true
+                }
+            ]
+        });
+        write(
+            &corpus,
+            &serde_json::to_string_pretty(&corpus_json).map_err(|err| err.to_string())?,
+        );
+
+        super::check_evidence_promotion_honesty(&[])?;
+        let report =
+            fs::read_to_string(root.join("target/ripr/reports/evidence-promotion-honesty.md"))
+                .map_err(|err| format!("read check-evidence-promotion-honesty report: {err}"))?;
+
+        assert!(
+            report.contains("no clean-guard case lost its findings"),
+            "pass report should name the clean-guard invariant, got {report}"
+        );
+        assert!(
+            report.contains("scope-guard cases kept report scope headers"),
+            "pass report should name the scope-guard invariant, got {report}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn editor_gap_cockpit_fixture_corpus_validator_accepts_complete_matrix() -> Result<(), String> {
+    with_temp_cwd("editor-gap-cockpit-fixtures", |root| {
+        write_editor_gap_cockpit_corpus(root, true);
+
+        let mut violations = Vec::new();
+        super::validate_editor_gap_cockpit_fixture_corpus(&mut violations)?;
+        assert_eq!(violations, Vec::<String>::new());
+
+        let fixture_dirs = super::lsp_cockpit_fixture_dirs()?;
+        let fixture_names = fixture_dirs
+            .iter()
+            .map(|(fixture, _)| fixture.as_str())
+            .collect::<BTreeSet<_>>();
+        assert!(fixture_names.contains("editor_gap_cockpit/rust_actionable"));
+        assert!(fixture_names.contains("editor_gap_cockpit/typescript_preview_static_limit"));
+        assert!(fixture_names.contains("editor_gap_cockpit/python_preview_static_limit"));
+        assert!(fixture_names.contains("editor_gap_cockpit/disabled_language"));
+        assert!(fixture_names.contains("editor_gap_cockpit/wrong_root"));
+        assert!(fixture_names.contains("editor_gap_cockpit/stale_artifact"));
+        assert!(fixture_names.contains("editor_gap_cockpit/no_actionable_gap"));
+        let (preview_name, preview_path) = fixture_dirs
+            .iter()
+            .find(|(fixture, _)| {
+                fixture.as_str() == "editor_gap_cockpit/typescript_preview_static_limit"
+            })
+            .ok_or_else(|| "typescript preview fixture must exist".to_string())?;
+        let preview =
+            super::lsp_cockpit_fixture_report(preview_name, preview_path).and_then(|report| {
+                report.ok_or_else(|| "typescript preview fixture report must exist".to_string())
+            })?;
+        assert_eq!(preview.diagnostic_count, 1);
+        assert!(preview.context.refresh_available);
+        Ok(())
+    })
+}
+
+#[test]
+fn editor_gap_cockpit_fixture_corpus_validator_reports_missing_and_misordered_cases()
+-> Result<(), String> {
+    with_temp_cwd("editor-gap-cockpit-violations", |root| {
+        let mut violations = Vec::new();
+        super::validate_editor_gap_cockpit_fixture_corpus(&mut violations)?;
+        assert!(violations.iter().any(|violation| {
+            violation.contains("editor gap cockpit fixture corpus is missing")
+        }));
+
+        write_editor_gap_cockpit_corpus(root, false);
+        let mut violations = Vec::new();
+        super::validate_editor_gap_cockpit_fixture_corpus(&mut violations)?;
+        assert!(violations.iter().any(|violation| {
+                violation.contains(
+                    "editor gap cockpit case typescript_preview_static_limit hover must show static limits before action language",
+                )
+            }));
+        Ok(())
+    })
+}
+
+#[test]
+fn editor_first_run_usability_fixture_corpus_validator_accepts_complete_matrix()
+-> Result<(), String> {
+    with_temp_cwd("editor-first-run-usability-fixtures", |root| {
+        write_editor_first_run_usability_corpus(root);
+
+        let mut violations = Vec::new();
+        super::validate_editor_first_run_usability_fixture_corpus(&mut violations)?;
+        assert_eq!(violations, Vec::<String>::new());
+        Ok(())
+    })
+}
+
+#[test]
+fn editor_first_run_usability_fixture_corpus_validator_reports_unsafe_states() -> Result<(), String>
+{
+    with_temp_cwd("editor-first-run-usability-violations", |root| {
+        let mut violations = Vec::new();
+        super::validate_editor_first_run_usability_fixture_corpus(&mut violations)?;
+        assert!(violations.iter().any(|violation| {
+            violation.contains("editor first-run usability fixture corpus is missing")
+        }));
+
+        write_editor_first_run_usability_corpus(root);
+        write_editor_first_run_status(root, "server_missing", "active", None);
+        write_editor_first_run_actions(root, "setup_ok", &[]);
+        write_editor_first_run_actions(root, "receipt_found", &[]);
+        write_editor_first_run_actions(root, "artifact_missing", &["Copy first repair packet"]);
+        write(
+            &root.join(
+                "fixtures/editor_first_run_usability/artifact_stale/expected/receipt-status.json",
+            ),
+            &serde_json::json!({
+                "schema_version": "0.1",
+                "receipt_state": "receipt_missing",
+                "runtime_adequacy_claim": true,
+                "gate_eligibility_claim": true
+            })
+            .to_string(),
+        );
+
+        let mut violations = Vec::new();
+        super::validate_editor_first_run_usability_fixture_corpus(&mut violations)?;
+        assert!(violations.iter().any(|violation| {
+            violation.contains("editor first-run usability case server_missing must fail closed")
+        }));
+        assert!(violations.iter().any(|violation| {
+            violation.contains(
+                "editor first-run usability case setup_ok must include Copy first repair packet",
+            )
+        }));
+        assert!(violations.iter().any(|violation| {
+                violation.contains(
+                    "editor first-run usability case receipt_found must include Copy first repair packet",
+                )
+            }));
+        assert!(violations.iter().any(|violation| {
+                violation.contains(
+                    "editor first-run usability case artifact_missing must not expose first repair packet",
+                )
+            }));
+        assert!(violations.iter().any(|violation| {
+            violation
+                .contains("editor first-run usability artifact_stale must record receipt_stale")
+        }));
+        assert!(violations.iter().any(|violation| {
+                violation.contains(
+                    "editor first-run usability case artifact_stale receipt-status must deny runtime_adequacy_claim",
+                )
+            }));
+        assert!(violations.iter().any(|violation| {
+                violation.contains(
+                    "editor first-run usability case artifact_stale receipt-status must deny gate_eligibility_claim",
+                )
+            }));
+        Ok(())
+    })
+}
+
+#[test]
+fn editor_adoption_assurance_fixture_corpus_validator_accepts_complete_matrix() -> Result<(), String>
+{
+    with_temp_cwd("editor-adoption-assurance-fixtures", |root| {
+        write_editor_adoption_assurance_corpus(root);
+
+        let mut violations = Vec::new();
+        super::validate_editor_adoption_assurance_fixture_corpus(&mut violations)?;
+        assert_eq!(violations, Vec::<String>::new());
+
+        let fixture_dirs = super::lsp_cockpit_fixture_dirs()?;
+        let fixture_names = fixture_dirs
+            .iter()
+            .map(|(fixture, _)| fixture.as_str())
+            .collect::<BTreeSet<_>>();
+        assert!(fixture_names.contains("editor_adoption_assurance/first_pr_packet_ready"));
+        assert!(fixture_names.contains("editor_adoption_assurance/server_version_mismatch"));
+
+        let (ready_name, ready_path) = fixture_dirs
+            .iter()
+            .find(|(fixture, _)| {
+                fixture.as_str() == "editor_adoption_assurance/first_pr_packet_ready"
+            })
+            .ok_or_else(|| "first-pr ready fixture must exist".to_string())?;
+        let ready =
+            super::lsp_cockpit_fixture_report(ready_name, ready_path).and_then(|report| {
+                report.ok_or_else(|| "first-pr ready report must exist".to_string())
+            })?;
+        assert_eq!(ready.diagnostic_count, 1);
+        assert!(
+            ready
+                .action_commands
+                .contains(&"ripr.copyFirstPrRepairPacket".to_string())
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn editor_adoption_assurance_fixture_corpus_validator_reports_unsafe_states() -> Result<(), String>
+{
+    with_temp_cwd("editor-adoption-assurance-violations", |root| {
+        let mut violations = Vec::new();
+        super::validate_editor_adoption_assurance_fixture_corpus(&mut violations)?;
+        assert!(violations.iter().any(|violation| {
+            violation.contains("editor adoption assurance fixture corpus is missing")
+        }));
+
+        write_editor_adoption_assurance_corpus(root);
+        write_editor_adoption_status(root, "server_missing", "server_missing", "active");
+        write_editor_adoption_actions(
+            root,
+            "first_pr_packet_mismatch",
+            &[
+                "First PR: open packet",
+                "Refresh Analysis - Saved Workspace Check",
+            ],
+        );
+        write_editor_adoption_actions(
+            root,
+            "first_pr_packet_ready",
+            &[
+                "First PR: open packet",
+                "Refresh Analysis - Saved Workspace Check",
+            ],
+        );
+        write_editor_adoption_first_pr(root, "first_pr_packet_ready", "missing");
+        write_editor_adoption_receipt(root, "stale_receipt", "receipt_missing", true, true);
+
+        let mut violations = Vec::new();
+        super::validate_editor_adoption_assurance_fixture_corpus(&mut violations)?;
+        assert!(violations.iter().any(|violation| {
+            violation.contains("editor adoption assurance case server_missing must fail closed")
+        }));
+        assert!(violations.iter().any(|violation| {
+                violation.contains(
+                    "editor adoption assurance case first_pr_packet_mismatch must suppress repair/proof actions",
+                )
+            }));
+        assert!(violations.iter().any(|violation| {
+                violation.contains(
+                    "editor adoption assurance case first_pr_packet_ready must include ripr.copyFirstPrRepairPacket",
+                )
+            }));
+        assert!(violations.iter().any(|violation| {
+                violation.contains(
+                    "editor adoption assurance case first_pr_packet_ready first-pr-status packet_state must be top_repairable_gap",
+                )
+            }));
+        assert!(violations.iter().any(|violation| {
+                violation.contains(
+                    "editor adoption assurance case stale_receipt receipt-status receipt_state must be receipt_stale",
+                )
+            }));
+        assert!(violations.iter().any(|violation| {
+                violation.contains(
+                    "editor adoption assurance case stale_receipt receipt-status must deny runtime_adequacy_claim",
+                )
+            }));
+        Ok(())
+    })
+}
+
+fn write_editor_adoption_assurance_corpus(root: &Path) {
+    let corpus = root.join("fixtures/editor_adoption_assurance");
+    write(
+        &corpus.join("SPEC.md"),
+        "# Fixture Corpus: editor_adoption_assurance\n\nSpec: RIPR-SPEC-0054\n\n## Given\n\nSetup artifacts exist.\n\n## When\n\nThe adoption assurance contract is checked.\n\n## Then\n\nVisible states are pinned.\n\n## Must Not\n\n- Claim source edits.\n",
+    );
+    for case in super::EDITOR_ADOPTION_ASSURANCE_CASES {
+        write_editor_adoption_status(
+            root,
+            case,
+            editor_adoption_status(case),
+            editor_adoption_projection(case),
+        );
+        write_editor_adoption_actions(root, case, &editor_adoption_actions(case));
+        write_editor_adoption_first_pr(root, case, editor_adoption_first_pr_state(case));
+        write_editor_adoption_receipt(
+            root,
+            case,
+            editor_adoption_receipt_state(case),
+            false,
+            false,
+        );
+        write_editor_adoption_diagnostics(root, case, *case == "first_pr_packet_ready");
+        write(
+            &root.join(format!(
+                "fixtures/editor_adoption_assurance/{case}/expected/setup-diagnosis.md"
+            )),
+            "# RIPR setup diagnosis\n\nCompatibility: compatible.\n\nWorkspace: selected.\n\nFirst PR packet: projected.\n\nReceipt: projected.\n\nNext safe action: refresh or inspect.\n\nLimits: no source edits; not a gate decision; not runtime proof.\n",
+        );
+    }
+}
+
+fn editor_adoption_status(case: &str) -> &'static str {
+    match case {
+        "setup_ok" => "setup_ok",
+        "server_missing" => "server_missing",
+        "server_version_mismatch" => "server_version_mismatch",
+        "no_workspace" => "no_workspace",
+        "multi_root" => "multi_root_ambiguous",
+        "wrong_root_artifact" => "wrong_root_artifact",
+        "stale_receipt" => "receipt_stale",
+        "first_pr_packet_ready" => "first_pr_packet_ready",
+        "first_pr_packet_mismatch" => "first_pr_packet_mismatch",
+        "preview_adapter_unavailable" => "preview_adapter_unavailable",
+        _ => "unknown",
+    }
+}
+
+fn editor_adoption_projection(case: &str) -> &'static str {
+    if super::editor_adoption_assurance_case_fails_closed(case) {
+        "fail_closed"
+    } else {
+        "active"
+    }
+}
+
+fn editor_adoption_actions(case: &str) -> Vec<&'static str> {
+    if case == "first_pr_packet_ready" {
+        vec![
+            "First PR: open packet",
+            "First PR: copy repair packet",
+            "First PR: copy verify command",
+            "First PR: copy receipt command",
+            "Refresh Analysis - Saved Workspace Check",
+        ]
+    } else {
+        vec!["Refresh Analysis - Saved Workspace Check"]
+    }
+}
+
+fn editor_adoption_first_pr_state(case: &str) -> &'static str {
+    match case {
+        "setup_ok" => "missing",
+        "wrong_root_artifact" => "wrong_root",
+        "first_pr_packet_ready" => "top_repairable_gap",
+        "first_pr_packet_mismatch" => "gap_mismatch",
+        _ => "not_projected",
+    }
+}
+
+fn editor_adoption_receipt_state(case: &str) -> &'static str {
+    match case {
+        "setup_ok" | "first_pr_packet_ready" => "receipt_missing",
+        "wrong_root_artifact" => "receipt_wrong_root",
+        "stale_receipt" => "receipt_stale",
+        "first_pr_packet_mismatch" => "receipt_gap_mismatch",
+        _ => RECEIPT_NOT_APPLICABLE,
+    }
+}
+
+fn write_editor_adoption_status(root: &Path, case: &str, status: &str, projection: &str) {
+    write(
+        &root.join(format!(
+            "fixtures/editor_adoption_assurance/{case}/expected/vscode-status.json"
+        )),
+        &serde_json::json!({
+            "schema_version": "0.1",
+            "fixture": format!("editor_adoption_assurance/{case}"),
+            "status": status,
+            "projection": projection,
+            "next_safe_action": "refresh or inspect"
+        })
+        .to_string(),
+    );
+}
+
+fn write_editor_adoption_actions(root: &Path, case: &str, titles: &[&str]) {
+    let actions = titles
+        .iter()
+        .map(|title| {
+            serde_json::json!({
+                "title": title,
+                "command": match *title {
+                    "First PR: open packet" => "ripr.openFirstPrPacket",
+                    "First PR: copy repair packet" => "ripr.copyFirstPrRepairPacket",
+                    "First PR: copy verify command" => "ripr.copyFirstPrVerifyCommand",
+                    "First PR: copy receipt command" => "ripr.copyFirstPrReceiptCommand",
+                    _ => "ripr.refresh",
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+    write(
+        &root.join(format!(
+            "fixtures/editor_adoption_assurance/{case}/expected/lsp-code-actions.json"
+        )),
+        &serde_json::json!({
+            "schema_version": "0.1",
+            "fixture": format!("editor_adoption_assurance/{case}"),
+            "actions": actions
+        })
+        .to_string(),
+    );
+}
+
+fn write_editor_adoption_first_pr(root: &Path, case: &str, packet_state: &str) {
+    write(
+        &root.join(format!(
+            "fixtures/editor_adoption_assurance/{case}/expected/first-pr-status.json"
+        )),
+        &serde_json::json!({
+            "schema_version": "0.1",
+            "fixture": format!("editor_adoption_assurance/{case}"),
+            "packet_state": packet_state,
+            "runtime_adequacy_claim": false,
+            "mutation_proof_claim": false,
+            "policy_gate_claim": false,
+            "pr_ready_claim": false
+        })
+        .to_string(),
+    );
+}
+
+fn write_editor_adoption_receipt(
+    root: &Path,
+    case: &str,
+    receipt_state: &str,
+    runtime_adequacy_claim: bool,
+    gate_eligibility_claim: bool,
+) {
+    write(
+        &root.join(format!(
+            "fixtures/editor_adoption_assurance/{case}/expected/receipt-status.json"
+        )),
+        &serde_json::json!({
+            "schema_version": "0.1",
+            "fixture": format!("editor_adoption_assurance/{case}"),
+            "receipt_state": receipt_state,
+            "runtime_adequacy_claim": runtime_adequacy_claim,
+            "mutation_proof_claim": false,
+            "gate_eligibility_claim": gate_eligibility_claim,
+            "merge_readiness_claim": false
+        })
+        .to_string(),
+    );
+}
+
+fn write_editor_adoption_diagnostics(root: &Path, case: &str, include_diagnostic: bool) {
+    let diagnostics = if include_diagnostic {
+        vec![serde_json::json!({
+            "source": "ripr",
+            "message": "gap",
+            "data": {
+                "canonical_gap_id": "gap:rust:pricing:discount:threshold-boundary",
+                "language": "rust",
+                "language_status": "stable"
+            }
+        })]
+    } else {
+        Vec::new()
+    };
+    write(
+        &root.join(format!(
+            "fixtures/editor_adoption_assurance/{case}/expected/lsp-diagnostics.json"
+        )),
+        &serde_json::json!({
+            "schema_version": "0.1",
+            "fixture": format!("editor_adoption_assurance/{case}"),
+            "diagnostics": diagnostics
+        })
+        .to_string(),
+    );
+}
+
+fn write_editor_first_run_usability_corpus(root: &Path) {
+    let corpus = root.join("fixtures/editor_first_run_usability");
+    write(
+        &corpus.join("SPEC.md"),
+        "# Fixture Corpus: editor_first_run_usability\n\nSpec: RIPR-SPEC-0049\nSpec: RIPR-SPEC-0050\n\n## Given\n\nEditor setup artifacts exist.\n\n## When\n\nThe first-run usability contract is checked.\n\n## Then\n\nVisible states are pinned.\n\n## Must Not\n\n- Claim source edits.\n",
+    );
+    for case in super::EDITOR_FIRST_RUN_USABILITY_CASES {
+        write_editor_first_run_status(
+            root,
+            case,
+            editor_first_run_projection(case),
+            editor_first_run_next_action(case),
+        );
+        write_editor_first_run_actions(root, case, &editor_first_run_actions(case));
+        write_editor_first_run_receipt(
+            root,
+            case,
+            editor_first_run_receipt_state(case),
+            false,
+            false,
+        );
+        write(
+            &root.join(format!(
+                "fixtures/editor_first_run_usability/{case}/expected/setup-diagnosis.md"
+            )),
+            "# RIPR setup diagnosis\n\nNext safe action: refresh or inspect.\n\nLimits: no source edits.\n",
+        );
+    }
+}
+
+fn editor_first_run_projection(case: &str) -> &'static str {
+    match case {
+        "server_missing"
+        | "language_disabled"
+        | "adapter_unavailable"
+        | "artifact_stale"
+        | "receipt_gap_mismatch" => "fail_closed",
+        _ => "active",
+    }
+}
+
+fn editor_first_run_next_action(case: &str) -> Option<&'static str> {
+    match case {
+        "setup_ok" | "receipt_found" | "receipt_improved" | "receipt_unchanged" => {
+            Some("copy first repair packet")
+        }
+        _ => None,
+    }
+}
+
+fn editor_first_run_actions(case: &str) -> Vec<&'static str> {
+    match case {
+        "setup_ok" | "receipt_found" | "receipt_improved" | "receipt_unchanged" => {
+            vec![
+                "Copy first repair packet",
+                "Refresh Analysis - Saved Workspace Check",
+            ]
+        }
+        _ => vec!["Refresh Analysis - Saved Workspace Check"],
+    }
+}
+
+fn editor_first_run_receipt_state(case: &str) -> &'static str {
+    match case {
+        "receipt_improved" => "receipt_movement_improved",
+        "receipt_unchanged" => "receipt_movement_unchanged",
+        "receipt_found" => "receipt_found",
+        "receipt_gap_mismatch" => "receipt_gap_mismatch",
+        "artifact_stale" => "receipt_stale",
+        _ => "receipt_missing",
+    }
+}
+
+fn write_editor_first_run_status(
+    root: &Path,
+    case: &str,
+    projection: &str,
+    next_safe_action: Option<&str>,
+) {
+    let mut status = serde_json::json!({
+        "schema_version": "0.1",
+        "fixture": format!("editor_first_run_usability/{case}"),
+        "projection": projection
+    });
+    if let Some(next_safe_action) = next_safe_action {
+        status["next_safe_action"] = serde_json::json!(next_safe_action);
+    }
+    write(
+        &root.join(format!(
+            "fixtures/editor_first_run_usability/{case}/expected/vscode-status.json"
+        )),
+        &status.to_string(),
+    );
+}
+
+fn write_editor_first_run_actions(root: &Path, case: &str, titles: &[&str]) {
+    let actions = titles
+            .iter()
+            .map(|title| {
+                serde_json::json!({
+                    "title": title,
+                    "command": if *title == "Copy first repair packet" {
+                        "ripr.copyContext"
+                    } else {
+                        "ripr.refresh"
+                    },
+                    "arguments": if *title == "Copy first repair packet" {
+                        serde_json::json!([{
+                            "packet": "RIPR first repair packet\nGap identity: gap:test\nSuggested action:\n- Add one focused assertion.\nVerify command:\nripr agent verify --root . --json\nReceipt command:\nripr agent receipt --root . --json\nLimits and non-claims:\n- Static editor evidence only."
+                        }])
+                    } else {
+                        serde_json::json!([])
+                    },
+                })
+            })
+            .collect::<Vec<_>>();
+    write(
+        &root.join(format!(
+            "fixtures/editor_first_run_usability/{case}/expected/lsp-code-actions.json"
+        )),
+        &serde_json::json!({
+            "schema_version": "0.1",
+            "actions": actions
+        })
+        .to_string(),
+    );
+}
+
+fn write_editor_first_run_receipt(
+    root: &Path,
+    case: &str,
+    receipt_state: &str,
+    runtime_adequacy_claim: bool,
+    gate_eligibility_claim: bool,
+) {
+    write(
+        &root.join(format!(
+            "fixtures/editor_first_run_usability/{case}/expected/receipt-status.json"
+        )),
+        &serde_json::json!({
+            "schema_version": "0.1",
+            "receipt_state": receipt_state,
+            "runtime_adequacy_claim": runtime_adequacy_claim,
+            "gate_eligibility_claim": gate_eligibility_claim
+        })
+        .to_string(),
+    );
+}
+
+fn write_editor_gap_cockpit_corpus(root: &Path, valid_preview_hover_order: bool) {
+    let corpus = root.join("fixtures/editor_gap_cockpit");
+    write(
+        &corpus.join("SPEC.md"),
+        "# Fixture Corpus: editor_gap_cockpit\n\nSpec: RIPR-SPEC-0047\n\n## Given\n\nArtifacts exist.\n\n## When\n\nThe LSP cockpit report runs.\n\n## Then\n\nCases are pinned.\n\n## Must Not\n\n- Edit source.\n",
+    );
+    for (case, language, language_status, diagnostics, actions, hover) in [
+        (
+            "rust_actionable",
+            "rust",
+            "stable",
+            true,
+            vec![
+                "Inspect gap: copy repair packet",
+                "Write targeted test: open best related test",
+                "Verify after test: copy verify command",
+                "Review result: copy receipt command",
+                "Refresh Analysis - Saved Workspace Check",
+            ],
+            "## Evidence boundary\n\nLanguage: rust\n\n## Gap state\n\nactionable\n\n## Limits\n\nStatic evidence only.\n",
+        ),
+        (
+            "typescript_preview_static_limit",
+            "typescript",
+            "preview",
+            true,
+            vec![
+                "Inspect gap: copy repair packet",
+                "Inspect gap: copy static-limit note",
+                "Refresh Analysis - Saved Workspace Check",
+            ],
+            if valid_preview_hover_order {
+                "## Evidence boundary\n\nStatic limit: mocked_module\n\n## Gap state\n\nactionable\n\nSuggested action: add one assertion.\n\n## Limits\n\nStatic evidence only.\n"
+            } else {
+                "## Evidence boundary\n\nSuggested action: add one assertion.\n\n## Gap state\n\nactionable\n\nStatic limit: mocked_module\n\n## Limits\n\nStatic evidence only.\n"
+            },
+        ),
+        (
+            "python_preview_static_limit",
+            "python",
+            "preview",
+            true,
+            vec![
+                "Inspect gap: copy repair packet",
+                "Inspect gap: copy static-limit note",
+                "Refresh Analysis - Saved Workspace Check",
+            ],
+            "## Evidence boundary\n\nStatic limit: missing_import_graph\n\n## Gap state\n\nactionable\n\nSuggested action: add one assertion.\n\n## Limits\n\nStatic evidence only.\n",
+        ),
+        (
+            "disabled_language",
+            "python",
+            "preview",
+            false,
+            vec!["Refresh Analysis - Saved Workspace Check"],
+            "## Evidence boundary\n\nLanguage disabled.\n\n## Gap state\n\ndisabled\n\n## Limits\n\nStatic evidence only.\n",
+        ),
+        (
+            "wrong_root",
+            "rust",
+            "stable",
+            false,
+            vec!["Refresh Analysis - Saved Workspace Check"],
+            "## Evidence boundary\n\nWrong root.\n\n## Gap state\n\nwrong_root\n\n## Limits\n\nStatic evidence only.\n",
+        ),
+        (
+            "stale_artifact",
+            "rust",
+            "stable",
+            false,
+            vec!["Refresh Analysis - Saved Workspace Check"],
+            "## Evidence boundary\n\nStale.\n\n## Gap state\n\nstale\n\n## Limits\n\nStatic evidence only.\n",
+        ),
+        (
+            "no_actionable_gap",
+            "rust",
+            "stable",
+            false,
+            vec!["Refresh Analysis - Saved Workspace Check"],
+            "## Evidence boundary\n\nNo action.\n\n## Gap state\n\nno action\n\n## Limits\n\nStatic evidence only.\n",
+        ),
+    ] {
+        let expected = corpus.join(case).join("expected");
+        let diagnostic_items = if diagnostics {
+            vec![serde_json::json!({
+                "uri": "src/lib.rs",
+                "message": "gap",
+                "data": {
+                    "canonical_gap_id": format!("gap:{case}"),
+                    "language": language,
+                    "language_status": language_status
+                }
+            })]
+        } else {
+            Vec::new()
+        };
+        let action_items = actions
+            .iter()
+            .map(|title| {
+                serde_json::json!({
+                    "title": title,
+                    "command": if *title == "Refresh Analysis - Saved Workspace Check" {
+                        "ripr.refresh"
+                    } else {
+                        "ripr.copyContext"
+                    },
+                    "arguments": []
+                })
+            })
+            .collect::<Vec<_>>();
+        write(
+            &expected.join("lsp-diagnostics.json"),
+            &serde_json::json!({
+                "fixture": format!("editor_gap_cockpit/{case}"),
+                "diagnostics": diagnostic_items
+            })
+            .to_string(),
+        );
+        write(
+            &expected.join("lsp-code-actions.json"),
+            &serde_json::json!({
+                "fixture": format!("editor_gap_cockpit/{case}"),
+                "actions": action_items
+            })
+            .to_string(),
+        );
+        write(&expected.join("lsp-hover.md"), hover);
+        write(
+            &expected.join("vscode-status.json"),
+            &serde_json::json!({
+                "schema_version": "0.1",
+                "fixture": format!("editor_gap_cockpit/{case}"),
+                "states": []
+            })
+            .to_string(),
+        );
+        write(
+            &expected.join("gap-projection.json"),
+            &serde_json::json!({
+                "schema_version": "0.1",
+                "case": case
+            })
+            .to_string(),
+        );
+    }
+}
+
+fn json_path(path: &Path) -> String {
+    json_escape(&path.display().to_string())
+}
+
+fn write_assistant_loop_health_corpus(
+    base: &Path,
+    report: &Path,
+    markdown: &Path,
+    proof: &Path,
+    expected_status: &str,
+    repair_queue: usize,
+) {
+    write(&base.join("README.md"), "# Assistant Loop Health Corpus\n");
+    write(proof, "{}\n");
+    let expected = format!(
+        r#"{{
+        "status": "{expected_status}",
+        "proofs": 1,
+        "complete": 1,
+        "partial": 0,
+        "missing_required_input": 0,
+        "missing_optional_input": 0,
+        "improved": 1,
+        "unchanged": 0,
+        "regressed": 0,
+        "unknown_movement": 0,
+        "warnings": 0,
+        "repair_queue": {repair_queue}
+      }}"#
+    );
+    let cases = [
+        "complete_improved",
+        "partial_missing_optional",
+        "missing_required_input",
+        "unchanged_after_attempt",
+        "regressed_after_attempt",
+        "warning_heavy",
+        "multi_proof",
+    ]
+    .into_iter()
+    .map(|id| {
+        format!(
+            r#"{{
+      "id": "{id}",
+      "proofs": ["{}"],
+      "expected_report": "{}",
+      "expected_markdown": "{}",
+      "expected": {expected}
+    }}"#,
+            json_path(proof),
+            json_path(report),
+            json_path(markdown)
+        )
+    })
+    .collect::<Vec<_>>()
+    .join(",\n");
+    write(
+        &base.join("corpus.json"),
+        &format!(
+            r#"{{
+  "kind": "assistant_loop_health_corpus",
+  "spec": "RIPR-SPEC-0022",
+  "cases": [
+{cases}
+  ]
+}}
+"#
+        ),
+    );
+}
+
+fn write_pr_review_front_panel_corpus(
+    base: &Path,
+    report: &Path,
+    markdown: &Path,
+    expected_status: &str,
+    blocking_candidates: usize,
+) {
+    write(&base.join("README.md"), "# PR Review Front Panel Corpus\n");
+    let expected = format!(
+        r#"{{
+        "status": "{expected_status}",
+        "top_issue_state": "actionable",
+        "policy_state": "new_policy_eligible",
+        "placement": "changed_line",
+        "movement_state": "unknown",
+        "coverage_grip_state": "not_available",
+        "new_policy_eligible": 1,
+        "baseline_resolved": 0,
+        "blocking_candidates": {blocking_candidates},
+        "warnings": 0
+      }}"#
+    );
+    let cases = [
+        "advisory_only",
+        "actionable",
+        "summary_only",
+        "acknowledged",
+        "suppressed",
+        "baseline_resolved",
+        "blocked",
+        "missing_proof",
+        "coverage_flat_grip_improved",
+        "stale_same_path_receipt_fails_closed",
+    ]
+    .into_iter()
+    .map(|id| {
+        format!(
+            r#"{{
+      "id": "{id}",
+      "expected_report": "{}",
+      "expected_markdown": "{}",
+      "expected": {expected}
+    }}"#,
+            json_path(report),
+            json_path(markdown)
+        )
+    })
+    .collect::<Vec<_>>()
+    .join(",\n");
+    write(
+        &base.join("corpus.json"),
+        &format!(
+            r#"{{
+  "kind": "pr_review_front_panel_corpus",
+  "spec": "RIPR-SPEC-0023",
+  "cases": [
+{cases}
+  ]
+}}
+"#
+        ),
+    );
+}
+
+fn write_report_packet_index_corpus(
+    base: &Path,
+    report: &Path,
+    markdown: &Path,
+    expected_status: &str,
+    missing_expected: usize,
+    failures: usize,
+    gate_authority_present: bool,
+) {
+    write(&base.join("README.md"), "# Report Packet Index Corpus\n");
+    let expected = format!(
+        r#"{{
+        "status": "{expected_status}",
+        "missing_expected": {missing_expected},
+        "failures": {failures},
+        "warnings": 0,
+        "start_here_available": true,
+        "gate_authority_present": {gate_authority_present},
+        "required_groups": ["start_here", "pr_review_story"]
+      }}"#
+    );
+    let cases = [
+        "complete_packet",
+        "sparse_advisory",
+        "missing_front_panel",
+        "blocked_gate",
+        "missing_assistant_proof",
+        "missing_receipts",
+        "coverage_grip_present",
+    ]
+    .into_iter()
+    .map(|id| {
+        format!(
+            r#"{{
+      "id": "{id}",
+      "expected_report": "{}",
+      "expected_markdown": "{}",
+      "expected": {expected}
+    }}"#,
+            json_path(report),
+            json_path(markdown)
+        )
+    })
+    .collect::<Vec<_>>()
+    .join(",\n");
+    write(
+        &base.join("corpus.json"),
+        &format!(
+            r#"{{
+  "kind": "report_packet_index_corpus",
+  "spec": "RIPR-SPEC-0024",
+  "cases": [
+{cases}
+  ]
+}}
+"#
+        ),
+    );
+}
+
+fn write_pr_inline_comment_publisher_corpus(
+    base: &Path,
+    report: &Path,
+    markdown: &Path,
+    expected_mode: &str,
+    publishable: usize,
+    skipped: usize,
+    blocked: usize,
+) {
+    write(
+        &base.join("README.md"),
+        "# PR Inline Comment Publisher Corpus\n",
+    );
+    let expected = format!(
+        r#"{{
+        "status": "advisory",
+        "mode": "{expected_mode}",
+        "publishable": {publishable},
+        "skipped": {skipped},
+        "blocked": {blocked},
+        "safe_to_publish": false,
+        "operations": ["create"],
+        "skip_reasons": [],
+        "blocked_reasons": []
+      }}"#
+    );
+    let cases = [
+        "publishable_changed_line",
+        "summary_only_excluded",
+        "cap_overflow",
+        "dedupe_upsert",
+        "stale_existing",
+        "fork_or_no_token",
+        "missing_input",
+    ]
+    .into_iter()
+    .map(|id| {
+        format!(
+            r#"{{
+      "id": "{id}",
+      "expected_report": "{}",
+      "expected_markdown": "{}",
+      "expected": {expected}
+    }}"#,
+            json_path(report),
+            json_path(markdown)
+        )
+    })
+    .collect::<Vec<_>>()
+    .join(",\n");
+    write(
+        &base.join("corpus.json"),
+        &format!(
+            r#"{{
+  "kind": "pr_inline_comment_publisher_corpus",
+  "spec": "RIPR-SPEC-0025",
+  "cases": [
+{cases}
+  ]
+}}
+"#
+        ),
+    );
+}
+
+fn write_editor_gap_case_expected(
+    root: &Path,
+    case: &str,
+    diagnostics: &str,
+    actions: &str,
+    hover: &str,
+) {
+    let expected = root.join(case).join("expected");
+    write(
+        &expected.join("gap-projection.json"),
+        &format!(
+            r#"{{
+  "schema_version": "0.1",
+  "case": "{case}"
+}}
+"#
+        ),
+    );
+    write(&expected.join("lsp-diagnostics.json"), diagnostics);
+    write(&expected.join("lsp-code-actions.json"), actions);
+    write(&expected.join("lsp-hover.md"), hover);
+    write(
+        &expected.join("vscode-status.json"),
+        r#"{
+  "status": "pass"
+}
+"#,
+    );
+}
+
+#[cfg(unix)]
+fn success_exit_status() -> ExitStatus {
+    use std::os::unix::process::ExitStatusExt;
+    ExitStatusExt::from_raw(0)
+}
+
+#[cfg(windows)]
+fn success_exit_status() -> ExitStatus {
+    use std::os::windows::process::ExitStatusExt;
+    ExitStatusExt::from_raw(0)
+}
+
+#[cfg(unix)]
+fn failure_exit_status() -> ExitStatus {
+    use std::os::unix::process::ExitStatusExt;
+    ExitStatusExt::from_raw(1 << 8)
+}
+
+#[cfg(windows)]
+fn failure_exit_status() -> ExitStatus {
+    use std::os::windows::process::ExitStatusExt;
+    ExitStatusExt::from_raw(1)
+}
+
+#[test]
+fn assistant_loop_health_fixture_corpus_guard_accepts_complete_contract() -> Result<(), String> {
+    let root = temp_dir("assistant-loop-health-valid");
+    let base = root.join("assistant-loop-health");
+    let report = root.join("assistant-loop-health.json");
+    let markdown = root.join("assistant-loop-health.md");
+    let proof = root.join("proof.json");
+    write_assistant_loop_health_corpus(&base, &report, &markdown, &proof, "advisory", 0);
+    write(
+        &report,
+        r#"{
+  "kind": "assistant_loop_health",
+  "status": "advisory",
+  "summary": {
+    "proofs": 1,
+    "complete": 1,
+    "partial": 0,
+    "missing_required_input": 0,
+    "missing_optional_input": 0,
+    "improved": 1,
+    "unchanged": 0,
+    "regressed": 0,
+    "unknown_movement": 0,
+    "warnings": 0,
+    "repair_queue": 0
+  },
+  "repair_queue": [],
+  "limits": ["Static RIPR evidence only."]
+}
+"#,
+    );
+    write(
+        &markdown,
+        "# RIPR Assistant Loop Health\n\nStatus: advisory\n",
+    );
+
+    let mut violations = Vec::new();
+    super::validate_assistant_loop_health_fixture_corpus_at(&base, &mut violations)?;
+
+    assert_eq!(violations, Vec::<String>::new());
+    Ok(())
+}
+
+#[test]
+fn assistant_loop_health_fixture_corpus_guard_reports_contract_drift() -> Result<(), String> {
+    let root = temp_dir("assistant-loop-health-invalid");
+    let base = root.join("assistant-loop-health");
+    let report = root.join("assistant-loop-health.json");
+    let markdown = root.join("assistant-loop-health.md");
+    let proof = root.join("proof.json");
+    write_assistant_loop_health_corpus(&base, &report, &markdown, &proof, "advisory", 1);
+    write(
+        &report,
+        r#"{
+  "kind": "wrong_kind",
+  "status": "blocked",
+  "summary": {
+    "proofs": 1,
+    "complete": 0,
+    "partial": 0,
+    "missing_required_input": 0,
+    "missing_optional_input": 0,
+    "improved": 0,
+    "unchanged": 0,
+    "regressed": 0,
+    "unknown_movement": 0,
+    "warnings": 0,
+    "repair_queue": 1
+  },
+  "proofs": [{"seam": {"static_class": "weakly_gripped"}}],
+  "repair_queue": [{"reason": "missing kind"}],
+  "limits": ["Does not run mutation testing."]
+}
+"#,
+    );
+    write(
+        &markdown,
+        "# RIPR Assistant Loop Health\n\nStatus: blocked\n\nNext repair queue:\n- inspect this\n",
+    );
+
+    let mut violations = Vec::new();
+    super::validate_assistant_loop_health_fixture_corpus_at(&base, &mut violations)?;
+    let report = violations.join("\n");
+
+    assert!(report.contains("report kind must be assistant_loop_health"));
+    assert!(report.contains("expected status advisory"));
+    assert!(report.contains("must use grip_class, not static_class"));
+    assert!(report.contains("expected complete=1, got 0"));
+    assert!(report.contains("repair_queue entries must include repair_kind"));
+    assert!(report.contains("report is missing static evidence limit"));
+    assert!(report.contains("Markdown must pin status advisory"));
+    assert!(report.contains("Markdown repair queue must include repair_kind"));
+    Ok(())
+}
+
+#[test]
+fn goldens_check_includes_assistant_loop_health_contract_drift() -> Result<(), String> {
+    let root = temp_dir("goldens-assistant-loop-health-invalid");
+    let base = root.join("assistant-loop-health");
+    let report = root.join("assistant-loop-health.json");
+    let markdown = root.join("assistant-loop-health.md");
+    let proof = root.join("proof.json");
+    write_assistant_loop_health_corpus(&base, &report, &markdown, &proof, "advisory", 0);
+    write(
+        &report,
+        r#"{
+  "kind": "assistant_loop_health",
+  "status": "blocked",
+  "summary": {
+    "proofs": 1,
+    "complete": 1,
+    "partial": 0,
+    "missing_required_input": 0,
+    "missing_optional_input": 0,
+    "improved": 1,
+    "unchanged": 0,
+    "regressed": 0,
+    "unknown_movement": 0,
+    "warnings": 0,
+    "repair_queue": 0
+  },
+  "repair_queue": [],
+  "limits": ["Static RIPR evidence only."]
+}
+"#,
+    );
+    write(
+        &markdown,
+        "# RIPR Assistant Loop Health\n\nStatus: advisory\n",
+    );
+
+    let violations = super::golden_assistant_loop_health_contract_violations_at(&base)?;
+    let report = violations.join("\n");
+
+    assert!(report.contains("expected status advisory"), "{report}");
+    Ok(())
+}
+
+#[test]
+fn assistant_loop_health_missing_corpus_fails_both_shared_gates() -> Result<(), String> {
+    let root = temp_dir("assistant-loop-health-missing");
+    let base = root.join("assistant-loop-health");
+
+    let mut fixture_contract_violations = Vec::new();
+    super::validate_assistant_loop_health_fixture_corpus_at(
+        &base,
+        &mut fixture_contract_violations,
+    )?;
+    assert_eq!(
+        fixture_contract_violations,
+        vec![format!(
+            "assistant-loop-health corpus is missing {}",
+            super::normalize_path(&base)
+        )]
+    );
+
+    let golden_violations = super::golden_assistant_loop_health_contract_violations_at(&base)?;
+    assert_eq!(golden_violations, fixture_contract_violations);
+    Ok(())
+}
+
+#[test]
+fn editor_gap_cockpit_fixture_case_guard_accepts_actionable_contract() -> Result<(), String> {
+    let root = temp_dir("editor-gap-cockpit-valid");
+    write_editor_gap_case_expected(
+        &root,
+        "rust_actionable",
+        r#"{
+  "diagnostics": [
+    {
+      "data": {
+        "language": "rust",
+        "language_status": "stable",
+        "canonical_gap_id": "gap:rust:pricing"
+      }
+    }
+  ]
+}
+"#,
+        r#"{
+  "actions": [
+    {"title": "Inspect gap: copy repair packet", "command": "ripr.copyAgentPacketCommand", "arguments": [{"command": "ripr agent packet"}]},
+    {"title": "Write targeted test: open best related test", "command": "ripr.openRelatedTest", "arguments": [{"uri": "file:///repo/tests/pricing.rs"}]},
+    {"title": "Verify after test: copy verify command", "command": "ripr.copyAgentVerifyCommand", "arguments": [{"command": "ripr agent verify"}]},
+    {"title": "Review result: copy receipt command", "command": "ripr.copyAgentReceiptCommand", "arguments": [{"command": "ripr agent receipt"}]},
+    {"title": "Refresh Analysis - Saved Workspace Check", "command": "ripr.refresh"}
+  ]
+}
+"#,
+        "# Hover\n\n## Evidence boundary\n\n## Gap state\n\n## Limits\n",
+    );
+
+    let mut violations = Vec::new();
+    super::validate_editor_gap_cockpit_fixture_case(&root, "rust_actionable", &mut violations)?;
+
+    assert_eq!(violations, Vec::<String>::new());
+    Ok(())
+}
+
+#[test]
+fn editor_gap_cockpit_fixture_case_guard_reports_projection_drift() -> Result<(), String> {
+    let root = temp_dir("editor-gap-cockpit-invalid-preview");
+    let expected = root
+        .join("typescript_preview_static_limit")
+        .join("expected");
+    write(
+        &expected.join("gap-projection.json"),
+        r#"{
+  "schema_version": "0.2",
+  "case": "wrong_case"
+}
+"#,
+    );
+    write(
+        &expected.join("lsp-diagnostics.json"),
+        r#"{
+  "diagnostics": [
+    {"data": {"language": "rust", "language_status": "stable"}},
+    {"data": {"language": "typescript", "language_status": "preview", "canonical_gap_id": "gap:ts:second"}}
+  ]
+}
+"#,
+    );
+    write(
+        &expected.join("lsp-code-actions.json"),
+        r#"{"actions": []}"#,
+    );
+    write(
+        &expected.join("lsp-hover.md"),
+        "## Evidence boundary\n\n## Gap state\n\n## Limits\n\nSuggested action: inspect\n\nStatic limit: missing import graph\n",
+    );
+    write(&expected.join("vscode-status.json"), r#"{"status":"warn"}"#);
+
+    let mut violations = Vec::new();
+    super::validate_editor_gap_cockpit_fixture_case(
+        &root,
+        "typescript_preview_static_limit",
+        &mut violations,
+    )?;
+    let report = violations.join("\n");
+
+    assert!(report.contains("schema_version must be 0.1"));
+    assert!(report.contains("case must be typescript_preview_static_limit"));
+    assert!(report.contains("must project exactly one diagnostic"));
+    assert!(report.contains("diagnostic language must be typescript"));
+    assert!(report.contains("diagnostic language_status must be preview"));
+    assert!(report.contains("diagnostic must carry canonical_gap_id"));
+    assert!(report.contains("is missing action `Inspect gap: copy static-limit note`"));
+    assert!(report.contains("hover must show static limits before action language"));
+    Ok(())
+}
+
+#[test]
+fn editor_gap_cockpit_fixture_case_guard_requires_fail_closed_projection() -> Result<(), String> {
+    let root = temp_dir("editor-gap-cockpit-disabled");
+    write_editor_gap_case_expected(
+        &root,
+        "disabled_language",
+        r#"{
+  "diagnostics": [
+    {"data": {"language": "python", "language_status": "preview", "canonical_gap_id": "gap:py"}}
+  ]
+}
+"#,
+        r#"{"actions": []}"#,
+        "# Hover\n\n## Evidence boundary\n\n## Gap state\n\n## Limits\n",
+    );
+
+    let mut violations = Vec::new();
+    super::validate_editor_gap_cockpit_fixture_case(&root, "disabled_language", &mut violations)?;
+    let report = violations.join("\n");
+
+    assert!(report.contains("must not project diagnostics"));
+    assert!(report.contains("must fail closed to refresh-only actions"));
+    Ok(())
+}
+
+#[test]
+fn lsp_cockpit_fixture_report_preserves_nested_fixture_name() -> Result<(), String> {
+    let root = temp_dir("lsp-cockpit-nested-fixture");
+    let fixture = root.join("editor_gap_cockpit").join("rust_actionable");
+    write(
+        &fixture.join("expected/lsp-diagnostics.json"),
+        r#"{
+  "diagnostics": [
+    {
+      "data": {
+        "seam_id": "seam:pricing",
+        "grip_class": "weakly_gripped"
+      }
+    },
+    {
+      "data": {
+        "finding_id": "finding:pricing"
+      }
+    }
+  ]
+}
+"#,
+    );
+    write(
+        &fixture.join("expected/lsp-code-actions.json"),
+        r#"{
+  "actions": [
+    {"title": "Inspect Test Gap - Copy Context", "command": "ripr.copyContext"},
+    {"title": "Copy agent packet", "command": "ripr.copyAgentPacketCommand", "arguments": [{"command": "ripr agent packet"}]},
+    {"title": "Open related test", "command": "ripr.openRelatedTest", "arguments": [{"uri": "file:///repo/tests/pricing.rs"}]},
+    {"title": "Refresh", "command": "ripr.refresh"}
+  ]
+}
+"#,
+    );
+
+    let report = super::lsp_cockpit_fixture_report("editor_gap_cockpit/rust_actionable", &fixture)?
+        .ok_or_else(|| "expected nested fixture report".to_string())?;
+
+    assert_eq!(report.fixture, "editor_gap_cockpit/rust_actionable");
+    assert_eq!(report.diagnostic_count, 2);
+    assert_eq!(report.seam_diagnostic_count, 1);
+    assert_eq!(report.finding_diagnostic_count, 1);
+    assert!(report.seam_ids.iter().any(|id| id == "seam:pricing"));
+    assert!(
+        report
+            .grip_classes
+            .iter()
+            .any(|class| class == "weakly_gripped")
+    );
+    assert!(report.context.seam_packet_available);
+    assert!(report.context.agent_packet_command_available);
+    assert!(report.context.related_test_available);
+    assert!(report.context.refresh_available);
+    Ok(())
+}
+
+#[test]
+fn pr_review_front_panel_fixture_corpus_guard_accepts_complete_contract() -> Result<(), String> {
+    let root = temp_dir("pr-review-front-panel-valid");
+    let base = root.join("pr-review-front-panel");
+    let report = root.join("pr-review-front-panel.json");
+    let markdown = root.join("pr-review-front-panel.md");
+    write_pr_review_front_panel_corpus(&base, &report, &markdown, "advisory", 0);
+    write(
+        &report,
+        r#"{
+  "kind": "pr_review_front_panel",
+  "status": "advisory",
+  "summary": {
+    "top_issue_state": "actionable",
+    "policy_state": "new_policy_eligible",
+    "placement": "changed_line",
+    "movement_state": "unknown",
+    "coverage_grip_state": "not_available",
+    "new_policy_eligible": 1,
+    "baseline_resolved": 0,
+    "blocking_candidates": 0,
+    "warnings": 0
+  },
+  "artifacts": [
+    {"group": "start_here"}
+  ],
+  "limits": ["Static RIPR evidence only."]
+}
+"#,
+    );
+    write(&markdown, "# RIPR PR Review\n\nStatus: advisory\n");
+
+    let mut violations = Vec::new();
+    super::validate_pr_review_front_panel_fixture_corpus_at(&base, &mut violations)?;
+
+    assert_eq!(violations, Vec::<String>::new());
+    Ok(())
+}
+
+#[test]
+fn pr_review_front_panel_fixture_corpus_guard_reports_contract_drift() -> Result<(), String> {
+    let root = temp_dir("pr-review-front-panel-invalid");
+    let base = root.join("pr-review-front-panel");
+    let report = root.join("pr-review-front-panel.json");
+    let markdown = root.join("pr-review-front-panel.md");
+    write_pr_review_front_panel_corpus(&base, &report, &markdown, "blocked", 1);
+    write(
+        &report,
+        r#"{
+  "kind": "wrong_kind",
+  "status": "advisory",
+  "summary": {
+    "top_issue_state": "missing",
+    "policy_state": "none",
+    "placement": "not_available",
+    "movement_state": "not_available",
+    "coverage_grip_state": "not_available",
+    "new_policy_eligible": 0,
+    "baseline_resolved": 0,
+    "blocking_candidates": 0,
+    "warnings": 0
+  },
+  "artifacts": [
+    {"group": "unknown"}
+  ],
+  "limits": ["Does not run mutation testing."]
+}
+"#,
+    );
+    write(&markdown, "# Wrong\n\nStatus: advisory\n");
+
+    let mut violations = Vec::new();
+    super::validate_pr_review_front_panel_fixture_corpus_at(&base, &mut violations)?;
+    let report = violations.join("\n");
+
+    assert!(report.contains("report kind must be pr_review_front_panel"));
+    assert!(report.contains("expected status blocked"));
+    assert!(report.contains("expected top_issue_state=actionable"));
+    assert!(report.contains("expected policy_state=new_policy_eligible"));
+    assert!(report.contains("expected placement=changed_line"));
+    assert!(report.contains("expected movement_state=unknown"));
+    assert!(report.contains("expected new_policy_eligible=1, got 0"));
+    assert!(report.contains("expected blocking_candidates=1, got 0"));
+    assert!(report.contains("artifacts must use known groups"));
+    assert!(report.contains("report is missing static evidence limit"));
+    assert!(report.contains("Markdown must use the PR review heading"));
+    assert!(report.contains("Markdown must pin status blocked"));
+    assert!(report.contains("blocked Markdown must name gate authority"));
+    Ok(())
+}
+
+#[test]
+fn pr_review_front_panel_fixture_corpus_guard_rejects_stale_case_removal() -> Result<(), String> {
+    let root = temp_dir("pr-review-front-panel-stale-case-removal");
+    let base = root.join("pr-review-front-panel");
+    let report = root.join("pr-review-front-panel.json");
+    let markdown = root.join("pr-review-front-panel.md");
+    write_pr_review_front_panel_corpus(&base, &report, &markdown, "advisory", 0);
+    write(
+        &report,
+        r#"{
+  "kind": "pr_review_front_panel",
+  "status": "advisory",
+  "summary": {
+    "top_issue_state": "actionable",
+    "policy_state": "new_policy_eligible",
+    "placement": "changed_line",
+    "movement_state": "unknown",
+    "coverage_grip_state": "not_available",
+    "new_policy_eligible": 1,
+    "baseline_resolved": 0,
+    "blocking_candidates": 0,
+    "warnings": 0
+  },
+  "artifacts": [{"group": "start_here"}],
+  "limits": ["Static RIPR evidence only."]
+}
+"#,
+    );
+    write(&markdown, "# RIPR PR Review\n\nStatus: advisory\n");
+
+    let corpus_path = base.join("corpus.json");
+    let corpus_text = fs::read_to_string(&corpus_path)
+        .map_err(|err| format!("read temporary front-panel corpus failed: {err}"))?;
+    let mut corpus: serde_json::Value = serde_json::from_str(&corpus_text)
+        .map_err(|err| format!("parse temporary front-panel corpus failed: {err}"))?;
+    corpus["cases"]
+        .as_array_mut()
+        .ok_or_else(|| "temporary front-panel corpus cases missing".to_string())?
+        .retain(|case| {
+            case.get("id").and_then(serde_json::Value::as_str)
+                != Some("stale_same_path_receipt_fails_closed")
+        });
+    write(
+        &corpus_path,
+        &serde_json::to_string_pretty(&corpus)
+            .map_err(|err| format!("render temporary front-panel corpus failed: {err}"))?,
+    );
+
+    let mut violations = Vec::new();
+    super::validate_pr_review_front_panel_fixture_corpus_at(&base, &mut violations)?;
+    assert_contains_error(
+        &violations,
+        "corpus is missing required case stale_same_path_receipt_fails_closed",
+    );
+    Ok(())
+}
+
+#[test]
+fn report_packet_index_fixture_corpus_guard_accepts_complete_contract() -> Result<(), String> {
+    let root = temp_dir("report-packet-index-valid");
+    let base = root.join("report-packet-index");
+    let report = root.join("index.json");
+    let markdown = root.join("index.md");
+    write_report_packet_index_corpus(&base, &report, &markdown, "pass", 0, 0, true);
+    write(
+        &report,
+        r#"{
+  "schema_version": "0.1",
+  "kind": "report_packet_index",
+  "status": "pass",
+  "summary": {
+    "missing_expected": 0,
+    "failures": 0,
+    "warnings": 0,
+    "start_here": "target/ripr/reports/pr-review-front-panel.md",
+    "gate_authority": "target/ripr/reports/gate-decision.md",
+    "advisory": true
+  },
+  "groups": [
+    {
+      "group": "start_here",
+      "entries": [{"status": "available"}]
+    },
+    {
+      "group": "pr_review_story",
+      "entries": [{"status": "pass"}]
+    }
+  ],
+  "missing_expected": [],
+  "limits": ["Advisory report-packet index only."]
+}
+"#,
+    );
+    write(
+        &markdown,
+        "# RIPR Report Packet Index\n\nStatus: pass\n\nStart here:\n- PR review front panel: target/ripr/reports/pr-review-front-panel.md\n- Gate authority: target/ripr/reports/gate-decision.md\n",
+    );
+
+    let mut violations = Vec::new();
+    super::validate_report_packet_index_fixture_corpus_at(&base, &mut violations)?;
+
+    assert_eq!(violations, Vec::<String>::new());
+    Ok(())
+}
+
+#[test]
+fn report_packet_index_fixture_corpus_guard_reports_contract_drift() -> Result<(), String> {
+    let root = temp_dir("report-packet-index-invalid");
+    let base = root.join("report-packet-index");
+    let report = root.join("index.json");
+    let markdown = root.join("index.md");
+    write_report_packet_index_corpus(&base, &report, &markdown, "fail", 1, 1, true);
+    write(
+        &report,
+        r#"{
+  "schema_version": "0.2",
+  "kind": "wrong_kind",
+  "status": "warn",
+  "summary": {
+    "missing_expected": 0,
+    "failures": 0,
+    "warnings": 0,
+    "start_here": null,
+    "gate_authority": null,
+    "advisory": false
+  },
+  "groups": [
+    {
+      "group": "unknown",
+      "entries": [{"status": "mystery"}]
+    }
+  ],
+  "missing_expected": [
+    {"reason": "surprise"}
+  ],
+  "limits": ["Does not run mutation testing."]
+}
+"#,
+    );
+    write(&markdown, "# Wrong\n\nStatus: warn\n");
+
+    let mut violations = Vec::new();
+    super::validate_report_packet_index_fixture_corpus_at(&base, &mut violations)?;
+    let report = violations.join("\n");
+
+    assert!(report.contains("schema_version must be 0.1"));
+    assert!(report.contains("report kind must be report_packet_index"));
+    assert!(report.contains("expected status fail"));
+    assert!(report.contains("summary.advisory must be true"));
+    assert!(report.contains("expected missing_expected=1, got 0"));
+    assert!(report.contains("expected failures=1, got 0"));
+    assert!(report.contains("expected start_here_available=true, got false"));
+    assert!(report.contains("expected gate_authority_present=true, got false"));
+    assert!(report.contains("groups must use known group vocabulary"));
+    assert!(report.contains("entries must use known status vocabulary"));
+    assert!(report.contains("is missing required group start_here"));
+    assert!(report.contains("missing_expected entries must use known reasons"));
+    assert!(report.contains("report is missing advisory index limit"));
+    assert!(report.contains("Markdown must use the report-packet index heading"));
+    assert!(report.contains("Markdown must pin status fail"));
+    assert!(report.contains("Markdown must name start-here artifacts"));
+    assert!(report.contains("Markdown must name gate authority"));
+    assert!(report.contains("Markdown must list missing expected artifacts"));
+    Ok(())
+}
+
+#[test]
+fn pr_inline_comment_publisher_fixture_corpus_guard_accepts_complete_contract() -> Result<(), String>
+{
+    let root = temp_dir("pr-inline-comment-publisher-valid");
+    let base = root.join("pr-inline-comment-publisher");
+    let report = root.join("comment-publish-plan.json");
+    let markdown = root.join("comment-publish-plan.md");
+    write_pr_inline_comment_publisher_corpus(&base, &report, &markdown, "plan", 1, 0, 0);
+    write(
+        &report,
+        r#"{
+  "schema_version": "0.1",
+  "kind": "pr_inline_comment_publish_plan",
+  "status": "advisory",
+  "mode": "plan",
+  "limits": {
+    "comments_default": "off"
+  },
+  "summary": {
+    "publishable": 1,
+    "skipped": 0,
+    "blocked": 0,
+    "safe_to_publish": false
+  },
+  "operations": [
+    {
+      "operation": "create",
+      "source_collection": "comments",
+      "dedupe_key": "ripr:test:src/lib.rs:1",
+      "placement": {
+        "path": "src/lib.rs",
+        "line": 1,
+        "side": "RIGHT"
+      }
+    }
+  ],
+  "skipped": [],
+  "blocked": [],
+  "limits_note": "Advisory inline-comment publish plan only."
+}
+"#,
+    );
+    write(
+        &markdown,
+        "# RIPR Inline Comment Publish Plan\n\nMode: plan\nStatus: advisory\n\nPlanned operations:\n- create src/lib.rs:1\n\nLimits:\n- Advisory inline-comment publish plan only.\n",
+    );
+
+    let mut violations = Vec::new();
+    super::validate_pr_inline_comment_publisher_fixture_corpus_at(&base, &mut violations)?;
+
+    assert_eq!(violations, Vec::<String>::new());
+    Ok(())
+}
+
+#[test]
+fn pr_inline_comment_publisher_fixture_corpus_guard_reports_contract_drift() -> Result<(), String> {
+    let root = temp_dir("pr-inline-comment-publisher-invalid");
+    let base = root.join("pr-inline-comment-publisher");
+    let report = root.join("comment-publish-plan.json");
+    let markdown = root.join("comment-publish-plan.md");
+    write_pr_inline_comment_publisher_corpus(&base, &report, &markdown, "inline", 1, 1, 1);
+    write(
+        &report,
+        r#"{
+  "schema_version": "0.2",
+  "kind": "wrong_kind",
+  "status": "pass",
+  "mode": "off",
+  "limits": {
+    "comments_default": "inline"
+  },
+  "summary": {
+    "publishable": 0,
+    "skipped": 0,
+    "blocked": 0,
+    "safe_to_publish": true
+  },
+  "operations": [
+    {
+      "operation": "surprise",
+      "source_collection": "summary_only"
+    }
+  ],
+  "skipped": [
+    {"skip_reason": "surprise"}
+  ],
+  "blocked": [
+    {"blocked_reason": "surprise"}
+  ],
+  "limits_note": "wrong"
+}
+"#,
+    );
+    write(&markdown, "# Wrong\n\nMode: off\nStatus: pass\n");
+
+    let mut violations = Vec::new();
+    super::validate_pr_inline_comment_publisher_fixture_corpus_at(&base, &mut violations)?;
+    let report = violations.join("\n");
+
+    assert!(report.contains("schema_version must be 0.1"));
+    assert!(report.contains("report kind must be pr_inline_comment_publish_plan"));
+    assert!(report.contains("expected status advisory"));
+    assert!(report.contains("expected mode inline"));
+    assert!(report.contains("limits.comments_default must be off"));
+    assert!(report.contains("expected publishable=1, got 0"));
+    assert!(report.contains("expected skipped=1, got 0"));
+    assert!(report.contains("expected blocked=1, got 0"));
+    assert!(report.contains("expected safe_to_publish=false, got true"));
+    assert!(report.contains("operations must use known operation vocabulary"));
+    assert!(report.contains("operations must not publish summary_only guidance"));
+    assert!(report.contains("is missing expected operation create"));
+    assert!(report.contains("skipped entries must use known skip_reason vocabulary"));
+    assert!(report.contains("blocked entries must use known blocked_reason vocabulary"));
+    assert!(report.contains("report is missing advisory publish-plan limit"));
+    assert!(report.contains("Markdown must use the inline comment publish-plan heading"));
+    assert!(report.contains("Markdown must pin mode inline"));
+    assert!(report.contains("Markdown must pin status advisory"));
+    assert!(report.contains("Markdown must list planned operations"));
+    assert!(report.contains("Markdown must list skipped guidance"));
+    assert!(report.contains("Markdown must list blocked operations"));
+    assert!(report.contains("Markdown must name advisory publish-plan limit"));
+    Ok(())
+}
+
+#[test]
+fn evidence_record_contract_fixture_corpus_is_valid() -> Result<(), String> {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "xtask manifest must have workspace parent".to_string())?;
+    let corpus =
+        repo_root.join("fixtures/boundary_gap/expected/evidence-record-contract/corpus.json");
+    let mut violations = Vec::new();
+    super::validate_evidence_record_contract_fixture_corpus_at(&corpus, &mut violations)?;
+
+    assert_eq!(violations, Vec::<String>::new());
+    Ok(())
+}
+
+#[test]
+fn evidence_record_contract_fixture_guard_reports_missing_fields() -> Result<(), String> {
+    let root = temp_dir("evidence-record-contract-invalid");
+    let corpus = root.join("corpus.json");
+    write(
+        &corpus,
+        r#"{
+  "kind": "wrong",
+  "schema_version": "0.2",
+  "spec": "RIPR-SPEC-9999",
+  "cases": [
+    {
+      "id": "predicate_boundary_missing_equality",
+      "source": "fixture",
+      "record": {
+        "schema_version": "0.2",
+        "seam_id": "bad",
+        "canonical_gap_id": 12,
+        "owner": "owner",
+        "seam_kind": "predicate_boundary",
+        "grip_class": "weakly_gripped",
+        "headline_eligible": "yes",
+        "evidence_path": {
+          "reach": {"state": "yes"},
+          "activate": {},
+          "propagate": {},
+          "observe": {},
+          "discriminate": {}
+        },
+        "observed_values": [],
+        "missing_discriminators": [],
+        "related_tests": [],
+        "recommendation": {},
+        "actionability": {"class": "unsupported", "signals": {}},
+        "calibration": {},
+        "static_limitations": []
+      }
+    }
+  ]
+}
+"#,
+    );
+
+    let mut violations = Vec::new();
+    super::validate_evidence_record_contract_fixture_corpus_at(&corpus, &mut violations)?;
+    let report = violations.join("\n");
+
+    assert!(report.contains("kind must be evidence_record_contract_corpus"));
+    assert!(report.contains("schema_version must be 0.1"));
+    assert!(report.contains("spec must be RIPR-SPEC-0021"));
+    assert!(report.contains("record schema_version must be 0.1"));
+    assert!(report.contains("canonical_gap_id must be string or null"));
+    assert!(report.contains("canonical_gap_group_size must be number or null"));
+    assert!(report.contains("canonical_gap_reason must be string or null"));
+    assert!(report.contains("headline_eligible must be boolean"));
+    assert!(report.contains("location must be an object"));
+    assert!(report.contains("is missing string field confidence"));
+    assert!(report.contains("recommendation"));
+    assert!(report.contains("actionability.class is unsupported"));
+    assert!(report.contains("calibration"));
+    assert!(report.contains("missing case exact_error_variant_gap"));
+    Ok(())
+}
+
+#[test]
+fn evidence_record_contract_fixture_guard_requires_oracle_semantics() -> Result<(), String> {
+    let root = temp_dir("evidence-record-contract-oracle-semantics-invalid");
+    let corpus = root.join("corpus.json");
+    write(
+        &corpus,
+        r#"{
+  "kind": "evidence_record_contract_corpus",
+  "schema_version": "0.1",
+  "spec": "RIPR-SPEC-0021",
+  "cases": [
+    {
+      "id": "predicate_boundary_missing_equality",
+      "description": "invalid oracle semantics shape",
+      "source": "fixture",
+      "record": {
+        "schema_version": "0.1",
+        "seam_id": "contract-predicate-boundary",
+        "canonical_gap_id": null,
+        "canonical_gap_group_size": null,
+        "canonical_gap_reason": null,
+        "owner": "src/pricing.rs::discounted_total",
+        "location": {"file": "src/pricing.rs", "line": 88},
+        "seam_kind": "predicate_boundary",
+        "grip_class": "weakly_gripped",
+        "headline_eligible": true,
+        "evidence_path": {
+          "reach": {"state": "yes", "confidence": "medium", "summary": "related tests call the owner"},
+          "activate": {"state": "yes", "confidence": "medium", "summary": "boundary values are visible"},
+          "propagate": {"state": "yes", "confidence": "low", "summary": "predicate flows to return value"},
+          "observe": {"state": "yes", "confidence": "medium", "summary": "related tests assert returned totals"},
+          "discriminate": {"state": "weak", "confidence": "medium", "summary": "boundary is not asserted"}
+        },
+        "observed_values": [],
+        "missing_discriminators": [],
+        "related_tests_total": 1,
+        "related_tests": [
+          {"name": "below_threshold_has_no_discount", "file": "tests/pricing.rs", "line": 10, "oracle_kind": "exact_value", "oracle_strength": "strong", "evidence_summary": "exact value assertion", "relation_reason": "direct_owner_call", "relation_confidence": "high"}
+        ],
+        "recommendation": {
+          "action": "write_targeted_test",
+          "reason": "extend the nearest related test",
+          "recommended_test": null,
+          "nearest_test_to_imitate": {"name": "below_threshold_has_no_discount", "file": "tests/pricing.rs", "line": 10, "oracle_kind": "exact_value", "oracle_strength": "strong", "evidence_summary": "exact value assertion", "oracle_semantics": {"observes": "exact value", "missing": "none", "upgrade_suggestion": false}, "relation_reason": "direct_owner_call", "relation_confidence": "high"},
+          "candidate_values": [],
+          "assertion_shape": null,
+          "verify_command": null
+        },
+        "actionability": {
+          "class": "actionable_related_test_extension",
+          "reason": "extend related test",
+          "has_concrete_guidance": true,
+          "signals": {"missing_discriminator": false, "candidate_value": false, "assertion_shape": false, "related_test": true, "recommended_test_target": false, "verification_command": false}
+        },
+        "calibration": {"availability": "not_imported", "confidence": "unknown", "agreement": "no_runtime_data"},
+        "static_limitations": []
+      }
+    }
+  ]
+}
+"#,
+    );
+
+    let mut violations = Vec::new();
+    super::validate_evidence_record_contract_fixture_corpus_at(&corpus, &mut violations)?;
+    let report = violations.join("\n");
+
+    assert!(report.contains("related_tests[0].oracle_semantics must be an object"));
+    assert!(report.contains(
+            "recommendation.nearest_test_to_imitate.oracle_semantics.upgrade_suggestion must be string or null"
+        ));
+    Ok(())
+}
+
+#[test]
+fn lane1_evidence_quality_failure_corpus_is_valid() -> Result<(), String> {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "xtask manifest must have workspace parent".to_string())?;
+    let corpus =
+        repo_root.join("fixtures/boundary_gap/expected/evidence-quality-failures/corpus.json");
+    let mut violations = Vec::new();
+    super::validate_lane1_evidence_quality_failure_fixture_corpus_at(&corpus, &mut violations)?;
+
+    assert_eq!(violations, Vec::<String>::new());
+    Ok(())
+}
+
+#[test]
+fn lane1_evidence_quality_failure_guard_reports_contract_drift() -> Result<(), String> {
+    let root = temp_dir("lane1-evidence-quality-failure-invalid");
+    let corpus = root.join("corpus.json");
+    write(
+        &corpus,
+        r#"{
+  "kind": "wrong",
+  "schema_version": "0.2",
+  "spec": "RIPR-SPEC-9999",
+  "source_report": {
+    "command": "cargo xtask lane1-evidence-audit",
+    "report": "target/ripr/reports/lane1-evidence-audit.json",
+    "summary": {
+      "raw_headline_gaps": "many"
+    }
+  },
+  "cases": [
+    {
+      "id": "duplicate_canonical_gap_overcount_suppressions_match_arm",
+      "case_kind": "surprise",
+      "description": "bad duplicate case",
+      "source": "audit",
+      "audit_signal": {
+        "category": "duplicate_canonical_gap",
+        "metric_path": "canonical_gap_groups.largest[0]",
+        "observed_count": 1,
+        "evidence": "gap"
+      },
+      "expected_repo_exposure": {
+        "source": "repo-exposure-json",
+        "evidence_record": {
+          "schema_version": "0.2",
+          "seam_id": "bad",
+          "canonical_gap_id": null,
+          "canonical_gap_group_size": null,
+          "canonical_gap_reason": null,
+          "owner": "owner",
+          "location": {"file": "src/lib.rs", "line": 1},
+          "seam_kind": "match_arm",
+          "grip_class": "activation_unknown",
+          "headline_eligible": true,
+          "evidence_path": {
+            "reach": {"state": "yes"},
+            "activate": {},
+            "propagate": {},
+            "observe": {},
+            "discriminate": {}
+          },
+          "counts": {
+            "observed_values": 0,
+            "missing_discriminators": 0,
+            "static_limitations": 0,
+            "related_tests_total": 0
+          },
+          "top_related_test": null,
+          "recommendation": {},
+          "actionability": {},
+          "calibration": {},
+          "static_limitations": []
+        }
+      },
+      "expected_claims": [],
+      "must_not_claim": []
+    }
+  ]
+}
+"#,
+    );
+
+    let mut violations = Vec::new();
+    super::validate_lane1_evidence_quality_failure_fixture_corpus_at(&corpus, &mut violations)?;
+    let report = violations.join("\n");
+
+    assert!(report.contains("kind must be lane1_evidence_quality_failure_corpus"));
+    assert!(report.contains("schema_version must be 0.1"));
+    assert!(report.contains("spec must be RIPR-SPEC-0032"));
+    assert!(report.contains("source_report.summary"));
+    assert!(report.contains("unsupported case_kind surprise"));
+    assert!(report.contains("evidence_record.schema_version must be 0.1"));
+    assert!(report.contains("is missing string field confidence"));
+    assert!(report.contains("top_related_test must be an object"));
+    assert!(report.contains("recommendation"));
+    assert!(report.contains("actionability.has_concrete_guidance must be boolean"));
+    assert!(report.contains("calibration"));
+    assert!(report.contains("expected_claims must be a non-empty string array"));
+    assert!(report.contains("must_not_claim must be a non-empty string array"));
+    assert!(report.contains("must pin canonical_gap_id"));
+    assert!(report.contains("must pin group size greater than 1 or pin corrected group size 1"));
+    assert!(report.contains("is missing case missing_equality_boundary_discriminator"));
+    assert!(report.contains("must include at least one negative_guard case"));
+    Ok(())
+}
+
+fn evidence_quality_benchmark_corpus_path() -> Result<PathBuf, String> {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "xtask manifest must have workspace parent".to_string())?;
+    Ok(repo_root.join("fixtures/evidence-quality-benchmark/corpus.json"))
+}
+
+fn evidence_quality_benchmark_corpus_value() -> Result<Value, String> {
+    let corpus = evidence_quality_benchmark_corpus_path()?;
+    super::read_json_value(&corpus)
+}
+
+fn evidence_quality_benchmark_violations(corpus: &Value) -> Vec<String> {
+    let mut violations = Vec::new();
+    super::validate_evidence_quality_benchmark_corpus_value(
+        Path::new("fixtures/evidence-quality-benchmark/corpus.json"),
+        corpus,
+        &mut violations,
+    );
+    violations
+}
+
+fn evidence_quality_benchmark_case_mut<'a>(
+    corpus: &'a mut Value,
+    case_id: &str,
+) -> Result<&'a mut Value, String> {
+    let cases = corpus
+        .get_mut("cases")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| "benchmark corpus must have cases array".to_string())?;
+    cases
+        .iter_mut()
+        .find(|case| case.get("id").and_then(Value::as_str) == Some(case_id))
+        .ok_or_else(|| format!("benchmark corpus is missing case {case_id}"))
+}
+
+#[test]
+fn evidence_quality_benchmark_corpus_is_valid() -> Result<(), String> {
+    let corpus = evidence_quality_benchmark_corpus_path()?;
+    let mut violations = Vec::new();
+    super::validate_evidence_quality_benchmark_fixture_corpus_at(&corpus, &mut violations)?;
+
+    assert_eq!(violations, Vec::<String>::new());
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_benchmark_requires_all_case_kinds() -> Result<(), String> {
+    let mut corpus = evidence_quality_benchmark_corpus_value()?;
+    corpus["required_case_kinds"] = serde_json::json!(["positive"]);
+
+    let report = evidence_quality_benchmark_violations(&corpus).join("\n");
+
+    assert!(report.contains("required_case_kinds is missing negative_guard"));
+    assert!(report.contains("required_case_kinds is missing calibration"));
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_benchmark_reports_contract_drift() {
+    let corpus = serde_json::json!({
+        "kind": "wrong",
+        "schema_version": "0.2",
+        "spec": "RIPR-SPEC-9999",
+        "evidence_classes": ["duplicate_canonical_gap"],
+        "required_case_kinds": ["positive"],
+        "cases": [
+            {
+                "id": "bad",
+                "case_kind": "surprise",
+                "evidence_class": "unknown",
+                "maturity_scope": "global",
+                "must_not_claim": [],
+                "expected_repo_exposure": {},
+                "expected_audit_signal": null
+            },
+            {
+                "id": "bad",
+                "case_kind": "metamorphic_line_movement",
+                "evidence_class": "match_arm_discriminator_split",
+                "maturity_scope": "fixture_backed",
+                "description": "bad line movement",
+                "fixture_reference": "fixture",
+                "expected_claim": "claim",
+                "must_not_claim": ["guard"],
+                "repair_route": "analysis/canonical-gap-overcount-regression",
+                "expected_repo_exposure": {
+                    "static_gap_created": true,
+                    "evidence_record": {}
+                },
+                "expected_audit_signal": {},
+                "metamorphic": {
+                    "before": {
+                        "canonical_gap_id": "gap:a",
+                        "line": 10
+                    },
+                    "after": {
+                        "canonical_gap_id": "gap:b",
+                        "line": 10
+                    }
+                }
+            }
+        ]
+    });
+
+    let report = evidence_quality_benchmark_violations(&corpus).join("\n");
+
+    assert!(report.contains("kind must be lane1_evidence_quality_benchmark_corpus"));
+    assert!(report.contains("schema_version must be 0.1"));
+    assert!(report.contains("spec must be RIPR-SPEC-0035"));
+    assert!(report.contains("evidence_classes is missing runtime_only_signal"));
+    assert!(report.contains("required_case_kinds is missing calibration"));
+    assert!(report.contains("is missing capability_scope object"));
+    assert!(report.contains("is missing calibration_scope object"));
+    assert!(report.contains("is missing audit_expectations object"));
+    assert!(report.contains("case bad is duplicated"));
+    assert!(report.contains("unsupported evidence_class unknown"));
+    assert!(report.contains("unsupported case_kind surprise"));
+    assert!(report.contains("unsupported maturity_scope global"));
+    assert!(report.contains("bad is missing string field description"));
+    assert!(report.contains("bad is missing string field fixture_reference"));
+    assert!(report.contains("bad is missing string field expected_claim"));
+    assert!(report.contains("bad is missing string field repair_route"));
+    assert!(report.contains("expected_repo_exposure.evidence_record must be an object"));
+    assert!(report.contains("is missing expected_audit_signal object"));
+    assert!(report.contains("must preserve canonical_gap_id"));
+    assert!(report.contains("must move line numbers"));
+    assert!(report.contains("must include a runtime-only nonstatic guard"));
+}
+
+#[test]
+fn evidence_quality_benchmark_reports_missing_must_not_claims() -> Result<(), String> {
+    let mut corpus = evidence_quality_benchmark_corpus_value()?;
+    let case = evidence_quality_benchmark_case_mut(&mut corpus, "broad_vs_exact_error_oracle")?;
+    case["must_not_claim"] = serde_json::json!([]);
+
+    let report = evidence_quality_benchmark_violations(&corpus).join("\n");
+
+    assert!(report.contains(
+            "Lane 1 evidence-quality case broad_vs_exact_error_oracle must_not_claim must be a non-empty string array"
+        ));
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_benchmark_requires_verify_command_for_actionable_cases() -> Result<(), String> {
+    let mut corpus = evidence_quality_benchmark_corpus_value()?;
+    let case = evidence_quality_benchmark_case_mut(
+        &mut corpus,
+        "config_policy_rendered_label_unobserved",
+    )?;
+    case["expected_repo_exposure"]["evidence_record"]["verify_command"] =
+        serde_json::json!("verify_command_unknown");
+
+    let report = evidence_quality_benchmark_violations(&corpus).join("\n");
+
+    assert!(report.contains(
+            "actionable case config_policy_rendered_label_unobserved must include a concrete expected_repo_exposure.evidence_record.verify_command"
+        ));
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_benchmark_requires_static_limitation_category_at_case_level()
+-> Result<(), String> {
+    let mut corpus = evidence_quality_benchmark_corpus_value()?;
+    let case = evidence_quality_benchmark_case_mut(
+        &mut corpus,
+        "presentation_text_constant_visibility_unknown",
+    )?;
+    case["static_limitation_category"] = serde_json::Value::Null;
+    case["expected_repo_exposure"]["evidence_record"]["static_limitation"]["category"] =
+        serde_json::json!("presentation_text_visibility_unknown");
+
+    let report = evidence_quality_benchmark_violations(&corpus).join("\n");
+
+    assert!(report.contains(
+            "static-limitation case presentation_text_constant_visibility_unknown is missing static_limitation_category"
+        ));
+    assert!(report.contains(
+            "static-limitation case presentation_text_constant_visibility_unknown must keep static_limitation_category at the case level"
+        ));
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_benchmark_keeps_runtime_only_signal_nonstatic() -> Result<(), String> {
+    let mut corpus = evidence_quality_benchmark_corpus_value()?;
+    let case = evidence_quality_benchmark_case_mut(&mut corpus, "runtime_only_signal_nonstatic")?;
+    case["expected_repo_exposure"]["static_gap_created"] = serde_json::json!(true);
+    case["calibration"]["runtime_signal"] = serde_json::json!(false);
+
+    let report = evidence_quality_benchmark_violations(&corpus).join("\n");
+
+    assert!(report.contains(
+            "runtime-only case runtime_only_signal_nonstatic must keep static_gap_created=false and evidence_record=null"
+        ));
+    assert!(report.contains(
+        "runtime-only case runtime_only_signal_nonstatic must set calibration.runtime_signal=true"
+    ));
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_benchmark_keeps_ambiguous_runtime_join_ambiguous() -> Result<(), String> {
+    let mut corpus = evidence_quality_benchmark_corpus_value()?;
+    let case =
+        evidence_quality_benchmark_case_mut(&mut corpus, "ambiguous_runtime_join_stays_ambiguous")?;
+    case["calibration"]["join_status"] = serde_json::json!("matched");
+
+    let report = evidence_quality_benchmark_violations(&corpus).join("\n");
+
+    assert!(report.contains(
+            "ambiguous join case ambiguous_runtime_join_stays_ambiguous must set calibration.join_status=ambiguous"
+        ));
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_benchmark_pins_line_movement_identity() -> Result<(), String> {
+    let mut corpus = evidence_quality_benchmark_corpus_value()?;
+    let case =
+        evidence_quality_benchmark_case_mut(&mut corpus, "match_arm_discriminator_line_movement")?;
+    case["metamorphic"]["after"]["canonical_gap_id"] = serde_json::json!("gap:changed");
+
+    let report = evidence_quality_benchmark_violations(&corpus).join("\n");
+
+    assert!(report.contains(
+        "line-movement case match_arm_discriminator_line_movement must preserve canonical_gap_id"
+    ));
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_benchmark_is_manifest_only_fixture_dir() -> Result<(), String> {
+    assert!(super::is_manifest_only_fixture_dir(Path::new(
+        "fixtures/evidence-quality-benchmark"
+    )));
+    assert!(super::is_manifest_only_fixture_dir(Path::new(
+        "fixtures/gap-decision-ledger"
+    )));
+    assert!(super::is_manifest_only_fixture_dir(Path::new(
+        "fixtures/typescript-preview-repair-loop"
+    )));
+    assert!(super::is_manifest_only_fixture_dir(Path::new(
+        "fixtures/perl_lsp_facts_exporter"
+    )));
+    assert!(!super::is_manifest_only_fixture_dir(Path::new(
+        "fixtures/boundary_gap"
+    )));
+    let violations =
+        super::fixture_contract_violations(Path::new("fixtures/evidence-quality-benchmark"))?;
+    assert_eq!(violations, Vec::<String>::new());
+    Ok(())
+}
+
+fn perl_lsp_facts_exporter_corpus_path() -> Result<PathBuf, String> {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "xtask manifest must have workspace parent".to_string())?;
+    Ok(repo_root.join("fixtures/perl_lsp_facts_exporter/corpus.json"))
+}
+
+#[test]
+fn perl_lsp_facts_exporter_fixture_corpus_is_valid() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let corpus = perl_lsp_facts_exporter_corpus_path()?;
+        let mut violations = Vec::new();
+        super::validate_perl_lsp_facts_exporter_fixture_corpus_at(&corpus, &mut violations)?;
+        assert_eq!(violations, Vec::<String>::new());
+
+        let mut root_violations = Vec::new();
+        super::validate_perl_lsp_facts_exporter_fixture_corpus(&mut root_violations)?;
+        assert_eq!(root_violations, Vec::<String>::new());
+        Ok(())
+    })
+}
+
+#[test]
+fn perl_lsp_facts_exporter_fixture_accepts_supported_producers() -> Result<(), String> {
+    with_temp_cwd("perl-lsp-facts-exporter-producer-names", |root| {
+        for producer in ["perl-ripr-facts", "perllsp", "perl-lsp"] {
+            let packet = root.join(format!("{producer}.json"));
+            let packet_json = serde_json::to_string_pretty(&serde_json::json!({
+                "schema_version": "ripr-perl-facts-v1",
+                "producer": {"name": producer},
+                "files": [{"path": "lib/App.pm"}]
+            }))
+            .map_err(|err| err.to_string())?;
+            write(&packet, &packet_json);
+
+            let corpus = root.join(format!("{producer}-corpus.json"));
+            let corpus_json = serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "perl_lsp_facts_exporter_corpus",
+                "schema_version": "0.1",
+                "spec": "RIPR-SPEC-0064",
+                "cases": [
+                    {
+                        "id": producer,
+                        "exporter": producer,
+                        "packet_schema": "ripr-perl-facts-v1",
+                        "authority_boundary": "preview_advisory_only",
+                        "must_not_claim": [
+                            "ripr_check_executes_perl_lsp",
+                            "canonical_gap_id_emitted_by_perl_lsp",
+                            "gap_state_emitted_by_perl_lsp",
+                            "repair_packet_ready",
+                            "default_gate_authority",
+                            "public_badge_contribution",
+                            "support_tier_promotion"
+                        ],
+                        "expected_packet": packet
+                    }
+                ]
+            }))
+            .map_err(|err| err.to_string())?;
+            write(&corpus, &corpus_json);
+
+            let mut violations = Vec::new();
+            super::validate_perl_lsp_facts_exporter_fixture_corpus_at(&corpus, &mut violations)?;
+            assert_eq!(violations, Vec::<String>::new());
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn perl_lsp_facts_exporter_fixture_guard_reports_missing_root_files() -> Result<(), String> {
+    with_temp_cwd("perl-lsp-facts-exporter-missing-root", |_| {
+        let mut violations = Vec::new();
+        super::validate_perl_lsp_facts_exporter_fixture_corpus(&mut violations)?;
+        let report = violations.join("\n");
+
+        assert!(report.contains("missing fixtures/perl_lsp_facts_exporter/SPEC.md"));
+        assert!(report.contains("missing fixtures/perl_lsp_facts_exporter/corpus.json"));
+        assert!(report.contains("perl-lsp facts exporter corpus is missing"));
+        Ok(())
+    })
+}
+
+#[test]
+fn perl_lsp_facts_exporter_fixture_guard_reports_contract_drift() -> Result<(), String> {
+    let root = temp_dir("perl-lsp-facts-exporter-invalid");
+    let missing = root.join("missing.json");
+    let mut violations = Vec::new();
+    super::validate_perl_lsp_facts_exporter_fixture_corpus_at(&missing, &mut violations)?;
+
+    let no_cases = root.join("no-cases.json");
+    write(
+        &no_cases,
+        r#"{
+  "kind": "perl_lsp_facts_exporter_corpus",
+  "schema_version": "0.1",
+  "spec": "RIPR-SPEC-0064"
+}
+"#,
+    );
+    super::validate_perl_lsp_facts_exporter_fixture_corpus_at(&no_cases, &mut violations)?;
+
+    let empty_cases = root.join("empty-cases.json");
+    write(
+        &empty_cases,
+        r#"{
+  "kind": "perl_lsp_facts_exporter_corpus",
+  "schema_version": "0.1",
+  "spec": "RIPR-SPEC-0064",
+  "cases": []
+}
+"#,
+    );
+    super::validate_perl_lsp_facts_exporter_fixture_corpus_at(&empty_cases, &mut violations)?;
+
+    let bad_packet = root.join("bad-packet.json");
+    let bad_packet_json = serde_json::to_string_pretty(&serde_json::json!({
+        "schema_version": "wrong",
+        "producer": {"name": "not-perl-lsp"},
+        "canonical_gap_id": "gap:bad",
+        "gap_state": "actionable",
+        "files": [
+            {},
+            {"path": "lib\\Bad.pm"},
+            {"path": "/absolute.pm"},
+            {"path": "host:bad.pm"}
+        ]
+    }))
+    .map_err(|err| err.to_string())?;
+    write(&bad_packet, &bad_packet_json);
+    let missing_files_packet = root.join("missing-files-packet.json");
+    let missing_files_packet_json = serde_json::to_string_pretty(&serde_json::json!({
+        "schema_version": "ripr-perl-facts-v1",
+        "producer": {"name": "perl-lsp"}
+    }))
+    .map_err(|err| err.to_string())?;
+    write(&missing_files_packet, &missing_files_packet_json);
+
+    let corpus = root.join("corpus.json");
+    let corpus_json = serde_json::to_string_pretty(&serde_json::json!({
+        "kind": "wrong",
+        "schema_version": "0.2",
+        "spec": "RIPR-SPEC-9999",
+        "cases": [
+            {
+                "id": "missing-expected",
+                "exporter": "wrong",
+                "packet_schema": "wrong",
+                "authority_boundary": "wrong",
+                "must_not_claim": []
+            },
+            {
+                "id": "missing-packet",
+                "exporter": "perl-lsp",
+                "packet_schema": "ripr-perl-facts-v1",
+                "authority_boundary": "preview_advisory_only",
+                "must_not_claim": [
+                    "ripr_check_executes_perl_lsp",
+                    "canonical_gap_id_emitted_by_perl_lsp",
+                    "gap_state_emitted_by_perl_lsp",
+                    "repair_packet_ready",
+                    "default_gate_authority",
+                    "public_badge_contribution",
+                    "support_tier_promotion"
+                ],
+                "expected_packet": root.join("does-not-exist.json")
+            },
+            {
+                "id": "bad-packet",
+                "exporter": "perl-lsp",
+                "packet_schema": "ripr-perl-facts-v1",
+                "authority_boundary": "preview_advisory_only",
+                "must_not_claim": [
+                    "default_gate_authority"
+                ],
+                "expected_packet": bad_packet
+            },
+            {
+                "id": "bad-packet",
+                "exporter": "perl-lsp",
+                "packet_schema": "ripr-perl-facts-v1",
+                "authority_boundary": "preview_advisory_only",
+                "must_not_claim": [
+                    "ripr_check_executes_perl_lsp",
+                    "canonical_gap_id_emitted_by_perl_lsp",
+                    "gap_state_emitted_by_perl_lsp",
+                    "repair_packet_ready",
+                    "default_gate_authority",
+                    "public_badge_contribution",
+                    "support_tier_promotion"
+                ],
+                "expected_packet": missing_files_packet
+            }
+        ]
+    }))
+    .map_err(|err| err.to_string())?;
+    write(&corpus, &corpus_json);
+    super::validate_perl_lsp_facts_exporter_fixture_corpus_at(&corpus, &mut violations)?;
+
+    let report = violations.join("\n");
+    assert!(report.contains("perl-lsp facts exporter corpus is missing"));
+    assert!(report.contains("is missing cases array"));
+    assert!(report.contains("cases array must not be empty"));
+    assert!(report.contains("kind must be perl_lsp_facts_exporter_corpus"));
+    assert!(report.contains("schema_version must be 0.1"));
+    assert!(report.contains("spec must be RIPR-SPEC-0064"));
+    assert!(report.contains("exporter must be perl-ripr-facts, perllsp, or perl-lsp"));
+    assert!(report.contains("packet_schema must be ripr-perl-facts-v1"));
+    assert!(report.contains("authority_boundary must be preview_advisory_only"));
+    assert!(report.contains("must_not_claim is missing ripr_check_executes_perl_lsp"));
+    assert!(report.contains("is missing expected_packet"));
+    assert!(report.contains("missing packet"));
+    assert!(report.contains("perl-lsp facts exporter case bad-packet is duplicated"));
+    assert!(report.contains("packet schema_version must be ripr-perl-facts-v1"));
+    assert!(report.contains("packet producer.name must be perl-ripr-facts, perllsp, or perl-lsp"));
+    assert!(report.contains("packet must not emit RIPR-derived gap state"));
+    assert!(report.contains("file fact is missing path"));
+    assert!(report.contains("must be repo-relative"));
+    assert!(report.contains("packet is missing files array"));
+    Ok(())
+}
+
+fn perl_real_repo_eval_corpus_path() -> Result<PathBuf, String> {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "xtask manifest must have workspace parent".to_string())?;
+    Ok(repo_root.join("fixtures/perl-real-repo-evals/corpus.json"))
+}
+
+#[test]
+fn perl_real_repo_eval_fixture_corpus_is_valid() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let corpus = perl_real_repo_eval_corpus_path()?;
+        let mut violations = Vec::new();
+        super::validate_perl_real_repo_eval_fixture_corpus_at(&corpus, &mut violations)?;
+        assert_eq!(violations, Vec::<String>::new());
+
+        let mut root_violations = Vec::new();
+        super::validate_perl_real_repo_eval_fixture_corpus(&mut root_violations)?;
+        assert_eq!(root_violations, Vec::<String>::new());
+        Ok(())
+    })
+}
+
+#[test]
+fn perl_real_repo_eval_fixture_guard_reports_missing_root_files() -> Result<(), String> {
+    with_temp_cwd("perl-real-repo-eval-missing-root", |_| {
+        let mut violations = Vec::new();
+        super::validate_perl_real_repo_eval_fixture_corpus(&mut violations)?;
+        let report = violations.join("\n");
+
+        assert!(report.contains("missing fixtures/perl-real-repo-evals/SPEC.md"));
+        assert!(report.contains("missing fixtures/perl-real-repo-evals/corpus.json"));
+        assert!(report.contains("Perl real-repo eval corpus is missing"));
+        Ok(())
+    })
+}
+
+#[test]
+fn perl_real_repo_eval_fixture_guard_reports_contract_drift() -> Result<(), String> {
+    let root = temp_dir("perl-real-repo-eval-invalid");
+    let missing = root.join("missing.json");
+    let mut violations = Vec::new();
+    super::validate_perl_real_repo_eval_fixture_corpus_at(&missing, &mut violations)?;
+
+    let no_cases = root.join("no-cases.json");
+    write(
+        &no_cases,
+        r#"{
+  "kind": "perl_real_repo_eval_corpus",
+  "schema_version": "0.1",
+  "spec": "RIPR-SPEC-0064",
+  "limits": [
+    "producer_required_on_path",
+    "no_five_repo_metrics",
+    "no_public_repair_packet_authority",
+    "no_support_tier_promotion"
+  ]
+}
+"#,
+    );
+    super::validate_perl_real_repo_eval_fixture_corpus_at(&no_cases, &mut violations)?;
+
+    let empty_cases = root.join("empty-cases.json");
+    write(
+        &empty_cases,
+        r#"{
+  "kind": "perl_real_repo_eval_corpus",
+  "schema_version": "0.1",
+  "spec": "RIPR-SPEC-0064",
+  "limits": [
+    "producer_required_on_path",
+    "no_five_repo_metrics",
+    "no_public_repair_packet_authority",
+    "no_support_tier_promotion"
+  ],
+  "cases": []
+}
+"#,
+    );
+    super::validate_perl_real_repo_eval_fixture_corpus_at(&empty_cases, &mut violations)?;
+
+    let bad_corpus = root.join("bad-corpus.json");
+    let corpus_json = serde_json::to_string_pretty(&serde_json::json!({
+            "kind": "wrong",
+            "schema_version": "0.2",
+            "spec": "RIPR-SPEC-9999",
+            "limits": [],
+            "cases": [
+                {
+                    "id": "bad-case",
+                    "repo_shape": "",
+                    "source_kind": "wrong",
+                    "source_ref": "",
+                    "command": "cargo test -p ripr",
+                    "producer": "wrong",
+                    "packet_schema": "wrong",
+                    "diff": "fixtures/perl_cpan_alpha/input/not-a-diff.txt",
+                    "oracle_shape": "",
+                    "expected_outcome": "wrong",
+                    "expected_classification": "",
+                    "changed_owner": "python:wrong",
+                    "missing_discriminator": "not_applicable_wrong",
+                    "repair_packet_expected": true,
+                    "agent_packet_expected": true,
+                    "receipt_expected": true,
+                    "harness_assertion": "",
+                    "evidence_source": "none",
+                    "claim_boundary": [],
+                    "reason": ""
+                },
+                {
+                    "id": "cpan_alpha_actionable_real_exporter_eval",
+                    "repo_shape": "cpan_style_test_more",
+                    "source_kind": "local_repo_fixture",
+                    "source_ref": "fixtures/perl_cpan_alpha/input",
+                    "command": "PERL_RIPR_FACTS=<path> cargo test -p ripr --features lang-perl --test perl_two_binary_harness -- --test-threads=1",
+                    "producer": "perl-ripr-facts",
+                    "packet_schema": "ripr-perl-facts-v1",
+                    "diff": "fixtures/perl_cpan_alpha/input/dynamic_dispatch.diff",
+                    "oracle_shape": "dynamic_method_dispatch",
+                    "expected_outcome": "limited",
+                    "expected_classification": "exposed",
+                    "changed_owner": "perl:lib/Pricing.pm::Pricing::dynamic_method",
+                    "missing_discriminator": "not_applicable_dynamic_dispatch",
+                    "repair_packet_expected": false,
+                    "agent_packet_expected": false,
+                    "receipt_expected": false,
+                    "harness_assertion": "asserts the limited outcome",
+                    "evidence_source": "PR #1491",
+                    "claim_boundary": [
+                        "No >=5 real Perl repo evidence",
+                        "No public repair-packet authority",
+                        "No support-tier promotion"
+                    ],
+                    "reason": "required id with wrong outcome"
+                },
+                {
+                    "id": "observed-bad-classification",
+                    "repo_shape": "cpan_style_test_more",
+                    "source_kind": "local_repo_fixture",
+                    "source_ref": "fixtures/perl_cpan_alpha/input",
+                    "command": "PERL_RIPR_FACTS=<path> cargo test -p ripr --features lang-perl --test perl_two_binary_harness -- --test-threads=1",
+                    "producer": "perl-ripr-facts",
+                    "packet_schema": "ripr-perl-facts-v1",
+                    "diff": "fixtures/perl_cpan_alpha/input/boundary_change.diff",
+                    "oracle_shape": "exact_test_more_is",
+                    "expected_outcome": "already_observed",
+                    "expected_classification": "weakly_exposed",
+                    "changed_owner": "perl:lib/Pricing.pm::Pricing::calculate_discount",
+                    "missing_discriminator": "not_applicable_already_observed",
+                    "repair_packet_expected": false,
+                    "agent_packet_expected": false,
+                    "harness_assertion": "asserts the observed outcome",
+                    "evidence_source": "PR #1491",
+                    "claim_boundary": [
+                        "No >=5 real Perl repo evidence",
+                        "No public repair-packet authority",
+                        "No support-tier promotion"
+                    ],
+                    "reason": "already observed case with wrong classification"
+                },
+                {
+                    "id": "bad-case",
+                    "repo_shape": "cpan_style_test_more",
+                    "source_kind": "local_repo_fixture",
+                    "source_ref": "fixtures/perl_cpan_alpha/input",
+                    "command": "PERL_RIPR_FACTS=<path> cargo test -p ripr --features lang-perl --test perl_two_binary_harness -- --test-threads=1",
+                    "producer": "perl-ripr-facts",
+                    "packet_schema": "ripr-perl-facts-v1",
+                    "diff": "fixtures/perl_cpan_alpha/input/diff.patch",
+                    "oracle_shape": "weak_test_more_ok",
+                    "expected_outcome": "actionable",
+                    "expected_classification": "reachable_unrevealed",
+                    "changed_owner": "perl:lib/Pricing.pm::Pricing::calculate_discount",
+                    "missing_discriminator": "not_applicable_wrong",
+                    "repair_packet_expected": false,
+                    "agent_packet_expected": false,
+                    "receipt_expected": false,
+                    "harness_assertion": "asserts the actionable outcome",
+                    "evidence_source": "PR #1491",
+                    "claim_boundary": [
+                        "No >=5 real Perl repo evidence",
+                        "No public repair-packet authority",
+                        "No support-tier promotion"
+                    ],
+                    "reason": "duplicate case"
+                }
+            ]
+        }))
+        .map_err(|err| err.to_string())?;
+    write(&bad_corpus, &corpus_json);
+    super::validate_perl_real_repo_eval_fixture_corpus_at(&bad_corpus, &mut violations)?;
+
+    let report = violations.join("\n");
+    assert!(report.contains("Perl real-repo eval corpus is missing"));
+    assert!(report.contains("is missing cases array"));
+    assert!(report.contains("cases array must not be empty"));
+    assert!(report.contains("kind must be perl_real_repo_eval_corpus"));
+    assert!(report.contains("schema_version must be 0.1"));
+    assert!(report.contains("spec must be RIPR-SPEC-0064"));
+    assert!(report.contains("limits is missing no_public_repair_packet_authority"));
+    assert!(report.contains("source_kind must be local_repo_fixture"));
+    assert!(report.contains("producer must be perl-ripr-facts"));
+    assert!(report.contains("packet_schema must be ripr-perl-facts-v1"));
+    assert!(report.contains("expected_outcome must be actionable"));
+    assert!(report.contains("changed_owner must use perl: identity"));
+    assert!(report.contains("command must run the perl_two_binary_harness"));
+    assert!(report.contains("diff must point at a perl_cpan_alpha diff"));
+    assert!(report.contains("repair_packet_expected must stay false"));
+    assert!(report.contains("claim_boundary must include No public repair-packet authority"));
+    assert!(report.contains("evidence_source must cite PR #1491"));
+    assert!(report.contains("Perl real-repo eval case bad-case is duplicated"));
+    assert!(report.contains("actionable outcome must name a missing discriminator"));
+    assert!(report.contains("limited outcome must name a limitation classification"));
+    assert!(report.contains("already_observed outcome must expect exposed"));
+    assert!(report.contains("field receipt_expected must be present"));
+    assert!(report.contains(
+            "Perl real-repo eval case cpan_alpha_actionable_real_exporter_eval must have expected_outcome actionable, got limited"
+        ));
+    Ok(())
+}
+
+fn gap_decision_ledger_corpus_path() -> Result<PathBuf, String> {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "xtask manifest must have workspace parent".to_string())?;
+    Ok(repo_root.join("fixtures/gap-decision-ledger/corpus.json"))
+}
+
+fn gap_decision_ledger_corpus_value() -> Result<Value, String> {
+    let corpus = gap_decision_ledger_corpus_path()?;
+    super::read_json_value(&corpus)
+}
+
+fn gap_decision_ledger_violations(corpus: &Value) -> Vec<String> {
+    let mut violations = Vec::new();
+    super::validate_gap_decision_ledger_corpus_value(
+        Path::new("fixtures/gap-decision-ledger/corpus.json"),
+        corpus,
+        &mut violations,
+    );
+    violations
+}
+
+fn gap_decision_ledger_case_mut<'a>(
+    corpus: &'a mut Value,
+    case_id: &str,
+) -> Result<&'a mut Value, String> {
+    let cases = corpus
+        .get_mut("cases")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| "gap-decision ledger corpus must have cases array".to_string())?;
+    cases
+        .iter_mut()
+        .find(|case| case.get("id").and_then(Value::as_str) == Some(case_id))
+        .ok_or_else(|| format!("gap-decision ledger corpus is missing case {case_id}"))
+}
+
+#[test]
+fn gap_decision_ledger_corpus_is_valid() -> Result<(), String> {
+    let corpus = gap_decision_ledger_corpus_path()?;
+    let mut violations = Vec::new();
+    super::validate_gap_decision_ledger_fixture_corpus_at(&corpus, &mut violations)?;
+
+    assert_eq!(violations, Vec::<String>::new());
+    Ok(())
+}
+
+fn first_successful_pr_corpus_path() -> Result<PathBuf, String> {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "xtask manifest must have workspace parent".to_string())?;
+    Ok(repo_root.join("fixtures/first_successful_pr/corpus.json"))
+}
+
+#[test]
+fn first_successful_pr_corpus_is_valid() -> Result<(), String> {
+    let corpus = first_successful_pr_corpus_path()?;
+    let mut violations = Vec::new();
+    super::validate_first_successful_pr_fixture_corpus_at(&corpus, &mut violations)?;
+
+    assert_eq!(violations, Vec::<String>::new());
+    Ok(())
+}
+
+#[test]
+fn first_successful_pr_outcome_input_path_is_stable_outside_repo_cwd() -> Result<(), String> {
+    let corpus = first_successful_pr_corpus_path()?;
+    let root = corpus
+        .parent()
+        .ok_or_else(|| "first successful PR corpus must have parent".to_string())?;
+
+    with_temp_cwd("first-successful-pr-outcome-input-cwd", |_| {
+        let input = super::first_successful_pr_outcome_input_path(
+            root,
+            "python-preview-gap/inputs/reports/after-check.json",
+        );
+        assert_eq!(
+            input,
+            "fixtures/first_successful_pr/python-preview-gap/inputs/reports/after-check.json"
+        );
+    });
+
+    Ok(())
+}
+
+#[test]
+fn first_successful_pr_outcome_input_path_uses_non_fixture_fallbacks() -> Result<(), String> {
+    with_temp_cwd(
+        "first-successful-pr-outcome-input-fallback-cwd",
+        |root| -> Result<(), String> {
+            let direct_root = root.join("direct-case");
+            let direct = super::first_successful_pr_outcome_input_path(
+                &direct_root,
+                "inputs/reports/before.json",
+            );
+            assert_eq!(direct, "direct-case/inputs/reports/before.json");
+
+            let nested = root.join("nested");
+            fs::create_dir_all(&nested).map_err(|err| format!("create nested cwd: {err}"))?;
+            std::env::set_current_dir(&nested).map_err(|err| format!("enter nested cwd: {err}"))?;
+            let sibling_root = root.join("sibling-case");
+            let sibling = super::first_successful_pr_outcome_input_path(
+                &sibling_root,
+                "inputs/reports/after.json",
+            );
+            assert_eq!(sibling, "sibling-case/inputs/reports/after.json");
+
+            let outside_root = std::env::temp_dir().join("ripr-outcome-path-outside");
+            let outside =
+                super::first_successful_pr_outcome_input_path(&outside_root, "outside.json");
+            assert!(outside.ends_with("ripr-outcome-path-outside/outside.json"));
+            Ok(())
+        },
+    )?;
+    Ok(())
+}
+
+#[test]
+fn first_successful_pr_corpus_reports_outcome_receipt_shape_drift() -> Result<(), String> {
+    let root = temp_dir("first-successful-pr-outcome-shape-drift");
+    let corpus = root.join("corpus.json");
+    write(
+        &corpus,
+        r#"{
+  "kind": "first_successful_pr_corpus",
+  "schema_version": "0.1",
+  "spec": "RIPR-SPEC-0051",
+  "cases": [
+    {
+      "id": "python-preview-gap",
+      "description": "bad outcome receipt case",
+      "expected_status": "actionable",
+      "expected_state": "top_gap",
+      "expected_output_state": "preview_limited",
+      "outcome_receipts": {
+        "id": "not-an-array"
+      }
+    }
+  ]
+}"#,
+    );
+
+    let mut violations = Vec::new();
+    super::validate_first_successful_pr_fixture_corpus_at(&corpus, &mut violations)?;
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("outcome_receipts must be an array")),
+        "expected malformed outcome_receipts violation, got {violations:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn first_successful_pr_outcome_receipt_reports_field_and_render_drift() -> Result<(), String> {
+    let root = temp_dir("first-successful-pr-outcome-render-drift");
+    let mut violations = Vec::new();
+
+    for receipt in [
+        serde_json::json!({"id": "missing-before"}),
+        serde_json::json!({
+            "id": "missing-after",
+            "before": "inputs/before.json"
+        }),
+        serde_json::json!({
+            "id": "missing-expected",
+            "before": "inputs/before.json",
+            "after": "inputs/after.json"
+        }),
+        serde_json::json!({
+            "id": "missing-markdown",
+            "before": "inputs/before.json",
+            "after": "inputs/after.json",
+            "expected": "expected/outcome.json"
+        }),
+        serde_json::json!({
+            "id": "missing-movement",
+            "before": "inputs/before.json",
+            "after": "inputs/after.json",
+            "expected": "expected/outcome.json",
+            "expected_markdown": "expected/outcome.md"
+        }),
+    ] {
+        super::validate_first_successful_pr_outcome_receipt(
+            &root,
+            "python-preview-gap",
+            &receipt,
+            &mut violations,
+        )?;
+    }
+
+    write(&root.join("inputs/before.json"), "{}");
+    write(&root.join("inputs/after.json"), "{}");
+    write(
+        &root.join("expected/outcome.json"),
+        r#"{
+  "schema_version": "0.2",
+  "tool": "other",
+  "status": "complete",
+  "inputs": {
+    "before": "wrong-before.json",
+    "after": "wrong-after.json"
+  },
+  "summary": {
+    "gap_movement": {
+      "closed": 1
+    }
+  },
+  "review_receipt": {}
+}"#,
+    );
+    write(
+        &root.join("expected/outcome.md"),
+        "not a targeted outcome report\n",
+    );
+    let rendered_drift = serde_json::json!({
+        "id": "rendered-drift",
+        "before": "inputs/before.json",
+        "after": "inputs/after.json",
+        "expected": "expected/outcome.json",
+        "expected_markdown": "expected/outcome.md",
+        "expected_gap_movement": "closed"
+    });
+    super::validate_first_successful_pr_outcome_receipt(
+        &root,
+        "python-preview-gap",
+        &rendered_drift,
+        &mut violations,
+    )?;
+
+    let report = violations.join("\n");
+    for expected in [
+        "is missing before",
+        "is missing after",
+        "is missing expected",
+        "is missing expected_markdown",
+        "is missing expected_gap_movement",
+        "schema_version must be 0.1",
+        "tool must be ripr",
+        "status must be advisory",
+        "before input must be",
+        "after input must be",
+        "Markdown is missing `# ripr targeted-test outcome report`",
+        "Markdown must show `| closed | 1 |`",
+    ] {
+        assert!(
+            report.contains(expected),
+            "expected `{expected}` in outcome receipt drift report:\n{report}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn first_successful_pr_corpus_reports_contract_drift() -> Result<(), String> {
+    let root = temp_dir("first-successful-pr-invalid");
+    let corpus = root.join("corpus.json");
+    write(
+        &corpus,
+        r#"{
+  "kind": "wrong",
+  "schema_version": "0.2",
+  "spec": "RIPR-SPEC-9999",
+  "cases": [
+    {
+      "id": "boundary-gap",
+      "description": "bad case",
+      "expected_status": "blocked",
+      "expected_state": "wrong_state"
+    },
+    {
+      "id": "boundary-gap",
+      "description": "duplicate case",
+      "expected_status": "actionable",
+      "expected_state": "top_gap"
+    },
+    {
+      "id": "output-contract-gap",
+      "description": "wrong status case",
+      "expected_status": "blocked",
+      "expected_state": "wrong_state"
+    }
+  ]
+}"#,
+    );
+    let mut violations = Vec::new();
+    super::validate_first_successful_pr_fixture_corpus_at(&corpus, &mut violations)?;
+    let report = violations.join("\n");
+
+    assert!(report.contains("kind must be first_successful_pr_corpus"));
+    assert!(report.contains("schema_version must be 0.1"));
+    assert!(report.contains("spec must be RIPR-SPEC-0051"));
+    assert!(report.contains("case boundary-gap is duplicated"));
+    assert!(report.contains("case output-contract-gap must be actionable/top_gap"));
+    assert!(report.contains("is missing case empty-diff"));
+    assert!(report.contains("is missing case blocked-ledger"));
+    assert!(report.contains("case boundary-gap is missing demo_story"));
+    assert!(report.contains("inputs/reports/gap-decision-ledger.json"));
+    assert!(report.contains("expected/start-here.json"));
+    assert!(report.contains("expected/start-here.md"));
+    Ok(())
+}
+
+#[test]
+fn first_successful_pr_corpus_reports_outcome_receipt_drift() -> Result<(), String> {
+    let root = temp_dir("first-successful-pr-outcome-drift");
+    let corpus = root.join("corpus.json");
+    write(
+        &corpus,
+        r#"{
+  "kind": "first_successful_pr_corpus",
+  "schema_version": "0.1",
+  "spec": "RIPR-SPEC-0051",
+  "cases": [
+    {
+      "id": "python-preview-gap",
+      "description": "bad outcome receipt case",
+      "expected_status": "actionable",
+      "expected_state": "top_gap",
+      "expected_output_state": "preview_limited",
+      "outcome_receipts": [
+        {
+          "id": "bad",
+          "before": "python-preview-gap/inputs/reports/missing-before.json",
+          "after": "python-preview-gap/inputs/reports/missing-after.json",
+          "expected": "python-preview-gap/expected/outcome/bad.json",
+          "expected_markdown": "python-preview-gap/expected/outcome/bad.md",
+          "expected_gap_movement": "closed"
+        },
+        {
+          "id": "bad",
+          "before": "python-preview-gap/inputs/reports/missing-before.json",
+          "after": "python-preview-gap/inputs/reports/missing-after.json",
+          "expected": "python-preview-gap/expected/outcome/bad.json",
+          "expected_markdown": "python-preview-gap/expected/outcome/bad.md",
+          "expected_gap_movement": "mystery"
+        }
+      ]
+    }
+  ]
+}"#,
+    );
+    write(
+        &root.join("python-preview-gap/expected/outcome/bad.json"),
+        r#"{
+  "schema_version": "0.1",
+  "tool": "ripr",
+  "status": "advisory",
+  "inputs": {
+    "before": "wrong-before.json",
+    "after": "wrong-after.json"
+  },
+  "summary": {
+    "gap_movement": {
+      "closed": 0
+    }
+  }
+}"#,
+    );
+    write(
+        &root.join("python-preview-gap/expected/outcome/bad.md"),
+        "# ripr targeted-test outcome report\n\nStatus: advisory\n\n## Gap Movement\n\n## Review Receipt\n",
+    );
+
+    let mut violations = Vec::new();
+    super::validate_first_successful_pr_fixture_corpus_at(&corpus, &mut violations)?;
+    let report = violations.join("\n");
+
+    assert!(report.contains("outcome receipt bad is duplicated"));
+    assert!(report.contains("missing-before.json"));
+    assert!(report.contains("unknown expected_gap_movement mystery"));
+    assert!(report.contains("before input must be"));
+    assert!(report.contains("must report expected gap movement closed"));
+    assert!(report.contains("must include review_receipt"));
+    assert!(report.contains("Markdown must show `| closed | 1 |`"));
+    Ok(())
+}
+
+#[test]
+fn first_successful_pr_corpus_rejects_unsafe_demo_story_path() -> Result<(), String> {
+    let root = temp_dir("first-successful-pr-unsafe-demo");
+    let corpus = root.join("corpus.json");
+    write(
+        &corpus,
+        r#"{
+  "kind": "first_successful_pr_corpus",
+  "schema_version": "0.1",
+  "spec": "RIPR-SPEC-0051",
+  "cases": [
+    {
+      "id": "boundary-gap",
+      "description": "unsafe demo path",
+      "input": "boundary-gap/inputs/reports/gap-decision-ledger.json",
+      "expected": "boundary-gap/expected/start-here.json",
+      "demo_story": "../README.md",
+      "expected_status": "actionable",
+      "expected_state": "top_gap"
+    }
+  ]
+}"#,
+    );
+    let mut violations = Vec::new();
+    super::validate_first_successful_pr_fixture_corpus_at(&corpus, &mut violations)?;
+    let report = violations.join("\n");
+
+    assert!(report.contains("demo_story must be workspace-local"));
+    Ok(())
+}
+
+#[test]
+fn first_successful_pr_corpus_requires_demo_story_tokens() -> Result<(), String> {
+    let root = temp_dir("first-successful-pr-demo-tokens");
+    let corpus = root.join("corpus.json");
+    write(
+        &corpus,
+        r#"{
+  "kind": "first_successful_pr_corpus",
+  "schema_version": "0.1",
+  "spec": "RIPR-SPEC-0051",
+  "cases": [
+    {
+      "id": "boundary-gap",
+      "description": "demo token coverage",
+      "input": "boundary-gap/inputs/reports/gap-decision-ledger.json",
+      "expected": "boundary-gap/expected/start-here.json",
+      "demo_story": "boundary-gap/README.md",
+      "expected_status": "actionable",
+      "expected_state": "top_gap"
+    }
+  ]
+}"#,
+    );
+    write(
+        &root.join("boundary-gap/inputs/reports/gap-decision-ledger.json"),
+        r#"{"kind":"gap_decision_ledger"}"#,
+    );
+    write(
+        &root.join("boundary-gap/expected/start-here.json"),
+        r#"{
+  "schema_version": "0.1",
+  "kind": "first_pr_start_here",
+  "status": "actionable",
+  "posture": "advisory",
+  "selected": {
+    "state": "top_gap",
+    "verify_command": "cargo xtask fixtures boundary_gap"
+  }
+}"#,
+    );
+    write(
+        &root.join("boundary-gap/expected/start-here.md"),
+        "# RIPR First PR Start Here\n\nStatus: advisory\n\n## Start Here\n\n- State: `top_gap`\n\n## Artifacts\n\n## Authority\n\n## Limits\n",
+    );
+    write(&root.join("boundary-gap/README.md"), "ripr first-pr\n");
+    let mut violations = Vec::new();
+    super::validate_first_successful_pr_fixture_corpus_at(&corpus, &mut violations)?;
+    let report = violations.join("\n");
+
+    assert!(report.contains("is missing `ripr outcome`"));
+    assert!(report.contains("is missing `focused external proof`"));
+    assert!(report.contains("is missing `reviewer receipt`"));
+    assert!(report.contains("is missing `fixture smoke path`"));
+    assert!(report.contains("is missing `release demo`"));
+    assert!(report.contains("is missing `agent training path`"));
+    assert!(report.contains("is missing `No runtime mutation proof`"));
+    assert!(report.contains("is missing `No merge approval`"));
+    assert!(report.contains("actionable packet must name top actionable gap"));
+    assert!(report.contains("actionable packet must name changed behavior"));
+    assert!(report.contains("actionable packet must name why this matters"));
+    assert!(report.contains("actionable packet must name static_evidence_boundary"));
+    assert!(report.contains("actionable Markdown must include `- Top actionable gap:`"));
+    assert!(report.contains("actionable Markdown must include `- Why this matters:`"));
+    assert!(report.contains("actionable Markdown must include receipt command or path"));
+    Ok(())
+}
+
+#[test]
+fn gap_decision_ledger_reports_contract_drift() {
+    let corpus = serde_json::json!({
+        "kind": "wrong",
+        "schema_version": "0.2",
+        "spec": "RIPR-SPEC-9999",
+        "proposal": "RIPR-PROP-9999",
+        "required_gap_kinds": ["MissingBoundaryAssertion"],
+        "required_scopes": ["pr_local"],
+        "required_policy_states": ["new"],
+        "required_repairability": ["repairable"],
+        "cases": [
+            {
+                "id": "bad",
+                "description": "bad case",
+                "source_artifacts": [],
+                "expected_claim": "claim",
+                "must_not_claim": [],
+                "expected_gap_record": {
+                    "gap_id": "gap:bad",
+                    "canonical_gap_id": "gap:bad",
+                    "kind": "surprise",
+                    "language": "rust",
+                    "language_status": "stable",
+                    "scope": "global",
+                    "evidence_class": "unknown",
+                    "gap_state": "actionable",
+                    "policy_state": "mystery",
+                    "repairability": "maybe",
+                    "evidence_ids": [],
+                    "verification_commands": [],
+                    "projection_eligibility": {
+                        "ci_summary": {"eligible": "yes", "reason": null}
+                    }
+                }
+            },
+            {
+                "id": "bad",
+                "description": "duplicate case",
+                "source_artifacts": ["artifact"],
+                "expected_claim": "claim",
+                "must_not_claim": ["guard"],
+                "expected_gap_record": {
+                    "gap_id": "gap:dup",
+                    "canonical_gap_id": "gap:dup",
+                    "kind": "MissingBoundaryAssertion",
+                    "language": "rust",
+                    "language_status": "stable",
+                    "scope": "pr_local",
+                    "evidence_class": "predicate_boundary",
+                    "gap_state": "actionable",
+                    "policy_state": "new",
+                    "repairability": "repairable",
+                    "evidence_ids": ["evidence"],
+                    "verification_commands": ["cargo xtask check-pr"],
+                    "projection_eligibility": {}
+                }
+            }
+        ]
+    });
+
+    let report = gap_decision_ledger_violations(&corpus).join("\n");
+
+    assert!(report.contains("kind must be gap_decision_ledger_corpus"));
+    assert!(report.contains("schema_version must be 0.1"));
+    assert!(report.contains("spec must be RIPR-SPEC-0046"));
+    assert!(report.contains("proposal must be RIPR-PROP-0006"));
+    assert!(report.contains("required_gap_kinds is missing MissingErrorDiscriminator"));
+    assert!(report.contains("required_scopes is missing repo_scoped"));
+    assert!(report.contains("required_policy_states is missing baseline_known"));
+    assert!(report.contains("required_repairability is missing needs_human_design"));
+    assert!(report.contains("case bad is duplicated"));
+    assert!(report.contains("source_artifacts must be a non-empty string array"));
+    assert!(report.contains("must_not_claim must be a non-empty string array"));
+    assert!(report.contains("has unsupported kind surprise"));
+    assert!(report.contains("has unsupported scope global"));
+    assert!(report.contains("has unsupported policy_state mystery"));
+    assert!(report.contains("has unsupported repairability maybe"));
+    assert!(report.contains("evidence_ids must be a non-empty string array"));
+    assert!(report.contains("verification_commands must be a non-empty string array"));
+    assert!(report.contains("projection ci_summary is missing eligible boolean"));
+    assert!(report.contains("projection ci_summary is missing reason"));
+    assert!(report.contains("is missing projection_eligibility.report_packet"));
+    assert!(report.contains("repairable case bad is missing repair_route object"));
+    assert!(report.contains("must include a safe gate-candidate case"));
+    assert!(report.contains("must include a MissingOutputContract case"));
+}
+
+#[test]
+fn gap_decision_ledger_gate_candidate_requires_safe_predicate() -> Result<(), String> {
+    let mut corpus = gap_decision_ledger_corpus_value()?;
+    let case = gap_decision_ledger_case_mut(
+        &mut corpus,
+        "repairable_boundary_gap_pr_comment_gate_candidate",
+    )?;
+    let record = case
+        .get_mut("expected_gap_record")
+        .ok_or_else(|| "case must have expected_gap_record".to_string())?;
+    record["language_status"] = serde_json::json!("preview");
+    record["safe_gate_predicate"]["policy_target_enabled"] = serde_json::json!(false);
+    record["safe_gate_predicate"]["static_unknown_only"] = serde_json::json!(true);
+
+    let report = gap_decision_ledger_violations(&corpus).join("\n");
+
+    assert!(report.contains(
+        "PR-comment case repairable_boundary_gap_pr_comment_gate_candidate must be stable Rust"
+    ));
+    assert!(report.contains(
+        "gate candidate repairable_boundary_gap_pr_comment_gate_candidate must be stable Rust"
+    ));
+    assert!(report.contains("must set safe_gate_predicate.policy_target_enabled=true"));
+    assert!(report.contains("must set safe_gate_predicate.static_unknown_only=false"));
+    Ok(())
+}
+
+#[test]
+fn gap_decision_ledger_missing_output_contract_requires_output_route() -> Result<(), String> {
+    let mut corpus = gap_decision_ledger_corpus_value()?;
+    let case = gap_decision_ledger_case_mut(
+        &mut corpus,
+        "missing_output_contract_routes_to_output_golden",
+    )?;
+    let record = case
+        .get_mut("expected_gap_record")
+        .ok_or_else(|| "case must have expected_gap_record".to_string())?;
+    record["evidence_class"] = serde_json::json!("return_value");
+    record["repair_route"]["route_kind"] = serde_json::json!("AddBoundaryAssertion");
+
+    let report = gap_decision_ledger_violations(&corpus).join("\n");
+
+    assert!(report.contains(
+            "MissingOutputContract case missing_output_contract_routes_to_output_golden must use presentation_text evidence"
+        ));
+    assert!(report.contains(
+            "MissingOutputContract case missing_output_contract_routes_to_output_golden must route to output/golden repair"
+        ));
+    Ok(())
+}
+
+#[test]
+fn gap_decision_ledger_static_unknown_only_stays_report_only() -> Result<(), String> {
+    let mut corpus = gap_decision_ledger_corpus_value()?;
+    let case = gap_decision_ledger_case_mut(&mut corpus, "static_unknown_report_only")?;
+    let record = case
+        .get_mut("expected_gap_record")
+        .ok_or_else(|| "case must have expected_gap_record".to_string())?;
+    record["repairability"] = serde_json::json!("repairable");
+    record["repair_route"] = serde_json::json!({
+        "route_kind": "AddBoundaryAssertion",
+        "target_file": "tests/macros.rs",
+        "assertion_shape": "assert boundary"
+    });
+    record["projection_eligibility"]["pr_comment"]["eligible"] = serde_json::json!(true);
+
+    let report = gap_decision_ledger_violations(&corpus).join("\n");
+
+    assert!(report.contains(
+            "static-unknown-only case static_unknown_report_only must stay report-only unless a repair route exists"
+        ));
+    Ok(())
+}
+
+#[test]
+fn gap_decision_ledger_missing_artifact_requires_regeneration() -> Result<(), String> {
+    let mut corpus = gap_decision_ledger_corpus_value()?;
+    let case = gap_decision_ledger_case_mut(&mut corpus, "missing_artifact_warning_regeneration")?;
+    let record = case
+        .get_mut("expected_gap_record")
+        .ok_or_else(|| "case must have expected_gap_record".to_string())?;
+    record["regeneration_commands"] = serde_json::json!([]);
+    record["projection_eligibility"]["gate_candidate"]["eligible"] = serde_json::json!(true);
+
+    let report = gap_decision_ledger_violations(&corpus).join("\n");
+
+    assert!(report.contains("regeneration_commands must be a non-empty string array"));
+    assert!(report.contains(
+            "missing-artifact case missing_artifact_warning_regeneration must not be PR-comment or gate eligible"
+        ));
+    Ok(())
+}
+
+#[test]
+fn gap_decision_ledger_is_manifest_only_fixture_dir() -> Result<(), String> {
+    let violations = super::fixture_contract_violations(Path::new("fixtures/gap-decision-ledger"))?;
+    assert_eq!(violations, Vec::<String>::new());
+    Ok(())
+}
+
+#[test]
+fn release_server_assets_selects_versioned_archives() -> Result<(), String> {
+    let root = temp_dir("release-server-assets");
+    write(
+        &root.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz"),
+        "archive",
+    );
+    write(
+        &root.join("ripr-server-v1.2.3-x86_64-pc-windows-msvc.zip"),
+        "archive",
+    );
+    write(
+        &root.join("ripr-server-v1.2.4-aarch64-apple-darwin.tar.gz"),
+        "other",
+    );
+    write(
+        &root.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz.sha256"),
+        "sha",
+    );
+
+    let assets = super::release_server_assets(&root, "1.2.3")?;
+
+    assert_eq!(
+        assets,
+        vec![
+            super::ReleaseServerAsset {
+                target: "x86_64-pc-windows-msvc".to_string(),
+                file_name: "ripr-server-v1.2.3-x86_64-pc-windows-msvc.zip".to_string(),
+            },
+            super::ReleaseServerAsset {
+                target: "x86_64-unknown-linux-gnu".to_string(),
+                file_name: "ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz".to_string(),
+            },
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn release_server_helpers_match_workflow_arguments() -> Result<(), String> {
+    let args = vec![
+        "--version=v1.2.3".to_string(),
+        "--target".to_string(),
+        "x86_64-unknown-linux-gnu".to_string(),
+    ];
+
+    assert_eq!(
+        super::required_release_arg(&args, "version", "MISSING_ENV")?,
+        "v1.2.3"
+    );
+    assert_eq!(
+        super::required_release_arg(&args, "target", "MISSING_ENV")?,
+        "x86_64-unknown-linux-gnu"
+    );
+    assert_eq!(super::normalize_release_version(" v1.2.3 "), "1.2.3");
+    assert_eq!(
+        super::release_server_readme("1.2.3"),
+        "ripr server 1.2.3\n\nThis archive contains the ripr executable used by the VS Code/Open VSX\nextension. It is distributed under MIT OR Apache-2.0."
+    );
+    Ok(())
+}
+
+#[test]
+fn release_server_archive_prepares_package_before_format_validation() -> Result<(), String> {
+    with_temp_cwd("release-server-archive", |root| {
+        let executable = if cfg!(windows) { "ripr.exe" } else { "ripr" };
+        write(
+            &root
+                .join("target")
+                .join("x86_64-unknown-linux-gnu")
+                .join("release")
+                .join(executable),
+            "binary",
+        );
+        write(&root.join("LICENSE-MIT"), "mit");
+        write(&root.join("LICENSE-APACHE"), "apache");
+
+        let args = vec![
+            "--version".to_string(),
+            "v1.2.3".to_string(),
+            "--target".to_string(),
+            "x86_64-unknown-linux-gnu".to_string(),
+            "--executable".to_string(),
+            executable.to_string(),
+            "--archive".to_string(),
+            "bad-format".to_string(),
+        ];
+
+        let Err(err) = super::release_server_archive(&args) else {
+            return Err("unsupported archive format should fail".to_string());
+        };
+        assert!(err.contains("unsupported release server archive format"));
+        assert_eq!(
+            fs::read_to_string(root.join("package").join(executable))
+                .map_err(|err| format!("read packaged executable: {err}"))?,
+            "binary"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("package").join("README-server.txt"))
+                .map_err(|err| format!("read packaged README: {err}"))?,
+            super::release_server_readme("1.2.3")
+        );
+        assert!(root.join("dist").is_dir());
+        Ok(())
+    })
+}
+
+#[test]
+fn create_zip_archive_writes_flat_package_contents() -> Result<(), String> {
+    with_temp_cwd("release-server-archive-zip", |root| {
+        let package = root.join("package");
+        fs::create_dir_all(&package).map_err(|err| format!("create package dir: {err}"))?;
+        write(&package.join("ripr.exe"), "binary");
+        write(&package.join("LICENSE-MIT"), "mit");
+        write(&package.join("LICENSE-APACHE"), "apache");
+        write(&package.join("README-server.txt"), "readme");
+
+        let dist = root.join("dist");
+        fs::create_dir_all(&dist).map_err(|err| format!("create dist dir: {err}"))?;
+        let asset = dist.join("ripr-server-v1.2.3.zip");
+        super::create_zip_archive(&package, &asset)?;
+
+        let zip_file = fs::File::open(&asset).map_err(|err| format!("open written zip: {err}"))?;
+        let mut archive =
+            zip::ZipArchive::new(zip_file).map_err(|err| format!("read written zip: {err}"))?;
+
+        let mut names: Vec<String> = Vec::with_capacity(archive.len());
+        for index in 0..archive.len() {
+            let entry = archive
+                .by_index(index)
+                .map_err(|err| format!("zip entry {index}: {err}"))?;
+            names.push(entry.name().to_string());
+        }
+        names.sort();
+        assert_eq!(
+            names,
+            vec![
+                "LICENSE-APACHE".to_string(),
+                "LICENSE-MIT".to_string(),
+                "README-server.txt".to_string(),
+                "ripr.exe".to_string(),
+            ]
+        );
+
+        let mut binary_contents = String::new();
+        archive
+            .by_name("ripr.exe")
+            .map_err(|err| format!("locate ripr.exe entry: {err}"))?
+            .read_to_string(&mut binary_contents)
+            .map_err(|err| format!("read ripr.exe entry: {err}"))?;
+        assert_eq!(binary_contents, "binary");
+        Ok(())
+    })
+}
+
+#[test]
+fn release_server_manifest_writes_assets_and_checksums() -> Result<(), String> {
+    with_temp_cwd("release-server-manifest", |root| {
+        let dist = root.join("dist");
+        write(
+            &dist.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz"),
+            "linux",
+        );
+        write(
+            &dist.join("ripr-server-v1.2.3-x86_64-pc-windows-msvc.zip"),
+            "windows",
+        );
+        write(
+            &dist.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz.sha256"),
+            "linux-sha\n",
+        );
+        write(
+            &dist.join("ripr-server-v1.2.3-x86_64-pc-windows-msvc.zip.sha256"),
+            "windows-sha\n",
+        );
+        // Simulate a reused `dist/` from a pre-rename run: a stale legacy
+        // `checksums.txt` must be cleaned up, never hashed into the new
+        // sidecar, and never surfaced in the manifest.
+        write(&dist.join("checksums.txt"), "stale-legacy-sidecar\n");
+
+        let args = vec![
+            "--version".to_string(),
+            "v1.2.3".to_string(),
+            "--repository".to_string(),
+            "EffortlessMetrics/ripr".to_string(),
+        ];
+
+        super::release_server_manifest(&args)?;
+
+        let manifest_path = dist.join("ripr-server-manifest-v1.2.3.json");
+        let manifest_text = fs::read_to_string(&manifest_path)
+            .map_err(|err| format!("read release manifest: {err}"))?;
+        let manifest: Value = serde_json::from_str(&manifest_text)
+            .map_err(|err| format!("parse release manifest: {err}"))?;
+        assert_eq!(manifest["version"], "1.2.3");
+        assert_eq!(
+            manifest["assets"]["x86_64-unknown-linux-gnu"]["url"],
+            "https://github.com/EffortlessMetrics/ripr/releases/download/v1.2.3/ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz"
+        );
+        assert_eq!(
+            manifest["assets"]["x86_64-pc-windows-msvc"]["sha256"],
+            "windows-sha"
+        );
+
+        let checksums = fs::read_to_string(dist.join("SHA256SUMS"))
+            .map_err(|err| format!("read SHA256SUMS: {err}"))?;
+        assert!(checksums.contains("  ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz"));
+        assert!(checksums.contains("  ripr-server-v1.2.3-x86_64-pc-windows-msvc.zip"));
+        assert!(checksums.contains("  ripr-server-manifest-v1.2.3.json"));
+        assert!(!checksums.contains(".sha256"));
+        // Neither sidecar hashes itself or the stale legacy file.
+        assert!(
+            !checksums.contains("SHA256SUMS"),
+            "SHA256SUMS must not hash itself"
+        );
+        assert!(
+            !checksums.contains("checksums.txt"),
+            "the stale legacy checksums.txt must not be hashed into SHA256SUMS"
+        );
+        // The reused-dist upgrade path leaves only the new sidecar behind.
+        assert!(
+            !dist.join("checksums.txt").exists(),
+            "stale legacy checksums.txt must be removed on a reused dist/ run"
+        );
+        // The JSON manifest keys are release targets only — never a sidecar.
+        let assets = manifest["assets"]
+            .as_object()
+            .ok_or("manifest assets is not an object")?;
+        assert_eq!(
+            assets.len(),
+            2,
+            "only the two server targets are manifested"
+        );
+        assert!(!assets.contains_key("SHA256SUMS"));
+        assert!(!assets.contains_key("checksums.txt"));
+        Ok(())
+    })
+}
+
+pub(crate) fn with_temp_cwd<T>(name: &str, f: impl FnOnce(&Path) -> T) -> T {
+    let lock = acquire_test_cwd_write_guard();
+    let old = std::env::current_dir().unwrap();
+    let root = temp_dir(name);
+    std::env::set_current_dir(&root).unwrap();
+
+    let out = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&root))) {
+        Ok(result) => result,
+        Err(panic_payload) => {
+            let _ = std::env::set_current_dir(&old);
+            drop(lock);
+            let _ = fs::remove_dir_all(&root);
+            std::panic::resume_unwind(panic_payload);
+        }
+    };
+
+    std::env::set_current_dir(old).unwrap();
+    drop(lock);
+    let _ = fs::remove_dir_all(&root);
+    out
+}
+
+fn with_repo_cwd<T>(f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    let guard = acquire_test_cwd_write_guard();
+    let old =
+        std::env::current_dir().map_err(|err| format!("failed to capture current dir: {err}"))?;
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let Some(repo_root) = manifest_dir.parent() else {
+        drop(guard);
+        return Err(format!(
+            "failed to resolve repo root from {}",
+            manifest_dir.display()
+        ));
+    };
+    std::env::set_current_dir(repo_root).map_err(|err| format!("failed to set repo cwd: {err}"))?;
+    // Restore the cwd even when the guarded body panics, mirroring
+    // `with_temp_cwd`: a leaked repo-root cwd would poison every other
+    // cwd-sensitive test in the process.
+    let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        Ok(result) => result,
+        Err(panic_payload) => {
+            let _ = std::env::set_current_dir(&old);
+            drop(guard);
+            std::panic::resume_unwind(panic_payload);
+        }
+    };
+    let restore =
+        std::env::set_current_dir(&old).map_err(|err| format!("failed to restore cwd: {err}"));
+    drop(guard);
+    restore?;
+    result
+}
+
+/// #3054, the binding this gate rests on: the directory the fixture runner
+/// clears must be the directory the `ripr` child actually writes its facts to.
+///
+/// `ripr` derives its default cache base from the workspace root it analyses, and
+/// a fixture run is rooted at `<fixture>/input` — so before this fix the runner
+/// cleared the repository cache while every fixture read and wrote its own
+/// `input/target/ripr/cache`. Nothing observed the mismatch, which is why the
+/// clear could be inert and still look correct.
+///
+/// This runs the real production path against a real fixture and asserts all
+/// three legs: a seeded stale entry is discarded, facts appear under the cleared
+/// directory, and nothing lands inside the fixture workspace.
+#[test]
+fn fixture_run_writes_its_facts_into_the_cache_the_runner_cleared() -> Result<(), String> {
+    fn file_count(dir: &Path) -> Result<usize, String> {
+        let mut total = 0;
+        let entries = fs::read_dir(dir).map_err(|err| format!("read {}: {err}", dir.display()))?;
+        for entry in entries {
+            let entry = entry.map_err(|err| format!("read entry in {}: {err}", dir.display()))?;
+            let path = entry.path();
+            if path.is_dir() {
+                total += file_count(&path)?;
+            } else {
+                total += 1;
+            }
+        }
+        Ok(total)
+    }
+
+    with_repo_cwd(|| {
+        let name = "all_no_path_disclosure";
+        let fixture = PathBuf::from("fixtures").join(name);
+        let workspace_cache = fixture
+            .join("input")
+            .join("target")
+            .join("ripr")
+            .join("cache");
+        let _ = fs::remove_dir_all(fixture.join("input").join("target"));
+
+        let cache_dir = super::fixture_cache_dir(name)?;
+        let stale = cache_dir
+            .join("repo-file-facts")
+            .join("0.2")
+            .join("stale-3054.json");
+        let stale_parent = stale
+            .parent()
+            .ok_or_else(|| "seeded cache entry should have a parent".to_string())?;
+        fs::create_dir_all(stale_parent)
+            .map_err(|err| format!("create {}: {err}", stale_parent.display()))?;
+        fs::write(&stale, b"{\"stale\":true}")
+            .map_err(|err| format!("write {}: {err}", stale.display()))?;
+
+        super::run_fixture_outputs(&fixture)?;
+
+        assert!(
+            !stale.exists(),
+            "a fixture run must discard cached facts computed by a previous binary: {}",
+            stale.display()
+        );
+        assert!(
+            cache_dir.is_dir(),
+            "the fixture run must write its facts under the cleared cache: {}",
+            cache_dir.display()
+        );
+        assert!(
+            file_count(&cache_dir)? > 0,
+            "the cleared cache must be the cache the child populates, but {} is empty",
+            cache_dir.display()
+        );
+        assert!(
+            !workspace_cache.exists(),
+            "no fixture cache may land inside the fixture workspace: {}",
+            workspace_cache.display()
+        );
+        Ok(())
+    })
+}
+
+fn targeted_static_seam(id: &str, grip_class: &str) -> StaticSeamRecord {
+    StaticSeamRecord {
+        seam_id: id.to_string(),
+        seam_kind: "predicate_boundary".to_string(),
+        file: "src/pricing.rs".to_string(),
+        line: 42,
+        seam_grip_class: grip_class.to_string(),
+        oracle_kind: "exact_value".to_string(),
+        oracle_strength: "weak".to_string(),
+        observed_values: vec!["50".to_string()],
+        missing_discriminators: Vec::new(),
+    }
+}
+
+fn mutation_record(
+    mutant_id: &str,
+    seam_id: Option<&str>,
+    runtime_outcome: &str,
+) -> MutationOutcomeRecord {
+    mutation_record_at(mutant_id, seam_id, "src/pricing.rs", 42, runtime_outcome)
+}
+
+fn mutation_record_at(
+    mutant_id: &str,
+    seam_id: Option<&str>,
+    file: &str,
+    line: usize,
+    runtime_outcome: &str,
+) -> MutationOutcomeRecord {
+    MutationOutcomeRecord {
+        mutant_id: Some(mutant_id.to_string()),
+        seam_id: seam_id.map(str::to_string),
+        file: Some(file.to_string()),
+        line: Some(line),
+        mutation_operator: "replace >= with >".to_string(),
+        runtime_outcome: runtime_outcome.to_string(),
+        duration: None,
+        test_command: Some("cargo test pricing".to_string()),
+    }
+}
+
+#[test]
+fn ripr_debug_binary_honors_cargo_target_dir() {
+    // #2176 review: with CARGO_TARGET_DIR set (as routed CI does), the
+    // binary must resolve under it, never a hardcoded target/debug.
+    let path = super::ripr_debug_binary_in(Some(PathBuf::from("/mnt/ci-scratch/target/run-1")));
+    let text = path.to_string_lossy().replace('\\', "/");
+    assert!(text.starts_with("/mnt/ci-scratch/target/run-1/debug/ripr"));
+    let default = super::ripr_debug_binary_in(None);
+    assert!(
+        default.ends_with(format!("target/debug/ripr{}", std::env::consts::EXE_SUFFIX).as_str())
+    );
+}
+
+// Enum contract tests
+// ============================================================================
+
+#[test]
+fn test_oracle_class_labels_are_stable() {
+    assert_eq!(TestOracleClass::Strong.as_str(), "strong");
+    assert_eq!(TestOracleClass::Medium.as_str(), "medium");
+    assert_eq!(TestOracleClass::Weak.as_str(), "weak");
+    assert_eq!(TestOracleClass::Smoke.as_str(), "smoke");
+}
+
+#[test]
+fn test_oracle_class_rank_is_monotonic() {
+    assert!(TestOracleClass::Strong.rank() > TestOracleClass::Medium.rank());
+    assert!(TestOracleClass::Medium.rank() > TestOracleClass::Weak.rank());
+    assert!(TestOracleClass::Weak.rank() > TestOracleClass::Smoke.rank());
+}
+
+#[test]
+fn test_intent_kind_round_trips_supported_values() {
+    for value in TestIntentKind::supported() {
+        let parsed = TestIntentKind::from_str(value).expect("supported intent should parse");
+        assert_eq!(parsed.as_str(), *value);
+    }
+}
+
+#[test]
+fn test_intent_kind_rejects_unknown_values() {
+    assert_eq!(TestIntentKind::from_str("not_a_real_intent"), None);
+    assert_eq!(TestIntentKind::from_str(""), None);
+    assert_eq!(TestIntentKind::from_str("SMOKE"), None);
+}
+
+#[test]
+fn test_intent_kind_supported_list_has_expected_values() {
+    let supported = TestIntentKind::supported();
+    assert!(supported.contains(&"smoke"));
+    assert!(supported.contains(&"business_case_duplicate"));
+    assert!(supported.contains(&"opaque_external_oracle"));
+    assert!(supported.contains(&"integration_contract"));
+    assert!(supported.contains(&"performance_guard"));
+    assert!(supported.contains(&"documentation_example"));
+    assert_eq!(supported.len(), 6);
+}
+
+// ============================================================================
+// Receipt and status utility tests
+// ============================================================================
+
+#[test]
+fn receipt_status_vocabulary_is_locked() {
+    assert!(is_receipt_status("passed"));
+    assert!(is_receipt_status("warn"));
+    assert!(is_receipt_status("failed"));
+    assert!(is_receipt_status("missing"));
+
+    assert!(!is_receipt_status("pass"));
+    assert!(!is_receipt_status("warning"));
+    assert!(!is_receipt_status("fail"));
+    assert!(!is_receipt_status("unknown"));
+    assert!(!is_receipt_status(""));
+}
+
+#[test]
+fn receipt_json_escapes_and_includes_metadata() {
+    let record = ReceiptRecord {
+        file: "shape.json".to_string(),
+        command: "cargo xtask shape".to_string(),
+        status: "passed".to_string(),
+        reports: vec![
+            "target/ripr/reports/shape.md".to_string(),
+            "target/ripr/reports/pr-summary.md".to_string(),
+        ],
+    };
+    let mut git = BTreeMap::new();
+    git.insert("branch".to_string(), "main".to_string());
+    git.insert("commit".to_string(), "abc123".to_string());
+
+    let json = receipt_json(&record, &git);
+
+    assert!(json.contains("\"schema_version\": \"0.1\""));
+    assert!(json.contains("\"command\": \"cargo xtask shape\""));
+    assert!(json.contains("\"status\": \"passed\""));
+    assert!(json.contains("\"branch\": \"main\""));
+    assert!(json.contains("\"commit\": \"abc123\""));
+    assert!(json.contains("target/ripr/reports/shape.md"));
+}
+
+#[test]
+fn receipt_json_escapes_quotes_and_backslashes() {
+    let record = ReceiptRecord {
+        file: "report.json".to_string(),
+        command: "cargo run -- check --diff \"path\\to\\file.diff\"".to_string(),
+        status: "passed".to_string(),
+        reports: vec![],
+    };
+    let git = BTreeMap::new();
+
+    let json = receipt_json(&record, &git);
+
+    assert!(json.contains("cargo run -- check --diff \\\"path\\\\to\\\\file.diff\\\""));
+}
+
+#[test]
+fn receipt_status_from_reports_detects_missing_files() {
+    with_temp_cwd("receipt-status-missing", |_root| {
+        let result = receipt_status_from_reports(&["missing.md".to_string()]);
+        assert_eq!(result, "missing");
+    });
+}
+
+#[test]
+fn receipt_specs_returns_expected_reports() {
+    let specs = receipt_specs();
+    assert!(!specs.is_empty());
+
+    // Spot-check that we have some expected specs
+    let spec_commands: Vec<&str> = specs.iter().map(|s| s.command).collect();
+    assert!(spec_commands.contains(&"cargo xtask shape"));
+    assert!(spec_commands.contains(&"cargo xtask check-pr"));
+}
+
+#[test]
+fn glob_match_supports_recursive_segments_and_star_suffixes() {
+    assert!(glob_matches(
+        "editors/vscode/**/*.ts",
+        "editors/vscode/src/client.ts"
+    ));
+    assert!(glob_matches("*.md", "README.md"));
+    assert!(glob_matches(
+        "fixtures/**",
+        "fixtures/boundary_gap/input/src/lib.rs"
+    ));
+    assert!(!glob_matches(
+        "editors/vscode/**/*.ts",
+        "docs/examples/client.ts"
+    ));
+}
+
+fn allowlist_with_docs_markdown_globs() -> Vec<StaticLanguageAllowEntry> {
+    vec![
+        StaticLanguageAllowEntry::new_path("AGENTS.md", "test", "test fixture"),
+        StaticLanguageAllowEntry::new_glob("docs/*.md", "test", "test fixture"),
+        StaticLanguageAllowEntry::new_glob("docs/**/*.md", "test", "test fixture"),
+    ]
+}
+
+#[test]
+fn static_language_allowlist_covers_exact_paths_and_scoped_doc_globs() {
+    let allowlist = allowlist_with_docs_markdown_globs();
+
+    assert!(static_language_allowlist_covers(&allowlist, "AGENTS.md"));
+    assert!(static_language_allowlist_covers(
+        &allowlist,
+        "docs/BADGE_POLICY.md"
+    ));
+    assert!(static_language_allowlist_covers(
+        &allowlist,
+        "docs/specs/RIPR-SPEC-0004-test-efficiency.md"
+    ));
+    assert!(!static_language_allowlist_covers(
+        &allowlist,
+        "crates/ripr/src/lib.rs"
+    ));
+    assert!(!static_language_allowlist_covers(
+        &allowlist,
+        "fixtures/boundary_gap/input/src/lib.rs"
+    ));
+    assert!(!static_language_allowlist_covers(
+        &allowlist,
+        "docs/generated/output.json"
+    ));
+}
+
+#[test]
+fn line_has_static_language_inline_allow_requires_a_reason() {
+    // Marker with a reason suppresses (input is lowercased by the caller).
+    assert!(line_has_static_language_inline_allow(
+        "# the proven approach  # ripr-allow: static-language: established ci wording"
+    ));
+    // Bare marker with no reason does NOT suppress — an allow must say why.
+    assert!(!line_has_static_language_inline_allow(
+        "# the proven approach  # ripr-allow: static-language:"
+    ));
+    assert!(!line_has_static_language_inline_allow(
+        "# the proven approach  # ripr-allow: static-language:   "
+    ));
+    // No marker at all.
+    assert!(!line_has_static_language_inline_allow(
+        "# the proven approach"
+    ));
+}
+
+#[test]
+fn static_language_violation_message_advertises_inline_allow() {
+    let message =
+        static_language_violation_message("policy/x.txt", 3, "adequate", "# this set is adequate");
+    assert!(
+        message.contains("ripr-allow: static-language:"),
+        "message must advertise the inline-allow escape, got: {message}"
+    );
+}
+
+#[test]
+fn static_language_violation_message_is_actionable() {
+    let message = static_language_violation_message(
+        ".github/workflows/scratch-gc.yml",
+        4,
+        "proven",
+        "# Mirrors the proven inline \"Prepare scratch\" step",
+    );
+    // file:line and the term.
+    assert!(
+        message.starts_with(".github/workflows/scratch-gc.yml:4"),
+        "message must lead with path:line, got: {message}"
+    );
+    assert!(
+        message.contains("`proven`"),
+        "message must name the term, got: {message}"
+    );
+    // The offending snippet, so the author sees the context inline.
+    assert!(
+        message.contains("Mirrors the proven inline"),
+        "message must quote the offending line, got: {message}"
+    );
+    // The key fix hint: the gate scans prose, not just output.
+    assert!(
+        message.contains("scans all tracked prose"),
+        "message must explain the prose-vs-output scope, got: {message}"
+    );
+    // A plain synonym for the prose case.
+    assert!(
+        message.contains("demonstrated/established"),
+        "message must suggest a synonym, got: {message}"
+    );
+}
+
+#[test]
+fn static_language_violation_message_truncates_long_lines() {
+    let long = "x".repeat(200);
+    let line = format!("// {long} adequate");
+    let message = static_language_violation_message("docs/notes.md", 7, "adequate", &line);
+    // Snippet is bounded so the report stays scannable.
+    assert!(
+        message.contains("..."),
+        "long snippet must be truncated, got len {}",
+        message.len()
+    );
+    assert!(
+        message.contains("sufficient/enough"),
+        "message must suggest a synonym for `adequate`, got: {message}"
+    );
+}
+
+#[test]
+fn should_scan_static_language_path_combines_candidate_check_and_allowlist() {
+    let allowlist = allowlist_with_docs_markdown_globs();
+
+    // Non-candidate files (not in the watched extensions list) are never
+    // scanned, regardless of allowlist contents.
+    assert!(!should_scan_static_language_path(
+        &allowlist,
+        "docs/generated/output.png"
+    ));
+    assert!(!should_scan_static_language_path(
+        &allowlist,
+        "fixtures/boundary_gap/expected/output.bin"
+    ));
+
+    // Editor-extension source is part of the static-language policy surface.
+    assert!(should_scan_static_language_path(
+        &allowlist,
+        "editors/vscode/src/extension.ts"
+    ));
+    assert!(should_scan_static_language_path(
+        &allowlist,
+        "editors/vscode/src/component.tsx"
+    ));
+    assert!(should_scan_static_language_path(
+        &allowlist,
+        "editors/vscode/scripts/package.js"
+    ));
+    assert!(should_scan_static_language_path(
+        &allowlist,
+        "editors/vscode/scripts/component.jsx"
+    ));
+
+    // Candidate files covered by an exact allowlist entry are not scanned.
+    assert!(!should_scan_static_language_path(&allowlist, "AGENTS.md"));
+
+    // Candidate files covered by the docs Markdown globs are not scanned.
+    assert!(!should_scan_static_language_path(
+        &allowlist,
+        "docs/BADGE_POLICY.md"
+    ));
+    assert!(!should_scan_static_language_path(
+        &allowlist,
+        "docs/specs/RIPR-SPEC-0004-test-efficiency.md"
+    ));
+
+    // Non-allowlisted candidate Rust source IS scanned.
+    assert!(should_scan_static_language_path(
+        &allowlist,
+        "crates/ripr/src/lib.rs"
+    ));
+    assert!(should_scan_static_language_path(
+        &allowlist,
+        "fixtures/boundary_gap/input/src/lib.rs"
+    ));
+}
+
+#[test]
+fn should_skip_path_ignores_generated_editor_test_artifacts() {
+    assert!(should_skip_path("editors/vscode/.vscode-test"));
+    assert!(should_skip_path(
+        "editors/vscode/.vscode-test/vscode-win32-x64-archive-1.119.0/resources/app/package.json"
+    ));
+    assert!(should_skip_path(
+        "editors/vscode/node_modules/vscode/package.json"
+    ));
+    assert!(should_skip_path("editors/vscode/out/src/extension.js"));
+    assert!(should_skip_path("editors/vscode/dist/ripr-0.3.0.vsix"));
+    assert!(!should_skip_path("editors/vscode/src/config.ts"));
+}
+
+#[test]
+fn should_skip_path_ignores_nested_target_artifacts() {
+    assert!(should_skip_path("crates/ripr/target"));
+    assert!(should_skip_path(
+        "crates/ripr/target/ripr/review/run-receipt.json"
+    ));
+    assert!(!should_skip_path("crates/ripr/src/targeting.rs"));
+}
+
+#[test]
+fn should_skip_path_ignores_agent_worktree_state() {
+    // Nested agent worktrees under `.claude/worktrees/` contain full repo
+    // copies; FS-walking checks must not descend into them and double-count
+    // or false-fail policy gates (#1030). `.claude/` is gitignored, so
+    // `git ls-files`-based checks are already safe; this guards the
+    // `collect_files()` filesystem walkers.
+    assert!(should_skip_path(".claude"));
+    assert!(should_skip_path(".claude/settings.local.json"));
+    assert!(should_skip_path(
+        ".claude/worktrees/agent-1/crates/ripr/src/lib.rs"
+    ));
+    // A real source path that merely contains the substring elsewhere must
+    // still be scanned.
+    assert!(!should_skip_path("crates/ripr/src/lib.rs"));
+    assert!(!should_skip_path("docs/claude-notes.md"));
+}
+
+#[test]
+fn non_rust_programming_policy_requires_retention_rule() {
+    assert!(is_non_rust_programming_candidate("scripts/check.py"));
+    assert!(is_non_rust_programming_candidate(
+        "editors/vscode/src/extension.ts"
+    ));
+    assert!(!is_non_rust_programming_candidate(
+        "policy/non_rust_allowlist.txt"
+    ));
+    assert!(!is_non_rust_programming_candidate("policy/ci-budget.toml"));
+
+    assert!(non_rust_programming_retention_reason("editors/vscode/src/extension.ts").is_some());
+    assert!(
+        non_rust_programming_retention_reason("editors/vscode/test/suite/extension.test.ts")
+            .is_some()
+    );
+    assert!(non_rust_programming_retention_reason("scripts/check.py").is_none());
+}
+
+#[test]
+fn rust_conversion_candidates_classify_unretained_non_rust_source() -> Result<(), String> {
+    let Some(candidate) = super::non_rust_source_conversion_candidate("scripts/check.py") else {
+        return Err("unretained non-Rust source should be a candidate".to_string());
+    };
+
+    assert_eq!(candidate.priority, "high");
+    assert_eq!(
+        candidate.kind,
+        "non_rust_programming_without_retention_rule"
+    );
+    assert!(candidate.recommendation.contains("xtask"));
+    Ok(())
+}
+
+#[test]
+fn rust_conversion_candidates_retains_fixture_and_editor_boundaries() -> Result<(), String> {
+    let Some(fixture) = super::non_rust_source_conversion_candidate(
+        "fixtures/python_boundary_gap/input/src/discount.py",
+    ) else {
+        return Err("fixture input should be assessed".to_string());
+    };
+    let Some(editor) =
+        super::non_rust_source_conversion_candidate("editors/vscode/src/extension.ts")
+    else {
+        return Err("editor adapter should be assessed".to_string());
+    };
+
+    assert_eq!(fixture.priority, "retained");
+    assert_eq!(fixture.kind, "retained_fixture_input");
+    assert_eq!(editor.priority, "retained");
+    assert_eq!(editor.kind, "retained_external_runtime");
+    Ok(())
+}
+
+#[test]
+fn rust_conversion_candidates_identify_workflow_shell_logic() -> Result<(), String> {
+    let block = super::RunBlock {
+        line_number: 12,
+        non_empty_lines: 1,
+        text:
+            "mkdir -p target/ripr/reports && git diff --name-only > target/ripr/reports/changes.txt"
+                .to_string(),
+    };
+
+    let Some(candidate) =
+        super::workflow_run_conversion_candidate(".github/workflows/pr-plan.yml", &block)
+    else {
+        return Err("repo-owned workflow shell should be a migration candidate".to_string());
+    };
+
+    assert_eq!(candidate.priority, "medium");
+    assert_eq!(candidate.line, Some(12));
+    assert_eq!(candidate.kind, "workflow_shell_logic");
+    Ok(())
+}
+
+#[test]
+fn rust_conversion_candidates_skip_xtask_workflow_calls() {
+    let block = super::RunBlock {
+        line_number: 34,
+        non_empty_lines: 1,
+        text: "cargo xtask reports index || true".to_string(),
+    };
+
+    assert!(super::workflow_run_conversion_candidate(".github/workflows/ci.yml", &block).is_none());
+}
+
+#[test]
+fn rust_conversion_candidates_retains_external_workflow_tooling() -> Result<(), String> {
+    let block = super::RunBlock {
+        line_number: 21,
+        non_empty_lines: 1,
+        text: "npm --prefix editors/vscode run compile".to_string(),
+    };
+
+    let Some(candidate) =
+        super::workflow_run_conversion_candidate(".github/workflows/ci.yml", &block)
+    else {
+        return Err("external workflow tooling should be retained".to_string());
+    };
+
+    assert_eq!(candidate.priority, "retained");
+    assert_eq!(candidate.kind, "retained_external_runtime");
+    assert_eq!(candidate.line, Some(21));
+    assert!(candidate.current_surface.contains("external toolchain"));
+    Ok(())
+}
+
+#[test]
+fn rust_conversion_candidates_markdown_reports_actionable_and_retained_counts() {
+    let candidates = sample_rust_conversion_candidates();
+
+    let markdown = super::rust_conversion_candidates_markdown(&candidates);
+
+    assert!(markdown.contains("Status: advisory"));
+    assert!(markdown.contains("Actionable candidates: 2"));
+    assert!(markdown.contains("Retained boundaries inspected: 1"));
+    assert!(markdown.contains("workflow_shell_logic"));
+    assert!(markdown.contains("VS Code extension TypeScript"));
+    assert!(markdown.contains("cargo xtask check-file-policy"));
+}
+
+#[test]
+fn rust_conversion_candidates_markdown_handles_empty_report() {
+    let markdown = super::rust_conversion_candidates_markdown(&[]);
+
+    assert!(markdown.contains("Actionable candidates: 0"));
+    assert!(markdown.contains("Retained boundaries inspected: 0"));
+    assert!(markdown.contains(
+        "No unretained non-Rust source files or workflow shell migration candidates were found."
+    ));
+    assert!(markdown.contains("No retained non-Rust runtime or fixture boundaries were found."));
+}
+
+#[test]
+fn rust_conversion_candidates_json_reports_counts_and_items() -> Result<(), String> {
+    let candidates = sample_rust_conversion_candidates();
+
+    let json = super::rust_conversion_candidates_json(&candidates)?;
+    let value: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|err| format!("rust conversion JSON should parse: {err}"))?;
+
+    assert_eq!(value["schema_version"], 1);
+    assert_eq!(value["actionable_count"], 2);
+    assert_eq!(value["retained_count"], 1);
+    assert_eq!(value["candidates"][0]["path"], "scripts/check.py");
+    assert_eq!(value["candidates"][1]["line"], 42);
+    assert_eq!(value["candidates"][2]["priority"], "retained");
+    Ok(())
+}
+
+fn sample_rust_conversion_candidates() -> Vec<super::RustConversionCandidate> {
+    vec![
+        super::RustConversionCandidate {
+            path: "scripts/check.py".to_string(),
+            line: None,
+            kind: "non_rust_programming_without_retention_rule".to_string(),
+            priority: "high".to_string(),
+            current_surface: "unapproved non-Rust implementation or automation".to_string(),
+            recommendation: "Move this behavior into xtask.".to_string(),
+            reason: "Rust is the default implementation surface.".to_string(),
+        },
+        super::RustConversionCandidate {
+            path: ".github/workflows/pr-plan.yml".to_string(),
+            line: Some(42),
+            kind: "workflow_shell_logic".to_string(),
+            priority: "medium".to_string(),
+            current_surface: "GitHub Actions shell run block".to_string(),
+            recommendation: "Move report assembly into cargo xtask.".to_string(),
+            reason: "Workflow shell is harder to type-check and test.".to_string(),
+        },
+        super::RustConversionCandidate {
+            path: "editors/vscode/src/extension.ts".to_string(),
+            line: None,
+            kind: "retained_external_runtime".to_string(),
+            priority: "retained".to_string(),
+            current_surface: "VS Code extension TypeScript".to_string(),
+            recommendation: "Keep this code in the editor adapter.".to_string(),
+            reason: "The VS Code Extension Host API is TypeScript-native.".to_string(),
+        },
+    ]
+}
+
+#[test]
+fn glob_matches_distinguishes_single_star_from_double_star_segments() {
+    // docs/*.md must NOT match a nested path: a single `*` cannot cross `/`.
+    assert!(!glob_matches(
+        "docs/*.md",
+        "docs/specs/RIPR-SPEC-0004-test-efficiency.md"
+    ));
+
+    // docs/**/*.md must match a top-level docs file because ** consumes zero segments.
+    assert!(glob_matches("docs/**/*.md", "docs/BADGE_POLICY.md"));
+
+    // docs/**/*.md must match deeply nested paths.
+    assert!(glob_matches("docs/**/*.md", "docs/adr/sub/0001-x.md"));
+
+    // Empty path against a non-empty pattern → false.
+    assert!(!glob_matches("docs/*.md", ""));
+
+    // A pattern with no wildcards behaves as exact match (case-sensitive).
+    assert!(glob_matches("AGENTS.md", "AGENTS.md"));
+    assert!(!glob_matches("AGENTS.md", "agents.md"));
+
+    // A `*` segment cannot cross `/`, so it matches one path component only.
+    assert!(glob_matches(
+        "crates/*/src/lib.rs",
+        "crates/ripr/src/lib.rs"
+    ));
+    assert!(!glob_matches(
+        "crates/*/src/lib.rs",
+        "crates/ripr/src/main.rs"
+    ));
+}
+
+#[test]
+fn static_language_allowlist_covers_handles_empty_and_glob_only_lists() {
+    // An empty allowlist covers nothing.
+    let empty: Vec<StaticLanguageAllowEntry> = Vec::new();
+    assert!(!static_language_allowlist_covers(&empty, "AGENTS.md"));
+    assert!(!static_language_allowlist_covers(&empty, "docs/X.md"));
+
+    // Glob-only allowlist: only paths matching the glob are covered.
+    let globs_only = vec![StaticLanguageAllowEntry::new_glob(
+        "docs/**/*.md",
+        "test",
+        "test fixture",
+    )];
+    assert!(static_language_allowlist_covers(
+        &globs_only,
+        "docs/specs/X.md"
+    ));
+    assert!(static_language_allowlist_covers(
+        &globs_only,
+        "docs/BADGE_POLICY.md"
+    ));
+    assert!(!static_language_allowlist_covers(&globs_only, "AGENTS.md"));
+    assert!(!static_language_allowlist_covers(
+        &globs_only,
+        "crates/ripr/README.md"
+    ));
+
+    // Exact-only allowlist: no glob behavior applied to non-glob entries.
+    let exact_only = vec![
+        StaticLanguageAllowEntry::new_path("AGENTS.md", "test", "test fixture"),
+        StaticLanguageAllowEntry::new_path("README.md", "test", "test fixture"),
+    ];
+    assert!(static_language_allowlist_covers(&exact_only, "AGENTS.md"));
+    assert!(!static_language_allowlist_covers(
+        &exact_only,
+        "docs/AGENTS.md"
+    ));
+    assert!(!static_language_allowlist_covers(&exact_only, "docs/X.md"));
+}
+
+#[test]
+fn static_language_allowlist_parses_reasoned_entries() {
+    let text = r#"
+schema_version = 1
+
+[[allow]]
+path = "AGENTS.md"
+owner = "maintainers"
+reason = "Agent instructions define the static-language boundary."
+
+[[allow]]
+glob = "docs/**/*.md"
+owner = "docs"
+reason = "Nested documentation may describe policy vocabulary."
+"#;
+    let (entries, violations) = parse_static_language_allowlist(text);
+    assert!(
+        violations.is_empty(),
+        "unexpected violations: {violations:?}"
+    );
+    assert_eq!(entries.len(), 2);
+    assert_eq!(
+        entries[0].matcher,
+        StaticLanguageMatcher::Path("AGENTS.md".to_string())
+    );
+    assert_eq!(entries[0].owner, "maintainers");
+    assert_eq!(
+        entries[1].matcher,
+        StaticLanguageMatcher::Glob("docs/**/*.md".to_string())
+    );
+    assert_eq!(entries[1].owner, "docs");
+}
+
+#[test]
+fn static_language_allowlist_requires_schema_version() {
+    let text = r#"
+[[allow]]
+path = "AGENTS.md"
+owner = "maintainers"
+reason = "Agent instructions describe policy vocabulary."
+"#;
+    let (_, violations) = parse_static_language_allowlist(text);
+    assert!(
+        violations.iter().any(|v| v.contains("schema_version = 1")),
+        "expected schema_version violation, got {violations:?}"
+    );
+}
+
+#[test]
+fn static_language_allowlist_requires_reason() {
+    let text = r#"
+schema_version = 1
+
+[[allow]]
+path = "AGENTS.md"
+owner = "maintainers"
+"#;
+    let (entries, violations) = parse_static_language_allowlist(text);
+    assert!(entries.is_empty());
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("missing required `reason`")),
+        "expected missing-reason violation, got {violations:?}"
+    );
+}
+
+#[test]
+fn static_language_allowlist_requires_owner() {
+    let text = r#"
+schema_version = 1
+
+[[allow]]
+path = "AGENTS.md"
+reason = "Agent instructions describe policy vocabulary."
+"#;
+    let (entries, violations) = parse_static_language_allowlist(text);
+    assert!(entries.is_empty());
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("missing required `owner`")),
+        "expected missing-owner violation, got {violations:?}"
+    );
+}
+
+#[test]
+fn static_language_allowlist_rejects_blank_reason() {
+    let text = r#"
+schema_version = 1
+
+[[allow]]
+path = "AGENTS.md"
+owner = "maintainers"
+reason = "   "
+"#;
+    let (entries, violations) = parse_static_language_allowlist(text);
+    assert!(entries.is_empty());
+    assert!(
+        violations.iter().any(|v| v.contains("`reason` is blank")),
+        "expected blank-reason violation, got {violations:?}"
+    );
+}
+
+#[test]
+fn static_language_allowlist_rejects_path_and_glob_together() {
+    let text = r#"
+schema_version = 1
+
+[[allow]]
+path = "AGENTS.md"
+glob = "docs/*.md"
+owner = "maintainers"
+reason = "Mixed entry should be rejected."
+"#;
+    let (entries, violations) = parse_static_language_allowlist(text);
+    assert!(entries.is_empty());
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("both `path` and `glob`")),
+        "expected path+glob violation, got {violations:?}"
+    );
+}
+
+#[test]
+fn static_language_allowlist_rejects_missing_path_and_glob() {
+    let text = r#"
+schema_version = 1
+
+[[allow]]
+owner = "maintainers"
+reason = "Entry without a matcher is meaningless."
+"#;
+    let (entries, violations) = parse_static_language_allowlist(text);
+    assert!(entries.is_empty());
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("must declare either `path` or `glob`")),
+        "expected missing-matcher violation, got {violations:?}"
+    );
+}
+
+#[test]
+fn static_language_allowlist_rejects_duplicate_matcher() {
+    let text = r#"
+schema_version = 1
+
+[[allow]]
+path = "AGENTS.md"
+owner = "maintainers"
+reason = "First declaration."
+
+[[allow]]
+path = "AGENTS.md"
+owner = "maintainers"
+reason = "Second declaration."
+"#;
+    let (entries, violations) = parse_static_language_allowlist(text);
+    assert_eq!(entries.len(), 2, "both entries should still parse");
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("`AGENTS.md` is duplicated")),
+        "expected duplicate violation, got {violations:?}"
+    );
+}
+
+#[test]
+fn static_language_allowlist_rejects_absolute_path() {
+    let unix = r#"
+schema_version = 1
+
+[[allow]]
+path = "/abs/path.md"
+owner = "maintainers"
+reason = "Absolute path attempt."
+"#;
+    let (entries, violations) = parse_static_language_allowlist(unix);
+    assert!(entries.is_empty());
+    assert!(
+        violations.iter().any(|v| v.contains("is absolute")),
+        "expected absolute-path violation, got {violations:?}"
+    );
+
+    // Windows drive letter form is also rejected. The drive prefix is
+    // assembled at runtime so the literal pattern never appears in this
+    // source file (`cargo xtask check-local-context` flags `<alpha>:/`).
+    let drive = "Z";
+    let sep = ":/";
+    let win = format!(
+        r#"
+schema_version = 1
+
+[[allow]]
+path = "{drive}{sep}abs/path.md"
+owner = "maintainers"
+reason = "Windows absolute path attempt."
+"#
+    );
+    let (entries, violations) = parse_static_language_allowlist(&win);
+    assert!(entries.is_empty());
+    assert!(
+        violations.iter().any(|v| v.contains("is absolute")),
+        "expected windows-absolute-path violation, got {violations:?}"
+    );
+}
+
+#[test]
+fn static_language_allowlist_rejects_backslash_path() {
+    let text = r#"
+schema_version = 1
+
+[[allow]]
+path = "docs\\BADGE_POLICY.md"
+owner = "maintainers"
+reason = "Backslash path attempt."
+"#;
+    let (entries, violations) = parse_static_language_allowlist(text);
+    assert!(entries.is_empty());
+    assert!(
+        violations.iter().any(|v| v.contains("backslashes")),
+        "expected backslash-path violation, got {violations:?}"
+    );
+}
+
+#[test]
+fn static_language_allowlist_rejects_repo_wide_markdown_glob() {
+    let cases = [
+        ("*.md", "repo-wide single-segment markdown glob"),
+        ("**/*.md", "repo-wide recursive markdown glob"),
+        ("crates/**/*.md", "non-docs glob outside the scoped set"),
+    ];
+    for (glob, label) in cases {
+        let text = format!(
+            r#"
+schema_version = 1
+
+[[allow]]
+glob = "{glob}"
+owner = "maintainers"
+reason = "{label}"
+"#
+        );
+        let (entries, violations) = parse_static_language_allowlist(&text);
+        assert!(entries.is_empty(), "glob `{glob}` should not parse");
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("not in the scoped set")),
+            "expected scoped-glob violation for `{glob}`, got {violations:?}"
+        );
+    }
+}
+
+#[test]
+fn allow_attribute_detection_flags_guarded_lint_suppressions() {
+    let text = format!(
+        "{}\nfn f() {{}}\n{}",
+        concat!("#[", "allow", "(clippy::unwrap_used, dead_code)]"),
+        concat!("#![", "expect", "(warnings, reason = \"temporary\")]")
+    );
+
+    let findings = guarded_allow_attributes_in_text(&text, &guarded_allow_attribute_lints());
+
+    assert_eq!(
+        findings,
+        vec![
+            (1, "allow(clippy::unwrap_used)".to_string()),
+            (1, "allow(dead_code)".to_string()),
+            (3, concat!("expect", "(warnings)").to_string()),
+        ]
+    );
+}
+
+#[test]
+fn allow_attribute_detection_ignores_untracked_lints() {
+    let text = format!(
+        "{}\nfn f() {{}}\n",
+        concat!("#[", "allow", "(clippy::module_name_repetitions)]")
+    );
+
+    let findings = guarded_allow_attributes_in_text(&text, &guarded_allow_attribute_lints());
+
+    assert!(findings.is_empty());
+}
+
+#[test]
+fn local_context_detection_flags_machine_and_session_artifacts() {
+    let machine_path = concat!("H:", "\\Code\\Rust\\ripr");
+    let line = format!(
+        "{}2026-05-01 from `{machine_path}`.",
+        concat!("Recorded", " on ")
+    );
+
+    let findings = local_context_line_findings(&line);
+
+    assert!(findings.iter().any(|(pattern, _)| pattern == machine_path));
+    assert!(
+        findings
+            .iter()
+            .any(|(pattern, _)| pattern == concat!("Recorded", " on <date>"))
+    );
+}
+
+#[test]
+fn local_context_detection_flags_codex_memory_and_chat_artifacts() {
+    let memory_path = format!(
+        "{}{}",
+        concat!("C:", "\\Users\\steven\\"),
+        concat!(".", "codex\\memories\\", "MEMORY", ".md")
+    );
+    let line = format!(
+        "See {memory_path}, {}, and {}.",
+        concat!("turn", "110", "file", "4"),
+        concat!("file_", "00000000abcdef")
+    );
+
+    let findings = local_context_line_findings(&line);
+
+    assert!(findings.iter().any(|(pattern, _)| pattern == &memory_path));
+    assert!(
+        findings
+            .iter()
+            .any(|(pattern, _)| pattern == concat!(".", "codex"))
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|(pattern, _)| pattern == concat!("MEMORY", ".md"))
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|(pattern, _)| pattern == concat!("turn", "110", "file", "4"))
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|(pattern, _)| pattern == concat!("file_", "00000000abcdef"))
+    );
+}
+
+#[test]
+fn local_context_allowlist_rejects_real_machine_paths() {
+    let allowlist = vec![LocalContextAllow {
+        path: "docs/example.md".to_string(),
+        pattern: concat!("H:", "\\Code\\Rust\\ripr").to_string(),
+        max_count: 1,
+        line: 7,
+    }];
+
+    let violations = validate_local_context_allowlist(&allowlist);
+
+    assert_eq!(violations.len(), 1);
+    assert!(violations[0].contains("real machine or session state"));
+}
+
+#[test]
+fn suspicious_runtime_file_names_include_current_state_notes() {
+    assert!(
+        suspicious_runtime_file_names()
+            .iter()
+            .any(|name| name == concat!("CURRENT", "_STATE.md"))
+    );
+}
+
+#[test]
+fn windows_absolute_path_tokens_find_tokens_without_trailing_punctuation() {
+    let path = concat!("C:", "\\path\\to\\ripr.exe");
+    let line = format!("Use `{path}`.");
+
+    assert_eq!(windows_absolute_path_tokens(&line), vec![path.to_string()]);
+}
+
+#[test]
+fn workflow_run_extraction_handles_step_shorthand_and_blocks() {
+    let workflow = r#"
+jobs:
+  test:
+    steps:
+      - run: cargo fmt --check
+      - name: block
+        run: |
+          cargo check
+          cargo test
+      - uses: actions/checkout@v4
+"#;
+
+    let blocks = extract_workflow_run_blocks(workflow);
+
+    assert_eq!(blocks.len(), 2);
+    assert_eq!(blocks[0].line_number, 5);
+    assert_eq!(blocks[0].non_empty_lines, 1);
+    assert_eq!(blocks[0].text, "cargo fmt --check");
+    assert_eq!(blocks[1].line_number, 7);
+    assert_eq!(blocks[1].non_empty_lines, 2);
+    assert!(blocks[1].text.contains("cargo check"));
+    assert!(blocks[1].text.contains("cargo test"));
+}
+
+#[test]
+fn workflow_runtime_policy_flags_old_action_refs_and_node20_extension_builds() {
+    let workflow = r#"
+jobs:
+  vscode:
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/upload-artifact@v4
+"#;
+    let violations =
+        workflow_runtime_violations(".github/workflows/ci.yml", workflow, &BTreeMap::new());
+
+    assert!(violations.iter().any(|violation| {
+        violation.contains("actions/checkout@v4") && violation.contains("actions/checkout@v6")
+    }));
+    assert!(violations.iter().any(|violation| {
+        violation.contains("actions/setup-node@v4") && violation.contains("actions/setup-node@v6")
+    }));
+    assert!(violations.iter().any(|violation| {
+        violation.contains("actions/upload-artifact@v4")
+            && violation.contains("actions/upload-artifact@v7")
+    }));
+    assert!(
+        violations
+            .iter()
+            .any(|violation| { violation.contains("uses Node 20 for extension tooling") })
+    );
+}
+
+#[test]
+fn workflow_runtime_policy_allows_documented_dependency_review_exception() {
+    let workflow = r#"
+jobs:
+  dependency-review:
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/dependency-review-action@v4
+"#;
+    let mut allowlist = BTreeMap::new();
+    allowlist.insert(
+        (
+            ".github/workflows/security.yml".to_string(),
+            "actions/dependency-review-action@v4".to_string(),
+        ),
+        1,
+    );
+
+    assert!(
+        workflow_runtime_violations(".github/workflows/security.yml", workflow, &allowlist,)
+            .is_empty()
+    );
+    assert!(
+        !workflow_runtime_violations(".github/workflows/security.yml", workflow, &BTreeMap::new(),)
+            .is_empty()
+    );
+}
+
+#[test]
+fn workflow_runtime_policy_flags_remaining_old_action_refs() {
+    let workflow = r#"
+jobs:
+  release:
+    steps:
+      - uses: actions/download-artifact@v4
+      - uses: codecov/codecov-action@v4
+"#;
+    let violations = workflow_runtime_violations(
+        ".github/workflows/release-server-binaries.yml",
+        workflow,
+        &BTreeMap::new(),
+    );
+
+    assert!(violations.iter().any(|violation| {
+        violation.contains("actions/download-artifact@v4")
+            && violation.contains("actions/download-artifact@v8")
+    }));
+    assert!(violations.iter().any(|violation| {
+        violation.contains("codecov/codecov-action@v4")
+            && violation.contains("codecov/codecov-action@v6")
+    }));
+}
+
+#[test]
+fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> Result<(), String> {
+    const QUALIFICATION_COMMIT_TYPE_COMMAND: &str = r#"git -C "${GITHUB_WORKSPACE}" cat-file -t"#;
+    let workflow_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(".github/workflows/server-archive-qualification.yml");
+    let workflow = fs::read_to_string(&workflow_path)
+        .map_err(|err| format!("read {}: {err}", workflow_path.display()))?;
+
+    let validate = |candidate: &str| -> Result<(), String> {
+        if candidate.contains("actions/checkout@")
+            || candidate
+                .matches("git init \"${GITHUB_WORKSPACE}\"")
+                .count()
+                != 3
+            || candidate
+                .matches("-c credential.helper= -c http.extraheader= fetch")
+                .count()
+                != 3
+            || !candidate.contains("git -c credential.helper= -c http.extraheader= ls-remote")
+            || candidate
+                .matches("https://github.com/EffortlessMetrics/ripr-swarm.git")
+                .count()
+                != 4
+        {
+            return Err(
+                "candidate source must use three isolated unauthenticated git fetches".to_owned(),
+            );
+        }
+        if !candidate.contains("permissions:\n  contents: read")
+            || candidate.contains("contents: write")
+        {
+            return Err("workflow permissions must be read-only contents".to_owned());
+        }
+        if !candidate.contains("candidate_sha=\"${CANDIDATE_SHA,,}\"")
+            || !candidate.contains("git -c credential.helper= -c http.extraheader= ls-remote")
+            || !candidate.contains(QUALIFICATION_COMMIT_TYPE_COMMAND)
+            || !candidate.contains("test \"${CANDIDATE_TAG}\" = \"${tag}\"")
+            || !candidate.contains("^ripr-release-[0-9]+\\.[0-9]+\\.[0-9]+$")
+        {
+            return Err("candidate tag must be strict, remote-bound, and commit-typed".to_owned());
+        }
+        if candidate.contains("rulesets?includes_parents=true")
+            || candidate.contains("message=${message}")
+            || candidate.contains("ruleset_shape=")
+            || !candidate.contains(
+                "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/rulesets/${ruleset_id}",
+            )
+            || !candidate.contains("ruleset_id=\"20661783\"")
+            || !candidate.contains("(.id == $expected_id)")
+            || !candidate.contains(".target == \"tag\"")
+            || !candidate.contains(".enforcement == \"active\"")
+            || !candidate.contains("type == \"array\" and length == 1")
+            || !candidate.contains(".conditions.ref_name.exclude")
+            || !candidate.contains("index(\"update\")")
+            || !candidate.contains("index(\"deletion\")")
+        {
+            return Err(
+                "fixed ruleset endpoint or strict protected tag shape checks are missing"
+                    .to_owned(),
+            );
+        }
+        let targets = [
+            "x86_64-pc-windows-msvc",
+            "x86_64-unknown-linux-gnu",
+            "aarch64-unknown-linux-gnu",
+            "x86_64-apple-darwin",
+            "aarch64-apple-darwin",
+        ];
+        let Some(matrix) = candidate
+            .split("matrix:\n")
+            .nth(1)
+            .and_then(|rest| rest.split_once("\n\n    steps:"))
+            .map(|(matrix, _)| matrix)
+        else {
+            return Err("matrix block delimiters were not found".to_owned());
+        };
+        if targets
+            .iter()
+            .filter(|target| matrix.matches(*target).count() == 1)
+            .count()
+            != 5
+        {
+            return Err(
+                "the exact five-target matrix inventory is missing or duplicated".to_owned(),
+            );
+        }
+        if candidate
+            .matches("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a")
+            .count()
+            != 2
+            || candidate
+                .matches("actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c")
+                .count()
+                != 1
+            || candidate.contains("release-upload-assets")
+            || candidate.contains("gh release")
+            || candidate.contains("gh api")
+            || candidate.contains("GH_TOKEN")
+            || candidate.contains("github.token")
+            || candidate.contains("secrets.")
+        {
+            return Err(
+                "workflow output must be Actions-artifact-only with no publication or secrets"
+                    .to_owned(),
+            );
+        }
+        for marker in [
+            "expected-archive-entries.txt",
+            "diff -u expected-archive-entries.txt actual-archive-entries.txt",
+            "Compare-Object $expectedEntries $actualEntries",
+            "expected-dist-files.txt",
+            "diff -u expected-dist-files.txt actual-dist-files.txt",
+            "archive: tar.gz",
+            "archive: zip",
+            "refs/tags/${tag}^{}",
+            "resolved_sha=\"${peeled_sha:-${remote_sha}}\"",
+            "actual_sha=\"$(sha256sum",
+            "assets[$target].sha256",
+            "(.assets | keys == ($targets | sort))",
+            "curl --silent --show-error --location --connect-timeout 10 --max-time 20 --dump-header",
+            "ruleset_transport_ok",
+            "^[0-9]{1,20}$",
+            "ruleset verification request failed",
+            "ruleset verification shape mismatch",
+            "ruleset_safe_summary",
+            "json_object",
+            "include_count",
+            "exclude_count",
+            "rule_count",
+            "rate_limit_remaining",
+            "rate_limit_reset",
+            "response_sha256",
+            "ruleset_mode",
+            "ruleset_source_url",
+            "ruleset_response_sha256",
+            "ruleset_id",
+            "--arg repository \"${REPOSITORY}\"",
+            "release_assets_created: false",
+        ] {
+            if !candidate.contains(marker) {
+                return Err(format!(
+                    "structured runtime inventory marker missing `{marker}`"
+                ));
+            }
+        }
+        Ok(())
+    };
+
+    validate(&workflow)?;
+    for (name, broken) in [
+        (
+            "writable permissions",
+            workflow.replacen("contents: read", "contents: write", 1),
+        ),
+        (
+            "credential clearing",
+            workflow.replacen(
+                "-c credential.helper= -c http.extraheader= fetch",
+                "fetch",
+                1,
+            ),
+        ),
+        (
+            "fixed public repository",
+            workflow.replacen(
+                "https://github.com/EffortlessMetrics/ripr-swarm.git",
+                "https://github.com/${REPOSITORY}.git",
+                1,
+            ),
+        ),
+        (
+            "publication",
+            workflow.replacen(
+                "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+                "actions/upload-release-asset@deadbeef",
+                1,
+            ),
+        ),
+        (
+            "tag protection",
+            workflow.replacen("index(\"deletion\")", "index(\"create\")", 1),
+        ),
+        (
+            "manifest inventory",
+            workflow.replacen(
+                "diff -u expected-dist-files.txt actual-dist-files.txt",
+                "true",
+                1,
+            ),
+        ),
+        (
+            "tag syntax",
+            workflow.replacen(
+                "^ripr-release-[0-9]+\\.[0-9]+\\.[0-9]+$",
+                "^ripr-release-.*$",
+                1,
+            ),
+        ),
+        (
+            "matrix inventory",
+            workflow.replacen(
+                "          - target: x86_64-pc-windows-msvc\n",
+                "          - target: x86_64-pc-windows-msvc\n          - target: x86_64-pc-windows-msvc\n",
+                1,
+            ),
+        ),
+        (
+            "required marker",
+            workflow.replacen(
+                "release_assets_created: false",
+                "release_assets_created: true",
+                1,
+            ),
+        ),
+        (
+            "authenticated API",
+            workflow.replacen("curl --silent --show-error", "gh api", 1),
+        ),
+        (
+            "token credential",
+            workflow.replacen("ruleset_mode", "GH_TOKEN", 1),
+        ),
+    ] {
+        if validate(&broken).is_ok() {
+            return Err(format!("negative fixture `{name}` was not rejected"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn server_archive_ruleset_shape_fixtures_are_strict_and_discriminating() -> Result<(), String> {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "xtask manifest should have a repository parent".to_string())?;
+    let workflow =
+        fs::read_to_string(repo_root.join(".github/workflows/server-archive-qualification.yml"))
+            .map_err(|error| format!("failed to read qualification workflow: {error}"))?;
+    let predicate_marker = "if jq -e --argjson expected_id \"${ruleset_id}\" '";
+    let predicate_start = workflow
+        .find(predicate_marker)
+        .map(|offset| offset + predicate_marker.len())
+        .ok_or_else(|| "qualification workflow jq predicate marker is missing".to_string())?;
+    let predicate_end = workflow[predicate_start..]
+        .find("' \"${ruleset_file}\"")
+        .ok_or_else(|| "qualification workflow jq predicate terminator is missing".to_string())?;
+    let predicate = workflow[predicate_start..predicate_start + predicate_end].trim();
+    if predicate.is_empty() {
+        return Err("qualification workflow jq predicate is empty".to_string());
+    }
+
+    let fixture_root = temp_dir("server-ruleset-jq");
+    let run_predicate = |ruleset: &Value, name: &str| -> Result<bool, String> {
+        let path = fixture_root.join(name);
+        let input = serde_json::to_vec(ruleset)
+            .map_err(|error| format!("failed to serialize ruleset fixture: {error}"))?;
+        fs::write(&path, input)
+            .map_err(|error| format!("failed to write ruleset fixture: {error}"))?;
+        let path_text = path
+            .to_str()
+            .ok_or_else(|| "ruleset fixture path was not UTF-8".to_string())?;
+        let args = vec![
+            "-e".to_string(),
+            "--argjson".to_string(),
+            "expected_id".to_string(),
+            "20661783".to_string(),
+            predicate.to_string(),
+            path_text.to_string(),
+        ];
+        let _cwd_guard = super::acquire_test_cwd_read_guard();
+        command_success_owned("jq", &args)
+    };
+
+    let positive: Value = serde_json::from_str(include_str!(
+        "../../fixtures/release_control/server-ruleset-20661783.json"
+    ))
+    .map_err(|error| format!("failed to parse positive ruleset fixture: {error}"))?;
+    if !run_predicate(&positive, "positive.json")? {
+        return Err("workflow jq predicate rejected the actual positive fixture".to_string());
+    }
+
+    let negative: Value = serde_json::from_str(include_str!(
+        "../../fixtures/release_control/server-ruleset-20661783-invalid.json"
+    ))
+    .map_err(|error| format!("failed to parse negative ruleset fixture: {error}"))?;
+    if run_predicate(&negative, "negative.json")? {
+        return Err("workflow jq predicate accepted the negative fixture".to_string());
+    }
+
+    let mut wrong_exclude = positive.clone();
+    wrong_exclude["conditions"]["ref_name"]["exclude"] = serde_json::json!(["refs/tags/old"]);
+    if run_predicate(&wrong_exclude, "wrong-exclude.json")? {
+        return Err("workflow jq predicate accepted a nonempty exclude mutation".to_string());
+    }
+
+    let mut wrong_id = positive.clone();
+    wrong_id["id"] = serde_json::json!(20_661_784);
+    if run_predicate(&wrong_id, "wrong-id.json")? {
+        return Err("workflow jq predicate accepted an unexpected ruleset id".to_string());
+    }
+
+    let wrong_shape = serde_json::json!({"id": 20_661_783, "target": "tag"});
+    if run_predicate(&wrong_shape, "wrong-shape.json")? {
+        return Err("workflow jq predicate accepted a malformed ruleset shape".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn workflow_runtime_policy_ignores_node20_outside_extension_workflows() {
+    let workflow = r#"
+jobs:
+  coverage:
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+"#;
+
+    assert!(
+        workflow_runtime_violations(".github/workflows/coverage.yml", workflow, &BTreeMap::new(),)
+            .is_empty()
+    );
+}
+
+#[test]
+fn workflow_runtime_policy_rejects_unsupported_allowlist_patterns() {
+    let workflow = r#"
+jobs:
+  security:
+    steps:
+      - uses: actions/checkout@v6
+"#;
+    let mut allowlist = BTreeMap::new();
+    allowlist.insert(
+        (
+            ".github/workflows/security.yml".to_string(),
+            "actions/unknown-action@v1".to_string(),
+        ),
+        1,
+    );
+
+    let violations =
+        workflow_runtime_violations(".github/workflows/security.yml", workflow, &allowlist);
+
+    assert!(violations.iter().any(|violation| {
+        violation.contains("unsupported exception")
+            && violation.contains("actions/unknown-action@v1")
+    }));
+}
+
+#[test]
+fn workflow_runtime_policy_rejects_dependency_review_over_allowlisted_count() {
+    let workflow = r#"
+jobs:
+  dependency-review:
+    steps:
+      - uses: actions/dependency-review-action@v4
+      - uses: actions/dependency-review-action@v4
+"#;
+    let mut allowlist = BTreeMap::new();
+    allowlist.insert(
+        (
+            ".github/workflows/security.yml".to_string(),
+            "actions/dependency-review-action@v4".to_string(),
+        ),
+        1,
+    );
+
+    let violations =
+        workflow_runtime_violations(".github/workflows/security.yml", workflow, &allowlist);
+
+    assert!(violations.iter().any(|violation| {
+        violation.contains("uses `actions/dependency-review-action@v4` 2 time(s), allowed 1")
+    }));
+}
+
+#[test]
+fn workflow_review_thread_mutation_policy_rejects_graphql_resolver() {
+    let resolver_name = ["resolve", "ReviewThread"].concat();
+    let workflow = format!(
+        r#"
+jobs:
+  review:
+    steps:
+      - run: gh api graphql -f query='mutation {{ {resolver_name}(input: {{}}) {{ thread {{ isResolved }} }} }}'
+"#
+    );
+
+    let violations =
+        workflow_review_thread_mutation_violations(".github/workflows/review.yml", &workflow);
+
+    assert_eq!(violations.len(), 1);
+    assert!(violations[0].contains("review-thread resolution mutation"));
+}
+
+#[test]
+fn workflow_review_thread_mutation_policy_rejects_runtime_constructed_resolver() {
+    let workflow = r#"
+jobs:
+  review:
+    steps:
+      - run: const resolver = 'resolve' + 'ReviewThread'; gh api graphql "$resolver"
+"#;
+
+    let violations =
+        workflow_review_thread_mutation_violations(".github/workflows/review.yml", workflow);
+
+    assert_eq!(violations.len(), 1);
+}
+
+#[test]
+fn repository_owned_review_thread_mutation_policy_rejects_delegated_action() -> Result<(), String> {
+    with_temp_cwd("workflow-delegated-review-resolver", |root| {
+        let action = root.join(".github/actions/blind-review-resolver/action.yml");
+        let script = root.join(".github/scripts/review-resolver.sh");
+        write(
+            &action,
+            "name: blind resolver\nruns:\n  using: composite\n  steps:\n    - run: bash .github/scripts/review-resolver.sh\n",
+        );
+        write(
+            &script,
+            "#!/usr/bin/env bash\nresolver='resolve'+'ReviewThread'\ngh api graphql \"$resolver\"\n",
+        );
+
+        let violations = repository_owned_review_thread_mutation_violations()?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| { violation.contains(".github/scripts/review-resolver.sh") })
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn workflow_review_thread_mutation_policy_accepts_adjudication_guidance() {
+    let workflow = r#"
+name: Review guidance
+jobs:
+  review:
+    steps:
+      - run: echo "Reply with evidence before resolving review threads"
+"#;
+
+    assert!(
+        workflow_review_thread_mutation_violations(".github/workflows/review.yml", workflow,)
+            .is_empty()
+    );
+}
+
+#[test]
+fn workflow_bare_self_hosted_policy_rejects_linux_x64_without_group() {
+    let workflow = r#"
+jobs:
+  inline:
+    runs-on: [self-hosted, linux, x64]
+  block:
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+"#;
+
+    let violations = workflow_bare_self_hosted_violations(".github/workflows/ci.yml", workflow);
+
+    assert_eq!(violations.len(), 2);
+}
+
+#[test]
+fn workflow_bare_self_hosted_policy_accepts_capacity_group() {
+    let workflow = r#"
+jobs:
+  rust:
+    runs-on:
+      group: em-ci-small
+      labels:
+        - self-hosted
+        - linux
+        - x64
+        - em-ci
+        - cx43
+        - rust-medium
+        - trusted-pr
+"#;
+
+    let violations =
+        workflow_bare_self_hosted_violations(".github/workflows/routed-rust.yml", workflow);
+
+    assert!(violations.is_empty());
+}
+
+#[test]
+fn scratch_gc_concurrency_policy_accepts_per_pool_matrix_queue() {
+    let workflow = r#"
+jobs:
+  scratch-gc:
+    strategy:
+      matrix:
+        pool: [cx43, cpx42, cx53]
+    concurrency:
+      group: scratch-gc-${{ github.repository }}-${{ matrix.pool }}
+      cancel-in-progress: false
+"#;
+
+    assert!(
+        scratch_gc_concurrency_violations(".github/workflows/scratch-gc.yml", workflow,).is_empty()
+    );
+}
+
+#[test]
+fn scratch_gc_concurrency_policy_rejects_workflow_queue() {
+    let workflow = r#"
+concurrency:
+  group: scratch-gc-${{ github.repository }}
+  cancel-in-progress: false
+jobs:
+  scratch-gc:
+    strategy:
+      matrix:
+        pool: [cx43, cpx42, cx53]
+    concurrency:
+      group: scratch-gc-${{ github.repository }}-${{ matrix.pool }}
+      cancel-in-progress: true
+  unrelated:
+    concurrency:
+      cancel-in-progress: false
+"#;
+
+    let violations =
+        scratch_gc_concurrency_violations(".github/workflows/scratch-gc.yml", workflow);
+
+    assert_eq!(violations.len(), 2);
+    assert!(violations[0].contains("workflow-level concurrency"));
+    assert!(violations[1].contains("matrix.pool"));
+}
+
+#[test]
+fn routed_rust_workflow_contract_accepts_swarm_shape() {
+    let workflow = r#"
+jobs:
+  route:
+    name: Route Ripr Rust Small
+    timeout-minutes: 10
+    steps:
+      - name: Select runner
+        env:
+          GH_TOKEN: ${{ secrets.EM_RUNNER_READ_TOKEN || github.token }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ] && [ "$HEAD_REPO" != "$REPOSITORY" ]; then
+            reason=fork_or_untrusted_pr
+          fi
+          idle() { printf '%s' "$runners" | jq -s -e --arg model "$1" --arg cap "$2" '[.[].runners[]?] | length > 0'; }
+          gh api --paginate orgs/EffortlessMetrics/actions/runners
+          reason=runner_api_failed
+          reason=no_idle_runner
+          reason=runner_capacity_unavailable
+          reason=cx43_idle
+          reason=cpx42_idle
+          reason=cx53_idle
+          echo rust-medium rust-16gb rust-large
+  detect-docs-only:
+    name: Detect Docs-Only Surface
+    timeout-minutes: 10
+  rust-cx43:
+    if: needs.route.outputs.router_target == 'cx43'
+    timeout-minutes: 60
+    outputs:
+      scratch_status: ${{ steps.scratch.outputs.status }}
+    env:
+      CARGO_HOME: /mnt/ci-scratch/cargo-home/${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Prepare toolchain temp
+        run: mkdir -p "$TMPDIR"
+      - name: Prepare scratch
+        run: ci-disk-guard /mnt/ci-scratch 35
+      - name: Proof route dry-run (advisory)
+        run: cargo xtask proof route --base "$BASE_SHA" --head "$HEAD_SHA" || true
+      - name: Clean scratch
+        run: rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
+  rust-cpx42:
+    if: needs.route.outputs.router_target == 'cpx42'
+    timeout-minutes: 60
+    outputs:
+      scratch_status: ${{ steps.scratch.outputs.status }}
+    env:
+      CARGO_HOME: /mnt/ci-scratch/cargo-home/${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Prepare toolchain temp
+        run: mkdir -p "$TMPDIR"
+      - name: Prepare CPX42 scratch
+        run: ci-disk-guard /mnt/ci-scratch 35
+      - name: Proof route dry-run (advisory)
+        run: cargo xtask proof route --base "$BASE_SHA" --head "$HEAD_SHA" || true
+      - name: Clean scratch
+        run: rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
+  rust-cx53:
+    if: needs.route.outputs.router_target == 'cx53'
+    timeout-minutes: 60
+    outputs:
+      scratch_status: ${{ steps.scratch.outputs.status }}
+    env:
+      CARGO_HOME: /mnt/ci-scratch/cargo-home/${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Prepare toolchain temp
+        run: mkdir -p "$TMPDIR"
+      - name: Prepare scratch
+        run: ci-disk-guard /mnt/ci-scratch 50
+      - name: Proof route dry-run (advisory)
+        run: cargo xtask proof route --base "$BASE_SHA" --head "$HEAD_SHA" || true
+      - name: Clean scratch
+        run: rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
+  rust-github:
+    if: >-
+      needs.detect-docs-only.result == 'success' &&
+      needs.route.outputs.router_target == 'github' ||
+      needs.rust-cx43.outputs.scratch_status == 'tempfail' ||
+      needs.rust-cpx42.outputs.scratch_status == 'tempfail' ||
+      needs.rust-cx53.outputs.scratch_status == 'tempfail'
+    timeout-minutes: 90
+    steps:
+      - name: Proof route dry-run (advisory)
+        run: cargo xtask proof route --base "$BASE_SHA" --head "$HEAD_SHA" || true
+  docs-gate:
+    name: Ripr Docs Gate
+    timeout-minutes: 20
+  result:
+    name: Ripr Rust Small Result
+    timeout-minutes: 10
+    env:
+      DOCS_DETECT_RESULT: ${{ needs.detect-docs-only.result }}
+      CX43_SCRATCH_STATUS: ${{ needs.rust-cx43.outputs.scratch_status }}
+    steps:
+      - run: echo "disk-guard tempfailed; GitHub-hosted fallback succeeded"
+      - run: echo "docs-surface detection result was $DOCS_DETECT_RESULT"
+"#;
+    let settings = r#"
+repository:
+  name: ripr-swarm
+branches:
+  - name: main
+    protection:
+      required_status_checks:
+        contexts:
+          - Ripr Rust Small Result
+"#;
+    let lane = r#"
+[[lane]]
+id = "routed-rust-small"
+workflow = ".github/workflows/routed-rust.yml"
+jobs = ["Ripr Rust Small Result"]
+"#;
+
+    assert!(
+        routed_rust_workflow_contract_violations(workflow, Some(settings), Some(lane),).is_empty()
+    );
+}
+
+#[test]
+fn routed_rust_workflow_contract_accepts_reusable_implementation_authority() {
+    let workflow = r#"
+jobs:
+  route:
+    name: Route Ripr Rust Small
+    timeout-minutes: 10
+    steps:
+      - name: Select runner
+        env:
+          GH_TOKEN: ${{ secrets.EM_RUNNER_READ_TOKEN || github.token }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ] && [ "$HEAD_REPO" != "$REPOSITORY" ]; then
+            reason=fork_or_untrusted_pr
+          fi
+          idle() { printf '%s' "$runners" | jq -s -e --arg model "$1" --arg cap "$2" '[.[].runners[]?] | length > 0'; }
+          gh api --paginate orgs/EffortlessMetrics/actions/runners
+          reason=runner_api_failed
+          reason=no_idle_runner
+          reason=runner_capacity_unavailable
+          reason=cx43_idle
+          reason=cpx42_idle
+          reason=cx53_idle
+          echo rust-medium rust-16gb rust-large
+  detect-docs-only:
+    name: Detect Docs-Only Surface
+    timeout-minutes: 10
+  rust-cx43:
+    if: needs.route.outputs.router_target == 'cx43'
+    uses: ./.github/workflows/rust-gates.yml
+    with:
+      disk-guard-threshold: 35
+  rust-cpx42:
+    if: needs.route.outputs.router_target == 'cpx42'
+    uses: ./.github/workflows/rust-gates.yml
+    with:
+      disk-guard-threshold: 35
+  rust-cx53:
+    if: needs.route.outputs.router_target == 'cx53'
+    uses: ./.github/workflows/rust-gates.yml
+    with:
+      disk-guard-threshold: 50
+  rust-github:
+    if: >-
+      needs.detect-docs-only.result == 'success' &&
+      needs.route.outputs.router_target == 'github' ||
+      needs.rust-cx43.outputs.scratch_status == 'tempfail' ||
+      needs.rust-cpx42.outputs.scratch_status == 'tempfail' ||
+      needs.rust-cx53.outputs.scratch_status == 'tempfail'
+    uses: ./.github/workflows/rust-gates.yml
+  docs-gate:
+    name: Ripr Docs Gate
+    timeout-minutes: 20
+  result:
+    name: Ripr Rust Small Result
+    timeout-minutes: 10
+    env:
+      DOCS_DETECT_RESULT: ${{ needs.detect-docs-only.result }}
+    steps:
+      - run: echo "disk-guard tempfailed; GitHub-hosted fallback succeeded"
+      - run: echo "docs-surface detection result was $DOCS_DETECT_RESULT"
+"#;
+    let reusable = r#"
+on:
+  workflow_call:
+    inputs:
+      disk-guard-threshold:
+        type: number
+        required: false
+    outputs:
+      scratch_status:
+        value: ${{ jobs.rust-gates.outputs.scratch_status }}
+jobs:
+  rust-gates:
+    timeout-minutes: 90
+    outputs:
+      scratch_status: ${{ steps.scratch.outputs.status }}
+    env:
+      CARGO_HOME: /mnt/ci-scratch/cargo-home/${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Prepare toolchain temp
+        run: mkdir -p "$TMPDIR"
+      - name: Prepare scratch
+        run: ci-disk-guard /mnt/ci-scratch "${{ inputs.disk-guard-threshold }}"
+      - name: Proof route dry-run (advisory)
+        run: cargo xtask proof route --base "$BASE_SHA" --head "$HEAD_SHA" || true
+      - name: Clean scratch
+        run: rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
+defaults:
+  run:
+    shell: bash
+"#;
+    let settings = r#"
+repository:
+  name: ripr-swarm
+branches:
+  - name: main
+    protection:
+      required_status_checks:
+        contexts:
+          - Ripr Rust Small Result
+"#;
+    let lane = r#"
+[[lane]]
+id = "routed-rust-small"
+workflow = ".github/workflows/routed-rust.yml"
+jobs = ["Ripr Rust Small Result"]
+"#;
+
+    let violations = routed_rust_workflow_contract_violations_with_reusable(
+        workflow,
+        Some(reusable),
+        Some(settings),
+        Some(lane),
+    );
+    assert!(violations.is_empty(), "{violations:#?}");
+
+    let missing = routed_rust_workflow_contract_violations_with_reusable(
+        workflow,
+        None,
+        Some(settings),
+        Some(lane),
+    );
+    assert!(
+        missing
+            .iter()
+            .any(|violation| violation.contains("delegates implementation jobs to missing"))
+    );
+
+    let no_jobs = reusable.replacen("jobs:\n", "missing-jobs:\n", 1);
+    let no_jobs_violations = routed_rust_workflow_contract_violations_with_reusable(
+        workflow,
+        Some(&no_jobs),
+        Some(settings),
+        Some(lane),
+    );
+    assert!(
+        no_jobs_violations
+            .iter()
+            .any(|violation| violation.contains("analyzed zero `jobs:` entries"))
+    );
+
+    let no_deadline = reusable.replace("    timeout-minutes: 90\n", "");
+    let deadline_violations = routed_rust_workflow_contract_violations_with_reusable(
+        workflow,
+        Some(&no_deadline),
+        Some(settings),
+        Some(lane),
+    );
+    assert!(deadline_violations.iter().any(|violation| {
+        violation.contains("rust-gates.yml job `rust-gates` must set an explicit `timeout-minutes`")
+    }));
+
+    let no_output = reusable.replace(
+        "    outputs:\n      scratch_status:\n        value: ${{ jobs.rust-gates.outputs.scratch_status }}\n",
+        "",
+    );
+    let output_violations = routed_rust_workflow_contract_violations_with_reusable(
+        workflow,
+        Some(&no_output),
+        Some(settings),
+        Some(lane),
+    );
+    assert!(
+        output_violations
+            .iter()
+            .any(|violation| { violation.contains("workflow_call scratch-status output") })
+    );
+
+    let wrong_output_key = reusable.replacen(
+        "      scratch_status:\n        value: ${{ jobs.rust-gates.outputs.scratch_status }}\n",
+        "      renamed_status:\n        value: ${{ jobs.rust-gates.outputs.scratch_status }}\n",
+        1,
+    );
+    let output_key_violations = routed_rust_workflow_contract_violations_with_reusable(
+        workflow,
+        Some(&wrong_output_key),
+        Some(settings),
+        Some(lane),
+    );
+    assert!(
+        output_key_violations
+            .iter()
+            .any(|violation| violation.contains("workflow_call scratch-status output"))
+    );
+
+    let partial = workflow.replacen(
+        "    uses: ./.github/workflows/rust-gates.yml\n",
+        "    runs-on: ubuntu-latest\n",
+        1,
+    );
+    let partial_violations = routed_rust_workflow_contract_violations_with_reusable(
+        &partial,
+        Some(reusable),
+        Some(settings),
+        Some(lane),
+    );
+    assert!(partial_violations.iter().any(|violation| {
+        violation.contains("must keep all four implementation jobs inline or delegate all four")
+    }));
+
+    let wrong_threshold = workflow
+        .replacen("disk-guard-threshold: 35", "disk-guard-threshold: swap", 1)
+        .replacen("disk-guard-threshold: 50", "disk-guard-threshold: 35", 1)
+        .replacen("disk-guard-threshold: swap", "disk-guard-threshold: 50", 1);
+    let threshold_violations = routed_rust_workflow_contract_violations_with_reusable(
+        &wrong_threshold,
+        Some(reusable),
+        Some(settings),
+        Some(lane),
+    );
+    assert!(
+        threshold_violations
+            .iter()
+            .any(|violation| violation.contains("job `rust-cx43` must pass"))
+    );
+    assert!(
+        threshold_violations
+            .iter()
+            .any(|violation| violation.contains("job `rust-cx53` must pass"))
+    );
+}
+
+#[test]
+fn routed_rust_workflow_contract_rejects_unsafe_drift() {
+    let workflow = r#"
+jobs:
+  route:
+    steps:
+      - run: |
+          gh api repos/$REPOSITORY/actions/runners
+          reason=no_idle_runner
+  rust-cx53:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+  result:
+    name: Ripr Rust Small Result
+"#;
+    let settings = r#"
+repository:
+  name: ripr-swarm
+branches:
+  - name: main
+    protection:
+      required_status_checks:
+        contexts:
+          - Ripr Rust Small Result
+          - Ripr Rust Small on CX53
+"#;
+    let lane = r#"
+[[lane]]
+id = "routed-rust-small"
+workflow = ".github/workflows/routed-rust.yml"
+jobs = ["Ripr Rust Small Result", "Ripr Rust Small on CX53"]
+"#;
+
+    let violations = routed_rust_workflow_contract_violations(workflow, Some(settings), Some(lane));
+
+    assert!(violations.iter().any(|violation| {
+        violation.contains("organization runner discovery")
+            || violation.contains("repo-local runner discovery")
+    }));
+    assert!(
+        violations
+            .iter()
+            .any(|violation| { violation.contains("slurped idle runner query") })
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|violation| { violation.contains("hosted fallback docs-detection guard") })
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|violation| { violation.contains("self-hosted scratch tempfail output") })
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|violation| { violation.contains("CX43 tempfail fallback predicate") })
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|violation| { violation.contains("CPX42 tempfail fallback predicate") })
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|violation| { violation.contains("CX53 tempfail fallback predicate") })
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|violation| { violation.contains("normalized tempfail fallback result") })
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|violation| { violation.contains("normalized docs detection failure") })
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|violation| { violation.contains("Prepare toolchain temp") })
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|violation| { violation.contains("scratch CARGO_HOME") })
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|violation| { violation.contains("guard pull_request events from forks") })
+    );
+    assert!(violations.iter().any(|violation| {
+        violation.contains("must not require conditional implementation job")
+    }));
+    assert!(
+        violations
+            .iter()
+            .any(|violation| { violation.contains("must list only `Ripr Rust Small Result`") })
+    );
+    assert!(violations.iter().any(|violation| {
+        violation.contains("must set an explicit `timeout-minutes` job deadline")
+    }));
+}
+
+#[test]
+fn routed_rust_contract_catches_deadline_bypass_with_stray_occurrences() {
+    // #2230 review: a global `timeout-minutes:` occurrence count passes even
+    // when a named job lost its deadline but stray tokens (comments, other
+    // jobs, duplicates) keep the total at eight. The per-job check must fire
+    // on the job that lost its deadline.
+    let workflow = r#"
+name: Routed Rust Small
+jobs:
+  route:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+  detect-docs-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+  rust-cx43:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # timeout-minutes: 60 (stray occurrence in a comment)
+  rust-cpx42:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    timeout-minutes: 60
+  rust-cx53:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+  rust-github:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+  docs-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+  result:
+    runs-on: ubuntu-latest
+"#;
+    let violations = routed_rust_workflow_contract_violations(workflow, None, None);
+    assert!(
+        violations.iter().any(|violation| violation
+            .contains("job `result` must set an explicit `timeout-minutes` job deadline")),
+        "missing per-job deadline must fire even with 8 stray occurrences: {violations:?}"
+    );
+    assert!(
+        !violations
+            .iter()
+            .any(|violation| violation.contains("job `route` must set an explicit")),
+        "a job that kept its deadline must not be flagged: {violations:?}"
+    );
+}
+
+#[test]
+fn generated_policy_detects_lockfiles_and_release_artifacts() {
+    assert!(is_generated_candidate("Cargo.lock"));
+    assert!(is_generated_candidate("editors/vscode/package-lock.json"));
+    assert!(is_generated_candidate("editors/vscode/dist/ripr.vsix"));
+    assert!(is_generated_candidate(".ripr/release/ripr.zip"));
+    assert!(!is_generated_candidate("assets/logo/ripr-icon-dark.png"));
+}
+
+#[test]
+fn dependency_policy_detects_package_manager_surfaces() {
+    assert!(is_dependency_surface_candidate("Cargo.toml"));
+    assert!(is_dependency_surface_candidate("xtask/Cargo.toml"));
+    assert!(is_dependency_surface_candidate(
+        "editors/vscode/package.json"
+    ));
+    assert!(is_dependency_surface_candidate(
+        "fixtures/example/input/Cargo.toml"
+    ));
+    assert!(is_dependency_surface_candidate(
+        "tools/example/requirements.txt"
+    ));
+    assert!(!is_dependency_surface_candidate("docs/DEPENDENCIES.md"));
+}
+
+#[test]
+fn sorted_allowlist_content_preserves_header_and_sorts_entries() {
+    let input = "# Header\n# More\n\nz|kind|owner|reason\na|kind|owner|reason\n";
+    let sorted = sorted_allowlist_content(input);
+
+    assert_eq!(
+        sorted,
+        "# Header\n# More\n\na|kind|owner|reason\nz|kind|owner|reason\n"
+    );
+}
+
+#[test]
+fn shape_rewrite_notice_lists_rewritten_files() {
+    assert_eq!(super::shape_rewrite_notice(&[]), None);
+    let notice =
+        super::shape_rewrite_notice(&["policy/a.txt".to_string(), ".ripr/b.txt".to_string()]);
+    assert!(
+        notice.is_some(),
+        "expected a rewrite notice for two sorted files"
+    );
+    if let Some(notice) = notice {
+        assert!(notice.contains("2 tracked allowlist file(s)"));
+        assert!(notice.contains("policy/a.txt"));
+        assert!(notice.contains(".ripr/b.txt"));
+        assert!(notice.contains("review before `git add`"));
+    }
+}
+
+#[test]
+fn sorted_markdown_index_table_content_sorts_index_rows() {
+    let input = "# Specs\n\n## Index\n\n| Spec | Status | Topic |\n| --- | --- | --- |\n| [RIPR-SPEC-0002](RIPR-SPEC-0002-b.md) | proposed | B |\n| [RIPR-SPEC-0001](RIPR-SPEC-0001-a.md) | accepted | A |\n\nAfter.\n";
+    let sorted = sorted_markdown_index_table_content(input);
+
+    assert_eq!(
+        sorted,
+        "# Specs\n\n## Index\n\n| Spec | Status | Topic |\n| --- | --- | --- |\n| [RIPR-SPEC-0001](RIPR-SPEC-0001-a.md) | accepted | A |\n| [RIPR-SPEC-0002](RIPR-SPEC-0002-b.md) | proposed | B |\n\nAfter.\n"
+    );
+}
+
+#[test]
+fn sorted_traceability_behavior_blocks_content_sorts_blocks_by_id() {
+    let prefix = "# Traceability\n\n";
+    let block_b = "[[behavior]]\n# keep b\nid = \"RIPR-SPEC-0002\"\nname = \"B\"\n\n";
+    let block_a = "[[behavior]]\n# keep a\nid = \"RIPR-SPEC-0001\"\nname = \"A\"\n\n";
+    let input = format!("{prefix}{block_b}{block_a}");
+    let sorted = sorted_traceability_behavior_blocks_content(&input);
+
+    assert_eq!(sorted, format!("{prefix}{block_a}{block_b}"));
+}
+
+#[test]
+fn sorted_traceability_behavior_blocks_content_skips_unsafe_manifests() {
+    let duplicate =
+        "[[behavior]]\nid = \"RIPR-SPEC-0001\"\n\n[[behavior]]\nid = \"RIPR-SPEC-0001\"\n";
+    let missing = "[[behavior]]\nname = \"A\"\n\n[[behavior]]\nid = \"RIPR-SPEC-0002\"\n";
+    let invalid = "[[behavior]]\nid = \"not-a-spec\"\n\n[[behavior]]\nid = \"RIPR-SPEC-0002\"\n";
+    let duplicate_key = "[[behavior]]\nid = \"RIPR-SPEC-0002\"\ntests = []\ntests = [\n  \"example\",\n]\n\n[[behavior]]\nid = \"RIPR-SPEC-0001\"\n";
+    let unterminated_array = "[[behavior]]\nid = \"RIPR-SPEC-0002\"\ntests = [\n  \"example\",\n\n[[behavior]]\nid = \"RIPR-SPEC-0001\"\n";
+    let malformed_inline_array = "[[behavior]]\nid = \"RIPR-SPEC-0002\"\ntests = [\"example\"\n\n[[behavior]]\nid = \"RIPR-SPEC-0001\"\n";
+
+    assert_eq!(
+        sorted_traceability_behavior_blocks_content(duplicate),
+        duplicate
+    );
+    assert_eq!(
+        sorted_traceability_behavior_blocks_content(missing),
+        missing
+    );
+    assert_eq!(
+        sorted_traceability_behavior_blocks_content(invalid),
+        invalid
+    );
+    assert_eq!(
+        sorted_traceability_behavior_blocks_content(duplicate_key),
+        duplicate_key
+    );
+    assert_eq!(
+        sorted_traceability_behavior_blocks_content(unterminated_array),
+        unterminated_array
+    );
+    assert_eq!(
+        sorted_traceability_behavior_blocks_content(malformed_inline_array),
+        malformed_inline_array
+    );
+}
+
+#[test]
+fn sorted_capability_blocks_content_sorts_blocks_by_spec_then_id() {
+    let prefix = "# Capabilities\n\n";
+    let block_c = "[[capability]]\n# keep c\nid = \"alpha_capability\"\nspec = \"RIPR-SPEC-0001\"\nname = \"Alpha\"\n\n";
+    let block_b = "[[capability]]\n# keep b\nid = \"zeta_capability\"\nspec = \"RIPR-SPEC-0001\"\nname = \"Zeta\"\n\n";
+    let block_a = "[[capability]]\n# keep a\nid = \"beta_capability\"\nspec = \"RIPR-SPEC-0002\"\nname = \"Beta\"\n\n";
+    let input = format!("{prefix}{block_a}{block_b}{block_c}");
+    let sorted = sorted_capability_blocks_content(&input);
+
+    assert_eq!(sorted, format!("{prefix}{block_c}{block_b}{block_a}"));
+}
+
+#[test]
+fn sorted_capability_blocks_content_preserves_prefix_and_whole_blocks() {
+    let prefix = "# Capabilities\n\n# human notes stay above generated ordering\n\n";
+    let block_b = "[[capability]]\nid = \"beta_capability\"\nspec = \"RIPR-SPEC-0002\"\n# block comment stays with beta\nname = \"Beta\"\n\n";
+    let block_a = "[[capability]]\nid = \"alpha_capability\"\nspec = \"RIPR-SPEC-0001\"\nname = \"Alpha\"\nfixtures = [\n  \"fixtures/alpha\",\n]\n\n";
+    let input = format!("{prefix}{block_b}{block_a}");
+    let sorted = sorted_capability_blocks_content(&input);
+
+    assert!(sorted.starts_with(prefix));
+    assert_eq!(sorted, format!("{prefix}{block_a}{block_b}"));
+}
+
+#[test]
+fn sorted_capability_blocks_content_skips_unsafe_manifests() {
+    let duplicate = "[[capability]]\nid = \"alpha\"\nspec = \"RIPR-SPEC-0001\"\n\n[[capability]]\nid = \"alpha\"\nspec = \"RIPR-SPEC-0002\"\n";
+    let missing = "[[capability]]\nname = \"A\"\nspec = \"RIPR-SPEC-0001\"\n\n[[capability]]\nid = \"beta\"\nspec = \"RIPR-SPEC-0002\"\n";
+    let invalid_id = "[[capability]]\nid = \"NotSnake\"\nspec = \"RIPR-SPEC-0001\"\n\n[[capability]]\nid = \"beta\"\nspec = \"RIPR-SPEC-0002\"\n";
+    let invalid_spec = "[[capability]]\nid = \"beta\"\nspec = \"not-a-spec\"\n\n[[capability]]\nid = \"alpha\"\nspec = \"RIPR-SPEC-0002\"\n";
+    let duplicate_key = "[[capability]]\nid = \"beta\"\nspec = \"RIPR-SPEC-0002\"\nevidence = []\nevidence = [\n  \"example\",\n]\n\n[[capability]]\nid = \"alpha\"\nspec = \"RIPR-SPEC-0001\"\n";
+    let unterminated_array = "[[capability]]\nid = \"beta\"\nspec = \"RIPR-SPEC-0002\"\nevidence = [\n  \"example\",\n\n[[capability]]\nid = \"alpha\"\nspec = \"RIPR-SPEC-0001\"\n";
+    let malformed_inline_array = "[[capability]]\nid = \"beta\"\nspec = \"RIPR-SPEC-0002\"\nevidence = [example]\n\n[[capability]]\nid = \"alpha\"\nspec = \"RIPR-SPEC-0001\"\n";
+
+    assert_eq!(sorted_capability_blocks_content(duplicate), duplicate);
+    assert_eq!(sorted_capability_blocks_content(missing), missing);
+    assert_eq!(sorted_capability_blocks_content(invalid_id), invalid_id);
+    assert_eq!(sorted_capability_blocks_content(invalid_spec), invalid_spec);
+    assert_eq!(
+        sorted_capability_blocks_content(duplicate_key),
+        duplicate_key
+    );
+    assert_eq!(
+        sorted_capability_blocks_content(unterminated_array),
+        unterminated_array
+    );
+    assert_eq!(
+        sorted_capability_blocks_content(malformed_inline_array),
+        malformed_inline_array
+    );
+}
+
+#[test]
+fn sorted_command_catalog_content_sorts_entries_by_help_order() {
+    let input = r#"pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
+    vec![
+        command_entry(
+            "check-pr",
+            "non_mutating_check",
+            "target/ripr/reports",
+            false,
+            "Review-ready gate.",
+        ),
+        command_entry(
+            "shape",
+            "mutating",
+            "source files",
+            false,
+            "Runs deterministic shaping.",
+        ),
+    ]
+}
+"#;
+    let sorted = sorted_command_catalog_content(input);
+
+    assert!(
+        sorted
+            .find("\"shape\"")
+            .zip(sorted.find("\"check-pr\""))
+            .is_some_and(|(shape, check_pr)| shape < check_pr)
+    );
+}
+
+#[test]
+fn sorted_command_catalog_content_sorts_commands_with_shared_roots() {
+    let input = r#"pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
+    vec![
+        command_entry(
+            "goldens bless <name> --reason <reason>",
+            "mutating",
+            "fixtures/**/expected/**",
+            true,
+            "Updates golden expected outputs.",
+        ),
+        command_entry(
+            "goldens check",
+            "non_mutating_check",
+            "target/ripr/reports/goldens.md",
+            false,
+            "Checks golden drift.",
+        ),
+    ]
+}
+"#;
+    let sorted = sorted_command_catalog_content(input);
+
+    assert!(
+        sorted
+            .find("\"goldens check\"")
+            .zip(sorted.find("\"goldens bless <name> --reason <reason>\""))
+            .is_some_and(|(check, bless)| check < bless)
+    );
+}
+
+#[test]
+fn sorted_command_catalog_content_skips_unknown_or_malformed_catalogs() {
+    let unknown = r#"pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
+    vec![
+        command_entry(
+            "not-a-real-command",
+            "report_only",
+            "target/ripr/reports",
+            false,
+            "Unknown command.",
+        ),
+        command_entry(
+            "shape",
+            "mutating",
+            "source files",
+            false,
+            "Runs deterministic shaping.",
+        ),
+    ]
+}
+"#;
+    let malformed = r#"pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
+    vec![
+        command_entry(
+            "check-pr",
+            "non_mutating_check",
+            "target/ripr/reports",
+            false,
+            "Review-ready gate.",
+        )
+    ]
+}
+"#;
+
+    assert_eq!(sorted_command_catalog_content(unknown), unknown);
+    assert_eq!(sorted_command_catalog_content(malformed), malformed);
+}
+
+#[test]
+fn sorted_command_catalog_content_skips_non_catalog_or_incomplete_catalogs() {
+    let no_catalog = "pub(crate) fn unrelated() {}\n";
+    let incomplete = r#"pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
+    vec![
+        command_entry(
+            "shape",
+            "mutating",
+            "source files",
+            false,
+            "Runs deterministic shaping.",
+        ),
+"#;
+    let non_entry_body = r#"pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
+    vec![
+        CommandCatalogEntry {
+            command: "shape",
+            mutability: "mutating",
+            writes: "source files",
+            judgment_required: false,
+            notes: "Runs deterministic shaping.",
+        },
+    ]
+}
+"#;
+    let single_entry = r#"pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
+    vec![
+        command_entry(
+            "shape",
+            "mutating",
+            "source files",
+            false,
+            "Runs deterministic shaping.",
+        ),
+    ]
+}
+"#;
+
+    assert_eq!(sorted_command_catalog_content(no_catalog), no_catalog);
+    assert_eq!(sorted_command_catalog_content(incomplete), incomplete);
+    assert_eq!(
+        sorted_command_catalog_content(non_entry_body),
+        non_entry_body
+    );
+    assert_eq!(sorted_command_catalog_content(single_entry), single_entry);
+}
+
+#[test]
+fn sorted_command_catalog_content_skips_entries_without_quoted_command() {
+    let input = r#"pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
+    vec![
+        command_entry(
+            SHAPE_COMMAND,
+            "mutating",
+            "source files",
+            false,
+            "Runs deterministic shaping.",
+        ),
+        command_entry(
+            "check-pr",
+            "non_mutating_check",
+            "target/ripr/reports",
+            false,
+            "Review-ready gate.",
+        ),
+    ]
+}
+"#;
+
+    assert_eq!(sorted_command_catalog_content(input), input);
+}
+
+#[test]
+fn suggested_fixes_patch_sorts_allowlists_doc_indexes_traceability_capabilities_and_catalog()
+-> Result<(), String> {
+    with_temp_cwd("suggested-fixes-allowlist", |root| {
+        write(
+            &root.join(".ripr/generated.txt"),
+            "# header\n\nzeta\nalpha\n",
+        );
+        write(
+            &root.join(".ripr/traceability.toml"),
+            "# Traceability\n\n[[behavior]]\nid = \"RIPR-SPEC-0002\"\nname = \"B\"\n\n[[behavior]]\nid = \"RIPR-SPEC-0001\"\nname = \"A\"\n",
+        );
+        write(
+            &root.join("metrics/capabilities.toml"),
+            "# Capabilities\n\n[[capability]]\nid = \"zeta_capability\"\nspec = \"RIPR-SPEC-0002\"\nname = \"Zeta\"\n\n[[capability]]\nid = \"alpha_capability\"\nspec = \"RIPR-SPEC-0001\"\nname = \"Alpha\"\n",
+        );
+        write(&root.join("policy/process.txt"), "gamma\nbeta\n");
+        write(
+            &root.join("docs/specs/README.md"),
+            "# Specs\n\n## Index\n\n| Spec | Status | Topic |\n| --- | --- | --- |\n| [RIPR-SPEC-0002](RIPR-SPEC-0002-b.md) | proposed | B |\n| [RIPR-SPEC-0001](RIPR-SPEC-0001-a.md) | accepted | A |\n",
+        );
+        write(
+            &root.join("xtask/src/command.rs"),
+            r#"pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
+    vec![
+        command_entry(
+            "check-pr",
+            "non_mutating_check",
+            "target/ripr/reports",
+            false,
+            "Review-ready gate.",
+        ),
+        command_entry(
+            "shape",
+            "mutating",
+            "source files",
+            false,
+            "Runs deterministic shaping.",
+        ),
+    ]
+}
+"#,
+        );
+        write(
+            &root.join("badges/ripr.json"),
+            r#"{"schemaVersion":1,"label":"ripr","message":"999","color":"red"}"#,
+        );
+
+        let (patch, files) = suggested_fixes_patch()?;
+
+        assert_eq!(
+            files,
+            vec![
+                ".ripr/generated.txt".to_string(),
+                ".ripr/traceability.toml".to_string(),
+                "docs/specs/README.md".to_string(),
+                "metrics/capabilities.toml".to_string(),
+                "policy/process.txt".to_string(),
+                "xtask/src/command.rs".to_string()
+            ]
+        );
+        assert!(patch.contains("diff --git a/.ripr/generated.txt b/.ripr/generated.txt"));
+        assert!(patch.contains("+alpha"));
+        assert!(patch.contains("+zeta"));
+        assert!(
+            patch
+                .find("+id = \"RIPR-SPEC-0001\"")
+                .zip(patch.find("+id = \"RIPR-SPEC-0002\""))
+                .is_some_and(|(first, second)| first < second)
+        );
+        assert!(
+            patch
+                .find("+id = \"alpha_capability\"")
+                .zip(patch.find("+id = \"zeta_capability\""))
+                .is_some_and(|(first, second)| first < second)
+        );
+        assert!(patch.contains("diff --git a/docs/specs/README.md b/docs/specs/README.md"));
+        assert!(
+            patch
+                .find("+| [RIPR-SPEC-0001](RIPR-SPEC-0001-a.md) | accepted | A |")
+                .zip(patch.find("+| [RIPR-SPEC-0002](RIPR-SPEC-0002-b.md) | proposed | B |"))
+                .is_some_and(|(first, second)| first < second)
+        );
+        assert!(patch.contains("diff --git a/policy/process.txt b/policy/process.txt"));
+        assert!(!patch.contains("badges/ripr.json"));
+        assert!(!patch.contains("999"));
+        assert!(
+            patch
+                .find("+            \"shape\"")
+                .zip(patch.find("+            \"check-pr\""))
+                .is_some_and(|(shape, check_pr)| shape < check_pr)
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn suggested_fixes_patch_is_empty_when_allowlists_are_sorted() -> Result<(), String> {
+    with_temp_cwd("suggested-fixes-empty", |root| {
+        write(
+            &root.join(".ripr/generated.txt"),
+            "# header\n\nalpha\nbeta\n",
+        );
+        write(
+            &root.join("docs/adr/README.md"),
+            "# Architecture Decision Records\n\n## Index\n\n| ADR | Status | Decision |\n| --- | --- | --- |\n| [0001](0001-a.md) | accepted | A. |\n| [0002](0002-b.md) | proposed | B. |\n",
+        );
+        write(
+            &root.join("metrics/capabilities.toml"),
+            "# Capabilities\n\n[[capability]]\nid = \"alpha_capability\"\nspec = \"RIPR-SPEC-0001\"\nname = \"Alpha\"\n\n[[capability]]\nid = \"beta_capability\"\nspec = \"RIPR-SPEC-0002\"\nname = \"Beta\"\n",
+        );
+
+        let (patch, files) = suggested_fixes_patch()?;
+
+        assert!(patch.is_empty());
+        assert!(files.is_empty());
+        Ok(())
+    })
+}
+
+#[test]
+fn golden_text_comparison_normalizes_line_endings_and_final_newline() {
+    assert_eq!(
+        normalize_golden_text("one\r\ntwo\r\n"),
+        normalize_golden_text("one\ntwo\n")
+    );
+    assert_eq!(
+        normalize_golden_text("one\ntwo\n"),
+        normalize_golden_text("one\ntwo")
+    );
+    assert_ne!(
+        normalize_golden_text("one\ntwo\n\n"),
+        normalize_golden_text("one\ntwo\n")
+    );
+    assert_ne!(
+        normalize_golden_text("one\ntwo\n\n"),
+        normalize_golden_text("one\ntwo")
+    );
+}
+
+#[test]
+fn first_line_difference_reports_snapshot_context() {
+    assert_eq!(
+        first_line_difference("a\nb\nc", "a\nx\nc"),
+        Some("line 2 expected `b` vs actual `x`".to_string())
+    );
+    assert_eq!(
+        first_line_difference("a\nb", "a\nb\nc"),
+        Some("line 3 expected `<missing>` vs actual `c`".to_string())
+    );
+    assert_eq!(first_line_difference("a\nb", "a\nb"), None);
+}
+
+#[test]
+fn first_line_difference_escapes_control_characters_for_snapshot_diffs() {
+    assert_eq!(
+        first_line_difference("ok\nline\tone", "ok\nline\rone"),
+        Some("line 2 expected `line\\tone` vs actual `line\\rone`".to_string())
+    );
+}
+
+#[test]
+fn first_line_difference_escapes_backticks_for_snapshot_diffs() {
+    assert_eq!(
+        first_line_difference("value with `tick`", "value with plain tick"),
+        Some(
+            "line 1 expected `value with \\`tick\\`` vs actual `value with plain tick`".to_string()
+        )
+    );
+}
+
+#[test]
+fn first_line_difference_truncates_very_long_snapshot_lines() {
+    let expected = format!("ok\n{}", "a".repeat(130));
+    let actual = format!("ok\n{}", "b".repeat(130));
+    let diff = first_line_difference(&expected, &actual);
+    assert!(matches!(
+        diff.as_deref(),
+        Some(message)
+            if message.contains("expected `") && message.contains("…` vs actual `")
+    ));
+}
+
+#[test]
+fn fixture_output_normalization_keeps_json_escapes_readable() {
+    let json =
+        r#"{"file":"fixtures/example/input\\src/lib.rs","oracle":"assert!(value == \"x\")"}"#;
+
+    assert_eq!(
+        normalize_fixture_json_output(json),
+        r#"{"file":"fixtures/example/input/src/lib.rs","oracle":"assert!(value == \"x\")"}"#
+    );
+    assert_eq!(
+        normalize_fixture_human_output("fixtures\\example\\input\\src/lib.rs"),
+        "fixtures/example/input/src/lib.rs\n"
+    );
+}
+
+#[test]
+fn public_contract_rows_detect_json_and_lsp_surfaces() {
+    let changes = vec![
+        ChangedPath {
+            path: "crates/ripr/src/output/json/report.rs".to_string(),
+            statuses: BTreeSet::from(["M".to_string()]),
+        },
+        ChangedPath {
+            path: "editors/vscode/src/client.ts".to_string(),
+            statuses: BTreeSet::from(["M".to_string()]),
+        },
+        ChangedPath {
+            path: "crates/ripr/src/output/human/sections.rs".to_string(),
+            statuses: BTreeSet::from(["A".to_string()]),
+        },
+    ];
+
+    let rows = public_contract_rows(&changes);
+    let json = rows
+        .iter()
+        .find(|(label, _)| *label == "JSON")
+        .map(|(_, paths)| paths.clone())
+        .unwrap_or_default();
+    let lsp = rows
+        .iter()
+        .find(|(label, _)| *label == "LSP")
+        .map(|(_, paths)| paths.clone())
+        .unwrap_or_default();
+    let human = rows
+        .iter()
+        .find(|(label, _)| *label == "Human output")
+        .map(|(_, paths)| paths.clone())
+        .unwrap_or_default();
+
+    assert_eq!(json, vec!["crates/ripr/src/output/json/report.rs (M)"]);
+    assert_eq!(lsp, vec!["editors/vscode/src/client.ts (M)"]);
+    assert_eq!(human, vec!["crates/ripr/src/output/human/sections.rs (A)"]);
+}
+
+#[test]
+fn pr_summary_lists_top_level_plans_as_docs_evidence() {
+    let changes = vec![ChangedPath {
+        path: "plans/campaign-27/lane3-editor-preview-routing.md".to_string(),
+        statuses: BTreeSet::from(["??".to_string()]),
+    }];
+
+    let body = pr_summary_body(&changes);
+
+    assert!(body.contains("- `plans/campaign-27/lane3-editor-preview-routing.md (??)`"));
+    assert!(body.contains("Evidence/support delta:"));
+    assert!(body.contains("Docs:"));
+}
+
+#[test]
+fn pr_actionable_front_panel_leads_with_typed_repair_delta() {
+    let changes = vec![ChangedPath {
+        path: "src/pricing.rs".to_string(),
+        statuses: BTreeSet::from(["M".to_string()]),
+    }];
+    let actionable = PrActionableInput::Read(serde_json::json!({
+        "report": "actionable-gaps",
+        "summary": {
+            "actionable_gaps": 4,
+            "packets_emitted": 2,
+            "public_projection_eligible_packets": 2,
+            "static_limitations": 3
+        },
+        "packets": [
+            {
+                "canonical_gap_id": "gap:abc",
+                "gap_state": "actionable",
+                "public_projection_eligible": true,
+                "source_file": "src/pricing.rs",
+                "changed_behavior": "amount >= threshold",
+                "repair_kind": "add_boundary_assertion",
+                "missing_discriminators": [
+                    {"value": "amount == threshold"}
+                ],
+                "recommended_repair": "Add exact assertion for amount == threshold.",
+                "verify_command": "ripr agent verify --root . --json",
+                "receipt_command_or_path": "ripr agent receipt --root . --json",
+                "static_limitations": [],
+                "related_test_or_observer": {
+                    "file": "tests/pricing.rs",
+                    "line": 42,
+                    "name": "discount_boundary"
+                }
+            },
+            {
+                "canonical_gap_id": "gap:def",
+                "gap_state": "actionable",
+                "public_projection_eligible": true,
+                "source_file": "src/other.rs",
+                "repair_kind": "add_output_proof",
+                "static_limitations": ["observer_unknown"]
+            }
+        ]
+    }));
+    let outcomes = PrActionableInput::Read(serde_json::json!({
+        "summary": {
+            "resolved": 1,
+            "receipts_present": 2,
+            "receipts_missing_after_input": 1,
+            "orphaned_receipts": 0,
+            "evidence_improved": 1,
+            "evidence_unchanged": 1
+        }
+    }));
+    let front_panel = PrActionableInput::Read(serde_json::json!({
+        "summary": {
+            "new_policy_eligible": 2
+        }
+    }));
+
+    let body =
+        pr_actionable_delta_front_panel_from_inputs(&changes, &actionable, &outcomes, &front_panel);
+
+    assert!(body.starts_with("## Actionable Repair Front Panel"));
+    assert!(body.contains("- repo actionable gaps: `4`"));
+    assert!(body.contains("- PR-local actionable gaps: `1`"));
+    assert!(body.contains("- new actionable gaps: `2`"));
+    assert!(body.contains("- resolved actionable gaps: `1`"));
+    assert!(body.contains("`receipts_present=2`"));
+    assert!(body.contains(
+        "- blocked/static-limited gaps: `3` static limitation(s), `1` static-limited packet(s)"
+    ));
+    assert!(body.contains("- canonical gap: `gap:abc`"));
+    assert!(body.contains("- Changed behavior: amount >= threshold"));
+    assert!(body.contains("- Missing discriminator: amount == threshold"));
+    assert!(body.contains("- Focused proof intent: Add exact assertion for amount == threshold."));
+    assert!(body.contains("- related test or observer: `tests/pricing.rs:42` `discount_boundary`"));
+    assert!(body.contains("- verify: `ripr agent verify --root . --json`"));
+    assert!(body.contains("Does not run mutation testing"));
+}
+
+#[test]
+fn pr_actionable_front_panel_highlights_top_python_repair_card() {
+    let changes = vec![ChangedPath {
+        path: "app/pricing.py".to_string(),
+        statuses: BTreeSet::from(["M".to_string()]),
+    }];
+    let actionable = PrActionableInput::Read(serde_json::json!({
+        "report": "actionable-gaps",
+        "summary": {
+            "actionable_gaps": 1,
+            "packets_emitted": 1,
+            "public_projection_eligible_packets": 1,
+            "static_limitations": 0
+        },
+        "packets": [
+            {
+                "canonical_gap_id": "gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold",
+                "gap_state": "actionable",
+                "public_projection_eligible": true,
+                "language": "python",
+                "language_status": "preview",
+                "authority_boundary": "Python repair cards are preview advisory evidence.",
+                "source_file": "app/pricing.py",
+                "changed_owner": "calculate_discount",
+                "changed_behavior": "if amount >= threshold:",
+                "repair_kind": "add_boundary_assertion",
+                "missing_discriminator": "amount == threshold",
+                "current_test_evidence": "tests/test_pricing.py reaches calculate_discount but only asserts broad success.",
+                "recommended_test_shape": "pytest exact boundary assertion",
+                "suggested_assertion": "assert calculate_discount(amount=threshold, threshold=threshold) == expected_discount",
+                "suggested_test_file": "tests/test_pricing.py",
+                "suggested_test_name": "test_calculate_discount_threshold_boundary",
+                "allowed_files": ["tests/test_pricing.py"],
+                "forbidden_files": ["app/pricing.py"],
+                "verify_command": "pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary",
+                "receipt_command": "ripr outcome --before target/ripr/reports/before-check.json --after target/ripr/reports/after-check.json --out target/ripr/receipts/python-pricing-boundary.json",
+                "stop_if": [
+                    "import cannot be resolved",
+                    "expected value is ambiguous",
+                    "production code edit appears necessary"
+                ]
+            }
+        ]
+    }));
+
+    let body = pr_actionable_delta_front_panel_from_inputs(
+        &changes,
+        &actionable,
+        &PrActionableInput::Missing,
+        &PrActionableInput::Missing,
+    );
+
+    assert!(body.contains("Top Python repair card:"));
+    assert!(body.contains("- language: `python` (`preview`)"));
+    assert!(body.contains("Python repair cards are preview advisory evidence."));
+    assert!(body.contains(
+            "- canonical gap: `gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold`"
+        ));
+    assert!(body.contains("- Changed owner: `calculate_discount`"));
+    assert!(body.contains("- Missing discriminator: amount == threshold"));
+    assert!(body.contains("- test shape: pytest exact boundary assertion"));
+    assert!(body.contains(
+            "- Suggested test target: `test_calculate_discount_threshold_boundary` in `tests/test_pricing.py`"
+        ));
+    assert!(body.contains(
+        "- Verify: `pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary`"
+    ));
+    assert!(body.contains("- Receipt: `ripr outcome --before"));
+    assert!(body.contains("  - production code edit appears necessary"));
+    assert!(body.contains("Does not run mutation testing"));
+}
+
+#[test]
+fn pr_actionable_front_panel_fails_closed_without_artifacts() {
+    let body = pr_actionable_delta_front_panel_from_inputs(
+        &[],
+        &PrActionableInput::Missing,
+        &PrActionableInput::Missing,
+        &PrActionableInput::Missing,
+    );
+
+    assert!(body.contains("- actionable gaps: `missing`"));
+    assert!(body.contains("- repo actionable gaps: `unknown`"));
+    assert!(body.contains("run `cargo xtask lane1-evidence-audit`"));
+    assert!(body.contains("- new actionable gaps: `unavailable`"));
+    assert!(body.contains("Static RIPR evidence only."));
+    assert!(!body.contains("Gate passed"));
+}
+
+#[test]
+fn pr_shape_warnings_flag_analysis_without_evidence() {
+    let changes = vec![ChangedPath {
+        path: "crates/ripr/src/analysis/classifier.rs".to_string(),
+        statuses: BTreeSet::from(["M".to_string()]),
+    }];
+    let warnings = pr_shape_warnings(&changes);
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.contains("Analysis code changed"))
+    );
+
+    let with_evidence = vec![
+        ChangedPath {
+            path: "crates/ripr/src/analysis/classifier.rs".to_string(),
+            statuses: BTreeSet::from(["M".to_string()]),
+        },
+        ChangedPath {
+            path: "docs/specs/RIPR-SPEC-0001-static-exposure-loop.md".to_string(),
+            statuses: BTreeSet::from(["M".to_string()]),
+        },
+    ];
+    assert!(pr_shape_warnings(&with_evidence).is_empty());
+}
+
+#[test]
+fn critic_flags_analysis_without_fixture_or_golden_reports() {
+    let changes = vec![ChangedPath {
+        path: "crates/ripr/src/analysis/classifier.rs".to_string(),
+        statuses: BTreeSet::from(["M".to_string()]),
+    }];
+    let reports = vec![ReportIndexEntry {
+        file: "pr-summary.md".to_string(),
+        path: "target/ripr/reports/pr-summary.md".to_string(),
+        status: "pass".to_string(),
+    }];
+    let findings = critic_findings(&changes, &reports, &[]);
+
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.id == "analysis_without_behavior_evidence")
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.id == "analysis_missing_fixture_report")
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.id == "missing_receipts")
+    );
+}
+
+#[test]
+fn critic_accepts_analysis_with_evidence_reports_and_receipts() {
+    let changes = vec![
+        ChangedPath {
+            path: "crates/ripr/src/analysis/classifier.rs".to_string(),
+            statuses: BTreeSet::from(["M".to_string()]),
+        },
+        ChangedPath {
+            path: "fixtures/boundary_gap/SPEC.md".to_string(),
+            statuses: BTreeSet::from(["M".to_string()]),
+        },
+    ];
+    let reports = ["pr-summary.md", "pr-shape.md", "fixtures.md", "goldens.md"]
+        .into_iter()
+        .map(|file| ReportIndexEntry {
+            file: file.to_string(),
+            path: format!("target/ripr/reports/{file}"),
+            status: "pass".to_string(),
+        })
+        .collect::<Vec<_>>();
+    let receipts = vec![ReportIndexEntry {
+        file: "check-pr.json".to_string(),
+        path: "target/ripr/receipts/check-pr.json".to_string(),
+        status: "present".to_string(),
+    }];
+
+    let findings = critic_findings(&changes, &reports, &receipts);
+
+    assert!(
+        !findings
+            .iter()
+            .any(|finding| finding.id.starts_with("analysis_"))
+    );
+    assert!(
+        !findings
+            .iter()
+            .any(|finding| finding.id == "missing_receipts")
+    );
+}
+
+#[test]
+fn critic_flags_golden_changes_without_blessing_reason() {
+    let changes = vec![ChangedPath {
+        path: "fixtures/boundary_gap/expected/check.json".to_string(),
+        statuses: BTreeSet::from(["M".to_string()]),
+    }];
+
+    let missing = golden_changes_without_blessing(&changes);
+
+    assert_eq!(missing.len(), 1);
+    assert!(missing[0].contains("fixtures/boundary_gap/expected/CHANGELOG.md"));
+}
+
+#[test]
+fn precommit_report_points_to_review_ready_gate() {
+    let body = precommit_report_body();
+
+    assert!(body.contains("cargo fmt --check"));
+    assert!(body.contains("cargo xtask check-pr"));
+}
+
+#[test]
+fn check_pr_temp_env_points_to_repo_local_target_tmp() -> Result<(), String> {
+    with_temp_cwd("check-pr-temp-env", |_root| -> Result<(), String> {
+        let envs = super::check_pr_temp_env()?;
+        let expected_path = std::env::current_dir()
+            .map_err(|err| format!("current dir: {err}"))?
+            .join("target")
+            .join("tmp")
+            .join("check-pr");
+        if !expected_path.is_dir() {
+            return Err(format!(
+                "check-pr temp dir should exist at {}",
+                expected_path.display()
+            ));
+        }
+        let expected = expected_path.to_string_lossy().into_owned();
+
+        for name in ["TEMP", "TMP", "TMPDIR"] {
+            let Some((_, value)) = envs.iter().find(|(env_name, _)| env_name == name) else {
+                return Err(format!("missing {name} in check-pr temp envs"));
+            };
+            if value != &expected {
+                return Err(format!("{name} should point to {expected}, got {value}"));
+            }
+        }
+
+        Ok(())
+    })
+}
+
+#[test]
+fn report_status_parser_reads_markdown_and_json() {
+    assert_eq!(
+        report_status_from_text("# Report\n\nStatus: warn\n\nBody"),
+        Some("warn".to_string())
+    );
+    assert_eq!(
+        report_status_from_text("{\n  \"status\": \"pass\"\n}"),
+        Some("pass".to_string())
+    );
+    assert_eq!(report_status_from_text("# Report\n\nBody"), None);
+}
+
+#[test]
+fn report_index_missing_expected_tracks_changed_surfaces() {
+    let reports = vec![ReportIndexEntry {
+        file: "pr-summary.md".to_string(),
+        path: "target/ripr/reports/pr-summary.md".to_string(),
+        status: "pass".to_string(),
+    }];
+    let changes = vec![
+        ChangedPath {
+            path: "docs/PR_AUTOMATION.md".to_string(),
+            statuses: BTreeSet::from(["M".to_string()]),
+        },
+        ChangedPath {
+            path: ".ripr/goals/active.toml".to_string(),
+            statuses: BTreeSet::from(["M".to_string()]),
+        },
+    ];
+
+    let missing = report_index_missing_expected(&reports, &changes);
+
+    assert!(missing.contains(&"target/ripr/reports/check-pr.md".to_string()));
+    assert!(missing.contains(&"target/ripr/reports/doc-index.md".to_string()));
+    assert!(missing.contains(&"target/ripr/reports/markdown-links.md".to_string()));
+    assert!(!missing.contains(&"target/ripr/reports/campaign.md".to_string()));
+    assert!(!missing.contains(&"target/ripr/reports/goals-next.md".to_string()));
+}
+
+#[test]
+fn report_index_expects_golden_drift_for_output_changes() {
+    let reports = vec![
+        ReportIndexEntry {
+            file: "pr-summary.md".to_string(),
+            path: "target/ripr/reports/pr-summary.md".to_string(),
+            status: "pass".to_string(),
+        },
+        ReportIndexEntry {
+            file: "check-pr.md".to_string(),
+            path: "target/ripr/reports/check-pr.md".to_string(),
+            status: "pass".to_string(),
+        },
+    ];
+    let changes = vec![ChangedPath {
+        path: "crates/ripr/src/output/human.rs".to_string(),
+        statuses: BTreeSet::from(["M".to_string()]),
+    }];
+
+    let missing = report_index_missing_expected(&reports, &changes);
+
+    assert!(missing.contains(&"target/ripr/reports/golden-drift.md".to_string()));
+}
+
+#[test]
+fn report_index_tracks_lane1_readiness_artifacts() {
+    let missing_packets = report_index_lane1_readiness_packets(&[]);
+
+    assert_eq!(report_index_lane1_overall_status(&missing_packets), "warn");
+    assert_eq!(report_index_missing_artifact_count(&missing_packets), 12);
+    assert!(
+        missing_packets
+            .iter()
+            .all(|packet| packet.status == "missing")
+    );
+
+    let complete_reports = lane1_readiness_packet_specs()
+        .iter()
+        .flat_map(|spec| spec.artifacts.iter())
+        .filter_map(|path| path.strip_prefix("target/ripr/reports/"))
+        .map(|file| ReportIndexEntry {
+            file: file.to_string(),
+            path: format!("target/ripr/reports/{file}"),
+            status: "advisory".to_string(),
+        })
+        .collect::<Vec<_>>();
+    let complete_packets = report_index_lane1_readiness_packets(&complete_reports);
+
+    assert_eq!(
+        report_index_lane1_overall_status(&complete_packets),
+        "present"
+    );
+    assert_eq!(report_index_missing_artifact_count(&complete_packets), 0);
+    assert!(
+        complete_packets
+            .iter()
+            .all(|packet| packet.status == "present")
+    );
+}
+
+#[test]
+fn report_index_status_keeps_failing_lane1_artifacts_advisory() {
+    let reports = vec![ReportIndexEntry {
+        file: "badge-basis.json".to_string(),
+        path: "target/ripr/reports/badge-basis.json".to_string(),
+        status: "fail".to_string(),
+    }];
+    let packets = report_index_lane1_readiness_packets(&reports);
+    let commands = report_index_next_commands(&[], &packets);
+
+    assert_eq!(super::report_index_status(&reports, &[], &[]), "warn");
+    assert_eq!(report_index_lane1_overall_status(&packets), "fail");
+    assert_eq!(super::report_index_failing_artifact_count(&packets), 1);
+    assert!(commands.contains(&"cargo xtask badge-basis".to_string()));
+}
+
+#[test]
+fn report_index_marks_limited_lane1_artifacts_as_warning() -> Result<(), String> {
+    with_temp_cwd("report-index-limited-lane1", |root| {
+        write(
+            &root.join("target/ripr/reports/lane1-evidence-audit.json"),
+            r#"{
+  "schema_version": "0.9",
+  "status": "advisory",
+  "run_limitations": [
+    {
+      "category": "lane1_repo_exposure_incomplete",
+      "summary": "Repo exposure capture was incomplete."
+    }
+  ],
+  "summary": {
+    "raw_headline_gaps": 0
+  }
+}
+"#,
+        );
+
+        let reports = super::report_index_entries()?;
+        let audit_entry = reports
+            .iter()
+            .find(|entry| entry.file == "lane1-evidence-audit.json")
+            .ok_or_else(|| "missing lane1 audit report entry".to_string())?;
+        assert_eq!(audit_entry.status, "warn");
+
+        let packets = super::report_index_lane1_readiness_packets(&reports);
+        let audit_packet = packets
+            .iter()
+            .find(|packet| packet.id == "lane1_evidence_audit")
+            .ok_or_else(|| "missing lane1 evidence audit packet".to_string())?;
+        assert_eq!(audit_packet.status, "warn");
+        assert_eq!(super::report_index_status(&reports, &[], &[]), "warn");
+        Ok(())
+    })
+}
+
+#[test]
+fn report_index_status_keeps_non_lane1_failures_blocking() {
+    let reports = vec![ReportIndexEntry {
+        file: "check-pr.md".to_string(),
+        path: "target/ripr/reports/check-pr.md".to_string(),
+        status: "fail".to_string(),
+    }];
+
+    assert_eq!(super::report_index_status(&reports, &[], &[]), "fail");
+}
+
+#[test]
+fn report_index_next_commands_include_missing_lane1_readiness() {
+    let packets = report_index_lane1_readiness_packets(&[]);
+    let commands = report_index_next_commands(&[], &packets);
+
+    assert!(commands.contains(&"cargo xtask evidence-health".to_string()));
+    assert!(commands.contains(&"cargo xtask lane1-evidence-audit".to_string()));
+    assert!(commands.contains(&"cargo xtask evidence-quality-scorecard".to_string()));
+    assert!(commands.contains(&"cargo xtask evidence-quality-trend".to_string()));
+    assert!(commands.contains(&"cargo xtask badge-basis".to_string()));
+}
+
+#[test]
+fn report_index_repo_ops_packets_are_structured_for_agents() {
+    let reports = [
+        ("commands.md", "present"),
+        ("commands.json", "present"),
+        ("cockpit.md", "actionable"),
+        ("cockpit.json", "actionable"),
+        ("generated-clean.md", "pass"),
+        ("gh-pr-status.md", "warn"),
+        ("gh-pr-status.json", "warn"),
+        ("pr-ready.md", "actionable"),
+        ("pr-ready.json", "actionable"),
+        ("suggested-fixes.md", "pass"),
+        ("suggested-fixes.patch", "present"),
+        ("check-pr.md", "pass"),
+    ]
+    .into_iter()
+    .map(|(file, status)| ReportIndexEntry {
+        file: file.to_string(),
+        path: format!("target/ripr/reports/{file}"),
+        status: status.to_string(),
+    })
+    .collect::<Vec<_>>();
+    let receipts = vec![ReportIndexEntry {
+        file: "check-pr.json".to_string(),
+        path: "target/ripr/receipts/check-pr.json".to_string(),
+        status: "pass".to_string(),
+    }];
+
+    let packets = report_index_repo_ops_packets(&reports, &receipts);
+
+    assert_eq!(
+        packets
+            .iter()
+            .find(|packet| packet.id == "command_mutability_catalog")
+            .map(|packet| packet.status.as_str()),
+        Some("present")
+    );
+    assert_eq!(
+        packets
+            .iter()
+            .find(|packet| packet.id == "gh_pr_status")
+            .map(|packet| packet.status.as_str()),
+        Some("warn")
+    );
+    assert_eq!(
+        packets
+            .iter()
+            .find(|packet| packet.id == "worktree_doctor")
+            .map(|packet| packet.status.as_str()),
+        Some("missing")
+    );
+    assert_eq!(
+        packets
+            .iter()
+            .find(|packet| packet.id == "repo_cockpit")
+            .map(|packet| packet.status.as_str()),
+        Some("actionable")
+    );
+    assert_eq!(
+        packets
+            .iter()
+            .find(|packet| packet.id == "pr_ready")
+            .map(|packet| packet.status.as_str()),
+        Some("actionable")
+    );
+    assert_eq!(
+        packets
+            .iter()
+            .find(|packet| packet.id == "check_pr")
+            .map(|packet| packet.status.as_str()),
+        Some("pass")
+    );
+}
+
+#[test]
+fn receipt_status_aggregates_report_statuses() {
+    assert_eq!(receipt_status_from_reports(&[]), "missing");
+    assert_eq!(
+        receipt_status_from_reports(&["target/ripr/reports/not-present.md".to_string()]),
+        "missing"
+    );
+
+    let pass = ReceiptRecord {
+        file: "check-pr.json".to_string(),
+        command: "cargo xtask check-pr".to_string(),
+        status: "passed".to_string(),
+        reports: vec!["target/ripr/reports/check-pr.md".to_string()],
+    };
+    let git = BTreeMap::from([
+        ("branch".to_string(), "test-branch".to_string()),
+        ("commit".to_string(), "abc123".to_string()),
+    ]);
+    let json = receipt_json(&pass, &git);
+
+    assert!(json.contains("\"schema_version\": \"0.1\""));
+    assert!(json.contains("\"command\": \"cargo xtask check-pr\""));
+    assert!(json.contains("\"status\": \"passed\""));
+    assert!(json.contains("\"branch\": \"test-branch\""));
+    assert!(json.contains("target/ripr/reports/check-pr.md"));
+}
+
+#[test]
+fn receipt_statuses_accept_expected_values() {
+    assert!(is_receipt_status("passed"));
+    assert!(is_receipt_status("warn"));
+    assert!(is_receipt_status("failed"));
+    assert!(is_receipt_status("missing"));
+    assert!(!is_receipt_status("unknown"));
+}
+
+#[test]
+fn receipt_specs_cover_required_gates() {
+    let files = receipt_specs()
+        .into_iter()
+        .map(|spec| spec.file.to_string())
+        .collect::<BTreeSet<_>>();
+
+    assert!(files.contains("shape.json"));
+    assert!(files.contains("fix-pr.json"));
+    assert!(files.contains("ci-fast.json"));
+    assert!(files.contains("check-pr.json"));
+    assert!(files.contains("fixtures.json"));
+    assert!(files.contains("goldens.json"));
+    assert!(files.contains("test-oracles.json"));
+    assert!(files.contains("badge-artifacts.json"));
+    assert!(files.contains("repo-badge-artifacts.json"));
+    assert!(files.contains("dogfood.json"));
+    assert!(files.contains("metrics.json"));
+    assert!(known_xtask_command("receipts"));
+}
+
+#[test]
+fn golden_drift_semantics_summarize_json_changes() {
+    let expected = r#"{
+  "findings": [
+    {"id":"probe:src_lib.rs:1:predicate","classification":"infection_unknown","probe":{"family":"predicate"},"related_tests":[{"oracle_kind":"exact_value","oracle_strength":"strong"}],"recommended_next_step":"Add a boundary test"}
+  ]
+}"#;
+    let actual = r#"{
+  "findings": [
+    {"id":"probe:src_lib.rs:1:predicate","classification":"weakly_exposed","probe":{"family":"predicate"},"related_tests":[{"oracle_kind":"smoke_only","oracle_strength":"smoke"}],"stop_reasons":["opaque fixture"],"recommended_next_step":"Assert the exact variant"},
+    {"id":"probe:src_lib.rs:2:error_path","classification":"weakly_exposed","probe":{"family":"error_path"},"related_tests":[{"oracle_kind":"broad_error","oracle_strength":"smoke"}],"recommended_next_step":"Assert the exact variant"}
+  ]
+}"#;
+
+    let semantics = golden_drift_semantics("check.json", expected, actual);
+
+    assert!(
+        semantics
+            .added_finding_ids
+            .contains(&"probe:src_lib.rs:2:error_path".to_string())
+    );
+    assert!(
+        semantics.changed_exposure_classes.iter().any(|value| {
+            value.contains("infection_unknown") && value.contains("weakly_exposed")
+        })
+    );
+    assert!(
+        semantics
+            .changed_probe_families
+            .iter()
+            .any(|value| value.contains("error_path"))
+    );
+    assert!(
+        semantics
+            .changed_oracle_strengths
+            .iter()
+            .any(|value| value.contains("smoke"))
+    );
+    assert!(
+        semantics
+            .changed_oracle_kinds
+            .iter()
+            .any(|value| value.contains("broad_error"))
+    );
+    assert!(
+        semantics
+            .changed_stop_reasons
+            .iter()
+            .any(|value| value.contains("opaque fixture"))
+    );
+    assert!(
+        semantics
+            .changed_recommendations
+            .iter()
+            .any(|value| value.contains("Assert the exact variant"))
+    );
+}
+
+#[test]
+fn golden_drift_type_names_classification_flip() {
+    // Gate-feedback contract: a goldens-check failure must say WHAT KIND of
+    // drift happened. A classification flip is the highest-stakes case and
+    // must be named explicitly with its before/after.
+    let semantics = super::GoldenDriftSemantics {
+        changed_exposure_classes: vec!["expected [exposed] -> actual [weakly_exposed]".to_string()],
+        ..super::GoldenDriftSemantics::default()
+    };
+    let summary = super::golden_drift_type(&semantics);
+    assert!(summary.contains("classification_changed"), "{summary}");
+    assert!(summary.contains("exposed"), "{summary}");
+    assert!(summary.contains("weakly_exposed"), "{summary}");
+}
+
+#[test]
+fn golden_drift_type_falls_back_to_formatting_only() {
+    // A whitespace/format-only drift must not masquerade as a semantic change.
+    let semantics = super::GoldenDriftSemantics {
+        changed_line_count: 3,
+        ..super::GoldenDriftSemantics::default()
+    };
+    let summary = super::golden_drift_type(&semantics);
+    assert!(summary.contains("formatting_only"), "{summary}");
+    assert!(summary.contains('3'), "{summary}");
+}
+
+#[test]
+fn goldens_check_failure_message_is_a_repair_card() {
+    // The failure message must point at the semantic report, carry the
+    // reproduce command, and tell the reader how to re-bless an intended flip.
+    let entries = vec![super::GoldenDriftEntry {
+        fixture: "python_field_assignment_shape".to_string(),
+        surface: "check.json".to_string(),
+        expected: "fixtures/x/expected/check.json".to_string(),
+        actual: "target/x/actual/check.json".to_string(),
+        blessing_reason_required: true,
+        blessing_reason_present: false,
+        semantics: super::GoldenDriftSemantics {
+            changed_exposure_classes: vec![
+                "expected [exposed] -> actual [weakly_exposed]".to_string(),
+            ],
+            ..super::GoldenDriftSemantics::default()
+        },
+    }];
+    let violations = vec!["drift for fixture `python_field_assignment_shape`".to_string()];
+    let message = super::goldens_check_failure_message(&entries, &violations);
+    assert!(message.contains("golden-drift.md"), "{message}");
+    assert!(
+        message.contains("python_field_assignment_shape"),
+        "{message}"
+    );
+    assert!(message.contains("classification_changed"), "{message}");
+    assert!(message.contains("re-bless"), "{message}");
+    assert!(
+        message.contains("reproduce: cargo xtask goldens check"),
+        "{message}"
+    );
+}
+
+#[test]
+fn json_string_values_for_key_reads_multiline_arrays() {
+    let text = r#"{
+  "stop_reasons": [
+    "opaque fixture",
+    "missing owner"
+  ]
+}"#;
+
+    let values = json_string_values_for_key(text, "stop_reasons");
+
+    assert_eq!(
+        values,
+        BTreeSet::from(["missing owner".to_string(), "opaque fixture".to_string()])
+    );
+}
+
+#[test]
+fn parse_reason_accepts_flag_forms() {
+    let spaced = vec![
+        "--reason".to_string(),
+        "RIPR-SPEC-0001: intentional update".to_string(),
+    ];
+    let equals = vec!["--reason=RIPR-SPEC-0001: intentional update".to_string()];
+
+    assert_eq!(
+        parse_reason(&spaced),
+        Ok("RIPR-SPEC-0001: intentional update".to_string())
+    );
+    assert_eq!(
+        parse_reason(&equals),
+        Ok("RIPR-SPEC-0001: intentional update".to_string())
+    );
+    parse_reason(&[]).expect_err("empty args should fail to produce a reason");
+}
+
+#[test]
+fn parse_reason_rejects_missing_or_malformed_spec_ids() {
+    for reason in [
+        "x",
+        "updated output",
+        "RIPR-SPEC-1: short id",
+        "RIPR-SPEC-12345: too many digits",
+        "RIPR-SPEC-0001x: invalid boundary",
+    ] {
+        let args = vec!["--reason".to_string(), reason.to_string()];
+        assert!(
+            parse_reason(&args).is_err(),
+            "reason without a well-formed spec id should fail: {reason}"
+        );
+    }
+}
+
+#[test]
+fn validate_bless_reason_rejects_unknown_spec_ids() -> Result<(), String> {
+    with_repo_cwd(|| {
+        validate_bless_reason("RIPR-SPEC-0001: valid existing spec")?;
+        let error = match validate_bless_reason("RIPR-SPEC-9999: not a repository spec") {
+            Ok(()) => return Err("unknown spec id must not be accepted".to_string()),
+            Err(error) => error,
+        };
+        if !error.contains("RIPR-SPEC-9999") {
+            return Err(format!("unknown spec error omitted the id: {error}"));
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn spec_id_helpers_accept_only_ripr_spec_ids() {
+    assert!(is_spec_id("RIPR-SPEC-0001"));
+    assert!(!is_spec_id("RIPR-SPEC-001"));
+    assert!(!is_spec_id("SPEC-0001"));
+    assert_eq!(
+        spec_id_from_path(Path::new("docs/specs/RIPR-SPEC-0004-predicate-boundary.md")),
+        Some("RIPR-SPEC-0004".to_string())
+    );
+    assert_eq!(spec_id_from_path(Path::new("docs/specs/README.md")), None);
+}
+
+#[test]
+fn traceability_array_parser_reads_inline_values() {
+    assert_eq!(
+        parse_inline_array("[\"one\", \"two\"]"),
+        Ok(vec!["one".to_string(), "two".to_string()])
+    );
+    assert_eq!(parse_inline_array("[]"), Ok(Vec::new()));
+    parse_inline_array("[one]").expect_err("unquoted token should fail array parse");
+}
+
+#[test]
+fn capability_helpers_validate_ids_and_escape_json() {
+    assert!(is_snake_case_id("agent_context_v2"));
+    assert!(!is_snake_case_id("AgentContextV2"));
+    assert!(!is_snake_case_id("agent__context"));
+    assert_eq!(json_escape("a\"b\\c\n"), "a\\\"b\\\\c\\n");
+
+    let capability = Capability {
+        id: Some("agent_context_v2".to_string()),
+        name: Some("Agent context v2".to_string()),
+        status: Some("planned".to_string()),
+        spec: Some("RIPR-SPEC-0003".to_string()),
+        evidence: vec!["agent context spec".to_string()],
+        fixtures: Vec::new(),
+        next: Some("agent-context-v2".to_string()),
+        metric: Some("context packets with suggested assertions".to_string()),
+        line: 1,
+    };
+    let json = super::capability_metrics_json(&[capability]);
+    assert!(json.contains("\"id\": \"agent_context_v2\""));
+    assert!(json.contains("\"schema_version\": \"0.1\""));
+}
+
+#[test]
+fn markdown_link_helpers_skip_fences_and_external_targets() {
+    let text = "[Docs](docs/README.md#top)\n```md\n[Ignored](missing.md)\n```\n[External](https://example.com)\n[Anchor](#section)\n";
+
+    let links = markdown_links_in_text(text);
+
+    assert_eq!(
+        links,
+        vec![
+            MarkdownLink {
+                line: 1,
+                target: "docs/README.md#top".to_string()
+            },
+            MarkdownLink {
+                line: 5,
+                target: "https://example.com".to_string()
+            },
+            MarkdownLink {
+                line: 6,
+                target: "#section".to_string()
+            }
+        ]
+    );
+    assert_eq!(
+        local_markdown_target("docs/README.md#top"),
+        Some("docs/README.md".to_string())
+    );
+    assert_eq!(
+        local_markdown_target("<docs/My File.md>"),
+        Some("docs/My File.md".to_string())
+    );
+    assert_eq!(local_markdown_target("https://example.com"), None);
+    assert_eq!(local_markdown_target("#section"), None);
+}
+
+#[test]
+fn capability_next_checkpoint_parser_reads_source_values() {
+    let source = "next = \"fixture-laboratory\"\nmetric = \"fixture pass rate\"\nnext = \"agent-context-v2\"\n";
+
+    assert_eq!(
+        next_checkpoints_from_capabilities(source),
+        Ok(vec![
+            "fixture-laboratory".to_string(),
+            "agent-context-v2".to_string()
+        ])
+    );
+}
+
+#[test]
+fn test_oracle_parser_classifies_strong_weak_and_smoke_tests() {
+    let source = r#"
+#[test]
+fn exact_json_contract() {
+    assert_eq!(actual_json, expected_json);
+}
+
+#[test]
+fn weak_status_check() {
+    assert!(result.is_err());
+}
+
+#[test]
+fn smoke_command_runs() {
+    assert!(status.success());
+}
+"#;
+
+    let tests = test_oracle_tests_in_text(Path::new("crates/ripr/tests/example.rs"), source);
+
+    assert_eq!(tests.len(), 3);
+    assert_eq!(tests[0].name, "exact_json_contract");
+    assert_eq!(tests[0].class, TestOracleClass::Strong);
+    assert_eq!(tests[1].name, "weak_status_check");
+    assert_eq!(tests[1].class, TestOracleClass::Weak);
+    assert_eq!(tests[2].name, "smoke_command_runs");
+    assert_eq!(tests[2].class, TestOracleClass::Smoke);
+}
+
+#[test]
+fn test_oracle_reports_include_advisory_debt() {
+    let source = r#"
+#[test]
+fn weak_contains() {
+    assert!(stdout.contains("warning"));
+}
+"#;
+    let tests = test_oracle_tests_in_text(Path::new("crates/ripr/tests/example.rs"), source);
+    let markdown = test_oracle_report_markdown(&tests);
+    let json = test_oracle_report_json(&tests);
+
+    assert!(markdown.contains("Status: warn"));
+    assert!(markdown.contains("Weak Or Smoke Tests"));
+    assert!(markdown.contains("BDD-shaped names: 0 / 1"));
+    assert!(json.contains("\"advisory\": true"));
+    assert!(json.contains("\"weak\": 1"));
+}
+
+#[test]
+fn test_efficiency_ledger_records_owner_oracle_values_and_limitations() {
+    let source = r#"
+#[test]
+fn creates_invoice_smoke() {
+    let invoice = create_invoice("acct-1", 100);
+    assert!(invoice.is_ok());
+}
+"#;
+    let tests = test_oracle_tests_in_text(Path::new("crates/ripr/tests/example.rs"), source);
+    let entry = test_efficiency_entry(&tests[0]);
+
+    assert_eq!(entry.name, "creates_invoice_smoke");
+    assert_eq!(entry.class, "useful_but_broad");
+    assert_eq!(entry.oracle_kind, "broad predicate");
+    assert_eq!(entry.oracle_strength, "weak");
+    assert!(entry.reasons.contains(&"broad_oracle".to_string()));
+    assert!(
+        entry
+            .reasons
+            .contains(&"assertion_may_not_match_detected_owner".to_string())
+    );
+    assert!(entry.reached_owners.contains(&"create_invoice".to_string()));
+    assert!(
+        entry
+            .observed_values
+            .iter()
+            .any(|value| value.value == "\"acct-1\"")
+    );
+    assert!(
+        entry
+            .observed_values
+            .iter()
+            .any(|value| value.value == "100")
+    );
+    assert!(
+        entry
+            .static_limitations
+            .iter()
+            .any(|limitation| limitation.contains("broad oracle"))
+    );
+}
+
+#[test]
+fn test_efficiency_reports_are_advisory() {
+    let source = r#"
+#[test]
+fn smoke_status_check() {
+    let status = run_cli();
+    assert!(status.success());
+}
+"#;
+    let tests = test_oracle_tests_in_text(Path::new("crates/ripr/tests/example.rs"), source);
+    let entry = test_efficiency_entry(&tests[0]);
+    let markdown = test_efficiency_report_markdown(
+        std::slice::from_ref(&entry),
+        &[],
+        &TestIntentReportSummary::default(),
+    );
+    let json = test_efficiency_report_json(
+        std::slice::from_ref(&entry),
+        &[],
+        &TestIntentReportSummary::default(),
+    );
+
+    assert_eq!(entry.class, "smoke_only");
+    assert!(entry.reasons.contains(&"smoke_oracle_only".to_string()));
+    assert!(markdown.contains("Mode: advisory"));
+    assert!(markdown.contains("smoke_status_check"));
+    assert!(json.contains("\"advisory\": true"));
+    assert!(json.contains("\"smoke_only\": 1"));
+}
+
+#[test]
+fn test_efficiency_signals_likely_vacuous_and_possibly_circular_tests() {
+    let source = r#"
+#[test]
+fn creates_invoice_without_assertion() {
+    create_invoice("acct-1", 100);
+}
+
+#[test]
+fn expected_uses_same_owner_path() {
+    assert_eq!(actual_invoice, create_invoice("acct-1", 100));
+}
+"#;
+    let tests = test_oracle_tests_in_text(Path::new("crates/ripr/tests/example.rs"), source);
+    let vacuous = test_efficiency_entry(&tests[0]);
+    let circular = test_efficiency_entry(&tests[1]);
+    let json = test_efficiency_report_json(
+        &[vacuous.clone(), circular.clone()],
+        &[],
+        &TestIntentReportSummary::default(),
+    );
+
+    assert_eq!(vacuous.class, "likely_vacuous");
+    assert!(
+        vacuous
+            .reasons
+            .contains(&"no_assertion_detected".to_string())
+    );
+    assert_eq!(circular.class, "possibly_circular");
+    assert!(
+        circular
+            .reasons
+            .contains(&"expected_value_computed_from_detected_owner_path".to_string())
+    );
+    assert!(json.contains("\"likely_vacuous\": 1"));
+    assert!(json.contains("\"possibly_circular\": 1"));
+    assert!(json.contains("\"reason_counts\""));
+}
+
+#[test]
+fn test_efficiency_does_not_treat_actual_side_owner_call_as_circular() {
+    let source = r#"
+#[test]
+fn exact_owner_call_has_external_expected_value() {
+    assert_eq!(create_invoice("acct-1", 100), expected_invoice);
+}
+"#;
+    let tests = test_oracle_tests_in_text(Path::new("crates/ripr/tests/example.rs"), source);
+    let entry = test_efficiency_entry(&tests[0]);
+
+    assert_eq!(entry.class, "strong_discriminator");
+    assert!(
+        !entry
+            .reasons
+            .contains(&"expected_value_computed_from_detected_owner_path".to_string())
+    );
+}
+
+#[test]
+fn bdd_name_helper_accepts_given_when_then_pattern() {
+    assert!(is_bdd_test_name(
+        "given_invalid_token_when_authenticate_then_returns_revoked_error"
+    ));
+    assert!(!is_bdd_test_name(
+        "given_invalid_token_then_returns_revoked_error_when_authenticate"
+    ));
+    assert!(!is_bdd_test_name(
+        "given__when_authenticate_then_returns_revoked_error"
+    ));
+    assert!(!is_bdd_test_name(
+        "given_invalid_token_when__then_returns_revoked_error"
+    ));
+    assert!(!is_bdd_test_name("authenticate_rejects_invalid_token"));
+}
+
+#[test]
+fn dogfood_helpers_summarize_json_output() {
+    let json = r#"{
+  "summary": {"findings":2},
+  "findings": [
+    {"classification": "weakly_exposed", "stop_reasons": []},
+    {"classification": "static_unknown", "stop_reasons": ["syntax unknown"]}
+  ]
+}"#;
+
+    let counts = dogfood_class_counts(json);
+
+    assert_eq!(json_number_after(json, "\"findings\":"), Some(2));
+    assert_eq!(counts.get("weakly_exposed").copied(), Some(1));
+    assert_eq!(counts.get("static_unknown").copied(), Some(1));
+}
+
+fn sample_first_pr_run(name: &str, status: &str, state: &str) -> DogfoodFirstPrRun {
+    let expected_dir = Path::new("fixtures/first_successful_pr")
+        .join(name)
+        .join("expected");
+    DogfoodFirstPrRun {
+        name: name.to_string(),
+        expected_dir: expected_dir.clone(),
+        json_path: expected_dir.join("start-here.json"),
+        markdown_path: expected_dir.join("start-here.md"),
+        status: status.to_string(),
+        state: state.to_string(),
+        top_gap_kind: "none".to_string(),
+        verify_command: None,
+        next_command: None,
+        expected_status: status.to_string(),
+        expected_state: state.to_string(),
+        description: "sample first-pr run".to_string(),
+        errors: Vec::new(),
+    }
+}
+
+#[test]
+fn dogfood_first_pr_metrics_count_adoption_states() {
+    let runs = [
+        sample_first_pr_run("boundary-gap", "actionable", "top_gap"),
+        sample_first_pr_run("output-contract-gap", "actionable", "top_gap"),
+        sample_first_pr_run("empty-diff", "no_action", "empty_diff"),
+        sample_first_pr_run("missing", "blocked", "missing_artifact"),
+        sample_first_pr_run("stale", "blocked", "stale_artifact"),
+        sample_first_pr_run("wrong-root", "blocked", "wrong_root"),
+        sample_first_pr_run("malformed", "blocked", "malformed_artifact"),
+        sample_first_pr_run("timeout", "blocked", "timeout"),
+    ];
+
+    let metrics = dogfood_first_pr_metrics(&runs);
+
+    assert_eq!(metrics.packets_total, 8);
+    assert_eq!(metrics.top_gap_selected_total, 2);
+    assert_eq!(metrics.no_action_total, 1);
+    assert_eq!(metrics.blocked_total, 5);
+    assert_eq!(metrics.missing_artifact_total, 1);
+    assert_eq!(metrics.stale_artifact_total, 1);
+    assert_eq!(metrics.wrong_root_total, 1);
+    assert_eq!(metrics.malformed_artifact_total, 1);
+    assert_eq!(metrics.timeout_total, 1);
+}
+
+#[test]
+fn dogfood_reports_are_advisory() -> Result<(), String> {
+    let run = DogfoodRun {
+        name: "boundary_gap".to_string(),
+        root: Path::new("fixtures/boundary_gap/input").to_path_buf(),
+        diff: Path::new("fixtures/boundary_gap/diff.patch").to_path_buf(),
+        actual_dir: Path::new("target/ripr/dogfood/boundary_gap").to_path_buf(),
+        duration_ms: 10,
+        findings: 1,
+        class_counts: [("weakly_exposed".to_string(), 1usize)]
+            .into_iter()
+            .collect(),
+        stop_reason_mentions: 1,
+        errors: Vec::new(),
+    };
+    let gate_run = DogfoodGateRun {
+            name: "calibrated-high-confidence-new-gap".to_string(),
+            mode: "calibrated-gate".to_string(),
+            actual_dir: Path::new(
+                "target/ripr/dogfood/gate-adoption/calibrated-high-confidence-new-gap",
+            )
+            .to_path_buf(),
+            json_path: Path::new(
+                "target/ripr/dogfood/gate-adoption/calibrated-high-confidence-new-gap/gate-decision.json",
+            )
+            .to_path_buf(),
+            markdown_path: Path::new(
+                "target/ripr/dogfood/gate-adoption/calibrated-high-confidence-new-gap/gate-decision.md",
+            )
+            .to_path_buf(),
+            duration_ms: 10,
+            status: "blocked".to_string(),
+            blocking: 1,
+            acknowledged: 0,
+            advisory: 0,
+            expected_status: "blocked".to_string(),
+            expected_blocking: 1,
+            expected_acknowledged: 0,
+            expected_advisory: 0,
+            exit_success: false,
+            expected_exit_success: false,
+            errors: Vec::new(),
+        };
+    let first_action_run = DogfoodFirstActionRun {
+            name: "actionable".to_string(),
+            expected_dir: Path::new("fixtures/boundary_gap/expected/first-useful-action/actionable")
+                .to_path_buf(),
+            json_path: Path::new(
+                "fixtures/boundary_gap/expected/first-useful-action/actionable/first-useful-action.json",
+            )
+            .to_path_buf(),
+            markdown_path: Path::new(
+                "fixtures/boundary_gap/expected/first-useful-action/actionable/first-useful-action.md",
+            )
+            .to_path_buf(),
+            status: "actionable".to_string(),
+            action_kind: "write_focused_test".to_string(),
+            audience: "developer".to_string(),
+            selected: true,
+            static_movement: "unknown".to_string(),
+            expected_status: "actionable".to_string(),
+            expected_action_kind: "write_focused_test".to_string(),
+            expected_audience: "developer".to_string(),
+            expected_selected: true,
+            expected_static_movement: "unknown".to_string(),
+            errors: Vec::new(),
+        };
+    let first_pr_run = DogfoodFirstPrRun {
+        name: "boundary-gap".to_string(),
+        expected_dir: Path::new("fixtures/first_successful_pr/boundary-gap/expected").to_path_buf(),
+        json_path: Path::new("fixtures/first_successful_pr/boundary-gap/expected/start-here.json")
+            .to_path_buf(),
+        markdown_path: Path::new(
+            "fixtures/first_successful_pr/boundary-gap/expected/start-here.md",
+        )
+        .to_path_buf(),
+        status: "actionable".to_string(),
+        state: "top_gap".to_string(),
+        top_gap_kind: "MissingBoundaryAssertion".to_string(),
+        verify_command: Some("cargo xtask fixtures boundary_gap".to_string()),
+        next_command: None,
+        expected_status: "actionable".to_string(),
+        expected_state: "top_gap".to_string(),
+        description: "boundary gap receipt".to_string(),
+        errors: Vec::new(),
+    };
+    let front_panel_run = DogfoodFrontPanelRun {
+            name: "actionable".to_string(),
+            report_path: Path::new(
+                "fixtures/boundary_gap/expected/pr-review-front-panel/actionable/pr-review-front-panel.json",
+            )
+            .to_path_buf(),
+            markdown_path: Path::new(
+                "fixtures/boundary_gap/expected/pr-review-front-panel/actionable/pr-review-front-panel.md",
+            )
+            .to_path_buf(),
+            status: "advisory".to_string(),
+            top_issue_state: "actionable".to_string(),
+            policy_state: "new_policy_eligible".to_string(),
+            placement: "changed_line".to_string(),
+            movement_state: "unknown".to_string(),
+            coverage_grip_state: "not_available".to_string(),
+            new_policy_eligible: 1,
+            baseline_resolved: 0,
+            blocking_candidates: 0,
+            warnings: 0,
+            expected_status: "advisory".to_string(),
+            expected_top_issue_state: "actionable".to_string(),
+            expected_policy_state: "new_policy_eligible".to_string(),
+            expected_placement: "changed_line".to_string(),
+            expected_movement_state: "unknown".to_string(),
+            expected_coverage_grip_state: "not_available".to_string(),
+            expected_new_policy_eligible: 1,
+            expected_baseline_resolved: 0,
+            expected_blocking_candidates: 0,
+            expected_warnings: 0,
+            reason: "The front panel should show the top focused-test action first.".to_string(),
+            errors: Vec::new(),
+        };
+    let report_packet_index_run = DogfoodReportPacketIndexRun {
+        name: "complete_packet".to_string(),
+        actual_dir: Path::new("fixtures/boundary_gap/expected/report-packet-index/complete-packet")
+            .to_path_buf(),
+        json_path: Path::new(
+            "fixtures/boundary_gap/expected/report-packet-index/complete-packet/index.json",
+        )
+        .to_path_buf(),
+        markdown_path: Path::new(
+            "fixtures/boundary_gap/expected/report-packet-index/complete-packet/index.md",
+        )
+        .to_path_buf(),
+        status: "pass".to_string(),
+        missing_expected: 0,
+        failures: 0,
+        warnings: 0,
+        start_here_available: true,
+        gate_authority_present: true,
+        groups: vec!["start_here".to_string(), "policy_gates".to_string()],
+        expected_status: "pass".to_string(),
+        expected_missing_expected: 0,
+        expected_failures: 0,
+        expected_warnings: 0,
+        expected_start_here_available: true,
+        expected_gate_authority_present: true,
+        expected_required_groups: vec!["start_here".to_string(), "policy_gates".to_string()],
+        reason: "complete packet receipt".to_string(),
+        expected_report: Path::new(
+            "fixtures/boundary_gap/expected/report-packet-index/complete-packet/index.json",
+        )
+        .to_path_buf(),
+        expected_markdown: Path::new(
+            "fixtures/boundary_gap/expected/report-packet-index/complete-packet/index.md",
+        )
+        .to_path_buf(),
+        errors: Vec::new(),
+    };
+    let generated_ci_run = DogfoodGeneratedCiCockpitRun {
+        name: "generated-pr-ci-review-workflow".to_string(),
+        command: "cargo run --quiet -p ripr -- init --ci github --dry-run".to_string(),
+        duration_ms: 10,
+        start_here: true,
+        repair_commands: 4,
+        expected_repair_commands: 4,
+        gate_authority_boundary: true,
+        default_advisory: true,
+        artifact_upload: true,
+        language_grouping_status: "checked".to_string(),
+        errors: Vec::new(),
+    };
+    let language_preview_run = DogfoodLanguagePreviewRun {
+        name: "python_mixed_language_no_cross_route".to_string(),
+        language: "python".to_string(),
+        root: Path::new("fixtures/python_mixed_language_no_cross_route/input").to_path_buf(),
+        diff: Path::new("fixtures/python_mixed_language_no_cross_route/diff.patch").to_path_buf(),
+        actual_dir: Path::new(
+            "target/ripr/dogfood/language-preview/python_mixed_language_no_cross_route",
+        )
+        .to_path_buf(),
+        json_path: Path::new(
+            "target/ripr/dogfood/language-preview/python_mixed_language_no_cross_route/check.json",
+        )
+        .to_path_buf(),
+        human_path: Path::new(
+            "target/ripr/dogfood/language-preview/python_mixed_language_no_cross_route/human.txt",
+        )
+        .to_path_buf(),
+        duration_ms: 10,
+        findings: 1,
+        language_findings: 1,
+        preview_findings: 1,
+        missing_preview_status: 0,
+        related_tests: 0,
+        classifications: vec!["no_static_path".to_string()],
+        static_limit_kinds: Vec::new(),
+        expected_findings: 1,
+        expected_preview_findings: 1,
+        expected_missing_preview_status: 0,
+        expected_related_tests: 0,
+        expected_classifications: vec!["no_static_path".to_string()],
+        expected_static_limit_kinds: Vec::new(),
+        preview_enabled: true,
+        reason: "mixed-language fixture must not cross-route related tests".to_string(),
+        errors: Vec::new(),
+    };
+    let editor_gap_cockpit_run = DogfoodEditorGapCockpitRun {
+            name: "typescript_preview_static_limit".to_string(),
+            expected_dir: Path::new(
+                "fixtures/editor_gap_cockpit/typescript_preview_static_limit/expected",
+            )
+            .to_path_buf(),
+            projection_path: Path::new(
+                "fixtures/editor_gap_cockpit/typescript_preview_static_limit/expected/gap-projection.json",
+            )
+            .to_path_buf(),
+            diagnostics_path: Path::new(
+                "fixtures/editor_gap_cockpit/typescript_preview_static_limit/expected/lsp-diagnostics.json",
+            )
+            .to_path_buf(),
+            hover_path: Path::new(
+                "fixtures/editor_gap_cockpit/typescript_preview_static_limit/expected/lsp-hover.md",
+            )
+            .to_path_buf(),
+            code_actions_path: Path::new(
+                "fixtures/editor_gap_cockpit/typescript_preview_static_limit/expected/lsp-code-actions.json",
+            )
+            .to_path_buf(),
+            status_path: Path::new(
+                "fixtures/editor_gap_cockpit/typescript_preview_static_limit/expected/vscode-status.json",
+            )
+            .to_path_buf(),
+            state: "actionable".to_string(),
+            language: Some("typescript".to_string()),
+            language_status: Some("preview".to_string()),
+            diagnostics_projected: 1,
+            actual_diagnostics: 1,
+            fail_closed: false,
+            actions_projected: vec![
+                "copy_repair_packet".to_string(),
+                "copy_static_limit_note".to_string(),
+                "refresh".to_string(),
+            ],
+            actual_actions: 3,
+            static_limit_kind: Some("mocked_module".to_string()),
+            hover_static_before_action: true,
+            expected_state: "actionable".to_string(),
+            expected_language: Some("typescript".to_string()),
+            expected_language_status: Some("preview".to_string()),
+            expected_diagnostics: 1,
+            expected_fail_closed: false,
+            expected_actions: vec![
+                "copy_repair_packet".to_string(),
+                "copy_static_limit_note".to_string(),
+                "refresh".to_string(),
+            ],
+            expected_static_limit_kind: Some("mocked_module".to_string()),
+            reason: "preview static-limit fixture".to_string(),
+            errors: Vec::new(),
+        };
+    let editor_first_pr_bridge_run = DogfoodEditorFirstPrBridgeRun {
+            name: "packet_found_repairable".to_string(),
+            expected_dir: Path::new(
+                "fixtures/editor_first_pr_bridge/packet_found_repairable/expected",
+            )
+            .to_path_buf(),
+            packet_path: Path::new(
+                "fixtures/editor_first_pr_bridge/packet_found_repairable/expected/first-pr-status.json",
+            )
+            .to_path_buf(),
+            diagnostics_path: Path::new(
+                "fixtures/editor_first_pr_bridge/packet_found_repairable/expected/lsp-diagnostics.json",
+            )
+            .to_path_buf(),
+            code_actions_path: Path::new(
+                "fixtures/editor_first_pr_bridge/packet_found_repairable/expected/lsp-code-actions.json",
+            )
+            .to_path_buf(),
+            status_path: Path::new(
+                "fixtures/editor_first_pr_bridge/packet_found_repairable/expected/vscode-status.json",
+            )
+            .to_path_buf(),
+            diagnosis_path: Path::new(
+                "fixtures/editor_first_pr_bridge/packet_found_repairable/expected/setup-diagnosis.md",
+            )
+            .to_path_buf(),
+            packet_state: "top_repairable_gap".to_string(),
+            safe_actions: vec![
+                "open_packet".to_string(),
+                "copy_summary".to_string(),
+                "copy_repair_packet".to_string(),
+                "copy_verify_command".to_string(),
+                "copy_receipt_command".to_string(),
+                "copy_regeneration_guidance".to_string(),
+            ],
+            suppressed_actions: Vec::new(),
+            receipt_movement: None,
+            diagnostics: 1,
+            action_commands: vec![
+                "ripr.openFirstPrPacket".to_string(),
+                "ripr.copyFirstPrSummary".to_string(),
+                "ripr.copyFirstPrRepairPacket".to_string(),
+                "ripr.copyFirstPrVerifyCommand".to_string(),
+                "ripr.copyFirstPrReceiptCommand".to_string(),
+                "ripr.copyFirstPrRegenerationGuidance".to_string(),
+                "ripr.refresh".to_string(),
+            ],
+            first_pr_actions: vec![
+                "open_packet".to_string(),
+                "copy_summary".to_string(),
+                "copy_repair_packet".to_string(),
+                "copy_verify_command".to_string(),
+                "copy_receipt_command".to_string(),
+                "copy_regeneration_guidance".to_string(),
+            ],
+            fail_closed: false,
+            expected_packet_state: "top_repairable_gap".to_string(),
+            expected_safe_actions: vec![
+                "open_packet".to_string(),
+                "copy_summary".to_string(),
+                "copy_repair_packet".to_string(),
+                "copy_verify_command".to_string(),
+                "copy_receipt_command".to_string(),
+                "copy_regeneration_guidance".to_string(),
+            ],
+            expected_suppressed_actions: Vec::new(),
+            expected_diagnostics: 1,
+            expected_fail_closed: false,
+            expected_receipt_movement: None,
+            runtime_adequacy_claim: false,
+            mutation_proof_claim: false,
+            policy_gate_claim: false,
+            pr_ready_claim: false,
+            reason: "repairable first-pr bridge receipt".to_string(),
+            errors: Vec::new(),
+        };
+    let finding_alignment_run = DogfoodFindingAlignmentRun {
+        name: "config_policy_rendered_label_unobserved".to_string(),
+        source_pr: "EffortlessMetrics/ripr#1016".to_string(),
+        canonical_gap_id: "gap:config_policy_rendered_label_unobserved".to_string(),
+        evidence_class: "config_or_policy_constant".to_string(),
+        raw_findings_total: 2,
+        canonical_items_total: 1,
+        raw_finding_summary:
+            "A rendered policy label aligns into one canonical output-observer item.".to_string(),
+        gap_state: "actionable".to_string(),
+        actionability: "add_output_observer".to_string(),
+        user_outcome: "actionable_gap".to_string(),
+        repair_kind: "output_observer".to_string(),
+        target_test_type: "report_render_or_golden".to_string(),
+        verify_command: "cargo xtask evidence-quality-scorecard".to_string(),
+        static_limitation_category: None,
+        static_limitation_repair_route: None,
+        raw_findings_supporting_only: true,
+        recommended_repair: "Add or update a report-render or golden observer.".to_string(),
+        before_after_context:
+            "Before/after context is pinned by finding-alignment dogfood receipts.".to_string(),
+        must_not_claim: vec![
+            "Do not infer actionability from raw static class.".to_string(),
+            "Do not recommend mutation testing first.".to_string(),
+        ],
+        reason: "actionable config-policy alignment receipt".to_string(),
+        errors: Vec::new(),
+    };
+    let surface_projection_alignment_run = super::DogfoodSurfaceProjectionAlignmentRun {
+            name: "receipt_improved_top_next_action_alignment".to_string(),
+            canonical_gap_id: "gap:boundary-discriminator-004".to_string(),
+            packet_id: "boundary-discriminator-004".to_string(),
+            repair_kind: "add_boundary_assertion".to_string(),
+            verify_command: "cargo test -p ripr-swarm boundary_discriminator_004".to_string(),
+            receipt_command: "cargo xtask receipts write --packet boundary-discriminator-004 --canonical-gap gap:boundary-discriminator-004".to_string(),
+            receipt_state: "receipt_movement_improved".to_string(),
+            outcome: "evidence_improved".to_string(),
+            top_next_action_kind: "attempt_ready_packet".to_string(),
+            top_next_action_command: Some(
+                "cargo xtask ripr-swarm attempt --packet boundary-discriminator-004 --dry-run"
+                    .to_string(),
+            ),
+            readiness_status: "advisory".to_string(),
+            attempted_packets: 1,
+            improved_packets: 1,
+            advisory_consumers: vec![
+                "badge".to_string(),
+                "lsp".to_string(),
+                "pr_comment".to_string(),
+                "ci".to_string(),
+            ],
+            reason: "single receipt-backed canonical gap projection alignment".to_string(),
+            errors: Vec::new(),
+        };
+    let real_repair_attempt_run = super::DogfoodRealRepairAttemptRun {
+        name: "repair_route_quality_metrics_improved".to_string(),
+        source_ref: "EffortlessMetrics/ripr-swarm#415".to_string(),
+        canonical_gap_id: "gap:repair-route-quality-metrics-missing".to_string(),
+        packet_id: "repair-route-quality-metrics-001".to_string(),
+        language: None,
+        evidence_class: None,
+        source_file: None,
+        repair_kind: "add_repair_route_quality_metrics".to_string(),
+        target_test_or_observer_shape: "readiness route-quality metric assertions".to_string(),
+        verify_command: "cargo xtask check-pr".to_string(),
+        verify_result: "pass".to_string(),
+        receipt_command: "cargo xtask ripr-swarm readiness".to_string(),
+        receipt_path: Some("target/ripr/reports/swarm-readiness.json".to_string()),
+        receipt_state: "receipt_movement_improved".to_string(),
+        actor_kind: "codex".to_string(),
+        before_gap_state: "actionable".to_string(),
+        after_gap_state: "actionable".to_string(),
+        outcome: "evidence_improved".to_string(),
+        attempted_repair: "Added repair-route quality report metrics.".to_string(),
+        evidence_movement: "Readiness can now show repair_kind success-rate evidence.".to_string(),
+        operator_note: "Route-quality proof stayed advisory.".to_string(),
+        must_not_change: vec![
+            "public badge semantics".to_string(),
+            "CI gate defaults".to_string(),
+        ],
+        raw_evidence_refs: vec!["metrics/capabilities.toml".to_string()],
+        missing_receipt_reason: None,
+        reason: "real merged repair-loop PR improved route-quality evidence".to_string(),
+        errors: Vec::new(),
+    };
+    let python_real_repo_eval_run = super::DogfoodPythonRealRepoEvalRun {
+            name: "tiny_controlled_pytest_boundary_receipt".to_string(),
+            repo_shape: "tiny_controlled_pytest".to_string(),
+            source_kind: "scratch_repo".to_string(),
+            source_ref: "target/ripr/python-real-repo-evals/tiny-controlled-pytest-receipt"
+                .to_string(),
+            command: "ripr check --root target/ripr/python-real-repo-evals/tiny-controlled-pytest-receipt --base HEAD~1 --format json".to_string(),
+            runtime_ms: 114,
+            top_finding_summary:
+                "Python predicate-boundary repair card for calculate_discount amount >= threshold"
+                    .to_string(),
+            canonical_gap_id:
+                "gap:python:app/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold"
+                    .to_string(),
+            repair_card_present: true,
+            repair_action: "strengthen_existing_test".to_string(),
+            agent_packet_present: true,
+            agent_packet_task:
+                "Strengthen the existing pytest boundary test for amount == threshold."
+                    .to_string(),
+            agent_packet_command: "ripr agent packet --root target/ripr/python-real-repo-evals/tiny-controlled-pytest-receipt --gap-ledger gap-ledger.json --gap-id gap:python:app/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold --json".to_string(),
+            agent_packet_allowed_files: vec!["tests/test_pricing.py".to_string()],
+            agent_packet_forbidden_files: vec!["app/pricing.py".to_string()],
+            agent_packet_stop_if: vec![
+                "import cannot be resolved".to_string(),
+                "expected boundary value is ambiguous".to_string(),
+                "production code edit appears necessary".to_string(),
+            ],
+            changed_owner: "python:app/pricing.py::calculate_discount".to_string(),
+            missing_discriminator: "amount == threshold".to_string(),
+            suggested_test_file: "tests/test_pricing.py".to_string(),
+            suggested_test_name: "test_calculate_discount_smoke".to_string(),
+            verify_command: "pytest tests/test_pricing.py::test_calculate_discount_smoke"
+                .to_string(),
+            verify_result: "pass".to_string(),
+            verify_summary: "1 passed in 0.30s".to_string(),
+            after_command: "ripr check --root target/ripr/python-real-repo-evals/tiny-controlled-pytest-receipt --base HEAD~1 --format json".to_string(),
+            after_runtime_ms: 58,
+            receipt_command: "ripr outcome --before before-check.json --after after-check.json --format json".to_string(),
+            receipt_result: "pass".to_string(),
+            gap_movement: "closed".to_string(),
+            closed_gaps: 1,
+            usability: "usable".to_string(),
+            false_positive_notes: "none observed".to_string(),
+            limitation_notes:
+                "scoped repair routing is usable alpha; broader Python static facts remain preview/advisory"
+                    .to_string(),
+            unsupported_limitations: Vec::new(),
+            ranked_top_3_findings: vec![
+                super::DogfoodPythonRankedFinding {
+                    rank: 1,
+                    canonical_gap_id:
+                        "gap:python:app/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold"
+                            .to_string(),
+                    repair_card_present: true,
+                    usability: "usable".to_string(),
+                    missing_discriminator: "amount == threshold".to_string(),
+                    suggested_test_file: "tests/test_pricing.py".to_string(),
+                    verify_command: "pytest tests/test_pricing.py::test_calculate_discount_smoke"
+                        .to_string(),
+                    false_positive_notes: "none observed".to_string(),
+                    reason: "rank 1 repair card matched the closed Python receipt".to_string(),
+                },
+                super::DogfoodPythonRankedFinding {
+                    rank: 2,
+                    canonical_gap_id:
+                        "gap:python:app/invoice.py:invoice_total:return_value:return_value:subtotal+tax+service_fee"
+                            .to_string(),
+                    repair_card_present: true,
+                    usability: "usable".to_string(),
+                    missing_discriminator: "return value == subtotal + tax + service_fee"
+                        .to_string(),
+                    suggested_test_file: "tests/test_invoice.py".to_string(),
+                    verify_command: "pytest tests/test_invoice.py::test_invoice_total_smoke"
+                        .to_string(),
+                    false_positive_notes: "none observed".to_string(),
+                    reason: "rank 2 repair card was concrete, placed, and verifiable"
+                        .to_string(),
+                },
+                super::DogfoodPythonRankedFinding {
+                    rank: 3,
+                    canonical_gap_id:
+                        "gap:python:app/validation.py:require_positive:exception_path:error_path:valueerror_positive_required"
+                            .to_string(),
+                    repair_card_present: true,
+                    usability: "usable".to_string(),
+                    missing_discriminator: "raises ValueError matching \"positive required\""
+                        .to_string(),
+                    suggested_test_file: "tests/test_validation.py".to_string(),
+                    verify_command: "pytest tests/test_validation.py::test_rejects_zero_amount"
+                        .to_string(),
+                    false_positive_notes: "none observed".to_string(),
+                    reason: "rank 3 repair card was concrete, placed, and verifiable"
+                        .to_string(),
+                },
+            ],
+            ranked_top_3_limit_reason: None,
+            claim_boundary: vec![
+                "Broader Python static facts remain preview/advisory".to_string(),
+                "No arbitrary imports or tests were run by RIPR".to_string(),
+                "No support-tier promotion".to_string(),
+            ],
+            reason: "sample Python real-repo eval receipt".to_string(),
+            errors: Vec::new(),
+        };
+    let typescript_preview_repair_loop_run = super::DogfoodTypescriptPreviewRepairLoopRun {
+            name: "typescript_boundary_predicate_proof".to_string(),
+            source_fixture: "fixtures/typescript_boundary_gap".to_string(),
+            source_finding_id: "probe:src_discount.ts:typescript_preview:2396aec1".to_string(),
+            language: "typescript".to_string(),
+            classification: "weakly_exposed".to_string(),
+            changed_owner: "applyDiscount".to_string(),
+            probe_family: "predicate".to_string(),
+            oracle_kind: "unknown".to_string(),
+            oracle_strength: "unknown".to_string(),
+            gap_state: "advisory".to_string(),
+            actionability_category: "incomplete_repair_packet".to_string(),
+            static_limit_kind: None,
+            repair_packet_ready: false,
+            expected_test_or_observer_shape: "exact equality-boundary assertion".to_string(),
+            verify_command: "npm test -- discount".to_string(),
+            verify_result: "not_run".to_string(),
+            receipt_command: "ripr agent receipt --source fixtures/typescript_boundary_gap"
+                .to_string(),
+            receipt_state: "fixture_receipt_recorded".to_string(),
+            outcome: "proof_improved".to_string(),
+            why_not_actionable: "preview lacks complete packet fields".to_string(),
+            repair_route: "project canonical TypeScript repair packet fields later".to_string(),
+            operator_note: "proof stays advisory".to_string(),
+            must_not_change: vec![
+                "production behavior".to_string(),
+                "default gate or badge policy".to_string(),
+            ],
+            raw_evidence_refs: vec![
+                "fixtures/typescript_boundary_gap/expected/check.json#probe:src_discount.ts:typescript_preview:2396aec1"
+                    .to_string(),
+            ],
+            non_claims: vec![
+                "no provider calls".to_string(),
+                "no source edits".to_string(),
+                "no generated tests".to_string(),
+                "no runtime Jest/Vitest execution".to_string(),
+                "no mutation execution".to_string(),
+                "no default gates".to_string(),
+                "no public badge contribution".to_string(),
+                "no baseline authority".to_string(),
+                "no RIPR Zero authority".to_string(),
+                "no support-tier promotion".to_string(),
+            ],
+            reason: "sample TypeScript preview repair-loop receipt".to_string(),
+            errors: Vec::new(),
+        };
+    let bun_ub_cross_language_run = super::DogfoodBunUbCrossLanguageRun {
+            name: "bun_blob_31648_known_good".to_string(),
+            source_case: "bun_blob_shared_and_resizable_present".to_string(),
+            route_quality_case: "bun_blob_complete_ts_discriminated_advisory".to_string(),
+            rust_file: "src/jsc/Blob.rs".to_string(),
+            rust_owner: "Blob::from_js_without_defer_gc".to_string(),
+            rust_boundary: "array_buffer.shared || array_buffer.resizable".to_string(),
+            ts_test_file: super::BUN_BLOB_ARRAY_BUFFER_TS_TEST_FILE.to_string(),
+            expected_state: "rust_ungripped_ts_discriminated".to_string(),
+            observed_state: "rust_ungripped_ts_discriminated".to_string(),
+            missing_discriminators: Vec::new(),
+            missing_graph_legs: Vec::new(),
+            suggested_test_file: "not_applicable".to_string(),
+            manual_verdict: "agrees".to_string(),
+            operator_action: "no_missing_bridge_discriminator".to_string(),
+            review_before:
+                "Rust-only review would manually grep for SharedArrayBuffer and maxByteLength"
+                    .to_string(),
+            review_after:
+                "TypeScript/Bun preview credits configured Blob stable-byte witness evidence"
+                    .to_string(),
+            bridge_verdict: "configured_binding_edge_credited".to_string(),
+            placement_verdict: "not_needed".to_string(),
+            proof_mode: "advisory_cross_language_preview".to_string(),
+            receipt_state: "closed".to_string(),
+            repair_packet_ready: false,
+            authority_boundary: "preview_advisory_only".to_string(),
+            raw_evidence_refs: vec![
+                "fixtures/typescript-bun-ub-calibration/corpus.json#bun_blob_shared_and_resizable_present".to_string(),
+                "fixtures/cross-language-oracle-graph-corpus/corpus.json#bun_blob_complete_ts_discriminated_advisory".to_string(),
+            ],
+            non_claims: vec![
+                "no source edits".to_string(),
+                "no generated tests".to_string(),
+                "no runtime Bun execution".to_string(),
+                "no mutation execution".to_string(),
+                "no default gates".to_string(),
+                "no public badge contribution".to_string(),
+                "no baseline authority".to_string(),
+                "no RIPR Zero authority".to_string(),
+                "no support-tier promotion".to_string(),
+                "no public repair packet".to_string(),
+                "no full cross-language proof".to_string(),
+            ],
+            reason: "sample Bun UB cross-language receipt".to_string(),
+            errors: Vec::new(),
+        };
+    let user_surface_projection_run = super::DogfoodUserSurfaceProjectionRun {
+            name: "badge_actionable_count_from_canonical_state".to_string(),
+            surface: "badge".to_string(),
+            artifact: "badge-basis".to_string(),
+            headline: "ripr: 8 actionable".to_string(),
+            run_status: "full".to_string(),
+            projection_basis: "canonical_actionable_gap".to_string(),
+            canonical_gap_id: "gap:boundary-discriminator-004".to_string(),
+            packet_id: "boundary-discriminator-004".to_string(),
+            repair_kind: "add_boundary_assertion".to_string(),
+            top_next_action_kind: "attempt_ready_packet".to_string(),
+            verify_command: "cargo test -p ripr-swarm boundary_discriminator_004".to_string(),
+            receipt_command: "cargo xtask receipts write --packet boundary-discriminator-004 --canonical-gap gap:boundary-discriminator-004".to_string(),
+            source_alignment_case: "receipt_improved_top_next_action_alignment".to_string(),
+            limitation_category: String::new(),
+            runtime_repair_command: String::new(),
+            actionable_count: 8,
+            raw_findings_total: 312,
+            consumes_canonical_state: true,
+            reinterprets_raw_findings: false,
+            raw_findings_headline: false,
+            advisory: true,
+            blocking_default: false,
+            limited_state_visible: true,
+            stale_state_visible: true,
+            reason: "badge projection should use canonical actionable state".to_string(),
+            errors: Vec::new(),
+        };
+    let pr_inline_comment_run = DogfoodPrInlineCommentRun {
+            name: "publishable_changed_line".to_string(),
+            actual_dir: Path::new(
+                "fixtures/boundary_gap/expected/pr-inline-comment-publisher/publishable-changed-line",
+            )
+            .to_path_buf(),
+            json_path: Path::new(
+                "fixtures/boundary_gap/expected/pr-inline-comment-publisher/publishable-changed-line/comment-publish-plan.json",
+            )
+            .to_path_buf(),
+            markdown_path: Path::new(
+                "fixtures/boundary_gap/expected/pr-inline-comment-publisher/publishable-changed-line/comment-publish-plan.md",
+            )
+            .to_path_buf(),
+            status: "advisory".to_string(),
+            mode: "plan".to_string(),
+            publishable: 1,
+            skipped: 0,
+            blocked: 0,
+            safe_to_publish: false,
+            operations: vec!["create".to_string()],
+            skip_reasons: Vec::new(),
+            blocked_reasons: Vec::new(),
+            expected_status: "advisory".to_string(),
+            expected_mode: "plan".to_string(),
+            expected_publishable: 1,
+            expected_skipped: 0,
+            expected_blocked: 0,
+            expected_safe_to_publish: false,
+            expected_operations: vec!["create".to_string()],
+            expected_skip_reasons: Vec::new(),
+            expected_blocked_reasons: Vec::new(),
+            reason: "publishable plan receipt".to_string(),
+            expected_report: Path::new(
+                "fixtures/boundary_gap/expected/pr-inline-comment-publisher/publishable-changed-line/comment-publish-plan.json",
+            )
+            .to_path_buf(),
+            expected_markdown: Path::new(
+                "fixtures/boundary_gap/expected/pr-inline-comment-publisher/publishable-changed-line/comment-publish-plan.md",
+            )
+            .to_path_buf(),
+            errors: Vec::new(),
+        };
+    let generated_ci_runs = [generated_ci_run];
+    let language_preview_runs = [language_preview_run];
+    let editor_gap_cockpit_runs = [editor_gap_cockpit_run];
+    let editor_first_pr_bridge_runs = [editor_first_pr_bridge_run];
+    let finding_alignment_runs = [finding_alignment_run];
+    let surface_projection_alignment_runs = [surface_projection_alignment_run];
+    let real_repair_attempt_runs = [real_repair_attempt_run];
+    let python_real_repo_eval_runs = [python_real_repo_eval_run];
+    let python_static_limit_eval_runs = [
+        dogfood_python_static_limit_eval_run(&valid_python_static_limit_eval_scenario()),
+        dogfood_python_static_limit_eval_run(
+            &valid_python_unresolved_fixture_static_limit_eval_scenario(),
+        ),
+    ];
+    let python_no_action_eval_runs = [
+        dogfood_python_no_action_eval_run(&valid_python_no_action_eval_scenario()),
+        dogfood_python_no_action_eval_run(&valid_python_already_observed_no_action_eval_scenario()),
+        dogfood_python_no_action_eval_run(&valid_python_heuristic_no_action_eval_scenario()),
+    ];
+    let typescript_preview_repair_loop_runs = [typescript_preview_repair_loop_run];
+    let bun_ub_cross_language_runs = [bun_ub_cross_language_run];
+    let user_surface_projection_runs = [user_surface_projection_run];
+    let preview_projection_runs = DogfoodPreviewProjectionRuns {
+        generated_ci_cockpit: &generated_ci_runs,
+        language_preview: &language_preview_runs,
+        editor_gap_cockpit: &editor_gap_cockpit_runs,
+        editor_first_pr_bridge: &editor_first_pr_bridge_runs,
+    };
+    let markdown_runs = [run];
+    let markdown_gate_runs = [gate_run];
+    let markdown_first_action_runs = [first_action_run];
+    let markdown_first_pr_runs = [first_pr_run];
+    let markdown_front_panel_runs = [front_panel_run];
+    let markdown_report_packet_index_runs = [report_packet_index_run];
+    let markdown_pr_inline_comment_runs = [pr_inline_comment_run];
+    let markdown_inputs = DogfoodReportInputs {
+        runs: &markdown_runs,
+        gate_runs: &markdown_gate_runs,
+        first_action_runs: &markdown_first_action_runs,
+        first_pr_runs: &markdown_first_pr_runs,
+        front_panel_runs: &markdown_front_panel_runs,
+        report_packet_index_runs: &markdown_report_packet_index_runs,
+        preview_projection_runs: &preview_projection_runs,
+        finding_alignment_runs: &finding_alignment_runs,
+        surface_projection_alignment_runs: &surface_projection_alignment_runs,
+        real_repair_attempt_runs: &real_repair_attempt_runs,
+        python_real_repo_eval_runs: &python_real_repo_eval_runs,
+        python_static_limit_eval_runs: &python_static_limit_eval_runs,
+        python_no_action_eval_runs: &python_no_action_eval_runs,
+        typescript_preview_repair_loop_runs: &typescript_preview_repair_loop_runs,
+        bun_ub_cross_language_runs: &bun_ub_cross_language_runs,
+        user_surface_projection_runs: &user_surface_projection_runs,
+        pr_inline_comment_runs: &markdown_pr_inline_comment_runs,
+    };
+    let empty_runs = [];
+    let empty_gate_runs = [];
+    let empty_first_action_runs = [];
+    let empty_front_panel_runs = [];
+    let empty_report_packet_index_runs = [];
+    let empty_pr_inline_comment_runs = [];
+    let json_inputs = DogfoodReportInputs {
+        runs: &empty_runs,
+        gate_runs: &empty_gate_runs,
+        first_action_runs: &empty_first_action_runs,
+        first_pr_runs: &markdown_first_pr_runs,
+        front_panel_runs: &empty_front_panel_runs,
+        report_packet_index_runs: &empty_report_packet_index_runs,
+        preview_projection_runs: &preview_projection_runs,
+        finding_alignment_runs: &finding_alignment_runs,
+        surface_projection_alignment_runs: &surface_projection_alignment_runs,
+        real_repair_attempt_runs: &real_repair_attempt_runs,
+        python_real_repo_eval_runs: &python_real_repo_eval_runs,
+        python_static_limit_eval_runs: &python_static_limit_eval_runs,
+        python_no_action_eval_runs: &python_no_action_eval_runs,
+        typescript_preview_repair_loop_runs: &typescript_preview_repair_loop_runs,
+        bun_ub_cross_language_runs: &bun_ub_cross_language_runs,
+        user_surface_projection_runs: &user_surface_projection_runs,
+        pr_inline_comment_runs: &empty_pr_inline_comment_runs,
+    };
+    let markdown = dogfood_report_markdown(&markdown_inputs);
+    let json = dogfood_report_json(&json_inputs);
+
+    assert!(markdown.contains("Mode: advisory"));
+    assert!(markdown.contains("boundary_gap"));
+    assert!(markdown.contains("First Useful Action Receipts"));
+    assert!(markdown.contains("First Successful PR Receipts"));
+    assert!(markdown.contains("PR Review Front Panel Receipts"));
+    assert!(markdown.contains("Report Packet Index Receipts"));
+    assert!(markdown.contains("Generated CI Cockpit Receipts"));
+    assert!(markdown.contains("Language Preview Receipts"));
+    assert!(markdown.contains("Editor Gap Cockpit Receipts"));
+    assert!(markdown.contains("Editor First-PR Bridge Receipts"));
+    assert!(markdown.contains("Finding Alignment Receipts"));
+    assert!(markdown.contains("Surface Projection Alignment Receipts"));
+    assert!(markdown.contains("Real Repair Attempt Receipts"));
+    assert!(markdown.contains("Python Real-Repo Eval Receipts"));
+    assert!(markdown.contains("static-limit no-action cases: 2"));
+    assert!(markdown.contains("ordinary no-action cases: 3"));
+    assert!(markdown.contains("Python Static-Limit Eval Receipts"));
+    assert!(markdown.contains("dynamic_dispatch_no_packet_eval"));
+    assert!(markdown.contains("unresolved_fixture_no_packet_eval"));
+    assert!(markdown.contains("Static-limit no-action cases: 2"));
+    assert!(markdown.contains("Python No-Action Eval Receipts"));
+    assert!(markdown.contains("no_related_test_no_packet_eval"));
+    assert!(markdown.contains("already_observed_no_packet_eval"));
+    assert!(markdown.contains("heuristic_only_no_packet_eval"));
+    assert!(markdown.contains("Ordinary no-action cases: 3"));
+    assert!(markdown.contains("no_related_test"));
+    assert!(markdown.contains("already_observed"));
+    assert!(markdown.contains("heuristic_only"));
+    assert!(markdown.contains("unresolved_pytest_fixture"));
+    assert!(markdown.contains("Python Repair-Routing Quality Metrics"));
+    assert!(markdown.contains("Top-3 actionable precision: 3 / 3 ranked findings"));
+    assert!(markdown.contains("Full top-3 capture cases: 1 / 1 evals"));
+    assert!(markdown.contains("TypeScript Preview Repair-Loop Receipts"));
+    assert!(markdown.contains("TypeScript False-Actionable Audit"));
+    assert!(markdown.contains("False actionable: 0 / 14 checked rows"));
+    assert!(markdown.contains("Bun UB Cross-Language Witness Receipts"));
+    assert!(markdown.contains("bun_blob_31648_known_good"));
+    assert!(markdown.contains("User Surface Projection Alignment Receipts"));
+    assert!(markdown.contains("PR Inline Comment Publisher Receipts"));
+    assert!(markdown.contains("Gate Adoption Receipts"));
+    assert!(markdown.contains("Default CI blocking: no"));
+    assert!(markdown.contains("first_run_packets_total"));
+    assert!(markdown.contains("first_run_top_gap_selected_total"));
+    assert!(markdown.contains("actionable"));
+    assert!(markdown.contains("complete_packet"));
+    assert!(markdown.contains("publishable_changed_line"));
+    assert!(markdown.contains("calibrated-high-confidence-new-gap"));
+    assert!(json.contains("\"advisory\": true"));
+    assert!(json.contains("\"default_ci_blocking\": false"));
+    assert!(json.contains("\"first_successful_pr\""));
+    assert!(json.contains("\"first_run_packets_total\": 1"));
+    assert!(json.contains("\"first_run_top_gap_selected_total\": 1"));
+    assert!(json.contains("\"report_packet_index\""));
+    assert!(json.contains("\"generated_ci_cockpit\""));
+    assert!(json.contains("\"language_preview\""));
+    assert!(json.contains("\"editor_first_pr_bridge\""));
+    assert!(json.contains("\"finding_alignment\""));
+    assert!(json.contains("\"surface_projection_alignment\""));
+    assert!(json.contains("\"real_repair_attempts\""));
+    assert!(json.contains("\"python_real_repo_evals\""));
+    assert!(json.contains("\"static_limit_cases\": 2"));
+    assert!(json.contains("\"static_limit_no_action_cases\": 2"));
+    assert!(json.contains("\"static_limit_no_action_distribution\""));
+    assert!(json.contains("\"dynamic_dispatch_no_packet_eval\""));
+    assert!(json.contains("\"unresolved_fixture_no_packet_eval\""));
+    assert!(json.contains("\"agent_packet_present\": false"));
+    assert!(json.contains("\"gap_movement\": \"no_receipt\""));
+    assert!(json.contains("\"typescript_preview_repair_loop\""));
+    assert!(json.contains("\"typescript_false_actionable_audit\""));
+    assert!(json.contains("\"bun_ub_cross_language_witnesses\""));
+    assert!(json.contains("\"repair_route_quality_metrics_improved\""));
+    assert!(json.contains("\"tiny_controlled_pytest_boundary_receipt\""));
+    assert!(json.contains("\"typescript_boundary_predicate_proof\""));
+    assert!(json.contains("\"user_surface_projection_alignment\""));
+    assert!(json.contains("\"badge_actionable_count_from_canonical_state\""));
+    let value: Value =
+        serde_json::from_str(&json).map_err(|err| format!("dogfood JSON invalid: {err}"))?;
+    let editor_gap_cockpit = value
+        .get("editor_gap_cockpit")
+        .ok_or_else(|| "editor_gap_cockpit section missing".to_string())?;
+    assert_eq!(
+        editor_gap_cockpit
+            .get("receipt_dir")
+            .and_then(Value::as_str),
+        Some("fixtures/editor_gap_cockpit")
+    );
+    let cases = editor_gap_cockpit
+        .get("cases")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "editor_gap_cockpit cases missing".to_string())?;
+    assert_eq!(cases.len(), 1);
+    let case = cases
+        .first()
+        .ok_or_else(|| "editor_gap_cockpit case missing".to_string())?;
+    assert_eq!(
+        case.get("name").and_then(Value::as_str),
+        Some("typescript_preview_static_limit")
+    );
+    assert_eq!(
+        case.get("state").and_then(Value::as_str),
+        Some("actionable")
+    );
+    assert_eq!(
+        case.get("language").and_then(Value::as_str),
+        Some("typescript")
+    );
+    assert_eq!(
+        case.get("language_status").and_then(Value::as_str),
+        Some("preview")
+    );
+    assert_eq!(
+        case.get("diagnostics_projected").and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        case.get("static_limit_kind").and_then(Value::as_str),
+        Some("mocked_module")
+    );
+    assert_eq!(
+        case.get("hover_static_before_action")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    let actions = case
+        .get("actions_projected")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "editor_gap_cockpit actions missing".to_string())?
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        actions,
+        vec!["copy_repair_packet", "copy_static_limit_note", "refresh"]
+    );
+    let editor_first_pr_bridge = value
+        .get("editor_first_pr_bridge")
+        .ok_or_else(|| "editor_first_pr_bridge section missing".to_string())?;
+    assert_eq!(
+        editor_first_pr_bridge
+            .get("receipt_dir")
+            .and_then(Value::as_str),
+        Some("fixtures/editor_first_pr_bridge")
+    );
+    let bridge_cases = editor_first_pr_bridge
+        .get("cases")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "editor_first_pr_bridge cases missing".to_string())?;
+    assert_eq!(bridge_cases.len(), 1);
+    let bridge_case = bridge_cases
+        .first()
+        .ok_or_else(|| "editor_first_pr_bridge case missing".to_string())?;
+    assert_eq!(
+        bridge_case.get("name").and_then(Value::as_str),
+        Some("packet_found_repairable")
+    );
+    assert_eq!(
+        bridge_case.get("packet_state").and_then(Value::as_str),
+        Some("top_repairable_gap")
+    );
+    assert_eq!(
+        bridge_case.get("diagnostics").and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        bridge_case
+            .get("runtime_adequacy_claim")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    let finding_alignment = value
+        .get("finding_alignment")
+        .ok_or_else(|| "finding_alignment section missing".to_string())?;
+    assert_eq!(
+        finding_alignment.get("receipt_dir").and_then(Value::as_str),
+        Some("fixtures/finding-alignment-dogfood")
+    );
+    let alignment_cases = finding_alignment
+        .get("cases")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "finding_alignment cases missing".to_string())?;
+    assert_eq!(alignment_cases.len(), 1);
+    assert_eq!(
+        alignment_cases
+            .first()
+            .and_then(|case| case.get("user_outcome"))
+            .and_then(Value::as_str),
+        Some("actionable_gap")
+    );
+    let surface_projection = value
+        .get("surface_projection_alignment")
+        .ok_or_else(|| "surface_projection_alignment section missing".to_string())?;
+    assert_eq!(
+        surface_projection
+            .get("receipt_dir")
+            .and_then(Value::as_str),
+        Some("fixtures/surface-projection-alignment")
+    );
+    let surface_cases = surface_projection
+        .get("cases")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "surface_projection_alignment cases missing".to_string())?;
+    assert_eq!(surface_cases.len(), 1);
+    let surface_case = surface_cases
+        .first()
+        .ok_or_else(|| "surface_projection_alignment case missing".to_string())?;
+    assert_eq!(
+        surface_case
+            .get("top_next_action_kind")
+            .and_then(Value::as_str),
+        Some("attempt_ready_packet")
+    );
+    assert_eq!(
+        surface_case.get("outcome").and_then(Value::as_str),
+        Some("evidence_improved")
+    );
+    let real_attempts = value
+        .get("real_repair_attempts")
+        .ok_or_else(|| "real_repair_attempts section missing".to_string())?;
+    assert_eq!(
+        real_attempts.get("receipt_dir").and_then(Value::as_str),
+        Some("fixtures/real-repair-attempts")
+    );
+    let real_attempt_summary = real_attempts
+        .get("summary")
+        .ok_or_else(|| "real_repair_attempts summary missing".to_string())?;
+    assert_eq!(
+        real_attempt_summary
+            .get("attempted")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    let real_attempt_cases = real_attempts
+        .get("cases")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "real_repair_attempts cases missing".to_string())?;
+    assert_eq!(real_attempt_cases.len(), 1);
+    let real_attempt_case = real_attempt_cases
+        .first()
+        .ok_or_else(|| "real_repair_attempts case missing".to_string())?;
+    assert_eq!(
+        real_attempt_case.get("outcome").and_then(Value::as_str),
+        Some("evidence_improved")
+    );
+    let python_evals = value
+        .get("python_real_repo_evals")
+        .ok_or_else(|| "python_real_repo_evals section missing".to_string())?;
+    assert_eq!(
+        python_evals.get("receipt_dir").and_then(Value::as_str),
+        Some("fixtures/python-real-repo-evals")
+    );
+    let python_eval_summary = python_evals
+        .get("summary")
+        .ok_or_else(|| "python_real_repo_evals summary missing".to_string())?;
+    assert_eq!(
+        python_eval_summary.get("closed").and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        python_eval_summary
+            .get("no_action_cases")
+            .and_then(Value::as_u64),
+        Some(3)
+    );
+    let python_eval_cases = python_evals
+        .get("cases")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "python_real_repo_evals cases missing".to_string())?;
+    assert_eq!(python_eval_cases.len(), 1);
+    assert_eq!(
+        python_eval_cases[0]
+            .get("gap_movement")
+            .and_then(Value::as_str),
+        Some("closed")
+    );
+    assert_eq!(
+        python_eval_cases[0]
+            .get("missing_discriminator")
+            .and_then(Value::as_str),
+        Some("amount == threshold")
+    );
+    let python_no_action_cases = python_evals
+        .get("no_action_cases")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "python_real_repo_evals no_action_cases missing".to_string())?;
+    assert_eq!(python_no_action_cases.len(), 3);
+    assert!(
+        python_no_action_cases.iter().any(|case| {
+            case.get("no_action_kind").and_then(Value::as_str) == Some("no_related_test")
+                && case.get("agent_packet_present").and_then(Value::as_bool) == Some(false)
+        }),
+        "no-related-test no-action case should stay packet-free"
+    );
+    assert!(
+        python_no_action_cases.iter().any(|case| {
+            case.get("no_action_kind").and_then(Value::as_str) == Some("already_observed")
+                && case.get("classification").and_then(Value::as_str) == Some("exposed")
+                && case.get("agent_packet_present").and_then(Value::as_bool) == Some(false)
+        }),
+        "already-observed no-action case should stay exposed but packet-free"
+    );
+    assert!(
+        python_no_action_cases.iter().any(|case| {
+            case.get("no_action_kind").and_then(Value::as_str) == Some("heuristic_only")
+                && case.get("classification").and_then(Value::as_str) == Some("weakly_exposed")
+                && case.get("agent_packet_present").and_then(Value::as_bool) == Some(false)
+        }),
+        "heuristic-only no-action case should stay weakly exposed but packet-free"
+    );
+    let python_quality = value
+        .get("python_repair_routing_quality")
+        .ok_or_else(|| "python_repair_routing_quality section missing".to_string())?;
+    assert_eq!(
+        python_quality["quality_gate"]["status"],
+        serde_json::Value::from("pass")
+    );
+    assert_eq!(
+        python_quality["summary"]["top_1_actionable_precision"]["status"],
+        serde_json::Value::from("pass")
+    );
+    assert_eq!(
+        python_quality["summary"]["top_3_actionable_precision"]["status"],
+        serde_json::Value::from("pass")
+    );
+    assert_eq!(
+        python_quality["summary"]["top_3_actionable_precision"]["count"],
+        serde_json::Value::from(3)
+    );
+    assert_eq!(
+        python_quality["summary"]["full_top_3_capture_cases"]["status"],
+        serde_json::Value::from("pass")
+    );
+    assert_eq!(
+        python_quality["summary"]["full_top_3_capture_cases"]["count"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        python_quality["summary"]["ranked_top_3_cases_with_capture"]["status"],
+        serde_json::Value::from("pass")
+    );
+    assert_eq!(
+        python_quality["summary"]["receipt_closure_rate"]["count"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        python_quality["summary"]["ordinary_no_action_cases"],
+        serde_json::Value::from(3)
+    );
+    assert!(
+        python_quality["ordinary_no_action_distribution"]
+            .as_array()
+            .ok_or_else(|| "ordinary_no_action_distribution missing".to_string())?
+            .iter()
+            .any(|entry| entry["kind"].as_str() == Some("no_related_test")
+                && entry["cases"].as_u64() == Some(1))
+    );
+    assert!(
+        python_quality["ordinary_no_action_distribution"]
+            .as_array()
+            .ok_or_else(|| "ordinary_no_action_distribution missing".to_string())?
+            .iter()
+            .any(|entry| entry["kind"].as_str() == Some("already_observed")
+                && entry["cases"].as_u64() == Some(1))
+    );
+    assert!(
+        python_quality["ordinary_no_action_distribution"]
+            .as_array()
+            .ok_or_else(|| "ordinary_no_action_distribution missing".to_string())?
+            .iter()
+            .any(|entry| entry["kind"].as_str() == Some("heuristic_only")
+                && entry["cases"].as_u64() == Some(1))
+    );
+    let typescript_preview_repair_loop = value
+        .get("typescript_preview_repair_loop")
+        .ok_or_else(|| "typescript_preview_repair_loop section missing".to_string())?;
+    assert_eq!(
+        typescript_preview_repair_loop
+            .get("receipt_dir")
+            .and_then(Value::as_str),
+        Some("fixtures/typescript-preview-repair-loop")
+    );
+    let typescript_preview_repair_loop_summary = typescript_preview_repair_loop
+        .get("summary")
+        .ok_or_else(|| "typescript_preview_repair_loop summary missing".to_string())?;
+    assert_eq!(
+        typescript_preview_repair_loop_summary
+            .get("repair_packet_ready")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    let typescript_preview_repair_loop_cases = typescript_preview_repair_loop
+        .get("cases")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "typescript_preview_repair_loop cases missing".to_string())?;
+    assert_eq!(typescript_preview_repair_loop_cases.len(), 1);
+    assert_eq!(
+        typescript_preview_repair_loop_cases[0]
+            .get("outcome")
+            .and_then(Value::as_str),
+        Some("proof_improved")
+    );
+    let typescript_false_actionable_audit = value
+        .get("typescript_false_actionable_audit")
+        .ok_or_else(|| "typescript_false_actionable_audit section missing".to_string())?;
+    assert_eq!(
+        typescript_false_actionable_audit["quality_gate"]["status"],
+        serde_json::Value::from("pass")
+    );
+    let typescript_false_actionable_summary = typescript_false_actionable_audit
+        .get("summary")
+        .ok_or_else(|| "typescript_false_actionable_audit summary missing".to_string())?;
+    assert_eq!(
+        typescript_false_actionable_summary
+            .get("cases")
+            .and_then(Value::as_u64),
+        Some(14)
+    );
+    assert_eq!(
+        typescript_false_actionable_summary
+            .get("false_actionable_rate")
+            .and_then(|value| value.get("count"))
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        typescript_false_actionable_summary
+            .get("false_actionable_rate")
+            .and_then(|value| value.get("checked"))
+            .and_then(Value::as_u64),
+        Some(14)
+    );
+    assert_eq!(
+        typescript_false_actionable_summary
+            .get("repair_packet_ready_violation_rate")
+            .and_then(|value| value.get("count"))
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    let typescript_false_actionable_cases = typescript_false_actionable_audit
+        .get("cases")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "typescript_false_actionable_audit cases missing".to_string())?;
+    assert_eq!(typescript_false_actionable_cases.len(), 14);
+    assert!(
+        typescript_false_actionable_cases
+            .iter()
+            .all(|case| { case.get("false_actionable").and_then(Value::as_bool) == Some(false) })
+    );
+    let bun_ub_cross_language = value
+        .get("bun_ub_cross_language_witnesses")
+        .ok_or_else(|| "bun_ub_cross_language_witnesses section missing".to_string())?;
+    assert_eq!(
+        bun_ub_cross_language
+            .get("receipt_dir")
+            .and_then(Value::as_str),
+        Some("fixtures/bun-ub-cross-language-dogfood")
+    );
+    let bun_ub_cross_language_summary = bun_ub_cross_language
+        .get("summary")
+        .ok_or_else(|| "bun_ub_cross_language_witnesses summary missing".to_string())?;
+    assert_eq!(
+        bun_ub_cross_language_summary
+            .get("repair_packet_ready")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    let bun_ub_cross_language_cases = bun_ub_cross_language
+        .get("cases")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "bun_ub_cross_language_witnesses cases missing".to_string())?;
+    assert_eq!(bun_ub_cross_language_cases.len(), 1);
+    assert_eq!(
+        bun_ub_cross_language_cases[0]
+            .get("operator_action")
+            .and_then(Value::as_str),
+        Some("no_missing_bridge_discriminator")
+    );
+    assert!(json.contains("\"pr_inline_comment_publisher\""));
+    Ok(())
+}
+
+#[test]
+fn dogfood_finding_alignment_scenarios_have_checked_receipts() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let scenarios = dogfood_finding_alignment_scenarios();
+        for required in [
+            ("presentation_text_actionable_output_observer", "actionable"),
+            (
+                "presentation_text_already_observed_output",
+                "already_observed",
+            ),
+            ("config_policy_internal_metadata_no_action", "internal_only"),
+            ("config_policy_rendered_label_unobserved", "actionable"),
+            ("config_policy_behavior_selector_unobserved", "actionable"),
+            (
+                "config_policy_behavior_selector_observed",
+                "already_observed",
+            ),
+            ("config_policy_flow_unknown_limitation", "static_limitation"),
+            (
+                "config_policy_opaque_lookup_limitation",
+                "static_limitation",
+            ),
+            (
+                "config_policy_opaque_lookup_supported_observer",
+                "actionable",
+            ),
+            ("predicate_boundary_actionable_scorecard_lead", "actionable"),
+            (
+                "call_presence_runtime_static_only_trend",
+                "static_limitation",
+            ),
+        ] {
+            assert!(
+                scenarios.iter().any(|scenario| {
+                    scenario.name == required.0 && scenario.gap_state == required.1
+                }),
+                "{} finding-alignment dogfood receipt should be checked as {}",
+                required.0,
+                required.1
+            );
+        }
+
+        for scenario in scenarios {
+            let run = dogfood_finding_alignment_run(&scenario);
+            assert!(
+                run.errors.is_empty(),
+                "{} finding-alignment receipt should validate: {:?}",
+                run.name,
+                run.errors
+            );
+        }
+
+        Ok(())
+    })
+}
+
+fn valid_finding_alignment_scenario(
+    name: &str,
+    gap_state: &str,
+) -> DogfoodFindingAlignmentScenario {
+    DogfoodFindingAlignmentScenario {
+        name: name.to_string(),
+        source_pr: "EffortlessMetrics/ripr#1016".to_string(),
+        canonical_gap_id: format!("gap:{name}"),
+        evidence_class: "presentation_text".to_string(),
+        raw_findings_total: 2,
+        canonical_items_total: 1,
+        raw_finding_summary: "Declaration and literal raw findings align into one canonical item."
+            .to_string(),
+        gap_state: gap_state.to_string(),
+        actionability: "add_output_observer".to_string(),
+        user_outcome: "actionable_gap".to_string(),
+        repair_kind: "output_observer".to_string(),
+        target_test_type: "help_output_snapshot".to_string(),
+        verify_command: "cargo xtask evidence-quality-scorecard".to_string(),
+        static_limitation_category: None,
+        static_limitation_repair_route: None,
+        raw_findings_supporting_only: true,
+        recommended_repair: "Add or update an output observer.".to_string(),
+        before_after_context: "Before and after scorecard context is pinned by this dogfood case."
+            .to_string(),
+        must_not_claim: vec![
+            "Do not infer actionability from raw static class.".to_string(),
+            "Do not recommend mutation testing first.".to_string(),
+        ],
+        reason: "fixture-backed dogfood receipt".to_string(),
+    }
+}
+
+#[test]
+fn dogfood_finding_alignment_validation_reports_actionable_drift() {
+    let mut scenario = valid_finding_alignment_scenario("", "actionable");
+    scenario.source_pr = "ripr#1016".to_string();
+    scenario.evidence_class = "unknown".to_string();
+    scenario.raw_findings_total = 0;
+    scenario.canonical_items_total = 1;
+    scenario.canonical_gap_id = "unknown".to_string();
+    scenario.raw_finding_summary = "missing raw finding summary".to_string();
+    scenario.user_outcome = "no_action".to_string();
+    scenario.repair_kind = "unknown".to_string();
+    scenario.target_test_type = "none".to_string();
+    scenario.verify_command = "unknown".to_string();
+    scenario.static_limitation_category = Some("presentation_text_visibility_unknown".to_string());
+    scenario.raw_findings_supporting_only = false;
+    scenario.recommended_repair = "Escalate to mutation testing first.".to_string();
+    scenario.before_after_context = "missing before/after context".to_string();
+    scenario.must_not_claim = vec!["Keep advisory.".to_string()];
+
+    let report = dogfood_finding_alignment_run(&scenario).errors.join("\n");
+
+    assert!(report.contains("case id must be present"));
+    assert!(report.contains("source_pr should name a real RIPR PR"));
+    assert!(report.contains("canonical_gap_id must be present"));
+    assert!(report.contains("unsupported evidence class"));
+    assert!(report.contains("raw findings 0 must be >= canonical items 1"));
+    assert!(report.contains("raw findings must be marked supporting-only"));
+    assert!(report.contains("raw_finding_summary must be present"));
+    assert!(report.contains("must not route first to mutation testing"));
+    assert!(report.contains("before_after_context must be present"));
+    assert!(report.contains("must_not_claim guards should preserve"));
+    assert!(report.contains("actionable case should have actionable_gap outcome"));
+    assert!(report.contains("actionable case must carry a concrete repair kind"));
+    assert!(report.contains("actionable case must carry a target test type"));
+    assert!(report.contains("actionable case must carry a verify command"));
+    assert!(report.contains("actionable case should not carry a static limitation category"));
+}
+
+#[test]
+fn dogfood_finding_alignment_validation_reports_no_action_and_limitation_drift() {
+    let mut observed = valid_finding_alignment_scenario("observed", "already_observed");
+    observed.user_outcome = "actionable_gap".to_string();
+    observed.repair_kind = "output_observer".to_string();
+    let observed_report = dogfood_finding_alignment_run(&observed).errors.join("\n");
+    assert!(observed_report.contains("already_observed case should have no_action outcome"));
+    assert!(observed_report.contains("already_observed case should use no_action repair kind"));
+
+    let mut internal = valid_finding_alignment_scenario("internal", "internal_only");
+    internal.user_outcome = "actionable_gap".to_string();
+    internal.repair_kind = "inspect_visibility".to_string();
+    let internal_report = dogfood_finding_alignment_run(&internal).errors.join("\n");
+    assert!(internal_report.contains("internal_only case should have no_action outcome"));
+    assert!(internal_report.contains("internal_only case should use no_action repair kind"));
+
+    let mut limitation = valid_finding_alignment_scenario("limitation", "static_limitation");
+    limitation.user_outcome = "no_action".to_string();
+    limitation.static_limitation_category = None;
+    limitation.static_limitation_repair_route = None;
+    let limitation_report = dogfood_finding_alignment_run(&limitation).errors.join("\n");
+    assert!(
+        limitation_report.contains("static_limitation case should have static_limitation outcome")
+    );
+    assert!(limitation_report.contains("static limitation case must name a limitation category"));
+    assert!(
+        limitation_report.contains("static limitation case must name a limitation repair route")
+    );
+
+    let unknown = valid_finding_alignment_scenario("unknown", "mystery");
+    assert!(
+        dogfood_finding_alignment_run(&unknown)
+            .errors
+            .join("\n")
+            .contains("unsupported gap_state `mystery`")
+    );
+}
+
+#[test]
+fn finding_alignment_verify_command_missing_recognizes_empty_unknown_and_none() {
+    assert!(finding_alignment_verify_command_is_missing(""));
+    assert!(finding_alignment_verify_command_is_missing("   "));
+    assert!(finding_alignment_verify_command_is_missing("unknown"));
+    assert!(finding_alignment_verify_command_is_missing("none"));
+    assert!(!finding_alignment_verify_command_is_missing(
+        "cargo xtask evidence-quality-scorecard"
+    ));
+}
+
+#[test]
+fn finding_alignment_dogfood_fixture_corpus_validator_reports_contract_drift() {
+    with_temp_cwd("finding-alignment-dogfood-invalid", |_| {
+        write(
+            Path::new("fixtures/finding-alignment-dogfood/SPEC.md"),
+            "# Finding Alignment Dogfood\n",
+        );
+        write(
+            Path::new("fixtures/finding-alignment-dogfood/corpus.json"),
+            r#"{
+  "schema_version": "0.1",
+  "kind": "finding_alignment_dogfood_corpus",
+  "cases": [
+    {
+      "id": "presentation_text_actionable_output_observer",
+      "source_pr": "EffortlessMetrics/ripr#966",
+      "evidence_class": "presentation_text",
+      "raw_findings_total": 2,
+      "canonical_items_total": 1,
+      "gap_state": "already_observed",
+      "actionability": "already_observed",
+      "user_outcome": "no_action",
+      "repair_kind": "no_action",
+      "target_test_type": "none",
+      "verify_command": "none",
+      "raw_findings_supporting_only": true,
+      "recommended_repair": "No action.",
+      "must_not_claim": ["Do not infer actionability from raw static class."],
+      "reason": "duplicate id with wrong state"
+    },
+    {
+      "id": "presentation_text_actionable_output_observer",
+      "source_pr": "bad",
+      "evidence_class": "unknown",
+      "raw_findings_total": 0,
+      "canonical_items_total": 0,
+      "gap_state": "mystery",
+      "actionability": "unknown",
+      "user_outcome": "unknown",
+      "repair_kind": "unknown",
+      "target_test_type": "unknown",
+      "verify_command": "unknown",
+      "raw_findings_supporting_only": false,
+      "recommended_repair": "",
+      "must_not_claim": [],
+      "reason": ""
+    }
+  ]
+}"#,
+        );
+
+        let mut violations = Vec::new();
+        let validation_result =
+            super::validate_finding_alignment_dogfood_fixture_corpus(&mut violations);
+        assert!(
+            validation_result.is_ok(),
+            "fixture corpus validation should not hard-fail: {validation_result:?}"
+        );
+        let report = violations.join("\n");
+
+        assert!(report.contains("finding alignment dogfood case presentation_text_actionable_output_observer is duplicated"));
+        assert!(report.contains("must have gap_state actionable, got mystery"));
+        assert!(report.contains("finding alignment dogfood corpus is missing case presentation_text_already_observed_output"));
+        assert!(report.contains("unsupported evidence class for dogfood receipt"));
+        assert!(report.contains("canonical_items_total must be non-zero"));
+        assert!(report.contains("unsupported gap_state `mystery`"));
+    });
+}
+
+#[test]
+fn dogfood_surface_projection_alignment_receipts_are_checked() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let scenarios = dogfood_surface_projection_alignment_scenarios();
+        assert!(
+            scenarios.iter().any(|scenario| {
+                scenario.name == "receipt_improved_top_next_action_alignment"
+                    && scenario.outcome == "evidence_improved"
+            }),
+            "surface projection alignment dogfood receipt should pin improved receipt case"
+        );
+
+        for scenario in scenarios {
+            let run = dogfood_surface_projection_alignment_run(&scenario);
+            assert!(
+                run.errors.is_empty(),
+                "{} surface projection alignment receipt should validate: {:?}",
+                run.name,
+                run.errors
+            );
+        }
+
+        Ok(())
+    })
+}
+
+fn valid_surface_projection_alignment_scenario() -> DogfoodSurfaceProjectionAlignmentScenario {
+    let canonical_gap_id = "gap:boundary-discriminator-004";
+    let packet_id = "boundary-discriminator-004";
+    let repair_kind = "add_boundary_assertion";
+    let verify_command = "cargo test -p ripr-swarm boundary_discriminator_004";
+    let receipt_command = "cargo xtask receipts write --packet boundary-discriminator-004 --canonical-gap gap:boundary-discriminator-004";
+    let attempt = serde_json::json!({
+        "packet_id": packet_id,
+        "canonical_gap_id": canonical_gap_id,
+        "attempt_id": "attempt:boundary-discriminator-004:evidence-improved",
+        "evidence_class": "predicate_boundary",
+        "repair_kind": repair_kind,
+        "actor_kind": "human",
+        "receipt_path": "target/ripr/receipts/boundary-discriminator-004.json",
+        "verify_command": verify_command,
+        "receipt_command": receipt_command,
+        "before_gap_state": "actionable",
+        "after_gap_state": "actionable",
+        "outcome": "evidence_improved",
+        "timestamp": "2026-05-27T20:00:00Z",
+        "receipt_state": "receipt_movement_improved",
+        "movement_source": "agent_receipt",
+        "reason": "receipt-backed dogfood attempt improved evidence"
+    });
+    DogfoodSurfaceProjectionAlignmentScenario {
+        name: "receipt_improved_top_next_action_alignment".to_string(),
+        canonical_gap_id: canonical_gap_id.to_string(),
+        packet_id: packet_id.to_string(),
+        evidence_class: "predicate_boundary".to_string(),
+        repair_kind: repair_kind.to_string(),
+        verify_command: verify_command.to_string(),
+        receipt_command: receipt_command.to_string(),
+        receipt_state: "receipt_movement_improved".to_string(),
+        outcome: "evidence_improved".to_string(),
+        expected_top_next_action_kind: "attempt_ready_packet".to_string(),
+        advisory_consumers: vec![
+            "badge".to_string(),
+            "lsp".to_string(),
+            "pr_comment".to_string(),
+            "ci".to_string(),
+        ],
+        must_not_change: vec![
+            "production behavior".to_string(),
+            "public API".to_string(),
+            "snapshot format".to_string(),
+        ],
+        swarm_plan: serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "report": "swarm-plan",
+            "source_summary": {
+                "actionable_gaps": 1,
+                "public_projection_eligible_packets": 1
+            },
+            "summary": {
+                "swarm_ready_packets": 1,
+                "blocked_packets": 0,
+                "missing_verify_command": 0,
+                "missing_receipt_command": 0,
+                "static_limitation_packets": 0,
+                "high_confidence_packets": 1
+            },
+            "top_ready_packets": [
+                {
+                    "packet_id": packet_id,
+                    "canonical_gap_id": canonical_gap_id,
+                    "evidence_class": "predicate_boundary",
+                    "repair_kind": repair_kind,
+                    "swarm_state": "queued"
+                }
+            ],
+            "top_blocked_packets": []
+        }),
+        actionable_gap_outcomes: serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "report": "actionable-gap-outcomes",
+            "summary": {
+                "outcomes_total": 1,
+                "not_attempted": 0,
+                "evidence_improved": 1,
+                "evidence_unchanged": 0,
+                "evidence_regressed": 0,
+                "resolved": 0,
+                "orphaned_receipts": 0
+            }
+        }),
+        attempt_ledger: serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "report": "swarm-attempt-ledger",
+            "summary": {
+                "attempts_total": 1,
+                "canonical_gaps_total": 1,
+                "not_attempted": 0,
+                "attempted_no_receipt": 0,
+                "receipt_present": 0,
+                "evidence_improved": 1,
+                "evidence_unchanged": 0,
+                "evidence_regressed": 0,
+                "resolved": 0,
+                "unknown": 0,
+                "orphaned_receipts": 0
+            },
+            "repair_route_quality": [
+                {
+                    "repair_kind": repair_kind,
+                    "repair_kind_attempted": 1,
+                    "repair_kind_improved": 1,
+                    "repair_kind_unchanged": 0,
+                    "repair_kind_regressed": 0,
+                    "repair_kind_resolved": 0,
+                    "repair_kind_attempted_no_receipt": 0,
+                    "repair_kind_receipt_present": 0,
+                    "repair_kind_unknown": 0,
+                    "repair_kind_success_rate": 1.0
+                }
+            ],
+            "top_missing_evidence_fields": [],
+            "latest_attempts": [attempt.clone()],
+            "attempts": [attempt],
+            "orphaned_receipts": []
+        }),
+        reason: "single receipt-backed canonical gap projection alignment".to_string(),
+    }
+}
+
+#[test]
+fn dogfood_surface_projection_alignment_reports_identity_drift() {
+    let mut scenario = valid_surface_projection_alignment_scenario();
+    scenario.packet_id = "wrong-packet".to_string();
+    scenario.advisory_consumers = vec!["badge".to_string()];
+
+    let report = dogfood_surface_projection_alignment_run(&scenario)
+        .errors
+        .join("\n");
+
+    assert!(report.contains("attempt ledger packet_id must be wrong-packet"));
+    assert!(report.contains("readiness top_next_action.packet_id must be wrong-packet"));
+    assert!(report.contains("advisory_consumers must include lsp"));
+    assert!(report.contains("advisory_consumers must include pr_comment"));
+    assert!(report.contains("advisory_consumers must include ci"));
+}
+
+#[test]
+fn dogfood_surface_projection_alignment_rejects_missing_limitation_backlog_packet()
+-> Result<(), String> {
+    with_repo_cwd(|| {
+        let mut scenario = dogfood_surface_projection_alignment_scenarios()
+            .into_iter()
+            .find(|scenario| scenario.name == "static_limitation_backlog_alignment")
+            .ok_or("surface projection corpus must include static limitation backlog case")?;
+        scenario.swarm_plan["static_limitation_backlog"]["limitation_backlog_packets"] =
+            serde_json::json!([]);
+
+        let report = dogfood_surface_projection_alignment_run(&scenario)
+            .errors
+            .join("\n");
+
+        assert!(
+            report.contains("static limitation backlog must include limitation_backlog_packets")
+        );
+        assert!(report.contains(
+            "readiness static_limitation_backlog must preserve limitation_backlog_packets"
+        ));
+        Ok(())
+    })
+}
+
+#[test]
+fn dogfood_surface_projection_alignment_rejects_incomplete_limitation_backlog_packet()
+-> Result<(), String> {
+    with_repo_cwd(|| {
+        let mut scenario = dogfood_surface_projection_alignment_scenarios()
+            .into_iter()
+            .find(|scenario| scenario.name == "static_limitation_backlog_alignment")
+            .ok_or("surface projection corpus must include static limitation backlog case")?;
+        scenario.swarm_plan["static_limitation_backlog"]["limitation_backlog_packets"] = serde_json::json!([
+            {
+                "packet_id": scenario.packet_id,
+                "canonical_gap_id": scenario.canonical_gap_id,
+                "limitation_category": "activation_owner_call_absent",
+                "repair_route": "analysis/related-test-affinity-owner-call-tracing",
+                "signal_count": 1,
+                "public_projection_eligible": true,
+                "swarm_ready": true
+            }
+        ]);
+
+        let report = dogfood_surface_projection_alignment_run(&scenario)
+            .errors
+            .join("\n");
+
+        assert!(report.contains("limitation backlog packet must include sample_canonical_gap_ids"));
+        assert!(report.contains("limitation backlog packet must include sample_sources"));
+        assert!(report.contains(
+            "limitation backlog packet must preserve non_claims denying public repair status"
+        ));
+        assert!(
+            report.contains("limitation backlog packet must not expose public_projection_eligible")
+        );
+        assert!(report.contains("limitation backlog packet must not expose swarm_ready"));
+        assert!(report.contains(
+            "readiness limitation backlog packet must preserve sample_canonical_gap_ids"
+        ));
+        assert!(
+            report.contains("readiness limitation backlog packet must preserve sample_sources")
+        );
+        assert!(report.contains("readiness limitation backlog packet must preserve non_claims"));
+        assert!(report.contains(
+            "readiness limitation backlog packet must not expose public_projection_eligible"
+        ));
+        assert!(report.contains("readiness limitation backlog packet must not expose swarm_ready"));
+        assert!(report.contains("top_limitation_routes must preserve sample_canonical_gap_ids"));
+        assert!(report.contains("top_limitation_routes must preserve sample_sources"));
+        assert!(report.contains(
+            "top_limitation_routes must preserve non_claims denying public repair status"
+        ));
+        Ok(())
+    })
+}
+
+#[test]
+fn dogfood_real_repair_attempt_receipts_are_checked() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let scenarios = dogfood_real_repair_attempt_scenarios();
+        for required in REAL_REPAIR_ATTEMPTS_REQUIRED_CASES {
+            assert!(
+                scenarios.iter().any(|scenario| {
+                    scenario.name == required.0 && scenario.outcome == required.1
+                }),
+                "{} real repair attempt should be checked as {}",
+                required.0,
+                required.1
+            );
+        }
+        assert!(
+            scenarios.len() >= 3,
+            "real repair attempts should include multiple attempts"
+        );
+        assert!(
+            scenarios
+                .iter()
+                .any(|scenario| scenario.outcome == "evidence_unchanged"),
+            "real repair attempts should include an unchanged non-success"
+        );
+        assert!(
+            scenarios
+                .iter()
+                .any(|scenario| scenario.outcome == "attempted_no_receipt"),
+            "real repair attempts should include a named missing-receipt case"
+        );
+
+        for scenario in scenarios {
+            let run = dogfood_real_repair_attempt_run(&scenario);
+            assert!(
+                run.errors.is_empty(),
+                "{} real repair attempt receipt should validate: {:?}",
+                run.name,
+                run.errors
+            );
+        }
+
+        Ok(())
+    })
+}
+
+fn valid_real_repair_attempt_scenario() -> DogfoodRealRepairAttemptScenario {
+    DogfoodRealRepairAttemptScenario {
+        name: "repair_route_quality_metrics_improved".to_string(),
+        source_ref: "EffortlessMetrics/ripr-swarm#415".to_string(),
+        canonical_gap_id: "gap:repair-route-quality-metrics-missing".to_string(),
+        packet_id: "repair-route-quality-metrics-001".to_string(),
+        language: None,
+        evidence_class: None,
+        source_file: None,
+        repair_kind: "add_repair_route_quality_metrics".to_string(),
+        target_test_or_observer_shape: "readiness route-quality metric assertions".to_string(),
+        verify_command: "cargo xtask check-pr".to_string(),
+        verify_result: "pass".to_string(),
+        receipt_command: "cargo xtask ripr-swarm readiness".to_string(),
+        receipt_path: Some("target/ripr/reports/swarm-readiness.json".to_string()),
+        receipt_state: "receipt_movement_improved".to_string(),
+        actor_kind: "codex".to_string(),
+        before_gap_state: "actionable".to_string(),
+        after_gap_state: "actionable".to_string(),
+        outcome: "evidence_improved".to_string(),
+        attempted_repair: "Added repair-route quality report metrics.".to_string(),
+        evidence_movement: "Readiness can now show repair_kind success-rate evidence.".to_string(),
+        operator_note: "Route-quality proof stayed advisory.".to_string(),
+        must_not_change: vec![
+            "public badge semantics".to_string(),
+            "CI gate defaults".to_string(),
+        ],
+        raw_evidence_refs: vec!["metrics/capabilities.toml".to_string()],
+        missing_receipt_reason: None,
+        reason: "real merged repair-loop PR improved route-quality evidence".to_string(),
+    }
+}
+
+#[test]
+fn dogfood_real_repair_attempt_reports_contract_drift() {
+    let mut scenario = valid_real_repair_attempt_scenario();
+    scenario.name.clear();
+    scenario.source_ref = "unknown".to_string();
+    scenario.canonical_gap_id = "repair-route-quality-metrics-missing".to_string();
+    scenario.verify_result = "maybe".to_string();
+    scenario.receipt_command = scenario.verify_command.clone();
+    scenario.receipt_path = None;
+    scenario.outcome = "evidence_improved".to_string();
+    scenario.must_not_change.clear();
+    scenario.raw_evidence_refs.clear();
+
+    let report = dogfood_real_repair_attempt_run(&scenario).errors.join("\n");
+
+    assert!(report.contains("case id must be present"));
+    assert!(report.contains("source_ref must name the PR"));
+    assert!(report.contains("canonical_gap_id must use gap: identity"));
+    assert!(report.contains("verify_result must be pass"));
+    assert!(report.contains("receipt_path must be present"));
+    assert!(report.contains("receipt_command must stay distinct"));
+    assert!(report.contains("must_not_change must name bounded edit constraints"));
+    assert!(report.contains("raw_evidence_refs must keep lineage"));
+
+    let mut missing_receipt = valid_real_repair_attempt_scenario();
+    missing_receipt.outcome = "attempted_no_receipt".to_string();
+    missing_receipt.receipt_path = None;
+    missing_receipt.missing_receipt_reason = None;
+
+    let missing_report = dogfood_real_repair_attempt_run(&missing_receipt)
+        .errors
+        .join("\n");
+    assert!(missing_report.contains("attempted_no_receipt must include missing_receipt_reason"));
+}
+
+#[test]
+fn dogfood_real_repair_attempt_rejects_movement_contradictions() {
+    let mut mismatched_receipt = valid_real_repair_attempt_scenario();
+    mismatched_receipt.outcome = "evidence_improved".to_string();
+    mismatched_receipt.receipt_state = "receipt_movement_regressed".to_string();
+    mismatched_receipt.evidence_movement =
+        "evidence_regressed despite an improved outcome".to_string();
+
+    let report = dogfood_real_repair_attempt_run(&mismatched_receipt)
+        .errors
+        .join("\n");
+    assert!(report.contains(
+        "receipt_state for evidence_improved must not claim conflicting movement terms: regressed"
+    ));
+    assert!(report.contains(
+            "evidence_movement for evidence_improved must not claim conflicting movement tokens: evidence_regressed"
+        ));
+
+    let mut missing_receipt_claim = valid_real_repair_attempt_scenario();
+    missing_receipt_claim.outcome = "attempted_no_receipt".to_string();
+    missing_receipt_claim.receipt_path = None;
+    missing_receipt_claim.receipt_state = "receipt_missing".to_string();
+    missing_receipt_claim.missing_receipt_reason =
+        Some("operator stopped before writing a receipt".to_string());
+    missing_receipt_claim.evidence_movement =
+        "evidence_improved without receipt evidence".to_string();
+
+    let missing_report = dogfood_real_repair_attempt_run(&missing_receipt_claim)
+        .errors
+        .join("\n");
+    assert!(missing_report.contains(
+            "evidence_movement for attempted_no_receipt must not claim conflicting movement tokens: evidence_improved"
+        ));
+}
+
+#[test]
+fn dogfood_python_real_repo_eval_receipts_are_checked() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let scenarios = dogfood_python_real_repo_eval_scenarios();
+        for required in PYTHON_REAL_REPO_EVAL_REQUIRED_CASES {
+            assert!(
+                scenarios.iter().any(|scenario| {
+                    scenario.name == required.0 && scenario.gap_movement == required.1
+                }),
+                "{} Python real-repo eval receipt should be checked as {}",
+                required.0,
+                required.1
+            );
+        }
+        assert!(
+            scenarios
+                .iter()
+                .any(|scenario| scenario.repo_shape == "tiny_controlled_pytest"),
+            "Python real-repo eval receipts should include the tiny controlled pytest case"
+        );
+        assert!(
+            scenarios
+                .iter()
+                .any(|scenario| scenario.gap_movement == "closed"),
+            "Python real-repo eval receipts should include a closed gap"
+        );
+        assert!(
+            scenarios
+                .iter()
+                .any(|scenario| scenario.ranked_top_3_findings.len() == 3),
+            "Python real-repo eval receipts should include a full top-3 repair-card capture"
+        );
+
+        let runs = scenarios
+            .iter()
+            .map(dogfood_python_real_repo_eval_run)
+            .collect::<Vec<_>>();
+        let quality = dogfood_python_repair_routing_quality_summary(&runs);
+        assert_eq!(quality.gate_status, "pass");
+        assert_eq!(quality.top_1_actionable_usable, quality.cases);
+        assert_eq!(quality.top_3_cases_with_ranked_capture, quality.cases);
+        assert_eq!(
+            quality.top_3_actionable_usable,
+            quality.top_3_ranked_findings_checked
+        );
+        assert_eq!(quality.verify_command_valid, quality.cases);
+        assert_eq!(quality.agent_packet_bounded, quality.cases);
+        assert_eq!(quality.concrete_discriminator, quality.cases);
+        assert_eq!(quality.suggested_test_location, quality.cases);
+        assert_eq!(quality.false_actionable, 0);
+        assert_eq!(quality.crashes, 0);
+        assert!(quality.receipt_closed > 0);
+        assert!(
+            quality.full_top_3_capture_cases > 0,
+            "Python real-repo eval receipts should include a full top-3 repair-card capture"
+        );
+        assert!(
+            quality
+                .unsupported_limitation_distribution
+                .iter()
+                .any(|(kind, count)| kind == "dynamic_route_registration" && *count == 1)
+        );
+
+        let static_limit_scenarios = dogfood_python_static_limit_eval_scenarios();
+        for required in PYTHON_REAL_REPO_EVAL_REQUIRED_STATIC_LIMIT_CASES {
+            assert!(
+                static_limit_scenarios.iter().any(|scenario| {
+                    scenario.name == required.0 && scenario.static_limit_kind == required.1
+                }),
+                "{} Python static-limit eval should be checked as {}",
+                required.0,
+                required.1
+            );
+        }
+        assert!(
+            static_limit_scenarios
+                .iter()
+                .any(|scenario| !scenario.agent_packet_present && !scenario.repair_card_present),
+            "Python static-limit evals should record no-packet/no-card cases"
+        );
+        for scenario in static_limit_scenarios {
+            let run = dogfood_python_static_limit_eval_run(&scenario);
+            assert!(
+                run.errors.is_empty(),
+                "{} Python static-limit eval should validate: {:?}",
+                run.name,
+                run.errors
+            );
+        }
+
+        let no_action_scenarios = dogfood_python_no_action_eval_scenarios();
+        for required in PYTHON_REAL_REPO_EVAL_REQUIRED_NO_ACTION_CASES {
+            assert!(
+                no_action_scenarios.iter().any(|scenario| {
+                    scenario.name == required.0 && scenario.no_action_kind == required.1
+                }),
+                "{} Python no-action eval should be checked as {}",
+                required.0,
+                required.1
+            );
+        }
+        assert!(
+            no_action_scenarios
+                .iter()
+                .any(|scenario| !scenario.agent_packet_present && !scenario.repair_card_present),
+            "Python no-action evals should record no-packet/no-card cases"
+        );
+        for scenario in no_action_scenarios {
+            let run = dogfood_python_no_action_eval_run(&scenario);
+            assert!(
+                run.errors.is_empty(),
+                "{} Python no-action eval should validate: {:?}",
+                run.name,
+                run.errors
+            );
+        }
+
+        for scenario in scenarios {
+            let run = dogfood_python_real_repo_eval_run(&scenario);
+            assert!(
+                run.errors.is_empty(),
+                "{} Python real-repo eval receipt should validate: {:?}",
+                run.name,
+                run.errors
+            );
+        }
+
+        Ok(())
+    })
+}
+
+#[test]
+fn dogfood_python_repair_routing_quality_flags_noisy_routes() {
+    let empty_quality = dogfood_python_repair_routing_quality_summary(&[]);
+    assert_eq!(empty_quality.gate_status, "review");
+    assert_eq!(empty_quality.cases, 0);
+    assert_eq!(empty_quality.receipt_closed, 0);
+
+    let mut unusable_card = valid_python_real_repo_eval_scenario();
+    unusable_card.usability = "needs_review".to_string();
+
+    let mut bad_verify = valid_python_real_repo_eval_scenario();
+    bad_verify.verify_result = "fail".to_string();
+    bad_verify.gap_movement = "unchanged".to_string();
+    bad_verify.closed_gaps = 0;
+
+    let mut vague_discriminator = valid_python_real_repo_eval_scenario();
+    vague_discriminator.missing_discriminator = "uncertain".to_string();
+
+    let mut missing_location = valid_python_real_repo_eval_scenario();
+    missing_location.suggested_test_file = "src/pricing.py".to_string();
+
+    let mut false_actionable = valid_python_real_repo_eval_scenario();
+    false_actionable.false_positive_notes = "possible false actionability".to_string();
+
+    let mut not_closed = valid_python_real_repo_eval_scenario();
+    not_closed.gap_movement = "unchanged".to_string();
+    not_closed.closed_gaps = 0;
+
+    let mut unsupported = valid_python_real_repo_eval_scenario();
+    unsupported.unsupported_limitations = vec![
+        "decorator_indirection".to_string(),
+        "dynamic_route_registration".to_string(),
+    ];
+
+    let mut crashed = dogfood_python_real_repo_eval_run(&valid_python_real_repo_eval_scenario());
+    crashed
+        .errors
+        .push("simulated parser/report contract error".to_string());
+
+    let runs = vec![
+        dogfood_python_real_repo_eval_run(&unusable_card),
+        dogfood_python_real_repo_eval_run(&bad_verify),
+        dogfood_python_real_repo_eval_run(&vague_discriminator),
+        dogfood_python_real_repo_eval_run(&missing_location),
+        dogfood_python_real_repo_eval_run(&false_actionable),
+        dogfood_python_real_repo_eval_run(&not_closed),
+        dogfood_python_real_repo_eval_run(&unsupported),
+        crashed,
+    ];
+    let quality = dogfood_python_repair_routing_quality_summary(&runs);
+
+    assert_eq!(quality.gate_status, "review");
+    assert_eq!(quality.cases, 8);
+    assert_eq!(quality.top_1_actionable_usable, 6);
+    assert_eq!(quality.top_3_cases_with_ranked_capture, 8);
+    assert_eq!(quality.full_top_3_capture_cases, 0);
+    assert_eq!(quality.top_3_ranked_findings_checked, 8);
+    assert_eq!(quality.top_3_actionable_usable, 8);
+    assert_eq!(quality.verify_command_valid, 7);
+    assert_eq!(quality.agent_packet_bounded, 7);
+    assert_eq!(quality.concrete_discriminator, 7);
+    assert_eq!(quality.suggested_test_location, 7);
+    assert_eq!(quality.false_actionable, 1);
+    assert_eq!(quality.crashes, 3);
+    assert_eq!(quality.receipt_closed, 6);
+    assert!(
+        quality
+            .unsupported_limitation_distribution
+            .iter()
+            .any(|(kind, count)| kind == "decorator_indirection" && *count == 1)
+    );
+    assert!(
+        quality
+            .unsupported_limitation_distribution
+            .iter()
+            .any(|(kind, count)| kind == "dynamic_route_registration" && *count == 1)
+    );
+}
+
+#[test]
+fn dogfood_python_quality_ratio_json_marks_review_and_not_measured() {
+    let mut body = String::new();
+    dogfood_push_python_quality_ratio_json(&mut body, "empty", 0, 0, true, "no cases");
+    dogfood_push_python_quality_ratio_json(&mut body, "higher_pass", 2, 2, true, "all good");
+    dogfood_push_python_quality_ratio_json(&mut body, "higher_review", 1, 2, true, "missing");
+    dogfood_push_python_quality_ratio_json(&mut body, "lower_pass", 0, 2, false, "none");
+    dogfood_push_python_quality_ratio_json(&mut body, "lower_review", 1, 2, false, "noisy");
+
+    assert!(body.contains("\"empty\": { \"status\": \"not_measured\""));
+    assert!(body.contains("\"higher_pass\": { \"status\": \"pass\""));
+    assert!(body.contains("\"higher_review\": { \"status\": \"review\""));
+    assert!(body.contains("\"lower_pass\": { \"status\": \"pass\""));
+    assert!(body.contains("\"lower_review\": { \"status\": \"review\""));
+}
+
+#[test]
+fn dogfood_python_static_limit_eval_rejects_actionable_overclaiming() {
+    let mut scenario = valid_python_static_limit_eval_scenario();
+    scenario.repair_card_present = true;
+    scenario.agent_packet_present = true;
+    scenario.verify_result = "pass".to_string();
+    scenario.receipt_result = "pass".to_string();
+    scenario.gap_movement = "closed".to_string();
+    scenario.stop_reasons.clear();
+    scenario.claim_boundary.clear();
+
+    let report = dogfood_python_static_limit_eval_run(&scenario)
+        .errors
+        .join("\n");
+
+    assert!(report.contains("static-limit evals must not emit repair cards"));
+    assert!(report.contains("static-limit evals must not emit agent packets"));
+    assert!(report.contains("verify_result=not_applicable"));
+    assert!(report.contains("receipt_result=not_applicable"));
+    assert!(report.contains("gap_movement=no_receipt"));
+    assert!(report.contains("stop_reasons must include the static-limit stop reason"));
+    assert!(report.contains("claim_boundary must include No repair packet emitted"));
+}
+
+#[test]
+fn dogfood_python_static_limit_eval_accepts_generated_file_exclusion() {
+    let mut scenario = valid_python_static_limit_eval_scenario();
+    scenario.name = "generated_file_no_packet_eval".to_string();
+    scenario.repo_shape = "generated_python_file".to_string();
+    scenario.source_ref = "target/ripr/python-real-repo-evals/generated-file-limit".to_string();
+    scenario.command = "ripr check --root target/ripr/python-real-repo-evals/generated-file-limit --base HEAD~1 --format json".to_string();
+    scenario.runtime_ms = 4513;
+    scenario.finding_id = "excluded:src/schema_pb2.py:generated_file".to_string();
+    scenario.changed_owner = "python:src/schema_pb2.py::<generated>".to_string();
+    scenario.static_limit_kind = "generated_file".to_string();
+    scenario.classification = "excluded".to_string();
+    scenario.stop_reasons = vec!["generated_file_excluded".to_string()];
+    scenario.related_test_file = "tests/test_schema.py".to_string();
+    scenario.related_test_name = "test_status_generated_value".to_string();
+    scenario.why_not_actionable = "static limit generated_file prevents bounded repair routing because the changed file is detectable generated Python code".to_string();
+    scenario.limitation_notes = "generated Python diffs stay out of repair-card, packet, verify, and receipt success metrics".to_string();
+    scenario.reason = "generated-file exclusion dogfood records an honest no-action result instead of a repair card".to_string();
+
+    let report = dogfood_python_static_limit_eval_run(&scenario)
+        .errors
+        .join("\n");
+
+    assert!(report.is_empty(), "{report}");
+}
+
+#[test]
+fn dogfood_python_no_action_eval_accepts_no_related_test() {
+    let report = dogfood_python_no_action_eval_run(&valid_python_no_action_eval_scenario())
+        .errors
+        .join("\n");
+
+    assert!(report.is_empty(), "{report}");
+}
+
+#[test]
+fn dogfood_python_no_action_eval_accepts_already_observed() {
+    let report =
+        dogfood_python_no_action_eval_run(&valid_python_already_observed_no_action_eval_scenario())
+            .errors
+            .join("\n");
+
+    assert!(report.is_empty(), "{report}");
+}
+
+#[test]
+fn dogfood_python_no_action_eval_rejects_actionable_overclaiming() {
+    let mut scenario = valid_python_no_action_eval_scenario();
+    scenario.repair_card_present = true;
+    scenario.agent_packet_present = true;
+    scenario.verify_result = "pass".to_string();
+    scenario.receipt_result = "pass".to_string();
+    scenario.gap_movement = "closed".to_string();
+    scenario.stop_reasons.clear();
+    scenario.claim_boundary.clear();
+
+    let report = dogfo
+... 764454 bytes omitted ...
+ .any(|action| action["kind"] == "fix_raw_evidence_refs")
+    }));
+    let markdown = ripr_swarm_readiness_markdown(&report);
+    assert!(markdown.contains("missing_raw_evidence_refs"));
+    assert!(markdown.contains("packet:stale-missing-raw-evidence"));
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_readiness_reconstructs_field_blockers_from_projection_exclusions()
+-> Result<(), String> {
+    let cases = [
+        (
+            "missing_canonical_gap_id",
+            "fix_canonical_gap_identity",
+            "packet:stale-missing-canonical-gap-id",
+            "gap:stale-missing-canonical-gap-id",
+        ),
+        (
+            "not_actionable_gap_state",
+            "inspect_non_actionable_gap_state",
+            "packet:stale-not-actionable-gap-state",
+            "gap:stale-not-actionable-gap-state",
+        ),
+        (
+            "missing_verify_command",
+            "fix_verify_command_source",
+            "packet:stale-missing-verify-command",
+            "gap:stale-missing-verify-command",
+        ),
+        (
+            "missing_receipt_command",
+            "fix_receipt_command_source",
+            "packet:stale-missing-receipt-command",
+            "gap:stale-missing-receipt-command",
+        ),
+        (
+            "missing_repair_kind",
+            "fix_repair_kind_source",
+            "packet:stale-missing-repair-kind",
+            "gap:stale-missing-repair-kind",
+        ),
+        (
+            "missing_repair_route",
+            "fix_repair_route_source",
+            "packet:stale-missing-repair-route",
+            "gap:stale-missing-repair-route",
+        ),
+        (
+            "missing_target_test_shape",
+            "fix_target_test_shape",
+            "packet:stale-missing-target-test-shape",
+            "gap:stale-missing-target-test-shape",
+        ),
+        (
+            "missing_must_not_change",
+            "fix_must_not_change_boundaries",
+            "packet:stale-missing-must-not-change",
+            "gap:stale-missing-must-not-change",
+        ),
+        (
+            "missing_allowed_edit_surface",
+            "fix_allowed_edit_surface",
+            "packet:stale-missing-edit-surface",
+            "gap:stale-missing-edit-surface",
+        ),
+        (
+            "missing_confidence",
+            "fix_confidence_basis",
+            "packet:stale-missing-confidence",
+            "gap:stale-missing-confidence",
+        ),
+        (
+            "missing_raw_evidence_refs",
+            "fix_raw_evidence_refs",
+            "packet:stale-missing-raw-evidence-refs",
+            "gap:stale-missing-raw-evidence-refs",
+        ),
+        (
+            "missing_related_test_or_observer",
+            "fix_related_test_or_observer",
+            "packet:stale-missing-related-context",
+            "gap:stale-missing-related-context",
+        ),
+    ];
+    let top_blocked_packets = cases
+        .iter()
+        .map(|(state, _action, packet_id, canonical_gap_id)| {
+            serde_json::json!({
+                "packet_id": packet_id,
+                "canonical_gap_id": canonical_gap_id,
+                "evidence_class": "error_path",
+                "repair_kind": "add_exact_error_variant",
+                "swarm_state": "blocked_by_public_projection_exclusion",
+                "missing_context": [],
+                "projection_exclusion_reasons": [state],
+                "blocked_reasons": [
+                    "public_projection_excluded"
+                ]
+            })
+        })
+        .collect::<Vec<_>>();
+    let swarm_plan = serde_json::json!({
+        "report": "swarm-plan",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "source_summary": {
+            "actionable_gaps": cases.len(),
+            "public_projection_eligible_packets": 0
+        },
+        "summary": {
+            "swarm_ready_packets": 0,
+            "blocked_packets": cases.len(),
+            "blocked_by_public_projection_exclusion_packets": cases.len(),
+            "public_projection_excluded_packets": cases.len()
+        },
+        "top_ready_packets": [],
+        "top_blocked_packets": top_blocked_packets
+    });
+    let outcomes = serde_json::json!({
+        "report": "actionable-gap-outcomes",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "summary": {
+            "outcomes_total": 0,
+            "not_attempted": 0
+        }
+    });
+    let attempt_ledger = serde_json::json!({
+        "report": "swarm-attempt-ledger",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "summary": {
+            "attempts_total": 0,
+            "not_attempted": 0
+        },
+        "attempts": []
+    });
+    let report = ripr_swarm_readiness_from_values(
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&attempt_ledger),
+        },
+    );
+
+    let json = ripr_swarm_readiness_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    let routes = value["blocked_state_routes"]
+        .as_array()
+        .ok_or("blocked_state_routes must be an array")?;
+    let actions = value["next_actions"]
+        .as_array()
+        .ok_or("next_actions must be an array")?;
+    for (state, action, packet_id, canonical_gap_id) in cases {
+        assert_eq!(
+            value["summary"][state],
+            serde_json::Value::from(1),
+            "summary count for {state}"
+        );
+        assert!(
+            actions.iter().any(|candidate| candidate["kind"] == action),
+            "missing next action {action} for {state}"
+        );
+        let route = routes
+            .iter()
+            .find(|route| route["state"] == state)
+            .ok_or_else(|| format!("missing blocked-state route for {state}"))?;
+        assert_eq!(route["count"], serde_json::Value::from(1));
+        assert_eq!(
+            route["example_packet_id"],
+            serde_json::Value::from(packet_id)
+        );
+        assert_eq!(
+            route["example_canonical_gap_id"],
+            serde_json::Value::from(canonical_gap_id)
+        );
+    }
+
+    let markdown = ripr_swarm_readiness_markdown(&report);
+    assert!(markdown.contains("missing_target_test_shape"));
+    assert!(markdown.contains("packet:stale-missing-target-test-shape"));
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_readiness_rejects_invalid_args() {
+    for (args, expected) in [
+        (
+            vec!["readiness".to_string(), "--swarm-plan".to_string()],
+            "ripr-swarm readiness --swarm-plan requires a path",
+        ),
+        (
+            vec![
+                "readiness".to_string(),
+                "--actionable-gap-outcomes".to_string(),
+            ],
+            "ripr-swarm readiness --actionable-gap-outcomes requires a path",
+        ),
+        (
+            vec!["readiness".to_string(), "--unknown".to_string()],
+            "unknown ripr-swarm readiness argument",
+        ),
+        (vec!["ready".to_string()], "unknown ripr-swarm subcommand"),
+    ] {
+        let error = parse_ripr_swarm_args(&args).expect_err("readiness args should fail");
+        assert!(
+            error.contains(expected),
+            "expected {expected:?} in {error:?}"
+        );
+    }
+}
+
+#[test]
+fn ripr_swarm_readiness_reports_read_missing_and_malformed_inputs() -> Result<(), String> {
+    let dir = badge_endpoint_tempdir("readiness-inputs")?;
+    let good = dir.join("good.json");
+    let malformed = dir.join("malformed.json");
+    let missing = dir.join("missing.json");
+    std::fs::write(&good, "{\"report\":\"swarm-plan\"}\n").map_err(|err| err.to_string())?;
+    std::fs::write(&malformed, "{").map_err(|err| err.to_string())?;
+
+    let (state, limitation, value) = ripr_swarm_read_optional_json(&good);
+    assert_eq!(state, "read");
+    assert!(limitation.is_none());
+    assert!(value.is_some());
+
+    let (state, limitation, value) = ripr_swarm_read_optional_json(&missing);
+    assert_eq!(state, "missing");
+    assert!(
+        limitation
+            .as_deref()
+            .unwrap_or_default()
+            .contains("failed to read")
+    );
+    assert!(value.is_none());
+
+    let (state, limitation, value) = ripr_swarm_read_optional_json(&malformed);
+    assert_eq!(state, "malformed");
+    assert!(
+        limitation
+            .as_deref()
+            .unwrap_or_default()
+            .contains("failed to parse")
+    );
+    assert!(value.is_none());
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_readiness_blocks_without_plan_but_keeps_outcome_context() -> Result<(), String> {
+    let outcomes = serde_json::json!({
+        "report": "actionable-gap-outcomes",
+        "summary": {
+            "outcomes_total": 8,
+            "not_attempted": 5,
+            "evidence_improved": 1,
+            "evidence_unchanged": 1,
+            "evidence_regressed": 1,
+            "resolved": 1,
+            "orphaned_receipts": 2
+        }
+    });
+    let attempt_ledger = serde_json::json!({
+        "report": "swarm-attempt-ledger",
+        "summary": {
+            "attempts_total": 8,
+            "not_attempted": 5,
+            "evidence_improved": 1,
+            "evidence_unchanged": 1,
+            "evidence_regressed": 1,
+            "resolved": 1,
+            "orphaned_receipts": 2
+        }
+    });
+    let report = ripr_swarm_readiness_from_values(
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "missing".to_string(),
+            limitation: Some("failed to read swarm plan".to_string()),
+            value: None,
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&attempt_ledger),
+        },
+    );
+
+    assert_eq!(report.status, "blocked");
+    assert_eq!(report.swarm_plan_state, "missing");
+    assert_eq!(report.summary.actionable_gaps_total, 0);
+    assert_eq!(report.summary.attempted_packets, 3);
+    assert_eq!(report.summary.improved_packets, 1);
+    assert_eq!(report.summary.unchanged_packets, 1);
+    assert_eq!(report.summary.regressed_packets, 1);
+    assert_eq!(report.summary.orphaned_receipts, 2);
+
+    let json = ripr_swarm_readiness_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(value["status"], "blocked");
+    assert_eq!(value["run_status"], "limited_incomplete_input");
+    assert_eq!(
+        value["runtime_status"]["limitation_category"],
+        "swarm_plan_input_unavailable"
+    );
+    assert_eq!(value["runtime_status"]["downstream_consumable"], false);
+    assert_eq!(value["inputs"]["swarm_plan"]["state"], "missing");
+    assert_eq!(
+        value["summary"]["attempted_packets"],
+        serde_json::Value::from(3)
+    );
+    assert_eq!(
+        value["next_actions"][0]["kind"],
+        serde_json::Value::from("refresh_swarm_plan")
+    );
+    assert_eq!(
+        value["next_actions"][1]["kind"],
+        serde_json::Value::from("reconcile_orphaned_receipts")
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_readiness_preserves_limited_attempt_ledger_runtime_status() -> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "report": "swarm-plan",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "summary": {
+            "swarm_ready_packets": 1
+        },
+        "top_ready_packets": [
+            {
+                "packet_id": "ready-boundary-001",
+                "canonical_gap_id": "gap:ready-boundary-001",
+                "evidence_class": "boundary_discriminator",
+                "repair_kind": "add_boundary_assertion"
+            }
+        ]
+    });
+    let outcomes = serde_json::json!({
+        "report": "actionable-gap-outcomes",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "summary": {
+            "outcomes_total": 1,
+            "not_attempted": 1,
+            "evidence_improved": 0,
+            "evidence_unchanged": 0,
+            "evidence_regressed": 0,
+            "resolved": 0,
+            "orphaned_receipts": 0
+        }
+    });
+    let attempt_ledger = serde_json::json!({
+        "report": "swarm-attempt-ledger",
+        "run_status": "limited_incomplete_input",
+        "runtime_status": {
+            "state": "limited_incomplete_input",
+            "phase": null,
+            "input_kind": "swarm-attempt-ledger",
+            "input_path": null,
+            "limitation_category": "actionable_gap_outcomes_input_unavailable",
+            "repair_route": "run cargo xtask actionable-gap-outcomes before building the attempt ledger",
+            "downstream_consumable": false
+        },
+        "summary": {
+            "attempts_total": 0,
+            "not_attempted": 0,
+            "evidence_improved": 0,
+            "evidence_unchanged": 0,
+            "evidence_regressed": 0,
+            "resolved": 0,
+            "orphaned_receipts": 0
+        }
+    });
+
+    let report = ripr_swarm_readiness_from_values(
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&attempt_ledger),
+        },
+    );
+
+    let value: serde_json::Value = serde_json::from_str(&ripr_swarm_readiness_json(&report)?)
+        .map_err(|err| err.to_string())?;
+    assert_eq!(value["status"], "blocked");
+    assert_eq!(value["run_status"], "limited_incomplete_input");
+    assert_eq!(
+        value["runtime_status"]["phase"],
+        "swarm_attempt_ledger_input"
+    );
+    assert_eq!(
+        value["runtime_status"]["input_path"],
+        "target/ripr/reports/swarm-attempt-ledger.json"
+    );
+    assert_eq!(
+        value["runtime_status"]["repair_route"],
+        "run cargo xtask actionable-gap-outcomes before building the attempt ledger"
+    );
+    assert_eq!(value["runtime_status"]["downstream_consumable"], false);
+    let markdown = ripr_swarm_readiness_markdown(&report);
+    assert!(markdown.contains("## Runtime Status"));
+    assert!(markdown.contains("| State | `limited_incomplete_input` |"));
+    assert!(markdown.contains("| Phase | `swarm_attempt_ledger_input` |"));
+    assert!(markdown.contains("| Input path | `target/ripr/reports/swarm-attempt-ledger.json` |"));
+    assert!(markdown.contains(
+            "| Repair route | run cargo xtask actionable-gap-outcomes before building the attempt ledger |"
+        ));
+    assert!(markdown.contains("| Downstream consumable | `false` |"));
+    assert_eq!(
+        value["top_next_action"]["kind"],
+        "resolve_limited_runtime_status"
+    );
+    assert_eq!(
+        value["top_next_action"]["command"],
+        "cargo xtask actionable-gap-outcomes"
+    );
+    assert!(value["top_next_action"]["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("repair route: run cargo xtask actionable-gap-outcomes before building the attempt ledger")));
+    assert!(!value["next_actions"].as_array().is_some_and(|actions| {
+        actions
+            .iter()
+            .any(|action| action["kind"] == "attempt_ready_packet")
+    }));
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_readiness_counts_latest_attempt_per_canonical_gap() -> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "report": "swarm-plan",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "summary": {
+            "swarm_ready_packets": 2
+        }
+    });
+    let outcomes = serde_json::json!({
+        "report": "actionable-gap-outcomes",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "summary": {
+            "outcomes_total": 2,
+            "not_attempted": 1,
+            "evidence_improved": 1,
+            "evidence_unchanged": 0,
+            "evidence_regressed": 0,
+            "resolved": 0,
+            "orphaned_receipts": 0
+        }
+    });
+    let attempt_ledger = serde_json::json!({
+        "report": "swarm-attempt-ledger",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "attempts": [
+            {
+                "packet_id": "packet-001",
+                "canonical_gap_id": "gap-001",
+                "attempt_id": "attempt:gap-001:evidence-unchanged:older",
+                "actor_kind": "agent",
+                "verify_command": "cargo test -p ripr gap_001",
+                "verify_result": "passed",
+                "receipt_command": "cargo xtask receipts write --packet packet-001",
+                "outcome": "evidence_unchanged",
+                "timestamp": "unix_ms:1000",
+                "receipt_state": "present"
+            },
+            {
+                "packet_id": "packet-001",
+                "canonical_gap_id": "gap-001",
+                "attempt_id": "attempt:gap-001:evidence-improved:newer",
+                "actor_kind": "agent",
+                "verify_command": "cargo test -p ripr gap_001",
+                "verify_result": "passed",
+                "receipt_command": "cargo xtask receipts write --packet packet-001",
+                "outcome": "evidence_improved",
+                "timestamp": "unix_ms:2000",
+                "receipt_state": "present"
+            },
+            {
+                "packet_id": "packet-002",
+                "canonical_gap_id": "gap-002",
+                "attempt_id": "attempt:gap-002:not-attempted",
+                "actor_kind": "none",
+                "verify_command": "cargo test -p ripr gap_002",
+                "outcome": "not_attempted",
+                "timestamp": "unix_ms:1500",
+                "receipt_state": "not_applicable"
+            }
+        ]
+    });
+
+    let report = ripr_swarm_readiness_from_values(
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&attempt_ledger),
+        },
+    );
+
+    let value: serde_json::Value = serde_json::from_str(&ripr_swarm_readiness_json(&report)?)
+        .map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["summary"]["attempted_packets"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["summary"]["improved_packets"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["summary"]["unchanged_packets"],
+        serde_json::Value::from(0)
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_readiness_routes_missing_attempt_receipt_before_verify_result() -> Result<(), String>
+{
+    let swarm_plan = serde_json::json!({
+        "report": "swarm-plan",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "summary": {
+            "swarm_ready_packets": 1
+        }
+    });
+    let outcomes = serde_json::json!({
+        "report": "actionable-gap-outcomes",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "summary": {
+            "outcomes_total": 1,
+            "not_attempted": 0,
+            "attempted_no_receipt": 1,
+            "evidence_improved": 0,
+            "evidence_unchanged": 0,
+            "evidence_regressed": 0,
+            "resolved": 0,
+            "orphaned_receipts": 0
+        }
+    });
+    let attempt_ledger = serde_json::json!({
+        "report": "swarm-attempt-ledger",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "attempts": [
+            {
+                "packet_id": "packet-001",
+                "canonical_gap_id": "gap-001",
+                "attempt_id": "attempt:gap-001:attempted-no-receipt",
+                "actor_kind": "agent",
+                "verify_command": "cargo test -p ripr gap_001",
+                "receipt_command": "cargo xtask receipts write --packet packet-001",
+                "outcome": "attempted_no_receipt",
+                "timestamp": "unix_ms:1000",
+                "receipt_state": "missing"
+            }
+        ]
+    });
+
+    let report = ripr_swarm_readiness_from_values(
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&attempt_ledger),
+        },
+    );
+
+    let value: serde_json::Value = serde_json::from_str(&ripr_swarm_readiness_json(&report)?)
+        .map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["summary"]["attempted_no_receipt_packets"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["summary"]["missing_verify_result"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["top_next_action"]["kind"],
+        serde_json::Value::from("collect_missing_attempt_receipts")
+    );
+    assert_eq!(
+        value["next_actions"][1]["kind"],
+        serde_json::Value::from("inspect_missing_verify_results")
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_readiness_routes_timeout_receipts_to_bounded_verify_backlog() -> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "report": "swarm-plan",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "summary": {
+            "swarm_ready_packets": 2
+        }
+    });
+    let outcomes = serde_json::json!({
+        "report": "actionable-gap-outcomes",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "summary": {
+            "outcomes_total": 2,
+            "not_attempted": 0,
+            "attempted_no_receipt": 2,
+            "evidence_improved": 0,
+            "evidence_unchanged": 0,
+            "evidence_regressed": 0,
+            "resolved": 0,
+            "orphaned_receipts": 0
+        }
+    });
+    let attempt_ledger = serde_json::json!({
+        "report": "swarm-attempt-ledger",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "attempts": [
+            {
+                "packet_id": "packet-timeout",
+                "canonical_gap_id": "gap:timeout",
+                "attempt_id": "attempt:gap-timeout:attempted-no-receipt",
+                "repair_kind": "add_call_observer",
+                "actor_kind": "agent",
+                "verify_command": "cargo xtask lane1-evidence-audit",
+                "verify_result": "timed_out",
+                "receipt_command": "cargo xtask receipts write --packet packet-timeout",
+                "missing_receipt_reason": "repo exposure verify timed out before receipt capture",
+                "outcome": "attempted_no_receipt",
+                "timestamp": "unix_ms:1000",
+                "receipt_state": "missing"
+            },
+            {
+                "packet_id": "packet-missing-receipt",
+                "canonical_gap_id": "gap:missing-receipt",
+                "attempt_id": "attempt:gap-missing-receipt:attempted-no-receipt",
+                "repair_kind": "add_output_observer",
+                "actor_kind": "agent",
+                "verify_command": "cargo test -p ripr output_observer",
+                "verify_result": "pass",
+                "receipt_command": "cargo xtask receipts write --packet packet-missing-receipt",
+                "missing_receipt_reason": "receipt command reported required local receipts were absent",
+                "outcome": "attempted_no_receipt",
+                "timestamp": "unix_ms:1001",
+                "receipt_state": "missing"
+            }
+        ]
+    });
+
+    let report = ripr_swarm_readiness_from_values(
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&attempt_ledger),
+        },
+    );
+
+    let value: serde_json::Value = serde_json::from_str(&ripr_swarm_readiness_json(&report)?)
+        .map_err(|err| err.to_string())?;
+    let actions = value["next_actions"]
+        .as_array()
+        .ok_or("next_actions must be an array")?;
+    let timeout_action = actions
+        .iter()
+        .find(|action| {
+            action["packet_id"].as_str()
+                == Some("route-quality:add-call-observer:attempted-no-receipt")
+        })
+        .ok_or("missing bounded verify route-quality action")?;
+    assert_eq!(
+        timeout_action["kind"],
+        serde_json::Value::from("improve_repair_route_quality")
+    );
+    assert_eq!(
+        timeout_action["attempt_id"],
+        serde_json::Value::from("attempt:gap-timeout:attempted-no-receipt")
+    );
+    assert_eq!(
+        timeout_action["canonical_gap_id"],
+        serde_json::Value::from("gap:timeout")
+    );
+    assert_eq!(
+        timeout_action["repair_kind"],
+        serde_json::Value::from("add_call_observer")
+    );
+    let timeout_reason = timeout_action["reason"]
+        .as_str()
+        .ok_or("timeout action must include reason")?;
+    assert!(timeout_reason.contains(
+        "report/repair-route-receipt-reliability/bounded-verify-route/add-call-observer"
+    ));
+    assert!(timeout_reason.contains("packet-timeout"));
+
+    let collect_action = actions
+        .iter()
+        .find(|action| action["kind"] == "collect_missing_attempt_receipts")
+        .ok_or("missing ordinary receipt collection action")?;
+    assert_eq!(
+        collect_action["packet_id"],
+        serde_json::Value::from("packet-missing-receipt")
+    );
+    assert_eq!(
+        collect_action["canonical_gap_id"],
+        serde_json::Value::from("gap:missing-receipt")
+    );
+    assert_eq!(
+        collect_action["repair_kind"],
+        serde_json::Value::from("add_output_observer")
+    );
+    assert!(
+        actions.iter().all(|action| {
+            action["kind"] != "collect_missing_attempt_receipts"
+                || action["packet_id"].as_str() != Some("packet-timeout")
+        }),
+        "timeout-backed missing receipts must not route to generic collection"
+    );
+    let markdown = ripr_swarm_readiness_markdown(&report);
+    assert!(markdown.contains("route-quality:add-call-observer:attempted-no-receipt"));
+    assert!(markdown.contains("attempt:gap-timeout:attempted-no-receipt"));
+    assert!(markdown.contains(
+        "report/repair-route-receipt-reliability/bounded-verify-route/add-call-observer"
+    ));
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_readiness_limited_runtime_command_routes_sampled_repo_exposure() {
+    for (category, expected) in [
+        (
+            "lane1_repo_exposure_sampled",
+            Some("cargo xtask lane1-evidence-audit"),
+        ),
+        (
+            "lane1_repo_exposure_incomplete",
+            Some("cargo xtask lane1-evidence-audit"),
+        ),
+        (
+            "lane1_repo_exposure_timeout",
+            Some("cargo xtask lane1-evidence-audit"),
+        ),
+        (
+            "lane1_repo_exposure_runner_error",
+            Some("cargo xtask lane1-evidence-audit"),
+        ),
+        (
+            "lane1_repo_exposure_large_cache_preflight_skip",
+            Some("cargo xtask cache report && cargo xtask cache gc --dry-run"),
+        ),
+        (
+            "lane1_repo_exposure_cache_store_skipped_large_entry",
+            Some("cargo xtask cache report"),
+        ),
+        (
+            "swarm_plan_input_unavailable",
+            Some("cargo xtask ripr-swarm plan --top 10"),
+        ),
+        (
+            "actionable_gap_outcomes_input_unavailable",
+            Some("cargo xtask actionable-gap-outcomes"),
+        ),
+        (
+            "swarm_attempt_ledger_input_unavailable",
+            Some("cargo xtask ripr-swarm attempt-ledger"),
+        ),
+        ("unknown_runtime_limitation", None),
+    ] {
+        let runtime_status = crate::Lane1RuntimeStatus {
+            state: if category == "lane1_repo_exposure_sampled" {
+                "limited_sampled_input"
+            } else {
+                "limited_incomplete_input"
+            }
+            .to_string(),
+            phase: Some("repo_exposure_generation".to_string()),
+            duration_ms: Some(70_604),
+            limit_ms: Some(120_000),
+            input_kind: Some("repo-exposure-json".to_string()),
+            input_path: Some("target/ripr/reports/lane1-evidence-audit.json".to_string()),
+            limitation_category: Some(category.to_string()),
+            repair_route: Some(
+                "use the sampled work queue for the next analyzer narrowing slice".to_string(),
+            ),
+            downstream_consumable: false,
+        };
+
+        assert_eq!(
+            crate::ripr_swarm_readiness_limited_runtime_command(&runtime_status).as_deref(),
+            expected,
+            "unexpected command for {category}"
+        );
+    }
+
+    let runtime_status_without_category = crate::Lane1RuntimeStatus {
+        state: "limited_incomplete_input".to_string(),
+        phase: None,
+        duration_ms: None,
+        limit_ms: None,
+        input_kind: None,
+        input_path: None,
+        limitation_category: None,
+        repair_route: None,
+        downstream_consumable: false,
+    };
+    assert_eq!(
+        crate::ripr_swarm_readiness_limited_runtime_command(&runtime_status_without_category),
+        None
+    );
+}
+
+#[test]
+fn ripr_swarm_readiness_state_classifies_full_limited_stale_blocked() {
+    let mut runtime_status = crate::Lane1RuntimeStatus {
+        state: "full".to_string(),
+        phase: None,
+        duration_ms: None,
+        limit_ms: None,
+        input_kind: None,
+        input_path: None,
+        limitation_category: None,
+        repair_route: None,
+        downstream_consumable: true,
+    };
+    assert_eq!(
+        crate::ripr_swarm_readiness_state("advisory", &runtime_status),
+        "full"
+    );
+
+    runtime_status.state = "limited_timeout".to_string();
+    runtime_status.limitation_category = Some("lane1_repo_exposure_timeout".to_string());
+    runtime_status.downstream_consumable = false;
+    assert_eq!(
+        crate::ripr_swarm_readiness_state("blocked", &runtime_status),
+        "limited"
+    );
+
+    runtime_status.state = "limited_stale_input".to_string();
+    runtime_status.limitation_category = Some("limited_stale_input".to_string());
+    assert_eq!(
+        crate::ripr_swarm_readiness_state("blocked", &runtime_status),
+        "stale"
+    );
+
+    runtime_status.state = "limited_incomplete_input".to_string();
+    runtime_status.limitation_category = Some("swarm_plan_input_unavailable".to_string());
+    assert_eq!(
+        crate::ripr_swarm_readiness_state("blocked", &runtime_status),
+        "blocked"
+    );
+}
+
+#[test]
+fn ripr_swarm_readiness_routes_static_limitation_backlog_when_no_ready_packets()
+-> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "report": "swarm-plan",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "summary": {
+            "swarm_ready_packets": 0,
+            "blocked_packets": 0,
+            "missing_verify_command": 0,
+            "missing_receipt_command": 0,
+            "static_limitation_packets": 0,
+            "high_confidence_packets": 0
+        },
+        "source_summary": {
+            "actionable_gaps": 0,
+            "public_projection_eligible_packets": 0
+        },
+        "static_limitation_backlog": {
+            "source": "lane1-evidence-audit.static_limitations",
+            "top_categories": [
+                {
+                    "category": "activation_owner_call_absent_affinity_only",
+                    "count": 1148,
+                    "repair_route": "analysis/related-test-affinity-owner-call-tracing"
+                }
+            ],
+            "top_repair_routes": [
+                {
+                    "repair_route": "analysis/related-test-affinity-owner-call-tracing",
+                    "count": 1148
+                }
+            ],
+            "limitation_backlog_packets": [
+                {
+                    "packet_id": "limitation:activation-owner-call-absent-affinity-only:related-test-affinity-owner-call-tracing",
+                    "limitation_category": "activation_owner_call_absent_affinity_only",
+                    "limitation_subroute": "import_path_affinity_missing_owner_call",
+                    "repair_route": "analysis/related-test-affinity-owner-call-tracing",
+                    "signal_count": 1148,
+                    "dominant_evidence_class": "call_presence",
+                    "why_not_actionable": "related tests are affinity-ranked but not tied to direct owner calls",
+                    "unlock_condition": "implement related-test owner-call tracing before repair packets are emitted",
+                    "non_claims": [
+                        "not a public repair packet",
+                        "not swarm-ready work",
+                        "do not edit tests from this backlog item alone"
+                    ],
+                    "sample_canonical_gap_ids": [
+                        "gap:affinity-owner-call"
+                    ],
+                    "sample_sources": [
+                        {
+                            "canonical_gap_id": "gap:affinity-owner-call",
+                            "source_file": "src/lib.rs",
+                            "evidence_class": "call_presence",
+                            "line": 42,
+                            "expression": "target.call()",
+                            "limitation_reason": "source sample still lacks direct owner-call proof"
+                        }
+                    ]
+                }
+            ]
+        },
+        "top_ready_packets": []
+    });
+    let outcomes = serde_json::json!({
+        "report": "actionable-gap-outcomes",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "summary": {
+            "outcomes_total": 0,
+            "not_attempted": 0,
+            "orphaned_receipts": 0
+        }
+    });
+    let attempt_ledger = serde_json::json!({
+        "report": "swarm-attempt-ledger",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "summary": {
+            "attempts_total": 0,
+            "canonical_gaps_total": 0,
+            "not_attempted": 0,
+            "orphaned_receipts": 0
+        },
+        "attempts": []
+    });
+
+    let report = ripr_swarm_readiness_from_values(
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&attempt_ledger),
+        },
+    );
+
+    let value: serde_json::Value = serde_json::from_str(&ripr_swarm_readiness_json(&report)?)
+        .map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["top_next_action"]["kind"],
+        "route_static_limitation_backlog"
+    );
+    assert_eq!(value["summary"]["static_limitation_packets"], 0);
+    assert_eq!(
+        value["summary"]["static_limitation_backlog_packets"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["summary"]["static_limitation_backlog_signals"],
+        serde_json::Value::from(1148)
+    );
+    assert_eq!(
+        value["top_next_action"]["packet_id"],
+        "limitation:activation-owner-call-absent-affinity-only:related-test-affinity-owner-call-tracing"
+    );
+    assert_eq!(
+        value["top_next_action"]["canonical_gap_id"],
+        "gap:affinity-owner-call"
+    );
+    assert_eq!(
+        value["top_next_action"]["command"],
+        "cargo xtask lane1-evidence-audit"
+    );
+    assert!(
+        value["top_next_action"]["reason"].as_str().is_some_and(
+            |reason| reason.contains("analysis/related-test-affinity-owner-call-tracing")
+        )
+    );
+    assert!(
+        value["top_next_action"]["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("import_path_affinity_missing_owner_call"))
+    );
+    assert!(
+            value["top_next_action"]["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains(
+                    "why not actionable: related tests are affinity-ranked but not tied to direct owner calls"
+                ))
+        );
+    assert_eq!(
+        value["static_limitation_backlog"]["top_categories"][0]["category"],
+        "activation_owner_call_absent_affinity_only"
+    );
+    assert_eq!(
+        value["top_limitation_routes"][0]["repair_route"],
+        "analysis/related-test-affinity-owner-call-tracing"
+    );
+    assert_eq!(
+        value["top_limitation_routes"][0]["sample_packet_id"],
+        "limitation:activation-owner-call-absent-affinity-only:related-test-affinity-owner-call-tracing"
+    );
+    assert_eq!(
+        value["top_limitation_routes"][0]["sample_limitation_subroute"],
+        "import_path_affinity_missing_owner_call"
+    );
+    assert_eq!(
+        value["top_limitation_routes"][0]["sample_canonical_gap_ids"][0],
+        "gap:affinity-owner-call"
+    );
+    assert_eq!(
+        value["top_limitation_routes"][0]["sample_sources"][0]["source_file"],
+        "src/lib.rs"
+    );
+    assert_eq!(
+        value["top_limitation_routes"][0]["sample_sources"][0]["canonical_gap_id"],
+        "gap:affinity-owner-call"
+    );
+    assert_eq!(
+        value["top_limitation_routes"][0]["sample_sources"][0]["line"],
+        serde_json::Value::from(42)
+    );
+    assert_eq!(
+        value["top_limitation_routes"][0]["sample_sources"][0]["expression"],
+        "target.call()"
+    );
+    assert_eq!(
+        value["top_limitation_routes"][0]["sample_sources"][0]["limitation_reason"],
+        "source sample still lacks direct owner-call proof"
+    );
+    assert!(
+        value["top_limitation_routes"][0]["non_claims"]
+            .as_array()
+            .is_some_and(|claims| claims
+                .iter()
+                .any(|claim| claim == "not a public repair packet"))
+    );
+    assert!(
+        value["static_limitation_backlog"]["limitation_backlog_packets"][0]
+            .get("public_projection_eligible")
+            .is_none()
+    );
+    assert!(
+        value["static_limitation_backlog"]["limitation_backlog_packets"][0]
+            .get("swarm_ready")
+            .is_none()
+    );
+    assert!(
+        value["top_limitation_routes"][0]
+            .get("public_projection_eligible")
+            .is_none()
+    );
+    assert!(
+        value["top_limitation_routes"][0]
+            .get("swarm_ready")
+            .is_none()
+    );
+    let markdown = ripr_swarm_readiness_markdown(&report);
+    assert!(markdown.contains("## Top Limitation Routes"));
+    assert!(markdown.contains("Why not actionable"));
+    assert!(markdown.contains("route_static_limitation_backlog"));
+    assert!(markdown.contains("analysis/related-test-affinity-owner-call-tracing"));
+    assert!(markdown.contains("src/lib.rs:42"));
+    assert!(markdown.contains("gap:affinity-owner-call"));
+    assert!(markdown.contains("target.call()"));
+    assert!(
+        markdown.contains("related tests are affinity-ranked but not tied to direct owner calls")
+    );
+    assert!(markdown.contains("not a public repair packet"));
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_readiness_surfaces_language_aware_limitation_route_quality() -> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "report": "swarm-plan",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "summary": {
+            "swarm_ready_packets": 0,
+            "blocked_packets": 0,
+            "static_limitation_backlog_packets": 1,
+            "static_limitation_backlog_signals": 7
+        },
+        "source_summary": {
+            "actionable_gaps": 0,
+            "public_projection_eligible_packets": 0
+        },
+        "static_limitation_backlog": {
+            "source": "lane1-evidence-audit.static_limitations",
+            "top_categories": [
+                {
+                    "category": "cross_language_target_unresolved",
+                    "count": 7,
+                    "repair_route": "analysis/cross-language-test-target-inference"
+                }
+            ],
+            "top_repair_routes": [
+                {
+                    "repair_route": "analysis/cross-language-test-target-inference",
+                    "count": 7
+                }
+            ],
+            "limitation_backlog_packets": [
+                {
+                    "packet_id": "limitation:cross-language-target:analysis-cross-language-test-target-inference",
+                    "limitation_category": "cross_language_target_unresolved",
+                    "limitation_subroute": "binding_ffi_target_unresolved",
+                    "repair_route": "analysis/cross-language-test-target-inference",
+                    "signal_count": 7,
+                    "dominant_evidence_class": "call_presence",
+                    "why_not_actionable": "external target placement is unresolved",
+                    "unlock_condition": "add explicit external observer target evidence before suggesting edits",
+                    "non_claims": [
+                        "not a public repair packet",
+                        "not swarm-ready work"
+                    ],
+                    "sample_canonical_gap_ids": ["gap:binding-target"],
+                    "sample_sources": [
+                        {
+                            "canonical_gap_id": "gap:binding-target",
+                            "source_file": "src/binding.rs",
+                            "evidence_class": "call_presence",
+                            "line": 88,
+                            "expression": "exported_binding()",
+                            "limitation_reason": "Rust seam is on a binding surface without Rust-side test context"
+                        }
+                    ]
+                }
+            ]
+        },
+        "top_ready_packets": []
+    });
+    let outcomes = serde_json::json!({
+        "report": "actionable-gap-outcomes",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "summary": {
+            "outcomes_total": 0,
+            "not_attempted": 0,
+            "orphaned_receipts": 0
+        }
+    });
+    let attempt_ledger = serde_json::json!({
+        "report": "swarm-attempt-ledger",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "summary": {
+            "attempts_total": 0,
+            "canonical_gaps_total": 0,
+            "not_attempted": 0,
+            "orphaned_receipts": 0
+        },
+        "attempts": []
+    });
+
+    let report = ripr_swarm_readiness_from_values(
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&attempt_ledger),
+        },
+    );
+
+    let value: serde_json::Value = serde_json::from_str(&ripr_swarm_readiness_json(&report)?)
+        .map_err(|err| err.to_string())?;
+    assert_eq!(value["summary"]["swarm_ready_packets"], 0);
+    assert_eq!(value["summary"]["public_projection_eligible_packets"], 0);
+    assert_eq!(
+        value["limitation_route_quality"][0]["repair_route"],
+        "analysis/cross-language-test-target-inference"
+    );
+    assert_eq!(
+        value["limitation_route_quality"][0]["route_state"],
+        "non_actionable_limitation"
+    );
+    assert_eq!(
+        value["limitation_route_quality"][0]["language_aware_placement"]["status"],
+        "cross_language_target_inference_unresolved"
+    );
+    assert_eq!(
+        value["limitation_route_quality"][0]["language_aware_placement"]["navigation_only_external_target_status"],
+        "requires_explicit_external_observer_target_evidence"
+    );
+    assert_eq!(
+        value["limitation_route_quality"][0]["packet_policy"],
+        "not_public_repair_packet"
+    );
+    assert!(
+        value["limitation_route_quality"][0]
+            .get("public_projection_eligible")
+            .is_none()
+    );
+    assert!(
+        value["limitation_route_quality"][0]
+            .get("swarm_ready")
+            .is_none()
+    );
+    assert!(
+        value["repair_route_quality"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+    );
+    assert!(value["top_next_action"]["kind"] == "route_static_limitation_backlog");
+
+    let markdown = ripr_swarm_readiness_markdown(&report);
+    assert!(markdown.contains("## Limitation Route Quality"));
+    assert!(markdown.contains("analysis/cross-language-test-target-inference"));
+    assert!(markdown.contains("cross_language_target_inference_unresolved"));
+    assert!(markdown.contains("requires_explicit_external_observer_target_evidence"));
+    assert!(markdown.contains("not_public_repair_packet"));
+    assert!(markdown.contains("src/binding.rs:88"));
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_readiness_hardens_legacy_limitation_backlog_packets() -> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "report": "swarm-plan",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "summary": {
+            "swarm_ready_packets": 0,
+            "blocked_packets": 0,
+            "static_limitation_packets": 0
+        },
+        "source_summary": {
+            "actionable_gaps": 0,
+            "public_projection_eligible_packets": 0
+        },
+        "static_limitation_backlog": {
+            "source": "lane1-evidence-audit.static_limitations",
+            "top_repair_routes": [
+                {
+                    "repair_route": "analysis/local-computed-boundary-operand-resolution",
+                    "count": 297
+                }
+            ],
+            "limitation_backlog_packets": [
+                {
+                    "packet_id": "limitation:activation-boundary-input-unresolved:local-computed",
+                    "limitation_category": "activation_boundary_input_unresolved",
+                    "repair_route": "analysis/local-computed-boundary-operand-resolution",
+                    "signal_count": 297,
+                    "sample_canonical_gap_ids": [
+                        "gap:idx-offset-local"
+                    ],
+                    "sample_sources": [
+                        {
+                            "canonical_gap_id": "gap:idx-offset-local",
+                            "source_file": "src/window.rs",
+                            "line": 44,
+                            "expression": "idx >= offset",
+                            "limitation_reason": "local/computed operand cannot be mapped to a safe test input"
+                        }
+                    ]
+                }
+            ]
+        },
+        "top_ready_packets": []
+    });
+    let outcomes = serde_json::json!({
+        "report": "actionable-gap-outcomes",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "summary": {
+            "outcomes_total": 0,
+            "not_attempted": 0,
+            "orphaned_receipts": 0
+        }
+    });
+    let attempt_ledger = serde_json::json!({
+        "report": "swarm-attempt-ledger",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "summary": {
+            "attempts_total": 0,
+            "canonical_gaps_total": 0,
+            "not_attempted": 0,
+            "orphaned_receipts": 0
+        },
+        "attempts": []
+    });
+
+    let report = ripr_swarm_readiness_from_values(
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&attempt_ledger),
+        },
+    );
+
+    let value: serde_json::Value = serde_json::from_str(&ripr_swarm_readiness_json(&report)?)
+        .map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["top_limitation_routes"][0]["dominant_evidence_class"],
+        "unknown"
+    );
+    assert_eq!(
+        value["top_limitation_routes"][0]["why_not_actionable"],
+        "activation inputs cannot yet be mapped to a safe concrete test value"
+    );
+    assert_eq!(
+        value["top_limitation_routes"][0]["unlock_condition"],
+        "implement `analysis/local-computed-boundary-operand-resolution` so local, member-access, iterator, or computed operands can be resolved before candidate values are recommended"
+    );
+    assert_eq!(
+        value["top_limitation_routes"][0]["sample_sources"][0]["evidence_class"],
+        "unknown"
+    );
+    assert!(
+        value["top_limitation_routes"][0]["non_claims"]
+            .as_array()
+            .is_some_and(|claims| claims
+                .iter()
+                .any(|claim| claim == "not a public repair packet"))
+    );
+    assert!(
+        value["top_limitation_routes"][0]["non_claims"]
+            .as_array()
+            .is_some_and(|claims| claims.iter().any(|claim| claim == "not swarm-ready work"))
+    );
+    assert!(
+        value["top_limitation_routes"][0]["non_claims"]
+            .as_array()
+            .is_some_and(|claims| claims
+                .iter()
+                .any(|claim| claim == "do not edit tests from this backlog item alone"))
+    );
+    assert!(
+        value["top_limitation_routes"][0]["non_claims"]
+            .as_array()
+            .is_some_and(|claims| claims
+                .iter()
+                .any(|claim| claim == "do not invent exact boundary candidate values"))
+    );
+    assert!(
+        value["top_limitation_routes"][0]
+            .get("public_projection_eligible")
+            .is_none()
+    );
+    assert!(
+        value["top_limitation_routes"][0]
+            .get("swarm_ready")
+            .is_none()
+    );
+    let markdown = ripr_swarm_readiness_markdown(&report);
+    assert!(markdown.contains("not a public repair packet"));
+    assert!(markdown.contains("not swarm-ready work"));
+    assert!(
+        markdown.contains("activation inputs cannot yet be mapped to a safe concrete test value")
+    );
+    assert!(markdown.contains("src/window.rs:44"));
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_readiness_prioritizes_sampled_static_limitation_backlog() -> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "report": "swarm-plan",
+        "run_status": "limited_sampled_input",
+        "runtime_status": {
+            "state": "limited_sampled_input",
+            "limitation_category": "lane1_repo_exposure_sampled",
+            "repair_route": "use the sampled work queue for the next analyzer narrowing slice",
+            "downstream_consumable": false
+        },
+        "summary": {
+            "swarm_ready_packets": 0,
+            "blocked_packets": 0,
+            "missing_verify_command": 0,
+            "missing_receipt_command": 0,
+            "static_limitation_packets": 0,
+            "high_confidence_packets": 0
+        },
+        "source_summary": {
+            "actionable_gaps": 0,
+            "public_projection_eligible_packets": 0
+        },
+        "static_limitation_backlog": {
+            "source": "lane1-evidence-audit.static_limitations",
+            "top_categories": [
+                {
+                    "category": "activation_owner_call_absent_affinity_only",
+                    "count": 333,
+                    "repair_route": "analysis/related-test-affinity-owner-call-tracing"
+                }
+            ],
+            "top_repair_routes": [
+                {
+                    "repair_route": "analysis/related-test-affinity-owner-call-tracing",
+                    "count": 333
+                }
+            ],
+            "limitation_backlog_packets": [
+                {
+                    "packet_id": "limitation:activation_owner_call_absent_affinity_only:same_test_file_call_presence_function_call_missing_owner_call:analysis-related-test-affinity-owner-call-tracing",
+                    "limitation_category": "activation_owner_call_absent_affinity_only",
+                    "limitation_subroute": "same_test_file_call_presence_function_call_missing_owner_call",
+                    "repair_route": "analysis/related-test-affinity-owner-call-tracing",
+                    "signal_count": 333,
+                    "dominant_evidence_class": "call_presence",
+                    "why_not_actionable": "related-test affinity is not enough to prove the owner is exercised",
+                    "unlock_condition": "implement related-test owner-call tracing before repair packets are emitted",
+                    "non_claims": [
+                        "not a public repair packet",
+                        "not swarm-ready work",
+                        "do not edit tests from this backlog item alone"
+                    ],
+                    "sample_canonical_gap_ids": [
+                        "gap:sampled-affinity-owner-call"
+                    ],
+                    "sample_sources": [
+                        {
+                            "canonical_gap_id": "gap:sampled-affinity-owner-call",
+                            "source_file": "src/lib.rs",
+                            "evidence_class": "call_presence",
+                            "line": 42,
+                            "expression": "target.call()",
+                            "limitation_reason": "related-test affinity is not enough to prove the owner is exercised"
+                        }
+                    ]
+                }
+            ]
+        },
+        "top_ready_packets": []
+    });
+    let outcomes = serde_json::json!({
+        "report": "actionable-gap-outcomes",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "summary": {
+            "outcomes_total": 0,
+            "not_attempted": 0,
+            "orphaned_receipts": 0
+        }
+    });
+    let attempt_ledger = serde_json::json!({
+        "report": "swarm-attempt-ledger",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "summary": {
+            "attempts_total": 0,
+            "canonical_gaps_total": 0,
+            "not_attempted": 0,
+            "orphaned_receipts": 0
+        },
+        "attempts": []
+    });
+
+    let report = ripr_swarm_readiness_from_values(
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&attempt_ledger),
+        },
+    );
+
+    let value: serde_json::Value = serde_json::from_str(&ripr_swarm_readiness_json(&report)?)
+        .map_err(|err| err.to_string())?;
+    assert_eq!(value["status"], "blocked");
+    assert_eq!(value["readiness_state"], "limited");
+    assert_eq!(value["run_status"], "limited_sampled_input");
+    assert_eq!(
+        value["runtime_status"]["limitation_category"],
+        "lane1_repo_exposure_sampled"
+    );
+    assert_eq!(value["runtime_status"]["downstream_consumable"], false);
+    assert_eq!(
+        value["top_next_action"]["kind"],
+        "route_static_limitation_backlog"
+    );
+    assert_eq!(
+        value["top_next_action"]["packet_id"],
+        "limitation:activation_owner_call_absent_affinity_only:same_test_file_call_presence_function_call_missing_owner_call:analysis-related-test-affinity-owner-call-tracing"
+    );
+    assert_eq!(
+        value["top_next_action"]["canonical_gap_id"],
+        "gap:sampled-affinity-owner-call"
+    );
+    assert_eq!(
+        value["next_actions"][1]["kind"],
+        "resolve_limited_runtime_status"
+    );
+    assert!(
+        value["next_actions"][1]["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("limited_sampled_input"))
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_readiness_marks_missing_outcomes_nonconsumable() -> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "report": "swarm-plan",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "summary": {
+            "swarm_ready_packets": 1
+        }
+    });
+    let attempt_ledger = serde_json::json!({
+        "report": "swarm-attempt-ledger",
+        "summary": {
+            "attempts_total": 0
+        }
+    });
+
+    let report = ripr_swarm_readiness_from_values(
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "missing".to_string(),
+            limitation: Some("failed to read actionable gap outcomes".to_string()),
+            value: None,
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&attempt_ledger),
+        },
+    );
+
+    let value: serde_json::Value = serde_json::from_str(&ripr_swarm_readiness_json(&report)?)
+        .map_err(|err| err.to_string())?;
+    assert_eq!(value["status"], "blocked");
+    assert_eq!(value["run_status"], "limited_incomplete_input");
+    assert_eq!(
+        value["runtime_status"]["limitation_category"],
+        "actionable_gap_outcomes_input_unavailable"
+    );
+    assert_eq!(value["runtime_status"]["downstream_consumable"], false);
+    assert_eq!(
+        value["runtime_status"]["repair_route"],
+        "run cargo xtask actionable-gap-outcomes before claiming attempt outcomes"
+    );
+    assert!(value["next_actions"].as_array().is_some_and(|actions| {
+        actions
+            .iter()
+            .any(|action| action["kind"] == "refresh_outcome_report")
+    }));
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_readiness_marks_missing_attempt_ledger_nonconsumable() -> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "report": "swarm-plan",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "summary": {
+            "swarm_ready_packets": 1
+        }
+    });
+    let outcomes = serde_json::json!({
+        "report": "actionable-gap-outcomes",
+        "summary": {
+            "outcomes_total": 8,
+            "not_attempted": 5,
+            "evidence_improved": 1,
+            "evidence_unchanged": 1,
+            "evidence_regressed": 1,
+            "resolved": 1,
+            "orphaned_receipts": 2
+        }
+    });
+
+    let report = ripr_swarm_readiness_from_values(
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "missing".to_string(),
+            limitation: Some("failed to read attempt ledger".to_string()),
+            value: None,
+        },
+    );
+
+    let value: serde_json::Value = serde_json::from_str(&ripr_swarm_readiness_json(&report)?)
+        .map_err(|err| err.to_string())?;
+    assert_eq!(value["status"], "blocked");
+    assert_eq!(value["run_status"], "limited_incomplete_input");
+    assert_eq!(
+        value["runtime_status"]["limitation_category"],
+        "swarm_attempt_ledger_input_unavailable"
+    );
+    assert_eq!(value["runtime_status"]["downstream_consumable"], false);
+    assert_eq!(
+        value["runtime_status"]["repair_route"],
+        "run cargo xtask ripr-swarm attempt-ledger before claiming durable attempt history"
+    );
+    let markdown = ripr_swarm_readiness_markdown(&report);
+    assert!(markdown.contains(
+            "| attempt ledger | `missing` | `target/ripr/reports/swarm-attempt-ledger.json` | failed to read attempt ledger |"
+        ));
+    assert_eq!(
+        value["summary"]["attempted_packets"],
+        serde_json::Value::from(3)
+    );
+    assert_eq!(
+        value["summary"]["improved_packets"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["summary"]["unchanged_packets"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["summary"]["regressed_packets"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["summary"]["resolved_packets"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["summary"]["orphaned_receipts"],
+        serde_json::Value::from(2)
+    );
+    assert!(value["next_actions"].as_array().is_some_and(|actions| {
+        actions
+            .iter()
+            .any(|action| action["kind"] == "refresh_attempt_ledger")
+    }));
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_readiness_summary_accepts_actionable_gap_total_fallback() {
+    let swarm_plan = serde_json::json!({
+        "source_summary": {
+            "actionable_gaps_total": 184,
+            "public_projection_eligible_packets": 12
+        },
+        "summary": {
+            "swarm_ready_packets": 7,
+            "blocked_packets": 5,
+            "missing_verify_command": 1,
+            "missing_receipt_command": 2,
+            "static_limitation_packets": 3,
+            "high_confidence_packets": 4
+        }
+    });
+
+    let summary = ripr_swarm_readiness_summary(Some(&swarm_plan), None, None);
+    assert_eq!(summary.actionable_gaps_total, 184);
+    assert_eq!(summary.public_projection_eligible_packets, 12);
+    assert_eq!(summary.swarm_ready_packets, 7);
+    assert_eq!(summary.blocked_packets, 5);
+    assert_eq!(summary.missing_verify_command, 1);
+    assert_eq!(summary.missing_receipt_command, 2);
+    assert_eq!(summary.static_limitation_packets, 3);
+    assert_eq!(summary.high_confidence_packets, 4);
+    assert_eq!(summary.attempted_packets, 0);
+
+    let actions = ripr_swarm_readiness_next_actions(
+        &summary,
+        RiprSwarmReadinessNextActionSources {
+            swarm_plan: Some(&swarm_plan),
+            top_failing_repair_routes: &[],
+            top_missing_evidence_fields: &[],
+            top_limitation_routes: &[],
+            static_limitation_backlog: &Value::Null,
+        },
+        [
+            &RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-plan.json".to_string(),
+                state: "read".to_string(),
+                limitation: None,
+                value: Some(&swarm_plan),
+            },
+            &RiprSwarmReadinessInput {
+                path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+                state: "missing".to_string(),
+                limitation: Some("failed to read actionable gap outcomes".to_string()),
+                value: None,
+            },
+            &RiprSwarmReadinessInput {
+                path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+                state: "missing".to_string(),
+                limitation: Some("failed to read attempt ledger".to_string()),
+                value: None,
+            },
+        ],
+        &crate::lane1_runtime_status_full(),
+    );
+    assert!(
+        actions
+            .iter()
+            .any(|action| action.kind == "fix_verify_command_source")
+    );
+    assert!(
+        actions
+            .iter()
+            .any(|action| action.kind == "fix_receipt_command_source")
+    );
+    assert!(
+        actions
+            .iter()
+            .any(|action| action.kind == "refresh_outcome_report")
+    );
+}
+
+#[test]
+fn ripr_swarm_attempt_requires_packet_and_dry_run() {
+    for (args, expected) in [
+        (
+            vec!["attempt".to_string(), "--dry-run".to_string()],
+            "requires --packet <id>",
+        ),
+        (
+            vec![
+                "attempt".to_string(),
+                "--packet".to_string(),
+                "gap:ready-boundary".to_string(),
+            ],
+            "requires --dry-run",
+        ),
+        (
+            vec![
+                "attempt".to_string(),
+                "--packet".to_string(),
+                "gap:ready-boundary".to_string(),
+                "--apply".to_string(),
+            ],
+            "unknown ripr-swarm attempt argument",
+        ),
+    ] {
+        let error = parse_ripr_swarm_args(&args).expect_err("attempt args should fail");
+        assert!(
+            error.contains(expected),
+            "expected {expected:?} in {error:?}"
+        );
+    }
+}
+
+#[test]
+fn ripr_swarm_attempt_dry_run_renders_bounded_packet_context() -> Result<(), String> {
+    let actionable_gaps = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "actionable-gaps",
+        "packets": [
+            {
+                "packet_id": "packet:ready-boundary",
+                "canonical_gap_id": "gap:ready-boundary",
+                "evidence_class": "predicate_boundary",
+                "gap_state": "actionable",
+                "actionability": "extend_related_test",
+                "source_file": "src/pricing.rs",
+                "repair_kind": "add_boundary_assertion",
+                "target_test_type": "boundary_discriminator",
+                "assertion_shape": "assert_eq!(discounted_total(threshold), expected)",
+                "repair_route": {
+                    "repair_kind": "add_boundary_assertion",
+                    "target_test_type": "boundary_discriminator",
+                    "assertion_shape": "assert_eq!(discounted_total(threshold), expected)"
+                },
+                "verify_command": "cargo test -p ripr pricing_threshold",
+                "receipt_command": "cargo xtask receipts check",
+                "related_test_or_observer": {
+                    "file": "tests/pricing.rs",
+                    "name": "pricing_threshold"
+                },
+                "confidence_basis": "fixture_backed",
+                "must_not_change": [
+                    "Do not edit production code by default."
+                ],
+                "raw_evidence_refs": [
+                    {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed"}
+                ],
+                "raw_findings": [
+                    {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed"}
+                ],
+                "static_limitations": [],
+                "public_projection_eligible": true
+            }
+        ]
+    });
+
+    let attempt = ripr_swarm_attempt_dry_run_from_actionable_gaps_value(
+        &actionable_gaps,
+        "packet:ready-boundary",
+    )?;
+    assert_eq!(attempt.packet_id, "packet:ready-boundary");
+    assert_eq!(attempt.canonical_gap_id, "gap:ready-boundary");
+    assert_eq!(attempt.swarm_state, "queued");
+    assert_eq!(attempt.repair_kind, "add_boundary_assertion");
+    assert_eq!(
+        attempt.related_test_or_observer,
+        "tests/pricing.rs::pricing_threshold"
+    );
+    assert!(
+        attempt
+            .expected_evidence_movement
+            .contains("-1 actionable canonical gap")
+    );
+
+    let markdown = ripr_swarm_attempt_dry_run_markdown(&attempt);
+    for expected in [
+        "# RIPR Swarm Attempt Dry Run",
+        "## Copy-Ready Operator Packet",
+        "Task:",
+        "Allowed files:",
+        "tests/pricing.rs (bounded repair target)",
+        "Do-not-change boundaries:",
+        "Repair target:",
+        "Stop conditions:",
+        "Required return format:",
+        "`files_changed`: workspace-relative files changed",
+        "gap:ready-boundary",
+        "add_boundary_assertion",
+        "cargo test -p ripr pricing_threshold",
+        "cargo xtask receipts check",
+        "Do not edit production code by default.",
+        "Raw findings are supporting evidence only: 1 finding(s).",
+        "does not edit files, run tests, call providers",
+    ] {
+        assert!(
+            markdown.contains(expected),
+            "expected dry-run markdown to contain {expected:?}:\n{markdown}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_attempt_dry_run_reports_blocked_packet_context() -> Result<(), String> {
+    let actionable_gaps = serde_json::json!({
+        "packets": [
+            {
+                "canonical_gap_id": "gap:static-limit",
+                "evidence_class": "config_or_policy_constant",
+                "gap_state": "actionable",
+                "source_file": "src/config.rs",
+                "repair_kind": "inspect_visibility",
+                "target_test_type": "output_observer",
+                "assertion_shape": "trace config label",
+                "repair_route_source": "canonical_item.repair_route",
+                "verify_command": "cargo xtask evidence-quality-scorecard",
+                "receipt_command_or_path": "cargo xtask receipts check",
+                "related_test_or_observer": {"file": "tests/config.rs", "name": "config"},
+                "confidence_basis": "static_only",
+                "must_not_change": ["Do not edit production code by default."],
+                "raw_evidence_refs": [{"file": "src/config.rs", "line": 3, "kind": "static_unknown"}],
+                "raw_findings": [{"file": "src/config.rs", "line": 3, "kind": "static_unknown"}],
+                "static_limitations": [
+                    {"category": "opaque_helper_call", "repair_route": "add fixture-backed helper tracing"}
+                ]
+            }
+        ]
+    });
+
+    let attempt = ripr_swarm_attempt_dry_run_from_actionable_gaps_value(
+        &actionable_gaps,
+        "gap:static-limit",
+    )?;
+    assert_eq!(attempt.swarm_state, "blocked_by_static_limitation");
+    assert!(
+        attempt
+            .expected_evidence_movement
+            .contains("not repair-ready")
+    );
+    assert_eq!(attempt.static_limitations_count, 1);
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_attempt_dry_run_does_not_turn_candidate_prose_into_allowed_file() -> Result<(), String>
+{
+    let actionable_gaps = serde_json::json!({
+        "packets": [
+            {
+                "packet_id": "packet:candidate-prose",
+                "canonical_gap_id": "gap:candidate-prose",
+                "evidence_class": "predicate_boundary",
+                "gap_state": "actionable",
+                "source_file": "src/pricing.rs",
+                "repair_kind": "add_boundary_assertion",
+                "target_test_type": "boundary_discriminator",
+                "assertion_shape": "assert_eq!(discounted_total(threshold), expected)",
+                "repair_route": {
+                    "repair_kind": "add_boundary_assertion",
+                    "target_test_type": "boundary_discriminator",
+                    "assertion_shape": "assert_eq!(discounted_total(threshold), expected)"
+                },
+                "verify_command": "cargo test -p ripr pricing_threshold",
+                "receipt_command": "cargo xtask receipts check",
+                "candidate_value_or_observer": "input that hits the boundary branch",
+                "confidence_basis": "fixture_backed",
+                "must_not_change": ["Do not edit production code by default."],
+                "raw_evidence_refs": [{"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed"}],
+                "raw_findings": [{"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed"}],
+                "static_limitations": [],
+                "public_projection_eligible": true
+            }
+        ]
+    });
+
+    let attempt = ripr_swarm_attempt_dry_run_from_actionable_gaps_value(
+        &actionable_gaps,
+        "packet:candidate-prose",
+    )?;
+    assert_eq!(attempt.swarm_state, "blocked_by_missing_context");
+    assert_eq!(
+        ripr_swarm_attempt_allowed_file_line(&attempt),
+        "No file edits are authorized while swarm_state is `blocked_by_missing_context`"
+    );
+    assert!(
+        attempt
+            .expected_evidence_movement
+            .contains("missing_related_test_or_observer")
+    );
+
+    let markdown = ripr_swarm_attempt_dry_run_markdown(&attempt);
+    assert!(markdown.contains("blocked_by_missing_context"));
+    assert!(markdown.contains("missing_related_test_or_observer"));
+    assert!(!markdown.contains("input that hits the boundary branch (bounded repair target)"));
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_plan_reports_blocked_input_states() -> Result<(), String> {
+    let report = ripr_swarm_plan_blocked_report(
+        5,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        "missing",
+        "run `cargo xtask lane1-evidence-audit` first".to_string(),
+    );
+
+    assert_eq!(report.status, "blocked");
+    assert_eq!(report.input_state, "missing");
+    assert_eq!(report.top_limit, 5);
+    assert!(report.packets.is_empty());
+
+    let json = ripr_swarm_plan_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(value["status"], "blocked");
+    assert_eq!(value["run_status"], "limited_incomplete_input");
+    assert_eq!(
+        value["runtime_status"]["limitation_category"],
+        "swarm_plan_input_unavailable"
+    );
+    assert_eq!(value["input"]["state"], "missing");
+    assert_eq!(
+        value["summary"]["packets_total"],
+        serde_json::Value::from(0)
+    );
+
+    let markdown = ripr_swarm_plan_markdown(&report);
+    assert!(markdown.contains("run `cargo xtask lane1-evidence-audit` first"));
+    assert!(markdown.contains("No packets in this section."));
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_plan_routes_missing_confidence_basis() -> Result<(), String> {
+    let actionable_gaps = serde_json::json!({
+        "summary": {"actionable_gaps": 1},
+        "packets": [
+            {
+                "packet_id": "packet:missing-confidence",
+                "canonical_gap_id": "gap:missing-confidence",
+                "evidence_class": "predicate_boundary",
+                "gap_state": "actionable",
+                "source_file": "src/lib.rs",
+                "repair_kind": "add_boundary_assertion",
+                "target_test_type": "boundary_discriminator",
+                "assertion_shape": "assert_eq!(value, expected)",
+                "repair_route": {
+                    "repair_kind": "add_boundary_assertion",
+                    "target_test_type": "boundary_discriminator",
+                    "assertion_shape": "assert_eq!(value, expected)"
+                },
+                "verify_command": "cargo test -p ripr missing_confidence",
+                "receipt_command": "cargo xtask receipts check",
+                "related_test_or_observer": {"file": "tests/lib.rs", "name": "missing_confidence"},
+                "confidence_basis": "confidence_basis_unknown",
+                "must_not_change": ["Do not edit production code by default."],
+                "allowed_edit_surface": ["tests/lib.rs"],
+                "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "static_limitations": [],
+                "public_projection_eligible": false,
+                "projection_exclusion_reasons": ["missing_confidence"]
+            }
+        ]
+    });
+
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    let json = ripr_swarm_plan_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["summary"]["missing_confidence"],
+        serde_json::Value::from(1)
+    );
+    let example = value["blocked_state_examples"]
+        .as_array()
+        .and_then(|examples| {
+            examples
+                .iter()
+                .find(|example| example["state"] == "missing_confidence")
+        })
+        .ok_or("missing confidence blocked-state example")?;
+    assert_eq!(
+        example["example_packet_id"],
+        serde_json::Value::from("packet:missing-confidence")
+    );
+    assert_eq!(
+        example["example_canonical_gap_id"],
+        serde_json::Value::from("gap:missing-confidence")
+    );
+    let markdown = ripr_swarm_plan_markdown(&report);
+    assert!(markdown.contains("missing confidence"));
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_plan_accepts_structured_routes_and_candidate_context() -> Result<(), String> {
+    let actionable_gaps = serde_json::json!({
+        "summary": {"actionable_gaps": 1},
+        "packets": [
+            {
+                "canonical_gap_id": "gap:structured",
+                "evidence_class": "predicate_boundary",
+                "gap_state": "actionable",
+                "source_file": "src/lib.rs",
+                "repair_kind": "add_boundary_assertion",
+                "target_test_type": "boundary_discriminator",
+                "assertion_shape": "assert_eq!(value, expected)",
+                "repair_route": {
+                    "repair_kind": "add_boundary_assertion",
+                    "target_test_type": "boundary_discriminator",
+                    "assertion_shape": "assert_eq!(value, expected)"
+                },
+                "verify_command": "cargo test structured",
+                "receipt_command": "cargo xtask receipts check",
+                "candidate_value_or_observer": "tests/lib.rs::structured",
+                "confidence_basis": "calibrated",
+                "must_not_change": ["Do not edit production code by default."],
+                "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "static_limitations": [],
+                "public_projection_eligible": true
+            },
+            {
+                "canonical_gap_id": "gap:report-only",
+                "evidence_class": "static_unknown",
+                "gap_state": "report_only",
+                "source_file": "src/opaque.rs",
+                "repair_kind": "repair_kind_unknown",
+                "target_test_type": "target_test_type_unknown",
+                "assertion_shape": "assertion_shape_unknown",
+                "verify_command": "verify_command_unknown",
+                "receipt_command": "receipt_command_unknown",
+                "confidence_basis": "confidence_basis_unknown",
+                "must_not_change": []
+            }
+        ]
+    });
+
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    let ready = ripr_swarm_plan_ready_packets(&report);
+    assert_eq!(ready.len(), 1);
+    assert_eq!(ready[0].canonical_gap_id, "gap:structured");
+    assert!(ready[0].related_test_or_observer_available);
+    assert!(ripr_swarm_plan_packet_is_high_confidence(&ready[0]));
+
+    let blocked = ripr_swarm_plan_blocked_packets(&report);
+    assert_eq!(blocked.len(), 1);
+    assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+    assert!(
+        blocked[0]
+            .missing_context
+            .iter()
+            .any(|field| field == "actionable_gap_state")
+    );
+    assert!(
+        blocked[0]
+            .missing_context
+            .iter()
+            .any(|field| field == "repair_route")
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_plan_blocks_explicit_projection_exclusion_reasons() -> Result<(), String> {
+    let actionable_gaps = serde_json::json!({
+        "summary": {"actionable_gaps": 1},
+        "packets": [
+            {
+                "canonical_gap_id": "gap:contradictory-projection",
+                "evidence_class": "error_path",
+                "gap_state": "actionable",
+                "source_file": "src/lib.rs",
+                "repair_kind": "add_exact_error_variant",
+                "target_test_type": "error_variant_observer",
+                "assertion_shape": "assert!(matches!(err, Error::Exact))",
+                "repair_route": {
+                    "repair_kind": "add_exact_error_variant",
+                    "target_test_type": "error_variant_observer",
+                    "assertion_shape": "assert!(matches!(err, Error::Exact))"
+                },
+                "verify_command": "cargo test exact_error_variant",
+                "receipt_command": "cargo xtask receipts check",
+                "related_test_or_observer": {
+                    "file": "tests/error.rs",
+                    "name": "exact_error_variant"
+                },
+                "confidence_basis": "fixture_backed",
+                "must_not_change": ["Do not edit production code by default."],
+                "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "static_limitations": [],
+                "public_projection_eligible": true,
+                "projection_exclusion_reasons": ["suppressed_by_public_projection_policy"]
+            }
+        ]
+    });
+
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    let ready = ripr_swarm_plan_ready_packets(&report);
+    assert!(ready.is_empty());
+
+    let blocked = ripr_swarm_plan_blocked_packets(&report);
+    assert_eq!(blocked.len(), 1);
+    assert_eq!(
+        blocked[0].swarm_state,
+        "blocked_by_public_projection_exclusion"
+    );
+    assert_eq!(
+        blocked[0].projection_exclusion_reasons,
+        vec!["suppressed_by_public_projection_policy"]
+    );
+
+    let json = ripr_swarm_plan_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["summary"]["public_projection_excluded_packets"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["summary"]["public_projection_exclusion_reasons"][0]["label"],
+        "suppressed_by_public_projection_policy"
+    );
+    assert_eq!(
+        value["summary"]["public_projection_exclusion_reasons"][0]["count"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["top_blocked_packets"][0]["projection_exclusion_reasons"][0],
+        "suppressed_by_public_projection_policy"
+    );
+    let markdown = ripr_swarm_plan_markdown(&report);
+    assert!(markdown.contains("## Public Projection Exclusion Reasons"));
+    assert!(markdown.contains("suppressed_by_public_projection_policy"));
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_plan_routes_explicit_missing_verify_projection_exclusion() -> Result<(), String> {
+    let actionable_gaps = serde_json::json!({
+        "summary": {"actionable_gaps": 1},
+        "packets": [
+            {
+                "packet_id": "packet:explicit-missing-verify",
+                "canonical_gap_id": "gap:explicit-missing-verify",
+                "evidence_class": "error_path",
+                "gap_state": "actionable",
+                "source_file": "src/lib.rs",
+                "repair_kind": "add_exact_error_variant",
+                "target_test_type": "error_variant_observer",
+                "assertion_shape": "assert!(matches!(err, Error::Exact))",
+                "repair_route": {
+                    "repair_kind": "add_exact_error_variant",
+                    "target_test_type": "error_variant_observer",
+                    "assertion_shape": "assert!(matches!(err, Error::Exact))"
+                },
+                "verify_command": "cargo test stale_verify_command",
+                "receipt_command": "cargo xtask receipts check",
+                "related_test_or_observer": {
+                    "file": "tests/error.rs",
+                    "name": "exact_error_variant"
+                },
+                "confidence_basis": "fixture_backed",
+                "must_not_change": ["Do not edit production code by default."],
+                "allowed_edit_surface": ["tests/error.rs"],
+                "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "static_limitations": [],
+                "public_projection_eligible": true,
+                "projection_exclusion_reasons": ["missing_verify_command"]
+            }
+        ]
+    });
+
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    let ready = ripr_swarm_plan_ready_packets(&report);
+    assert!(ready.is_empty());
+
+    let blocked = ripr_swarm_plan_blocked_packets(&report);
+    assert_eq!(blocked.len(), 1);
+    assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+    assert_eq!(blocked[0].missing_context, vec!["verify_command"]);
+    assert_eq!(
+        blocked[0].projection_exclusion_reasons,
+        vec!["missing_verify_command"]
+    );
+
+    let json = ripr_swarm_plan_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["summary"]["missing_verify_command"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["top_missing_verify_or_receipt"][0]["packet_id"],
+        "packet:explicit-missing-verify"
+    );
+    assert!(
+        value["blocked_state_examples"]
+            .as_array()
+            .is_some_and(|examples| {
+                examples.iter().any(|example| {
+                    example["state"] == "missing_verify_command"
+                        && example["example_packet_id"] == "packet:explicit-missing-verify"
+                })
+            })
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_plan_routes_explicit_missing_receipt_projection_exclusion() -> Result<(), String> {
+    let actionable_gaps = serde_json::json!({
+        "summary": {"actionable_gaps": 1},
+        "packets": [
+            {
+                "packet_id": "packet:explicit-missing-receipt",
+                "canonical_gap_id": "gap:explicit-missing-receipt",
+                "evidence_class": "error_path",
+                "gap_state": "actionable",
+                "source_file": "src/lib.rs",
+                "repair_kind": "add_exact_error_variant",
+                "target_test_type": "error_variant_observer",
+                "assertion_shape": "assert!(matches!(err, Error::Exact))",
+                "repair_route": {
+                    "repair_kind": "add_exact_error_variant",
+                    "target_test_type": "error_variant_observer",
+                    "assertion_shape": "assert!(matches!(err, Error::Exact))"
+                },
+                "verify_command": "cargo test exact_error_variant",
+                "receipt_command": "cargo xtask receipts stale",
+                "related_test_or_observer": {
+                    "file": "tests/error.rs",
+                    "name": "exact_error_variant"
+                },
+                "confidence_basis": "fixture_backed",
+                "must_not_change": ["Do not edit production code by default."],
+                "allowed_edit_surface": ["tests/error.rs"],
+                "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "static_limitations": [],
+                "public_projection_eligible": true,
+                "projection_exclusion_reasons": ["missing_receipt_command"]
+            }
+        ]
+    });
+
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    let ready = ripr_swarm_plan_ready_packets(&report);
+    assert!(ready.is_empty());
+
+    let blocked = ripr_swarm_plan_blocked_packets(&report);
+    assert_eq!(blocked.len(), 1);
+    assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+    assert_eq!(blocked[0].missing_context, vec!["receipt_command"]);
+    assert_eq!(
+        blocked[0].projection_exclusion_reasons,
+        vec!["missing_receipt_command"]
+    );
+
+    let json = ripr_swarm_plan_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["summary"]["missing_receipt_command"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["top_missing_verify_or_receipt"][0]["packet_id"],
+        "packet:explicit-missing-receipt"
+    );
+    assert!(
+        value["blocked_state_examples"]
+            .as_array()
+            .is_some_and(|examples| {
+                examples.iter().any(|example| {
+                    example["state"] == "missing_receipt_command"
+                        && example["example_packet_id"] == "packet:explicit-missing-receipt"
+                })
+            })
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_plan_routes_explicit_missing_must_not_change_projection_exclusion()
+-> Result<(), String> {
+    let actionable_gaps = serde_json::json!({
+        "summary": {"actionable_gaps": 1},
+        "packets": [
+            {
+                "packet_id": "packet:explicit-missing-must-not-change",
+                "canonical_gap_id": "gap:explicit-missing-must-not-change",
+                "evidence_class": "error_path",
+                "gap_state": "actionable",
+                "source_file": "src/lib.rs",
+                "repair_kind": "add_exact_error_variant",
+                "target_test_type": "error_variant_observer",
+                "assertion_shape": "assert!(matches!(err, Error::Exact))",
+                "repair_route": {
+                    "repair_kind": "add_exact_error_variant",
+                    "target_test_type": "error_variant_observer",
+                    "assertion_shape": "assert!(matches!(err, Error::Exact))"
+                },
+                "verify_command": "cargo test exact_error_variant",
+                "receipt_command": "cargo xtask receipts check",
+                "related_test_or_observer": {
+                    "file": "tests/error.rs",
+                    "name": "exact_error_variant"
+                },
+                "confidence_basis": "fixture_backed",
+                "must_not_change": ["stale boundary text"],
+                "allowed_edit_surface": ["tests/error.rs"],
+                "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "static_limitations": [],
+                "public_projection_eligible": true,
+                "projection_exclusion_reasons": ["missing_must_not_change"]
+            }
+        ]
+    });
+
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    let ready = ripr_swarm_plan_ready_packets(&report);
+    assert!(ready.is_empty());
+
+    let blocked = ripr_swarm_plan_blocked_packets(&report);
+    assert_eq!(blocked.len(), 1);
+    assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+    assert_eq!(blocked[0].missing_context, vec!["must_not_change"]);
+    assert_eq!(
+        blocked[0].projection_exclusion_reasons,
+        vec!["missing_must_not_change"]
+    );
+
+    let json = ripr_swarm_plan_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["summary"]["missing_must_not_change"],
+        serde_json::Value::from(1)
+    );
+    assert!(
+        value["blocked_state_examples"]
+            .as_array()
+            .is_some_and(|examples| {
+                examples.iter().any(|example| {
+                    example["state"] == "missing_must_not_change"
+                        && example["example_packet_id"] == "packet:explicit-missing-must-not-change"
+                })
+            })
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_plan_routes_explicit_missing_allowed_edit_surface_projection_exclusion()
+-> Result<(), String> {
+    let actionable_gaps = serde_json::json!({
+        "summary": {"actionable_gaps": 1},
+        "packets": [
+            {
+                "packet_id": "packet:explicit-missing-edit-surface",
+                "canonical_gap_id": "gap:explicit-missing-edit-surface",
+                "evidence_class": "error_path",
+                "gap_state": "actionable",
+                "source_file": "src/lib.rs",
+                "repair_kind": "add_exact_error_variant",
+                "target_test_type": "error_variant_observer",
+                "assertion_shape": "assert!(matches!(err, Error::Exact))",
+                "repair_route": {
+                    "repair_kind": "add_exact_error_variant",
+                    "target_test_type": "error_variant_observer",
+                    "assertion_shape": "assert!(matches!(err, Error::Exact))"
+                },
+                "verify_command": "cargo test exact_error_variant",
+                "receipt_command": "cargo xtask receipts check",
+                "related_test_or_observer": {
+                    "file": "tests/error.rs",
+                    "name": "exact_error_variant"
+                },
+                "confidence_basis": "fixture_backed",
+                "must_not_change": ["Do not edit production code by default."],
+                "allowed_edit_surface": ["tests/error.rs"],
+                "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "static_limitations": [],
+                "public_projection_eligible": true,
+                "projection_exclusion_reasons": ["missing_allowed_edit_surface"]
+            }
+        ]
+    });
+
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    let ready = ripr_swarm_plan_ready_packets(&report);
+    assert!(ready.is_empty());
+
+    let blocked = ripr_swarm_plan_blocked_packets(&report);
+    assert_eq!(blocked.len(), 1);
+    assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+    assert_eq!(blocked[0].missing_context, vec!["allowed_edit_surface"]);
+    assert_eq!(
+        blocked[0].projection_exclusion_reasons,
+        vec!["missing_allowed_edit_surface"]
+    );
+    assert_eq!(blocked[0].allowed_edit_surface_count, 0);
+
+    let json = ripr_swarm_plan_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["summary"]["missing_allowed_edit_surface"],
+        serde_json::Value::from(1)
+    );
+    assert!(
+        value["blocked_state_examples"]
+            .as_array()
+            .is_some_and(|examples| {
+                examples.iter().any(|example| {
+                    example["state"] == "missing_allowed_edit_surface"
+                        && example["example_packet_id"] == "packet:explicit-missing-edit-surface"
+                })
+            })
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_plan_routes_explicit_missing_raw_evidence_refs_projection_exclusion()
+-> Result<(), String> {
+    let actionable_gaps = serde_json::json!({
+        "summary": {"actionable_gaps": 1},
+        "packets": [
+            {
+                "packet_id": "packet:explicit-missing-raw-evidence",
+                "canonical_gap_id": "gap:explicit-missing-raw-evidence",
+                "evidence_class": "error_path",
+                "gap_state": "actionable",
+                "source_file": "src/lib.rs",
+                "repair_kind": "add_exact_error_variant",
+                "target_test_type": "error_variant_observer",
+                "assertion_shape": "assert!(matches!(err, Error::Exact))",
+                "repair_route": {
+                    "repair_kind": "add_exact_error_variant",
+                    "target_test_type": "error_variant_observer",
+                    "assertion_shape": "assert!(matches!(err, Error::Exact))"
+                },
+                "verify_command": "cargo test exact_error_variant",
+                "receipt_command": "cargo xtask receipts check",
+                "related_test_or_observer": {
+                    "file": "tests/error.rs",
+                    "name": "exact_error_variant"
+                },
+                "confidence_basis": "fixture_backed",
+                "must_not_change": ["Do not edit production code by default."],
+                "allowed_edit_surface": ["tests/error.rs"],
+                "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "static_limitations": [],
+                "public_projection_eligible": true,
+                "projection_exclusion_reasons": ["missing_raw_evidence_refs"]
+            }
+        ]
+    });
+
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    let ready = ripr_swarm_plan_ready_packets(&report);
+    assert!(ready.is_empty());
+
+    let blocked = ripr_swarm_plan_blocked_packets(&report);
+    assert_eq!(blocked.len(), 1);
+    assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+    assert_eq!(blocked[0].missing_context, vec!["raw_evidence_refs"]);
+    assert_eq!(
+        blocked[0].projection_exclusion_reasons,
+        vec!["missing_raw_evidence_refs"]
+    );
+
+    let json = ripr_swarm_plan_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["summary"]["missing_raw_evidence_refs"],
+        serde_json::Value::from(1)
+    );
+    assert!(
+        value["blocked_state_examples"]
+            .as_array()
+            .is_some_and(|examples| {
+                examples.iter().any(|example| {
+                    example["state"] == "missing_raw_evidence_refs"
+                        && example["example_packet_id"] == "packet:explicit-missing-raw-evidence"
+                })
+            })
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_plan_routes_explicit_missing_confidence_projection_exclusion() -> Result<(), String> {
+    let actionable_gaps = serde_json::json!({
+        "summary": {"actionable_gaps": 1},
+        "packets": [
+            {
+                "packet_id": "packet:explicit-missing-confidence",
+                "canonical_gap_id": "gap:explicit-missing-confidence",
+                "evidence_class": "error_path",
+                "gap_state": "actionable",
+                "source_file": "src/lib.rs",
+                "repair_kind": "add_exact_error_variant",
+                "target_test_type": "error_variant_observer",
+                "assertion_shape": "assert!(matches!(err, Error::Exact))",
+                "repair_route": {
+                    "repair_kind": "add_exact_error_variant",
+                    "target_test_type": "error_variant_observer",
+                    "assertion_shape": "assert!(matches!(err, Error::Exact))"
+                },
+                "verify_command": "cargo test exact_error_variant",
+                "receipt_command": "cargo xtask receipts check",
+                "related_test_or_observer": {
+                    "file": "tests/error.rs",
+                    "name": "exact_error_variant"
+                },
+                "confidence_basis": "fixture_backed",
+                "must_not_change": ["Do not edit production code by default."],
+                "allowed_edit_surface": ["tests/error.rs"],
+                "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "static_limitations": [],
+                "public_projection_eligible": true,
+                "projection_exclusion_reasons": ["missing_confidence"]
+            }
+        ]
+    });
+
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    let ready = ripr_swarm_plan_ready_packets(&report);
+    assert!(ready.is_empty());
+
+    let blocked = ripr_swarm_plan_blocked_packets(&report);
+    assert_eq!(blocked.len(), 1);
+    assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+    assert_eq!(blocked[0].missing_context, vec!["confidence_basis"]);
+    assert_eq!(
+        blocked[0].projection_exclusion_reasons,
+        vec!["missing_confidence"]
+    );
+
+    let json = ripr_swarm_plan_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["summary"]["missing_confidence"],
+        serde_json::Value::from(1)
+    );
+    assert!(
+        value["blocked_state_examples"]
+            .as_array()
+            .is_some_and(|examples| {
+                examples.iter().any(|example| {
+                    example["state"] == "missing_confidence"
+                        && example["example_packet_id"] == "packet:explicit-missing-confidence"
+                })
+            })
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_plan_routes_explicit_missing_related_context_projection_exclusion()
+-> Result<(), String> {
+    let actionable_gaps = serde_json::json!({
+        "summary": {"actionable_gaps": 1},
+        "packets": [
+            {
+                "packet_id": "packet:explicit-missing-related-context",
+                "canonical_gap_id": "gap:explicit-missing-related-context",
+                "evidence_class": "error_path",
+                "gap_state": "actionable",
+                "source_file": "src/lib.rs",
+                "repair_kind": "add_exact_error_variant",
+                "target_test_type": "error_variant_observer",
+                "assertion_shape": "assert!(matches!(err, Error::Exact))",
+                "repair_route": {
+                    "repair_kind": "add_exact_error_variant",
+                    "target_test_type": "error_variant_observer",
+                    "assertion_shape": "assert!(matches!(err, Error::Exact))"
+                },
+                "verify_command": "cargo test exact_error_variant",
+                "receipt_command": "cargo xtask receipts check",
+                "related_test_or_observer": {
+                    "file": "tests/error.rs",
+                    "name": "stale_exact_error_variant"
+                },
+                "confidence_basis": "fixture_backed",
+                "must_not_change": ["Do not edit production code by default."],
+                "allowed_edit_surface": ["tests/error.rs"],
+                "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "static_limitations": [],
+                "public_projection_eligible": true,
+                "projection_exclusion_reasons": ["missing_related_test_or_observer"]
+            }
+        ]
+    });
+
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    let ready = ripr_swarm_plan_ready_packets(&report);
+    assert!(ready.is_empty());
+
+    let blocked = ripr_swarm_plan_blocked_packets(&report);
+    assert_eq!(blocked.len(), 1);
+    assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+    assert_eq!(blocked[0].missing_context, vec!["related_test_or_observer"]);
+    assert_eq!(
+        blocked[0].projection_exclusion_reasons,
+        vec!["missing_related_test_or_observer"]
+    );
+
+    let json = ripr_swarm_plan_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["summary"]["missing_related_test_or_observer"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["summary"]["related_context_missing"],
+        serde_json::Value::from(1)
+    );
+    assert!(
+        value["blocked_state_examples"]
+            .as_array()
+            .is_some_and(|examples| {
+                examples.iter().any(|example| {
+                    example["state"] == "missing_related_test_or_observer"
+                        && example["example_packet_id"] == "packet:explicit-missing-related-context"
+                })
+            })
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_plan_routes_explicit_not_actionable_gap_state_projection_exclusion()
+-> Result<(), String> {
+    let actionable_gaps = serde_json::json!({
+        "summary": {"actionable_gaps": 1},
+        "packets": [
+            {
+                "packet_id": "packet:explicit-not-actionable-gap-state",
+                "canonical_gap_id": "gap:explicit-not-actionable-gap-state",
+                "evidence_class": "error_path",
+                "gap_state": "actionable",
+                "source_file": "src/lib.rs",
+                "repair_kind": "add_exact_error_variant",
+                "target_test_type": "error_variant_observer",
+                "assertion_shape": "assert!(matches!(err, Error::Exact))",
+                "repair_route": {
+                    "repair_kind": "add_exact_error_variant",
+                    "target_test_type": "error_variant_observer",
+                    "assertion_shape": "assert!(matches!(err, Error::Exact))"
+                },
+                "verify_command": "cargo test exact_error_variant",
+                "receipt_command": "cargo xtask receipts check",
+                "related_test_or_observer": {
+                    "file": "tests/error.rs",
+                    "name": "exact_error_variant"
+                },
+                "confidence_basis": "fixture_backed",
+                "must_not_change": ["Do not edit production code by default."],
+                "allowed_edit_surface": ["tests/error.rs"],
+                "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "static_limitations": [],
+                "public_projection_eligible": true,
+                "projection_exclusion_reasons": ["not_actionable_gap_state"]
+            }
+        ]
+    });
+
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    let ready = ripr_swarm_plan_ready_packets(&report);
+    assert!(ready.is_empty());
+
+    let blocked = ripr_swarm_plan_blocked_packets(&report);
+    assert_eq!(blocked.len(), 1);
+    assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+    assert_eq!(blocked[0].missing_context, vec!["actionable_gap_state"]);
+    assert_eq!(
+        blocked[0].projection_exclusion_reasons,
+        vec!["not_actionable_gap_state"]
+    );
+
+    let json = ripr_swarm_plan_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["summary"]["not_actionable_gap_state"],
+        serde_json::Value::from(1)
+    );
+    assert!(
+        value["blocked_state_examples"]
+            .as_array()
+            .is_some_and(|examples| {
+                examples.iter().any(|example| {
+                    example["state"] == "not_actionable_gap_state"
+                        && example["example_packet_id"]
+                            == "packet:explicit-not-actionable-gap-state"
+                })
+            })
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_plan_routes_explicit_missing_repair_kind_projection_exclusion() -> Result<(), String>
+{
+    let actionable_gaps = serde_json::json!({
+        "summary": {"actionable_gaps": 1},
+        "packets": [
+            {
+                "packet_id": "packet:explicit-missing-repair-kind",
+                "canonical_gap_id": "gap:explicit-missing-repair-kind",
+                "evidence_class": "error_path",
+                "gap_state": "actionable",
+                "source_file": "src/lib.rs",
+                "repair_kind": "add_exact_error_variant",
+                "target_test_type": "error_variant_observer",
+                "assertion_shape": "assert!(matches!(err, Error::Exact))",
+                "repair_route": {
+                    "repair_kind": "add_exact_error_variant",
+                    "target_test_type": "error_variant_observer",
+                    "assertion_shape": "assert!(matches!(err, Error::Exact))"
+                },
+                "verify_command": "cargo test exact_error_variant",
+                "receipt_command": "cargo xtask receipts check",
+                "related_test_or_observer": {
+                    "file": "tests/error.rs",
+                    "name": "exact_error_variant"
+                },
+                "confidence_basis": "fixture_backed",
+                "must_not_change": ["Do not edit production code by default."],
+                "allowed_edit_surface": ["tests/error.rs"],
+                "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "static_limitations": [],
+                "public_projection_eligible": true,
+                "projection_exclusion_reasons": ["missing_repair_kind"]
+            }
+        ]
+    });
+
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    let ready = ripr_swarm_plan_ready_packets(&report);
+    assert!(ready.is_empty());
+
+    let blocked = ripr_swarm_plan_blocked_packets(&report);
+    assert_eq!(blocked.len(), 1);
+    assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+    assert_eq!(blocked[0].missing_context, vec!["repair_kind"]);
+    assert_eq!(
+        blocked[0].projection_exclusion_reasons,
+        vec!["missing_repair_kind"]
+    );
+
+    let json = ripr_swarm_plan_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["summary"]["missing_repair_kind"],
+        serde_json::Value::from(1)
+    );
+    assert!(
+        value["blocked_state_examples"]
+            .as_array()
+            .is_some_and(|examples| {
+                examples.iter().any(|example| {
+                    example["state"] == "missing_repair_kind"
+                        && example["example_packet_id"] == "packet:explicit-missing-repair-kind"
+                })
+            })
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_plan_routes_explicit_missing_repair_route_projection_exclusion() -> Result<(), String>
+{
+    let actionable_gaps = serde_json::json!({
+        "summary": {"actionable_gaps": 1},
+        "packets": [
+            {
+                "packet_id": "packet:explicit-missing-repair-route",
+                "canonical_gap_id": "gap:explicit-missing-repair-route",
+                "evidence_class": "error_path",
+                "gap_state": "actionable",
+                "source_file": "src/lib.rs",
+                "repair_kind": "add_exact_error_variant",
+                "target_test_type": "error_variant_observer",
+                "assertion_shape": "assert!(matches!(err, Error::Exact))",
+                "repair_route": {
+                    "repair_kind": "add_exact_error_variant",
+                    "target_test_type": "error_variant_observer",
+                    "assertion_shape": "assert!(matches!(err, Error::Exact))"
+                },
+                "verify_command": "cargo test exact_error_variant",
+                "receipt_command": "cargo xtask receipts check",
+                "related_test_or_observer": {
+                    "file": "tests/error.rs",
+                    "name": "exact_error_variant"
+                },
+                "confidence_basis": "fixture_backed",
+                "must_not_change": ["Do not edit production code by default."],
+                "allowed_edit_surface": ["tests/error.rs"],
+                "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "static_limitations": [],
+                "public_projection_eligible": true,
+                "projection_exclusion_reasons": ["missing_repair_route"]
+            }
+        ]
+    });
+
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    let ready = ripr_swarm_plan_ready_packets(&report);
+    assert!(ready.is_empty());
+
+    let blocked = ripr_swarm_plan_blocked_packets(&report);
+    assert_eq!(blocked.len(), 1);
+    assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+    assert_eq!(blocked[0].missing_context, vec!["repair_route"]);
+    assert_eq!(
+        blocked[0].projection_exclusion_reasons,
+        vec!["missing_repair_route"]
+    );
+
+    let json = ripr_swarm_plan_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["summary"]["missing_repair_route"],
+        serde_json::Value::from(1)
+    );
+    assert!(
+        value["blocked_state_examples"]
+            .as_array()
+            .is_some_and(|examples| {
+                examples.iter().any(|example| {
+                    example["state"] == "missing_repair_route"
+                        && example["example_packet_id"] == "packet:explicit-missing-repair-route"
+                })
+            })
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_plan_routes_explicit_static_limitation_projection_exclusion() -> Result<(), String> {
+    let actionable_gaps = serde_json::json!({
+        "summary": {"actionable_gaps": 1},
+        "packets": [
+            {
+                "packet_id": "packet:explicit-static-limitation",
+                "canonical_gap_id": "gap:explicit-static-limitation",
+                "evidence_class": "predicate_boundary",
+                "gap_state": "actionable",
+                "source_file": "src/lib.rs",
+                "repair_kind": "add_boundary_assertion",
+                "target_test_type": "boundary_discriminator",
+                "assertion_shape": "assert_eq!(value, expected)",
+                "repair_route": {
+                    "repair_kind": "add_boundary_assertion",
+                    "target_test_type": "boundary_discriminator",
+                    "assertion_shape": "assert_eq!(value, expected)"
+                },
+                "verify_command": "cargo test boundary_discriminator",
+                "receipt_command": "cargo xtask receipts check",
+                "related_test_or_observer": {
+                    "file": "tests/boundary.rs",
+                    "name": "boundary_discriminator"
+                },
+                "confidence_basis": "fixture_backed",
+                "must_not_change": ["Do not edit production code by default."],
+                "allowed_edit_surface": ["tests/boundary.rs"],
+                "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "static_limitations": [],
+                "public_projection_eligible": true,
+                "projection_exclusion_reasons": ["static_limitation_present"]
+            }
+        ]
+    });
+
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    let ready = ripr_swarm_plan_ready_packets(&report);
+    assert!(ready.is_empty());
+
+    let blocked = ripr_swarm_plan_blocked_packets(&report);
+    assert_eq!(blocked.len(), 1);
+    assert_eq!(blocked[0].swarm_state, "blocked_by_static_limitation");
+    assert_eq!(
+        blocked[0].blocked_reasons,
+        vec!["static_limitation_present"]
+    );
+    assert_eq!(
+        blocked[0].projection_exclusion_reasons,
+        vec!["static_limitation_present"]
+    );
+
+    let json = ripr_swarm_plan_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["summary"]["static_limitation_packets"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["summary"]["blocked_by_static_limitation_packets"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["summary"]["blocked_by_public_projection_exclusion_packets"],
+        serde_json::Value::from(0)
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_plan_blocks_malformed_actionable_gap_reports() {
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &serde_json::json!({"summary": {"actionable_gaps": 1}}),
+    );
+
+    assert_eq!(report.status, "blocked");
+    assert_eq!(report.input_state, "malformed");
+    assert!(report.packets.is_empty());
+    assert!(
+        report
+            .input_limitation
+            .as_deref()
+            .is_some_and(|limitation| limitation.contains("`packets` array"))
+    );
+}
+
+#[test]
+fn ripr_swarm_plan_blocks_missing_target_test_shape() {
+    let actionable_gaps = serde_json::json!({
+        "summary": {"actionable_gaps": 1},
+        "packets": [
+            {
+                "canonical_gap_id": "gap:no-target-test-shape",
+                "evidence_class": "predicate_boundary",
+                "gap_state": "actionable",
+                "source_file": "src/lib.rs",
+                "repair_kind": "add_boundary_assertion",
+                "target_test_type": "boundary_discriminator",
+                "assertion_shape": "assert_eq!(value, expected)",
+                "repair_route": {
+                    "repair_kind": "add_boundary_assertion",
+                    "target_test_type": "boundary_discriminator",
+                    "assertion_shape": "assert_eq!(value, expected)"
+                },
+                "target_test_shape": "target_test_shape_unknown",
+                "verify_command": "cargo test no_target_test_shape",
+                "receipt_command": "cargo xtask receipts check",
+                "related_test_or_observer": {
+                    "file": "tests/lib.rs",
+                    "name": "no_target_test_shape"
+                },
+                "confidence_basis": "fixture_backed",
+                "must_not_change": ["Do not edit production code by default."],
+                "allowed_edit_surface": ["tests/lib.rs"],
+                "raw_evidence_refs": [
+                    {"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}
+                ],
+                "static_limitations": [],
+                "public_projection_eligible": true
+            }
+        ]
+    });
+
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    let ready = ripr_swarm_plan_ready_packets(&report);
+    let blocked = ripr_swarm_plan_blocked_packets(&report);
+    let summary = crate::ripr_swarm_plan_summary_json(&report);
+    let examples = crate::ripr_swarm_plan_blocked_state_examples_json(&report);
+
+    assert!(ready.is_empty());
+    assert_eq!(blocked.len(), 1);
+    assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+    assert_eq!(blocked[0].missing_context, vec!["target_test_shape"]);
+    assert_eq!(
+        summary["missing_target_test_shape"],
+        serde_json::Value::from(1)
+    );
+    assert!(examples.iter().any(|example| {
+        example["state"] == "missing_target_test_shape"
+            && example["example_missing_context"] == serde_json::json!(["target_test_shape"])
+    }));
+}
+
+#[test]
+fn ripr_swarm_plan_blocks_missing_related_context() {
+    let actionable_gaps = serde_json::json!({
+        "summary": {"actionable_gaps": 1},
+        "packets": [
+            {
+                "canonical_gap_id": "gap:no-related-context",
+                "evidence_class": "predicate_boundary",
+                "gap_state": "actionable",
+                "source_file": "src/lib.rs",
+                "repair_kind": "add_boundary_assertion",
+                "target_test_type": "boundary_discriminator",
+                "assertion_shape": "assert_eq!(value, expected)",
+                "repair_route": {
+                    "repair_kind": "add_boundary_assertion",
+                    "target_test_type": "boundary_discriminator",
+                    "assertion_shape": "assert_eq!(value, expected)"
+                },
+                "verify_command": "cargo test no_related_context",
+                "receipt_command": "cargo xtask receipts check",
+                "confidence_basis": "fixture_backed",
+                "must_not_change": ["Do not edit production code by default."],
+                "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "static_limitations": [],
+                "public_projection_eligible": true
+            }
+        ]
+    });
+
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    let blocked = ripr_swarm_plan_blocked_packets(&report);
+
+    assert_eq!(blocked.len(), 1);
+    assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+    assert!(
+        blocked[0]
+            .missing_context
+            .iter()
+            .any(|field| field == "related_test_or_observer")
+    );
+}
+
+#[test]
+fn ripr_swarm_plan_blocks_candidate_prose_without_typed_target() {
+    let actionable_gaps = serde_json::json!({
+        "summary": {"actionable_gaps": 1},
+        "packets": [
+            {
+                "canonical_gap_id": "gap:candidate-prose",
+                "evidence_class": "call_presence",
+                "gap_state": "actionable",
+                "source_file": "src/lib.rs",
+                "repair_kind": "add_call_observer",
+                "target_test_type": "call_presence_observer",
+                "assertion_shape": "// assert that helper called the expected target",
+                "repair_route": {
+                    "repair_kind": "add_call_observer",
+                    "target_test_type": "call_presence_observer",
+                    "assertion_shape": "// assert that helper called the expected target"
+                },
+                "verify_command": "cargo test helper_call",
+                "receipt_command": "cargo xtask receipts check",
+                "candidate_value_or_observer": "input that reaches call helper()",
+                "confidence_basis": "fixture_backed",
+                "must_not_change": ["Do not edit production code by default."],
+                "raw_evidence_refs": [{"kind": "ungripped", "file": "src/lib.rs", "line": 12}],
+                "raw_findings": [{"kind": "ungripped", "file": "src/lib.rs", "line": 12}],
+                "static_limitations": [],
+                "public_projection_eligible": true
+            }
+        ]
+    });
+
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    let blocked = ripr_swarm_plan_blocked_packets(&report);
+
+    assert_eq!(blocked.len(), 1);
+    assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+    assert!(
+        blocked[0]
+            .missing_context
+            .iter()
+            .any(|field| field == "related_test_or_observer")
+    );
+}
+
+#[test]
+fn ripr_swarm_plan_blocks_missing_raw_evidence_refs() {
+    let actionable_gaps = serde_json::json!({
+        "summary": {"actionable_gaps": 1},
+        "packets": [
+            {
+                "canonical_gap_id": "gap:no-raw-evidence",
+                "evidence_class": "predicate_boundary",
+                "gap_state": "actionable",
+                "source_file": "src/lib.rs",
+                "repair_kind": "add_boundary_assertion",
+                "target_test_type": "boundary_discriminator",
+                "assertion_shape": "assert_eq!(value, expected)",
+                "repair_route": {
+                    "repair_kind": "add_boundary_assertion",
+                    "target_test_type": "boundary_discriminator",
+                    "assertion_shape": "assert_eq!(value, expected)"
+                },
+                "verify_command": "cargo test no_raw_evidence",
+                "receipt_command": "cargo xtask receipts check",
+                "related_test_or_observer": "tests/lib.rs::no_raw_evidence",
+                "confidence_basis": "fixture_backed",
+                "must_not_change": ["Do not edit production code by default."],
+                "raw_evidence_refs": [],
+                "raw_findings": [],
+                "static_limitations": [],
+                "public_projection_eligible": true
+            }
+        ]
+    });
+
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    let blocked = ripr_swarm_plan_blocked_packets(&report);
+
+    assert_eq!(blocked.len(), 1);
+    assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+    assert!(
+        blocked[0]
+            .missing_context
+            .iter()
+            .any(|field| field == "raw_evidence_refs")
+    );
+}
+
+#[test]
+fn ripr_swarm_plan_blocks_missing_raw_evidence_refs_even_with_raw_findings() {
+    let actionable_gaps = serde_json::json!({
+        "summary": {"actionable_gaps": 1},
+        "packets": [
+            {
+                "canonical_gap_id": "gap:raw-findings-only",
+                "evidence_class": "predicate_boundary",
+                "gap_state": "actionable",
+                "source_file": "src/lib.rs",
+                "repair_kind": "add_boundary_assertion",
+                "target_test_type": "boundary_discriminator",
+                "assertion_shape": "assert_eq!(value, expected)",
+                "repair_route": {
+                    "repair_kind": "add_boundary_assertion",
+                    "target_test_type": "boundary_discriminator",
+                    "assertion_shape": "assert_eq!(value, expected)"
+                },
+                "verify_command": "cargo test raw_findings_only",
+                "receipt_command": "cargo xtask receipts check",
+                "related_test_or_observer": {
+                    "file": "tests/lib.rs",
+                    "name": "raw_findings_only"
+                },
+                "confidence_basis": "fixture_backed",
+                "must_not_change": ["Do not edit production code by default."],
+                "allowed_edit_surface": ["tests/lib.rs"],
+                "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "static_limitations": [],
+                "public_projection_eligible": true
+            }
+        ]
+    });
+
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    let ready = ripr_swarm_plan_ready_packets(&report);
+    let blocked = ripr_swarm_plan_blocked_packets(&report);
+    let summary = crate::ripr_swarm_plan_summary_json(&report);
+
+    assert!(ready.is_empty());
+    assert_eq!(blocked.len(), 1);
+    assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+    assert_eq!(blocked[0].missing_context, vec!["raw_evidence_refs"]);
+    assert_eq!(blocked[0].raw_findings_count, 1);
+    assert_eq!(
+        summary["missing_raw_evidence_refs"],
+        serde_json::Value::from(1)
+    );
+}
+
+#[test]
+fn ripr_swarm_plan_blocks_receipt_path_without_receipt_command() {
+    let actionable_gaps = serde_json::json!({
+        "summary": {"actionable_gaps": 1},
+        "packets": [
+            {
+                "canonical_gap_id": "gap:receipt-path-only",
+                "evidence_class": "error_path",
+                "gap_state": "actionable",
+                "source_file": "src/auth.rs",
+                "repair_kind": "add_exact_error_variant",
+                "target_test_type": "error_variant",
+                "assertion_shape": "matches!(auth(input), Err(AuthError::RevokedToken))",
+                "repair_route": {
+                    "repair_kind": "add_exact_error_variant",
+                    "target_test_type": "error_variant",
+                    "assertion_shape": "matches!(auth(input), Err(AuthError::RevokedToken))"
+                },
+                "verify_command": "cargo test -p ripr revoked_token",
+                "receipt_command_or_path": "target/ripr/receipts/receipt-path-only.json",
+                "related_test_or_observer": {
+                    "file": "tests/auth.rs",
+                    "name": "revoked_token"
+                },
+                "confidence_basis": "fixture_backed",
+                "must_not_change": ["Do not edit production auth code by default."],
+                "raw_findings": [{"kind": "weakly_exposed", "file": "src/auth.rs", "line": 55}],
+                "static_limitations": [],
+                "public_projection_eligible": true
+            }
+        ]
+    });
+
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    let blocked = ripr_swarm_plan_blocked_packets(&report);
+    let ready = ripr_swarm_plan_ready_packets(&report);
+
+    assert!(ready.is_empty());
+    assert_eq!(blocked.len(), 1);
+    assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+    assert!(
+        blocked[0]
+            .missing_context
+            .iter()
+            .any(|field| field == "receipt_command")
+    );
+    assert!(
+        blocked[0]
+            .blocked_reasons
+            .iter()
+            .any(|reason| reason == "missing_receipt_command")
+    );
+}
+
+#[test]
+fn ripr_swarm_plan_blocks_malformed_raw_evidence_refs() {
+    let actionable_gaps = serde_json::json!({
+        "summary": {"actionable_gaps": 1},
+        "packets": [
+            {
+                "canonical_gap_id": "gap:malformed-raw-evidence",
+                "evidence_class": "predicate_boundary",
+                "gap_state": "actionable",
+                "source_file": "src/lib.rs",
+                "repair_kind": "add_boundary_assertion",
+                "target_test_type": "boundary_discriminator",
+                "assertion_shape": "assert_eq!(value, expected)",
+                "repair_route": {
+                    "repair_kind": "add_boundary_assertion",
+                    "target_test_type": "boundary_discriminator",
+                    "assertion_shape": "assert_eq!(value, expected)"
+                },
+                "verify_command": "cargo test malformed_raw_evidence",
+                "receipt_command": "cargo xtask receipts check",
+                "related_test_or_observer": "tests/lib.rs::malformed_raw_evidence",
+                "confidence_basis": "fixture_backed",
+                "must_not_change": ["Do not edit production code by default."],
+                "raw_evidence_refs": [{}],
+                "raw_findings": ["placeholder"],
+                "static_limitations": [],
+                "public_projection_eligible": true
+            }
+        ]
+    });
+
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    let blocked = ripr_swarm_plan_blocked_packets(&report);
+
+    assert_eq!(blocked.len(), 1);
+    assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+    assert!(
+        blocked[0]
+            .missing_context
+            .iter()
+            .any(|field| field == "raw_evidence_refs")
+    );
+}
+
+#[test]
+fn ripr_swarm_plan_blocks_incomplete_structured_repair_routes() {
+    let actionable_gaps = serde_json::json!({
+        "summary": {"actionable_gaps": 1},
+        "packets": [
+            {
+                "canonical_gap_id": "gap:incomplete-route",
+                "evidence_class": "predicate_boundary",
+                "gap_state": "actionable",
+                "source_file": "src/lib.rs",
+                "repair_kind": "add_boundary_assertion",
+                "target_test_type": "boundary_discriminator",
+                "assertion_shape": "assert_eq!(value, expected)",
+                "repair_route": {"repair_kind": "add_boundary_assertion"},
+                "verify_command": "cargo test incomplete_route",
+                "receipt_command": "cargo xtask receipts check",
+                "related_test_or_observer": "tests/lib.rs::incomplete_route",
+                "confidence_basis": "fixture_backed",
+                "must_not_change": ["Do not edit production code by default."],
+                "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "static_limitations": [],
+                "public_projection_eligible": true
+            }
+        ]
+    });
+
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    let blocked = ripr_swarm_plan_blocked_packets(&report);
+
+    assert_eq!(blocked.len(), 1);
+    assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+    assert!(
+        blocked[0]
+            .missing_context
+            .iter()
+            .any(|field| field == "repair_route")
+    );
+}
+
+#[test]
+fn ripr_swarm_plan_blocks_inconsistent_structured_repair_routes() {
+    let actionable_gaps = serde_json::json!({
+        "summary": {"actionable_gaps": 1},
+        "packets": [
+            {
+                "canonical_gap_id": "gap:inconsistent-route",
+                "evidence_class": "predicate_boundary",
+                "gap_state": "actionable",
+                "source_file": "src/lib.rs",
+                "repair_kind": "add_boundary_assertion",
+                "target_test_type": "boundary_discriminator",
+                "assertion_shape": "assert_eq!(value, expected)",
+                "repair_route": {
+                    "repair_kind": "add_output_observer",
+                    "target_test_type": "output_observer",
+                    "assertion_shape": "assert!(output.contains(expected))"
+                },
+                "verify_command": "cargo test inconsistent_route",
+                "receipt_command": "cargo xtask receipts check",
+                "related_test_or_observer": "tests/lib.rs::inconsistent_route",
+                "confidence_basis": "fixture_backed",
+                "must_not_change": ["Do not edit production code by default."],
+                "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "static_limitations": [],
+                "public_projection_eligible": true
+            }
+        ]
+    });
+
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    let blocked = ripr_swarm_plan_blocked_packets(&report);
+    let ready = ripr_swarm_plan_ready_packets(&report);
+
+    assert!(ready.is_empty());
+    assert_eq!(blocked.len(), 1);
+    assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+    assert!(
+        blocked[0]
+            .missing_context
+            .iter()
+            .any(|field| field == "repair_route_consistency")
+    );
+    assert!(
+        blocked[0]
+            .blocked_reasons
+            .iter()
+            .any(|reason| reason == "missing_repair_route_consistency")
+    );
+}
+
+#[test]
+fn ripr_swarm_plan_blocks_unserialized_repair_route_hints() {
+    let actionable_gaps = serde_json::json!({
+        "summary": {"actionable_gaps": 1},
+        "packets": [
+            {
+                "canonical_gap_id": "gap:route-source-only",
+                "evidence_class": "call_presence",
+                "gap_state": "actionable",
+                "source_file": "src/lib.rs",
+                "repair_kind": "add_call_observer",
+                "target_test_type": "call_presence_observer",
+                "assertion_shape": "// assert that helper called the expected target",
+                "repair_route_source": "canonical_item.repair_route",
+                "verify_command": "cargo test helper_call",
+                "receipt_command": "cargo xtask receipts check",
+                "related_test_or_observer": "tests/lib.rs::helper_call",
+                "confidence_basis": "fixture_backed",
+                "must_not_change": ["Do not edit production code by default."],
+                "raw_evidence_refs": [{"kind": "ungripped", "file": "src/lib.rs", "line": 12}],
+                "raw_findings": [{"kind": "ungripped", "file": "src/lib.rs", "line": 12}],
+                "static_limitations": [],
+                "public_projection_eligible": true
+            }
+        ]
+    });
+
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    let blocked = ripr_swarm_plan_blocked_packets(&report);
+
+    assert_eq!(blocked.len(), 1);
+    assert_eq!(blocked[0].swarm_state, "blocked_by_missing_context");
+    assert!(
+        blocked[0]
+            .missing_context
+            .iter()
+            .any(|field| field == "repair_route")
+    );
+}
+
+#[test]
+fn ripr_swarm_plan_accepts_structured_routes_with_suggested_assertion() {
+    let actionable_gaps = serde_json::json!({
+        "summary": {"actionable_gaps": 1},
+        "packets": [
+            {
+                "canonical_gap_id": "gap:suggested-assertion",
+                "evidence_class": "predicate_boundary",
+                "gap_state": "actionable",
+                "source_file": "src/lib.rs",
+                "repair_kind": "add_boundary_assertion",
+                "target_test_type": "boundary_discriminator",
+                "assertion_shape": "assert_eq!(value, expected)",
+                "repair_route": {
+                    "repair_kind": "add_boundary_assertion",
+                    "target_test_type": "boundary_discriminator",
+                    "suggested_assertion": "assert_eq!(value, expected)"
+                },
+                "verify_command": "cargo test suggested_assertion",
+                "receipt_command": "cargo xtask receipts check",
+                "related_test_or_observer": "tests/lib.rs::suggested_assertion",
+                "confidence_basis": "fixture_backed",
+                "must_not_change": ["Do not edit production code by default."],
+                "raw_evidence_refs": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "raw_findings": [{"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}],
+                "static_limitations": [],
+                "public_projection_eligible": true
+            }
+        ]
+    });
+
+    let report = ripr_swarm_plan_from_actionable_gaps_value(
+        10,
+        Path::new("target/ripr/reports/actionable-gaps.json"),
+        &actionable_gaps,
+    );
+    let ready = ripr_swarm_plan_ready_packets(&report);
+
+    assert_eq!(ready.len(), 1);
+    assert_eq!(ready[0].canonical_gap_id, "gap:suggested-assertion");
+    let markdown = ripr_swarm_plan_markdown(&report);
+    assert!(markdown.contains("## Runtime Status"));
+    assert!(markdown.contains("| State | `full` |"));
+    assert!(markdown.contains("| Downstream consumable | `true` |"));
+}
+
+#[test]
+fn ripr_swarm_plan_packet_corpus_matches_expected_states() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let mut violations = Vec::new();
+        validate_swarm_plan_packet_fixture_corpus(&mut violations)?;
+        if violations.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "swarm plan packet corpus violations:\n- {}",
+                violations.join("\n- ")
+            ))
+        }
+    })
+}
+
+#[test]
+fn actionable_gap_outcomes_fixture_corpus_matches_expected_states() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let mut violations = Vec::new();
+        validate_actionable_gap_outcomes_fixture_corpus(&mut violations)?;
+        if violations.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "actionable gap outcomes corpus violations:\n- {}",
+                violations.join("\n- ")
+            ))
+        }
+    })
+}
+
+#[test]
+fn actionable_gap_outcomes_fixture_rejects_incomplete_receipt_command() -> Result<(), String> {
+    let case = serde_json::json!({
+        "id": "incomplete_receipt_command",
+        "description": "outcome fixture packet with an incomplete receipt command",
+        "actionable_gaps": {
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "report": "actionable-gaps",
+            "packets": [
+                {
+                    "canonical_gap_id": "gap:incomplete-receipt-command",
+                    "evidence_class": "predicate_boundary",
+                    "repair_kind": "add_boundary_assertion",
+                    "source_file": "src/lib.rs",
+                    "primary_anchor": {
+                        "file": "src/lib.rs",
+                        "line": 12
+                    },
+                    "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+                    "receipt_command_or_path": "ripr agent receipt --root . --json"
+                }
+            ]
+        },
+        "agent_receipt": null,
+        "targeted_test_outcome": null,
+        "expected": {
+            "summary": {
+                "packets_total": 1,
+                "outcomes_total": 1,
+                "not_attempted": 1,
+                "receipt_present": 0,
+                "evidence_improved": 0,
+                "receipts_present": 0
+            },
+            "outcomes": [
+                {
+                    "canonical_gap_id": "gap:incomplete-receipt-command",
+                    "outcome_state": "not_attempted",
+                    "receipt_state": "receipt_not_applicable",
+                    "movement_source": null
+                }
+            ]
+        },
+        "must_not_claim": [
+            "Do not accept malformed receipt commands."
+        ]
+    });
+    let mut violations = Vec::new();
+    validate_actionable_gap_outcomes_fixture_case(
+        &case,
+        "incomplete_receipt_command",
+        &mut violations,
+    )?;
+
+    violations
+        .iter()
+        .any(|violation| violation.contains("unsupported receipt command"))
+        .then_some(())
+        .ok_or_else(|| format!("missing unsupported receipt command violation: {violations:?}"))
+}
+
+#[test]
+fn ripr_swarm_plan_packet_corpus_rejects_unsupported_receipt_commands() {
+    let case = serde_json::json!({
+        "id": "unsupported_receipt_emit",
+        "description": "ready-looking packet with an unsupported receipt command",
+        "must_not_claim": ["Do not create receipts from the swarm plan."],
+        "packet": {
+            "canonical_gap_id": "gap:unsupported-receipt",
+            "evidence_class": "predicate_boundary",
+            "gap_state": "actionable",
+            "source_file": "src/lib.rs",
+            "repair_kind": "add_boundary_assertion",
+            "target_test_type": "boundary_discriminator",
+            "assertion_shape": "assert_eq!(value, expected)",
+            "repair_route": {
+                "repair_kind": "add_boundary_assertion",
+                "target_test_type": "boundary_discriminator",
+                "assertion_shape": "assert_eq!(value, expected)"
+            },
+            "verify_command": "cargo test unsupported_receipt",
+            "receipt_command": "cargo xtask receipts emit --packet gap:unsupported-receipt",
+            "related_test_or_observer": "tests/lib.rs::unsupported_receipt",
+            "confidence_basis": "fixture_backed",
+            "must_not_change": ["Do not edit production code by default."],
+            "raw_findings": [
+                {"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}
+            ],
+            "static_limitations": [],
+            "public_projection_eligible": true
+        },
+        "expected": {
+            "swarm_state": "queued",
+            "swarm_ready": true,
+            "high_confidence": true,
+            "missing_context": [],
+            "blocked_reasons": [],
+            "summary": {
+                "swarm_ready_packets": 1,
+                "blocked_packets": 0
+            }
+        }
+    });
+    let mut violations = Vec::new();
+    validate_swarm_plan_packet_fixture_case(&case, "unsupported_receipt_emit", &mut violations);
+
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("unsupported receipt_command"))
+    );
+}
+
+#[test]
+fn ripr_swarm_plan_packet_corpus_rejects_incomplete_agent_receipt_commands() {
+    let case = serde_json::json!({
+        "id": "incomplete_agent_receipt",
+        "description": "ready-looking packet with an incomplete agent receipt command",
+        "must_not_claim": ["Do not accept malformed receipt commands."],
+        "packet": {
+            "canonical_gap_id": "gap:incomplete-agent-receipt",
+            "evidence_class": "predicate_boundary",
+            "gap_state": "actionable",
+            "source_file": "src/lib.rs",
+            "repair_kind": "add_boundary_assertion",
+            "target_test_type": "boundary_discriminator",
+            "assertion_shape": "assert_eq!(value, expected)",
+            "repair_route": {
+                "repair_kind": "add_boundary_assertion",
+                "target_test_type": "boundary_discriminator",
+                "assertion_shape": "assert_eq!(value, expected)"
+            },
+            "verify_command": "cargo test incomplete_agent_receipt",
+            "receipt_command": "ripr agent receipt --root . --json",
+            "related_test_or_observer": "tests/lib.rs::incomplete_agent_receipt",
+            "confidence_basis": "fixture_backed",
+            "must_not_change": ["Do not edit production code by default."],
+            "raw_findings": [
+                {"kind": "weakly_exposed", "file": "src/lib.rs", "line": 12}
+            ],
+            "static_limitations": [],
+            "public_projection_eligible": true
+        },
+        "expected": {
+            "swarm_state": "queued",
+            "swarm_ready": true,
+            "high_confidence": true,
+            "missing_context": [],
+            "blocked_reasons": [],
+            "summary": {
+                "swarm_ready_packets": 1,
+                "blocked_packets": 0
+            }
+        }
+    });
+    let mut violations = Vec::new();
+    validate_swarm_plan_packet_fixture_case(&case, "incomplete_agent_receipt", &mut violations);
+
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("unsupported receipt_command"))
+    );
+}
+
+#[test]
+fn actionable_gap_outcomes_fixture_corpus_reports_contract_drift() -> Result<(), String> {
+    with_temp_cwd("actionable-gap-outcomes-corpus-drift", |_| {
+        let mut violations = Vec::new();
+        super::validate_actionable_gap_outcomes_fixture_corpus_at(
+            Path::new("missing-corpus.json"),
+            &mut violations,
+        )?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("actionable gap outcomes corpus is missing")),
+            "missing corpus path should be reported: {violations:?}"
+        );
+
+        write(
+            Path::new("bad-corpus.json"),
+            r#"{
+  "schema_version": "bad",
+  "kind": "wrong",
+  "spec": "RIPR-SPEC-0000",
+  "related_spec": "RIPR-SPEC-0000",
+  "cases": [
+    {
+      "id": "bad-outcome",
+      "description": "Bad outcome case.",
+      "must_not_claim": ["Do not trust this malformed case."],
+      "actionable_gaps": {
+        "packets": [
+          {
+            "canonical_gap_id": "gap:bad-outcome",
+            "evidence_class": "predicate_boundary",
+            "repair_kind": "add_boundary_assertion",
+            "source_file": "src/lib.rs",
+            "primary_anchor": {"file": "src/lib.rs", "line": 1},
+            "verify_command": "ripr agent verify --json",
+            "receipt_command_or_path": "ripr agent receipt --seam-id bad-outcome"
+          }
+        ]
+      },
+      "agent_receipt": null,
+      "targeted_test_outcome": null,
+      "expected": {
+        "summary": {"packets_total": 2},
+            "outcomes": [
+          {
+            "canonical_gap_id": "gap:bad-outcome",
+            "outcome_state": "resolved",
+            "receipt_state": "receipt_found",
+            "movement_source": "agent_receipt"
+          }
+        ]
+      }
+    }
+  ]
+}"#,
+        );
+
+        let mut violations = Vec::new();
+        super::validate_actionable_gap_outcomes_fixture_corpus_at(
+            Path::new("bad-corpus.json"),
+            &mut violations,
+        )?;
+        for expected in [
+            "kind must be actionable_gap_outcomes_corpus",
+            "schema_version must be 0.1",
+            "spec must be RIPR-SPEC-0031",
+            "related_spec must be RIPR-SPEC-0057",
+            "outcome_state must be resolved, got not_attempted",
+            "receipt_state must be receipt_found, got receipt_not_applicable",
+            "summary.packets_total must be 2, got 1",
+            "corpus is missing case not_attempted_packet",
+        ] {
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains(expected)),
+                "expected violation containing {expected:?}, got {violations:?}"
+            );
+        }
+
+        let mut violations = Vec::new();
+        super::validate_actionable_gap_outcomes_fixture_case(
+            &serde_json::json!({"id": "missing-fields"}),
+            "missing-fields",
+            &mut violations,
+        )?;
+        for expected in [
+            "missing description",
+            "must_not_claim must be a non-empty string array",
+            "is missing actionable_gaps object",
+        ] {
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains(expected)),
+                "expected fixture-case violation containing {expected:?}, got {violations:?}"
+            );
+        }
+
+        let targeted_shape_case = serde_json::json!({
+            "id": "bad-targeted-shape",
+            "description": "Bad targeted-test outcome shape.",
+            "must_not_claim": ["Do not infer movement from malformed targeted-test outcome."],
+            "actionable_gaps": {
+                "packets": [
+                    {
+                        "canonical_gap_id": "gap:bad-targeted-shape",
+                        "evidence_class": "predicate_boundary",
+                        "repair_kind": "add_boundary_assertion",
+                        "source_file": "src/lib.rs",
+                        "primary_anchor": {"file": "src/lib.rs", "line": 1},
+                        "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+                        "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id bad-targeted-shape --json"
+                    }
+                ]
+            },
+            "agent_receipt": {"receipts": []},
+            "targeted_test_outcome": {
+                "schema_version": "0.1",
+                "moved": [
+                    {
+                        "seam_id": "bad-targeted-shape",
+                        "seam_kind": "predicate_boundary",
+                        "file": "src/lib.rs",
+                        "line": 1
+                    }
+                ],
+                "unchanged": [],
+                "regressed": [],
+                "removed": [
+                    {
+                        "seam_id": "bad-targeted-shape-removed",
+                        "seam_kind": "predicate_boundary",
+                        "file": "src/lib.rs",
+                        "line": 2,
+                        "before": "weakly_gripped"
+                    }
+                ],
+                "new": [
+                    {
+                        "seam_id": "bad-targeted-shape-new",
+                        "seam_kind": "predicate_boundary",
+                        "file": "src/lib.rs",
+                        "line": 3,
+                        "after": "ungripped"
+                    }
+                ]
+            },
+            "expected": {
+                "summary": {"packets_total": 1},
+                "outcomes": [
+                    {
+                        "canonical_gap_id": "gap:bad-targeted-shape",
+                        "outcome_state": "evidence_improved",
+                        "receipt_state": "receipt_missing",
+                        "movement_source": "targeted_test_outcome",
+                        "movement_direction": "improved",
+                        "before": "weakly_gripped",
+                        "after": "strongly_gripped"
+                    }
+                ]
+            }
+        });
+        let mut violations = Vec::new();
+        super::validate_actionable_gap_outcomes_fixture_case(
+            &targeted_shape_case,
+            "bad-targeted-shape",
+            &mut violations,
+        )?;
+        for expected in [
+            "targeted_test_outcome.moved item must include before",
+            "targeted_test_outcome.moved item must include after",
+            "targeted_test_outcome.moved item must include direction",
+            "targeted_test_outcome.removed item must include grip_class",
+            "targeted_test_outcome.removed item must use one-sided grip_class instead of before",
+            "targeted_test_outcome.new item must include grip_class",
+            "targeted_test_outcome.new item must use one-sided grip_class instead of after",
+            "outcome_state must be evidence_improved, got attempted_no_receipt",
+            "movement_direction must be \"improved\", got \"move\"",
+            "before must be \"weakly_gripped\", got null",
+            "after must be \"strongly_gripped\", got null",
+        ] {
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains(expected)),
+                "expected targeted-shape violation containing {expected:?}, got {violations:?}"
+            );
+        }
+
+        Ok(())
+    })
+}
+
+#[test]
+fn actionable_gap_outcomes_fixture_corpus_reports_spec_wrapper_drift() -> Result<(), String> {
+    with_temp_cwd("actionable-gap-outcomes-wrapper-drift", |_| {
+        let mut violations = Vec::new();
+        super::validate_actionable_gap_outcomes_fixture_corpus(&mut violations)?;
+        for expected in [
+            "fixture corpus is missing fixtures/actionable-gap-outcomes-corpus/SPEC.md",
+            "fixture corpus is missing fixtures/actionable-gap-outcomes-corpus/corpus.json",
+            "corpus is missing fixtures/actionable-gap-outcomes-corpus/corpus.json",
+        ] {
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains(expected)),
+                "expected wrapper violation containing {expected:?}, got {violations:?}"
+            );
+        }
+
+        write(
+            Path::new("fixtures/actionable-gap-outcomes-corpus/SPEC.md"),
+            "# Bad spec\n\n## Given\n",
+        );
+        let mut violations = Vec::new();
+        super::validate_actionable_gap_outcomes_fixture_corpus(&mut violations)?;
+        for expected in [
+            "is missing `Spec: RIPR-SPEC-0031`",
+            "is missing `Related: RIPR-SPEC-0057`",
+            "is missing `## When`",
+            "is missing `## Then`",
+            "is missing `## Must Not`",
+        ] {
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains(expected)),
+                "expected spec violation containing {expected:?}, got {violations:?}"
+            );
+        }
+
+        Ok(())
+    })
+}
+
+#[test]
+fn actionable_gap_outcomes_fixture_corpus_reports_manifest_edge_states() -> Result<(), String> {
+    with_temp_cwd("actionable-gap-outcomes-corpus-edge-states", |_| {
+        write(Path::new("bad-json.json"), "{");
+        let mut violations = Vec::new();
+        super::validate_actionable_gap_outcomes_fixture_corpus_at(
+            Path::new("bad-json.json"),
+            &mut violations,
+        )?;
+        assert!(
+            !violations.is_empty(),
+            "invalid corpus JSON should be reported"
+        );
+
+        write(
+            Path::new("no-cases.json"),
+            r#"{
+  "schema_version": "0.1",
+  "kind": "actionable_gap_outcomes_corpus",
+  "spec": "RIPR-SPEC-0031",
+  "related_spec": "RIPR-SPEC-0057"
+}"#,
+        );
+        let mut violations = Vec::new();
+        super::validate_actionable_gap_outcomes_fixture_corpus_at(
+            Path::new("no-cases.json"),
+            &mut violations,
+        )?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("is missing cases array")),
+            "missing cases array should be reported: {violations:?}"
+        );
+
+        write(
+            Path::new("duplicate-case.json"),
+            r#"{
+  "schema_version": "0.1",
+  "kind": "actionable_gap_outcomes_corpus",
+  "spec": "RIPR-SPEC-0031",
+  "related_spec": "RIPR-SPEC-0057",
+  "cases": [
+    {
+      "id": "not_attempted_packet",
+      "description": "Duplicate case A.",
+      "must_not_claim": ["Do not treat duplicate cases as valid."],
+      "actionable_gaps": {
+        "packets": [
+          {
+            "canonical_gap_id": "gap:duplicate-a",
+            "evidence_class": "predicate_boundary",
+            "repair_kind": "add_boundary_assertion",
+            "source_file": "src/lib.rs",
+            "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+            "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id duplicate-a"
+          }
+        ]
+      },
+      "expected": {
+        "summary": {"packets_total": 1},
+        "outcomes": [
+          {"canonical_gap_id": "gap:duplicate-a", "outcome_state": "not_attempted", "receipt_state": "receipt_not_applicable"}
+        ]
+      }
+    },
+    {
+      "id": "not_attempted_packet",
+      "description": "Duplicate case B.",
+      "must_not_claim": ["Do not treat duplicate cases as valid."],
+      "actionable_gaps": {
+        "packets": [
+          {
+            "canonical_gap_id": "gap:duplicate-b",
+            "evidence_class": "predicate_boundary",
+            "repair_kind": "add_boundary_assertion",
+            "source_file": "src/lib.rs",
+            "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+            "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id duplicate-b"
+          }
+        ]
+      },
+      "expected": {
+        "summary": {"packets_total": 1},
+        "outcomes": [
+          {"canonical_gap_id": "gap:duplicate-b", "outcome_state": "receipt_present", "receipt_state": "receipt_found"}
+        ]
+      }
+    }
+  ]
+}"#,
+        );
+        let mut violations = Vec::new();
+        super::validate_actionable_gap_outcomes_fixture_corpus_at(
+            Path::new("duplicate-case.json"),
+            &mut violations,
+        )?;
+        for expected in [
+            "case not_attempted_packet is duplicated",
+            "case not_attempted_packet must have state not_attempted/receipt_not_applicable",
+        ] {
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains(expected)),
+                "expected duplicate-case violation containing {expected:?}, got {violations:?}"
+            );
+        }
+
+        Ok::<(), String>(())
+    })
+}
+
+#[test]
+fn actionable_gap_outcomes_fixture_case_reports_expected_shape_drift() -> Result<(), String> {
+    let base_packet = serde_json::json!({
+        "canonical_gap_id": "gap:expected-shape",
+        "evidence_class": "predicate_boundary",
+        "repair_kind": "add_boundary_assertion",
+        "source_file": "src/lib.rs",
+        "primary_anchor": {"file": "src/lib.rs", "line": 1},
+        "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+        "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id expected-shape --json"
+    });
+
+    for (case, expected) in [
+        (
+            serde_json::json!({
+                "id": "empty-packets",
+                "description": "Empty packet list.",
+                "must_not_claim": ["Do not accept an empty packet list."],
+                "actionable_gaps": {"packets": []}
+            }),
+            "actionable_gaps.packets must not be empty",
+        ),
+        (
+            serde_json::json!({
+                "id": "missing-expected",
+                "description": "Missing expected object.",
+                "must_not_claim": ["Do not accept a missing expected object."],
+                "actionable_gaps": {"packets": [base_packet.clone()]}
+            }),
+            "is missing expected object",
+        ),
+        (
+            serde_json::json!({
+                "id": "empty-expected-outcomes",
+                "description": "Empty expected outcomes.",
+                "must_not_claim": ["Do not accept empty expected outcomes."],
+                "actionable_gaps": {"packets": [base_packet.clone()]},
+                "expected": {"summary": {"packets_total": 1}, "outcomes": []}
+            }),
+            "expected.outcomes must not be empty",
+        ),
+    ] {
+        let case_id = case.get("id").and_then(Value::as_str).unwrap_or_default();
+        let mut violations = Vec::new();
+        super::validate_actionable_gap_outcomes_fixture_case(&case, case_id, &mut violations)?;
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains(expected)),
+            "expected fixture violation containing {expected:?}, got {violations:?}"
+        );
+    }
+
+    let case = serde_json::json!({
+        "id": "bad-expected-shape",
+        "description": "Malformed expected shape.",
+        "must_not_claim": ["Do not accept malformed expected outcome fields."],
+        "actionable_gaps": {"packets": [base_packet]},
+        "agent_receipt": null,
+        "targeted_test_outcome": null,
+        "expected": {
+            "summary": {"packets_total": "one", "outcomes_total": 2},
+            "outcomes": [
+                {},
+                {"canonical_gap_id": "gap:missing"},
+                {"canonical_gap_id": "gap:expected-shape"}
+            ]
+        }
+    });
+    let mut violations = Vec::new();
+    super::validate_actionable_gap_outcomes_fixture_case(
+        &case,
+        "bad-expected-shape",
+        &mut violations,
+    )?;
+    for expected in [
+        "expected outcome is missing canonical_gap_id",
+        "did not produce outcome gap:missing",
+        "expected outcome gap:expected-shape is missing outcome_state",
+        "expected outcome gap:expected-shape is missing receipt_state",
+        "expected.summary.packets_total must be numeric",
+        "summary.outcomes_total must be 2, got 1",
+    ] {
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains(expected)),
+            "expected malformed expected-shape violation containing {expected:?}, got {violations:?}"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_plan_rejects_unsafe_argument_shapes() -> Result<(), String> {
+    expect_ripr_swarm_plan_arg_error(&[])?
+        .contains("usage: cargo xtask ripr-swarm plan")
+        .then_some(())
+        .ok_or_else(|| "missing ripr-swarm subcommand returned unexpected error".to_string())?;
+    expect_ripr_swarm_plan_arg_error(&["unknown"])?
+        .contains("unknown ripr-swarm subcommand")
+        .then_some(())
+        .ok_or_else(|| "unknown ripr-swarm subcommand returned unexpected error".to_string())?;
+    expect_ripr_swarm_plan_arg_error(&["plan", "--top"])?
+        .contains("--top requires a positive integer")
+        .then_some(())
+        .ok_or_else(|| "missing swarm plan top value returned unexpected error".to_string())?;
+    expect_ripr_swarm_plan_arg_error(&["plan", "--top", "0"])?
+        .contains("must be greater than zero")
+        .then_some(())
+        .ok_or_else(|| "zero swarm plan top value returned unexpected error".to_string())?;
+    expect_ripr_swarm_plan_arg_error(&["plan", "--actionable-gaps"])?
+        .contains("--actionable-gaps requires a path")
+        .then_some(())
+        .ok_or_else(|| "missing actionable-gaps path returned unexpected error".to_string())?;
+    Ok(())
+}
+
+fn expect_ripr_swarm_plan_arg_error(args: &[&str]) -> Result<String, String> {
+    let owned_args = args
+        .iter()
+        .map(|arg| (*arg).to_string())
+        .collect::<Vec<_>>();
+    match parse_ripr_swarm_plan_args(&owned_args) {
+        Ok(parsed) => Err(format!("accepted invalid ripr swarm plan args: {parsed:?}")),
+        Err(err) => Ok(err),
+    }
+}
+
+#[test]
+fn lane1_actionable_gap_packets_require_canonical_assertion_for_public_projection()
+-> Result<(), String> {
+    let report = lane1_evidence_audit_from_repo_exposure(
+        ".",
+        r#"{
+              "schema_version": "0.3",
+              "scope": "repo",
+              "seams": [
+                {
+                  "seam_id": "packet-fallback-assertion-gap",
+                  "headline_eligible": true,
+                  "file": "src/pricing.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "packet-fallback-assertion-gap",
+                    "canonical_gap_id": "gap:packet-fallback-assertion-gap",
+                    "location": {"file": "src/pricing.rs", "line": 42},
+                    "recommendation": {
+                      "assertion_shape": {"kind": "exact_value"}
+                    },
+                    "raw_findings": [
+                      {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed", "expression": "amount >= discount_threshold"}
+                    ],
+                    "canonical_item": {
+                      "canonical_gap_id": "gap:packet-fallback-assertion-gap",
+                      "canonical_item_kind": "gap",
+                      "evidence_class": "predicate_boundary",
+                      "gap_state": "actionable",
+                      "actionability": "extend_related_test",
+                      "raw_findings": [
+                        {"file": "src/pricing.rs", "line": 42, "kind": "weakly_exposed", "expression": "amount >= discount_threshold"}
+                      ],
+                      "why": "related tests reach the seam but miss equality at the threshold",
+                      "recommended_repair": "Add an equality-boundary assertion for the changed predicate.",
+                      "repair_route": {
+                        "repair_kind": "add_boundary_assertion",
+                        "target_test_type": "boundary_discriminator"
+                      },
+                      "verify_command": "cargo xtask evidence-quality-scorecard",
+                      "receipt_command": "cargo xtask receipts check",
+                      "confidence": {"basis": "static_only", "notes": []}
+                    }
+                  }
+                }
+              ]
+            }"#,
+    )?;
+
+    let packet_json = lane1_actionable_gap_packets_json(&report)?;
+    let packet_value: serde_json::Value =
+        serde_json::from_str(&packet_json).map_err(|err| err.to_string())?;
+    assert_eq!(packet_value["packets"][0]["assertion_shape"], "exact_value");
+    assert_eq!(packet_value["packets"][0]["repair_route_source"], "missing");
+    assert_eq!(
+        packet_value["packets"][0]["public_projection_eligible"],
+        serde_json::Value::Bool(false)
+    );
+    assert_eq!(
+        packet_value["packets"][0]["projection_exclusion_reasons"],
+        serde_json::json!([
+            "missing_repair_route",
+            "missing_related_test_or_observer",
+            "missing_allowed_edit_surface"
+        ])
+    );
+    assert_eq!(
+        packet_value["summary"]["public_projection_eligible_packets"],
+        serde_json::Value::from(0)
+    );
+    Ok(())
+}
+
+#[test]
+fn actionable_gap_outcomes_join_receipts_and_targeted_movement() -> Result<(), String> {
+    let packets = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "actionable-gaps",
+        "packets": [
+            {
+                "canonical_gap_id": "gap:seam-a",
+                "evidence_class": "predicate_boundary",
+                "repair_kind": "add_boundary_assertion",
+                "source_file": "src/pricing.rs",
+                "primary_anchor": {"file": "src/pricing.rs", "line": 42},
+                "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+                "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id seam-a"
+            },
+            {
+                "canonical_gap_id": "gap:seam-b",
+                "evidence_class": "error_path",
+                "repair_kind": "add_exact_error_variant",
+                "source_file": "src/parser.rs",
+                "primary_anchor": {"file": "src/parser.rs", "line": 12},
+                "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+                "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id seam-b"
+            },
+            {
+                "canonical_gap_id": "gap:seam-c",
+                "evidence_class": "side_effect",
+                "repair_kind": "add_side_effect_observer",
+                "source_file": "src/audit.rs",
+                "primary_anchor": {"file": "src/audit.rs", "line": 9},
+                "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+                "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id seam-c"
+            },
+            {
+                "canonical_gap_id": "gap:seam-d",
+                "evidence_class": "config_or_policy_constant",
+                "repair_kind": "add_output_observer",
+                "source_file": "src/config.rs",
+                "primary_anchor": {"file": "src/config.rs", "line": 4},
+                "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+                "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id seam-d"
+            },
+            {
+                "canonical_gap_id": "gap:seam-e",
+                "evidence_class": "predicate_boundary",
+                "repair_kind": "add_boundary_assertion",
+                "source_file": "src/new_gap.rs",
+                "primary_anchor": {"file": "src/new_gap.rs", "line": 20},
+                "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+                "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id seam-e"
+            }
+        ]
+    });
+    let receipt = serde_json::json!({
+        "schema_version": "0.3",
+        "verify_result": "pass",
+        "seam": {
+            "seam_id": "seam-a",
+            "file": "src/pricing.rs",
+            "line": 42,
+            "before": "weakly_gripped",
+            "after": "strongly_gripped",
+            "change": "improved",
+            "evidence_delta": ["missing discriminator no longer reported: threshold equality"]
+        },
+        "provenance": {
+            "seam_id": "seam-a",
+            "movement": "improved",
+            "generated_at": "unix_ms:2"
+        }
+    });
+    let targeted = serde_json::json!({
+        "schema_version": "0.1",
+        "generated_at": "unix_ms:3",
+        "verify_result": "pass",
+        "moved": [],
+        "unchanged": [
+            {
+                "seam_id": "seam-b",
+                "seam_kind": "error_path",
+                "file": "src/parser.rs",
+                "line": 12,
+                "before": "weakly_gripped",
+                "after": "weakly_gripped",
+                "direction": "unchanged",
+                "evidence_delta": []
+            }
+        ],
+        "regressed": [],
+        "removed": [
+            {
+                "seam_id": "seam-c",
+                "seam_kind": "side_effect",
+                "file": "src/audit.rs",
+                "line": 9,
+                "grip_class": "weakly_gripped"
+            }
+        ],
+        "new": [
+            {
+                "seam_id": "seam-e",
+                "seam_kind": "predicate_boundary",
+                "file": "src/new_gap.rs",
+                "line": 20,
+                "grip_class": "ungripped"
+            }
+        ]
+    });
+
+    let report = actionable_gap_outcomes_report_from_values(
+        &packets,
+        Some(&receipt),
+        Some(&targeted),
+        "target/ripr/reports/actionable-gaps.json".to_string(),
+        Some("target/ripr/reports/agent-receipt.json".to_string()),
+        Some("target/ripr/reports/targeted-test-outcome.json".to_string()),
+    )?;
+    let states = report
+        .outcomes
+        .iter()
+        .map(|outcome| {
+            (
+                outcome.canonical_gap_id.as_str(),
+                outcome.outcome_state.as_str(),
+                outcome.receipt_state.as_str(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        states,
+        vec![
+            ("gap:seam-a", "evidence_improved", RECEIPT_MOVEMENT_IMPROVED,),
+            ("gap:seam-b", "attempted_no_receipt", RECEIPT_MISSING),
+            ("gap:seam-c", "attempted_no_receipt", RECEIPT_MISSING),
+            ("gap:seam-d", "not_attempted", RECEIPT_MISSING),
+            ("gap:seam-e", "attempted_no_receipt", RECEIPT_MISSING),
+        ]
+    );
+
+    let json = actionable_gap_outcomes_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(value["report"], "actionable-gap-outcomes");
+    assert_eq!(
+        value["outcomes"][0]["receipt_command"],
+        "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id seam-a"
+    );
+    assert_eq!(value["outcomes"][0]["verify_result"], "pass");
+    assert_eq!(value["outcomes"][1]["verify_result"], "pass");
+    assert_eq!(
+        value["outcomes"][3]["verify_result"],
+        serde_json::Value::Null
+    );
+    assert_eq!(value["summary"]["evidence_improved"], 1);
+    assert_eq!(value["summary"]["evidence_unchanged"], 0);
+    assert_eq!(value["summary"]["resolved"], 0);
+    assert_eq!(value["summary"]["not_attempted"], 1);
+    assert_eq!(value["summary"]["attempted_no_receipt"], 3);
+    assert_eq!(value["summary"]["receipts_present"], 1);
+    assert_eq!(value["movement_front"]["current_actionable_count"], 5);
+    assert_eq!(
+        value["movement_front"]["receipt_linked_actionable_delta"],
+        0
+    );
+    assert_eq!(value["movement_front"]["resolved"], 0);
+    assert_eq!(value["movement_front"]["improved"], 1);
+    assert_eq!(value["movement_front"]["unchanged_after_attempt"], 0);
+    assert_eq!(value["movement_front"]["missing_receipts"], 4);
+    assert_eq!(
+        value["movement_front"]["top_blocked_reason"],
+        "missing_receipts"
+    );
+    assert_eq!(
+        value["outcomes"][0]["reason"],
+        "Matched agent receipt artifact."
+    );
+    assert_eq!(value["outcomes"][0]["timestamp"], "unix_ms:2");
+    assert_eq!(
+        value["outcomes"][0]["attempt_instance"],
+        "timestamp:unix_ms:2"
+    );
+    assert_eq!(value["outcomes"][1]["timestamp"], "unix_ms:3");
+    assert_eq!(
+        value["outcomes"][1]["attempt_instance"],
+        "timestamp:unix_ms:3"
+    );
+    assert_eq!(
+        value["outcomes"][3]["attempt_instance"],
+        serde_json::Value::Null
+    );
+    let markdown = actionable_gap_outcomes_markdown(&report);
+    assert!(markdown.contains("# Actionable Gap Outcomes"));
+    assert!(markdown.contains("## Movement Since Prior Refresh"));
+    assert!(markdown.contains("| Current actionable count | 5 |"));
+    assert!(markdown.contains("| Receipt-linked actionable delta | 0 |"));
+    assert!(markdown.contains("| Unchanged after attempt | 0 |"));
+    assert!(markdown.contains("| Missing receipts | 4 |"));
+    assert!(markdown.contains("| Top blocked reason | missing_receipts |"));
+    assert!(markdown.contains("gap:seam-c"));
+    assert!(markdown.contains("attempted_no_receipt"));
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_attempt_ledger_preserves_prior_attempts_and_highlights_latest() -> Result<(), String>
+{
+    let swarm_plan = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "swarm-plan",
+        "top_ready_packets": [
+            {
+                "packet_id": "packet-boundary-001",
+                "canonical_gap_id": "gap:seam-a",
+                "verify_command": "cargo test -p ripr seam_a",
+                "receipt_command": "cargo xtask receipts write --packet packet-boundary-001"
+            }
+        ]
+    });
+    let outcomes = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "actionable-gap-outcomes",
+        "inputs": {
+            "agent_receipt": "target/ripr/reports/agent-receipt.json"
+        },
+        "outcomes": [
+            {
+                "canonical_gap_id": "gap:seam-a",
+                "evidence_class": "predicate_boundary",
+                "repair_kind": "add_boundary_assertion",
+                "source_file": "src/pricing.rs",
+                "verify_command": "cargo test -p ripr seam_a",
+                "verify_result": "pass",
+                "receipt_command_or_path": "cargo xtask receipts write --packet packet-boundary-001",
+                "receipt_state": "receipt_movement_improved",
+                "outcome_state": "evidence_improved",
+                "seam_id": "seam-a",
+                "before": "weakly_gripped",
+                "after": "strongly_gripped",
+                "movement_source": "agent_receipt",
+                "movement_direction": "improved",
+                "reason": "Matched agent receipt artifact."
+            }
+        ],
+        "orphaned_receipts": [
+            {
+                "receipt_id": "receipt:old",
+                "seam_id": "old",
+                "reason": "Receipt artifact did not match any current actionable canonical gap packet."
+            }
+        ]
+    });
+    let prior_ledger = serde_json::json!({
+        "schema_version": "0.1",
+        "report": "swarm-attempt-ledger",
+        "attempts": [
+            {
+                "packet_id": "packet-boundary-001",
+                "canonical_gap_id": "gap:seam-a",
+                "attempt_id": "attempt:prior-unchanged",
+                "actor_kind": "agent",
+                "receipt_path": "target/ripr/reports/agent-receipt-old.json",
+                "verify_command": "cargo test -p ripr seam_a",
+                "verify_result": "pass",
+                "receipt_command": "cargo xtask receipts write --packet packet-boundary-001",
+                "before_gap_state": "weakly_gripped",
+                "after_gap_state": "weakly_gripped",
+                "outcome": "evidence_unchanged",
+                "timestamp": "unix_ms:1",
+                "receipt_state": "receipt_movement_unchanged",
+                "movement_source": "agent_receipt",
+                "reason": "prior attempt"
+            }
+        ]
+    });
+
+    let report = ripr_swarm_attempt_ledger_from_values(
+        "unix_ms:2".to_string(),
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&prior_ledger),
+        },
+    );
+
+    assert_eq!(report.attempts.len(), 2);
+    assert_eq!(report.latest_attempts.len(), 1);
+    assert_eq!(report.latest_attempts[0].packet_id, "packet-boundary-001");
+    assert_eq!(report.latest_attempts[0].outcome, "evidence_improved");
+    assert_eq!(
+        report.latest_attempts[0].receipt_path.as_deref(),
+        Some("target/ripr/reports/agent-receipt.json")
+    );
+    let json = ripr_swarm_attempt_ledger_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(value["report"], "swarm-attempt-ledger");
+    assert_eq!(value["summary"]["attempts_total"], 2);
+    assert_eq!(value["summary"]["evidence_improved"], 1);
+    assert_eq!(value["summary"]["missing_verify_result"], 0);
+    assert_eq!(value["summary"]["orphaned_receipts"], 1);
+    assert_eq!(
+        value["latest_attempts"][0]["attempt_id"],
+        "attempt:gap-seam-a:evidence-improved:receipt-movement-improved:agent-receipt:seam-a:receipt-path-target-ripr-reports-agent-receipt-json"
+    );
+    assert_eq!(value["latest_attempts"][0]["verify_result"], "pass");
+    let markdown = ripr_swarm_attempt_ledger_markdown(&report);
+    assert!(markdown.contains("# RIPR Swarm Attempt Ledger"));
+    assert!(markdown.contains("## Runtime Status"));
+    assert!(markdown.contains("| State | `full` |"));
+    assert!(markdown.contains("| Downstream consumable | `true` |"));
+    assert!(markdown.contains("## Latest Attempts By Canonical Gap"));
+    assert!(markdown.contains("evidence_improved"));
+    assert!(markdown.contains("| Verify result |"));
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_attempt_ledger_drops_stale_synthetic_not_attempted_rows() -> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "swarm-plan",
+        "top_ready_packets": []
+    });
+    let outcomes = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "actionable-gap-outcomes",
+        "outcomes": []
+    });
+    let prior_ledger = serde_json::json!({
+        "schema_version": "0.1",
+        "report": "swarm-attempt-ledger",
+        "attempts": [
+            {
+                "packet_id": "packet-stale-001",
+                "canonical_gap_id": "gap:stale",
+                "attempt_id": "attempt:stale:not-attempted",
+                "actor_kind": "swarm",
+                "verify_command": "verify_command_unknown",
+                "outcome": "not_attempted",
+                "timestamp": "unix_ms:1",
+                "receipt_state": "receipt_not_applicable",
+                "reason": "prior synthetic queue placeholder"
+            }
+        ]
+    });
+
+    let report = ripr_swarm_attempt_ledger_from_values(
+        "unix_ms:2".to_string(),
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&prior_ledger),
+        },
+    );
+
+    assert!(report.attempts.is_empty());
+    assert!(report.latest_attempts.is_empty());
+    assert!(report.repair_route_quality.is_empty());
+    assert!(report.top_missing_evidence_fields.is_empty());
+    let json = ripr_swarm_attempt_ledger_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(value["summary"]["attempts_total"], 0);
+    assert_eq!(value["summary"]["not_attempted"], 0);
+    assert_eq!(
+        value["top_missing_evidence_fields"]
+            .as_array()
+            .map(Vec::len),
+        Some(0)
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_attempt_ledger_synthesizes_current_plan_not_attempted_rows() -> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "swarm-plan",
+        "top_ready_packets": [
+            {
+                "packet_id": "packet-current-001",
+                "canonical_gap_id": "gap:current",
+                "evidence_class": "predicate_boundary",
+                "source_file": "src/pricing.rs",
+                "repair_kind": "add_boundary_assertion",
+                "target_test_type": "boundary_discriminator",
+                "assertion_shape": "assert_eq!(discount(100, 100), 90)",
+                "verify_command": "cargo test -p ripr current_gap",
+                "receipt_command": "cargo xtask receipts write --packet packet-current-001"
+            }
+        ]
+    });
+    let outcomes = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "actionable-gap-outcomes",
+        "outcomes": []
+    });
+    let prior_ledger = serde_json::json!({
+        "schema_version": "0.1",
+        "report": "swarm-attempt-ledger",
+        "attempts": []
+    });
+
+    let report = ripr_swarm_attempt_ledger_from_values(
+        "unix_ms:2".to_string(),
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&prior_ledger),
+        },
+    );
+
+    assert_eq!(report.attempts.len(), 1);
+    assert_eq!(report.latest_attempts.len(), 1);
+    let attempt = &report.latest_attempts[0];
+    assert_eq!(attempt.packet_id, "packet-current-001");
+    assert_eq!(attempt.canonical_gap_id, "gap:current");
+    assert_eq!(
+        attempt.repair_kind.as_deref(),
+        Some("add_boundary_assertion")
+    );
+    assert_eq!(attempt.verify_command, "cargo test -p ripr current_gap");
+    assert_eq!(
+        attempt.receipt_command.as_deref(),
+        Some("cargo xtask receipts write --packet packet-current-001")
+    );
+    assert_eq!(attempt.outcome, "not_attempted");
+    assert_eq!(attempt.actor_kind, "none");
+    assert_eq!(attempt.receipt_state, RECEIPT_NOT_APPLICABLE);
+    assert_eq!(
+        attempt.reason,
+        "current swarm plan queued packet placeholder"
+    );
+    let json = ripr_swarm_attempt_ledger_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(value["summary"]["attempts_total"], 1);
+    assert_eq!(value["summary"]["not_attempted"], 1);
+    assert_eq!(value["summary"]["missing_verify_result"], 0);
+    assert_eq!(
+        value["top_missing_evidence_fields"]
+            .as_array()
+            .map(Vec::len),
+        Some(0)
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_attempt_ledger_dedupes_current_plan_placeholders_by_packet_or_gap()
+-> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "swarm-plan",
+        "top_ready_packets": [
+            {
+                "packet_id": "packet-existing",
+                "canonical_gap_id": "gap:new-packet-duplicate",
+                "repair_kind": "add_boundary_assertion",
+                "verify_command": "cargo test -p ripr duplicate_packet",
+                "receipt_command": "cargo xtask receipts write --packet packet-existing"
+            },
+            {
+                "packet_id": "packet-new-gap",
+                "canonical_gap_id": "gap:existing",
+                "repair_kind": "add_boundary_assertion",
+                "verify_command": "cargo test -p ripr duplicate_gap",
+                "receipt_command": "cargo xtask receipts write --packet packet-new-gap"
+            }
+        ]
+    });
+    let outcomes = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "actionable-gap-outcomes",
+        "outcomes": []
+    });
+    let prior_ledger = serde_json::json!({
+        "schema_version": "0.1",
+        "report": "swarm-attempt-ledger",
+        "attempts": [
+            {
+                "packet_id": "packet-existing",
+                "canonical_gap_id": "gap:prior-packet",
+                "attempt_id": "attempt:prior-packet:not-attempted",
+                "repair_kind": "add_boundary_assertion",
+                "actor_kind": "none",
+                "verify_command": "cargo test -p ripr prior_packet",
+                "receipt_command": "cargo xtask receipts write --packet packet-existing",
+                "outcome": "not_attempted",
+                "timestamp": "unix_ms:1",
+                "receipt_state": "receipt_not_applicable",
+                "reason": "prior current queue placeholder"
+            },
+            {
+                "packet_id": "packet-prior-gap",
+                "canonical_gap_id": "gap:existing",
+                "attempt_id": "attempt:prior-gap:not-attempted",
+                "repair_kind": "add_boundary_assertion",
+                "actor_kind": "none",
+                "verify_command": "cargo test -p ripr prior_gap",
+                "receipt_command": "cargo xtask receipts write --packet packet-prior-gap",
+                "outcome": "not_attempted",
+                "timestamp": "unix_ms:1",
+                "receipt_state": "receipt_not_applicable",
+                "reason": "prior current queue placeholder"
+            }
+        ]
+    });
+
+    let report = ripr_swarm_attempt_ledger_from_values(
+        "unix_ms:2".to_string(),
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&prior_ledger),
+        },
+    );
+
+    assert_eq!(report.attempts.len(), 2);
+    assert_eq!(report.latest_attempts.len(), 2);
+    assert!(
+        !report
+            .latest_attempts
+            .iter()
+            .any(|attempt| attempt.canonical_gap_id == "gap:new-packet-duplicate")
+    );
+    assert!(
+        !report
+            .latest_attempts
+            .iter()
+            .any(|attempt| attempt.packet_id == "packet-new-gap")
+    );
+    assert!(report.top_missing_evidence_fields.is_empty());
+    let json = ripr_swarm_attempt_ledger_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(value["summary"]["attempts_total"], 2);
+    assert_eq!(value["summary"]["not_attempted"], 2);
+    assert_eq!(
+        value["top_missing_evidence_fields"]
+            .as_array()
+            .map(Vec::len),
+        Some(0)
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_attempt_ledger_synthesizes_fallback_placeholder_fields() -> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "swarm-plan",
+        "top_ready_packets": [
+            {
+                "canonical_gap_id": "gap:fallback",
+                "repair_kind": "add_boundary_assertion",
+                "receipt_command": "cargo xtask receipts write --packet gap-fallback"
+            }
+        ]
+    });
+    let outcomes = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "actionable-gap-outcomes",
+        "outcomes": []
+    });
+    let prior_ledger = serde_json::json!({
+        "schema_version": "0.1",
+        "report": "swarm-attempt-ledger",
+        "attempts": []
+    });
+
+    let report = ripr_swarm_attempt_ledger_from_values(
+        "unix_ms:2".to_string(),
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&prior_ledger),
+        },
+    );
+
+    assert_eq!(report.latest_attempts.len(), 1);
+    let attempt = &report.latest_attempts[0];
+    assert_eq!(attempt.packet_id, "gap:fallback");
+    assert_eq!(attempt.canonical_gap_id, "gap:fallback");
+    assert_eq!(attempt.verify_command, "verify_command_unknown");
+    assert_eq!(
+        attempt.reason,
+        "current swarm plan queued packet placeholder missing verify_command"
+    );
+    assert_eq!(report.top_missing_evidence_fields.len(), 1);
+    assert_eq!(
+        report.top_missing_evidence_fields[0].label,
+        "verify_command"
+    );
+    assert_eq!(report.top_missing_evidence_fields[0].count, 1);
+    let json = ripr_swarm_attempt_ledger_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(value["summary"]["attempts_total"], 1);
+    assert_eq!(value["summary"]["not_attempted"], 1);
+    assert_eq!(value["summary"]["missing_verify_result"], 0);
+    assert_eq!(
+        value["top_missing_evidence_fields"][0]["label"],
+        "verify_command"
+    );
+    assert_eq!(
+        value["latest_attempts"][0]["verify_command"],
+        "verify_command_unknown"
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_attempt_ledger_preserves_current_plan_not_attempted_rows() -> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "swarm-plan",
+        "top_ready_packets": [
+            {
+                "packet_id": "packet-current-001",
+                "canonical_gap_id": "gap:current",
+                "repair_kind": "add_boundary_assertion",
+                "verify_command": "cargo test -p ripr current_gap",
+                "receipt_command": "cargo xtask receipts write --packet packet-current-001"
+            }
+        ]
+    });
+    let outcomes = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "actionable-gap-outcomes",
+        "outcomes": []
+    });
+    let prior_ledger = serde_json::json!({
+        "schema_version": "0.1",
+        "report": "swarm-attempt-ledger",
+        "attempts": [
+            {
+                "packet_id": "packet-current-001",
+                "canonical_gap_id": "gap:current",
+                "attempt_id": "attempt:current:not-attempted",
+                "repair_kind": "add_boundary_assertion",
+                "actor_kind": "swarm",
+                "verify_command": "cargo test -p ripr current_gap",
+                "receipt_command": "cargo xtask receipts write --packet packet-current-001",
+                "outcome": "not_attempted",
+                "timestamp": "unix_ms:1",
+                "receipt_state": "receipt_not_applicable",
+                "reason": "current queue placeholder"
+            }
+        ]
+    });
+
+    let report = ripr_swarm_attempt_ledger_from_values(
+        "unix_ms:2".to_string(),
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&prior_ledger),
+        },
+    );
+
+    assert_eq!(report.attempts.len(), 1);
+    assert_eq!(report.latest_attempts.len(), 1);
+    assert_eq!(report.latest_attempts[0].packet_id, "packet-current-001");
+    assert_eq!(report.latest_attempts[0].outcome, "not_attempted");
+    let json = ripr_swarm_attempt_ledger_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(value["summary"]["attempts_total"], 1);
+    assert_eq!(value["summary"]["not_attempted"], 1);
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_attempt_ledger_preserves_repeated_same_state_attempts() -> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "swarm-plan",
+        "top_ready_packets": [
+            {
+                "packet_id": "packet-boundary-001",
+                "canonical_gap_id": "gap:seam-a",
+                "evidence_class": "predicate_boundary",
+                "source_file": "src/pricing.rs",
+                "repair_kind": "add_boundary_assertion",
+                "target_test_type": "boundary_discriminator",
+                "assertion_shape": "assert_eq!(discounted_total(threshold), expected)",
+                "verify_command": "cargo test -p ripr seam_a",
+                "receipt_command": "cargo xtask receipts write --packet packet-boundary-001"
+            }
+        ]
+    });
+    let outcomes = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "actionable-gap-outcomes",
+        "inputs": {
+            "agent_receipt": "target/ripr/reports/agent-receipt-new.json"
+        },
+        "outcomes": [
+            {
+                "canonical_gap_id": "gap:seam-a",
+                "receipt_state": "receipt_movement_unchanged",
+                "outcome_state": "evidence_unchanged",
+                "seam_id": "seam-a",
+                "before": "weakly_gripped",
+                "after": "weakly_gripped",
+                "movement_source": "agent_receipt",
+                "timestamp": "unix_ms:2",
+                "attempt_instance": "receipt:agent-new"
+            }
+        ]
+    });
+    let prior_ledger = serde_json::json!({
+        "schema_version": "0.1",
+        "report": "swarm-attempt-ledger",
+        "attempts": [
+            {
+                "packet_id": "packet-boundary-001",
+                "canonical_gap_id": "gap:seam-a",
+                "attempt_id": "attempt:gap-seam-a:evidence-unchanged:receipt-movement-unchanged:agent-receipt:seam-a",
+                "actor_kind": "agent",
+                "receipt_path": "target/ripr/reports/agent-receipt-old.json",
+                "verify_command": "cargo test -p ripr seam_a",
+                "receipt_command": "cargo xtask receipts write --packet packet-boundary-001",
+                "before_gap_state": "weakly_gripped",
+                "after_gap_state": "weakly_gripped",
+                "outcome": "evidence_unchanged",
+                "timestamp": "unix_ms:1",
+                "receipt_state": "receipt_movement_unchanged",
+                "movement_source": "agent_receipt",
+                "reason": "prior unchanged attempt"
+            }
+        ]
+    });
+
+    let report = ripr_swarm_attempt_ledger_from_values(
+        "unix_ms:3".to_string(),
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&prior_ledger),
+        },
+    );
+
+    assert_eq!(
+        report.attempts.len(),
+        2,
+        "same-state repeated attempts with distinct timestamps must not collapse"
+    );
+    assert_eq!(report.latest_attempts.len(), 1);
+    assert_eq!(report.latest_attempts[0].outcome, "evidence_unchanged");
+    assert_eq!(
+        report.latest_attempts[0].attempt_id,
+        "attempt:gap-seam-a:evidence-unchanged:receipt-movement-unchanged:agent-receipt:seam-a:receipt-agent-new"
+    );
+    assert!(
+            report.attempts.iter().any(|attempt| attempt.attempt_id.as_str()
+                == "attempt:gap-seam-a:evidence-unchanged:receipt-movement-unchanged:agent-receipt:seam-a"),
+            "prior same-state attempt remains visible"
+        );
+    let value: serde_json::Value = serde_json::from_str(&ripr_swarm_attempt_ledger_json(&report)?)
+        .map_err(|err| err.to_string())?;
+    assert_eq!(value["summary"]["attempts_total"], 2);
+    assert_eq!(value["summary"]["evidence_unchanged"], 1);
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_attempt_ledger_imports_real_repair_attempts() -> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "swarm-plan",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "top_ready_packets": []
+    });
+    let outcomes = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "actionable-gap-outcomes",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "outcomes": [
+            {
+                "canonical_gap_id": "gap:missing-receipt",
+                "packet_id": "gap:missing-receipt",
+                "outcome_state": "not_attempted",
+                "receipt_state": "receipt_not_applicable",
+                "repair_kind": "add_call_observer",
+                "verify_command": "cargo test -p ripr missing_receipt"
+            }
+        ]
+    });
+    let real_attempts = serde_json::json!({
+        "schema_version": "0.1",
+        "kind": "real_repair_attempts_corpus",
+        "cases": [
+            {
+                "id": "route-improved",
+                "canonical_gap_id": "gap:route-improved",
+                "packet_id": "limitation:route-improved",
+                "language": "typescript",
+                "repair_kind": "sharpen_static_limitation_route",
+                "target_test_or_observer_shape": "fixture-backed analyzer route split",
+                "verify_command": "cargo test -p ripr route_improved",
+                "verify_result": "pass",
+                "receipt_command": "cargo xtask dogfood",
+                "receipt_path": "fixtures/real-repair-attempts/corpus.json",
+                "receipt_state": "receipt_movement_improved",
+                "actor_kind": "codex",
+                "before_gap_state": "static_limitation",
+                "after_gap_state": "static_limitation",
+                "outcome": "evidence_improved",
+                "reason": "real analyzer backlog route improved"
+            },
+            {
+                "id": "missing-receipt",
+                "canonical_gap_id": "gap:missing-receipt",
+                "packet_id": "gap:missing-receipt",
+                "language": "javascript",
+                "repair_kind": "add_call_observer",
+                "target_test_or_observer_shape": "bounded call observer",
+                "verify_command": "cargo test -p ripr missing_receipt",
+                "verify_result": "not_run",
+                "receipt_command": "cargo xtask receipts write",
+                "receipt_path": null,
+                "receipt_state": "receipt_missing",
+                "actor_kind": "codex",
+                "before_gap_state": "actionable",
+                "after_gap_state": "actionable",
+                "outcome": "attempted_no_receipt",
+                "missing_receipt_reason": "receipt command was not run after verify timed out",
+                "reason": "attempt stopped before receipt"
+            }
+        ]
+    });
+
+    let report = ripr_swarm_attempt_ledger_from_values_with_real_repair_attempts(
+        "unix_ms:99".to_string(),
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "missing".to_string(),
+            limitation: Some("no prior ledger".to_string()),
+            value: None,
+        },
+        RiprSwarmReadinessInput {
+            path: "fixtures/real-repair-attempts/corpus.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&real_attempts),
+        },
+    );
+
+    let value: serde_json::Value = serde_json::from_str(&ripr_swarm_attempt_ledger_json(&report)?)
+        .map_err(|err| err.to_string())?;
+    assert_eq!(value["summary"]["attempts_total"], 3);
+    assert_eq!(value["summary"]["evidence_improved"], 1);
+    assert_eq!(value["summary"]["attempted_no_receipt"], 1);
+    assert_eq!(value["summary"]["not_attempted"], 0);
+    assert_eq!(
+        value["inputs"]["real_repair_attempts"]["state"],
+        serde_json::Value::from("read")
+    );
+    assert_eq!(
+        value["repair_route_quality"][0]["repair_kind"],
+        serde_json::Value::from("add_call_observer")
+    );
+    assert_eq!(
+        value["repair_route_quality"][0]["repair_kind_attempted_no_receipt"],
+        serde_json::Value::from(1)
+    );
+    let language_rows = value["language_repair_route_quality"]
+        .as_array()
+        .ok_or_else(|| "expected language repair-route quality rows".to_string())?;
+    assert!(language_rows.iter().any(|row| {
+        row["language"] == "javascript"
+            && row["repair_kind"] == "add_call_observer"
+            && row["repair_kind_attempted_no_receipt"] == 1
+    }));
+    assert!(language_rows.iter().any(|row| {
+        row["language"] == "typescript"
+            && row["repair_kind"] == "sharpen_static_limitation_route"
+            && row["repair_kind_improved"] == 1
+    }));
+    let missing_receipt_attempt = value["attempts"]
+        .as_array()
+        .and_then(|attempts| {
+            attempts
+                .iter()
+                .find(|attempt| attempt["outcome"] == "attempted_no_receipt")
+        })
+        .ok_or_else(|| "expected attempted_no_receipt attempt".to_string())?;
+    assert_eq!(
+        missing_receipt_attempt["missing_receipt_reason"],
+        serde_json::Value::from("receipt command was not run after verify timed out")
+    );
+    assert_eq!(
+        missing_receipt_attempt["language"],
+        serde_json::Value::from("javascript")
+    );
+    let markdown = ripr_swarm_attempt_ledger_markdown(&report);
+    assert!(markdown.contains("| real repair attempts | `read` |"));
+    assert!(markdown.contains("## Repair Route Quality By Language"));
+    assert!(markdown.contains("Missing receipt reason"));
+    assert!(markdown.contains("receipt command was not run after verify timed out"));
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_attempt_ledger_real_corpus_supersedes_add_call_observer_timeout() -> Result<(), String>
+{
+    let swarm_plan = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "swarm-plan",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "top_ready_packets": []
+    });
+    let outcomes = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "actionable-gap-outcomes",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "outcomes": []
+    });
+    let corpus_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(REAL_REPAIR_ATTEMPTS_CORPUS);
+    let real_attempts = read_json_value(&corpus_path)?;
+
+    let report = ripr_swarm_attempt_ledger_from_values_with_real_repair_attempts(
+        "unix_ms:100".to_string(),
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "missing".to_string(),
+            limitation: Some("no prior ledger".to_string()),
+            value: None,
+        },
+        RiprSwarmReadinessInput {
+            path: REAL_REPAIR_ATTEMPTS_CORPUS.to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&real_attempts),
+        },
+    );
+
+    let value: serde_json::Value = serde_json::from_str(&ripr_swarm_attempt_ledger_json(&report)?)
+        .map_err(|err| err.to_string())?;
+    let latest = value["latest_attempts"]
+        .as_array()
+        .and_then(|attempts| {
+            attempts
+                .iter()
+                .find(|attempt| attempt["canonical_gap_id"] == "gap:54970c87c8f8ca9d")
+        })
+        .ok_or_else(|| "expected latest add_call_observer attempt".to_string())?;
+    assert_eq!(latest["outcome"], "evidence_improved");
+    assert_eq!(
+        latest["verify_command"],
+        "cargo test -p ripr serve_stdio_call_presence_observer"
+    );
+    assert_eq!(
+        latest["receipt_path"],
+        serde_json::Value::from(REAL_REPAIR_ATTEMPTS_CORPUS)
+    );
+
+    let route_quality = value["repair_route_quality"]
+        .as_array()
+        .and_then(|rows| {
+            rows.iter()
+                .find(|row| row["repair_kind"] == "add_call_observer")
+        })
+        .ok_or_else(|| "expected add_call_observer route-quality row".to_string())?;
+    assert_eq!(
+        route_quality["repair_kind_attempted_no_receipt"],
+        serde_json::Value::from(0)
+    );
+    assert_eq!(
+        route_quality["repair_kind_improved"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        route_quality["repair_kind_failure_count"],
+        serde_json::Value::from(0)
+    );
+    assert!(
+        value["top_missing_evidence_fields"]
+            .as_array()
+            .is_none_or(|rows| {
+                !rows
+                    .iter()
+                    .flat_map(|row| {
+                        row["sample_canonical_gap_ids"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                    })
+                    .any(|gap| gap == "gap:54970c87c8f8ca9d")
+            })
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_attempt_ledger_real_corpus_supersedes_add_output_observer_missing_receipt()
+-> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "swarm-plan",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "top_ready_packets": []
+    });
+    let outcomes = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "actionable-gap-outcomes",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "outcomes": []
+    });
+    let corpus_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(REAL_REPAIR_ATTEMPTS_CORPUS);
+    let real_attempts = read_json_value(&corpus_path)?;
+
+    let report = ripr_swarm_attempt_ledger_from_values_with_real_repair_attempts(
+        "unix_ms:100".to_string(),
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "missing".to_string(),
+            limitation: Some("no prior ledger".to_string()),
+            value: None,
+        },
+        RiprSwarmReadinessInput {
+            path: REAL_REPAIR_ATTEMPTS_CORPUS.to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&real_attempts),
+        },
+    );
+
+    let value: serde_json::Value = serde_json::from_str(&ripr_swarm_attempt_ledger_json(&report)?)
+        .map_err(|err| err.to_string())?;
+    let latest = value["latest_attempts"]
+        .as_array()
+        .and_then(|attempts| {
+            attempts
+                .iter()
+                .find(|attempt| attempt["canonical_gap_id"] == "gap:report-config-label")
+        })
+        .ok_or_else(|| "expected latest add_output_observer attempt".to_string())?;
+    assert_eq!(latest["outcome"], "evidence_improved");
+    assert_eq!(latest["verify_command"], "cargo xtask goldens check");
+    assert_eq!(latest["receipt_command"], "cargo xtask dogfood");
+    assert_eq!(
+        latest["receipt_path"],
+        serde_json::Value::from(REAL_REPAIR_ATTEMPTS_CORPUS)
+    );
+
+    let route_quality = value["repair_route_quality"]
+        .as_array()
+        .and_then(|rows| {
+            rows.iter()
+                .find(|row| row["repair_kind"] == "add_output_observer")
+        })
+        .ok_or_else(|| "expected add_output_observer route-quality row".to_string())?;
+    assert_eq!(
+        route_quality["repair_kind_attempted_no_receipt"],
+        serde_json::Value::from(0)
+    );
+    assert_eq!(
+        route_quality["repair_kind_improved"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        route_quality["repair_kind_failure_count"],
+        serde_json::Value::from(0)
+    );
+    assert!(
+        value["top_missing_evidence_fields"]
+            .as_array()
+            .is_none_or(|rows| {
+                !rows
+                    .iter()
+                    .flat_map(|row| {
+                        row["sample_canonical_gap_ids"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                    })
+                    .any(|gap| gap == "gap:report-config-label")
+            })
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_attempt_ledger_real_corpus_supersedes_unchanged_attempts() -> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "swarm-plan",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "top_ready_packets": []
+    });
+    let outcomes = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "actionable-gap-outcomes",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "outcomes": []
+    });
+    let corpus_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(REAL_REPAIR_ATTEMPTS_CORPUS);
+    let real_attempts = read_json_value(&corpus_path)?;
+
+    let report = ripr_swarm_attempt_ledger_from_values_with_real_repair_attempts(
+        "unix_ms:100".to_string(),
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "missing".to_string(),
+            limitation: Some("no prior ledger".to_string()),
+            value: None,
+        },
+        RiprSwarmReadinessInput {
+            path: REAL_REPAIR_ATTEMPTS_CORPUS.to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&real_attempts),
+        },
+    );
+
+    let value: serde_json::Value = serde_json::from_str(&ripr_swarm_attempt_ledger_json(&report)?)
+        .map_err(|err| err.to_string())?;
+    let latest = value["latest_attempts"]
+        .as_array()
+        .and_then(|attempts| {
+            attempts
+                .iter()
+                .find(|attempt| attempt["canonical_gap_id"] == "gap:unchanged")
+        })
+        .ok_or_else(|| "expected latest add_exact_error_variant attempt".to_string())?;
+    assert_eq!(latest["outcome"], "evidence_improved");
+    assert_eq!(latest["repair_kind"], "add_exact_error_variant");
+    assert_eq!(
+        latest["verify_command"],
+        "cargo test -p ripr exact_error_variant --lib"
+    );
+    assert_eq!(latest["receipt_command"], "cargo xtask dogfood");
+    assert_eq!(
+        latest["receipt_path"],
+        serde_json::Value::from(REAL_REPAIR_ATTEMPTS_CORPUS)
+    );
+
+    let route_quality = value["repair_route_quality"]
+        .as_array()
+        .and_then(|rows| {
+            rows.iter()
+                .find(|row| row["repair_kind"] == "add_exact_error_variant")
+        })
+        .ok_or_else(|| "expected add_exact_error_variant route-quality row".to_string())?;
+    assert_eq!(
+        route_quality["repair_kind_unchanged"],
+        serde_json::Value::from(0)
+    );
+    assert_eq!(
+        route_quality["repair_kind_improved"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        route_quality["repair_kind_failure_count"],
+        serde_json::Value::from(0)
+    );
+    let weak_oracle_expected_unchanged = value["attempts"]
+        .as_array()
+        .and_then(|attempts| {
+            attempts.iter().find(|attempt| {
+                attempt["canonical_gap_id"] == "gap:typescript-preview-weak-oracle-downgrade"
+                    && attempt["outcome"] == "evidence_unchanged"
+            })
+        })
+        .ok_or_else(|| "expected durable weak-oracle expected-unchanged attempt".to_string())?;
+    assert_eq!(
+        weak_oracle_expected_unchanged["route_quality_expectation"],
+        "expected_unchanged_negative_capability"
+    );
+    assert_eq!(
+        value["summary"]["expected_unchanged"],
+        serde_json::Value::from(0)
+    );
+    assert_eq!(
+        value["attempt_history_summary"]["evidence_unchanged"],
+        serde_json::Value::from(2)
+    );
+    assert_eq!(
+        value["attempt_history_summary"]["attempted_no_receipt"],
+        serde_json::Value::from(2)
+    );
+    assert_eq!(
+        value["attempt_history_summary"]["expected_unchanged"],
+        serde_json::Value::from(1)
+    );
+    assert!(
+        !value["top_failing_repair_routes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|row| row["repair_kind"] == "preserve_preview_weak_oracle_boundary")
+    );
+    assert!(
+        !value["repair_route_quality_backlog"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|row| row["repair_kind"] == "add_exact_error_variant")
+    );
+
+    let weak_oracle_latest = value["latest_attempts"]
+        .as_array()
+        .and_then(|attempts| {
+            attempts.iter().find(|attempt| {
+                attempt["canonical_gap_id"] == "gap:typescript-preview-weak-oracle-downgrade"
+            })
+        })
+        .ok_or_else(|| "expected latest TypeScript weak-oracle attempt".to_string())?;
+    assert_eq!(weak_oracle_latest["outcome"], "evidence_improved");
+    assert_eq!(
+        weak_oracle_latest["repair_kind"],
+        "preserve_preview_weak_oracle_boundary"
+    );
+    assert_eq!(
+        weak_oracle_latest["verify_command"],
+        "cargo test -p ripr typescript_preview_weak_oracle --lib"
+    );
+    assert_eq!(
+        weak_oracle_latest["receipt_command"],
+        "cargo xtask fixtures typescript_jest_vitest_assertion_facts"
+    );
+    assert_eq!(
+        weak_oracle_latest["receipt_path"],
+        "fixtures/typescript_jest_vitest_assertion_facts/expected/check.json"
+    );
+
+    let weak_oracle_route_quality = value["repair_route_quality"]
+        .as_array()
+        .and_then(|rows| {
+            rows.iter()
+                .find(|row| row["repair_kind"] == "preserve_preview_weak_oracle_boundary")
+        })
+        .ok_or_else(|| {
+            "expected preserve_preview_weak_oracle_boundary route-quality row".to_string()
+        })?;
+    assert_eq!(
+        weak_oracle_route_quality["repair_kind_unchanged"],
+        serde_json::Value::from(0)
+    );
+    assert_eq!(
+        weak_oracle_route_quality["repair_kind_expected_unchanged"],
+        serde_json::Value::from(0)
+    );
+    assert_eq!(
+        weak_oracle_route_quality["repair_kind_improved"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        weak_oracle_route_quality["repair_kind_failure_count"],
+        serde_json::Value::from(0)
+    );
+    assert!(
+        !value["repair_route_quality_backlog"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|row| row["repair_kind"] == "preserve_preview_weak_oracle_boundary")
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_attempt_ledger_preserves_limited_outcome_runtime_status() -> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "swarm-plan",
+        "run_status": "full",
+        "runtime_status": {
+            "state": "full",
+            "downstream_consumable": true
+        },
+        "top_ready_packets": []
+    });
+    let outcomes = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "actionable-gap-outcomes",
+        "run_status": "limited_timeout",
+        "runtime_status": {
+            "state": "limited_timeout",
+            "phase": null,
+            "duration_ms": 30000,
+            "limit_ms": 30000,
+            "input_kind": "actionable-gap-outcomes",
+            "input_path": null,
+            "limitation_category": "lane1_repo_exposure_timeout",
+            "repair_route": "rerun cargo xtask actionable-gap-outcomes with a larger budget",
+            "downstream_consumable": false
+        },
+        "outcomes": []
+    });
+
+    let report = ripr_swarm_attempt_ledger_from_values(
+        "unix_ms:12".to_string(),
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "missing".to_string(),
+            limitation: Some("no prior ledger".to_string()),
+            value: None,
+        },
+    );
+
+    let value: serde_json::Value = serde_json::from_str(&ripr_swarm_attempt_ledger_json(&report)?)
+        .map_err(|err| err.to_string())?;
+    assert_eq!(value["run_status"], "limited_timeout");
+    assert_eq!(
+        value["runtime_status"]["phase"],
+        "actionable_gap_outcomes_input"
+    );
+    assert_eq!(
+        value["runtime_status"]["input_path"],
+        "target/ripr/reports/actionable-gap-outcomes.json"
+    );
+    assert_eq!(
+        value["runtime_status"]["repair_route"],
+        "rerun cargo xtask actionable-gap-outcomes with a larger budget"
+    );
+    assert_eq!(value["runtime_status"]["downstream_consumable"], false);
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_attempt_ledger_orders_unix_ms_timestamps_numerically() -> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "swarm-plan",
+        "top_ready_packets": []
+    });
+    let outcomes = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "actionable-gap-outcomes",
+        "outcomes": []
+    });
+    let prior_ledger = serde_json::json!({
+        "schema_version": "0.1",
+        "report": "swarm-attempt-ledger",
+        "attempts": [
+            {
+                "packet_id": "packet-boundary-001",
+                "canonical_gap_id": "gap:seam-a",
+                "attempt_id": "attempt:older-improved",
+                "actor_kind": "agent",
+                "verify_command": "cargo test -p ripr seam_a",
+                "receipt_command": "cargo xtask receipts write --packet packet-boundary-001",
+                "outcome": "evidence_improved",
+                "timestamp": "unix_ms:9",
+                "receipt_state": "receipt_movement_improved"
+            },
+            {
+                "packet_id": "packet-boundary-001",
+                "canonical_gap_id": "gap:seam-a",
+                "attempt_id": "attempt:newer-regressed",
+                "actor_kind": "agent",
+                "verify_command": "cargo test -p ripr seam_a",
+                "receipt_command": "cargo xtask receipts write --packet packet-boundary-001",
+                "outcome": "evidence_regressed",
+                "timestamp": "unix_ms:10",
+                "receipt_state": "receipt_movement_regressed"
+            }
+        ]
+    });
+
+    let report = ripr_swarm_attempt_ledger_from_values(
+        "unix_ms:11".to_string(),
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&prior_ledger),
+        },
+    );
+
+    assert_eq!(report.latest_attempts.len(), 1);
+    assert_eq!(
+        report.latest_attempts[0].attempt_id, "attempt:newer-regressed",
+        "unix_ms timestamps must sort numerically so unix_ms:10 outranks unix_ms:9"
+    );
+    assert_eq!(report.latest_attempts[0].outcome, "evidence_regressed");
+    let json = ripr_swarm_attempt_ledger_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["summary"]["evidence_regressed"],
+        serde_json::Value::from(1)
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_attempt_ledger_summarizes_repair_route_quality() -> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "swarm-plan",
+        "top_ready_packets": [
+            {
+                "packet_id": "packet-boundary-001",
+                "canonical_gap_id": "gap:boundary",
+                "evidence_class": "predicate_boundary",
+                "source_file": "src/pricing.rs",
+                "repair_kind": "add_boundary_assertion",
+                "target_test_type": "boundary_discriminator",
+                "assertion_shape": "assert_eq!(discounted_total(threshold), expected)",
+                "verify_command": "cargo test -p ripr boundary",
+                "receipt_command": "cargo xtask receipts write --packet packet-boundary-001"
+            },
+            {
+                "packet_id": "packet-output-001",
+                "canonical_gap_id": "gap:output-a",
+                "evidence_class": "call_presence",
+                "source_file": "src/output.rs",
+                "repair_kind": "add_output_observer",
+                "target_test_type": "output_observer",
+                "assertion_shape": "assert!(rendered.contains(label))",
+                "verify_command": "cargo test -p ripr output_a",
+                "receipt_command": "cargo xtask receipts write --packet packet-output-001"
+            },
+            {
+                "packet_id": "packet-output-002",
+                "canonical_gap_id": "gap:output-b",
+                "evidence_class": "call_presence",
+                "source_file": "src/output.rs",
+                "repair_kind": "add_output_observer",
+                "target_test_type": "output_observer",
+                "assertion_shape": "assert!(rendered.contains(label))",
+                "verify_command": "cargo test -p ripr output_b",
+                "receipt_command": "cargo xtask receipts write --packet packet-output-002"
+            },
+            {
+                "packet_id": "packet-call-001",
+                "canonical_gap_id": "gap:call-a",
+                "evidence_class": "call_presence",
+                "source_file": "src/call.rs",
+                "repair_kind": "add_call_observer",
+                "target_test_type": "call_observer",
+                "assertion_shape": "assert!(calls.contains(\"emit\"))",
+                "verify_command": "cargo test -p ripr call_a",
+                "receipt_command": "cargo xtask receipts write --packet packet-call-001"
+            }
+        ]
+    });
+    let outcomes = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "actionable-gap-outcomes",
+        "inputs": {
+            "agent_receipt": "target/ripr/reports/agent-receipt.json"
+        },
+        "outcomes": [
+            {
+                "canonical_gap_id": "gap:boundary",
+                "receipt_state": "receipt_movement_improved",
+                "outcome_state": "evidence_improved",
+                "seam_id": "boundary",
+                "before": "weakly_gripped",
+                "after": "strongly_gripped",
+                "movement_source": "agent_receipt"
+            },
+            {
+                "canonical_gap_id": "gap:output-a",
+                "receipt_state": "receipt_movement_unchanged",
+                "outcome_state": "evidence_unchanged",
+                "seam_id": "output-a",
+                "before": "weakly_gripped",
+                "after": "weakly_gripped",
+                "movement_source": "agent_receipt"
+            },
+            {
+                "canonical_gap_id": "gap:output-b",
+                "receipt_state": "receipt_movement_regressed",
+                "outcome_state": "evidence_regressed",
+                "seam_id": "output-b",
+                "before": "weakly_gripped",
+                "after": "reachable_unrevealed",
+                "movement_source": "agent_receipt"
+            },
+            {
+                "canonical_gap_id": "gap:unknown-route",
+                "receipt_state": "receipt_missing",
+                "outcome_state": "attempted_no_receipt",
+                "seam_id": "unknown-route"
+            },
+            {
+                "canonical_gap_id": "gap:call-a",
+                "receipt_state": "receipt_missing",
+                "outcome_state": "attempted_no_receipt",
+                "seam_id": "call-a",
+                "verify_result": "timed_out",
+                "missing_receipt_reason": "repo exposure verify timed out before receipt capture"
+            }
+        ]
+    });
+
+    let report = ripr_swarm_attempt_ledger_from_values(
+        "unix_ms:3".to_string(),
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "missing".to_string(),
+            limitation: Some("no prior ledger".to_string()),
+            value: None,
+        },
+    );
+
+    assert_eq!(report.repair_route_quality.len(), 4);
+    assert_eq!(
+        report.repair_route_quality[0].repair_kind,
+        "add_output_observer"
+    );
+    assert_eq!(report.repair_route_quality[0].attempted, 2);
+    assert_eq!(report.repair_route_quality[0].unchanged, 1);
+    assert_eq!(report.repair_route_quality[0].regressed, 1);
+    assert!(
+        report
+            .top_missing_evidence_fields
+            .iter()
+            .any(|row| row.label == "repair_kind" && row.count == 1)
+    );
+
+    let json = ripr_swarm_attempt_ledger_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["repair_route_quality"][0]["repair_kind"],
+        "add_output_observer"
+    );
+    assert_eq!(
+        value["repair_route_quality"][0]["repair_kind_attempted"],
+        serde_json::Value::from(2)
+    );
+    assert_eq!(
+        value["repair_route_quality"][0]["repair_kind_missing_verify_result"],
+        serde_json::Value::from(2)
+    );
+    assert_eq!(
+        value["repair_route_quality"][0]["repair_kind_failure_count"],
+        serde_json::Value::from(4)
+    );
+    assert_eq!(
+        value["repair_route_quality"][0]["repair_kind_dominant_failure_reason"],
+        "missing_verify_result"
+    );
+    assert_eq!(
+        value["top_failing_repair_routes"][0]["repair_kind"],
+        "add_output_observer"
+    );
+    assert_eq!(
+        value["top_failing_repair_routes"][0]["repair_kind_missing_verify_result"],
+        serde_json::Value::from(2)
+    );
+    assert_eq!(
+        value["top_failing_repair_routes"][0]["repair_kind_dominant_failure_reason"],
+        "missing_verify_result"
+    );
+    assert_eq!(
+        value["top_failing_repair_routes"][0]["sample_packet_ids"][0],
+        serde_json::Value::from("packet-output-001")
+    );
+    assert_eq!(
+        value["top_failing_repair_routes"][0]["sample_canonical_gap_ids"][0],
+        serde_json::Value::from("gap:output-a")
+    );
+    let call_route = value["repair_route_quality"]
+        .as_array()
+        .and_then(|rows| {
+            rows.iter()
+                .find(|row| row["repair_kind"] == "add_call_observer")
+        })
+        .ok_or("missing add_call_observer route-quality row")?;
+    assert_eq!(
+        call_route["sample_missing_receipt_reasons"][0],
+        serde_json::Value::from("repo exposure verify timed out before receipt capture")
+    );
+    let call_backlog = value["repair_route_quality_backlog"]
+        .as_array()
+        .and_then(|rows| {
+            rows.iter()
+                .find(|row| row["repair_kind"] == "add_call_observer")
+        })
+        .ok_or("missing add_call_observer route-quality backlog row")?;
+    assert_eq!(
+        call_backlog["sample_missing_receipt_reasons"][0],
+        serde_json::Value::from("repo exposure verify timed out before receipt capture")
+    );
+    assert_eq!(
+        call_backlog["improvement_route"],
+        "report/repair-route-receipt-reliability/bounded-verify-route/add-call-observer"
+    );
+    assert_eq!(
+        call_backlog["why_action_required"],
+        "`add_call_observer` attempts timed out before receipt capture; repair guidance needs a bounded verify route before outcomes can be trusted"
+    );
+    assert_eq!(
+        call_backlog["unlock_condition"],
+        "replace broad `add_call_observer` verify or receipt routes with a bounded command that can complete and emit a receipt inside the runtime budget"
+    );
+    assert_eq!(
+        value["repair_route_quality_backlog"][0]["packet_id"],
+        "route-quality:add-output-observer:missing-verify-result"
+    );
+    assert_eq!(
+        value["repair_route_quality_backlog"][0]["improvement_route"],
+        "report/repair-route-verify-result-capture/add-output-observer"
+    );
+    assert_eq!(
+        value["repair_route_quality_backlog"][0]["non_claims"][0],
+        "not a public repair packet"
+    );
+    assert!(
+        value["repair_route_quality_backlog"][0]["non_claims"]
+            .as_array()
+            .is_some_and(|claims| claims.iter().any(|claim| claim
+                == "do not promote or downgrade actionability from route-quality evidence alone"))
+    );
+    assert_eq!(value["summary"]["missing_verify_result"], 4);
+    assert!(
+        value["top_missing_evidence_fields"]
+            .as_array()
+            .is_some_and(|rows| rows.iter().any(|row| row["label"] == "repair_kind"))
+    );
+    assert!(
+        value["top_missing_evidence_fields"]
+            .as_array()
+            .is_some_and(|rows| rows
+                .iter()
+                .any(|row| row["label"] == "verify_result" && row["count"] == 4))
+    );
+    assert!(
+        value["top_missing_evidence_fields"]
+            .as_array()
+            .is_some_and(|rows| rows.iter().any(|row| {
+                row["label"] == "verify_result"
+                    && row["sample_packet_ids"]
+                        .as_array()
+                        .is_some_and(|samples| !samples.is_empty())
+                    && row["sample_canonical_gap_ids"]
+                        .as_array()
+                        .is_some_and(|samples| !samples.is_empty())
+                    && row["sample_repair_kinds"]
+                        .as_array()
+                        .is_some_and(|samples| !samples.is_empty())
+            }))
+    );
+    assert_eq!(
+        value["attempts"][0]["target_test_type"],
+        "boundary_discriminator"
+    );
+    let markdown = ripr_swarm_attempt_ledger_markdown(&report);
+    assert!(markdown.contains("## Repair Route Quality"));
+    assert!(markdown.contains("## Repair Route Quality Backlog"));
+    assert!(markdown.contains("route-quality:add-output-observer:missing-verify-result"));
+    assert!(markdown.contains("add_output_observer"));
+    assert!(markdown.contains("Failure count | Dominant failure"));
+    assert!(markdown.contains("Missing receipt reasons"));
+    assert!(markdown.contains("Why action required | Unlock condition"));
+    assert!(markdown.contains("missing_verify_result"));
+    assert!(markdown.contains("repo exposure verify timed out before receipt capture"));
+    assert!(markdown.contains(
+        "report/repair-route-receipt-reliability/bounded-verify-route/add-call-observer"
+    ));
+    assert!(markdown.contains(
+            "`add_call_observer` attempts timed out before receipt capture; repair guidance needs a bounded verify route before outcomes can be trusted"
+        ));
+    assert!(markdown.contains(
+            "replace broad `add_call_observer` verify or receipt routes with a bounded command that can complete and emit a receipt inside the runtime budget"
+        ));
+    assert!(markdown.contains(
+            "`add_output_observer` attempts lack typed verify results; route quality cannot be trusted until receipts preserve pass/fail/not-run evidence"
+        ));
+    assert!(markdown.contains(
+            "preserve typed verify_result evidence for `add_output_observer` attempts in receipts or targeted-test outcomes"
+        ));
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_repair_route_quality_samples_attempts_and_classifies_failures() {
+    fn attempt(outcome: &str, verify_result: Option<&str>) -> RiprSwarmAttemptLedgerEntry {
+        RiprSwarmAttemptLedgerEntry {
+            packet_id: format!("packet-{outcome}"),
+            canonical_gap_id: format!("gap:{outcome}"),
+            attempt_id: format!("attempt:{outcome}"),
+            language: None,
+            evidence_class: Some("output_observer".to_string()),
+            source_file: Some("crates/ripr/src/lib.rs".to_string()),
+            repair_kind: Some("add_output_observer".to_string()),
+            target_test_type: Some("output_observer".to_string()),
+            assertion_shape: Some("assert_eq".to_string()),
+            actor_kind: "agent".to_string(),
+            receipt_path: None,
+            verify_command: "cargo test -p ripr output_observer".to_string(),
+            verify_result: verify_result.map(str::to_string),
+            receipt_command: Some("cargo xtask receipts write --packet packet".to_string()),
+            missing_receipt_reason: None,
+            before_gap_state: Some("actionable".to_string()),
+            after_gap_state: Some("actionable".to_string()),
+            outcome: outcome.to_string(),
+            timestamp: Some("unix_ms:1".to_string()),
+            receipt_state: "receipt_present".to_string(),
+            movement_source: Some("agent_receipt".to_string()),
+            route_quality_expectation: None,
+            reason: "fixture attempt".to_string(),
+        }
+    }
+
+    assert!(ripr_swarm_repair_route_quality_attempt_is_failure(
+        &attempt("receipt_present", None)
+    ));
+    assert!(ripr_swarm_repair_route_quality_attempt_is_failure(
+        &attempt("attempted_no_receipt", Some("not_run"))
+    ));
+    assert!(ripr_swarm_repair_route_quality_attempt_is_failure(
+        &attempt("evidence_unchanged", Some("pass"))
+    ));
+    let mut expected_unchanged = attempt("evidence_unchanged", Some("pass"));
+    expected_unchanged.route_quality_expectation =
+        Some("expected_unchanged_negative_capability".to_string());
+    assert!(!ripr_swarm_repair_route_quality_attempt_is_failure(
+        &expected_unchanged
+    ));
+    let expected_unchanged_rows =
+        crate::ripr_swarm_attempt_ledger_repair_route_quality(&[expected_unchanged]);
+    assert_eq!(expected_unchanged_rows.len(), 1);
+    assert_eq!(expected_unchanged_rows[0].unchanged, 1);
+    assert_eq!(expected_unchanged_rows[0].expected_unchanged, 1);
+    assert_eq!(
+        crate::ripr_swarm_repair_route_quality_failure_count(&expected_unchanged_rows[0]),
+        0
+    );
+    assert_eq!(
+        crate::ripr_swarm_repair_route_quality_success_rate(&expected_unchanged_rows[0]),
+        serde_json::Value::from(1.0)
+    );
+    assert!(ripr_swarm_repair_route_quality_attempt_is_failure(
+        &attempt("evidence_regressed", Some("fail"))
+    ));
+    assert!(ripr_swarm_repair_route_quality_attempt_is_failure(
+        &attempt("unknown", Some("pass"))
+    ));
+    assert!(ripr_swarm_repair_route_quality_attempt_is_failure(
+        &attempt("future_new_outcome", Some("pass"))
+    ));
+    assert!(!ripr_swarm_repair_route_quality_attempt_is_failure(
+        &attempt("not_attempted", None)
+    ));
+    assert!(!ripr_swarm_repair_route_quality_attempt_is_failure(
+        &attempt("evidence_improved", Some("pass"))
+    ));
+    assert!(!ripr_swarm_repair_route_quality_attempt_is_failure(
+        &attempt("resolved", Some("pass"))
+    ));
+    let rows = crate::ripr_swarm_attempt_ledger_repair_route_quality(&[
+        attempt("not_attempted", None),
+        attempt("evidence_improved", Some("pass")),
+        attempt("resolved", Some("pass")),
+    ]);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].attempted, 2);
+    assert_eq!(
+        rows[0].sample_packet_ids,
+        vec![
+            "packet-evidence_improved".to_string(),
+            "packet-resolved".to_string()
+        ]
+    );
+    assert_eq!(
+        rows[0].sample_attempt_ids,
+        vec![
+            "attempt:evidence_improved".to_string(),
+            "attempt:resolved".to_string()
+        ]
+    );
+    assert_eq!(
+        rows[0].sample_canonical_gap_ids,
+        vec![
+            "gap:evidence_improved".to_string(),
+            "gap:resolved".to_string()
+        ]
+    );
+}
+
+#[test]
+fn ripr_swarm_attempt_ledger_projects_historical_route_quality() -> Result<(), String> {
+    fn attempt(
+        packet_id: &str,
+        outcome: &str,
+        receipt_state: &str,
+        verify_result: &str,
+        timestamp: &str,
+        missing_receipt_reason: Option<&str>,
+    ) -> RiprSwarmAttemptLedgerEntry {
+        RiprSwarmAttemptLedgerEntry {
+            packet_id: packet_id.to_string(),
+            canonical_gap_id: "gap:call-a".to_string(),
+            attempt_id: format!("attempt:{packet_id}:{outcome}"),
+            language: None,
+            evidence_class: Some("call_presence".to_string()),
+            source_file: Some("crates/ripr/src/lsp/tests.rs".to_string()),
+            repair_kind: Some("add_call_observer".to_string()),
+            target_test_type: Some("call_observer".to_string()),
+            assertion_shape: Some("serve_stdio observer".to_string()),
+            actor_kind: "codex".to_string(),
+            receipt_path: None,
+            verify_command: "cargo test -p ripr serve_stdio_call_presence_observer".to_string(),
+            verify_result: Some(verify_result.to_string()),
+            receipt_command: Some("cargo xtask dogfood".to_string()),
+            missing_receipt_reason: missing_receipt_reason.map(str::to_string),
+            before_gap_state: Some("actionable".to_string()),
+            after_gap_state: Some("actionable".to_string()),
+            outcome: outcome.to_string(),
+            timestamp: Some(timestamp.to_string()),
+            receipt_state: receipt_state.to_string(),
+            movement_source: Some("real_repair_attempts".to_string()),
+            route_quality_expectation: None,
+            reason: "fixture attempt".to_string(),
+        }
+    }
+
+    let attempts = vec![
+        attempt(
+            "packet-call-broad-receipt",
+            "attempted_no_receipt",
+            "receipt_missing",
+            "not_run",
+            "unix_ms:1",
+            Some("repo exposure verify timed out before receipt capture"),
+        ),
+        attempt(
+            "packet-call-bounded-receipt",
+            "evidence_improved",
+            "receipt_movement_improved",
+            "pass",
+            "unix_ms:2",
+            None,
+        ),
+    ];
+    let latest_attempts = ripr_swarm_attempt_ledger_latest_attempts(&attempts);
+    let repair_route_quality = ripr_swarm_attempt_ledger_repair_route_quality(&latest_attempts);
+    let historical_repair_route_quality = ripr_swarm_attempt_ledger_repair_route_quality(&attempts);
+
+    assert_eq!(latest_attempts.len(), 1);
+    assert_eq!(repair_route_quality[0].attempted, 1);
+    assert_eq!(repair_route_quality[0].improved, 1);
+    assert_eq!(
+        ripr_swarm_repair_route_quality_failure_count(&repair_route_quality[0]),
+        0
+    );
+    assert_eq!(historical_repair_route_quality[0].attempted, 2);
+    assert_eq!(historical_repair_route_quality[0].improved, 1);
+    assert_eq!(historical_repair_route_quality[0].attempted_no_receipt, 1);
+    assert_eq!(
+        ripr_swarm_repair_route_quality_failure_count(&historical_repair_route_quality[0]),
+        1
+    );
+    assert_eq!(
+        historical_repair_route_quality[0].sample_packet_ids,
+        vec![
+            "packet-call-broad-receipt".to_string(),
+            "packet-call-bounded-receipt".to_string()
+        ]
+    );
+    assert_eq!(
+        historical_repair_route_quality[0].sample_attempt_ids,
+        vec![
+            "attempt:packet-call-broad-receipt:attempted_no_receipt".to_string(),
+            "attempt:packet-call-bounded-receipt:evidence_improved".to_string()
+        ]
+    );
+
+    let report = RiprSwarmAttemptLedgerReport {
+        status: "advisory".to_string(),
+        runtime_status: lane1_runtime_status_full(),
+        generated_at: "unix_ms:3".to_string(),
+        swarm_plan_path: "target/ripr/reports/swarm-plan.json".to_string(),
+        swarm_plan_state: "read".to_string(),
+        swarm_plan_limitation: None,
+        actionable_gap_outcomes_path: "target/ripr/reports/actionable-gap-outcomes.json"
+            .to_string(),
+        actionable_gap_outcomes_state: "read".to_string(),
+        actionable_gap_outcomes_limitation: None,
+        prior_ledger_path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+        prior_ledger_state: "read".to_string(),
+        prior_ledger_limitation: None,
+        real_repair_attempts_path: "fixtures/real-repair-attempts/corpus.json".to_string(),
+        real_repair_attempts_state: "read".to_string(),
+        real_repair_attempts_limitation: None,
+        attempts,
+        latest_attempts,
+        repair_route_quality,
+        language_repair_route_quality: Vec::new(),
+        historical_repair_route_quality,
+        historical_language_repair_route_quality: Vec::new(),
+        top_missing_evidence_fields: Vec::new(),
+        orphaned_receipts: Vec::new(),
+    };
+    let value: serde_json::Value = serde_json::from_str(&ripr_swarm_attempt_ledger_json(&report)?)
+        .map_err(|err| err.to_string())?;
+
+    assert_eq!(value["top_failing_repair_routes"], serde_json::json!([]));
+    assert_eq!(
+        value["top_historical_failing_repair_routes"][0]["repair_kind"],
+        "add_call_observer"
+    );
+    assert_eq!(
+        value["top_historical_failing_repair_routes"][0]["sample_packet_ids"][0],
+        "packet-call-broad-receipt"
+    );
+    assert_eq!(
+        value["top_historical_failing_repair_routes"][0]["sample_attempt_ids"][0],
+        "attempt:packet-call-broad-receipt:attempted_no_receipt"
+    );
+    let markdown = ripr_swarm_attempt_ledger_markdown(&report);
+    assert!(markdown.contains("## Historical Repair Route Quality"));
+    assert!(markdown.contains("## Historical Repair Route Quality Backlog"));
+    assert!(markdown.contains("packet-call-broad-receipt"));
+    assert!(markdown.contains("attempt:packet-call-broad-receipt:attempted_no_receipt"));
+    assert!(markdown.contains("current routing still comes from latest attempts"));
+
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_readiness_consumes_attempt_ledger_counts() -> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "swarm-plan",
+        "summary": {
+            "swarm_ready_packets": 2,
+            "blocked_packets": 0,
+            "missing_verify_command": 0,
+            "missing_receipt_command": 0,
+            "static_limitation_packets": 0,
+            "high_confidence_packets": 2
+        },
+        "source_summary": {
+            "actionable_gaps": 2,
+            "public_projection_eligible_packets": 2
+        },
+        "static_limitation_backlog": {
+            "source": "lane1-evidence-audit.static_limitations",
+            "top_categories": [
+                {
+                    "category": "activation_value_unresolved",
+                    "count": 7,
+                    "repair_route": "analysis/value-resolution-audit-fixes"
+                }
+            ],
+            "top_repair_routes": [
+                {
+                    "repair_route": "analysis/value-resolution-audit-fixes",
+                    "count": 7
+                }
+            ]
+        },
+        "top_ready_packets": []
+    });
+    let outcomes = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "actionable-gap-outcomes",
+        "summary": {
+            "outcomes_total": 2,
+            "not_attempted": 2,
+            "evidence_improved": 0,
+            "evidence_unchanged": 0,
+            "evidence_regressed": 0,
+            "resolved": 0,
+            "orphaned_receipts": 0
+        }
+    });
+    let attempt_ledger = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "swarm-attempt-ledger",
+        "summary": {
+            "attempts_total": 4,
+            "canonical_gaps_total": 3,
+            "not_attempted": 1,
+            "attempted_no_receipt": 0,
+            "receipt_present": 0,
+            "evidence_improved": 2,
+            "evidence_unchanged": 1,
+            "evidence_regressed": 0,
+            "resolved": 0,
+            "unknown": 0,
+            "orphaned_receipts": 1
+        },
+        "attempt_history_summary": {
+            "attempts_total": 6,
+            "durable_attempts_total": 5,
+            "canonical_gaps_total": 4,
+            "not_attempted": 1,
+            "attempted_no_receipt": 1,
+            "receipt_present": 0,
+            "missing_verify_result": 0,
+            "evidence_improved": 2,
+            "evidence_unchanged": 2,
+            "expected_unchanged": 1,
+            "evidence_regressed": 0,
+            "resolved": 0,
+            "unknown": 0
+        },
+        "repair_route_quality": [
+            {
+                "repair_kind": "add_output_observer",
+                "repair_kind_attempted": 2,
+                "repair_kind_improved": 0,
+                "repair_kind_unchanged": 1,
+                "repair_kind_regressed": 1,
+                "repair_kind_resolved": 0,
+                "repair_kind_attempted_no_receipt": 0,
+                "repair_kind_receipt_present": 0,
+                "repair_kind_unknown": 0,
+                "repair_kind_success_rate": 0.0,
+                "sample_packet_ids": ["packet-output-001"],
+                "sample_attempt_ids": ["attempt-output-001"],
+                "sample_canonical_gap_ids": ["gap:output-a"]
+            }
+        ],
+        "top_missing_evidence_fields": [
+            {"label": "receipt_command", "count": 1}
+        ]
+    });
+
+    let report = ripr_swarm_readiness_from_values(
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&attempt_ledger),
+        },
+    );
+
+    assert_eq!(report.summary.attempted_packets, 3);
+    assert_eq!(report.summary.improved_packets, 2);
+    assert_eq!(report.summary.unchanged_packets, 1);
+    assert_eq!(report.summary.orphaned_receipts, 1);
+    assert_eq!(report.attempt_history_summary.evidence_unchanged, 2);
+    assert_eq!(report.attempt_history_summary.attempted_no_receipt, 1);
+    assert_eq!(report.attempt_history_summary.expected_unchanged, 1);
+    assert_eq!(
+        report.repair_route_quality[0].repair_kind,
+        "add_output_observer"
+    );
+    assert!(
+        report
+            .next_actions
+            .iter()
+            .any(|action| action.kind == "improve_repair_route_quality"
+                && action.repair_kind.as_deref() == Some("add_output_observer")
+                && action.packet_id.as_deref()
+                    == Some("route-quality:add-output-observer:regressed")
+                && action.attempt_id.as_deref() == Some("attempt-output-001")
+                && action.canonical_gap_id.as_deref() == Some("gap:output-a"))
+    );
+    assert!(report.next_actions.iter().any(|action| {
+        action.kind == "inspect_unchanged_attempts"
+            && action.command.as_deref() == Some("cargo xtask ripr-swarm attempt-ledger")
+    }));
+    let json = ripr_swarm_readiness_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["inputs"]["attempt_ledger"]["path"],
+        "target/ripr/reports/swarm-attempt-ledger.json"
+    );
+    assert_eq!(
+        value["top_failing_repair_routes"][0]["repair_kind"],
+        "add_output_observer"
+    );
+    assert_eq!(
+        value["attempt_history_summary"]["evidence_unchanged"],
+        serde_json::Value::from(2)
+    );
+    assert_eq!(
+        value["attempt_history_summary"]["attempted_no_receipt"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["attempt_history_summary"]["expected_unchanged"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["static_limitation_backlog"]["top_categories"][0]["category"],
+        "activation_value_unresolved"
+    );
+    assert_eq!(
+        value["static_limitation_backlog"]["top_repair_routes"][0]["repair_route"],
+        "analysis/value-resolution-audit-fixes"
+    );
+    assert_eq!(
+        value["top_failing_repair_routes"][0]["repair_kind_failure_count"],
+        serde_json::Value::from(2)
+    );
+    assert_eq!(
+        value["top_failing_repair_routes"][0]["repair_kind_dominant_failure_reason"],
+        "regressed"
+    );
+    assert_eq!(
+        value["top_failing_repair_routes"][0]["sample_packet_ids"][0],
+        serde_json::Value::from("packet-output-001")
+    );
+    assert_eq!(
+        value["top_failing_repair_routes"][0]["sample_attempt_ids"][0],
+        serde_json::Value::from("attempt-output-001")
+    );
+    assert_eq!(
+        value["top_failing_repair_routes"][0]["sample_canonical_gap_ids"][0],
+        serde_json::Value::from("gap:output-a")
+    );
+    assert_eq!(
+        value["repair_route_quality_backlog"][0]["packet_id"],
+        "route-quality:add-output-observer:regressed"
+    );
+    assert_eq!(
+        value["repair_route_quality_backlog"][0]["improvement_route"],
+        "analysis/repair-route-regression-review/add-output-observer"
+    );
+    assert_eq!(
+        value["repair_route_quality_backlog"][0]["sample_packet_ids"][0],
+        "packet-output-001"
+    );
+    assert_eq!(
+        value["repair_route_quality_backlog"][0]["sample_attempt_ids"][0],
+        "attempt-output-001"
+    );
+    assert!(
+        value["next_actions"]
+            .as_array()
+            .is_some_and(|actions| actions.iter().any(|action| {
+                action["kind"] == "improve_repair_route_quality"
+                    && action["packet_id"] == "route-quality:add-output-observer:regressed"
+                    && action["attempt_id"] == "attempt-output-001"
+                    && action["canonical_gap_id"] == "gap:output-a"
+                    && action["command"] == "cargo xtask ripr-swarm readiness"
+                    && action["reason"].as_str().is_some_and(|reason| {
+                        reason.contains("dominant reason `regressed`")
+                            && reason.contains(
+                                "analysis/repair-route-regression-review/add-output-observer",
+                            )
+                            && reason.contains("sample failed packet `packet-output-001`")
+                            && reason.contains("attempt `attempt-output-001`")
+                    })
+            }))
+    );
+    let markdown = ripr_swarm_readiness_markdown(&report);
+    assert!(markdown.contains("## Attempt History Summary"));
+    assert!(markdown.contains("| evidence unchanged | 2 |"));
+    assert!(markdown.contains("## Static Limitation Backlog"));
+    assert!(markdown.contains("analysis/value-resolution-audit-fixes"));
+    assert!(markdown.contains("## Repair Route Quality Backlog"));
+    assert!(markdown.contains("route-quality:add-output-observer:regressed"));
+    assert!(markdown.contains("Failure count | Dominant failure"));
+    assert!(markdown.contains("regressed"));
+    assert_eq!(
+        value["top_missing_evidence_fields"][0]["label"],
+        "receipt_command"
+    );
+    assert_eq!(
+        value["top_missing_evidence_fields"][0]["sample_packet_ids"],
+        serde_json::Value::Array(Vec::new())
+    );
+    assert_eq!(
+        value["top_missing_evidence_fields"][0]["sample_canonical_gap_ids"],
+        serde_json::Value::Array(Vec::new())
+    );
+    assert_eq!(
+        value["top_next_action"]["kind"],
+        "reconcile_orphaned_receipts"
+    );
+    assert_eq!(value["top_next_action"], value["next_actions"][0]);
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_readiness_recomputes_route_quality_from_latest_attempts_when_rows_absent()
+-> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "swarm-plan",
+        "summary": {
+            "swarm_ready_packets": 1,
+            "blocked_packets": 0,
+            "missing_verify_command": 0,
+            "missing_receipt_command": 0,
+            "static_limitation_packets": 0,
+            "high_confidence_packets": 1
+        },
+        "source_summary": {
+            "actionable_gaps": 1,
+            "public_projection_eligible_packets": 1
+        },
+        "top_ready_packets": []
+    });
+    let outcomes = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "actionable-gap-outcomes",
+        "summary": {
+            "outcomes_total": 1,
+            "not_attempted": 0,
+            "evidence_improved": 1,
+            "evidence_unchanged": 0,
+            "evidence_regressed": 0,
+            "resolved": 0,
+            "orphaned_receipts": 0
+        }
+    });
+    let attempt_ledger = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "swarm-attempt-ledger",
+        "summary": {
+            "attempts_total": 2,
+            "canonical_gaps_total": 1,
+            "not_attempted": 0,
+            "attempted_no_receipt": 0,
+            "receipt_present": 0,
+            "evidence_improved": 1,
+            "evidence_unchanged": 0,
+            "evidence_regressed": 0,
+            "resolved": 0,
+            "unknown": 0,
+            "orphaned_receipts": 0
+        },
+        "attempts": [
+            {
+                "packet_id": "packet-output-001",
+                "canonical_gap_id": "gap:output-observer",
+                "attempt_id": "attempt:older-unchanged",
+                "actor_kind": "agent",
+                "language": "typescript",
+                "repair_kind": "add_output_observer",
+                "verify_command": "cargo test -p ripr output_observer",
+                "verify_result": "pass",
+                "receipt_command": "cargo xtask receipts write --packet packet-output-001",
+                "outcome": "evidence_unchanged",
+                "timestamp": "unix_ms:9"
+            },
+            {
+                "packet_id": "packet-output-001",
+                "canonical_gap_id": "gap:output-observer",
+                "attempt_id": "attempt:newer-improved",
+                "actor_kind": "agent",
+                "language": "typescript",
+                "repair_kind": "add_output_observer",
+                "verify_command": "cargo test -p ripr output_observer",
+                "verify_result": "pass",
+                "receipt_command": "cargo xtask receipts write --packet packet-output-001",
+                "outcome": "evidence_improved",
+                "timestamp": "unix_ms:10"
+            }
+        ]
+    });
+
+    let report = ripr_swarm_readiness_from_values(
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&attempt_ledger),
+        },
+    );
+
+    assert_eq!(report.repair_route_quality.len(), 1);
+    assert_eq!(
+        report.repair_route_quality[0].repair_kind,
+        "add_output_observer"
+    );
+    assert_eq!(report.repair_route_quality[0].improved, 1);
+    assert_eq!(report.repair_route_quality[0].unchanged, 0);
+    assert!(report.top_failing_repair_routes.is_empty());
+    assert!(!report.next_actions.iter().any(|action| {
+        action.kind == "improve_repair_route_quality"
+            && action.repair_kind.as_deref() == Some("add_output_observer")
+    }));
+    let json = ripr_swarm_readiness_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["repair_route_quality"][0]["repair_kind_improved"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["repair_route_quality"][0]["repair_kind_unchanged"],
+        serde_json::Value::from(0)
+    );
+    assert_eq!(
+        value["language_repair_route_quality"][0]["language"],
+        serde_json::Value::from("typescript")
+    );
+    assert_eq!(
+        value["language_repair_route_quality"][0]["repair_kind"],
+        serde_json::Value::from("add_output_observer")
+    );
+    assert_eq!(
+        value["language_repair_route_quality"][0]["repair_kind_improved"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["top_failing_repair_routes"],
+        serde_json::Value::Array(Vec::new())
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_readiness_routes_missing_verify_result_quality() -> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "swarm-plan",
+        "summary": {
+            "swarm_ready_packets": 1,
+            "blocked_packets": 0,
+            "missing_verify_command": 0,
+            "missing_receipt_command": 0,
+            "static_limitation_packets": 0,
+            "high_confidence_packets": 1
+        },
+        "source_summary": {
+            "actionable_gaps": 1,
+            "public_projection_eligible_packets": 1
+        },
+        "top_ready_packets": []
+    });
+    let outcomes = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "actionable-gap-outcomes",
+        "summary": {
+            "outcomes_total": 2,
+            "not_attempted": 0,
+            "evidence_improved": 0,
+            "evidence_unchanged": 0,
+            "evidence_regressed": 0,
+            "resolved": 0,
+            "orphaned_receipts": 0
+        }
+    });
+    let attempt_ledger = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "swarm-attempt-ledger",
+        "summary": {
+            "attempts_total": 2,
+            "canonical_gaps_total": 2,
+            "not_attempted": 0,
+            "attempted_no_receipt": 0,
+            "receipt_present": 2,
+            "missing_verify_result": 2,
+            "evidence_improved": 0,
+            "evidence_unchanged": 0,
+            "evidence_regressed": 0,
+            "resolved": 0,
+            "unknown": 0,
+            "orphaned_receipts": 0
+        },
+        "repair_route_quality": [
+            {
+                "repair_kind": "add_exact_error_variant_observer",
+                "repair_kind_attempted": 2,
+                "repair_kind_improved": 0,
+                "repair_kind_unchanged": 0,
+                "repair_kind_regressed": 0,
+                "repair_kind_resolved": 0,
+                "repair_kind_attempted_no_receipt": 0,
+                "repair_kind_receipt_present": 2,
+                "repair_kind_missing_verify_result": 2,
+                "repair_kind_unknown": 0,
+                "repair_kind_success_rate": 0.0
+            }
+        ],
+        "top_missing_evidence_fields": [
+            {"label": "verify_result", "count": 2}
+        ]
+    });
+
+    let report = ripr_swarm_readiness_from_values(
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&attempt_ledger),
+        },
+    );
+
+    let json = ripr_swarm_readiness_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["top_failing_repair_routes"][0]["repair_kind"],
+        "add_exact_error_variant_observer"
+    );
+    assert_eq!(
+        value["top_failing_repair_routes"][0]["repair_kind_dominant_failure_reason"],
+        "missing_verify_result"
+    );
+    assert_eq!(
+        value["top_next_action"]["kind"],
+        "inspect_missing_verify_results"
+    );
+    assert!(
+        value["next_actions"]
+            .as_array()
+            .is_some_and(|actions| actions.iter().any(|action| {
+                action["kind"] == "improve_repair_route_quality"
+                    && action["reason"].as_str().is_some_and(|reason| {
+                        reason.contains("dominant reason `missing_verify_result`")
+                    })
+            }))
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_readiness_recomputes_route_quality_from_attempts_when_rows_are_stale()
+-> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "swarm-plan",
+        "summary": {
+            "swarm_ready_packets": 1,
+            "blocked_packets": 0,
+            "missing_verify_command": 0,
+            "missing_receipt_command": 0,
+            "static_limitation_packets": 0,
+            "high_confidence_packets": 1
+        },
+        "source_summary": {
+            "actionable_gaps": 1,
+            "public_projection_eligible_packets": 1
+        },
+        "top_ready_packets": []
+    });
+    let outcomes = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "actionable-gap-outcomes",
+        "summary": {
+            "outcomes_total": 1,
+            "not_attempted": 0,
+            "evidence_improved": 1,
+            "evidence_unchanged": 0,
+            "evidence_regressed": 0,
+            "resolved": 0,
+            "orphaned_receipts": 0
+        }
+    });
+    let attempt_ledger = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "swarm-attempt-ledger",
+        "summary": {
+            "attempts_total": 1,
+            "canonical_gaps_total": 1,
+            "not_attempted": 0,
+            "attempted_no_receipt": 0,
+            "receipt_present": 0,
+            "evidence_improved": 1,
+            "evidence_unchanged": 0,
+            "evidence_regressed": 0,
+            "resolved": 0,
+            "unknown": 0,
+            "orphaned_receipts": 0
+        },
+        "repair_route_quality": [
+            {
+                "repair_kind": "add_output_observer",
+                "repair_kind_attempted": 1,
+                "repair_kind_improved": 0,
+                "repair_kind_unchanged": 1,
+                "repair_kind_regressed": 0,
+                "repair_kind_resolved": 0,
+                "repair_kind_attempted_no_receipt": 0,
+                "repair_kind_receipt_present": 0,
+                "repair_kind_unknown": 0,
+                "repair_kind_success_rate": 0.0
+            }
+        ],
+        "attempts": [
+            {
+                "packet_id": "packet-output-001",
+                "canonical_gap_id": "gap:output-observer",
+                "attempt_id": "attempt:newer-improved",
+                "actor_kind": "agent",
+                "repair_kind": "add_output_observer",
+                "verify_command": "cargo test -p ripr output_observer",
+                "verify_result": "pass",
+                "receipt_command": "cargo xtask receipts write --packet packet-output-001",
+                "outcome": "evidence_improved",
+                "timestamp": "unix_ms:10"
+            }
+        ]
+    });
+
+    let report = ripr_swarm_readiness_from_values(
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&attempt_ledger),
+        },
+    );
+
+    assert_eq!(report.repair_route_quality.len(), 1);
+    assert_eq!(report.repair_route_quality[0].improved, 1);
+    assert_eq!(report.repair_route_quality[0].unchanged, 0);
+    assert!(report.top_failing_repair_routes.is_empty());
+    let json = ripr_swarm_readiness_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["repair_route_quality"][0]["repair_kind_improved"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["repair_route_quality"][0]["repair_kind_unchanged"],
+        serde_json::Value::from(0)
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_readiness_recomputes_summary_from_attempts_when_summary_is_stale()
+-> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "swarm-plan",
+        "summary": {
+            "swarm_ready_packets": 1,
+            "blocked_packets": 0,
+            "missing_verify_command": 0,
+            "missing_receipt_command": 0,
+            "static_limitation_packets": 0,
+            "high_confidence_packets": 1
+        },
+        "source_summary": {
+            "actionable_gaps": 1,
+            "public_projection_eligible_packets": 1
+        },
+        "top_ready_packets": []
+    });
+    let outcomes = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "actionable-gap-outcomes",
+        "summary": {
+            "outcomes_total": 1,
+            "not_attempted": 0,
+            "evidence_improved": 1,
+            "evidence_unchanged": 0,
+            "evidence_regressed": 0,
+            "resolved": 0,
+            "orphaned_receipts": 0
+        }
+    });
+    let attempt_ledger = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "swarm-attempt-ledger",
+        "summary": {
+            "attempts_total": 1,
+            "canonical_gaps_total": 1,
+            "not_attempted": 0,
+            "attempted_no_receipt": 0,
+            "receipt_present": 0,
+            "evidence_improved": 0,
+            "evidence_unchanged": 1,
+            "evidence_regressed": 0,
+            "resolved": 0,
+            "unknown": 0,
+            "orphaned_receipts": 0
+        },
+        "attempts": [
+            {
+                "packet_id": "packet-output-001",
+                "canonical_gap_id": "gap:output-observer",
+                "attempt_id": "attempt:older-unchanged",
+                "actor_kind": "agent",
+                "repair_kind": "add_output_observer",
+                "verify_command": "cargo test -p ripr output_observer",
+                "verify_result": "pass",
+                "receipt_command": "cargo xtask receipts write --packet packet-output-001",
+                "outcome": "evidence_unchanged",
+                "timestamp": "unix_ms:1"
+            },
+            {
+                "packet_id": "packet-output-001",
+                "canonical_gap_id": "gap:output-observer",
+                "attempt_id": "attempt:newer-improved",
+                "actor_kind": "agent",
+                "repair_kind": "add_output_observer",
+                "verify_command": "cargo test -p ripr output_observer",
+                "verify_result": "pass",
+                "receipt_command": "cargo xtask receipts write --packet packet-output-001",
+                "outcome": "evidence_improved",
+                "timestamp": "unix_ms:10"
+            }
+        ]
+    });
+
+    let report = ripr_swarm_readiness_from_values(
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&attempt_ledger),
+        },
+    );
+
+    assert_eq!(report.summary.attempted_packets, 1);
+    assert_eq!(report.summary.improved_packets, 1);
+    assert_eq!(report.summary.unchanged_packets, 0);
+    let json = ripr_swarm_readiness_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(value["summary"]["improved_packets"], 1);
+    assert_eq!(value["summary"]["unchanged_packets"], 0);
+    assert_eq!(
+        value["attempt_history_summary"]["attempts_total"],
+        serde_json::Value::from(2)
+    );
+    assert_eq!(
+        value["attempt_history_summary"]["evidence_improved"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["attempt_history_summary"]["evidence_unchanged"],
+        serde_json::Value::from(1)
+    );
+    Ok(())
+}
+
+#[test]
+fn ripr_swarm_readiness_recomputes_missing_evidence_from_attempts_when_rows_are_stale()
+-> Result<(), String> {
+    let swarm_plan = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "swarm-plan",
+        "summary": {
+            "swarm_ready_packets": 1,
+            "blocked_packets": 0,
+            "missing_verify_command": 0,
+            "missing_receipt_command": 0,
+            "static_limitation_packets": 0,
+            "high_confidence_packets": 1
+        },
+        "source_summary": {
+            "actionable_gaps": 1,
+            "public_projection_eligible_packets": 1
+        },
+        "top_ready_packets": []
+    });
+    let outcomes = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "actionable-gap-outcomes",
+        "summary": {
+            "outcomes_total": 1,
+            "not_attempted": 0,
+            "evidence_improved": 1,
+            "evidence_unchanged": 0,
+            "evidence_regressed": 0,
+            "resolved": 0,
+            "orphaned_receipts": 0
+        }
+    });
+    let attempt_ledger = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "swarm-attempt-ledger",
+        "summary": {
+            "attempts_total": 1,
+            "canonical_gaps_total": 1,
+            "not_attempted": 0,
+            "evidence_improved": 1,
+            "evidence_unchanged": 0,
+            "evidence_regressed": 0,
+            "resolved": 0,
+            "orphaned_receipts": 0
+        },
+        "top_missing_evidence_fields": [
+            {
+                "label": "receipt_command",
+                "count": 1
+            }
+        ],
+        "attempts": [
+            {
+                "packet_id": "packet-output-001",
+                "canonical_gap_id": "gap:output-observer",
+                "attempt_id": "attempt:newer-improved",
+                "actor_kind": "agent",
+                "repair_kind": "add_output_observer",
+                "verify_command": "cargo test -p ripr output_observer",
+                "verify_result": "pass",
+                "receipt_command": "cargo xtask receipts write --packet packet-output-001",
+                "outcome": "evidence_improved",
+                "timestamp": "unix_ms:10"
+            }
+        ]
+    });
+
+    let report = ripr_swarm_readiness_from_values(
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-plan.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&swarm_plan),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/actionable-gap-outcomes.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&outcomes),
+        },
+        RiprSwarmReadinessInput {
+            path: "target/ripr/reports/swarm-attempt-ledger.json".to_string(),
+            state: "read".to_string(),
+            limitation: None,
+            value: Some(&attempt_ledger),
+        },
+    );
+
+    assert!(report.top_missing_evidence_fields.is_empty());
+    let json = ripr_swarm_readiness_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["top_missing_evidence_fields"],
+        serde_json::Value::Array(Vec::new())
+    );
+    Ok(())
+}
+
+#[test]
+fn actionable_gap_outcomes_command_writes_markdown_and_json() -> Result<(), String> {
+    with_temp_cwd("actionable-gap-outcomes", |_| {
+        fs::create_dir_all("target/ripr/reports")
+            .map_err(|err| format!("failed to create reports dir: {err}"))?;
+        write(
+            Path::new("target/ripr/reports/actionable-gaps.json"),
+            r#"{
+  "schema_version": "0.1",
+  "tool": "ripr",
+  "report": "actionable-gaps",
+  "packets": [
+    {
+      "canonical_gap_id": "gap:seam-a",
+      "evidence_class": "predicate_boundary",
+      "repair_kind": "add_boundary_assertion",
+      "source_file": "src/pricing.rs",
+      "primary_anchor": {"file": "src/pricing.rs", "line": 42},
+      "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+      "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id seam-a"
+    }
+  ]
+}"#,
+        );
+        write(
+            Path::new("target/ripr/reports/agent-receipt.json"),
+            r#"{
+  "schema_version": "0.3",
+  "seam": {
+    "seam_id": "seam-a",
+    "file": "src/pricing.rs",
+    "line": 42,
+    "before": "weakly_gripped",
+    "after": "strongly_gripped",
+    "change": "improved",
+    "evidence_delta": ["missing discriminator no longer reported: threshold equality"]
+  },
+  "provenance": {"seam_id": "seam-a", "movement": "improved"}
+}"#,
+        );
+
+        actionable_gap_outcomes_report_impl(&[])?;
+        let json = fs::read_to_string("target/ripr/reports/actionable-gap-outcomes.json")
+            .map_err(|err| format!("failed to read outcomes JSON: {err}"))?;
+        let markdown = fs::read_to_string("target/ripr/reports/actionable-gap-outcomes.md")
+            .map_err(|err| format!("failed to read outcomes Markdown: {err}"))?;
+        assert!(json.contains("\"report\": \"actionable-gap-outcomes\""));
+        assert!(json.contains("\"evidence_improved\": 1"));
+        assert!(json.contains("\"movement_front\""));
+        assert!(markdown.contains("# Actionable Gap Outcomes"));
+        assert!(markdown.contains("## Movement Since Prior Refresh"));
+        assert!(markdown.contains("gap:seam-a"));
+        Ok(())
+    })
+}
+
+#[test]
+fn actionable_gap_outcomes_command_rejects_unsafe_argument_shapes() -> Result<(), String> {
+    for (args, expected) in [
+        (
+            vec!["--actionable-gaps"],
+            "missing value for `--actionable-gaps`",
+        ),
+        (
+            vec!["--agent-receipt"],
+            "missing value for `--agent-receipt`",
+        ),
+        (
+            vec!["--targeted-test-outcome"],
+            "missing value for `--targeted-test-outcome`",
+        ),
+        (vec!["--help"], "usage: cargo xtask actionable-gap-outcomes"),
+        (
+            vec!["--unknown"],
+            "unknown actionable-gap-outcomes option `--unknown`",
+        ),
+        (
+            vec!["positional"],
+            "unexpected positional argument `positional`",
+        ),
+    ] {
+        let owned_args = args
+            .iter()
+            .map(|arg| (*arg).to_string())
+            .collect::<Vec<_>>();
+        let err = parse_actionable_gap_outcomes_args(&owned_args)
+            .expect_err("invalid actionable-gap-outcomes args should be rejected");
+        assert!(
+            err.contains(expected),
+            "expected {expected:?} in error for {args:?}, got {err:?}"
+        );
+    }
+
+    with_temp_cwd("actionable-gap-outcomes-missing-input", |_| {
+        let err = actionable_gap_outcomes_report_impl(&[])
+            .expect_err("missing actionable-gaps artifact should fail closed");
+        assert!(
+            err.contains(
+                "actionable-gap-outcomes requires `target/ripr/reports/actionable-gaps.json`"
+            ),
+            "missing artifact error should name regeneration target, got {err:?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn actionable_gap_outcomes_join_receipt_arrays_anchor_and_unknown_movement() -> Result<(), String> {
+    let packets = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "actionable-gaps",
+        "packets": [
+            {
+                "canonical_gap_id": "gap:anchor-only",
+                "evidence_class": "predicate_boundary",
+                "repair_kind": "add_boundary_assertion",
+                "source_file": "src/anchor.rs",
+                "primary_anchor": {"file": "src/anchor.rs", "line": 7},
+                "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+                "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id anchor-only"
+            },
+            {
+                "canonical_gap_id": "gap:changed-target",
+                "evidence_class": "predicate_boundary",
+                "repair_kind": "add_boundary_assertion",
+                "source_file": "src/target.rs",
+                "primary_anchor": {"file": "src/target.rs", "line": 11},
+                "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+                "receipt_command_or_path": "ripr agent receipt --verify-json target/ripr/workflow/agent-verify.json --seam-id changed-target"
+            }
+        ]
+    });
+    let receipt = serde_json::json!([
+        {
+            "schema_version": "0.3",
+            "seam": {
+                "file": "src/anchor.rs",
+                "line": 7,
+                "before": "weakly_gripped",
+                "after": "weakly_gripped"
+            },
+            "summary": {"next_action": {"kind": "changed"}}
+        }
+    ]);
+    let targeted = serde_json::json!({
+        "schema_version": "0.1",
+        "moved": [
+            {
+                "seam_id": "changed-target",
+                "seam_kind": "predicate_boundary",
+                "file": "src/target.rs",
+                "line": 11,
+                "before": "weakly_gripped",
+                "after": "weakly_gripped",
+                "direction": "changed",
+                "evidence_delta": []
+            }
+        ],
+        "unchanged": [],
+        "regressed": [],
+        "removed": [],
+        "new": []
+    });
+
+    let report = actionable_gap_outcomes_report_from_values(
+        &packets,
+        Some(&receipt),
+        Some(&targeted),
+        "target/ripr/reports/actionable-gaps.json".to_string(),
+        Some("target/ripr/reports/agent-receipt.json".to_string()),
+        Some("target/ripr/reports/targeted-test-outcome.json".to_string()),
+    )?;
+    let json = actionable_gap_outcomes_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+
+    assert_eq!(value["summary"]["receipt_present"], 1);
+    assert_eq!(value["summary"]["attempted_no_receipt"], 1);
+    assert_eq!(value["summary"]["unknown"], 0);
+    assert_eq!(value["outcomes"][0]["canonical_gap_id"], "gap:anchor-only");
+    assert_eq!(value["outcomes"][0]["receipt_state"], "receipt_found");
+    assert_eq!(value["outcomes"][0]["outcome_state"], "receipt_present");
+    assert_eq!(value["outcomes"][0]["movement_direction"], "changed");
+    assert_eq!(
+        value["outcomes"][1]["canonical_gap_id"],
+        "gap:changed-target"
+    );
+    assert_eq!(value["outcomes"][1]["receipt_state"], "receipt_missing");
+    assert_eq!(
+        value["outcomes"][1]["outcome_state"],
+        "attempted_no_receipt"
+    );
+    assert_eq!(
+        value["outcomes"][1]["reason"],
+        "Matched targeted-test outcome `moved` bucket."
+    );
+    Ok(())
+}
+
+#[test]
+fn actionable_gap_outcomes_render_empty_packet_set_as_no_action() -> Result<(), String> {
+    let packets = serde_json::json!({
+        "schema_version": "0.1",
+        "tool": "ripr",
+        "report": "actionable-gaps",
+        "packets": []
+    });
+    let report = actionable_gap_outcomes_report_from_values(
+        &packets,
+        None,
+        None,
+        "target/ripr/reports/actionable-gaps.json".to_string(),
+        None,
+        None,
+    )?;
+    let json = actionable_gap_outcomes_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(value["summary"]["packets_total"], 0);
+    assert_eq!(value["summary"]["outcomes_total"], 0);
+
+    let markdown = actionable_gap_outcomes_markdown(&report);
+    assert!(markdown.contains("No actionable-gap packets were present."));
+    Ok(())
+}
+
+#[test]
+fn lane1_actionable_gap_packets_keep_observed_gaps_out_of_public_projection() -> Result<(), String>
+{
+    let report = lane1_evidence_audit_from_repo_exposure(
+        ".",
+        r#"{
+              "schema_version": "0.3",
+              "scope": "repo",
+              "seams": [
+                {
+                  "seam_id": "packet-observed-gap",
+                  "headline_eligible": true,
+                  "file": "src/pricing.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "packet-observed-gap",
+                    "canonical_gap_id": "gap:packet-observed-gap",
+                    "location": {"file": "src/pricing.rs", "line": 42},
+                    "raw_findings": [
+                      {"file": "src/pricing.rs", "line": 42, "kind": "exposed", "expression": "amount >= discount_threshold"}
+                    ],
+                    "canonical_item": {
+                      "canonical_gap_id": "gap:packet-observed-gap",
+                      "canonical_item_kind": "gap",
+                      "evidence_class": "predicate_boundary",
+                      "gap_state": "already_observed",
+                      "actionability": "already_observed",
+                      "raw_findings": [
+                        {"file": "src/pricing.rs", "line": 42, "kind": "exposed", "expression": "amount >= discount_threshold"}
+                      ],
+                      "why": "related tests already observe the changed boundary",
+                      "recommended_repair": "No repair is needed for this observed gap.",
+                      "repair_route": {
+                        "repair_kind": "add_boundary_assertion",
+                        "target_test_type": "boundary_discriminator",
+                        "suggested_assertion": "assert_eq!(discounted_total(threshold), expected)"
+                      },
+                      "verify_command": "cargo xtask evidence-quality-scorecard",
+                      "receipt_command": "cargo xtask receipts check",
+                      "confidence": {"basis": "static_only", "notes": []}
+                    }
+                  }
+                }
+              ]
+            }"#,
+    )?;
+
+    let packet_json = lane1_actionable_gap_packets_json(&report)?;
+    let packet_value: serde_json::Value =
+        serde_json::from_str(&packet_json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        packet_value["summary"]["public_projection_eligible_packets"],
+        serde_json::Value::from(0)
+    );
+    assert_eq!(
+        packet_value["summary"]["public_projection_excluded_packets"],
+        serde_json::Value::from(0)
+    );
+    assert_eq!(packet_value["packets"], serde_json::json!([]));
+    Ok(())
+}
+
+#[test]
+fn lane1_evidence_audit_requires_structured_repair_route_for_actionable_items() -> Result<(), String>
+{
+    let report = lane1_evidence_audit_from_repo_exposure(
+        ".",
+        r#"{
+              "schema_version": "0.3",
+              "scope": "repo",
+              "seams": [
+                {
+                  "seam_id": "prose-only-repair",
+                  "headline_eligible": true,
+                  "file": "src/lib.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "prose-only-repair",
+                    "canonical_gap_id": "gap:prose-only-repair",
+                    "owner": "pricing::discount",
+                    "location": {"file": "src/lib.rs", "line": 12},
+                    "seam_kind": "predicate_boundary",
+                    "grip_class": "weakly_gripped",
+                    "headline_eligible": true,
+                    "evidence_path": {},
+                    "observed_values": [],
+                    "missing_discriminators": [],
+                    "related_tests_total": 0,
+                    "related_tests": [],
+                    "recommendation": {"action": "write_targeted_test", "reason": "missing discriminator", "verify_command": "ripr agent verify --root . --before before.json --after after.json --json"},
+                    "actionability": {"class": "actionable_assertion_upgrade"},
+                    "calibration": {"availability": "not_imported", "confidence": "unknown", "agreement": "no_runtime_data"},
+                    "static_limitations": [],
+                    "raw_findings": [
+                      {"file": "src/lib.rs", "line": 12, "kind": "weakly_exposed", "expression": "discount(amount)"}
+                    ],
+                    "canonical_item": {
+                      "canonical_gap_id": "gap:prose-only-repair",
+                      "canonical_item_kind": "gap",
+                      "evidence_class": "predicate_boundary",
+                      "gap_state": "actionable",
+                      "actionability": "upgrade_assertion",
+                      "raw_findings": [
+                        {"file": "src/lib.rs", "line": 12, "kind": "weakly_exposed", "expression": "discount(amount)"}
+                      ],
+                      "raw_group_size": 1,
+                      "why": "related tests reach the seam but miss the boundary discriminator",
+                      "recommended_repair": "Add an equality-boundary assertion for the changed predicate.",
+                      "verify_command": "verify_command_unknown",
+                      "confidence": {"basis": "static_only", "notes": []}
+                    }
+                  }
+                }
+              ]
+            }"#,
+    )?;
+    let json = lane1_evidence_audit_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    let coverage = &value["finding_alignment"]["coverage"];
+
+    assert_eq!(
+        coverage["canonical_items_without_repair_route"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        coverage["canonical_items_without_verify_command"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["finding_alignment"]["actionable_gap_top_lists"]["top_repair_route_unknowns"][0]["label"],
+        "predicate_boundary"
+    );
+    assert_eq!(
+        value["finding_alignment"]["actionable_gap_top_lists"]["top_verify_command_unknowns"][0]["label"],
+        "predicate_boundary"
+    );
+    let packet = &value["finding_alignment"]["actionable_gap_packets"][0];
+    assert_eq!(
+        packet["verify_command"],
+        "ripr agent verify --root . --before before.json --after after.json --json"
+    );
+    assert_eq!(
+        packet["verify_command_source"],
+        "evidence_record.recommendation.verify_command"
+    );
+    assert_eq!(packet["repair_route_source"], "missing");
+    assert_eq!(
+        packet["projection_exclusion_reasons"],
+        serde_json::json!([
+            "missing_repair_route",
+            "missing_repair_kind",
+            "missing_target_test_shape",
+            "missing_verify_command",
+            "missing_receipt_command",
+            "missing_related_test_or_observer",
+            "missing_allowed_edit_surface"
+        ])
+    );
+    let actionable_static_limitation_reasons =
+        value["finding_alignment"]["actionable_gap_top_lists"]["top_static_limitation_reasons"]
+            .as_array()
+            .ok_or_else(|| "top_static_limitation_reasons should be an array".to_string())?;
+    assert!(
+        actionable_static_limitation_reasons.is_empty(),
+        "static limitations without actionable gap records must not appear in actionable top lists"
+    );
+    Ok(())
+}
+
+#[test]
+fn lane1_evidence_audit_limits_static_top_reasons_to_actionable_items() -> Result<(), String> {
+    let report = lane1_evidence_audit_from_repo_exposure(
+        ".",
+        r#"{
+              "schema_version": "0.3",
+              "scope": "repo",
+              "seams": [
+                {
+                  "seam_id": "actionable-static-limit",
+                  "headline_eligible": true,
+                  "file": "src/lib.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "actionable-static-limit",
+                    "canonical_gap_id": "gap:actionable-static-limit",
+                    "location": {"file": "src/lib.rs", "line": 12},
+                    "missing_discriminators": [],
+                    "static_limitations": [
+                      {"reason": "preview import graph", "stage": "reach", "state": "unknown"}
+                    ],
+                    "canonical_item": {
+                      "canonical_gap_id": "gap:actionable-static-limit",
+                      "canonical_item_kind": "gap",
+                      "evidence_class": "predicate_boundary",
+                      "gap_state": "actionable",
+                      "actionability": "upgrade_assertion",
+                      "repair_route": {"repair_kind": "add_boundary_assertion"},
+                      "verify_command": "cargo xtask evidence-quality-scorecard"
+                    }
+                  }
+                },
+                {
+                  "seam_id": "non-action-static-limit",
+                  "headline_eligible": true,
+                  "file": "src/opaque.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "non-action-static-limit",
+                    "canonical_gap_id": null,
+                    "location": {"file": "src/opaque.rs", "line": 30},
+                    "missing_discriminators": [],
+                    "static_limitations": [
+                      {"reason": "opaque helper value", "stage": "activate", "state": "unknown"}
+                    ],
+                    "canonical_item": {
+                      "canonical_gap_id": null,
+                      "canonical_item_kind": "limitation",
+                      "evidence_class": "call_presence",
+                      "gap_state": "static_limitation",
+                      "actionability": "static_limitation",
+                      "verify_command": null
+                    }
+                  }
+                }
+              ]
+            }"#,
+    )?;
+    let json = lane1_evidence_audit_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+
+    assert_eq!(
+        audit_count_row(
+            &value["static_limitations"]["by_reason"],
+            "preview import graph"
+        )?,
+        1
+    );
+    assert_eq!(
+        audit_count_row(
+            &value["static_limitations"]["by_reason"],
+            "opaque helper value"
+        )?,
+        1
+    );
+    let top_static =
+        &value["finding_alignment"]["actionable_gap_top_lists"]["top_static_limitation_reasons"];
+    assert_eq!(top_static[0]["label"], "preview import graph");
+    assert_eq!(top_static[0]["count"], serde_json::Value::from(1));
+    assert_eq!(
+        top_static
+            .as_array()
+            .ok_or_else(|| "top static reasons should be an array".to_string())?
+            .len(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn lane1_evidence_audit_rejects_generic_static_unknown_limitation_category() -> Result<(), String> {
+    let report = lane1_evidence_audit_from_repo_exposure(
+        ".",
+        r#"{
+              "schema_version": "0.3",
+              "scope": "repo",
+              "seams": [
+                {
+                  "seam_id": "generic-static-unknown",
+                  "headline_eligible": true,
+                  "file": "src/opaque.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "generic-static-unknown",
+                    "canonical_gap_id": "gap:generic-static-unknown",
+                    "owner": "opaque::generic",
+                    "location": {"file": "src/opaque.rs", "line": 10},
+                    "seam_kind": "call_presence",
+                    "grip_class": "static_unknown",
+                    "headline_eligible": true,
+                    "evidence_path": {},
+                    "observed_values": [],
+                    "missing_discriminators": [],
+                    "related_tests_total": 0,
+                    "related_tests": [],
+                    "recommendation": {"action": "inspect_static_limitation", "reason": "generic limitation", "verify_command": null},
+                    "actionability": {"class": "static_limitation"},
+                    "calibration": {"availability": "not_imported", "confidence": "unknown", "agreement": "no_runtime_data"},
+                    "static_limitations": [
+                      {"category": "static_unknown", "repair_route": "analysis/static-limitation-taxonomy"}
+                    ],
+                    "raw_findings": [
+                      {"file": "src/opaque.rs", "line": 10, "kind": "static_unknown", "expression": "opaque(value)"}
+                    ],
+                    "canonical_item": {
+                      "canonical_gap_id": "gap:generic-static-unknown",
+                      "canonical_item_kind": "limitation",
+                      "evidence_class": "call_presence",
+                      "gap_state": "static_limitation",
+                      "actionability": "static_limitation",
+                      "raw_findings": [
+                        {"file": "src/opaque.rs", "line": 10, "kind": "static_unknown", "expression": "opaque(value)"}
+                      ],
+                      "static_limitations": [
+                        {"category": "static_unknown", "repair_route": "analysis/static-limitation-taxonomy"}
+                      ],
+                      "recommended_repair": "Inspect static limitation",
+                      "verify_command": null
+                    }
+                  }
+                },
+                {
+                  "seam_id": "named-static-limitation",
+                  "headline_eligible": true,
+                  "file": "src/helper.rs",
+                  "evidence_record": {
+                    "schema_version": "0.1",
+                    "seam_id": "named-static-limitation",
+                    "canonical_gap_id": "gap:named-static-limitation",
+                    "owner": "helper::named",
+                    "location": {"file": "src/helper.rs", "line": 12},
+                    "seam_kind": "call_presence",
+                    "grip_class": "static_unknown",
+                    "headline_eligible": true,
+                    "evidence_path": {},
+                    "observed_values": [],
+                    "missing_discriminators": [],
+                    "related_tests_total": 0,
+                    "related_tests": [],
+                    "recommendation": {"action": "inspect_static_limitation", "reason": "opaque helper", "verify_command": null},
+                    "actionability": {"class": "static_limitation"},
+                    "calibration": {"availability": "not_imported", "confidence": "unknown", "agreement": "no_runtime_data"},
+                    "static_limitations": [
+                      {"category": "opaque_helper_call", "repair_route": "analysis/oracle-semantics-audit-fixes"}
+                    ],
+                    "raw_findings": [
+                      {"file": "src/helper.rs", "line": 12, "kind": "static_unknown", "expression": "helper(value)"}
+                    ],
+                    "canonical_item": {
+                      "canonical_gap_id": "gap:named-static-limitation",
+                      "canonical_item_kind": "limitation",
+                      "evidence_class": "call_presence",
+                      "gap_state": "static_limitation",
+                      "actionability": "static_limitation",
+                      "raw_findings": [
+                        {"file": "src/helper.rs", "line": 12, "kind": "static_unknown", "expression": "helper(value)"}
+                      ],
+                      "static_limitations": [
+                        {"category": "opaque_helper_call", "repair_route": "analysis/oracle-semantics-audit-fixes"}
+                      ],
+                      "recommended_repair": "Inspect opaque helper assertion path",
+                      "verify_command": null
+                    }
+                  }
+                }
+              ]
+            }"#,
+    )?;
+    let json = lane1_evidence_audit_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    let coverage = &value["finding_alignment"]["coverage"];
+
+    assert_eq!(
+        coverage["static_unknown_without_named_limitation"],
+        serde_json::Value::from(1)
+    );
+    Ok(())
+}
+
+#[test]
+fn lane1_evidence_audit_markdown_names_required_sections() -> Result<(), String> {
+    let report = lane1_evidence_audit_from_repo_exposure(".", lane1_audit_sample_json())?;
+    let markdown = lane1_evidence_audit_markdown(&report);
+
+    assert!(markdown.contains("Lane 1 evidence quality audit"));
+    assert!(markdown.contains("Repo Exposure Generation"));
+    assert!(markdown.contains("Largest Canonical Gap Groups"));
+    assert!(markdown.contains("Finding Alignment"));
+    assert!(markdown.contains("Finding Alignment Coverage"));
+    assert!(markdown.contains("Actionable Canonical Gap Top Lists"));
+    assert!(markdown.contains("Repair kind"));
+    assert!(markdown.contains("Static unknown without named limitation"));
+    assert!(markdown.contains("Raw-to-canonical ratio"));
+    assert!(markdown.contains("Duplicate-Looking Groups"));
+    assert!(markdown.contains("Missing Discriminator Classes"));
+    assert!(markdown.contains("opaque_helper_call"));
+    assert!(markdown.contains("analysis/oracle-semantics-audit-fixes"));
+    assert!(markdown.contains("Evidence Record Field Health"));
+    assert!(markdown.contains("Top Files By Unresolved Evidence Debt"));
+    assert!(markdown.contains("gap:shared"));
+    Ok(())
+}
+
+#[test]
+fn lane1_evidence_audit_json_reports_generation_diagnostics() -> Result<(), String> {
+    let mut report = lane1_evidence_audit_from_repo_exposure(".", lane1_audit_sample_json())?;
+    report.repo_exposure_generation = Some(Lane1EvidenceAuditRepoExposureGeneration {
+        command: "target/debug/ripr check --root . --mode instant --format repo-exposure-json"
+            .to_string(),
+        timeout_ms: 60_000,
+        status: "pass".to_string(),
+        failure_reason: None,
+        duration_ms: 42_000,
+        exit_code: Some(0),
+        stdout_bytes: 1024,
+        stderr_bytes: 128,
+        latency_trace_events_total: 3,
+        latency_trace_tail: vec![RepoExposureLatencyTrace {
+            phase: "evidence_for_seams_progress".to_string(),
+            status: "processed_5000_of_38124".to_string(),
+            duration_ms: 41_000,
+        }],
+    });
+
+    let json = lane1_evidence_audit_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    let generation = &value["inputs"]["repo_exposure_generation"];
+
+    assert_eq!(generation["status"], "pass");
+    assert_eq!(generation["duration_ms"], serde_json::Value::from(42_000));
+    assert_eq!(
+        generation["latency_trace_tail"][0]["phase"],
+        "evidence_for_seams_progress"
+    );
+    assert_eq!(
+        generation["latency_trace_tail"][0]["status"],
+        "processed_5000_of_38124"
+    );
+    Ok(())
+}
+
+#[test]
+fn lane1_evidence_audit_normalizes_static_limitation_taxonomy() {
+    for (stage, state, reason, expected) in [
+        (
+            "activate",
+            "unknown",
+            "No direct owner call observed for value-insensitive seam `Vec::new()`",
+            "activation_owner_call_absent",
+        ),
+        (
+            "activate",
+            "unknown",
+            "owner call target is unresolved for value-insensitive seam `Vec::new()`",
+            "activation_owner_call_unresolved",
+        ),
+        (
+            "activate",
+            "unknown",
+            "No concrete activation values observed for seam `threshold`",
+            "activation_value_unresolved",
+        ),
+        (
+            "activate",
+            "unknown",
+            "cross-file constant boundary is unresolved",
+            "cross_file_constant_unresolved",
+        ),
+        (
+            "activate",
+            "unknown",
+            "macro generated value hides literal",
+            "macro_generated_value",
+        ),
+        (
+            "observe",
+            "unknown",
+            "opaque helper hides field",
+            "opaque_helper_call",
+        ),
+        (
+            "propagate",
+            "unknown",
+            "dynamic dispatch target is opaque",
+            "dynamic_dispatch",
+        ),
+        (
+            "observe",
+            "unknown",
+            "mock expectation shape is unsupported",
+            "unsupported_mock_shape",
+        ),
+        (
+            "observe",
+            "unknown",
+            "snapshot field is unknown",
+            "snapshot_field_unknown",
+        ),
+        (
+            "propagate",
+            "unknown",
+            "side-effect sink is unknown",
+            "side_effect_sink_unknown",
+        ),
+        (
+            "classification",
+            "opaque",
+            "seam is classified opaque",
+            "opaque_static_evidence",
+        ),
+        (
+            "reach",
+            "unknown",
+            "no related tests",
+            "reachability_static_unknown",
+        ),
+        (
+            "activate",
+            "unknown",
+            "missing fact",
+            "activation_static_unknown",
+        ),
+        (
+            "propagate",
+            "unknown",
+            "missing sink",
+            "propagation_static_unknown",
+        ),
+        (
+            "observe",
+            "unknown",
+            "missing oracle",
+            "observation_static_unknown",
+        ),
+        (
+            "discriminate",
+            "unknown",
+            "missing exact assertion",
+            "discrimination_static_unknown",
+        ),
+        (
+            "unknown",
+            "unknown",
+            "missing stage",
+            "static_limitation_unclassified",
+        ),
+    ] {
+        assert_eq!(
+            static_limitation_category(stage, state, reason),
+            expected,
+            "unexpected category for {stage}/{state}: {reason}"
+        );
+    }
+
+    for (category, expected) in [
+        (
+            "activation_owner_call_absent",
+            "analysis/owner-call-absence-triage",
+        ),
+        (
+            "activation_owner_call_absent_call_presence_target_affinity",
+            "analysis/call-presence-target-affinity-owner-call-tracing",
+        ),
+        (
+            "activation_owner_call_absent_assertion_target_affinity",
+            "analysis/assertion-target-affinity-owner-call-tracing",
+        ),
+        (
+            "activation_owner_call_absent_affinity_only",
+            "analysis/related-test-affinity-owner-call-tracing",
+        ),
+        (
+            "activation_owner_call_absent_same_file_only",
+            "analysis/same-file-owner-call-tracing",
+        ),
+        (
+            "activation_owner_call_unresolved",
+            "analysis/related-test-ranking-audit-fixes",
+        ),
+        (
+            "activation_value_unresolved",
+            "analysis/value-resolution-audit-fixes",
+        ),
+        (
+            "cross_file_constant_unresolved",
+            "analysis/cross-file-constant-resolution",
+        ),
+        (
+            "macro_generated_value",
+            "analysis/macro-generated-value-fixtures",
+        ),
+        (
+            "opaque_helper_call",
+            "analysis/oracle-semantics-audit-fixes",
+        ),
+        ("dynamic_dispatch", "calibration/runtime-fixtures-v3"),
+        (
+            "unsupported_mock_shape",
+            "analysis/oracle-semantics-audit-fixes",
+        ),
+        (
+            "snapshot_field_unknown",
+            "analysis/oracle-semantics-audit-fixes",
+        ),
+        (
+            "side_effect_sink_unknown",
+            "analysis/oracle-semantics-audit-fixes",
+        ),
+        (
+            "opaque_static_evidence",
+            "analysis/static-limitation-taxonomy",
+        ),
+        (
+            "reachability_static_unknown",
+            "analysis/related-test-ranking-audit-fixes",
+        ),
+        (
+            "activation_static_unknown",
+            "analysis/static-limitation-taxonomy",
+        ),
+        (
+            "propagation_static_unknown",
+            "analysis/static-limitation-taxonomy",
+        ),
+        (
+            "observation_static_unknown",
+            "analysis/oracle-semantics-audit-fixes",
+        ),
+        (
+            "discrimination_static_unknown",
+            "analysis/oracle-semantics-audit-fixes",
+        ),
+        (
+            "static_limitation_unclassified",
+            "analysis/static-limitation-taxonomy",
+        ),
+        ("unknown", "analysis/static-limitation-taxonomy"),
+    ] {
+        assert_eq!(
+            static_limitation_repair_route(category),
+            expected,
+            "unexpected repair route for {category}"
+        );
+    }
+
+    let mut markdown = String::new();
+    audit_push_value_counts_table_limited(
+        &mut markdown,
+        "Static limitation category",
+        &serde_json::json!({}),
+        &["missing"],
+        5,
+    );
+    assert!(markdown.contains("No static limitation category counts were reported."));
+}
+
+#[test]
+fn lane1_evidence_audit_rejects_repo_exposure_without_seams() {
+    let err = lane1_evidence_audit_from_repo_exposure(".", r#"{"schema_version":"0.3"}"#)
+        .expect_err("missing seams should fail");
+    assert!(err.contains("missing `seams` array"));
+}
+
+#[test]
+fn evidence_quality_scorecard_renders_required_json_sections() -> Result<(), String> {
+    let audit = lane1_scorecard_sample_audit_value()?;
+    let report = evidence_quality_scorecard_from_values(
+        "unix_ms:1".to_string(),
+        scorecard_inputs_for_test(false),
+        &audit,
+        None,
+        None,
+    )?;
+    let json = evidence_quality_scorecard_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+
+    assert_eq!(value["schema_version"], "0.1");
+    assert_eq!(value["report"], "evidence-quality-scorecard");
+    assert!(value.get("inputs").is_some());
+    assert!(value.get("headline").is_some());
+    assert!(value.get("summary").is_some());
+    assert!(value.get("maturity_by_class").is_some());
+    assert!(value.get("canonical_gap_groups").is_some());
+    assert!(value.get("duplicate_looking_groups").is_some());
+    assert!(value.get("static_limitation_categories").is_some());
+    assert!(
+        value["static_limitation_categories"]
+            .get("by_category")
+            .is_some()
+    );
+    assert!(
+        value["static_limitation_categories"]
+            .get("repair_routes")
+            .is_some()
+    );
+    assert!(value.get("missing_discriminator_classes").is_some());
+    assert!(value.get("related_test_confidence").is_some());
+    assert!(value.get("oracle_semantics_distribution").is_some());
+    assert!(value.get("movement_availability").is_some());
+    assert!(value.get("calibration_coverage").is_some());
+    assert!(value.get("actionable_gap_top_lists").is_some());
+    assert!(
+        value
+            .get("actionable_gap_packet_public_projection")
+            .is_some()
+    );
+    assert!(value.get("evidence_class_work_queue").is_some());
+    assert!(
+        value
+            .get("language_aware_placement_route_quality")
+            .is_some()
+    );
+    assert!(value.get("cross_language_oracle_route_quality").is_some());
+    assert!(value.get("recommended_repairs").is_some());
+    assert!(value.get("recent_audit_deltas").is_some());
+    assert!(value.get("unknowns").is_some());
+    assert_eq!(
+        value["inputs"]["evidence_health"]["status"],
+        serde_json::Value::from("missing")
+    );
+    assert_eq!(
+        value["headline"]["primary_metric"],
+        "finding_alignment_actionable_unresolved_canonical_gaps"
+    );
+    assert_eq!(
+        value["headline"]["counting_model"],
+        "actionable_canonical_gaps"
+    );
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_scorecard_surfaces_limited_inputs_as_unknowns() -> Result<(), String> {
+    let mut audit = lane1_scorecard_sample_audit_value()?;
+    let audit_object = audit
+        .as_object_mut()
+        .ok_or_else(|| "sample audit must be an object".to_string())?;
+    audit_object.insert(
+        "run_limitations".to_string(),
+        serde_json::json!([
+            {
+                "category": "lane1_repo_exposure_timeout",
+                "phase": "repo_exposure_generation",
+                "repair_route": "inspect repo-exposure latency trace"
+            }
+        ]),
+    );
+    audit_object.insert(
+        "static_limitations".to_string(),
+        serde_json::json!({
+            "by_reason": [],
+            "by_stage": {},
+            "by_category": {"lane1_repo_exposure_timeout": 1},
+            "repair_routes": {"report/lane1-audit-bounded-diagnostics": 1}
+        }),
+    );
+    audit_object
+        .get_mut("summary")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| "sample audit summary must be an object".to_string())?
+        .insert("static_limitations_total".to_string(), Value::from(0));
+    let evidence_health = serde_json::json!({
+        "schema_version": "0.1",
+        "status": "warn",
+        "run_limitations": [
+            {
+                "category": "evidence_health_timeout",
+                "phase": "evidence_health_generation",
+                "repair_route": "inspect evidence-health runtime"
+            }
+        ]
+    });
+    let report = evidence_quality_scorecard_from_values(
+        "unix_ms:1".to_string(),
+        scorecard_inputs_for_test(false),
+        &audit,
+        Some(&evidence_health),
+        None,
+    )?;
+    let json = evidence_quality_scorecard_json(&report)?;
+    let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    let kinds = value["unknowns"]
+        .as_array()
+        .ok_or("unknowns must be an array")?
+        .iter()
+        .filter_map(|unknown| unknown["kind"].as_str())
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(value["run_status"], "limited_timeout");
+    assert_eq!(
+        value["runtime_status"]["limitation_category"],
+        "lane1_repo_exposure_timeout"
+    );
+    assert!(kinds.contains("lane1_evidence_audit_limited"));
+    assert!(kinds.contains("evidence_health_limited"));
+    assert_eq!(value["summary"]["static_limitations_total"], 1);
+    assert_eq!(value["headline"]["static_limitations"], 1);
+    assert_eq!(
+        value["static_limitation_categories"]["by_category"]["lane1_repo_exposure_timeout"],
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_scorecard_does_not_treat_cache_store_skip_as_limited_audit()
+-> Result<(), String> {
+    let mut audit = lane1_scorecard_sample_audit_value()?;
+    audit
+        .as_object_mut()
+        .ok_or_else(|| "sample audit must be an object".to_string())?
+        .insert(
+            "run_limitations".to_string(),
+            serde_json::json!([
+                {
+                    "category": "lane1_repo_exposure_cache_store_skipped_large_entry",
+                    "phase": "repo_exposure_cache_store",
+                    "repair_route": "add bounded full-cache serialization"
+                }
+            ]),
+        );
+    let report = evidence_quality_scorecard_from_values(
+        "unix_ms:1".to_string(),
+        scorecard_inputs_for_test(false),
+        &audit,
+        None,
+        None,
+    )?;
+    let json = evidence_quality_scorecard_json(&report)?;
+    let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    let kinds = value["unknowns"]
+        .as_array()
+        .ok_or("unknowns must be an array")?
+        .iter()
+        .filter_map(|unknown| unknown["kind"].as_str())
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(value["run_status"], "limited_large_cache_skip");
+    assert_eq!(value["runtime_status"]["downstream_consumable"], true);
+    assert!(!kinds.contains("lane1_evidence_audit_limited"));
+    assert!(kinds.contains("evidence_health_unavailable"));
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_scorecard_treats_large_cache_preflight_as_limited() -> Result<(), String> {
+    let mut audit = lane1_scorecard_sample_audit_value()?;
+    audit
+        .as_object_mut()
+        .ok_or_else(|| "sample audit must be an object".to_string())?
+        .insert(
+            "run_limitations".to_string(),
+            serde_json::json!([
+                {
+                    "category": "lane1_repo_exposure_large_cache_preflight_skip",
+                    "phase": "repo_seam_facts_cache",
+                    "input": "target/ripr/cache",
+                    "repair_route": "cargo xtask cache report && cargo xtask cache gc --dry-run",
+                    "downstream_consumable": false
+                }
+            ]),
+        );
+    let report = evidence_quality_scorecard_from_values(
+        "unix_ms:1".to_string(),
+        scorecard_inputs_for_test(false),
+        &audit,
+        None,
+        None,
+    )?;
+    let json = evidence_quality_scorecard_json(&report)?;
+    let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    let kinds = value["unknowns"]
+        .as_array()
+        .ok_or("unknowns must be an array")?
+        .iter()
+        .filter_map(|unknown| unknown["kind"].as_str())
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(value["run_status"], "limited_large_cache_skip");
+    assert_eq!(value["runtime_status"]["downstream_consumable"], false);
+    assert!(kinds.contains("lane1_evidence_audit_limited"));
+    assert!(kinds.contains("evidence_health_unavailable"));
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_scorecard_treats_incomplete_audit_as_limited() -> Result<(), String> {
+    let mut audit = lane1_scorecard_sample_audit_value()?;
+    audit
+        .as_object_mut()
+        .ok_or_else(|| "sample audit must be an object".to_string())?
+        .insert(
+            "run_limitations".to_string(),
+            serde_json::json!([
+                {
+                    "category": "lane1_repo_exposure_incomplete",
+                    "phase": "repo_exposure_generation",
+                    "repair_route": "inspect repo-exposure generation"
+                }
+            ]),
+        );
+    let report = evidence_quality_scorecard_from_values(
+        "unix_ms:1".to_string(),
+        scorecard_inputs_for_test(false),
+        &audit,
+        None,
+        None,
+    )?;
+    let json = evidence_quality_scorecard_json(&report)?;
+    let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    let kinds = value["unknowns"]
+        .as_array()
+        .ok_or("unknowns must be an array")?
+        .iter()
+        .filter_map(|unknown| unknown["kind"].as_str())
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(value["run_status"], "limited_incomplete_input");
+    assert_eq!(
+        value["runtime_status"]["limitation_category"],
+        "lane1_repo_exposure_incomplete"
+    );
+    assert!(kinds.contains("lane1_evidence_audit_limited"));
+    assert!(kinds.contains("evidence_health_unavailable"));
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_scorecard_names_audit_regeneration_failure() -> Result<(), String> {
+    let audit =
+        evidence_quality_scorecard_audit_regeneration_failure_audit("repo exposure failed")?;
+    assert_eq!(
+        audit["run_limitations"][0]["category"],
+        EVIDENCE_QUALITY_SCORECARD_AUDIT_REGENERATION_FAILED
+    );
+    assert_eq!(
+        audit["static_limitations"]["by_category"]
+            [EVIDENCE_QUALITY_SCORECARD_AUDIT_REGENERATION_FAILED],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        audit["summary"]["static_limitations_total"],
+        serde_json::Value::from(1)
+    );
+
+    let report = evidence_quality_scorecard_from_values(
+        "unix_ms:1".to_string(),
+        scorecard_inputs_for_test(false),
+        &audit,
+        None,
+        None,
+    )?;
+    let json = evidence_quality_scorecard_json(&report)?;
+    let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    let kinds = value["unknowns"]
+        .as_array()
+        .ok_or("unknowns must be an array")?
+        .iter()
+        .filter_map(|unknown| unknown["kind"].as_str())
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(value["run_status"], "limited_incomplete_input");
+    assert_eq!(
+        value["runtime_status"]["limitation_category"],
+        EVIDENCE_QUALITY_SCORECARD_AUDIT_REGENERATION_FAILED
+    );
+    assert!(kinds.contains("lane1_evidence_audit_limited"));
+    assert!(kinds.contains(EVIDENCE_QUALITY_SCORECARD_AUDIT_REGENERATION_FAILED));
+    assert_eq!(
+        value["headline"]["primary_metric"],
+        "finding_alignment_actionable_unresolved_canonical_gaps"
+    );
+    assert_eq!(
+        value["headline"]["primary_count"],
+        serde_json::Value::from(0)
+    );
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_scorecard_headline_prefers_actionable_canonical_gaps() -> Result<(), String> {
+    let mut audit = scorecard_minimal_audit_value(0, 0, 0, 0, 0);
+    audit
+        .as_object_mut()
+        .ok_or_else(|| "sample audit must be an object".to_string())?
+        .insert(
+            "finding_alignment".to_string(),
+            serde_json::json!({
+                "summary": {
+                    "raw_signals": 7,
+                    "canonical_items": 3,
+                    "aligned_raw_findings": 7,
+                    "unaligned_raw_findings": 0,
+                    "duplicate_groups_total": 2,
+                    "actionable_gaps": 2,
+                    "already_observed": 1,
+                    "internal_no_action": 0,
+                    "static_limitations": 0,
+                    "unknown": 0,
+                    "calibrated_supported": 0,
+                    "uncalibrated": 3
+                }
+            }),
+        );
+    let report = evidence_quality_scorecard_from_values(
+        "unix_ms:1".to_string(),
+        scorecard_inputs_for_test(false),
+        &audit,
+        None,
+        None,
+    )?;
+    let json = evidence_quality_scorecard_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+
+    assert_eq!(value["headline"]["primary_count"], 2);
+    assert_eq!(value["headline"]["raw_signals"], 7);
+    assert_eq!(value["headline"]["canonical_items"], 3);
+    assert_eq!(value["headline"]["already_observed"], 1);
+    assert_eq!(value["headline"]["raw_to_canonical_ratio"], 7.0 / 3.0);
+    assert_eq!(
+        value["summary"]["finding_alignment_actionable_unresolved_canonical_gaps"],
+        2
+    );
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_scorecard_defaults_static_limitation_taxonomy_sections() -> Result<(), String> {
+    let mut audit = scorecard_minimal_audit_value(0, 0, 0, 0, 0);
+    audit
+        .as_object_mut()
+        .ok_or_else(|| "sample audit must be an object".to_string())?
+        .remove("static_limitations");
+    let report = evidence_quality_scorecard_from_values(
+        "unix_ms:1".to_string(),
+        scorecard_inputs_for_test(false),
+        &audit,
+        None,
+        None,
+    )?;
+    let json = evidence_quality_scorecard_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+
+    let static_limitations = &value["static_limitation_categories"];
+    assert!(static_limitations["by_reason"].is_array());
+    assert!(static_limitations["by_stage"].is_object());
+    assert!(static_limitations["by_category"].is_object());
+    assert!(static_limitations["repair_routes"].is_object());
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_scorecard_markdown_names_required_sections() -> Result<(), String> {
+    let audit = lane1_scorecard_sample_audit_value()?;
+    let report = evidence_quality_scorecard_from_values(
+        "unix_ms:1".to_string(),
+        scorecard_inputs_for_test(false),
+        &audit,
+        None,
+        None,
+    )?;
+    let markdown = evidence_quality_scorecard_markdown(&report);
+
+    for needle in [
+        "Lane 1 evidence quality scorecard",
+        "Actionable canonical gaps",
+        "Actionable Canonical Gap Top Lists",
+        "Actionable gap class",
+        "Repair kind",
+        "Actionable Gap Packet Public Projection Readiness",
+        "Projection exclusion reason",
+        "Language-Aware Placement Route Quality",
+        "Cross-Language Oracle Route Quality",
+        "Evidence Class Work Queue",
+        "Dominant signal",
+        "Maturity By Class",
+        "Top Evidence-Quality Risks",
+        "Recommended Lane 1 Repairs",
+        "Duplicate-Looking And Canonical Group Signals",
+        "Static Limitations And Missing Discriminators",
+        "Static limitation category",
+        "Related-Test And Oracle Distributions",
+        "Movement And Calibration Coverage",
+        "Recent Deltas",
+        "Unknowns And Unavailable Inputs",
+    ] {
+        assert!(
+            markdown.contains(needle),
+            "scorecard Markdown missing {needle}"
+        );
+    }
+    assert!(markdown.contains("## Runtime Status"));
+    assert!(markdown.contains("| State | `full` |"));
+    assert!(markdown.contains("| Downstream consumable | `true` |"));
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_scorecard_carries_actionable_gap_top_lists_from_audit() -> Result<(), String> {
+    let audit = lane1_scorecard_sample_audit_value()?;
+    let report = evidence_quality_scorecard_from_values(
+        "unix_ms:1".to_string(),
+        scorecard_inputs_for_test(false),
+        &audit,
+        None,
+        None,
+    )?;
+    let json = evidence_quality_scorecard_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+
+    assert_eq!(
+        value["actionable_gap_top_lists"]["top_actionable_gap_classes"][0]["label"],
+        "predicate_boundary"
+    );
+    assert_eq!(
+        value["actionable_gap_top_lists"]["top_repair_kinds"][0]["label"],
+        "add_boundary_assertion"
+    );
+    assert!(
+        value["actionable_gap_top_lists"]["top_static_limitation_reasons"]
+            .as_array()
+            .is_some_and(Vec::is_empty),
+        "scorecard should carry only actionable static-limit reasons from the audit"
+    );
+
+    let markdown = evidence_quality_scorecard_markdown(&report);
+    assert!(markdown.contains("Actionable Canonical Gap Top Lists"));
+    assert!(markdown.contains("add_boundary_assertion"));
+    assert!(markdown.contains("No static limitation reason counts were reported."));
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_scorecard_carries_evidence_class_work_queue_from_audit() -> Result<(), String> {
+    let audit = lane1_scorecard_sample_audit_value()?;
+    let report = evidence_quality_scorecard_from_values(
+        "unix_ms:1".to_string(),
+        scorecard_inputs_for_test(false),
+        &audit,
+        None,
+        None,
+    )?;
+    let json = evidence_quality_scorecard_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+
+    assert_eq!(
+        value["evidence_class_work_queue"][0]["evidence_class"],
+        "predicate_boundary"
+    );
+    assert_eq!(
+        value["evidence_class_work_queue"][0]["dominant_signal"],
+        "actionable_canonical_gaps"
+    );
+    assert_eq!(
+        value["evidence_class_work_queue"][0]["next_repair"],
+        "dogfood/actionable-gap-repair-loop"
+    );
+    let call_presence = value["evidence_class_work_queue"]
+        .as_array()
+        .and_then(|rows| {
+            rows.iter()
+                .find(|row| row["evidence_class"] == "call_presence")
+        })
+        .ok_or_else(|| "scorecard should carry call_presence work queue row".to_string())?;
+    assert_eq!(
+        call_presence["dominant_static_limitation_category"],
+        "opaque_helper_call"
+    );
+    assert_eq!(
+        call_presence["dominant_static_limitation_category_count"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        call_presence["dominant_static_limitation_repair_route"],
+        "analysis/oracle-semantics-audit-fixes"
+    );
+    assert_eq!(
+        call_presence["next_repair"],
+        "analysis/oracle-semantics-audit-fixes"
+    );
+
+    let markdown = evidence_quality_scorecard_markdown(&report);
+    assert!(markdown.contains("Evidence Class Work Queue"));
+    assert!(markdown.contains("actionable_canonical_gaps"));
+    assert!(markdown.contains("opaque_helper_call"));
+    assert!(markdown.contains("analysis/oracle-semantics-audit-fixes"));
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_scorecard_recommended_repairs_follow_evidence_class_work_queue()
+-> Result<(), String> {
+    let audit = lane1_scorecard_sample_audit_value()?;
+    let report = evidence_quality_scorecard_from_values(
+        "unix_ms:1".to_string(),
+        scorecard_inputs_for_test(false),
+        &audit,
+        None,
+        None,
+    )?;
+
+    let first = report
+        .recommended_repairs
+        .first()
+        .ok_or_else(|| "expected work-queue recommended repair".to_string())?;
+    assert_eq!(first.slice, "dogfood/actionable-gap-repair-loop");
+    assert_eq!(first.evidence_class, "predicate_boundary");
+    assert_eq!(first.risk_kind, "actionable_canonical_gaps");
+    assert_eq!(first.signal_count, 2);
+    assert!(
+        first
+            .why
+            .contains("Audit work queue ranks `predicate_boundary`"),
+        "work-queue repair should explain the class-specific live signal: {first:?}"
+    );
+
+    let call_presence = report
+        .recommended_repairs
+        .iter()
+        .find(|repair| repair.evidence_class == "call_presence")
+        .ok_or_else(|| "expected call_presence work-queue repair".to_string())?;
+    assert_eq!(call_presence.slice, "analysis/oracle-semantics-audit-fixes");
+    assert_eq!(
+        call_presence.risk_kind,
+        "static_limitations:opaque_helper_call"
+    );
+    assert_eq!(call_presence.signal_count, 1);
+    assert!(call_presence.why.contains("opaque_helper_call"));
+
+    let markdown = evidence_quality_scorecard_markdown(&report);
+    assert!(markdown.contains("Audit work queue ranks `predicate_boundary`"));
+    assert!(markdown.contains("Audit work queue ranks `call_presence`"));
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_scorecard_carries_actionable_packet_projection_readiness() -> Result<(), String>
+{
+    let mut audit = scorecard_minimal_audit_value(0, 0, 0, 0, 0);
+    audit
+        .as_object_mut()
+        .ok_or_else(|| "audit should be an object".to_string())?
+        .insert(
+            "finding_alignment".to_string(),
+            serde_json::json!({
+                "summary": {
+                    "raw_signals": 9,
+                    "canonical_items": 4,
+                    "actionable_gaps": 3
+                },
+                "coverage": {
+                    "static_unknown_without_named_limitation": 0,
+                    "canonical_items_without_repair_route": 0,
+                    "canonical_items_without_verify_command": 0
+                },
+                "actionable_gap_packet_public_projection": {
+                    "scope": "emitted_actionable_gap_packets",
+                    "public_projection_eligible_packets": 2,
+                    "public_projection_excluded_packets": 1,
+                    "projection_exclusion_reasons": [
+                        {"label": "missing_receipt_command", "count": 1}
+                    ]
+                }
+            }),
+        );
+
+    let report = evidence_quality_scorecard_from_values(
+        "unix_ms:1".to_string(),
+        scorecard_inputs_for_test(false),
+        &audit,
+        None,
+        None,
+    )?;
+
+    assert_eq!(
+        report
+            .summary
+            .finding_alignment_actionable_gap_packet_public_projection_eligible_packets,
+        2
+    );
+    assert_eq!(
+        report
+            .summary
+            .finding_alignment_actionable_gap_packet_public_projection_excluded_packets,
+        1
+    );
+    let json = evidence_quality_scorecard_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["summary"]["finding_alignment_actionable_gap_packet_public_projection_eligible_packets"],
+        serde_json::Value::from(2)
+    );
+    assert_eq!(
+        value["summary"]["finding_alignment_actionable_gap_packet_public_projection_excluded_packets"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["actionable_gap_packet_public_projection"]["projection_exclusion_reasons"][0]["label"],
+        "missing_receipt_command"
+    );
+
+    let markdown = evidence_quality_scorecard_markdown(&report);
+    assert!(markdown.contains("Actionable Gap Packet Public Projection Readiness"));
+    assert!(markdown.contains("Public projection eligible packets"));
+    assert!(markdown.contains("missing_receipt_command"));
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_scorecard_summarizes_language_aware_placement_route_quality()
+-> Result<(), String> {
+    let mut audit = scorecard_minimal_audit_value(0, 7, 0, 0, 7);
+    audit
+        .as_object_mut()
+        .ok_or_else(|| "audit should be an object".to_string())?
+        .insert(
+            "static_limitations".to_string(),
+            serde_json::json!({
+                "by_reason": [],
+                "by_stage": {},
+                "by_category": {
+                    "cross_language_target_unresolved": 7,
+                    "cross_language_oracle_visibility_unresolved": 2
+                },
+                "repair_routes": {
+                    "analysis/cross-language-test-target-inference": 7,
+                    "analysis/cross-language-oracle-visibility": 2
+                }
+            }),
+        );
+    audit
+        .as_object_mut()
+        .ok_or_else(|| "audit should be an object".to_string())?
+        .insert(
+            "finding_alignment".to_string(),
+            serde_json::json!({
+                "summary": {
+                    "raw_signals": 7,
+                    "canonical_items": 7,
+                    "actionable_gaps": 0,
+                    "static_limitations": 7
+                },
+                "coverage": {
+                    "static_unknown_without_named_limitation": 0,
+                    "canonical_items_without_repair_route": 0,
+                    "canonical_items_without_verify_command": 0
+                },
+                "actionable_gap_packet_public_projection": {
+                    "scope": "emitted_actionable_gap_packets",
+                    "public_projection_eligible_packets": 0,
+                    "public_projection_excluded_packets": 1,
+                    "projection_exclusion_reasons": [
+                        {"label": "cross_language_target_unresolved", "count": 1}
+                    ]
+                },
+                "actionable_gap_packets": [
+                    {
+                        "canonical_gap_id": "gap:nav-only",
+                        "public_projection_eligible": false,
+                        "projection_exclusion_reasons": [
+                            "cross_language_target_unresolved"
+                        ],
+                        "navigation_only_target": {
+                            "file": "test/js/web/fetch/blob.test.ts",
+                            "line": 41,
+                            "language": "typescript",
+                            "repair_packet_ready": false
+                        }
+                    }
+                ]
+            }),
+        );
+
+    let report = evidence_quality_scorecard_from_values(
+        "unix_ms:1".to_string(),
+        scorecard_inputs_for_test(false),
+        &audit,
+        None,
+        None,
+    )?;
+    let json = evidence_quality_scorecard_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    let placement = &value["language_aware_placement_route_quality"];
+
+    assert_eq!(placement["status"], "navigation_only_context_visible");
+    assert_eq!(
+        placement["repair_route"],
+        "analysis/cross-language-test-target-inference"
+    );
+    assert_eq!(
+        placement["cross_language_target_unresolved_signals"],
+        serde_json::Value::from(7)
+    );
+    assert_eq!(
+        placement["cross_language_test_target_inference_route_signals"],
+        serde_json::Value::from(7)
+    );
+    assert_eq!(
+        placement["cross_language_oracle_visibility_unresolved_signals"],
+        serde_json::Value::from(2)
+    );
+    assert_eq!(
+        placement["navigation_only_external_target_packets"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        placement["navigation_only_external_target_public_promotions"],
+        serde_json::Value::from(0)
+    );
+    assert_eq!(
+        placement["navigation_only_external_target_status"],
+        "explicit_navigation_context_only"
+    );
+    assert!(placement["non_claims"].as_array().is_some_and(|claims| {
+        claims
+            .iter()
+            .any(|claim| claim == "not a public repair packet")
+    }));
+    assert_eq!(
+        value["summary"]["finding_alignment_actionable_unresolved_canonical_gaps"],
+        serde_json::Value::from(0)
+    );
+
+    let markdown = evidence_quality_scorecard_markdown(&report);
+    assert!(markdown.contains("## Language-Aware Placement Route Quality"));
+    assert!(markdown.contains("analysis/cross-language-test-target-inference"));
+    assert!(markdown.contains("Navigation-only external target packets"));
+    assert!(markdown.contains("navigation_only_external_target_status"));
+    assert!(markdown.contains("not runtime calibration or public repair packets"));
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_scorecard_summarizes_cross_language_oracle_route_quality() -> Result<(), String>
+{
+    let audit = scorecard_minimal_audit_value(0, 0, 0, 0, 0);
+    let report = evidence_quality_scorecard_from_values(
+        "unix_ms:1".to_string(),
+        scorecard_inputs_for_test(false),
+        &audit,
+        None,
+        None,
+    )?;
+    let json = evidence_quality_scorecard_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    let route_quality = &value["cross_language_oracle_route_quality"];
+
+    assert_eq!(route_quality["status"], "pass");
+    assert_eq!(
+        route_quality["cross_language_oracle_graph_complete_advisory_witnesses"],
+        serde_json::Value::from(3)
+    );
+    assert_eq!(
+        route_quality["cross_language_oracle_graph_missing_discriminator_limitations"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        route_quality["cross_language_oracle_graph_missing_external_oracle_limitations"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        route_quality["cross_language_oracle_graph_bridge_unknown_limitations"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        route_quality["cross_language_oracle_graph_mention_only_limitations"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        route_quality["cross_language_oracle_graph_panic_boundary_limitations"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        route_quality["cross_language_oracle_graph_manifest_only_profiles"],
+        serde_json::Value::from(2)
+    );
+    assert_eq!(
+        route_quality["cross_language_oracle_graph_public_packet_exclusions"],
+        serde_json::Value::from(11)
+    );
+    assert_eq!(
+        route_quality["repair_packet_ready_cases"],
+        serde_json::Value::from(0)
+    );
+    assert!(
+        route_quality["rows"]
+            .as_array()
+            .is_some_and(|rows| rows.iter().any(|row| {
+                row["case_id"] == "bun_blob_bridge_unknown_limitation"
+                    && row["missing_graph_legs"]
+                        .as_array()
+                        .is_some_and(|legs| legs.iter().any(|leg| leg == "binding_or_ffi_edge"))
+            }))
+    );
+    assert!(
+        route_quality["rows"]
+            .as_array()
+            .is_some_and(|rows| rows.iter().any(|row| {
+                row["case_id"] == "bun_array_buffer_copy_to_unshared_configured_bridge_advisory"
+                    && row["observed_state"] == "rust_ungripped_ts_discriminated"
+                    && row["binding_edge_confidence"] == "configured_hint"
+                    && row["missing_graph_legs"]
+                        .as_array()
+                        .is_some_and(Vec::is_empty)
+                    && row["repair_packet_ready"] == false
+                    && row["public_projection_eligible"] == false
+            }))
+    );
+    assert!(
+        route_quality["rows"]
+            .as_array()
+            .is_some_and(|rows| rows.iter().any(|row| {
+                row["case_id"] == "bun_write_helper_gated_manifest_only_profile"
+                    && row["profile"] == "bun_write_helper_gated"
+                    && row["profile_status"] == "manifest_only"
+                    && row["observed_state"] == "named_static_limitation"
+                    && row["proof_mode"] == "helper_gated"
+                    && row["suggested_test_file"] == "not_applicable"
+                    && row["repair_packet_ready"] == false
+                    && row["public_projection_eligible"] == false
+            }))
+    );
+    assert!(
+        route_quality["rows"]
+            .as_array()
+            .is_some_and(|rows| rows.iter().any(|row| {
+                row["case_id"] == "bun_markdown_resizable_array_buffer_configured_bridge_advisory"
+                    && row["profile"] == "bun_markdown_resizable_array_buffer"
+                    && row["observed_state"] == "rust_ungripped_ts_discriminated"
+                    && row["binding_edge_confidence"] == "configured_hint"
+                    && row["missing_graph_legs"]
+                        .as_array()
+                        .is_some_and(Vec::is_empty)
+                    && row["repair_packet_ready"] == false
+                    && row["public_projection_eligible"] == false
+            }))
+    );
+    assert!(
+        route_quality["rows"]
+            .as_array()
+            .is_some_and(|rows| rows.iter().any(|row| {
+                row["case_id"] == "bun_ffi_negative_offset_panic_boundary_limitation"
+                    && row["observed_state"] == "public_reachable_panic_boundary_unrevealed"
+                    && row["limitation_category"]
+                        == "cross_language_panic_boundary_visibility_unresolved"
+                    && row["repair_packet_ready"] == false
+                    && row["public_projection_eligible"] == false
+            }))
+    );
+    assert!(
+        route_quality["rows"]
+            .as_array()
+            .is_some_and(|rows| rows.iter().any(|row| {
+                row["case_id"] == "bun_node_fs_scalar_write_manifest_only_profile"
+                    && row["profile"] == "bun_node_fs_scalar_write"
+                    && row["profile_status"] == "manifest_only"
+                    && row["observed_state"] == "named_static_limitation"
+                    && row["proof_mode"] == "observable_red_green"
+                    && row["suggested_test_file"] == "test/js/node/fs/fs.test.ts"
+                    && row["repair_packet_ready"] == false
+                    && row["public_projection_eligible"] == false
+            }))
+    );
+
+    let markdown = evidence_quality_scorecard_markdown(&report);
+    assert!(markdown.contains("## Cross-Language Oracle Route Quality"));
+    assert!(markdown.contains("Missing discriminator limitations"));
+    assert!(markdown.contains("Bridge unknown limitations"));
+    assert!(markdown.contains("Panic boundary limitations"));
+    assert!(markdown.contains("Manifest-only profiles"));
+    assert!(markdown.contains("Repair-packet-ready cases"));
+    assert!(markdown.contains("not full cross-language proof"));
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_scorecard_classifies_maturity_by_proof_scope() -> Result<(), String> {
+    let audit = lane1_scorecard_sample_audit_value()?;
+    let report = evidence_quality_scorecard_from_values(
+        "unix_ms:1".to_string(),
+        scorecard_inputs_for_test(false),
+        &audit,
+        None,
+        None,
+    )?;
+
+    assert_eq!(
+        scorecard_status_for(&report, "canonical_gap_identity")?,
+        "fixture_backed"
+    );
+    assert_eq!(
+        scorecard_status_for(&report, "related_test_ranking")?,
+        "static_only"
+    );
+    assert_eq!(
+        scorecard_status_for(&report, "runtime_calibration")?,
+        "imported_runtime_calibrated"
+    );
+
+    let uncalibrated = scorecard_minimal_audit_value(0, 0, 0, 0, 0);
+    let uncalibrated_report = evidence_quality_scorecard_from_values(
+        "unix_ms:2".to_string(),
+        scorecard_inputs_for_test(false),
+        &uncalibrated,
+        None,
+        None,
+    )?;
+    assert_eq!(
+        scorecard_status_for(&uncalibrated_report, "runtime_calibration")?,
+        "uncalibrated"
+    );
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_scorecard_orders_repairs_by_risk_not_count() -> Result<(), String> {
+    let audit = scorecard_minimal_audit_value(1, 99, 0, 0, 0);
+    let report = evidence_quality_scorecard_from_values(
+        "unix_ms:1".to_string(),
+        scorecard_inputs_for_test(false),
+        &audit,
+        None,
+        None,
+    )?;
+    let first = report
+        .recommended_repairs
+        .first()
+        .ok_or_else(|| "expected at least one recommended repair".to_string())?;
+    assert_eq!(first.slice, "analysis/related-test-ranking-audit-fixes");
+    assert_eq!(first.signal_count, 1);
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_scorecard_reports_recent_deltas_when_present() -> Result<(), String> {
+    let audit = scorecard_minimal_audit_value(1, 3, 2, 0, 5);
+    let previous = serde_json::json!({
+        "summary": {
+            "duplicate_looking_groups_total": 8,
+            "missing_discriminators_total": 7,
+            "static_limitations_total": 5,
+            "low_or_opaque_top_related_tests": 4,
+            "uncalibrated_records": 9,
+            "calibrated_records": 1
+        }
+    });
+    let report = evidence_quality_scorecard_from_values(
+        "unix_ms:1".to_string(),
+        scorecard_inputs_for_test(true),
+        &audit,
+        None,
+        Some(&previous),
+    )?;
+
+    assert!(report.recent_audit_deltas.available);
+    let duplicate_delta = report
+        .recent_audit_deltas
+        .deltas
+        .iter()
+        .find(|delta| delta.metric == "duplicate_looking_groups_total")
+        .ok_or_else(|| "duplicate delta missing".to_string())?;
+    assert_eq!(duplicate_delta.before, 8);
+    assert_eq!(duplicate_delta.after, 2);
+    assert_eq!(duplicate_delta.direction, "improved");
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_scorecard_reports_finding_alignment_presentation_text_counts()
+-> Result<(), String> {
+    let mut audit = scorecard_minimal_audit_value(0, 0, 0, 0, 0);
+    audit
+        .as_object_mut()
+        .ok_or_else(|| "audit should be an object".to_string())?
+        .insert(
+            "finding_alignment".to_string(),
+            serde_json::json!({
+                "summary": {
+                    "raw_signals": 6,
+                    "canonical_items": 3,
+                    "aligned_raw_findings": 5,
+                    "unaligned_raw_findings": 1,
+                    "duplicate_groups_total": 2,
+                    "actionable_gaps": 1,
+                    "already_observed": 1,
+                    "internal_no_action": 1,
+                    "static_limitations": 1,
+                    "unknown": 0,
+                    "presentation_text_total": 3,
+                    "presentation_text_user_visible": 2,
+                    "presentation_text_observed": 1,
+                    "presentation_text_unobserved": 1,
+                    "presentation_text_internal_only": 1,
+                    "presentation_text_visibility_unknown": 1,
+                    "presentation_text_observer_unknown": 1,
+                    "presentation_text_duplicate_groups": 2,
+                    "presentation_text_actionable_snapshot": 1,
+                    "presentation_text_no_action": 2,
+                    "presentation_text_static_limitations": 1
+                },
+                "coverage": {
+                    "static_unknown_without_named_limitation": 0,
+                    "canonical_items_without_repair_route": 1,
+                    "canonical_items_without_verify_command": 2
+                }
+            }),
+        );
+
+    let report = evidence_quality_scorecard_from_values(
+        "unix_ms:1".to_string(),
+        scorecard_inputs_for_test(false),
+        &audit,
+        None,
+        None,
+    )?;
+    assert_eq!(report.summary.finding_alignment_raw_signals_total, 6);
+    assert_eq!(report.summary.finding_alignment_canonical_items_total, 3);
+    assert_eq!(report.summary.finding_alignment_duplicate_groups_total, 2);
+    assert_eq!(report.summary.finding_alignment_actionable_items_total, 1);
+    assert_eq!(report.summary.finding_alignment_internal_no_action_total, 1);
+    assert_eq!(
+        report
+            .summary
+            .finding_alignment_canonical_items_without_repair_route,
+        1
+    );
+    assert_eq!(
+        report
+            .summary
+            .finding_alignment_canonical_items_without_verify_command,
+        2
+    );
+    assert_eq!(
+        report
+            .summary
+            .finding_alignment_static_unknown_without_named_limitation,
+        0
+    );
+    assert_eq!(report.summary.presentation_text_user_visible, 2);
+    assert_eq!(report.summary.presentation_text_observed, 1);
+    assert_eq!(report.summary.presentation_text_no_action, 2);
+    assert_eq!(
+        finding_alignment_raw_to_canonical_ratio(&report.summary),
+        Some(2.0)
+    );
+    assert!(report.recommended_repairs.iter().any(|repair| repair.slice
+        == "analysis/predicate-boundary-repair-routes"
+        && repair.signal_count == 1));
+
+    let json = evidence_quality_scorecard_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(
+        value["summary"]["finding_alignment_raw_to_canonical_ratio"],
+        serde_json::Value::from(2.0)
+    );
+    assert_eq!(
+        value["summary"]["presentation_text_static_limitations"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["summary"]["finding_alignment_canonical_items_without_repair_route"],
+        serde_json::Value::from(1)
+    );
+    assert_eq!(
+        value["summary"]["finding_alignment_canonical_items_without_verify_command"],
+        serde_json::Value::from(2)
+    );
+    assert_eq!(
+        value["summary"]["finding_alignment_static_unknown_without_named_limitation"],
+        serde_json::Value::from(0)
+    );
+
+    let markdown = evidence_quality_scorecard_markdown(&report);
+    assert!(markdown.contains("Finding Alignment And Presentation Text"));
+    assert!(markdown.contains("Raw-to-canonical ratio"));
+    assert!(markdown.contains("Static unknown without named limitation"));
+    assert!(markdown.contains("Canonical items without repair route"));
+    assert!(markdown.contains("Canonical items without verify command"));
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_scorecard_uses_audit_canonical_item_alignment_summary() -> Result<(), String> {
+    let audit = lane1_scorecard_sample_audit_value()?;
+    let report = evidence_quality_scorecard_from_values(
+        "unix_ms:1".to_string(),
+        scorecard_inputs_for_test(false),
+        &audit,
+        None,
+        None,
+    )?;
+
+    assert_eq!(report.summary.finding_alignment_raw_signals_total, 3);
+    assert_eq!(report.summary.finding_alignment_canonical_items_total, 3);
+    assert_eq!(report.summary.finding_alignment_actionable_items_total, 2);
+    assert_eq!(report.summary.finding_alignment_static_limitation_total, 1);
+    assert_eq!(
+        report.summary.finding_alignment_calibrated_supported_total,
+        1
+    );
+    assert_eq!(report.summary.finding_alignment_uncalibrated_total, 2);
+    assert!(
+        !report
+            .unknowns
+            .iter()
+            .any(|unknown| unknown.kind == "finding_alignment_unavailable")
+    );
+    let json = evidence_quality_scorecard_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    let rows = value["calibration_coverage"]["by_evidence_class"]
+        .as_array()
+        .ok_or_else(|| "scorecard calibration by-class rows should be an array".to_string())?;
+    let predicate = rows
+        .iter()
+        .find(|row| row["evidence_class"] == "predicate_boundary")
+        .ok_or_else(|| "missing predicate_boundary by-class row".to_string())?;
+    assert_eq!(predicate["static_only"], serde_json::Value::from(2));
+    assert_eq!(predicate["uncalibrated"], serde_json::Value::from(2));
+    let call = rows
+        .iter()
+        .find(|row| row["evidence_class"] == "call_presence")
+        .ok_or_else(|| "missing call_presence by-class row".to_string())?;
+    assert_eq!(call["calibrated_supported"], serde_json::Value::from(1));
+    let markdown = evidence_quality_scorecard_markdown(&report);
+    assert!(markdown.contains("Calibrated supported"));
+    assert!(markdown.contains("predicate_boundary"));
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_trend_reports_no_history_explicitly() -> Result<(), String> {
+    let current = scorecard_minimal_audit_value(0, 0, 0, 2, 3);
+    let report = evidence_quality_trend_from_values(
+        "unix_ms:1".to_string(),
+        trend_inputs_for_test(false),
+        &current,
+        None,
+    )?;
+    let json = evidence_quality_trend_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+
+    assert_eq!(value["schema_version"], "0.1");
+    assert_eq!(value["report"], "evidence-quality-trend");
+    assert_eq!(value["summary"]["status"], "unknown");
+    assert_eq!(
+        value["summary"]["no_history"],
+        serde_json::Value::from(true)
+    );
+    assert_eq!(
+        value["movement_front"]["current_actionable_count"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        value["movement_front"]["actionable_delta_since_prior_refresh"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        value["movement_front"]["top_blocked_reason"],
+        "trend_history_unavailable"
+    );
+    assert!(value["unknowns"].as_array().is_some_and(|unknowns| {
+        unknowns
+            .iter()
+            .any(|unknown| unknown["kind"] == "trend_history_unavailable")
+    }));
+    let markdown = evidence_quality_trend_markdown(&report);
+    assert!(markdown.contains("Lane 1 evidence quality trend"));
+    assert!(markdown.contains("## Movement Since Prior Refresh"));
+    assert!(markdown.contains("| Current actionable count | unavailable |"));
+    assert!(markdown.contains("| Delta since prior refresh | unavailable |"));
+    assert!(markdown.contains("| Improved | unavailable |"));
+    assert!(markdown.contains("| Missing receipts | unavailable |"));
+    assert!(markdown.contains("Metric Trends"));
+    assert!(markdown.contains("Unknowns"));
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_trend_marks_limited_current_scorecard_unknown() -> Result<(), String> {
+    let mut current = scorecard_minimal_audit_value(0, 1, 0, 5, 2);
+    let mut previous = scorecard_minimal_audit_value(4, 8, 5, 2, 6);
+    push_scorecard_unknown(&mut current, "lane1_evidence_audit_limited")?;
+    push_scorecard_unknown(&mut current, "evidence_health_limited")?;
+    push_scorecard_unknown(
+        &mut current,
+        "evidence_quality_scorecard_audit_regeneration_failed",
+    )?;
+    set_static_category_count(&mut current, "opaque_helper_call", 1)?;
+    set_static_category_count(&mut previous, "opaque_helper_call", 8)?;
+
+    let report = evidence_quality_trend_from_values(
+        "unix_ms:1".to_string(),
+        trend_inputs_for_test(true),
+        &current,
+        Some(&previous),
+    )?;
+
+    assert_eq!(report.summary.status, "unknown");
+    assert_eq!(report.summary.compared_metrics, 0);
+    assert_eq!(report.summary.improved_metrics, 0);
+    assert_eq!(report.summary.regressed_metrics, 0);
+    assert_eq!(report.summary.unchanged_metrics, 0);
+    assert_eq!(report.summary.unknown_metrics, report.metric_trends.len());
+    assert!(
+        report
+            .metric_trends
+            .iter()
+            .all(|trend| trend.direction == "unknown" && trend.delta.is_none())
+    );
+    assert!(
+        report
+            .static_limitation_category_trends
+            .iter()
+            .all(|trend| trend.direction == "unknown" && trend.delta.is_none())
+    );
+    let current_limited = report
+        .unknowns
+        .iter()
+        .find(|unknown| unknown.kind == "current_scorecard_limited")
+        .ok_or_else(|| "missing current_scorecard_limited trend unknown".to_string())?;
+    assert!(
+        current_limited
+            .summary
+            .contains("lane1_evidence_audit_limited")
+    );
+    assert!(current_limited.summary.contains("evidence_health_limited"));
+    assert!(
+        current_limited
+            .summary
+            .contains("evidence_quality_scorecard_audit_regeneration_failed")
+    );
+
+    let json = evidence_quality_trend_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(value["run_status"], "limited_incomplete_input");
+    assert_eq!(
+        value["runtime_status"]["limitation_category"],
+        "current_scorecard_limited"
+    );
+    assert_eq!(value["summary"]["status"], "unknown");
+    assert_eq!(
+        value["summary"]["compared_metrics"],
+        serde_json::Value::from(0)
+    );
+    assert!(value["unknowns"].as_array().is_some_and(|unknowns| {
+        unknowns
+            .iter()
+            .any(|unknown| unknown["kind"] == "current_scorecard_limited")
+    }));
+
+    let markdown = evidence_quality_trend_markdown(&report);
+    assert!(markdown.contains("## Runtime Status"));
+    assert!(markdown.contains("| State | `limited_incomplete_input` |"));
+    assert!(markdown.contains("| Limitation category | `current_scorecard_limited` |"));
+    assert!(markdown.contains("| Downstream consumable | `false` |"));
+    assert!(markdown.contains("current_scorecard_limited"));
+    assert!(markdown.contains("cannot claim improvement or regression"));
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_trend_missing_previous_writes_limited_report() -> Result<(), String> {
+    with_temp_cwd("trend-missing-previous", |_root| {
+        let current = scorecard_minimal_audit_value(0, 3, 1, 5, 4);
+        write(
+            Path::new("target/ripr/reports/evidence-quality-scorecard.json"),
+            &serde_json::to_string(&current).map_err(|err| err.to_string())?,
+        );
+        let args = vec![
+            "--previous".to_string(),
+            "target/ripr/reports/missing-previous-scorecard.json".to_string(),
+        ];
+
+        evidence_quality_trend_report_impl(&args)?;
+
+        let json = fs::read_to_string("target/ripr/reports/evidence-quality-trend.json")
+            .map_err(|err| format!("read trend json: {err}"))?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(value["run_status"], "limited_incomplete_input");
+        assert_eq!(
+            value["runtime_status"]["limitation_category"],
+            EVIDENCE_QUALITY_TREND_PREVIOUS_ARTIFACT_UNAVAILABLE
+        );
+        assert_eq!(value["summary"]["status"], "unknown");
+        assert_eq!(value["summary"]["no_history"], true);
+        assert_eq!(value["inputs"]["previous_artifact"]["status"], "missing");
+        assert!(
+            value["metric_trends"]
+                .as_array()
+                .is_some_and(|items| !items.is_empty())
+        );
+        assert!(value["unknowns"].as_array().is_some_and(|unknowns| {
+            unknowns.iter().any(|unknown| {
+                unknown["kind"] == EVIDENCE_QUALITY_TREND_PREVIOUS_ARTIFACT_UNAVAILABLE
+            })
+        }));
+        let markdown = fs::read_to_string("target/ripr/reports/evidence-quality-trend.md")
+            .map_err(|err| format!("read trend markdown: {err}"))?;
+        assert!(markdown.contains(EVIDENCE_QUALITY_TREND_PREVIOUS_ARTIFACT_UNAVAILABLE));
+        assert!(markdown.contains("No movement or badge-readiness delta claim"));
+        Ok(())
+    })
+}
+
+#[test]
+fn evidence_quality_trend_malformed_previous_writes_limited_report() -> Result<(), String> {
+    with_temp_cwd("trend-malformed-previous", |_root| {
+        let current = scorecard_minimal_audit_value(0, 3, 1, 5, 4);
+        write(
+            Path::new("target/ripr/reports/evidence-quality-scorecard.json"),
+            &serde_json::to_string(&current).map_err(|err| err.to_string())?,
+        );
+        write(
+            Path::new("target/ripr/reports/previous-scorecard.json"),
+            "{not-json",
+        );
+        let args = vec![
+            "--previous".to_string(),
+            "target/ripr/reports/previous-scorecard.json".to_string(),
+        ];
+
+        evidence_quality_trend_report_impl(&args)?;
+
+        let json = fs::read_to_string("target/ripr/reports/evidence-quality-trend.json")
+            .map_err(|err| format!("read trend json: {err}"))?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(value["run_status"], "limited_incomplete_input");
+        assert_eq!(value["summary"]["status"], "unknown");
+        assert_eq!(value["summary"]["no_history"], true);
+        assert_eq!(value["inputs"]["previous_artifact"]["status"], "malformed");
+        assert!(
+            value["metric_trends"]
+                .as_array()
+                .is_some_and(|items| !items.is_empty())
+        );
+        assert!(value["unknowns"].as_array().is_some_and(|unknowns| {
+            unknowns.iter().any(|unknown| {
+                unknown["kind"] == EVIDENCE_QUALITY_TREND_PREVIOUS_ARTIFACT_UNAVAILABLE
+            })
+        }));
+        let markdown = fs::read_to_string("target/ripr/reports/evidence-quality-trend.md")
+            .map_err(|err| format!("read trend markdown: {err}"))?;
+        assert!(markdown.contains(EVIDENCE_QUALITY_TREND_PREVIOUS_ARTIFACT_UNAVAILABLE));
+        assert!(markdown.contains("No movement or badge-readiness delta claim"));
+        Ok(())
+    })
+}
+
+#[test]
+fn evidence_quality_trend_distinguishes_improvement_regression_and_unchanged() -> Result<(), String>
+{
+    let current = scorecard_minimal_audit_value(0, 3, 1, 5, 4);
+    let previous = scorecard_minimal_audit_value(2, 3, 3, 3, 6);
+    let report = evidence_quality_trend_from_values(
+        "unix_ms:1".to_string(),
+        trend_inputs_for_test(true),
+        &current,
+        Some(&previous),
+    )?;
+
+    assert_eq!(report.summary.status, "improvement");
+    assert_eq!(
+        trend_direction_for(&report, "duplicate_looking_groups_total")?,
+        "improvement"
+    );
+    assert_eq!(
+        trend_direction_for(&report, "calibrated_records")?,
+        "improvement"
+    );
+    assert_eq!(
+        trend_direction_for(&report, "static_limitations_total")?,
+        "unchanged"
+    );
+
+    let regressing_current = scorecard_minimal_audit_value(0, 5, 7, 3, 8);
+    let regressing_report = evidence_quality_trend_from_values(
+        "unix_ms:2".to_string(),
+        trend_inputs_for_test(true),
+        &regressing_current,
+        Some(&previous),
+    )?;
+    assert_eq!(
+        trend_direction_for(&regressing_report, "duplicate_looking_groups_total")?,
+        "regression"
+    );
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_trend_reports_static_limitation_category_deltas() -> Result<(), String> {
+    let mut current = scorecard_minimal_audit_value(0, 2, 0, 1, 1);
+    let mut previous = scorecard_minimal_audit_value(0, 5, 0, 1, 1);
+    set_static_category_count(&mut current, "opaque_helper_call", 2)?;
+    set_static_category_count(&mut previous, "opaque_helper_call", 5)?;
+
+    let report = evidence_quality_trend_from_values(
+        "unix_ms:1".to_string(),
+        trend_inputs_for_test(true),
+        &current,
+        Some(&previous),
+    )?;
+    let row = report
+        .static_limitation_category_trends
+        .iter()
+        .find(|row| row.label == "opaque_helper_call")
+        .ok_or_else(|| "missing opaque_helper_call category trend".to_string())?;
+    assert_eq!(row.before, Some(5));
+    assert_eq!(row.after, Some(2));
+    assert_eq!(row.direction, "improvement");
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_trend_reports_runtime_confidence_static_only_classes() -> Result<(), String> {
+    let mut current = scorecard_minimal_audit_value(0, 2, 0, 1, 1);
+    let mut previous = scorecard_minimal_audit_value(0, 5, 0, 1, 1);
+    set_runtime_confidence_class_counts(&mut current, "call_presence", 7, 0, 7)?;
+    set_runtime_confidence_class_counts(&mut current, "predicate_boundary", 3, 2, 1)?;
+    set_runtime_confidence_class_counts(&mut previous, "call_presence", 12, 0, 12)?;
+    set_runtime_confidence_class_counts(&mut previous, "predicate_boundary", 4, 1, 3)?;
+
+    let report = evidence_quality_trend_from_values(
+        "unix_ms:1".to_string(),
+        trend_inputs_for_test(true),
+        &current,
+        Some(&previous),
+    )?;
+
+    let first = report
+        .runtime_confidence_static_only_class_trends
+        .first()
+        .ok_or_else(|| "missing runtime confidence static-only class trend".to_string())?;
+    assert_eq!(
+        first.metric,
+        "runtime_confidence_static_only_class:call_presence"
+    );
+    assert_eq!(first.label, "call_presence");
+    assert_eq!(first.before, Some(12));
+    assert_eq!(first.after, Some(7));
+    assert_eq!(first.direction, "improvement");
+    let predicate = report
+        .runtime_confidence_static_only_class_trends
+        .iter()
+        .find(|row| row.label == "predicate_boundary")
+        .ok_or_else(|| "missing predicate_boundary runtime trend".to_string())?;
+    assert_eq!(predicate.before, Some(3));
+    assert_eq!(predicate.after, Some(1));
+
+    let json = evidence_quality_trend_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    let rows = value["runtime_confidence_static_only_class_trends"]
+        .as_array()
+        .ok_or_else(|| {
+            "runtime_confidence_static_only_class_trends should be an array".to_string()
+        })?;
+    assert!(
+        rows.iter()
+            .any(|row| row["metric"] == "runtime_confidence_static_only_class:call_presence")
+    );
+
+    let markdown = evidence_quality_trend_markdown(&report);
+    assert!(markdown.contains("Runtime Confidence Static-Only Class Trends"));
+    assert!(markdown.contains("call_presence"));
+    Ok(())
+}
+
+#[test]
+fn evidence_quality_trend_reports_finding_alignment_presentation_text_deltas() -> Result<(), String>
+{
+    let mut current = scorecard_minimal_audit_value(0, 0, 0, 0, 0);
+    let mut previous = scorecard_minimal_audit_value(0, 0, 0, 0, 0);
+    set_summary_count(&mut current, "finding_alignment_duplicate_groups_total", 1)?;
+    set_summary_count(&mut previous, "finding_alignment_duplicate_groups_total", 3)?;
+    set_summary_count(
+        &mut current,
+        "finding_alignment_actionable_unresolved_canonical_gaps",
+        2,
+    )?;
+    set_summary_count(
+        &mut previous,
+        "finding_alignment_actionable_unresolved_canonical_gaps",
+        5,
+    )?;
+    set_summary_count(&mut current, "presentation_text_observed", 4)?;
+    set_summary_count(&mut previous, "presentation_text_observed", 2)?;
+    set_summary_count(&mut current, "presentation_text_visibility_unknown", 1)?;
+    set_summary_count(&mut previous, "presentation_text_visibility_unknown", 5)?;
+    set_summary_count(
+        &mut current,
+        "finding_alignment_canonical_items_without_repair_route",
+        1,
+    )?;
+    set_summary_count(
+        &mut previous,
+        "finding_alignment_canonical_items_without_repair_route",
+        4,
+    )?;
+    set_summary_count(
+        &mut current,
+        "finding_alignment_canonical_items_without_verify_command",
+        2,
+    )?;
+    set_summary_count(
+        &mut previous,
+        "finding_alignment_canonical_items_without_verify_command",
+        2,
+    )?;
+    set_summary_count(
+        &mut current,
+        "finding_alignment_static_unknown_without_named_limitation",
+        3,
+    )?;
+    set_summary_count(
+        &mut previous,
+        "finding_alignment_static_unknown_without_named_limitation",
+        1,
+    )?;
+    set_summary_count(
+        &mut current,
+        "finding_alignment_actionable_gap_packet_public_projection_eligible_packets",
+        4,
+    )?;
+    set_summary_count(
+        &mut previous,
+        "finding_alignment_actionable_gap_packet_public_projection_eligible_packets",
+        1,
+    )?;
+    set_summary_count(
+        &mut current,
+        "finding_alignment_actionable_gap_packet_public_projection_excluded_packets",
+        0,
+    )?;
+    set_summary_count(
+        &mut previous,
+        "finding_alignment_actionable_gap_packet_public_projection_excluded_packets",
+        3,
+    )?;
+
+    let report = evidence_quality_trend_from_values(
+        "unix_ms:1".to_string(),
+        trend_inputs_for_test(true),
+        &current,
+        Some(&previous),
+    )?;
+
+    let first_metric = report
+        .metric_trends
+        .first()
+        .ok_or_else(|| "expected metric trends".to_string())?;
+    assert_eq!(
+        first_metric.metric,
+        "finding_alignment_actionable_unresolved_canonical_gaps"
+    );
+    assert_eq!(first_metric.label, "Actionable canonical gaps");
+    assert_eq!(first_metric.direction, "improvement");
+    assert_eq!(
+        trend_direction_for(&report, "finding_alignment_duplicate_groups_total")?,
+        "improvement"
+    );
+    assert_eq!(
+        trend_direction_for(&report, "presentation_text_observed")?,
+        "improvement"
+    );
+    assert_eq!(
+        trend_direction_for(&report, "presentation_text_visibility_unknown")?,
+        "improvement"
+    );
+    assert_eq!(
+        trend_direction_for(
+            &report,
+            "finding_alignment_canonical_items_without_repair_route"
+        )?,
+        "improvement"
+    );
+    assert_eq!(
+        trend_direction_for(
+            &report,
+            "finding_alignment_canonical_items_without_verify_command"
+        )?,
+        "unchanged"
+    );
+    assert_eq!(
+        trend_direction_for(
+            &report,
+            "finding_alignment_static_unknown_without_named_limitation"
+        )?,
+        "regression"
+    );
+    assert_eq!(
+        trend_direction_for(
+            &report,
+            "finding_alignment_actionable_gap_packet_public_projection_eligible_packets"
+        )?,
+        "improvement"
+    );
+    assert_eq!(
+        trend_direction_for(
+            &report,
+            "finding_alignment_actionable_gap_packet_public_projection_excluded_packets"
+        )?,
+        "improvement"
+    );
+
+    let json = evidence_quality_trend_json(&report)?;
+    let value: serde_json::Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+    assert_eq!(value["movement_front"]["current_actionable_count"], 2);
+    assert_eq!(
+        value["movement_front"]["actionable_delta_since_prior_refresh"],
+        -3
+    );
+    assert_eq!(
+        value["movement_front"]["top_blocked_reason"],
+        "metric_regression:finding_alignment_static_unknown_without_named_limitation"
+    );
+    let metric_trends = value["metric_trends"]
+        .as_array()
+        .ok_or_else(|| "metric_trends should be an array".to_string())?;
+    assert_eq!(
+        metric_trends
+            .first()
+            .and_then(|trend| trend["metric"].as_str()),
+        Some("finding_alignment_actionable_unresolved_canonical_gaps")
+    );
+    assert!(
+        metric_trends.iter().any(
+            |trend| trend["metric"] == "finding_alignment_actionable_unresolved_canonical_gaps"
+        )
+    );
+    assert!(
+        metric_trends.iter().any(
+            |trend| trend["metric"] == "finding_alignment_canonical_items_without_repair_route"
+        )
+    );
+    assert!(
+        metric_trends
+            .iter()
+            .any(|trend| trend["metric"]
+                == "finding_alignment_canonical_items_without_verify_command")
+    );
+    assert!(metric_trends.iter().any(
+        |trend| trend["metric"] == "finding_alignment_static_unknown_without_named_limitation"
+    ));
+    assert!(metric_trends.iter().any(|trend| trend["metric"]
+        == "finding_alignment_actionable_gap_packet_public_projection_eligible_packets"));
+    assert!(metric_trends.iter().any(|trend| trend["metric"]
+        == "finding_alignment_actionable_gap_packet_public_projection_excluded_packets"));
+
+    let markdown = evidence_quality_trend_markdown(&report);
+    assert!(markdown.contains("## Movement Since Prior Refresh"));
+    assert!(markdown.contains("| Current actionable count | 2 |"));
+    assert!(markdown.contains("| Delta since prior refresh | -3 |"));
+    assert!(markdown.contains("| Orphaned receipts | unavailable |"));
+    assert!(markdown.contains("Actionable canonical gaps"));
+    assert!(markdown.contains("Finding-alignment canonical items without repair route"));
+    assert!(markdown.contains("Finding-alignment canonical items without verify command"));
+    assert!(markdown.contains("Finding-alignment static unknown without named limitation"));
+    assert!(markdown.contains("Actionable gap public-projection eligible packets"));
+    assert!(markdown.contains("Actionable gap public-projection excluded packets"));
+    Ok(())
+}
+
+fn lane1_scorecard_sample_audit_value() -> Result<serde_json::Value, String> {
+    let report = lane1_evidence_audit_from_repo_exposure(".", lane1_audit_sample_json())?;
+    let json = lane1_evidence_audit_json(&report)?;
+    serde_json::from_str(&json).map_err(|err| err.to_string())
+}
+
+fn scorecard_minimal_audit_value(
+    low_top_related: usize,
+    static_limitations: usize,
+    duplicate_groups: usize,
+    calibrated_records: usize,
+    uncalibrated_records: usize,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": "0.1",
+        "report": "lane1-evidence-audit",
+        "inputs": {"root": "."},
+        "summary": {
+            "raw_headline_gaps": 12,
+            "canonical_gap_groups_total": 5,
+            "duplicate_looking_groups_total": duplicate_groups,
+            "missing_discriminators_total": 4,
+            "static_limitations_total": static_limitations,
+            "related_tests_total": 20,
+            "low_or_opaque_top_related_tests": low_top_related,
+            "calibrated_records": calibrated_records,
+            "uncalibrated_records": uncalibrated_records,
+            "evidence_records_total": 12,
+            "evidence_records_missing": 0
+        },
+        "canonical_gap_groups": {"total": 5, "largest": []},
+        "duplicate_looking_groups": [],
+        "missing_discriminator_classes": {"by_reason": [], "by_flow_sink": {}, "by_value": []},
+        "static_limitations": {
+            "by_reason": [],
+            "by_stage": {},
+            "by_category": {},
+            "repair_routes": {}
+        },
+        "oracle_semantics_distribution": {
+            "by_semantics": [],
+            "oracle_kind_counts": {"unknown": 0},
+            "oracle_strength_counts": {"unknown": 0}
+        },
+        "related_test_ranking": {
+            "all_confidence_counts": {"high": 19, "low": low_top_related},
+            "top_confidence_counts": {"low": low_top_related}
+        },
+        "movement_availability": {"records_with_canonical_gap_id": 5},
+        "calibration_availability": {
+            "availability_counts": {},
+            "confidence_counts": {},
+            "agreement_counts": {},
+            "calibrated_records": calibrated_records,
+            "uncalibrated_records": uncalibrated_records
+        }
+    })
+}
+
+fn push_scorecard_unknown(value: &mut serde_json::Value, kind: &str) -> Result<(), String> {
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| "scorecard value should be an object".to_string())?;
+    let unknowns = object
+        .entry("unknowns".to_string())
+        .or_insert_with(|| serde_json::Value::Array(Vec::new()))
+        .as_array_mut()
+        .ok_or_else(|| "scorecard unknowns should be an array".to_string())?;
+    unknowns.push(serde_json::json!({
+        "kind": kind,
+        "summary": "limited input",
+        "next_repair": "rerun Lane 1 reports"
+    }));
+    Ok(())
+}
+
+fn scorecard_inputs_for_test(previous_loaded: bool) -> EvidenceQualityScorecardInputs {
+    EvidenceQualityScorecardInputs {
+        lane1_evidence_audit: scorecard_input_for_test(
+            "target/ripr/reports/lane1-evidence-audit.json",
+            "loaded",
+        ),
+        evidence_health: scorecard_input_for_test(
+            "target/ripr/reports/evidence-health.json",
+            "missing",
+        ),
+        previous_scorecard: scorecard_input_for_test(
+            "target/ripr/reports/evidence-quality-scorecard.json",
+            if previous_loaded { "loaded" } else { "missing" },
+        ),
+        capability_matrix: scorecard_input_for_test("docs/CAPABILITY_MATRIX.md", "loaded"),
+        capabilities: scorecard_input_for_test("metrics/capabilities.toml", "loaded"),
+        traceability: scorecard_input_for_test(".ripr/traceability.toml", "loaded"),
+    }
+}
+
+fn scorecard_input_for_test(path: &str, status: &str) -> EvidenceQualityScorecardInput {
+    EvidenceQualityScorecardInput {
+        path: path.to_string(),
+        status: status.to_string(),
+        schema_version: None,
+        sha256: None,
+        note: None,
+    }
+}
+
+fn trend_inputs_for_test(previous_loaded: bool) -> EvidenceQualityTrendInputs {
+    EvidenceQualityTrendInputs {
+        current_scorecard: scorecard_input_for_test(
+            "target/ripr/reports/evidence-quality-scorecard.json",
+            "loaded",
+        ),
+        previous_artifact: scorecard_input_for_test(
+            "target/ripr/reports/evidence-quality-scorecard.previous.json",
+            if previous_loaded { "loaded" } else { "missing" },
+        ),
+        capability_matrix: scorecard_input_for_test("docs/CAPABILITY_MATRIX.md", "loaded"),
+        traceability: scorecard_input_for_test(".ripr/traceability.toml", "loaded"),
+    }
+}
+
+fn trend_direction_for(
+    report: &EvidenceQualityTrendReport,
+    metric: &str,
+) -> Result<String, String> {
+    report
+        .metric_trends
+        .iter()
+        .find(|trend| trend.metric == metric)
+        .map(|trend| trend.direction.clone())
+        .ok_or_else(|| format!("missing trend metric {metric}"))
+}
+
+fn set_static_category_count(
+    value: &mut serde_json::Value,
+    category: &str,
+    count: usize,
+) -> Result<(), String> {
+    let static_limitations = value
+        .get_mut("static_limitations")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| "missing static_limitations object".to_string())?;
+    let by_category = static_limitations
+        .get_mut("by_category")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| "missing static_limitations.by_category object".to_string())?;
+    by_category.insert(category.to_string(), serde_json::json!(count));
+    Ok(())
+}
+
+fn set_runtime_confidence_class_counts(
+    value: &mut serde_json::Value,
+    evidence_class: &str,
+    canonical_items: usize,
+    calibrated_supported: usize,
+    static_only: usize,
+) -> Result<(), String> {
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| "scorecard value should be an object".to_string())?;
+    let calibration_coverage = object
+        .entry("calibration_coverage".to_string())
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .ok_or_else(|| "calibration_coverage should be an object".to_string())?;
+    let rows = calibration_coverage
+        .entry("by_evidence_class".to_string())
+        .or_insert_with(|| serde_json::json!([]))
+        .as_array_mut()
+        .ok_or_else(|| "by_evidence_class should be an array".to_string())?;
+    rows.push(serde_json::json!({
+        "evidence_class": evidence_class,
+        "canonical_items": canonical_items,
+        "calibrated_supported": calibrated_supported,
+        "fixture_backed": 0,
+        "static_only": static_only,
+        "unknown_confidence": 0,
+        "uncalibrated": canonical_items.saturating_sub(calibrated_supported),
+        "actionable_items": 0,
+        "static_limitation_items": 0,
+    }));
+    Ok(())
+}
+
+fn set_summary_count(
+    value: &mut serde_json::Value,
+    metric: &str,
+    count: usize,
+) -> Result<(), String> {
+    let summary = value
+        .get_mut("summary")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| "missing summary object".to_string())?;
+    summary.insert(metric.to_string(), serde_json::json!(count));
+    Ok(())
+}
+
+fn scorecard_status_for(
+    report: &EvidenceQualityScorecardReport,
+    class: &str,
+) -> Result<String, String> {
+    report
+        .maturity_by_class
+        .iter()
+        .find(|row| row.class == class)
+        .map(|row| row.status.clone())
+        .ok_or_else(|| format!("missing maturity row {class}"))
+}
+
+fn audit_count_row(rows: &Value, label: &str) -> Result<usize, String> {
+    let row = rows
+        .as_array()
+        .ok_or_else(|| format!("expected count rows for {label}"))?
+        .iter()
+        .find(|row| row["label"].as_str() == Some(label))
+        .ok_or_else(|| format!("missing count row {label}"))?;
+    row["count"]
+        .as_u64()
+        .map(|count| count as usize)
+        .ok_or_else(|| format!("missing count for {label}"))
+}
+
+fn lane1_audit_sample_json() -> &'static str {
+    r#"{
+          "schema_version": "0.3",
+          "scope": "repo",
+          "seams": [
+            {
+              "seam_id": "raw-1",
+              "headline_eligible": true,
+              "file": "src/lib.rs",
+              "evidence_record": {
+                "schema_version": "0.1",
+                "seam_id": "seam-1",
+                "canonical_gap_id": "gap:shared",
+                "canonical_gap_group_size": 2,
+                "canonical_gap_reason": "same owner, seam kind, flow sink, missing discriminator, and assertion shape",
+                "owner": "pricing::discount",
+                "location": {"file": "src/lib.rs", "line": 12},
+                "seam_kind": "predicate_boundary",
+                "grip_class": "weakly_gripped",
+                "headline_eligible": true,
+                "evidence_path": {
+                  "reach": {"state": "yes", "confidence": "high", "summary": "direct call"},
+                  "activate": {"state": "yes", "confidence": "high", "summary": "value observed"},
+                  "propagate": {"state": "weak", "confidence": "medium", "summary": "return value"},
+                  "observe": {"state": "weak", "confidence": "medium", "summary": "assertion nearby"},
+                  "discriminate": {"state": "no", "confidence": "unknown", "summary": "boundary missing"}
+                },
+                "observed_values": [{"value": "101", "line": 20, "text": "discount(101)", "context": "function_argument"}],
+                "missing_discriminators": [{"value": "amount == threshold", "reason": "boundary value not observed", "flow_sink": {"kind": "return_value", "text": "discounted", "line": 12}}],
+                "related_tests_total": 1,
+                "related_tests": [{
+                  "name": "discounts_large_orders",
+                  "file": "tests/pricing.rs",
+                  "line": 7,
+                  "oracle_kind": "exact_value",
+                  "oracle_strength": "strong",
+                  "evidence_summary": "asserts exact discount",
+                  "relation_reason": "direct_owner_call",
+                  "relation_confidence": "high",
+                  "oracle_semantics": {
+                    "observes": "exact return value",
+                    "missing": "boundary equality",
+                    "upgrade_suggestion": "add equality boundary"
+                  }
+                }],
+                "recommendation": {
+                  "action": "write_targeted_test",
+                  "reason": "missing discriminator",
+                  "assertion_shape": {"kind": "exact_value", "example": "assert_eq!(...)"},
+                  "verify_command": "ripr agent verify --root . --before before.json --after after.json --json"
+                },
+                "actionability": {"class": "actionable_assertion_upgrade"},
+                "calibration": {"availability": "not_imported", "confidence": "unknown", "agreement": "no_runtime_data"},
+                "static_limitations": [],
+                "raw_findings": [{
+                  "file": "src/lib.rs",
+                  "line": 12,
+                  "kind": "weakly_exposed",
+                  "expression": "discount(amount)"
+                }],
+                "canonical_item": {
+                  "canonical_gap_id": "gap:shared",
+                  "canonical_item_kind": "gap",
+                  "evidence_class": "predicate_boundary",
+                  "gap_state": "actionable",
+                  "actionability": "upgrade_assertion",
+                  "group_reason": "same owner, seam kind, flow sink, missing discriminator, and assertion shape",
+                  "raw_group_size": 1,
+                  "why": "related tests reach the seam but miss the boundary discriminator",
+                  "recommended_repair": "Add an equality-boundary assertion for the changed predicate.",
+                  "repair_route": {
+                    "repair_kind": "add_boundary_assertion",
+                    "target_test_type": "boundary_behavior",
+                    "suggested_assertion": "assert_eq!(discount(threshold), expected_discount)"
+                  },
+                  "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+                  "confidence": {"basis": "static_only", "notes": []}
+                }
+              }
+            },
+            {
+              "seam_id": "raw-2",
+              "headline_eligible": true,
+              "file": "src/lib.rs",
+              "evidence_record": {
+                "schema_version": "0.1",
+                "seam_id": "seam-2",
+                "canonical_gap_id": "gap:shared",
+                "canonical_gap_group_size": 2,
+                "canonical_gap_reason": "same owner, seam kind, flow sink, missing discriminator, and assertion shape",
+                "owner": "pricing::discount",
+                "location": {"file": "src/lib.rs", "line": 18},
+                "seam_kind": "predicate_boundary",
+                "grip_class": "weakly_gripped",
+                "headline_eligible": true,
+                "evidence_path": {
+                  "reach": {"state": "yes", "confidence": "high", "summary": "direct call"},
+                  "activate": {"state": "yes", "confidence": "medium", "summary": "value nearby"},
+                  "propagate": {"state": "weak", "confidence": "medium", "summary": "return value"},
+                  "observe": {"state": "weak", "confidence": "medium", "summary": "broad assertion"},
+                  "discriminate": {"state": "no", "confidence": "unknown", "summary": "boundary missing"}
+                },
+                "observed_values": [],
+                "missing_discriminators": [{"value": "amount == threshold", "reason": "boundary value not observed", "flow_sink": {"kind": "return_value", "text": "discounted", "line": 18}}],
+                "related_tests_total": 1,
+                "related_tests": [{
+                  "name": "discounts_smoke",
+                  "file": "tests/pricing.rs",
+                  "line": 22,
+                  "oracle_kind": "broad_error",
+                  "oracle_strength": "weak",
+                  "evidence_summary": "only checks broad behavior",
+                  "relation_reason": "same_test_file",
+                  "relation_confidence": "low",
+                  "oracle_semantics": {
+                    "observes": "broad behavior",
+                    "missing": "exact boundary",
+                    "upgrade_suggestion": null
+                  }
+                }],
+                "recommendation": {
+                  "action": "write_targeted_test",
+                  "reason": "missing discriminator",
+                  "assertion_shape": {"kind": "exact_value", "example": "assert_eq!(...)"},
+                  "verify_command": "ripr agent verify --root . --before before.json --after after.json --json"
+                },
+                "actionability": {"class": "actionable_assertion_upgrade"},
+                "calibration": {"availability": "not_imported", "confidence": "unknown", "agreement": "no_runtime_data"},
+                "static_limitations": [],
+                "raw_findings": [{
+                  "file": "src/lib.rs",
+                  "line": 18,
+                  "kind": "weakly_exposed",
+                  "expression": "discount(amount)"
+                }],
+                "canonical_item": {
+                  "canonical_gap_id": "gap:shared",
+                  "canonical_item_kind": "gap",
+                  "evidence_class": "predicate_boundary",
+                  "gap_state": "actionable",
+                  "actionability": "upgrade_assertion",
+                  "group_reason": "same owner, seam kind, flow sink, missing discriminator, and assertion shape",
+                  "raw_group_size": 1,
+                  "why": "related tests reach the seam but miss the boundary discriminator",
+                  "recommended_repair": "Add an equality-boundary assertion for the changed predicate.",
+                  "repair_route": {
+                    "repair_kind": "add_boundary_assertion",
+                    "target_test_type": "boundary_behavior",
+                    "suggested_assertion": "assert_eq!(discount(threshold), expected_discount)"
+                  },
+                  "verify_command": "ripr agent verify --root . --before before.json --after after.json --json",
+                  "confidence": {"basis": "static_only", "notes": []}
+                }
+              }
+            },
+            {
+              "seam_id": "raw-3",
+              "headline_eligible": true,
+              "file": "src/opaque.rs",
+              "evidence_record": {
+                "schema_version": "0.1",
+                "seam_id": "seam-3",
+                "canonical_gap_id": null,
+                "canonical_gap_group_size": null,
+                "canonical_gap_reason": null,
+                "owner": "pricing::opaque",
+                "location": {"file": "src/opaque.rs", "line": 30},
+                "seam_kind": "call_presence",
+                "grip_class": "activation_unknown",
+                "headline_eligible": true,
+                "evidence_path": {
+                  "reach": {"state": "yes", "confidence": "medium", "summary": "same module"},
+                  "activate": {"state": "unknown", "confidence": "unknown", "summary": "opaque helper"},
+                  "propagate": {"state": "unknown", "confidence": "unknown", "summary": "opaque helper"},
+                  "observe": {"state": "unknown", "confidence": "unknown", "summary": "opaque helper"},
+                  "discriminate": {"state": "unknown", "confidence": "unknown", "summary": "opaque helper"}
+                },
+                "observed_values": [],
+                "missing_discriminators": [],
+                "related_tests_total": 0,
+                "related_tests": [],
+                "recommendation": {"action": "inspect_static_limitation", "reason": "opaque helper", "verify_command": null},
+                "actionability": {"class": "static_limitation"},
+                "calibration": {"availability": "imported", "confidence": "medium", "agreement": "static_runtime_agree"},
+                "static_limitations": [{
+                  "stage": "activate",
+                  "state": "unknown",
+                  "reason": "opaque helper value",
+                  "category": "opaque_helper_call",
+                  "repair_route": "analysis/oracle-semantics-audit-fixes"
+                }],
+                "raw_findings": [{
+                  "file": "src/opaque.rs",
+                  "line": 30,
+                  "kind": "static_unknown",
+                  "expression": "opaque_helper(value)"
+                }],
+                "canonical_item": {
+                  "canonical_gap_id": null,
+                  "canonical_item_kind": "limitation",
+                  "evidence_class": "call_presence",
+                  "gap_state": "static_limitation",
+                  "actionability": "static_limitation",
+                  "group_reason": null,
+                  "raw_group_size": 1,
+                  "why": "static evidence is opaque for this seam",
+                  "recommended_repair": "Inspect static limitation `opaque_helper_call` via `analysis/oracle-semantics-audit-fixes`.",
+                  "verify_command": null,
+                  "confidence": {"basis": "calibrated", "notes": ["sample imported runtime agreement"]}
+                }
+              }
+            },
+            {
+              "seam_id": "raw-4",
+              "headline_eligible": true,
+              "file": "src/missing.rs"
+            }
+          ]
+        }"#
+}
+
+#[test]
+fn vscode_package_version_reads_extension_manifest() -> Result<(), String> {
+    with_temp_cwd("vscode-package-version", |root| {
+        let package_json = root.join("package.json");
+        fs::write(&package_json, r#"{"version":"0.4.0"}"#)
+            .map_err(|err| format!("failed to write {}: {err}", package_json.display()))?;
+        assert_eq!(vscode_package_version(&package_json)?, "0.4.0");
+        Ok(())
+    })
+}
+
+#[test]
+fn vscode_commands_use_extension_cwd_and_local_bins() {
+    let extension_dir = vscode_extension_dir();
+    let node_bin_extension = if cfg!(windows) { ".cmd" } else { "" };
+
+    assert_eq!(
+        vscode_compile_command(),
+        CwdCommand {
+            program: extension_dir
+                .join("node_modules")
+                .join(".bin")
+                .join(format!("tsc{node_bin_extension}")),
+            args: vec!["-p".to_string(), "./".to_string()],
+            cwd: extension_dir.clone(),
+        }
+    );
+    assert_eq!(
+        vscode_package_command("0.4.0"),
+        CwdCommand {
+            program: extension_dir
+                .join("node_modules")
+                .join(".bin")
+                .join(format!("vsce{node_bin_extension}")),
+            args: vec![
+                "package".to_string(),
+                "--out".to_string(),
+                "dist/ripr-0.4.0.vsix".to_string(),
+            ],
+            cwd: extension_dir.clone(),
+        }
+    );
+    assert_eq!(
+        vscode_test_e2e_command(),
+        CwdCommand {
+            program: PathBuf::from("node"),
+            args: vec!["out/test/runTest.js".to_string()],
+            cwd: extension_dir,
+        }
+    );
+}
+
+#[test]
+fn vscode_e2e_preserves_installed_server_selection() -> Result<(), String> {
+    let root = std::env::temp_dir().join(format!(
+        "ripr-vscode-server-selection-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).map_err(|err| format!("create test directory: {err}"))?;
+    let installed = root.join("installed-ripr.exe");
+    let built = root.join("target-ripr.exe");
+    fs::write(&installed, b"packaged").map_err(|err| format!("write installed fixture: {err}"))?;
+
+    let selected = select_vscode_test_server(Some(&installed), &built)?;
+    assert_eq!(selected, (installed.clone(), false));
+    assert_eq!(select_vscode_test_server(None, &built)?, (built, true));
+    let missing = root.join("missing-ripr.exe");
+    let error = select_vscode_test_server(Some(&missing), &installed).unwrap_err();
+    assert!(error.contains("installed server binary"));
+
+    fs::remove_dir_all(&root).map_err(|err| format!("remove test directory: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn lsp_cockpit_report_reads_boundary_gap_fixture_expectations() -> Result<(), String> {
+    let report = with_repo_cwd(build_lsp_cockpit_report)?;
+    let Some(boundary_gap) = report
+        .fixtures
+        .iter()
+        .find(|fixture| fixture.fixture == "boundary_gap")
+    else {
+        return Err("expected boundary_gap LSP cockpit fixture".to_string());
+    };
+
+    assert_eq!(boundary_gap.diagnostic_count, 1);
+    assert_eq!(boundary_gap.seam_diagnostic_count, 1);
+    assert!(
+        boundary_gap
+            .action_titles
+            .contains(&"Inspect Test Gap - Copy Context".to_string())
+    );
+    assert!(
+        boundary_gap
+            .action_titles
+            .contains(&"Write targeted test: copy brief".to_string())
+    );
+    assert!(
+        boundary_gap
+            .action_titles
+            .contains(&"Write targeted test: open best related test".to_string())
+    );
+    assert!(boundary_gap.context.seam_packet_available);
+    assert!(boundary_gap.context.targeted_test_brief_available);
+    assert!(boundary_gap.context.agent_packet_command_available);
+    assert!(boundary_gap.context.agent_brief_command_available);
+    assert!(boundary_gap.context.after_snapshot_command_available);
+    assert!(boundary_gap.context.agent_verify_command_available);
+    assert!(boundary_gap.context.agent_receipt_command_available);
+    assert!(boundary_gap.context.assertion_available);
+    assert!(boundary_gap.context.related_test_available);
+    assert!(boundary_gap.context.refresh_available);
+    assert!(
+        boundary_gap
+            .action_argument_fields
+            .contains(&"seam_id".to_string())
+    );
+    Ok(())
+}
+
+#[test]
+fn editor_lsp_workflow_fixture_pins_saved_workspace_loop() -> Result<(), String> {
+    let report = with_repo_cwd(build_lsp_cockpit_report)?;
+    let Some(editor_fixture) = report
+        .fixtures
+        .iter()
+        .find(|fixture| fixture.fixture == "editor_lsp_workflow")
+    else {
+        return Err("expected editor_lsp_workflow LSP cockpit fixture".to_string());
+    };
+
+    assert_eq!(editor_fixture.diagnostic_count, 1);
+    assert_eq!(editor_fixture.seam_diagnostic_count, 1);
+    assert!(editor_fixture.context.seam_packet_available);
+    assert!(editor_fixture.context.targeted_test_brief_available);
+    assert!(editor_fixture.context.agent_packet_command_available);
+    assert!(editor_fixture.context.agent_brief_command_available);
+    assert!(editor_fixture.context.after_snapshot_command_available);
+    assert!(editor_fixture.context.agent_verify_command_available);
+    assert!(editor_fixture.context.agent_receipt_command_available);
+    assert!(editor_fixture.context.assertion_available);
+    assert!(editor_fixture.context.related_test_available);
+    assert!(editor_fixture.context.refresh_available);
+
+    let expected = repo_root()?.join("fixtures/editor_lsp_workflow/expected");
+    let hover = fs::read_to_string(expected.join("lsp-hover.md"))
+        .map_err(|err| format!("failed to read editor hover fixture: {err}"))?;
+    for needle in [
+        "## Evidence Path",
+        "## Missing discriminator",
+        "## Suggested test shape",
+        "## Handoff, verify, and receipt commands",
+        "## Status projection",
+        "## Limits",
+    ] {
+        if !hover.contains(needle) {
+            return Err(format!("editor hover fixture missing `{needle}`"));
+        }
+    }
+
+    let vscode_status = read_lsp_cockpit_json_value(&expected.join("vscode-status.json"))?;
+    assert_eq!(vscode_status["schema_version"], "0.1");
+    assert_eq!(vscode_status["fixture"], "editor_lsp_workflow");
+    let states = vscode_status["states"]
+        .as_array()
+        .ok_or_else(|| "vscode-status fixture should include states".to_string())?;
+    for state in [
+        "valid_first_useful_action",
+        "wrong_root_report",
+        "stale_saved_workspace",
+    ] {
+        if !states.iter().any(|entry| entry["name"] == state) {
+            return Err(format!("vscode-status fixture missing `{state}`"));
+        }
+    }
+
+    let first_action_status =
+        read_lsp_cockpit_json_value(&expected.join("first-useful-action-status.json"))?;
+    assert_eq!(first_action_status["schema_version"], "0.1");
+    assert_eq!(first_action_status["fixture"], "editor_lsp_workflow");
+    assert_eq!(
+        first_action_status["accepted"]["seam_id"],
+        "67fc764ba37d77bd"
+    );
+    assert_eq!(
+        first_action_status["stale_behavior"]["report_remains_visible"],
+        true
+    );
+    Ok(())
+}
+
+#[test]
+fn preview_editor_workflow_fixtures_pin_preview_boundaries() -> Result<(), String> {
+    let report = with_repo_cwd(build_lsp_cockpit_report)?;
+    let python = lsp_fixture(&report, "python_missing_import_graph_limit")?;
+    assert_eq!(python.diagnostic_count, 1);
+    assert_eq!(python.finding_diagnostic_count, 1);
+    assert_eq!(python.seam_diagnostic_count, 0);
+    assert!(
+        python
+            .action_titles
+            .contains(&"Inspect finding: copy context packet".to_string())
+    );
+    assert!(python.context.refresh_available);
+    assert!(!python.context.agent_packet_command_available);
+    assert_preview_lsp_fixture(
+        "python_missing_import_graph_limit",
+        "python",
+        "missing_import_graph",
+    )?;
+
+    let typescript = lsp_fixture(&report, "typescript_mocked_module_limit")?;
+    assert_eq!(typescript.diagnostic_count, 1);
+    assert_eq!(typescript.finding_diagnostic_count, 1);
+    assert_eq!(typescript.seam_diagnostic_count, 0);
+    assert!(
+        typescript
+            .action_titles
+            .contains(&"Inspect finding: copy context packet".to_string())
+    );
+    assert!(typescript.context.refresh_available);
+    assert!(!typescript.context.agent_packet_command_available);
+    assert_preview_lsp_fixture(
+        "typescript_mocked_module_limit",
+        "typescript",
+        "mocked_module",
+    )?;
+
+    let disabled = lsp_fixture(&report, "python_disabled")?;
+    assert_eq!(disabled.diagnostic_count, 0);
+    assert_eq!(disabled.finding_diagnostic_count, 0);
+    assert_eq!(disabled.seam_diagnostic_count, 0);
+    assert!(disabled.context.refresh_available);
+    assert_preview_disabled_fixture()?;
+    Ok(())
+}
+
+#[test]
+fn lsp_cockpit_report_json_and_markdown_are_structured() -> Result<(), String> {
+    let report = with_repo_cwd(build_lsp_cockpit_report)?;
+    let json = lsp_cockpit_report_json(&report)?;
+    let value: Value =
+        serde_json::from_str(&json).map_err(|err| format!("cockpit JSON should parse: {err}"))?;
+    assert_eq!(value["schema_version"], "0.1");
+    assert_eq!(value["tool"], "ripr");
+    assert!(json.contains("Write targeted test: copy brief"));
+
+    let markdown = lsp_cockpit_report_markdown(&report);
+    assert!(markdown.contains("# ripr LSP cockpit report"));
+    assert!(markdown.contains("## Fixture: boundary_gap"));
+    assert!(markdown.contains("## Fixture: editor_lsp_workflow"));
+    assert!(markdown.contains("## Fixture: python_missing_import_graph_limit"));
+    assert!(markdown.contains("## Fixture: typescript_mocked_module_limit"));
+    assert!(markdown.contains("seam packet available: yes"));
+    assert!(markdown.contains("finding diagnostics: 1"));
+    assert!(markdown.contains("agent verify command available: yes"));
+    assert!(markdown.contains("agent receipt command available: yes"));
+    assert!(markdown.contains("ripr.collectContext"));
+    Ok(())
+}
+
+fn lsp_fixture<'a>(
+    report: &'a LspCockpitReport,
+    name: &str,
+) -> Result<&'a LspCockpitFixture, String> {
+    report
+        .fixtures
+        .iter()
+        .find(|fixture| fixture.fixture == name)
+        .ok_or_else(|| format!("expected `{name}` LSP cockpit fixture"))
+}
+
+fn assert_preview_lsp_fixture(
+    fixture: &str,
+    language: &str,
+    static_limit_kind: &str,
+) -> Result<(), String> {
+    let expected = repo_root()?.join("fixtures").join(fixture).join("expected");
+    let diagnostics = read_lsp_cockpit_json_value(&expected.join("lsp-diagnostics.json"))?;
+    let data = &diagnostics["diagnostics"][0]["data"];
+    assert_eq!(data["language"], language);
+    assert_eq!(data["language_status"], "preview");
+    assert_eq!(data["static_limit_kind"], static_limit_kind);
+
+    let actions = read_lsp_cockpit_json_value(&expected.join("lsp-code-actions.json"))?;
+    assert_eq!(actions["actions"][0]["command"], "ripr.copyContext");
+    assert_eq!(actions["actions"][1]["command"], "ripr.refresh");
+
+    let hover = fs::read_to_string(expected.join("lsp-hover.md"))
+        .map_err(|err| format!("failed to read preview hover fixture: {err}"))?;
+    let boundary = hover
+        .find("## Preview Boundary")
+        .ok_or_else(|| format!("{fixture} hover missing preview boundary"))?;
+    let static_limit = hover
+        .find(&format!("Static limit: {static_limit_kind}"))
+        .ok_or_else(|| format!("{fixture} hover missing static limit"))?;
+    let evidence = hover
+        .find("## RIPR Evidence")
+        .ok_or_else(|| format!("{fixture} hover missing evidence section"))?;
+    let action = hover
+        .find("## Suggested Action")
+        .ok_or_else(|| format!("{fixture} hover missing suggested action section"))?;
+    if !(boundary < static_limit && static_limit < evidence && evidence < action) {
+        return Err(format!(
+            "{fixture} hover must show preview/static-limit text before evidence and action"
+        ));
+    }
+    let static_limits = fs::read_to_string(expected.join("static-limits.md"))
+        .map_err(|err| format!("failed to read preview static-limits fixture: {err}"))?;
+    if !static_limits.contains(static_limit_kind) {
+        return Err(format!(
+            "{fixture} static-limits fixture missing `{static_limit_kind}`"
+        ));
+    }
+    Ok(())
+}
+
+fn assert_preview_disabled_fixture() -> Result<(), String> {
+    let expected = repo_root()?.join("fixtures/python_disabled/expected");
+    let diagnostics = read_lsp_cockpit_json_value(&expected.join("lsp-diagnostics.json"))?;
+    let diagnostics_array = diagnostics["diagnostics"]
+        .as_array()
+        .ok_or_else(|| "python_disabled diagnostics should be an array".to_string())?;
+    assert!(
+        diagnostics_array.is_empty(),
+        "disabled Python fixture must not project preview diagnostics"
+    );
+    let status = read_lsp_cockpit_json_value(&expected.join("vscode-status.json"))?;
+    assert_eq!(status["states"][0]["name"], "preview_disabled");
+    let static_limits = fs::read_to_string(expected.join("static-limits.md"))
+        .map_err(|err| format!("failed to read disabled static-limits fixture: {err}"))?;
+    if !static_limits.contains("no Python preview diagnostics") {
+        return Err("disabled fixture must explain no preview diagnostics".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn repo_exposure_latency_trace_parses_phase_lines() -> Result<(), String> {
+    let traces = repo_exposure_latency_trace(
+        "noise\nripr_repo_exposure_latency phase=cache_load status=hit duration_ms=7\n",
+    );
+    if traces.len() != 1 {
+        return Err(format!("expected one trace line, got {}", traces.len()));
+    }
+    assert_eq!(traces[0].phase, "cache_load");
+    assert_eq!(traces[0].status, "hit");
+    assert_eq!(traces[0].duration_ms, 7);
+    Ok(())
+}
+
+#[test]
+fn repo_exposure_latency_report_json_and_markdown_are_structured() -> Result<(), String> {
+    let runs = vec![
+        RepoExposureLatencyRun {
+            format: "repo-exposure-json".to_string(),
+            status: "timeout".to_string(),
+            duration_ms: 30_000,
+            exit_code: None,
+            stdout_bytes: 0,
+            stderr_bytes: 91,
+            trace: vec![
+                RepoExposureLatencyTrace {
+                    phase: "cache_load".to_string(),
+                    status: "miss".to_string(),
+                    duration_ms: 2,
+                },
+                RepoExposureLatencyTrace {
+                    phase: "cold_compute".to_string(),
+                    status: "ok".to_string(),
+                    duration_ms: 29_998,
+                },
+            ],
+        },
+        RepoExposureLatencyRun {
+            format: "repo-exposure-md".to_string(),
+            status: "skipped_after_json_timeout".to_string(),
+            duration_ms: 0,
+            exit_code: None,
+            stdout_bytes: 0,
+            stderr_bytes: 0,
+            trace: Vec::new(),
+        },
+    ];
+    let report = RepoExposureLatencyReport {
+        status: repo_exposure_latency_status(&runs),
+        timeout_ms: 30_000,
+        binary: "target/debug/ripr".to_string(),
+        runs,
+    };
+
+    let json = repo_exposure_latency_json(&report);
+    let value: Value =
+        serde_json::from_str(&json).map_err(|err| format!("latency JSON should parse: {err}"))?;
+    assert_eq!(value["schema_version"], "0.1");
+    assert_eq!(value["report"], "repo-exposure-latency");
+    assert_eq!(value["status"], "warn");
+    assert_eq!(value["runs"][0]["trace"][0]["phase"], "cache_load");
+    assert_eq!(value["runs"][0]["trace"][1]["phase"], "cold_compute");
+
+    let markdown = repo_exposure_latency_markdown(&report);
+    assert!(markdown.contains("# Repo Exposure Latency Report"));
+    assert!(markdown.contains("`repo-exposure-json`"));
+    assert!(markdown.contains("`skipped_after_json_timeout`"));
+    assert!(markdown.contains("`cache_load`"));
+    Ok(())
+}
+
+#[test]
+fn repo_exposure_latency_debug_binary_uses_debug_ripr_name() -> Result<(), String> {
+    let binary = ripr_debug_binary();
+    let file_name = binary
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| format!("debug binary should have a file name: {binary:?}"))?;
+    let parent = binary
+        .parent()
         .and_then(|path| path.file_name())
         .and_then(|name| name.to_str())
         .ok_or_else(|| format!("debug binary should have a parent directory: {binary:?}"))?;
