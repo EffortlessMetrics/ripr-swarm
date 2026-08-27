@@ -28,6 +28,10 @@ Describe the user or integration problem this behavior solves.
 
 Describe the observable behavior that must be true.
 
+## Non-Goals
+
+Describe what is intentionally out of scope.
+
 ## Required Evidence
 
 List the data, output, diagnostics, or receipts required to establish the behavior.
