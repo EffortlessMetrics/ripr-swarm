@@ -878,4 +878,3 @@ fn findings_require_the_same_authoritative_shape_as_completed() {
         Some(RiprProviderContractErrorCodeV1::CompletenessConflict)
     );
 }
-}
