@@ -17,7 +17,7 @@ Why are we doing this?
 What exact behavior must be true?
 What architecture decision did we make?
 What PR-sized work comes next?
-What is the active lane right now?
+What is live now?
 What proves the claim?
 Which support tier changed?
 Which policy ledgers changed?
@@ -38,7 +38,6 @@ Roadmap
     -> Specs
       -> ADRs where needed
         -> Implementation plan
-          -> Active goal manifest
             -> Issues / PRs
               -> Proof commands
               -> CI lanes
@@ -69,7 +68,7 @@ and hallucinated commands or policies.
 With the system, the repo itself provides the execution graph:
 
 ```text
-.ripr/goals/active.toml
+GitHub issue / pull request + local worktree
   -> linked implementation plan
     -> linked spec
       -> linked proposal
@@ -152,15 +151,15 @@ Plan item template:
 
 Use [docs/templates/PLAN_ITEM_TEMPLATE.md](templates/PLAN_ITEM_TEMPLATE.md).
 
-### 3.6 Active goal manifest
+### 3.6 Live execution state
 
-**Owns:** what Codex/agent/operator is actively executing now.
+**Owns:** the current issue, pull request, checks, reviews, branch, and local worktree state.
 
-Typical location:
+Typical locations:
 
 ```text
-.ripr/goals/active.toml
-.ripr/goals/archive/
+GitHub issues, pull requests, checks, and reviews
+local worktree and branch
 ```
 
 ### 3.7 Support tiers
@@ -199,7 +198,23 @@ docs/release/
 
 ---
 
-## 4. Directory layout
+## 4. Authority boundaries
+
+The documents in this system govern different objects and must not be read as one overloaded lifecycle:
+
+| Object | Canonical authority |
+| --- | --- |
+| Legacy document identity and disposition | The spec document and [`SPEC_FORMAT.md`](SPEC_FORMAT.md) |
+| v2 requirement lifecycle and ancestry | The RIPR-SPEC v2 dialect and its schema |
+| One-PR implementation claim | `ImplementationSliceV1` in the scoped PR contract |
+| Evidence and proof currentness | Traceability edges and exact receipts |
+| Support claim | [`status/SUPPORT_TIERS.md`](status/SUPPORT_TIERS.md) |
+| Live execution state | GitHub issues, pull requests, checks, reviews, and the local worktree |
+| Maintenance attention | The advisory maintenance report and review receipts |
+
+A document's disposition does not prove implementation, evidence, support, or live execution. Maintenance attention is a review queue signal, not a lifecycle transition.
+
+## 5. Directory layout
 
 ```text
 docs/
@@ -217,7 +232,7 @@ Use stable, repo-specific IDs like `RIPR-SPEC-0001`.
 
 ---
 
-## 5. How documents link
+## 6. How documents link
 
 - roadmap -> proposals
 - proposals -> specs + ADRs + plan
@@ -247,7 +262,7 @@ Policy impact:
 
 ---
 
-## 6. Status lifecycle
+## 7. Status lifecycle
 
 - Proposals/specs/ADRs: `draft`, `proposed`, `accepted`, `implemented`,
   `superseded`, `rejected`
@@ -256,7 +271,7 @@ Policy impact:
 
 ---
 
-## 7. What not to duplicate
+## 8. What not to duplicate
 
 Single source-of-truth examples:
 
@@ -264,7 +279,7 @@ Single source-of-truth examples:
 - CI lane policy -> `policy/ci-lane-whitelist.toml`
 - Workspace/package shape -> `policy/workspace_shape.txt`
 - File exceptions -> `policy/non-rust-allowlist.toml`
-- Active work -> `.ripr/goals/active.toml`
+- Live work -> GitHub issues/PRs/checks/reviews and the local worktree
 - PR order -> `plans/<milestone>/implementation-plan.md`
 - Why -> `docs/proposals/`
 - Behavior -> `docs/specs/`
@@ -272,24 +287,24 @@ Single source-of-truth examples:
 
 ---
 
-## 8. How Codex should use the system
+## 9. How Codex should use the system
 
-1. Read `.ripr/goals/active.toml`.
-2. Pick the next ready `work_item`.
-3. Read linked plan item.
+1. Read the controlling GitHub issue and current worktree state.
+2. Select one unblocked issue or PR-sized work item.
+3. Read the linked plan item.
 4. Read linked spec.
 5. Read linked proposal for context.
 6. Read linked ADRs if architecture is involved.
 7. Make one PR-sized change.
 8. Update support tiers/policy ledgers only when claims/policy change.
 9. Run listed proof commands.
-10. Update goal manifest.
+10. Record the implementation slice and evidence in the PR.
 11. Open/review/improve/merge per repo policy.
 12. Add closeout notes when lane completes.
 
 ---
 
-## 9. How CI enforces the system
+## 10. How CI enforces the system
 
 Recommended checks:
 
@@ -305,7 +320,7 @@ cargo xtask check-ci-lane-whitelist
 
 ---
 
-## 10. How PRs should look
+## 11. How PRs should look
 
 PR bodies should include summary, links (proposal/spec/ADR/plan/issue), scope,
 non-goals, support-tier impact, policy impact, proof commands, claim boundary,
@@ -313,7 +328,7 @@ and rollback.
 
 ---
 
-## 11. Core operating principles
+## 12. Core operating principles
 
 1. One artifact, one kind of truth.
 2. Specs are contracts, not queues.
@@ -326,7 +341,7 @@ and rollback.
 
 ---
 
-## 12. Minimal rollout order
+## 13. Minimal rollout order
 
 1. Define docs model.
 2. Add doc artifact ledger.
@@ -341,7 +356,7 @@ and rollback.
 
 ---
 
-## 13. Simplest mental model
+## 14. Simplest mental model
 
 ```text
 Proposal = why.
