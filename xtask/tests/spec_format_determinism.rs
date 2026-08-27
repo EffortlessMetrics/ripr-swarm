@@ -58,9 +58,13 @@ fn finish(
 }
 
 #[test]
-fn canonical_template_materializes_into_a_valid_spec_without_git_history() -> Result<(), String> {
+fn canonical_template_materializes_into_a_valid_spec_without_git_history()
+    -> Result<(), String> {
     let root = temp_root("template")?;
-    write_spec(&root, &VALID_SPEC.replace("RIPR-SPEC-NNNN: Title", "RIPR-SPEC-9999: Template fixture"))?;
+    write_spec(
+        &root,
+        &VALID_SPEC.replace("RIPR-SPEC-NNNN: Title", "RIPR-SPEC-9999: Template fixture"),
+    )?;
     let output = run_check(&root)?;
     finish(root, output, true)
 }
