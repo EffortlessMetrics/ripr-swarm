@@ -323,7 +323,10 @@ fn rebase_function_identity(
     }
     let source_prefix = format!("{}::", function.file.display());
     if let Some(suffix) = function.id.0.strip_prefix(&source_prefix) {
-        function.id.0 = format!("{}::{suffix}", compilation_unit.display());
+        function.id.0 = format!(
+            "{}::{suffix}",
+            compilation_unit.to_string_lossy().replace('\\', "/")
+        );
     }
 }
 

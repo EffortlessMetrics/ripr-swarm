@@ -928,6 +928,8 @@ mod tests {
             files,
             tests,
             functions: Vec::new(),
+            include_parents: std::collections::BTreeMap::new(),
+            include_limitations: Vec::new(),
             workspace_authority: None,
         }
     }

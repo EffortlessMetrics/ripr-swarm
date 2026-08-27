@@ -1582,6 +1582,8 @@ mod tests {
                     ..FileFacts::default()
                 },
             )]),
+            include_parents: BTreeMap::new(),
+            include_limitations: Vec::new(),
             workspace_authority: None,
         };
         let probe = Probe {
@@ -1642,6 +1644,8 @@ mod tests {
                     ..FileFacts::default()
                 },
             )]),
+            include_parents: BTreeMap::new(),
+            include_limitations: Vec::new(),
             workspace_authority: None,
         };
         let probe = Probe {
