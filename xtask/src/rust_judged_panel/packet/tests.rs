@@ -1032,7 +1032,7 @@ fn on_disk_host_fixture(name: &str) -> Result<HostDiskFixture, String> {
 
     let repository = repository_root()?;
     let root = TestRoot(scratch(name)?);
-    copy_panel_authority(repository, &root.0)?;
+    copy_panel_authority(&repository, &root.0)?;
     let manifest = crate::rust_judged_panel::load_and_validate_at(
         &root.0,
         Path::new("metrics/rust-judged-behavior-panel/manifest.json"),
