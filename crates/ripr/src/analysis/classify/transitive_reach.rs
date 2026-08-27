@@ -534,7 +534,7 @@ impl<'a> ReachSweep<'a> {
         if let Some(cached) = self.macro_edge_memo.get(start_name) {
             return cached.clone();
         }
-        let edge = self.bfs_hits_owner_macro_uncached(start_name, &self.owner_name, index);
+        let edge = self.bfs_hits_owner_macro_uncached(start_name, index);
         self.macro_edge_memo
             .insert(start_name.to_string(), edge.clone());
         edge
