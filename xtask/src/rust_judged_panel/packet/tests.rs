@@ -934,8 +934,6 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("sha256:{:x}", sha2::Sha256::digest(bytes))
 }
 
-
-
 fn repository_root() -> Result<PathBuf, String> {
     let output = std::process::Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
@@ -972,7 +970,11 @@ fn snapshot_tree(root: &Path) -> Result<Option<Vec<(String, bool, Vec<u8>)>>, St
         if metadata.is_dir() {
             entries.push((relative, true, Vec::new()));
             for entry in fs::read_dir(path).map_err(|error| error.to_string())? {
-                visit(root, &entry.map_err(|error| error.to_string())?.path(), entries)?;
+                visit(
+                    root,
+                    &entry.map_err(|error| error.to_string())?.path(),
+                    entries,
+                )?;
             }
         } else {
             entries.push((
@@ -1341,7 +1343,10 @@ fn judgment_sidecar_public_publish_fails_closed_without_a_valid_host_run() -> Re
     // Absent sidecar: publish must fail closed without writing any portable
     // artifact when the referenced host current does not exist.
     let absent = on_disk_host_fixture("absent-sidecar")?;
-    let absent_portable = absent._root.0.join("metrics/rust-judged-behavior-panel/portable");
+    let absent_portable = absent
+        ._root
+        .0
+        .join("metrics/rust-judged-behavior-panel/portable");
     let absent_before = snapshot_tree(&absent_portable)?;
     match super::publish(
         &absent._root.0,
@@ -1350,7 +1355,9 @@ fn judgment_sidecar_public_publish_fails_closed_without_a_valid_host_run() -> Re
     ) {
         Ok(()) => return Err("publish accepted an absent host current".to_string()),
         Err(error) if !error.contains("resolve host current") => {
-            return Err(format!("absent host current failed for the wrong reason: {error}"))
+            return Err(format!(
+                "absent host current failed for the wrong reason: {error}"
+            ))
         }
         Err(_) => {}
     }
@@ -1389,7 +1396,9 @@ fn judgment_sidecar_public_publish_fails_closed_without_a_valid_host_run() -> Re
     ) {
         Ok(()) => return Err("publish accepted tampered retained raw evidence".to_string()),
         Err(error) if !error.contains("host receipt raw stdout identity mismatch") => {
-            return Err(format!("tampered evidence failed for the wrong reason: {error}"))
+            return Err(format!(
+                "tampered evidence failed for the wrong reason: {error}"
+            ))
         }
         Err(_) => {}
     }
