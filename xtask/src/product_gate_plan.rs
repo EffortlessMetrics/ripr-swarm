@@ -150,7 +150,7 @@ impl ProductGatePlan {
             Some("selector authority is missing; the complete product route is required")
         } else if subject.trust_class == ProductGateTrustClass::ExternalTree {
             Some(
-                "external-tree applicability is not yet proven; the complete product route is required",
+                "external-tree applicability is not yet established; the complete product route is required",
             )
         } else {
             None
@@ -348,10 +348,11 @@ mod tests {
         let plan = ProductGatePlan::for_subject(&subject);
 
         assert!(plan.full_route_reason.is_some());
-        assert!(plan
-            .rows
-            .iter()
-            .all(|row| row.selection == ProductGateSelection::Selected));
+        assert!(
+            plan.rows
+                .iter()
+                .all(|row| row.selection == ProductGateSelection::Selected)
+        );
     }
 
     #[test]
@@ -363,13 +364,14 @@ mod tests {
         assert_eq!(
             plan.full_route_reason,
             Some(
-                "external-tree applicability is not yet proven; the complete product route is required",
+                "external-tree applicability is not yet established; the complete product route is required",
             )
         );
-        assert!(plan
-            .rows
-            .iter()
-            .all(|row| row.selection == ProductGateSelection::Selected));
+        assert!(
+            plan.rows
+                .iter()
+                .all(|row| row.selection == ProductGateSelection::Selected)
+        );
     }
 
     #[test]
@@ -380,9 +382,11 @@ mod tests {
 
         assert_eq!(ids.len(), definitions.len());
         assert_eq!(commands.len(), definitions.len());
-        assert!(definitions
-            .iter()
-            .all(|gate| gate.role == ProductGateRole::Required));
+        assert!(
+            definitions
+                .iter()
+                .all(|gate| gate.role == ProductGateRole::Required)
+        );
     }
 
     #[test]
@@ -403,8 +407,10 @@ mod tests {
         let parity = ProductGateParity::compare(producer_ids);
 
         assert!(!parity.aligned);
-        assert!(parity
-            .missing_from_producer
-            .contains(ProductGateId::WorkspaceTests.as_str()));
+        assert!(
+            parity
+                .missing_from_producer
+                .contains(ProductGateId::WorkspaceTests.as_str())
+        );
     }
 }
