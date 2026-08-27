@@ -18,12 +18,7 @@ pub(in crate::analysis) fn find_related_tests<'a>(
     let mut related: Vec<(&TestSummary, RelationReason)> = Vec::new();
     let owner_name = owner_fn.map(|f| f.name.as_str()).unwrap_or("");
     let probe_tokens = extract_identifier_tokens(&probe.expression);
-    let file_name = probe
-        .location
-        .file
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
+    let probe_file_stem = normalized_file_stem(&probe.location.file);
     let owner_package_prefix = owner_fn.and_then(|owner| package_prefix(&owner.file));
 
     // #2971 ambiguity rule: a call to `owner_name` can bypass the
@@ -146,13 +141,14 @@ pub(in crate::analysis) fn find_related_tests<'a>(
 
         let test_name = test.name.to_ascii_lowercase();
         let owner_name_lc = owner_name.to_ascii_lowercase();
-        let same_test_file = same_test_file(&probe.location.file, &test.file);
+        let normalized_test_path = normalize_path(&test.file);
+        let same_test_file = same_test_file(&normalized_test_path, &probe_file_stem);
         // Keep the broad path-token association available to callers, but do
         // not publish it as file identity.  A short source stem such as
         // `config` can occur in unrelated test paths (for example
         // `reconfigure.rs`).
-        let file_path_token_matches = !file_name.is_empty()
-            && normalize_path(&test.file).contains(file_name);
+        let file_path_token_matches =
+            !probe_file_stem.is_empty() && normalized_test_path.contains(&probe_file_stem);
         let owner_name_in_test = !owner_name_lc.is_empty() && test_name.contains(&owner_name_lc);
         let token_in_test_name = probe_tokens
             .iter()
@@ -213,21 +209,48 @@ pub(in crate::analysis) fn find_related_tests<'a>(
     related
 }
 
-/// Return whether `test_file` is the canonical companion test file for
-/// `probe_file`.  This intentionally mirrors the stronger test-grip
+/// Source-file stem taken after separator normalization.
+///
+/// Probe locations are built as `root.join(path)` (`analysis::probes::diff`,
+/// `analysis::probes::repo`), so a path carries the separators of whichever
+/// host produced it. `Path::file_stem` splits on the *running* host's
+/// separators only, so normalizing first is what actually makes the stem
+/// host-independent.
+fn normalized_file_stem(path: &Path) -> String {
+    Path::new(normalize_path(path).as_str())
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// Return whether the already-normalized `normalized_test_path` is the
+/// canonical companion test file for a probe whose stem is
+/// `probe_file_stem`. This intentionally mirrors the stronger test-grip
 /// authority: only the source stem itself and its `_test`/`_tests` variants
-/// count as file identity.  Paths are compared by stem, so host-specific
-/// separators do not affect the result.
-fn same_test_file(probe_file: &Path, test_file: &Path) -> bool {
-    let Some(probe_stem) = probe_file.file_stem().and_then(|stem| stem.to_str()) else {
+/// count as file identity.
+///
+/// The suffix check avoids the two `format!` allocations an equality
+/// comparison would perform for every candidate test — the same reason
+/// `test_grip_evidence::related_tests::same_test_file` documents for using
+/// `strip_suffix`.
+fn same_test_file(normalized_test_path: &str, probe_file_stem: &str) -> bool {
+    if probe_file_stem.is_empty() {
+        return false;
+    }
+    let Some(test_stem) = Path::new(normalized_test_path)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+    else {
         return false;
     };
-    let Some(test_stem) = test_file.file_stem().and_then(|stem| stem.to_str()) else {
-        return false;
-    };
-    test_stem == probe_stem
-        || test_stem == format!("{probe_stem}_test")
-        || test_stem == format!("{probe_stem}_tests")
+    if test_stem == probe_file_stem {
+        return true;
+    }
+    test_stem
+        .strip_suffix("_test")
+        .or_else(|| test_stem.strip_suffix("_tests"))
+        .is_some_and(|prefix| prefix == probe_file_stem)
 }
 
 fn normalize_path(path: &Path) -> String {
@@ -528,13 +551,51 @@ mod tests {
         assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
     }
 
+    /// The `same_test_file` doc claims separator independence. `Path::file_stem`
+    /// splits on the *running* host's separators only — on Unix a backslash is
+    /// an ordinary character — so that claim holds only because the stem is
+    /// normalized first. This control fails if the normalization is dropped.
+    #[test]
+    fn foreign_separator_probe_path_keeps_file_identity() {
+        let owner = function("crates/core/src/config.rs", "load_config");
+        let index = RustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test(
+                "crates/core/tests/config_tests.rs",
+                "config_tests_file",
+                "assert!(true);",
+            )],
+            ..RustIndex::default()
+        };
+
+        for probe_path in ["crates/core/src/config.rs", "crates\\core\\src\\config.rs"] {
+            let related = find_related_tests(
+                &probe(probe_path, "marker"),
+                Some(&owner),
+                &index,
+                true,
+                None,
+            );
+            assert_eq!(related.len(), 1, "{probe_path} must relate the companion");
+            assert_eq!(
+                related[0].1,
+                RelationReason::SameTestFile,
+                "{probe_path} must resolve file identity regardless of separators"
+            );
+        }
+    }
+
     #[test]
     fn canonical_companion_stems_remain_same_test_file() {
         let owner = function("crates/core/src/config.rs", "load_config");
         let index = RustIndex {
             functions: vec![owner.clone()],
             tests: vec![
-                test("crates/core/tests/config.rs", "config_file", "assert!(true);"),
+                test(
+                    "crates/core/tests/config.rs",
+                    "config_file",
+                    "assert!(true);",
+                ),
                 test(
                     "crates/core/tests/config_test.rs",
                     "config_test_file",
@@ -553,9 +614,11 @@ mod tests {
         let related = find_related_tests(&probe, Some(&owner), &index, true, None);
 
         assert_eq!(related.len(), 3);
-        assert!(related
-            .iter()
-            .all(|(_, reason)| *reason == RelationReason::SameTestFile));
+        assert!(
+            related
+                .iter()
+                .all(|(_, reason)| *reason == RelationReason::SameTestFile)
+        );
     }
 
     #[test]
