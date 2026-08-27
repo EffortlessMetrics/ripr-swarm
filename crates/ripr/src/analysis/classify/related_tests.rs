@@ -18,12 +18,7 @@ pub(in crate::analysis) fn find_related_tests<'a>(
     let mut related: Vec<(&TestSummary, RelationReason)> = Vec::new();
     let owner_name = owner_fn.map(|f| f.name.as_str()).unwrap_or("");
     let probe_tokens = extract_identifier_tokens(&probe.expression);
-    let file_name = probe
-        .location
-        .file
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
+    let file_name = normalized_file_stem(&probe.location.file);
     let owner_package_prefix = owner_fn.and_then(|owner| package_prefix(&owner.file));
 
     // #2971 ambiguity rule: a call to `owner_name` can bypass the
@@ -146,7 +141,8 @@ pub(in crate::analysis) fn find_related_tests<'a>(
 
         let test_name = test.name.to_ascii_lowercase();
         let owner_name_lc = owner_name.to_ascii_lowercase();
-        let file_path_matches = normalize_path(&test.file).contains(file_name);
+        let file_path_matches =
+            !file_name.is_empty() && normalize_path(&test.file).contains(&file_name);
         let owner_name_in_test = !owner_name_lc.is_empty() && test_name.contains(&owner_name_lc);
         let token_in_test_name = probe_tokens
             .iter()
@@ -209,6 +205,18 @@ fn normalize_path(path: &Path) -> String {
     path.to_string_lossy()
         .replace('\\', "/")
         .trim_start_matches("./")
+        .to_string()
+}
+
+/// Extract a source-file stem after normalizing separators from either host.
+/// Analysis inputs can contain paths produced on a different platform than the
+/// host running the association pass.
+fn normalized_file_stem(path: &Path) -> String {
+    normalize_path(path)
+        .rsplit('/')
+        .next()
+        .and_then(|file| file.rsplit_once('.').map(|(stem, _)| stem).or(Some(file)))
+        .unwrap_or_default()
         .to_string()
 }
 
@@ -736,6 +744,43 @@ mod tests {
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].0.name, "repo_lane_deserializes_fields_correctly");
+    }
+
+    #[test]
+    fn given_mixed_path_separators_when_same_file_probe_is_repeated_then_association_and_assertion_text_are_stable()
+     {
+        let assertion_text = "assert_eq!(config.retry_limit, 3);";
+        let oracle_test = test_with_assertions(
+            "crates/ripr/tests/config.rs",
+            "config_retry_limit_is_preserved",
+            assertion_text,
+            vec![oracle_fact(
+                assertion_text,
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        let index = RustIndex {
+            tests: vec![oracle_test],
+            ..RustIndex::default()
+        };
+        let forward_probe = struct_field_probe("crates/ripr/src/config.rs", "retry_limit");
+        let windows_probe = struct_field_probe("crates\\ripr\\src\\config.rs", "retry_limit");
+
+        let forward_related = find_related_tests(&forward_probe, None, &index, true, None);
+        let windows_related = find_related_tests(&windows_probe, None, &index, true, None);
+
+        assert_eq!(forward_related.len(), 1);
+        assert_eq!(windows_related.len(), 1);
+        assert_eq!(forward_related[0].0.name, windows_related[0].0.name);
+        assert_eq!(
+            forward_related[0].0.assertions[0].text, assertion_text,
+            "path normalization must not rewrite assertion text"
+        );
+        assert_eq!(
+            windows_related[0].0.assertions[0].text, assertion_text,
+            "path normalization must not rewrite assertion text"
+        );
     }
 
     // --- #1054 repro ---
