@@ -57,33 +57,38 @@ pub(crate) struct ResolvedGitCandidate {
 
 pub(crate) struct TempRootGuard(PathBuf);
 
-impl Drop for TempRootGuard {
-    fn drop(&mut self) {
-        // A cleanup failure leaves an extracted copy of the candidate tree
-        // on disk. `Drop` cannot return it, and discarding it would make an
-        // unbounded, invisible disk leak indistinguishable from a clean run,
-        // so name the path an operator has to remove.
+impl TempRootGuard {
+    /// Remove the root and, if that fails, report it to `sink`.
+    ///
+    /// `Drop` delegates here in full so the warning is assertable. Asserting
+    /// it any other way is not possible: `Drop` can neither return the error
+    /// nor be handed a channel, and a test that re-derives the message by
+    /// calling the helpers itself proves nothing about what `Drop` wrote —
+    /// deleting the write would leave such a test green.
+    fn clean_up_reporting_to(&self, sink: &mut dyn std::io::Write) {
+        // A cleanup failure leaves an extracted copy of the candidate tree on
+        // disk. Discarding it would make an unbounded, invisible disk leak
+        // indistinguishable from a clean run, so name the path an operator
+        // has to remove.
         if let Err(error) = remove_temp_root(&self.0) {
-            // Report fallibly. `eprintln!` panics when the stderr write fails
-            // (a closed descriptor, a non-blocking pipe), and this runs in
-            // `Drop` — possibly while a panic is already unwinding, where a
-            // second panic aborts the process. Losing a warning is strictly
-            // better than turning a disk-cleanup problem into an abort, so
-            // the write result is deliberately discarded.
-            use std::io::Write as _;
-            let _ = writeln!(
-                std::io::stderr(),
-                "{}",
-                cleanup_failure_report(&self.0, &error)
-            );
+            // Report fallibly, discarding the write result. `eprintln!` panics
+            // when the stderr write fails (a closed descriptor, a non-blocking
+            // pipe), and this runs in `Drop` — possibly while a panic is
+            // already unwinding, where a second panic aborts the process.
+            // Losing a warning is strictly better than turning a disk-cleanup
+            // problem into an abort.
+            let _ = writeln!(sink, "{}", cleanup_failure_report(&self.0, &error));
         }
     }
 }
 
-/// The operator-facing text for a cleanup that could not be performed. Split
-/// out of `Drop` so the message an operator has to act on is assertable:
-/// `Drop` can neither return the error nor be given a channel to report it
-/// through.
+impl Drop for TempRootGuard {
+    fn drop(&mut self) {
+        self.clean_up_reporting_to(&mut std::io::stderr());
+    }
+}
+
+/// The operator-facing text for a cleanup that could not be performed.
 fn cleanup_failure_report(path: &Path, error: &std::io::Error) -> String {
     format!(
         "ripr: candidate materialization root could not be removed: {} ({error}); \
@@ -860,11 +865,17 @@ mod tests {
     }
 
     /// The guard's whole reason to exist on the failure path is that it says
-    /// something. Drive a real `Drop` over a root that cannot be removed and
-    /// assert both halves: the path survives (so the failure was genuine, not
-    /// a silent success) and the operator-facing text names it.
+    /// something. Capture what it actually writes.
+    ///
+    /// An earlier version of this test dropped the guard and then re-derived
+    /// the message by calling `remove_temp_root` and `cleanup_failure_report`
+    /// itself. Those two halves were disconnected: deleting the write from the
+    /// guard left every assertion green, so the promised operator warning was
+    /// not bound at all. `clean_up_reporting_to` is what `Drop` delegates to in
+    /// full, so driving it against a buffer observes the real emission.
     #[test]
-    fn dropping_the_guard_over_an_unremovable_root_reports_the_path() -> Result<(), String> {
+    fn cleanup_failure_writes_the_operator_warning_and_success_writes_nothing() -> Result<(), String>
+    {
         let base = std::env::temp_dir().join(format!(
             "ripr-guard-drop-{}-{}",
             std::process::id(),
@@ -876,37 +887,41 @@ mod tests {
         std::fs::create_dir_all(&base).map_err(|error| error.to_string())?;
 
         // A regular file is not a directory on every platform, and — unlike a
-        // permission denial — it fails for root too, so this holds in a
-        // container as well as on a developer machine.
+        // permission denial — it fails for root too, so this control holds in
+        // a container as well as on a developer machine.
         let unremovable = base.join("regular-file");
         std::fs::write(&unremovable, "not a directory\n").map_err(|error| error.to_string())?;
 
-        drop(TempRootGuard(unremovable.clone()));
+        let mut reported = Vec::new();
+        TempRootGuard(unremovable.clone()).clean_up_reporting_to(&mut reported);
+        let reported = String::from_utf8(reported).map_err(|error| error.to_string())?;
+        assert!(
+            reported.contains(&unremovable.display().to_string()),
+            "the warning must name the path an operator has to remove: {reported:?}"
+        );
+        assert!(
+            reported.contains("could not be removed"),
+            "the warning must say what went wrong: {reported:?}"
+        );
         assert!(
             unremovable.exists(),
             "the failing path must survive, or this proves nothing about the failure branch"
         );
 
-        let error = remove_temp_root(&unremovable)
-            .err()
-            .ok_or_else(|| "the fixture path must not be removable".to_string())?;
-        let report = cleanup_failure_report(&unremovable, &error);
-        assert!(
-            report.contains(&unremovable.display().to_string()),
-            "the report must name the path an operator has to remove: {report}"
-        );
-        assert!(
-            report.contains("could not be removed"),
-            "the report must say what went wrong: {report}"
-        );
-
-        // A guard over a root that IS removable stays quiet and removes it.
+        // A removable root is removed, and says nothing. Without this half a
+        // guard that warned on every drop would still pass.
         let removable = base.join("tree");
         std::fs::create_dir_all(removable.join("nested")).map_err(|error| error.to_string())?;
-        drop(TempRootGuard(removable.clone()));
+        let mut quiet = Vec::new();
+        TempRootGuard(removable.clone()).clean_up_reporting_to(&mut quiet);
+        assert!(
+            quiet.is_empty(),
+            "a successful cleanup must not warn: {:?}",
+            String::from_utf8_lossy(&quiet)
+        );
         assert!(
             !removable.exists(),
-            "a removable root must be gone after the guard drops"
+            "a removable root must be gone after cleanup"
         );
 
         let _ = std::fs::remove_file(&unremovable);
