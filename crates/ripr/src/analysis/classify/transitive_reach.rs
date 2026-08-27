@@ -527,11 +527,7 @@ impl<'a> ReachSweep<'a> {
         false
     }
 
-    fn macro_edge(
-        &mut self,
-        start_name: &str,
-        index: &RustIndex,
-    ) -> Option<MacroReachEdge> {
+    fn macro_edge(&mut self, start_name: &str, index: &RustIndex) -> Option<MacroReachEdge> {
         if let Some(cached) = self.macro_edge_memo.get(start_name) {
             return cached.clone();
         }
@@ -586,32 +582,32 @@ impl<'a> ReachSweep<'a> {
         None
     }
 
-fn macro_edge_for_invocation(
-    memo: &mut HashMap<String, bool>,
-    invocation: &MacroInvocation,
-    invocation_file: &std::path::Path,
-    host: &str,
-    owner_name: &str,
-    index: &RustIndex,
-) -> Option<MacroReachEdge> {
-    if let Some(cached) = memo.get(invocation.name.as_str()) {
-        if !*cached {
-            return None;
+    fn macro_edge_for_invocation(
+        memo: &mut HashMap<String, bool>,
+        invocation: &MacroInvocation,
+        invocation_file: &std::path::Path,
+        host: &str,
+        owner_name: &str,
+        index: &RustIndex,
+    ) -> Option<MacroReachEdge> {
+        if let Some(cached) = memo.get(invocation.name.as_str()) {
+            if !*cached {
+                return None;
+            }
+        } else {
+            let mentions = macro_definition_mentions_owner(index, &invocation.name, owner_name);
+            memo.insert(invocation.name.clone(), mentions);
+            if !mentions {
+                return None;
+            }
         }
-    } else {
-        let mentions = macro_definition_mentions_owner(index, &invocation.name, owner_name);
-        memo.insert(invocation.name.clone(), mentions);
-        if !mentions {
-            return None;
-        }
+        Some(MacroReachEdge {
+            macro_name: invocation.name.clone(),
+            macro_file: invocation_file.to_path_buf(),
+            macro_line: invocation.line,
+            macro_host: host.to_string(),
+        })
     }
-    Some(MacroReachEdge {
-        macro_name: invocation.name.clone(),
-        macro_file: invocation_file.to_path_buf(),
-        macro_line: invocation.line,
-        macro_host: host.to_string(),
-    })
-}
 }
 
 fn macro_invocations_in_text(text: &str, start_line: usize) -> Vec<MacroInvocation> {

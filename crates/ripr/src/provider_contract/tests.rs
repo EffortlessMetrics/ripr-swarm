@@ -812,7 +812,6 @@ fn diagnostics_require_identity_and_a_coherent_source_position() {
         error_code(blank_limitation.validate()),
         Some(RiprProviderContractErrorCodeV1::MissingField)
     );
-
 }
 
 #[test]
