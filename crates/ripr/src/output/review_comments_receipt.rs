@@ -246,7 +246,8 @@ mod tests {
         assert_eq!(timeout.last_completed_phase, None);
         timeout.write_atomic(&timeout_path)?;
         let timeout_json: Value = serde_json::from_slice(
-            &fs::read(&timeout_path).map_err(|err| format!("read timeout receipt failed: {err}"))?,
+            &fs::read(&timeout_path)
+                .map_err(|err| format!("read timeout receipt failed: {err}"))?,
         )
         .map_err(|err| format!("parse timeout receipt failed: {err}"))?;
         assert_eq!(timeout_json["status"], "limited_timeout");
