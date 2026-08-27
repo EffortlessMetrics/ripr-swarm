@@ -747,12 +747,11 @@ mod tests {
     }
 
     #[test]
-    fn given_mixed_path_separators_when_same_file_probe_is_repeated_then_association_and_assertion_text_are_stable()
-     {
-        let assertion_text = "assert_eq!(config.retry_limit, 3);";
+    fn given_foreign_separator_file_stem_when_associated_then_assertion_text_is_preserved() {
+        let assertion_text = "assert_eq!(value, 3);";
         let oracle_test = test_with_assertions(
             "crates/ripr/tests/config.rs",
-            "config_retry_limit_is_preserved",
+            "checks_value",
             assertion_text,
             vec![oracle_fact(
                 assertion_text,
@@ -764,8 +763,8 @@ mod tests {
             tests: vec![oracle_test],
             ..RustIndex::default()
         };
-        let forward_probe = struct_field_probe("crates/ripr/src/config.rs", "retry_limit");
-        let windows_probe = struct_field_probe("crates\\ripr\\src\\config.rs", "retry_limit");
+        let forward_probe = struct_field_probe("crates/ripr/src/config.rs", "marker");
+        let windows_probe = struct_field_probe("crates\\ripr\\src\\config.rs", "marker");
 
         let forward_related = find_related_tests(&forward_probe, None, &index, true, None);
         let windows_related = find_related_tests(&windows_probe, None, &index, true, None);
@@ -773,6 +772,8 @@ mod tests {
         assert_eq!(forward_related.len(), 1);
         assert_eq!(windows_related.len(), 1);
         assert_eq!(forward_related[0].0.name, windows_related[0].0.name);
+        assert_eq!(forward_related[0].1, RelationReason::SameTestFile);
+        assert_eq!(windows_related[0].1, RelationReason::SameTestFile);
         assert_eq!(
             forward_related[0].0.assertions[0].text, assertion_text,
             "path normalization must not rewrite assertion text"
