@@ -2,7 +2,7 @@
 
 This is `ripr`'s agent-neutral, repo-owned tracking model. It is the
 centralized source of truth for proposals, behavior contracts, architectural
-decisions, multi-PR campaigns, the currently active campaign, scoped review
+decisions, multi-PR campaigns, scoped review
 units, and closeouts.
 
 External agents have their own goal or task systems — Codex `/goal`, Kiro
@@ -36,7 +36,7 @@ Each doc has exactly one role. Avoid mixing roles in one file.
 ## Proof-stack translation
 
 Incoming handoffs and agent prompts may use generic terms like PRD, proof
-stack, source-of-truth stack, policy ledger, or active goal. Translate those
+stack, source-of-truth stack, policy ledger, or a retired active-goal manifest. Translate those
 terms into the repo-native artifacts above instead of creating a parallel
 namespace:
 
@@ -46,7 +46,7 @@ namespace:
 | Spec | `docs/specs/RIPR-SPEC-*` |
 | ADR | `docs/adr/` |
 | Implementation plan | `docs/IMPLEMENTATION_PLAN.md`, `docs/IMPLEMENTATION_CAMPAIGNS.md`, and `plans/` |
-| Active goal manifest | Retired (`.ripr/goals/` deleted in #1701 PR 3); live work selection comes from GitHub and the local worktree. |
+| Retired active-goal manifest | Historical only; `.ripr/goals/` was deleted in #1701 PR 3. Live work selection comes from GitHub and the local worktree. |
 | Support tiers | `docs/status/SUPPORT_TIERS.md` |
 | Policy ledgers | `policy/*.toml`, `.ripr/traceability.toml`, `docs/CAPABILITY_MATRIX.md`, and `metrics/capabilities.toml` |
 | Closeout | `docs/handoffs/` |
