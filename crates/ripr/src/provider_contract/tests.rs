@@ -813,6 +813,8 @@ fn diagnostics_require_identity_and_a_coherent_source_position() {
         Some(RiprProviderContractErrorCodeV1::MissingField)
     );
 
+}
+
 #[test]
 fn summary_rejects_noncanonical_taxonomy_and_counter_contradictions() {
     let mut invalid_kind = receipt();
