@@ -108,9 +108,11 @@ impl ReviewCommentsRunReceipt {
     }
 
     fn terminalize_non_claims(&mut self) {
+        self.non_claims.retain(|claim| {
+            claim != "no complete route inventory is claimed until status is complete"
+        });
         self.non_claims
-            .retain(|claim| claim != "no complete route inventory is claimed until status is complete");
-        self.non_claims.push("no complete route inventory".to_string());
+            .push("no complete route inventory".to_string());
         self.non_claims.push("no all-clear".to_string());
     }
 
@@ -255,7 +257,14 @@ mod tests {
             timeout.limitations[0].repair_route,
             "rerun review-comments with a larger configured timeout"
         );
-        assert!(timeout.non_claims.iter().any(|claim| claim == "no all-clear"));
+        assert_eq!(
+            timeout.non_claims,
+            vec![
+                "static review guidance is advisory evidence only",
+                "no complete route inventory",
+                "no all-clear",
+            ]
+        );
         timeout.write_atomic(&timeout_path)?;
         let timeout_json: Value = serde_json::from_slice(
             &fs::read(&timeout_path)
@@ -265,9 +274,18 @@ mod tests {
         assert_eq!(timeout_json["status"], "limited_timeout");
         assert_eq!(timeout_json["active_phase"], "review_guidance");
         assert_eq!(timeout_json["atomic_write_status"], "committed");
-        assert_eq!(timeout_json["limitations"][0]["category"], "analysis_timeout");
-        assert_eq!(timeout_json["limitations"][0]["repair_route"], "rerun review-comments with a larger configured timeout");
-        assert_eq!(timeout_json["non_claims"][0], "static review guidance is advisory evidence only");
+        assert_eq!(
+            timeout_json["limitations"][0]["category"],
+            "analysis_timeout"
+        );
+        assert_eq!(
+            timeout_json["limitations"][0]["repair_route"],
+            "rerun review-comments with a larger configured timeout"
+        );
+        assert_eq!(
+            timeout_json["non_claims"][0],
+            "static review guidance is advisory evidence only"
+        );
         assert_eq!(timeout_json["non_claims"][1], "no complete route inventory");
         assert_eq!(timeout_json["non_claims"][2], "no all-clear");
 
@@ -284,7 +302,14 @@ mod tests {
             failure.limitations[0].repair_route,
             "canonical comparison failed"
         );
-        assert!(failure.non_claims.iter().any(|claim| claim == "no all-clear"));
+        assert_eq!(
+            failure.non_claims,
+            vec![
+                "static review guidance is advisory evidence only",
+                "no complete route inventory",
+                "no all-clear",
+            ]
+        );
         failure.write_atomic(&failure_path)?;
         let failure_json: Value = serde_json::from_slice(
             &fs::read(&failure_path).map_err(|err| format!("read failed receipt failed: {err}"))?,
@@ -293,9 +318,18 @@ mod tests {
         assert_eq!(failure_json["status"], "failed");
         assert_eq!(failure_json["active_phase"], "canonical_comparison");
         assert_eq!(failure_json["atomic_write_status"], "committed");
-        assert_eq!(failure_json["limitations"][0]["category"], "analysis_failed");
-        assert_eq!(failure_json["limitations"][0]["repair_route"], "canonical comparison failed");
-        assert_eq!(failure_json["non_claims"][0], "static review guidance is advisory evidence only");
+        assert_eq!(
+            failure_json["limitations"][0]["category"],
+            "analysis_failed"
+        );
+        assert_eq!(
+            failure_json["limitations"][0]["repair_route"],
+            "canonical comparison failed"
+        );
+        assert_eq!(
+            failure_json["non_claims"][0],
+            "static review guidance is advisory evidence only"
+        );
         assert_eq!(failure_json["non_claims"][1], "no complete route inventory");
         assert_eq!(failure_json["non_claims"][2], "no all-clear");
 

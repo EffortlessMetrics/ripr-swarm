@@ -32,7 +32,9 @@ fn record_review_comments_error(
     receipt.failed(phase, &error);
     match receipt.write_atomic(receipt_path) {
         Ok(()) => error,
-        Err(receipt_error) => format!("{error}; failed to persist terminal receipt: {receipt_error}"),
+        Err(receipt_error) => {
+            format!("{error}; failed to persist terminal receipt: {receipt_error}")
+        }
     }
 }
 
@@ -48,7 +50,9 @@ fn enforce_review_comments_deadline(
     }
     receipt.limited_timeout(phase);
     receipt.write_atomic(receipt_path).map_err(|error| {
-        format!("review-comments timed out during {phase}; failed to persist terminal receipt: {error}")
+        format!(
+            "review-comments timed out during {phase}; failed to persist terminal receipt: {error}"
+        )
     })?;
     Err(format!("review-comments timed out during {phase}"))
 }
@@ -6318,7 +6322,10 @@ language = "rust"
         assert_eq!(receipt["status"], "failed");
         assert_eq!(receipt["active_phase"], "diff_discovery");
         assert_eq!(receipt["limitations"][0]["category"], "analysis_failed");
-        assert_eq!(receipt["limitations"][0]["repair_route"], "synthetic diff failure");
+        assert_eq!(
+            receipt["limitations"][0]["repair_route"],
+            "synthetic diff failure"
+        );
         assert_eq!(receipt["non_claims"][1], "no complete route inventory");
         assert_eq!(receipt["non_claims"][2], "no all-clear");
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
