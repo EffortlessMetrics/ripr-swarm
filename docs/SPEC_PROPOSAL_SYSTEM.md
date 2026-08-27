@@ -349,10 +349,10 @@ and rollback.
 3. Add doc artifact validation.
 4. Add live issue/PR tracking and implementation-slice validation.
 5. Add first proposal.
-7. Add first spec.
-8. Add support tiers.
-9. Add package/CI/policy ledgers.
-10. Wire CI (advisory then selective blocking).
+6. Add first spec.
+7. Add support tiers.
+8. Add package/CI/policy ledgers.
+9. Wire CI (advisory then selective blocking).
 
 ---
 
