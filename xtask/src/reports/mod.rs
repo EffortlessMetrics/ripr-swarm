@@ -31,6 +31,8 @@ mod release_negative;
 mod release_scope;
 pub(crate) mod release_server;
 mod repo;
+#[cfg(test)]
+mod reverse_authorization;
 mod review_comments;
 mod rust_repair_trust;
 mod sarif;

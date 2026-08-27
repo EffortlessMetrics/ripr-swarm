@@ -5,6 +5,20 @@
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
   "cases": [
     {
+      "id": "py_multiline_docstring_interior_no_behavior",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_noop_multiline_docstring_interior",
+      "vector": "multiline_docstring_interior_has_no_behavior_delta",
+      "assertions": [
+        { "type": "expected_finding_count", "count": 0 },
+        { "type": "must_disclose_scope" },
+        { "type": "must_not_emit_repair_packet" },
+        { "type": "must_not_have_receipt_command" },
+        { "type": "must_not_promote" }
+      ]
+    },
+    {
       "id": "py_token_substring",
       "language": "python",
       "tier": "pure",

@@ -217,7 +217,6 @@ Current reference docs:
 - [Test evidence lanes](ci/test-evidence-lanes.md)
 - [ripr / mutation boundary](ci/ripr-mutation-boundary.md)
 - [Rust 1.95 consistency audit](ci/rust-1.95-consistency-audit.md)
-- [Canonical product-gate plan](ci/PRODUCT_GATE_PLAN.md)
 
 Planned reference docs:
 
