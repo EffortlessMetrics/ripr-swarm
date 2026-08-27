@@ -1425,10 +1425,7 @@ fn review_comments_with_diff_loader(
         &selection,
         &analysis_scope,
         analysis_outcome.as_ref(),
-    )
-    .map_err(|error| {
-        record_review_comments_error(&mut receipt, &receipt_path, "static_rendering", error)
-    })?;
+    );
     receipt.phase("static_rendering", "artifact_io");
     receipt.write_atomic(&receipt_path)?;
     let rendered_json = output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
@@ -6257,6 +6254,17 @@ language = "rust"
         );
 
         assert_eq!(result, Err("synthetic diff failure".to_string()));
+        let receipt_path = out.with_file_name("run-receipt.json");
+        let receipt_json = std::fs::read_to_string(&receipt_path)
+            .map_err(|err| format!("read failed receipt: {err}"))?;
+        let receipt: serde_json::Value = serde_json::from_str(&receipt_json)
+            .map_err(|err| format!("parse failed receipt: {err}"))?;
+        assert_eq!(receipt["status"], "failed");
+        assert_eq!(receipt["active_phase"], "diff_discovery");
+        assert_eq!(receipt["limitations"][0]["category"], "analysis_failed");
+        assert_eq!(receipt["limitations"][0]["repair_route"], "synthetic diff failure");
+        assert_eq!(receipt["non_claims"][1], "no complete route inventory");
+        assert_eq!(receipt["non_claims"][2], "no all-clear");
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
         Ok(())
     }
