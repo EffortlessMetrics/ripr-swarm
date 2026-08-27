@@ -171,6 +171,7 @@ Current reference docs:
 - [Defaults-first adoption](specs/RIPR-SPEC-0009-defaults-first-adoption.md)
 - [Spec-test-code traceability](SPEC_TEST_CODE.md)
 - [Spec format](SPEC_FORMAT.md)
+- [Spec maintenance inventory](SPEC_MAINTENANCE.md)
 - [Fixture contracts](../fixtures/README.md)
 - [Defaults-first example corpus](../fixtures/EXAMPLE_CORPUS.md)
 - [Calibration corpus index](../fixtures/CALIBRATION_CORPUS.md)
