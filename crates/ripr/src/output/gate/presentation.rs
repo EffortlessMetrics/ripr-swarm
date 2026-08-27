@@ -6,6 +6,7 @@ use super::model::{
 use super::{LIMITS_NOTE, SCHEMA_VERSION};
 use crate::app::causal_projection::insert_canonical_delta_fields;
 use serde_json::{Value, json};
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 pub(crate) fn render_gate_decision_json(report: &GateDecisionReport) -> Result<String, String> {
@@ -182,33 +183,27 @@ pub(crate) fn gate_decision_inline_detail(report: &GateDecisionReport) -> String
                 blocking.len(),
                 first.gate_reason
             );
-            if let Some(path) = &first.placement.path {
-                match first.placement.line {
-                    Some(line) => detail.push_str(&format!(" [{path}:{line}]")),
-                    None => detail.push_str(&format!(" [{path}]")),
-                }
+            match (first.placement.path.as_deref(), first.placement.line) {
+                (Some(path), Some(line)) => { let _ = write!(detail, " [{path}:{line}]"); }
+                (Some(path), None) => { let _ = write!(detail, " [{path}]"); }
+                (None, Some(line)) => { let _ = write!(detail, " [(no file anchor):{line}]"); }
+                (None, None) => {}
             }
-            if let Some(class) = &first.static_class {
-                detail.push_str(&format!(" ({class})"));
-            }
-            match (
-                first.repair_route.repair_target.as_ref(),
-                first.repair_route.changed_behavior.as_deref(),
-            ) {
+            if let Some(class) = &first.static_class { let _ = write!(detail, " ({class})"); }
+            let behavior = first.repair_route.missing_discriminator.as_deref()
+                .or(first.repair_route.test_intent.as_deref())
+                .or(first.repair_route.changed_behavior.as_deref());
+            match (first.repair_route.repair_target.as_ref(), behavior) {
                 (Some(GateRepairTarget::ProductionCaller { owner, .. }), Some(behavior)) => {
-                    detail.push_str(&format!(
-                        "; add a test that drives `{owner}` so it observes {behavior}"
-                    ));
+                    let _ = write!(detail, "; add a test that drives `{owner}` so it observes {behavior}");
                 }
                 (_, Some(behavior)) => {
-                    detail.push_str(&format!(
-                        "; add a test that observes {behavior} at the flagged seam"
-                    ));
+                    let _ = write!(detail, "; add a test that observes {behavior} at the flagged seam");
                 }
                 (_, None) => {}
             }
             if let Some(command) = first.repair_route.inspection_command.as_deref() {
-                detail.push_str(&format!("; inspect with `{command}`"));
+                let _ = write!(detail, "; inspect with `{command}`");
             }
             return detail;
         }
