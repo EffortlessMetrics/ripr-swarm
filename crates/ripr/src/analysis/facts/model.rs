@@ -626,7 +626,14 @@ mod tests {
         let authority = WorkspaceRootAuthority::from_index(&root, &files);
         let test = Path::new("pkg/tests/lib.rs");
         let source = Path::new("pkg/src/lib.rs");
-        assert!(authority.validates_target(test, source, sources[1].1));
+        assert!(root.join(test).is_file());
+        assert!(root.join(source).is_file());
+        assert!(authority.files.get(test).is_some_and(|file| file.valid));
+        assert!(authority.files.get(source).is_some_and(|file| file.valid));
+        assert!(
+            authority.validates_target(test, source, sources[1].1),
+            "authority should accept unchanged materialized files"
+        );
         std::fs::write(root.join("pkg/tests/lib.rs"), "changed\n")?;
         assert!(!authority.validates_target(test, source, sources[1].1));
         Ok(())
