@@ -109,9 +109,7 @@ impl WorkspaceRootAuthority {
         let test_current = self.current_file_is_current(test_file, file);
         let seam_authority = self.files.get(seam_file)?;
         let seam_current = self.current_file_is_current(seam_file, seam_authority);
-        test_current && seam_current
-            && source_digest(source.as_bytes()) == file.source_digest
-
+        test_current && seam_current && source_digest(source.as_bytes()) == file.source_digest
     }
 
     fn current_file_is_current(&self, path: &Path, authority: &WorkspaceFileAuthority) -> bool {
@@ -497,8 +495,7 @@ mod tests {
         Ok(())
     }
     #[test]
-    fn manifest_added_after_index_invalidates_target() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn manifest_added_after_index_invalidates_target() -> Result<(), Box<dyn std::error::Error>> {
         struct FixtureCleanup(PathBuf);
         impl Drop for FixtureCleanup {
             fn drop(&mut self) {
@@ -557,30 +554,48 @@ mod tests {
         Ok(())
     }
 
-
     #[test]
-    fn source_change_invalidates_cached_currentness() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn source_change_invalidates_cached_currentness() -> Result<(), Box<dyn std::error::Error>> {
         struct FixtureCleanup(PathBuf);
         impl Drop for FixtureCleanup {
-            fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
         }
 
         let root = std::env::temp_dir().join(format!(
             "ripr-authority-cache-invalidation-{}",
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
         ));
         let _cleanup = FixtureCleanup(root.clone());
         std::fs::create_dir_all(root.join("pkg/src"))?;
         std::fs::create_dir_all(root.join("pkg/tests"))?;
         std::fs::write(root.join("pkg/Cargo.toml"), "[package]\nname = \"pkg\"\n")?;
         let sources = [
-            (PathBuf::from("pkg/src/lib.rs"), "pub fn source() -> i32 { 1 }\n"),
-            (PathBuf::from("pkg/tests/lib.rs"), "#[test]\nfn source_test() { assert_eq!(1, 1); }\n"),
+            (
+                PathBuf::from("pkg/src/lib.rs"),
+                "pub fn source() -> i32 { 1 }\n",
+            ),
+            (
+                PathBuf::from("pkg/tests/lib.rs"),
+                "#[test]\nfn source_test() { assert_eq!(1, 1); }\n",
+            ),
         ];
-        let files = sources.iter().map(|(path, source)| (path.clone(), FileFacts {
-            path: path.clone(), source: (*source).to_string(), ..FileFacts::default()
-        })).collect();
+        let files = sources
+            .iter()
+            .map(|(path, source)| {
+                (
+                    path.clone(),
+                    FileFacts {
+                        path: path.clone(),
+                        source: (*source).to_string(),
+                        ..FileFacts::default()
+                    },
+                )
+            })
+            .collect();
         let authority = WorkspaceRootAuthority::from_index(&root, &files);
         let test = Path::new("pkg/tests/lib.rs");
         let source = Path::new("pkg/src/lib.rs");
@@ -589,5 +604,4 @@ mod tests {
         assert!(!authority.validates_target(test, source, sources[1].1));
         Ok(())
     }
-
 }
