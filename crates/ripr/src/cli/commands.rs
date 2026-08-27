@@ -22,6 +22,17 @@ use crate::cli::commands_timestamps::generated_at_unix_ms;
 
 const DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS: u64 = 120_000;
 
+fn record_review_comments_error(
+    receipt: &mut crate::output::review_comments_receipt::ReviewCommentsRunReceipt,
+    receipt_path: &Path,
+    phase: &str,
+    error: String,
+) -> String {
+    receipt.failed(phase, &error);
+    let _ = receipt.write_atomic(receipt_path);
+    error
+}
+
 fn load_review_comments_analysis_outcome(
     path: Option<&Path>,
     root: &Path,
@@ -1336,7 +1347,9 @@ fn review_comments_with_diff_loader(
 
     receipt.phase("configuration", "diff_discovery");
     receipt.write_atomic(&receipt_path)?;
-    let diff_text = load_diff(&input.root, &options.base, &options.head)?;
+    let diff_text = load_diff(&input.root, &options.base, &options.head).map_err(|error| {
+        record_review_comments_error(&mut receipt, &receipt_path, "diff_discovery", error)
+    })?;
     if analysis::working_tree_has_tracked_changes(&input.root) {
         eprintln!(
             "ripr: warning: working tree has uncommitted tracked changes; \
@@ -1362,7 +1375,10 @@ fn review_comments_with_diff_loader(
         &config,
         &working_set.files,
         &changed_owner_names,
-    )?;
+    )
+    .map_err(|error| {
+        record_review_comments_error(&mut receipt, &receipt_path, "canonical_analysis", error)
+    })?;
     receipt.phase("canonical_analysis", "route_construction");
     receipt.write_atomic(&receipt_path)?;
     let selection = select_agent_brief_seams(
@@ -1382,7 +1398,10 @@ fn review_comments_with_diff_loader(
         &input.root,
         &options.base,
         &diff_text,
-    )?;
+    )
+    .map_err(|error| {
+        record_review_comments_error(&mut receipt, &receipt_path, "route_construction", error)
+    })?;
     let render_context = output::review_comments::ReviewCommentsRenderContext {
         root: &input.root,
         base: &options.base,
@@ -1396,14 +1415,20 @@ fn review_comments_with_diff_loader(
         &selection,
         &analysis_scope,
         analysis_outcome.as_ref(),
-    )?;
+    )
+    .map_err(|error| {
+        record_review_comments_error(&mut receipt, &receipt_path, "static_rendering", error)
+    })?;
     let rendered_md = output::review_comments::render_review_comments_markdown_with_scope(
         &render_context,
         &working_set,
         &selection,
         &analysis_scope,
         analysis_outcome.as_ref(),
-    );
+    )
+    .map_err(|error| {
+        record_review_comments_error(&mut receipt, &receipt_path, "static_rendering", error)
+    })?;
     receipt.phase("static_rendering", "artifact_io");
     receipt.write_atomic(&receipt_path)?;
     let rendered_json = output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
