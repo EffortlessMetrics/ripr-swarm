@@ -687,6 +687,15 @@ fn agent_brief_sample_workspace(
     label: &str,
 ) -> Result<(PathBuf, PathBuf), Box<dyn std::error::Error>> {
     let root = unique_temp_workspace(label);
+    // Keep the sample tree representative of a Cargo package.  The source
+    // and integration-test files intentionally live in different directories;
+    // without a manifest the authority model must treat them as distinct
+    // manifest-less packages, so the packet cannot recover the related test.
+    std::fs::create_dir_all(&root)?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"agent-brief-sample\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
     std::fs::create_dir_all(root.join("src"))?;
     std::fs::create_dir_all(root.join("tests"))?;
     std::fs::copy(
@@ -3541,8 +3550,8 @@ fn agent_start_writes_source_edit_free_workflow_packet() -> Result<(), Box<dyn s
 }
 
 #[test]
-fn agent_start_packet_discloses_supported_command_shells() -> Result<(), Box<dyn std::error::Error>>
-{
+fn agent_start_packet_discloses_that_generated_commands_assume_bash()
+-> Result<(), Box<dyn std::error::Error>> {
     let out_dir = unique_temp_workspace("agent-start-shell-disclosure");
     let out = out_dir
         .to_str()
@@ -3566,8 +3575,8 @@ fn agent_start_packet_discloses_supported_command_shells() -> Result<(), Box<dyn
     // The commands are already fenced as ```bash, so a bare `bash` substring is
     // not evidence. Require the prose disclosure ahead of the first fence.
     let disclosure = commands_md
-        .find("Each step includes Bash and PowerShell command variants.")
-        .ok_or_else(|| format!("commands.md must disclose both command shells:\n{commands_md}"))?;
+        .find("Generated commands are bash command lines.")
+        .ok_or_else(|| format!("commands.md must disclose the bash assumption:\n{commands_md}"))?;
     let first_fence = commands_md
         .find("```bash")
         .ok_or("commands.md must still fence commands as bash")?;
@@ -3577,7 +3586,7 @@ fn agent_start_packet_discloses_supported_command_shells() -> Result<(), Box<dyn
     );
     assert!(
         commands_md.contains("PowerShell"),
-        "commands.md must name the supported shells:\n{commands_md}"
+        "commands.md must name the shells that do not accept these commands:\n{commands_md}"
     );
     assert!(
         workflow_json.contains(r#""command_shell": "bash""#),
