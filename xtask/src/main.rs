@@ -31,6 +31,7 @@ mod evidence_quality;
 mod fixture_contracts;
 mod no_panic;
 mod policy;
+mod product_gate_plan;
 mod public_api_surface;
 mod repo_readiness;
 mod schema_pattern;
