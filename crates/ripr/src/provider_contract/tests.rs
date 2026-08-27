@@ -816,15 +816,22 @@ fn diagnostics_require_identity_and_a_coherent_source_position() {
 #[test]
 fn summary_rejects_noncanonical_taxonomy_and_counter_contradictions() {
     let mut invalid_kind = receipt();
-    invalid_kind.summary.as_mut().unwrap().related_tests[0].oracle_kind = "proven".into();
+    if let Some(summary) = invalid_kind.summary.as_mut() {
+        if let Some(entry) = summary.related_tests.first_mut() {
+            entry.oracle_kind = "proven".into();
+        }
+    }
     assert_eq!(
         error_code(invalid_kind.validate()),
         Some(RiprProviderContractErrorCodeV1::MalformedIdentity)
     );
 
     let mut invalid_strength = receipt();
-    invalid_strength.summary.as_mut().unwrap().related_tests[0].oracle_strength =
-        "adequate".into();
+    if let Some(summary) = invalid_strength.summary.as_mut() {
+        if let Some(entry) = summary.related_tests.first_mut() {
+            entry.oracle_strength = "adequate".into();
+        }
+    }
     assert_eq!(
         error_code(invalid_strength.validate()),
         Some(RiprProviderContractErrorCodeV1::MalformedIdentity)
@@ -834,15 +841,19 @@ fn summary_rejects_noncanonical_taxonomy_and_counter_contradictions() {
     invalid_count
         .summary
         .as_mut()
-        .unwrap()
-        .missing_discriminator_count = 2;
+        .and_then(|summary| {
+            summary.missing_discriminator_count = 2;
+            Some(())
+        });
     assert_eq!(
         error_code(invalid_count.validate()),
         Some(RiprProviderContractErrorCodeV1::CompletenessConflict)
     );
 
     let mut empty_related = receipt();
-    empty_related.summary.as_mut().unwrap().related_tests.clear();
+    if let Some(summary) = empty_related.summary.as_mut() {
+        summary.related_tests.clear();
+    }
     assert_eq!(
         error_code(empty_related.validate()),
         Some(RiprProviderContractErrorCodeV1::CompletenessConflict)
