@@ -38,8 +38,7 @@ Roadmap
     -> Specs
       -> ADRs where needed
         -> Implementation plan
-          -> Active goal manifest
-            -> Issues / PRs
+          -> Issues / PRs
               -> Proof commands
               -> CI lanes
               -> support-tier updates
@@ -51,8 +50,8 @@ Each layer narrows the previous one.
 
 A **roadmap** says direction. A **proposal** says why. A **spec** says the
 behavior contract. An **ADR** says the architecture decision. An
-**implementation plan** says PR sequence. An **active goal manifest** says what
-is executing now. A **support-tier map** says what users may believe. A
+**implementation plan** says PR sequence. GitHub issues, pull requests, checks,
+reviews, and the local worktree say what is executing now. A **support-tier map** says what users may believe. A
 **policy ledger** says exceptions and obligations. A **closeout** says what
 actually happened.
 
@@ -66,10 +65,10 @@ Without this system, workers rely on stale chat context, old PR descriptions,
 ambiguous README claims, unverified assumptions, hidden CI costs, broad todos,
 and hallucinated commands or policies.
 
-With the system, the repo itself provides the execution graph:
+With the system, the repo itself provides the durable context graph:
 
 ```text
-.ripr/goals/active.toml
+GitHub issue / PR
   -> linked implementation plan
     -> linked spec
       -> linked proposal
@@ -152,16 +151,14 @@ Plan item template:
 
 Use [docs/templates/PLAN_ITEM_TEMPLATE.md](templates/PLAN_ITEM_TEMPLATE.md).
 
-### 3.6 Active goal manifest
+### 3.6 Live execution state
 
-**Owns:** what Codex/agent/operator is actively executing now.
+**Owns:** the work currently being executed, reviewed, and merged.
 
-Typical location:
-
-```text
-.ripr/goals/active.toml
-.ripr/goals/archive/
-```
+The live authority is GitHub issues, pull requests, checks, reviews, and the
+local worktree. No tracked file selects a repository-wide current issue, lane,
+branch, writer, or wave. Agent-side goal/task systems may consume this model,
+but they do not replace the live board or create a parallel repo queue.
 
 ### 3.7 Support tiers
 
@@ -224,7 +221,7 @@ Use stable, repo-specific IDs like `RIPR-SPEC-0001`.
 - specs -> proposal + proof commands
 - ADRs -> dependent specs
 - plan -> proposal/spec/ADR IDs
-- active goal -> plan work items
+- issues/PRs -> plan work items and implementation slices
 - PRs -> plan/spec/proposal
 - closeouts -> landed evidence
 
@@ -249,10 +246,10 @@ Policy impact:
 
 ## 6. Status lifecycle
 
-- Proposals/specs/ADRs: `draft`, `proposed`, `accepted`, `implemented`,
-  `superseded`, `rejected`
+- Proposals/specs/ADRs: use the vocabulary defined for that document kind;
+  legacy specs are `proposed`, `planned`, `accepted`, or `deprecated`.
 - Plan items: `ready`, `active`, `blocked`, `done`, `superseded`
-- Active goals: `active`, `paused`, `complete`, `archived`
+- Issues/PRs: GitHub's live state, labels, checks, reviews, and merge state
 
 ---
 
@@ -264,7 +261,7 @@ Single source-of-truth examples:
 - CI lane policy -> `policy/ci-lane-whitelist.toml`
 - Workspace/package shape -> `policy/workspace_shape.txt`
 - File exceptions -> `policy/non-rust-allowlist.toml`
-- Active work -> `.ripr/goals/active.toml`
+- Live work -> GitHub issues/PRs/checks/reviews and the local worktree
 - PR order -> `plans/<milestone>/implementation-plan.md`
 - Why -> `docs/proposals/`
 - Behavior -> `docs/specs/`
@@ -274,18 +271,13 @@ Single source-of-truth examples:
 
 ## 8. How Codex should use the system
 
-1. Read `.ripr/goals/active.toml`.
-2. Pick the next ready `work_item`.
-3. Read linked plan item.
-4. Read linked spec.
-5. Read linked proposal for context.
-6. Read linked ADRs if architecture is involved.
-7. Make one PR-sized change.
-8. Update support tiers/policy ledgers only when claims/policy change.
-9. Run listed proof commands.
-10. Update goal manifest.
-11. Open/review/improve/merge per repo policy.
-12. Add closeout notes when lane completes.
+1. Select a bounded issue from the live GitHub board.
+2. Read its linked plan item, spec, proposal, and ADRs when present.
+3. Make one PR-sized change.
+4. Update support tiers/policy ledgers only when claims/policy change.
+5. Run listed proof commands.
+6. Open/review/improve/merge per repo policy.
+7. Add closeout notes when a lane completes.
 
 ---
 
@@ -331,13 +323,12 @@ and rollback.
 1. Define docs model.
 2. Add doc artifact ledger.
 3. Add doc artifact validation.
-4. Add active goal manifest.
-5. Add goal validation.
-6. Add first proposal.
-7. Add first spec.
-8. Add support tiers.
-9. Add package/CI/policy ledgers.
-10. Wire CI (advisory then selective blocking).
+4. Connect the live GitHub issue/PR board and local worktree.
+5. Add first proposal.
+6. Add first spec.
+7. Add support tiers.
+8. Add package/CI/policy ledgers.
+9. Wire CI (advisory then selective blocking).
 
 ---
 
