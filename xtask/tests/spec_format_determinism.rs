@@ -103,7 +103,7 @@ fn backdate_spec(root: &Path) -> Result<(), String> {
     if modified
         .duration_since(UNIX_EPOCH)
         .map_err(|error| error.to_string())?
-        >= Duration::from_secs(86_400)
+        >= Duration::from_hours(24)
     {
         return Err("fixture spec mtime was not backdated".to_owned());
     }
