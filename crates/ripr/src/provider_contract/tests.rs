@@ -15,7 +15,8 @@ fn error_code(
 }
 
 fn json_error(message: impl Into<String>) -> serde_json::Error {
-    std::io::Error::other(message.into()).into()
+    serde_json::from_reader(std::io::Cursor::new(message.into()))
+        .expect_err("test helper must receive malformed JSON")
 }
 
 fn required_excluded_claims() -> Vec<String> {
