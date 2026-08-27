@@ -30,12 +30,12 @@ pub(in crate::analysis) fn find_related_tests<'a>(
     // package-prefix guard only when (a) the owner name is unique in the
     // workspace AND (b) the index spans the whole workspace. When multiple
     // crates define functions with the same name, a bare call in crate_b
-    // calling `score()` cannot be attributed to crate_a::score — that is the
+    // calling `score()` cannot be attributed to crate_a::score â that is the
     // token-coincidence false-exposed family.
     //
     // (b) is not a property of the analysis mode. The diff path indexes only
-    // the changed files whenever `include_unchanged_tests` is false — Deep and
-    // Ready included — and only the changed packages under Draft/Fast, so a
+    // the changed files whenever `include_unchanged_tests` is false â Deep and
+    // Ready included â and only the changed packages under Draft/Fast, so a
     // same-named function in an unindexed file is absent from the count and
     // the name would falsely appear unique. The caller therefore derives
     // `workspace_complete` from the file selection that actually built the
@@ -65,7 +65,7 @@ pub(in crate::analysis) fn find_related_tests<'a>(
     // scoping needed", silently disabling the package guard. When the
     // candidate test's path is *also* absolute, a weak match cannot be scoped
     // at all, so fail closed: only the strong uniquely-owned call path (#2971)
-    // may admit. A *relative* test file keeps current behavior — the
+    // may admit. A *relative* test file keeps current behavior â the
     // mixed-form companion flow (absolute probe, relative test files) is
     // production-pinned. A future producer that supplies absolute test paths
     // must carry an explicit relativization authority instead of relying on
@@ -91,7 +91,7 @@ pub(in crate::analysis) fn find_related_tests<'a>(
             && (test.calls.iter().any(|call| call.name == owner_name)
                 || body_contains_owner_call(&test.body, owner_name));
         // #3296 review: the test-to-entry edge must also be a direct
-        // free-function call site — a method or qualified call sharing
+        // free-function call site â a method or qualified call sharing
         // the entry's terminal name is not callee identity.
         let calls_helper_entry = helper_chain.is_some_and(|chain| {
             test.calls.iter().any(|call| {
@@ -102,7 +102,7 @@ pub(in crate::analysis) fn find_related_tests<'a>(
             })
         });
 
-        // #2971: Only apply the package-prefix guard to weak signals — tests
+        // #2971: Only apply the package-prefix guard to weak signals â tests
         // that do not directly call the owner, OR tests that call a bare name
         // that is ambiguous across crates. A cross-crate test that calls a
         // uniquely-named owner is genuinely related and must not be suppressed.
@@ -119,7 +119,7 @@ pub(in crate::analysis) fn find_related_tests<'a>(
         {
             continue;
         }
-        // #3235: unscopable-absolute owner against an absolute test file —
+        // #3235: unscopable-absolute owner against an absolute test file â
         // no package comparison is possible, so weak matches fail closed.
         if owner_scope_unscopable
             && path_is_absolute_form(&test.file)
@@ -164,7 +164,7 @@ pub(in crate::analysis) fn find_related_tests<'a>(
         // caller directly reaches the owner through the bounded chain
         // (same authority the activation rows consume). The chain is
         // resolved once per probe above the test loop (#3296 review
-        // M1 — the per-test re-resolution was O(tests x functions)).
+        // M1 â the per-test re-resolution was O(tests x functions)).
         let helper_chain_reaches = !calls_owner
             && !assertions_reference_owner
             && !same_file_or_named
@@ -237,7 +237,7 @@ fn normalize_path(path: &Path) -> String {
         .to_string()
 }
 
-/// #3235: one authority for recognizing an absolute path form on any host —
+/// #3235: one authority for recognizing an absolute path form on any host â
 /// Unix-rooted, Windows drive-prefixed, or host-absolute. Shared by
 /// `package_prefix` (which cannot derive a package scope from such a path
 /// without a `crates/` segment) and the package guards in
@@ -290,7 +290,7 @@ fn package_prefix(path: &Path) -> Option<String> {
 ///
 /// That suppression is also unnecessary. `CallFact` carries no receiver or
 /// path information (`analysis/extract/calls.rs` keeps only the bare trailing
-/// identifier), so receiver identity cannot be recovered here — but the
+/// identifier), so receiver identity cannot be recovered here â but the
 /// cross-crate bypass is already gated on the owner name being unique across
 /// `index.functions`, and `syntax/ra.rs` indexes impl methods alongside free
 /// functions. A same-named method on another type is therefore itself in the
@@ -386,8 +386,8 @@ mod tests {
 
     /// An impl-method owner is reachable only through a receiver, so a `.`
     /// before the name must not disqualify the call. The `propagate_*` goldens
-    /// are exactly this shape — owner `Ledger::apply`, test body
-    /// `ledger.apply(5);` — and a `.`-rejecting matcher silently downgraded
+    /// are exactly this shape â owner `Ledger::apply`, test body
+    /// `ledger.apply(5);` â and a `.`-rejecting matcher silently downgraded
     /// them from `direct_owner_call` to `owner_named_test`, weakening the
     /// relation on every method owner in the corpus.
     #[test]
@@ -423,7 +423,7 @@ mod tests {
     /// packages under Draft/Fast, so a name seen once in that index is not
     /// evidence that it is unique in the workspace. The bypass must not fire:
     /// a sibling crate's unindexed same-named function would otherwise be
-    /// credited as the owner — the token-coincidence false-`exposed` family.
+    /// credited as the owner â the token-coincidence false-`exposed` family.
     #[test]
     fn given_incomplete_index_when_cross_crate_test_calls_owner_then_filtered() {
         let owner = function("crates/digest/src/lib.rs", "compute_hash");
@@ -708,7 +708,7 @@ mod tests {
         }
     }
 
-    /// Like `test` but with a configurable call name — needed for cross-crate
+    /// Like `test` but with a configurable call name â needed for cross-crate
     /// tests where the owner name is not hardcoded to `"score"`.
     fn test_with_call(file: &str, name: &str, body: &str, call_name: &str) -> TestSummary {
         TestSummary {
@@ -743,7 +743,7 @@ mod tests {
         }
     }
 
-    /// A probe with no function owner — models a module-level struct field.
+    /// A probe with no function owner â models a module-level struct field.
     fn struct_field_probe(file: &str, expression: &str) -> Probe {
         Probe {
             id: ProbeId("probe:struct-field".to_string()),
@@ -876,7 +876,7 @@ mod tests {
     // --- Anti-over-association: short 4-char token rejected ---
     // A struct-field probe whose only shared token with a test assertion is a
     // common 4-char name (`port`) must NOT select that test via the
-    // assertions_reference_owner signal — the >= 5 threshold rejects it.
+    // assertions_reference_owner signal â the >= 5 threshold rejects it.
     // The test and probe live in different-stem files and the test name does
     // not contain the probe token, so same_file_or_named also does not fire.
     #[test]
@@ -899,7 +899,7 @@ mod tests {
             tests: vec![unrelated_test],
             ..RustIndex::default()
         };
-        // Probe expression is `port` (4 chars) — below the >= 5 threshold.
+        // Probe expression is `port` (4 chars) â below the >= 5 threshold.
         let probe = struct_field_probe("crates/ripr/src/scheduler.rs", "port");
 
         let related = find_related_tests(&probe, None, &index, true, None);
@@ -935,7 +935,7 @@ mod tests {
             ..RustIndex::default()
         };
         // Probe expression contains `discount_threshold` (>= 5 chars) which is
-        // also in the assertion observed_tokens — but owner_fn is Some, so the
+        // also in the assertion observed_tokens â but owner_fn is Some, so the
         // assertions_reference_owner signal must NOT fire.
         let probe = probe("src/lib.rs", "amount >= discount_threshold");
 
@@ -1002,7 +1002,7 @@ mod tests {
     /// derivable package scope. Before the fail-closed guard the prefix came
     /// back `None` and the package scoping was silently disabled, admitting
     /// wrong-package name/token coincidences. The fixture is a pure weak
-    /// match — the test never calls the owner, only its name contains it.
+    /// match â the test never calls the owner, only its name contains it.
     #[test]
     fn given_absolute_owner_and_absolute_wrong_package_test_when_weak_match_then_filtered() {
         let owner = function("/ws/pkg-a/src/lib.rs", "score");
@@ -1028,7 +1028,7 @@ mod tests {
 
     /// #3235 positive control: the #2971 strong path still admits a
     /// cross-package test that calls a uniquely-named owner even when both
-    /// paths are absolute — failing closed must not break the deliberate
+    /// paths are absolute â failing closed must not break the deliberate
     /// unique-owner bypass.
     #[test]
     fn given_absolute_paths_when_unique_owner_is_called_cross_package_then_retained() {
