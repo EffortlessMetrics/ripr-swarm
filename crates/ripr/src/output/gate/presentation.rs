@@ -6,6 +6,7 @@ use super::model::{
 use super::{LIMITS_NOTE, SCHEMA_VERSION};
 use crate::app::causal_projection::insert_canonical_delta_fields;
 use serde_json::{Value, json};
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 pub(crate) fn render_gate_decision_json(report: &GateDecisionReport) -> Result<String, String> {
@@ -157,8 +158,12 @@ pub(crate) fn gate_decision_status(report: &GateDecisionReport) -> &str {
 /// (#2599).
 ///
 /// For `config_error`: the first config error message. For `blocked`: the
-/// first blocking decision or, when exception policy is the blocker, the
-/// count and first blocking exception-policy violation.
+/// first blocking decision enriched with the exact seam location,
+/// classification, a concrete fix sketch, and the producer-owned
+/// inspection command (#1440) — so the point of failure names what to fix
+/// and how to inspect it instead of forcing artifact archaeology. When
+/// exception policy is the blocker: the count and first blocking
+/// exception-policy violation.
 /// Returns an empty string when no useful detail is available.
 pub(crate) fn gate_decision_inline_detail(report: &GateDecisionReport) -> String {
     if report.status == "config_error"
@@ -178,7 +183,28 @@ pub(crate) fn gate_decision_inline_detail(report: &GateDecisionReport) -> String
                 blocking.len(),
                 first.gate_reason
             );
-            append_inline_repair_route(&mut detail, first);
+            match (first.placement.path.as_deref(), first.placement.line) {
+                (Some(path), Some(line)) => { let _ = write!(detail, " [{path}:{line}]"); }
+                (Some(path), None) => { let _ = write!(detail, " [{path}]"); }
+                (None, Some(line)) => { let _ = write!(detail, " [(no file anchor):{line}]"); }
+                (None, None) => {}
+            }
+            if let Some(class) = &first.static_class { let _ = write!(detail, " ({class})"); }
+            let behavior = first.repair_route.missing_discriminator.as_deref()
+                .or(first.repair_route.test_intent.as_deref())
+                .or(first.repair_route.changed_behavior.as_deref());
+            match (first.repair_route.repair_target.as_ref(), behavior) {
+                (Some(GateRepairTarget::ProductionCaller { owner, .. }), Some(behavior)) => {
+                    let _ = write!(detail, "; add a test that drives `{owner}` so it observes {behavior}");
+                }
+                (_, Some(behavior)) => {
+                    let _ = write!(detail, "; add a test that observes {behavior} at the flagged seam");
+                }
+                (_, None) => {}
+            }
+            if let Some(command) = first.repair_route.inspection_command.as_deref() {
+                let _ = write!(detail, "; inspect with `{command}`");
+            }
             return detail;
         }
         if let Some(exception_policy) = &report.exception_policy {
@@ -196,36 +222,6 @@ pub(crate) fn gate_decision_inline_detail(report: &GateDecisionReport) -> String
         }
     }
     String::new()
-}
-
-/// Add the smallest useful repair route to a failing CLI diagnostic.
-///
-/// The Markdown and JSON reports remain the complete receipts. This inline
-/// projection only exposes the first blocking decision so CI logs give a
-/// consumer an exact next action without duplicating route derivation.
-fn append_inline_repair_route(detail: &mut String, decision: &GateDecision) {
-    let route = &decision.repair_route;
-    let location = match (decision.placement.path.as_deref(), decision.placement.line) {
-        (Some(path), Some(line)) => format!("{path}:{line}"),
-        (Some(path), None) => format!("{path} (no line anchor)"),
-        (None, Some(line)) => format!("line {line}"),
-        (None, None) => "no source location".to_string(),
-    };
-    let classification = route
-        .classification
-        .as_deref()
-        .or(decision.static_class.as_deref())
-        .unwrap_or("unknown");
-    detail.push_str(&format!(
-        "; seam {} at {location} ({classification})",
-        route.seam_id.as_deref().unwrap_or("unknown")
-    ));
-    if let Some(test_intent) = route.test_intent.as_deref() {
-        detail.push_str(&format!("; next: {test_intent}"));
-    }
-    if let Some(inspection_command) = route.inspection_command.as_deref() {
-        detail.push_str(&format!("; inspect: `{inspection_command}`"));
-    }
 }
 
 pub(crate) fn markdown_path_for(out: &Path) -> PathBuf {
