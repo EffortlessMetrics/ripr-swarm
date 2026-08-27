@@ -16,10 +16,8 @@ fn temp_root() -> Result<TempRoot, String> {
         .duration_since(UNIX_EPOCH)
         .map_err(|error| error.to_string())?
         .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "ripr-spec-template-{}-{nonce}",
-        std::process::id()
-    ));
+    let root =
+        std::env::temp_dir().join(format!("ripr-spec-template-{}-{nonce}", std::process::id()));
     fs::create_dir_all(root.join("docs/specs")).map_err(|error| error.to_string())?;
     Ok(TempRoot(root))
 }
