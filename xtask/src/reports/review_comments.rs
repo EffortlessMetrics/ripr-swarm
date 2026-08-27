@@ -20,6 +20,7 @@ const REVIEW_COMMENTS_MD: &str = "target/ripr/review/comments.md";
 const REVIEW_COMMENTS_RECEIPT: &str = "target/ripr/review/run-receipt.json";
 const REVIEW_COMMENTS_SCHEMA: &str = "schemas/ripr/review-comments.schema.json";
 const DEFAULT_TOOL_TIMEOUT_SECS: u64 = 120;
+const STATIC_GAP_CLASSES: [&str; 3] = ["weakly_exposed", "reachable_unrevealed", "no_static_path"];
 
 #[derive(Debug)]
 struct ReviewCommentsRunError {
@@ -651,139 +652,10 @@ fn write_error_review_comments(
     receipt: &Value,
 ) -> Result<(), String> {
     let packet = error_review_comments_packet(repo, options, error, receipt);
-    // #1419: the guidance producer is an enhancement layered on static facts
-    // the gate already computed. A timeout must not blank the seam location
-    // out of the summary when the diff-check artifact already names it.
-    let fallback = static_gap_seam_fallback(repo, options);
     let json_text = serde_json::to_string_pretty(&packet)
         .map_err(|err| format!("serialize review comments error packet: {err}"))?;
-    let markdown = render_error_review_comments_markdown(&packet, &fallback);
+    let markdown = render_error_review_comments_markdown(&packet);
     write_review_comments_artifacts(repo, &json_text, &markdown)
-}
-
-/// The diff-check producer's classifications that represent actionable static
-/// gaps. Keep this list aligned with the summary fields used by `ripr-pr`.
-const STATIC_GAP_CLASSIFICATIONS: [&str; 3] =
-    ["weakly_exposed", "reachable_unrevealed", "no_static_path"];
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct StaticGapSeam {
-    file: String,
-    line: usize,
-    seam_kind: String,
-    grip_class: String,
-}
-
-/// Recover gap locations from the exact diff-check artifact supplied to
-/// `ripr-review-comments`. The artifact is accepted only when its producer
-/// identity matches this invocation; repo-wide reports are never a PR-scoped
-/// fallback because they lack the required diff provenance.
-fn static_gap_seam_fallback(repo: &Path, options: &ReviewCommentsOptions) -> Vec<StaticGapSeam> {
-    let Some(relative) = options.check_output.as_deref() else {
-        return Vec::new();
-    };
-    let path = Path::new(relative);
-    let path = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        repo.join(path)
-    };
-    let Ok(text) = fs::read_to_string(path) else {
-        return Vec::new();
-    };
-    let Ok(value) = serde_json::from_str::<Value>(&text) else {
-        return Vec::new();
-    };
-    if value.get("tool").and_then(Value::as_str) != Some("ripr")
-        || value.get("base").and_then(Value::as_str) != Some(options.base.as_str())
-        || !producer_root_matches(repo, options, &value)
-    {
-        return Vec::new();
-    }
-    let Some(findings) = value.get("findings").and_then(Value::as_array) else {
-        return Vec::new();
-    };
-    let mut gaps = findings
-        .iter()
-        .filter_map(|finding| {
-            let classification = finding.get("classification").and_then(Value::as_str)?;
-            if !STATIC_GAP_CLASSIFICATIONS.contains(&classification) {
-                return None;
-            }
-            let probe = finding.get("probe")?;
-            let file = probe.get("file").and_then(Value::as_str)?;
-            let line = probe.get("line").and_then(Value::as_u64)?;
-            let line = usize::try_from(line).ok()?;
-            let family = probe.get("family").and_then(Value::as_str)?;
-            Some(StaticGapSeam {
-                file: normalize_path_text(file),
-                line,
-                seam_kind: family.to_string(),
-                grip_class: classification.to_string(),
-            })
-        })
-        .collect::<Vec<_>>();
-    gaps.sort_by(|left, right| {
-        left.file
-            .cmp(&right.file)
-            .then(left.line.cmp(&right.line))
-            .then(left.seam_kind.cmp(&right.seam_kind))
-    });
-    gaps.dedup();
-    gaps.truncate(5);
-    gaps
-}
-
-fn producer_root_matches(repo: &Path, options: &ReviewCommentsOptions, value: &Value) -> bool {
-    let Some(root) = value.get("root").and_then(Value::as_str) else {
-        return false;
-    };
-    root == options.root
-        || normalize_path_text(root) == normalize_path_text(&command_root_arg(repo, &options.root))
-}
-
-fn render_error_review_comments_markdown(packet: &Value, fallback: &[StaticGapSeam]) -> String {
-    let header = format!(
-        "# RIPR PR Guidance\n\n- status: error\n- base: `{}`\n- head: `{}`\n- line annotations: 0\n- summary-only recommendations: 0\n- suppressed recommendations: 0\n\n",
-        packet
-            .get("base")
-            .and_then(Value::as_str)
-            .unwrap_or(DEFAULT_BASE),
-        packet
-            .get("head")
-            .and_then(Value::as_str)
-            .unwrap_or(DEFAULT_HEAD),
-    );
-    let warning = packet
-        .get("warnings")
-        .and_then(Value::as_array)
-        .and_then(|warnings| warnings.first())
-        .and_then(|warning| warning.get("message"))
-        .and_then(Value::as_str)
-        .unwrap_or("review guidance generation did not complete");
-    if fallback.is_empty() {
-        return format!(
-            "{header}No review guidance was generated.\n\n## Warnings\n\n- tool_error: {}\n",
-            md_escape(warning)
-        );
-    }
-    let mut list = String::new();
-    for seam in fallback {
-        list.push_str(&format!(
-            "- `{}`:{} — `{}` (`{}`)\n",
-            md_escape(&seam.file),
-            seam.line,
-            md_escape(&seam.seam_kind),
-            md_escape(&seam.grip_class)
-        ));
-    }
-    format!(
-        "{header}No LLM review guidance was generated. Static analysis already \
-         computed the following gap seams before the failure — these are the \
-         locations the gate detected, independent of the timed-out enhancement:\n\n\
-         ## Static gap seams already computed\n\n{list}\n## Warnings\n\n- tool_error: {}\n",
-        md_escape(warning)
-    )
 }
 
 fn write_empty_review_comments(repo: &Path, options: &ReviewCommentsOptions) -> Result<(), String> {
@@ -846,13 +718,74 @@ fn error_review_comments_packet(
         "limits_note": "Review guidance generation is advisory. The producer did not complete, so no comments are emitted.",
         "run_receipt": receipt
     });
-    if let Some(analysis_outcome) = producer_analysis_outcome(repo, options) {
-        packet["analysis_outcome"] = analysis_outcome;
+    if let Some(static_fallback) = static_gap_fallback(repo, options) {
+        packet["static_gap_fallback"] = static_fallback;
         packet["limits_note"] = serde_json::json!(
-            "Review guidance generation did not complete; no comments are emitted, but the producer analysis outcome is retained and bound to this error packet."
+            "Review guidance generation did not complete; static seam locations from the check artifact are retained as fallback evidence, but no comments are emitted."
         );
     }
+    if let Some(analysis_outcome) = producer_analysis_outcome(repo, options) {
+        packet["analysis_outcome"] = analysis_outcome;
+        packet["limits_note"] = if packet.get("static_gap_fallback").is_some() {
+            serde_json::json!(
+                "Review guidance generation did not complete; static seam locations and the producer analysis outcome are retained as fallback evidence, but no comments are emitted."
+            )
+        } else {
+            serde_json::json!(
+                "Review guidance generation did not complete; no comments are emitted, but the producer analysis outcome is retained and bound to this error packet."
+            )
+        };
+    }
     packet
+}
+
+fn static_gap_fallback(repo: &Path, options: &ReviewCommentsOptions) -> Option<Value> {
+    let check_output = options.check_output.as_deref()?;
+    let path = Path::new(check_output);
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        repo.join(path)
+    };
+    let text = fs::read_to_string(&path).ok()?;
+    let producer: Value = serde_json::from_str(&text).ok()?;
+    if producer.get("tool").and_then(Value::as_str) != Some("ripr")
+        || producer.get("base").and_then(Value::as_str) != Some(options.base.as_str())
+        || !producer_root_matches(repo, options, &producer)
+    {
+        return None;
+    }
+    let findings = producer.get("findings")?.as_array()?;
+    let seams = findings
+        .iter()
+        .filter_map(|finding| {
+            let classification = finding.get("classification")?.as_str()?;
+            if !STATIC_GAP_CLASSES.contains(&classification) {
+                return None;
+            }
+            let probe = finding.get("probe")?;
+            Some(serde_json::json!({
+                "id": finding.get("id").cloned().unwrap_or(Value::Null),
+                "classification": classification,
+                "family": probe.get("family").cloned().unwrap_or(Value::Null),
+                "file": probe.get("file").cloned().unwrap_or(Value::Null),
+                "line": probe.get("line").cloned().unwrap_or(Value::Null)
+            }))
+        })
+        .collect::<Vec<_>>();
+    Some(serde_json::json!({
+        "source": check_output,
+        "seams": seams,
+        "claim_boundary": "Static seam locations only; no review guidance, correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    }))
+}
+
+fn producer_root_matches(repo: &Path, options: &ReviewCommentsOptions, producer: &Value) -> bool {
+    let Some(root) = producer.get("root").and_then(Value::as_str) else {
+        return false;
+    };
+    root == options.root
+        || normalize_path_text(root) == normalize_path_text(&command_root_arg(repo, &options.root))
 }
 
 fn producer_analysis_outcome(repo: &Path, options: &ReviewCommentsOptions) -> Option<Value> {
@@ -1079,6 +1012,80 @@ fn reusable_cache_identity(root: &str, base: &str, head: &str) -> String {
     hasher.update([0]);
     hasher.update(head.as_bytes());
     format!("sha256:{:x}", hasher.finalize())
+}
+
+fn render_error_review_comments_markdown(packet: &Value) -> String {
+    let warning = packet
+        .get("warnings")
+        .and_then(Value::as_array)
+        .and_then(|warnings| warnings.first())
+        .and_then(|warning| warning.get("message"))
+        .and_then(Value::as_str)
+        .unwrap_or("review guidance generation did not complete");
+    let mut markdown = format!(
+        "# RIPR PR Guidance\n\n- status: error\n- base: `{}`\n- head: `{}`\n- line annotations: 0\n- summary-only recommendations: 0\n- suppressed recommendations: 0\n\nNo review guidance was generated.\n",
+        packet
+            .get("base")
+            .and_then(Value::as_str)
+            .unwrap_or(DEFAULT_BASE),
+        packet
+            .get("head")
+            .and_then(Value::as_str)
+            .unwrap_or(DEFAULT_HEAD)
+    );
+    if let Some(fallback) = packet.get("static_gap_fallback") {
+        markdown.push_str("\n## Static seam fallback\n\n");
+        markdown.push_str(
+            "LLM review guidance failed, but the static check artifact still identified these gap locations:\n\n",
+        );
+        if let Some(seams) = fallback.get("seams").and_then(Value::as_array) {
+            if seams.is_empty() {
+                markdown.push_str(
+                    "- No classified severe-gap seams were present in the fallback artifact.\n",
+                );
+            } else {
+                for seam in seams {
+                    markdown.push_str(&format!(
+                        "- `{}`: `{}`:{} ({})\n",
+                        md_escape(
+                            seam.get("classification")
+                                .and_then(Value::as_str)
+                                .unwrap_or("unknown"),
+                        ),
+                        md_escape(
+                            seam.get("file")
+                                .and_then(Value::as_str)
+                                .unwrap_or("unknown"),
+                        ),
+                        seam.get("line")
+                            .and_then(Value::as_u64)
+                            .map(|line| line.to_string())
+                            .unwrap_or_else(|| "?".to_string()),
+                        md_escape(
+                            seam.get("family")
+                                .and_then(Value::as_str)
+                                .unwrap_or("unknown"),
+                        ),
+                    ));
+                }
+            }
+        }
+        markdown.push_str("\n- source: `");
+        markdown.push_str(&md_escape(
+            fallback
+                .get("source")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown"),
+        ));
+        markdown.push_str(
+            "`\n- boundary: static seam location only; inspect the seam before writing a repair.\n",
+        );
+    }
+    markdown.push_str(&format!(
+        "\n## Warnings\n\n- tool_error: {}\n",
+        md_escape(warning),
+    ));
+    markdown
 }
 
 fn render_empty_review_comments_markdown(packet: &Value) -> String {
@@ -1435,6 +1442,93 @@ mod tests {
     }
 
     #[test]
+    fn error_packet_retains_static_gap_locations_for_failed_guidance() -> Result<(), String> {
+        let repo = temp_repo("ripr-review-comments-static-fallback")?;
+        let mut options = options();
+        options.check_output = Some("target/check-output.json".to_string());
+        let producer = serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "mode": "fast",
+            "root": normalize_path_text(&command_root_arg(&repo, &options.root)),
+            "base": options.base,
+            "summary": {
+                "weakly_exposed": 1,
+                "reachable_unrevealed": 1,
+                "no_static_path": 0
+            },
+            "findings": [
+                {
+                    "id": "gap:weak",
+                    "classification": "weakly_exposed",
+                    "probe": {
+                        "family": "return_value",
+                        "file": "src/auth.rs",
+                        "line": 42
+                    }
+                },
+                {
+                    "id": "gap:reachable",
+                    "classification": "reachable_unrevealed",
+                    "probe": {
+                        "family": "predicate",
+                        "file": "src/auth.rs",
+                        "line": 55
+                    }
+                },
+                {
+                    "id": "gap:ignored",
+                    "classification": "exposed",
+                    "probe": {
+                        "family": "return_value",
+                        "file": "src/auth.rs",
+                        "line": 60
+                    }
+                }
+            ]
+        });
+        fs::create_dir_all(repo.join("target")).map_err(|err| format!("create target: {err}"))?;
+        fs::write(
+            repo.join("target/check-output.json"),
+            serde_json::to_string(&producer).map_err(|err| format!("serialize: {err}"))?,
+        )
+        .map_err(|err| format!("write producer: {err}"))?;
+
+        let receipt =
+            review_comments_receipt(&repo, &options, "limited_timeout", Some("timed out"));
+        let packet = error_review_comments_packet(&repo, &options, "timed out", &receipt);
+        let fallback = packet
+            .get("static_gap_fallback")
+            .ok_or_else(|| "static fallback missing".to_string())?;
+        assert_eq!(fallback["source"], "target/check-output.json");
+        assert_eq!(fallback["seams"].as_array().map(Vec::len), Some(2));
+        assert_eq!(fallback["seams"][0]["file"], "src/auth.rs");
+        assert_eq!(fallback["seams"][0]["line"], 42);
+        assert_eq!(
+            fallback["seams"][1]["classification"],
+            "reachable_unrevealed",
+        );
+        assert!(
+            validate_packet_value(
+                &packet,
+                &repo,
+                &options,
+                false,
+                Path::new(REVIEW_COMMENTS_MD),
+            )
+            .is_empty(),
+        );
+
+        let markdown = render_error_review_comments_markdown(&packet);
+        assert!(markdown.contains("Static seam fallback"));
+        assert!(markdown.contains("`src/auth.rs`:42"));
+        assert!(markdown.contains("`src/auth.rs`:55"));
+
+        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+        Ok(())
+    }
+
+    #[test]
     fn write_and_check_packet_in_git_repo() -> Result<(), String> {
         let (repo, options) = prepared_review_repo("ripr-review-comments")?;
         let packet = valid_packet_for_repo(&repo, &options);
@@ -1495,90 +1589,6 @@ mod tests {
         let markdown = fs::read_to_string(repo.join(REVIEW_COMMENTS_MD))
             .map_err(|err| format!("read error Markdown: {err}"))?;
         assert!(markdown.contains("No review guidance was generated."));
-        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
-        Ok(())
-    }
-
-    #[test]
-    fn error_summary_names_static_gap_seams_from_diff_check() -> Result<(), String> {
-        let (repo, mut options) = prepared_review_repo("ripr-review-comments-check-output")?;
-        options.check_output = Some("target/check-output.json".to_string());
-        let check_output = serde_json::json!({
-            "schema_version": "0.2",
-            "tool": "ripr",
-            "mode": "draft",
-            "root": repo.display().to_string(),
-            "base": options.base.clone(),
-            "summary": {
-                "weakly_exposed": 1,
-                "reachable_unrevealed": 0,
-                "no_static_path": 0
-            },
-            "findings": [
-                {
-                    "classification": "weakly_exposed",
-                    "probe": {
-                        "family": "predicate_boundary",
-                        "file": "src/discount.rs",
-                        "line": 42
-                    }
-                },
-                {
-                    "classification": "exposed",
-                    "probe": {
-                        "family": "error_variant",
-                        "file": "src/covered.rs",
-                        "line": 7
-                    }
-                }
-            ]
-        });
-        write_repo_file(
-            &repo,
-            "target/check-output.json",
-            &serde_json::to_string(&check_output)
-                .map_err(|err| format!("serialize check output: {err}"))?,
-        )?;
-        write_review_comments_with_runner(&repo, &options, |_repo, _options| {
-            Err(ReviewCommentsRunError::timed_out(
-                "ripr timed out after 210s".to_string(),
-            ))
-        })?;
-
-        let markdown = fs::read_to_string(repo.join(REVIEW_COMMENTS_MD))
-            .map_err(|err| format!("read error Markdown: {err}"))?;
-        assert!(
-            markdown.contains("## Static gap seams already computed"),
-            "fallback section missing: {markdown}"
-        );
-        assert!(
-            markdown.contains("`src/discount.rs`:42 — `predicate_boundary` (`weakly_exposed`)"),
-            "gap seam location missing: {markdown}"
-        );
-        assert!(
-            !markdown.contains("src/covered.rs"),
-            "non-gap seam leaked into fallback: {markdown}"
-        );
-        assert!(!markdown.contains("No review guidance was generated."));
-        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
-        Ok(())
-    }
-
-    #[test]
-    fn error_summary_stays_honest_when_check_output_is_unusable() -> Result<(), String> {
-        let (repo, mut options) = prepared_review_repo("ripr-review-comments-bad-check-output")?;
-        options.check_output = Some("target/check-output.json".to_string());
-        write_repo_file(&repo, "target/check-output.json", "{not json")?;
-        write_review_comments_with_runner(&repo, &options, |_repo, _options| {
-            Err(ReviewCommentsRunError::from(
-                "synthetic producer failure".to_string(),
-            ))
-        })?;
-
-        let markdown = fs::read_to_string(repo.join(REVIEW_COMMENTS_MD))
-            .map_err(|err| format!("read error Markdown: {err}"))?;
-        assert!(markdown.contains("No review guidance was generated."));
-        assert!(!markdown.contains("Static gap seams already computed"));
         fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
         Ok(())
     }

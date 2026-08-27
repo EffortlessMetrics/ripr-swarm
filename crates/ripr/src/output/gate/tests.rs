@@ -43,6 +43,45 @@ fn gate_acknowledgeable_blocks_policy_candidate_without_label() -> Result<(), St
 }
 
 #[test]
+fn gate_inline_failure_detail_names_seam_location_and_inspection_command() -> Result<(), String> {
+    // #1440: at the point of failure the inline detail must name the exact
+    // seam location and the producer-owned inspection command so consumers
+    // do not need artifact archaeology to act on a correct signal.
+    let input = fixture_input(GateMode::Acknowledgeable);
+    let report = build_gate_decision_report(&input)?;
+    assert_eq!(report.status, "blocked");
+    let inline = gate_decision_inline_detail(&report);
+    let decision = &report.decisions[0];
+    let missing = decision.repair_route.missing_discriminator.as_deref().expect("fixture must provide the missing discriminator");
+    assert!(inline.contains(&format!(" ({})", decision.static_class.as_deref().unwrap())), "inline detail missing static classification: {inline}");
+    assert!(inline.contains(missing), "inline detail missing exact repair discriminator: {inline}");
+    assert!(
+        inline.contains("1 blocking gap(s); first:"),
+        "inline detail lost the blocking summary: {inline}"
+    );
+    assert!(
+        inline.contains("[src/pricing.rs:88]"),
+        "inline detail missing seam location: {inline}"
+    );
+    assert!(
+        inline.contains("`ripr agent brief --root . --seam-id 8f7fa8644fd12280 --json ...`"),
+        "inline detail missing inspection command: {inline}"
+    );
+    Ok(())
+}
+
+#[test]
+fn gate_inline_failure_detail_preserves_line_only_anchor() -> Result<(), String> {
+    let input = fixture_input(GateMode::Acknowledgeable);
+    let mut report = build_gate_decision_report(&input)?;
+    report.decisions[0].placement.path = None;
+    report.decisions[0].placement.line = Some(88);
+    let inline = gate_decision_inline_detail(&report);
+    assert!(inline.contains("[(no file anchor):88]"), "inline detail dropped line-only anchor: {inline}");
+    Ok(())
+}
+
+#[test]
 fn gate_acknowledgeable_keeps_waived_candidate_visible() -> Result<(), String> {
     let mut input = fixture_input(GateMode::Acknowledgeable);
     input.labels.push("ripr-waive".to_string());
@@ -1266,6 +1305,9 @@ fn gate_acknowledgeable_blocks_complete_gap_ledger_route_with_typed_seam_identit
         value["decisions"][0]["evidence"]["verification_commands"][0],
         "cargo xtask fixtures boundary_gap"
     );
+    let inline = gate_decision_inline_detail(&report);
+    assert!(inline.contains("(weakly_exposed)"), "gap-ledger inline detail must preserve its evidence classification: {inline}");
+    assert!(inline.contains("amount == discount_threshold"), "gap-ledger inline detail must name the exact missing discriminator: {inline}");
     assert_eq!(
         value["decisions"][0]["evidence"]["candidate_values"],
         Value::Array(Vec::new()),

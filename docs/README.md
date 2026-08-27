@@ -15,6 +15,7 @@
 | **Verification & badges** | [Verification contract](VERIFICATION.md) |
 | **Triage a finding** | [Finding triage guide](how-to/triage-a-finding.md) |
 | **Support tiers** | [Support tiers](status/SUPPORT_TIERS.md) |
+| **Sibling-tool contracts** | [Interop and learning ledger](interop/sibling-tools.md) |
 
 ## Reference
 

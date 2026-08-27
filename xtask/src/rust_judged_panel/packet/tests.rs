@@ -140,6 +140,89 @@ fn rust_judged_panel_packet_retained_validator_reaches_committed_generation() ->
     super::validate_at(root, &manifest)
 }
 
+#[test]
+fn rust_judged_panel_packet_public_publish_validates_disposable_host_run() -> Result<(), String> {
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "xtask manifest lacks repository parent".to_string())?;
+    let root = TestRoot(scratch("public-publish")?);
+    copy_tree(
+        &repository.join("metrics/rust-judged-behavior-panel"),
+        &root.0.join("metrics/rust-judged-behavior-panel"),
+    )?;
+    fs::write(
+        root.0.join(".git"),
+        format!("gitdir: {}\n", repository.join(".git").display()),
+    )
+    .map_err(|error| format!("bind disposable fixture to repository git data: {error}"))?;
+    let state = crate::rust_judged_panel::subject::repository_state(repository)?;
+    let subjects_path = root.0.join(SUBJECTS_PATH);
+    let mut authority: serde_json::Value = read_strict_json(&subjects_path, "subject authority")?;
+    for case in authority
+        .get_mut("cases")
+        .and_then(serde_json::Value::as_array_mut)
+        .ok_or_else(|| "subject authority cases are not an array".to_string())?
+    {
+        case["expected_base"] = serde_json::Value::String(state.head.clone());
+        case["expected_head"] = serde_json::Value::String(state.head.clone());
+        case["expected_tree"] = serde_json::Value::String(state.tree.clone());
+    }
+    fs::write(
+        subjects_path,
+        serde_json::to_vec_pretty(&authority).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("write disposable subject identities: {error}"))?;
+    let manifest =
+        crate::rust_judged_panel::load_and_validate_at(&root.0, Path::new(MANIFEST_PATH))?;
+    let subjects = crate::rust_judged_panel::subject::load_for_packet(&root.0, &manifest)?;
+    if subjects.len() != 3
+        || subjects
+            .iter()
+            .map(|subject| subject.expected_direction.as_str())
+            .collect::<std::collections::BTreeSet<_>>()
+            != ["should_gap", "should_stay_quiet", "should_limit"]
+                .into_iter()
+                .collect()
+    {
+        return Err("fixture does not cover all three governed directions".to_string());
+    }
+    let host_current = crate::rust_judged_panel::host_run::write_test_host_run(&root.0, &subjects)?;
+    super::publish(&root.0, &manifest, &host_current)?;
+
+    let current: PortableCurrent =
+        read_strict_json(&root.0.join(CURRENT_PATH), "public publish current")?;
+    let index: PortableIndex =
+        read_strict_json(&root.0.join(&current.index_path), "public publish index")?;
+    if index.generation_id.is_empty()
+        || index.packets.len() != 3
+        || index
+            .packets
+            .iter()
+            .any(|entry| entry.packet_path.split('/').nth(4) != Some(index.generation_id.as_str()))
+    {
+        return Err(
+            "public publication did not bind every packet to its final generation".to_string(),
+        );
+    }
+    for entry in &index.packets {
+        let packet: PortablePacket =
+            read_strict_json(&root.0.join(&entry.packet_path), "public packet")?;
+        let attestation: RetainedAttestation =
+            read_strict_json(&root.0.join(&entry.attestation_path), "public attestation")?;
+        if packet.case_id != entry.case_id
+            || attestation.case_id != entry.case_id
+            || packet.host_evidence.run_id != "run-fixture"
+            || packet.judgment.disposition != "unjudged"
+        {
+            return Err(format!(
+                "public publication lost generation or unjudged identity for `{}`",
+                entry.case_id
+            ));
+        }
+    }
+    Ok(())
+}
+
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 struct TestRoot(PathBuf);

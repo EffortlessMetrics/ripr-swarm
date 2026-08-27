@@ -46,7 +46,7 @@ impl<'a> CompactGripContext<'a> {
         let unambiguous_test_helper_owner_calls_by_name =
             unambiguous_test_helper_owner_calls_by_name(&helper_owner_calls_by_file);
         let helper_owner_calls_by_module_path =
-            helper_owner_calls_by_module_path(&helper_owner_calls_by_file);
+            helper_owner_calls_by_module_path(index, &helper_owner_calls_by_file);
         let direct_helper_import_aliases_by_file =
             direct_helper_import_aliases_by_file(index, &helper_owner_calls_by_module_path);
         let production_helper_owner_calls_by_package =
@@ -174,7 +174,7 @@ impl<'a> CompactGripContext<'a> {
                 CompactTest {
                     test,
                     path_normalized: normalize_path(&test.file),
-                    module_path: module_path_for(&test.file),
+                    module_path: module_path_for_index(index, &test.file),
                     name_lower: test.name.to_ascii_lowercase(),
                     call_names,
                     assertion_tokens,
@@ -518,6 +518,7 @@ pub(in crate::analysis::test_grip_evidence) fn unambiguous_test_helper_owner_cal
 }
 
 pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_module_path(
+    index: &RustIndex,
     helpers: &HelperOwnerCallsByFile,
 ) -> HelperOwnerCallsByModulePath {
     helpers
@@ -526,7 +527,7 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_module_path
             if !rust_index::is_test_file(file) {
                 return None;
             }
-            let module_path = module_path_for(file)?.replace('/', "::");
+            let module_path = module_path_for_index(index, file)?.replace('/', "::");
             Some((module_path, file_helpers.clone()))
         })
         .collect()
@@ -663,7 +664,7 @@ pub(in crate::analysis::test_grip_evidence) fn target_affinity_production_owner_
         .iter()
         .filter(|function| !function.is_test && !rust_index::is_test_file(&function.file))
     {
-        let Some(module_path) = module_path_for(&function.file) else {
+        let Some(module_path) = module_path_for_index(index, &function.file) else {
             continue;
         };
         let Some(package) = package_scope(&function.file) else {
@@ -862,7 +863,7 @@ pub(in crate::analysis::test_grip_evidence) fn production_owner_names_by_module_
         .iter()
         .filter(|function| !function.is_test && !rust_index::is_test_file(&function.file))
     {
-        let Some(module_path) = module_path_for(&function.file) else {
+        let Some(module_path) = module_path_for_index(index, &function.file) else {
             continue;
         };
         by_module_path
@@ -885,7 +886,7 @@ pub(in crate::analysis::test_grip_evidence) fn production_owner_names_by_package
         let Some(package) = package_scope(&function.file) else {
             continue;
         };
-        let Some(module_path) = module_path_for(&function.file) else {
+        let Some(module_path) = module_path_for_index(index, &function.file) else {
             continue;
         };
         by_package

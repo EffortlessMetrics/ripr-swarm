@@ -1582,6 +1582,7 @@ mod tests {
                     ..FileFacts::default()
                 },
             )]),
+            workspace_authority: None,
         };
         let probe = Probe {
             id: ProbeId("probe:watchdog-reason".to_string()),
@@ -1641,6 +1642,7 @@ mod tests {
                     ..FileFacts::default()
                 },
             )]),
+            workspace_authority: None,
         };
         let probe = Probe {
             id: ProbeId("probe:watchdog-reason".to_string()),
