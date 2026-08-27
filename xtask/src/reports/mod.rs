@@ -37,8 +37,8 @@ mod reverse_authorization;
 mod review_comments;
 mod rust_repair_trust;
 mod sarif;
-mod spec_maintenance;
 mod source_promotion;
+mod spec_maintenance;
 mod targeted_rerun;
 mod targeted_test;
 mod test_oracles;
@@ -126,7 +126,6 @@ pub(crate) use repo::{
 pub(crate) use review_comments::ripr_review_comments;
 pub(crate) use rust_repair_trust::{rust_repair_trust_report, rust_repair_trust_report_value_at};
 pub(crate) use sarif::sarif_policy;
-pub(crate) use spec_maintenance::spec_maintenance;
 #[cfg(test)]
 pub(crate) use sarif::{
     SarifMissingBaseline, SarifPolicyMode, SarifPolicyResult, SarifPolicyThreshold,
@@ -134,6 +133,7 @@ pub(crate) use sarif::{
     sarif_policy_report_json, sarif_policy_report_markdown,
 };
 pub(crate) use source_promotion::source_promotion;
+pub(crate) use spec_maintenance::spec_maintenance;
 pub(crate) use targeted_rerun::targeted_rerun_benchmark;
 pub(crate) use targeted_test::targeted_test_outcome;
 pub(crate) use test_oracles::{test_efficiency_report, test_oracle_report};
