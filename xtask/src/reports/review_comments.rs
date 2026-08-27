@@ -1050,8 +1050,8 @@ fn render_error_review_comments_markdown(packet: &Value) -> String {
                         md_escape(
                             seam.get("family")
                                 .and_then(Value::as_str)
-                                .unwrap_or("unknown")
-                        )
+                                .unwrap_or("unknown"),
+                        ),
                     ));
                 }
             }
