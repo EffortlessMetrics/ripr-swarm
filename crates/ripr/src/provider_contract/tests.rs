@@ -812,4 +812,61 @@ fn diagnostics_require_identity_and_a_coherent_source_position() {
         error_code(blank_limitation.validate()),
         Some(RiprProviderContractErrorCodeV1::MissingField)
     );
+
+#[test]
+fn summary_rejects_noncanonical_taxonomy_and_counter_contradictions() {
+    let mut invalid_kind = receipt();
+    invalid_kind.summary.as_mut().unwrap().related_tests[0].oracle_kind = "proven".into();
+    assert_eq!(
+        error_code(invalid_kind.validate()),
+        Some(RiprProviderContractErrorCodeV1::MalformedIdentity)
+    );
+
+    let mut invalid_strength = receipt();
+    invalid_strength.summary.as_mut().unwrap().related_tests[0].oracle_strength =
+        "adequate".into();
+    assert_eq!(
+        error_code(invalid_strength.validate()),
+        Some(RiprProviderContractErrorCodeV1::MalformedIdentity)
+    );
+
+    let mut invalid_count = receipt();
+    invalid_count
+        .summary
+        .as_mut()
+        .unwrap()
+        .missing_discriminator_count = 2;
+    assert_eq!(
+        error_code(invalid_count.validate()),
+        Some(RiprProviderContractErrorCodeV1::CompletenessConflict)
+    );
+
+    let mut empty_related = receipt();
+    empty_related.summary.as_mut().unwrap().related_tests.clear();
+    assert_eq!(
+        error_code(empty_related.validate()),
+        Some(RiprProviderContractErrorCodeV1::CompletenessConflict)
+    );
+}
+
+#[test]
+fn findings_require_the_same_authoritative_shape_as_completed() {
+    let mut findings = receipt();
+    findings.result_class = RiprProviderResultClassV1::Findings;
+    assert_eq!(findings.validate(), Ok(()));
+
+    findings.native_status = None;
+    assert_eq!(
+        error_code(findings.validate()),
+        Some(RiprProviderContractErrorCodeV1::MissingField)
+    );
+
+    let mut incomplete = receipt();
+    incomplete.result_class = RiprProviderResultClassV1::Findings;
+    incomplete.analysis_complete = false;
+    assert_eq!(
+        error_code(incomplete.validate()),
+        Some(RiprProviderContractErrorCodeV1::CompletenessConflict)
+    );
+}
 }
