@@ -1,4 +1,4 @@
-use std::fs;
+use std::fs::{self, FileTimes};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -61,6 +61,24 @@ fn write_spec(root: &Path, text: &str) -> Result<(), String> {
     .map_err(|error| error.to_string())
 }
 
+
+fn backdate_spec(root: &Path) -> Result<(), String> {
+    let path = root.join("docs/specs/RIPR-SPEC-9999-time-independent-fixture.md");
+    let old = SystemTime::UNIX_EPOCH;
+    fs::File::open(&path)
+        .map_err(|error| error.to_string())?
+        .set_times(FileTimes::new().set_modified(old))
+        .map_err(|error| error.to_string())?;
+    let modified = fs::metadata(path)
+        .map_err(|error| error.to_string())?
+        .modified()
+        .map_err(|error| error.to_string())?;
+    if modified.duration_since(UNIX_EPOCH).map_err(|error| error.to_string())? >= Duration::from_secs(86_400) {
+        return Err("fixture spec mtime was not backdated".to_owned());
+    }
+    Ok(())
+}
+
 fn run_check(root: &Path) -> Result<std::process::Output, String> {
     Command::new(env!("CARGO_BIN_EXE_xtask"))
         .arg("check-spec-format")
@@ -94,7 +112,8 @@ fn run_git(root: &Path, args: &[&str]) -> Result<(), String> {
 fn old_proposed_spec_remains_structurally_valid() -> Result<(), String> {
     let root = temp_root("old-history")?;
     write_spec(&root, VALID_SPEC)?;
-    run_git(&root, &["init", "-q"])?;
+    backdate_spec(&root)?;
+    run_git(&root, &["-c", "commit.gpgsign=false", "init", "-q"])?;
     run_git(&root, &["add", "--", "docs/specs"])?;
     let commit = Command::new("git")
         .args([
@@ -102,6 +121,8 @@ fn old_proposed_spec_remains_structurally_valid() -> Result<(), String> {
             "user.name=fixture",
             "-c",
             "user.email=fixture@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
             "commit",
             "-q",
             "-m",

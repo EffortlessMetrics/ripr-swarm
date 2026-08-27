@@ -19,7 +19,7 @@ claims and PR-local slices, traceability and evidence, support authorities, and
 live GitHub/worktree state respectively.
 
 Specs do not expire because time passes or because their files remain
-unchanged. If a contract is wrong, replaced, or retired, update, supersede, or
+unchanged. If a contract is wrong, rejected, replaced, or retired, update, supersede, or
 deprecate it explicitly. Review dates may be useful descriptive context, but
 they do not determine spec validity or merge eligibility.
 
