@@ -92,7 +92,8 @@ impl ReviewCommentsRunReceipt {
             category: "analysis_timeout".to_string(),
             repair_route: "rerun review-comments with a larger configured timeout".to_string(),
         });
-        self.non_claims.push("no complete route inventory".to_string());
+        self.non_claims
+            .push("no complete route inventory".to_string());
         self.non_claims.push("no all-clear".to_string());
     }
 
@@ -258,7 +259,10 @@ mod tests {
         let mut failure = sample_receipt();
         failure.failed("canonical_comparison", "canonical comparison failed");
         assert_eq!(failure.status, "failed");
-        assert_eq!(failure.active_phase.as_deref(), Some("canonical_comparison"));
+        assert_eq!(
+            failure.active_phase.as_deref(),
+            Some("canonical_comparison")
+        );
         assert_eq!(
             failure.limitations[0].repair_route,
             "canonical comparison failed"
