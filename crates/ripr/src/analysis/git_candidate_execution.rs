@@ -64,7 +64,18 @@ impl Drop for TempRootGuard {
         // unbounded, invisible disk leak indistinguishable from a clean run,
         // so name the path an operator has to remove.
         if let Err(error) = remove_temp_root(&self.0) {
-            eprintln!("{}", cleanup_failure_report(&self.0, &error));
+            // Report fallibly. `eprintln!` panics when the stderr write fails
+            // (a closed descriptor, a non-blocking pipe), and this runs in
+            // `Drop` — possibly while a panic is already unwinding, where a
+            // second panic aborts the process. Losing a warning is strictly
+            // better than turning a disk-cleanup problem into an abort, so
+            // the write result is deliberately discarded.
+            use std::io::Write as _;
+            let _ = writeln!(
+                std::io::stderr(),
+                "{}",
+                cleanup_failure_report(&self.0, &error)
+            );
         }
     }
 }
