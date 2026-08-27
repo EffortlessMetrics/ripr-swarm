@@ -125,7 +125,7 @@ pub(in crate::analysis) fn find_transitive_witness(
     // that test which reaches the owner. Collected as a sortable 4-tuple so the
     // named witness is stable across index iteration order (goldens depend on
     // this determinism).
-    let mut sweep = ReachSweep::new(&prod_fns);
+    let mut sweep = ReachSweep::new(&prod_fns, owner_name);
     let mut witnesses: Vec<(PathBuf, usize, String, String)> = Vec::new();
     for test in &all_tests {
         let mut entry: Option<&str> = None;
@@ -140,7 +140,7 @@ pub(in crate::analysis) fn find_transitive_witness(
                 continue;
             }
             // BFS from this callee through the production call graph.
-            if sweep.reaches(&callee.name, owner_name) {
+            if sweep.reaches(&callee.name) {
                 match entry {
                     Some(current) if current <= callee.name.as_str() => {}
                     _ => entry = Some(callee.name.as_str()),
@@ -215,7 +215,7 @@ pub(in crate::analysis) fn find_macro_reach_witness(
             if is_macro_call(&callee.name) || callee.name == owner_name {
                 continue;
             }
-            if let Some(edge) = sweep.macro_edge(&callee.name, owner_name, index) {
+            if let Some(edge) = sweep.macro_edge(&callee.name, index) {
                 found.push((callee.name.clone(), edge));
             }
         }
@@ -452,19 +452,21 @@ fn collect_all_tests(index: &RustIndex) -> Vec<&TestFact> {
 /// (goldens depend on all three).
 struct ReachSweep<'a> {
     by_name: HashMap<&'a str, &'a FunctionSummary>,
+    owner_name: String,
     reach_memo: HashMap<String, bool>,
     macro_edge_memo: HashMap<String, Option<MacroReachEdge>>,
     macro_mention_memo: HashMap<String, bool>,
 }
 
 impl<'a> ReachSweep<'a> {
-    fn new(prod_fns: &[&'a FunctionSummary]) -> Self {
+    fn new(prod_fns: &[&'a FunctionSummary], owner_name: &str) -> Self {
         let mut by_name: HashMap<&str, &FunctionSummary> = HashMap::with_capacity(prod_fns.len());
         for function in prod_fns {
             by_name.entry(function.name.as_str()).or_insert(function);
         }
         Self {
             by_name,
+            owner_name: owner_name.to_string(),
             reach_memo: HashMap::new(),
             macro_edge_memo: HashMap::new(),
             macro_mention_memo: HashMap::new(),
@@ -475,11 +477,11 @@ impl<'a> ReachSweep<'a> {
         self.by_name.get(name).copied()
     }
 
-    fn reaches(&mut self, start_name: &str, owner_name: &str) -> bool {
+    fn reaches(&mut self, start_name: &str) -> bool {
         if let Some(cached) = self.reach_memo.get(start_name) {
             return *cached;
         }
-        let reached = self.bfs_reaches_owner_uncached(start_name, owner_name);
+        let reached = self.bfs_reaches_owner_uncached(start_name, &self.owner_name);
         self.reach_memo.insert(start_name.to_string(), reached);
         reached
     }
@@ -527,13 +529,12 @@ impl<'a> ReachSweep<'a> {
     fn macro_edge(
         &mut self,
         start_name: &str,
-        owner_name: &str,
         index: &RustIndex,
     ) -> Option<MacroReachEdge> {
         if let Some(cached) = self.macro_edge_memo.get(start_name) {
             return cached.clone();
         }
-        let edge = self.bfs_hits_owner_macro_uncached(start_name, owner_name, index);
+        let edge = self.bfs_hits_owner_macro_uncached(start_name, &self.owner_name, index);
         self.macro_edge_memo
             .insert(start_name.to_string(), edge.clone());
         edge
@@ -542,20 +543,19 @@ impl<'a> ReachSweep<'a> {
     fn bfs_hits_owner_macro_uncached(
         &mut self,
         start_name: &str,
-        owner_name: &str,
         index: &RustIndex,
     ) -> Option<MacroReachEdge> {
-        let mut queue: VecDeque<(String, usize)> = VecDeque::new();
-        let mut visited: HashSet<String> = HashSet::new();
+        let mut queue: VecDeque<(&str, usize)> = VecDeque::new();
+        let mut visited: HashSet<&str> = HashSet::new();
 
-        queue.push_back((start_name.to_string(), 1));
-        visited.insert(start_name.to_string());
+        queue.push_back((start_name, 1));
+        visited.insert(start_name);
 
         while let Some((current_name, depth)) = queue.pop_front() {
             if depth > MAX_TRANSITIVE_DEPTH {
                 continue;
             }
-            let Some(current_fn) = self.resolve(&current_name) else {
+            let Some(current_fn) = self.resolve(current_name) else {
                 continue;
             };
             for macro_invocation in
@@ -565,18 +565,18 @@ impl<'a> ReachSweep<'a> {
                     &macro_invocation,
                     &current_fn.file,
                     &current_fn.name,
-                    owner_name,
+                    &self.owner_name,
                     index,
                 ) {
                     return Some(edge);
                 }
             }
             for call in calls_of(current_fn) {
-                if is_macro_call(call.name.as_str()) || call.name == owner_name {
+                if is_macro_call(call.name.as_str()) || call.name == self.owner_name {
                     continue;
                 }
-                if visited.insert(call.name.clone()) {
-                    queue.push_back((call.name.clone(), depth + 1));
+                if visited.insert(call.name.as_str()) {
+                    queue.push_back((call.name.as_str(), depth + 1));
                 }
             }
         }
