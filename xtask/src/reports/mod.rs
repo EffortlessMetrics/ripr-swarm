@@ -37,6 +37,7 @@ mod reverse_authorization;
 mod review_comments;
 mod rust_repair_trust;
 mod sarif;
+mod spec_maintenance;
 mod source_promotion;
 mod targeted_rerun;
 mod targeted_test;
@@ -125,6 +126,7 @@ pub(crate) use repo::{
 pub(crate) use review_comments::ripr_review_comments;
 pub(crate) use rust_repair_trust::{rust_repair_trust_report, rust_repair_trust_report_value_at};
 pub(crate) use sarif::sarif_policy;
+pub(crate) use spec_maintenance::spec_maintenance;
 #[cfg(test)]
 pub(crate) use sarif::{
     SarifMissingBaseline, SarifPolicyMode, SarifPolicyResult, SarifPolicyThreshold,

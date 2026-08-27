@@ -429,6 +429,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "doctor",
         "worktree doctor",
         "specs next",
+        "specs maintenance --as-of YYYY-MM-DD [--json]",
         "ci-fast",
         "ci-full",
         "check-static-language",
@@ -1289,6 +1290,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Prints the next available RIPR-SPEC ID.",
+        ),
+        command_entry(
+            "specs maintenance",
+            "report_only",
+            "target/ripr/reports/spec-maintenance.{json,md}",
+            false,
+            false,
+            "Writes an advisory, reason-coded specification maintenance inventory.",
         ),
         command_entry(
             "ci-fast",
