@@ -490,6 +490,9 @@ mod tests {
                 "#[test]\nfn source_test() { assert_eq!(1, 1); }\n",
             ),
         ];
+        for (path, source) in &sources {
+            std::fs::write(root.join(path), source)?;
+        }
         let files = sources
             .iter()
             .map(|(path, source)| {
