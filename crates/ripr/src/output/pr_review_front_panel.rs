@@ -1155,7 +1155,7 @@ fn movement(input: &PrReviewFrontPanelInput, parsed: &ParsedPanelSources) -> Pan
     {
         return PanelMovement {
             state,
-            before_class: string_path(proof, &["movement", "before_class"]).map(normalize_class),
+            before_class: string_path(proof, &["movement", "before_class"]),
             after_class: string_path(proof, &["movement", "after_class"]),
             source_artifact: input.assistant_health_path.clone(),
         };
@@ -2450,6 +2450,11 @@ mod tests {
                 assert_eq!(
                     report.movement.after_class.as_deref(),
                     Some("strongly_gripped"),
+                    "movement must retain assistant-health grip vocabulary"
+                );
+                assert_eq!(
+                    report.movement.before_class.as_deref(),
+                    Some("weakly_gripped"),
                     "movement must retain assistant-health grip vocabulary"
                 );
             }
