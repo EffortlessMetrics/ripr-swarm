@@ -1155,7 +1155,7 @@ fn movement(input: &PrReviewFrontPanelInput, parsed: &ParsedPanelSources) -> Pan
     {
         return PanelMovement {
             state,
-            before_class: string_path(proof, &["movement", "before_class"]).map(normalize_class),
+            before_class: string_path(proof, &["movement", "before_class"]),
             after_class: string_path(proof, &["movement", "after_class"]),
             source_artifact: input.assistant_health_path.clone(),
         };
@@ -2448,6 +2448,11 @@ mod tests {
                     "public evidence strength must use exposure vocabulary"
                 );
                 assert_eq!(
+                    report.movement.before_class.as_deref(),
+                    Some("weakly_gripped"),
+                    "movement must preserve the assistant-health grip vocabulary"
+                );
+                assert_eq!(
                     report.movement.after_class.as_deref(),
                     Some("strongly_gripped"),
                     "movement must retain assistant-health grip vocabulary"
@@ -2503,6 +2508,41 @@ mod tests {
         let rendered = render_pr_review_front_panel_json(&report)?;
         assert!(rendered.contains("\"kind\": \"malformed_input\""));
         assert!(rendered.contains("Optional PR guidance input is malformed"));
+        Ok(())
+    }
+
+    #[test]
+    fn assistant_health_movement_keeps_one_producer_vocabulary() -> Result<(), String> {
+        let repo_root = repo_root()?;
+        let inputs = serde_json::json!({
+            "assistant_health": "fixtures/boundary_gap/expected/assistant-loop-health/complete-improved/assistant-loop-health.json"
+        });
+        let expected_md_path = repo_root.join(
+            "fixtures/boundary_gap/expected/pr-review-front-panel/coverage-flat-grip-improved/pr-review-front-panel.md",
+        );
+        let input = fixture_input(&repo_root, &inputs, &expected_md_path)?;
+        let report = build_pr_review_front_panel_report(input);
+
+        assert_eq!(
+            report.movement.before_class.as_deref(),
+            Some("weakly_gripped")
+        );
+        assert_eq!(
+            report.movement.after_class.as_deref(),
+            Some("strongly_gripped")
+        );
+        assert_ne!(
+            report.movement.before_class.as_deref(),
+            Some("weakly_exposed")
+        );
+        assert_eq!(
+            report
+                .top_issue
+                .as_ref()
+                .and_then(|issue| issue.classification.as_deref()),
+            Some("exposed"),
+            "top_issue must retain its existing exposure vocabulary"
+        );
         Ok(())
     }
 
