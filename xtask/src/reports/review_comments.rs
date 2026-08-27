@@ -653,7 +653,7 @@ fn write_error_review_comments(
     let packet = error_review_comments_packet(repo, options, error, receipt);
     // #1419: the guidance producer is an enhancement layered on static facts
     // the gate already computed. A timeout must not blank the seam location
-    // out of the summary when a repo-exposure artifact already names it.
+    // out of the summary when the diff-check artifact already names it.
     let fallback = static_gap_seam_fallback(repo, options);
     let json_text = serde_json::to_string_pretty(&packet)
         .map_err(|err| format!("serialize review comments error packet: {err}"))?;
