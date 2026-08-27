@@ -3575,7 +3575,7 @@ fn agent_start_packet_discloses_that_generated_commands_assume_bash()
     // The commands are already fenced as ```bash, so a bare `bash` substring is
     // not evidence. Require the prose disclosure ahead of the first fence.
     let disclosure = commands_md
-        .find("Generated commands are bash command lines.")
+        .find("The Bash form uses POSIX single-quote quoting and `>` redirection;")
         .ok_or_else(|| format!("commands.md must disclose the bash assumption:\n{commands_md}"))?;
     let first_fence = commands_md
         .find("```bash")
