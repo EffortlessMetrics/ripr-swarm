@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 
 use super::*;
+use crate::domain::{OracleKind, OracleStrength, RelationReason};
 
 impl RiprProviderCapabilitySetV1 {
     pub fn read_only(provider_version: impl Into<String>) -> Self {
@@ -130,7 +131,7 @@ impl RiprAnalysisRequestV1 {
         require_non_empty("profile", &self.profile)?;
         require_sha256("config_digest", &self.config_digest)?;
         require_non_empty("analyzer_generation", &self.analyzer_generation)?;
-        validate_portable_relative_path("output_root", &self.output_root)?;
+        validate_portable_relative_path("output_root", &self.output_root, RiprProviderContractErrorCodeV1::UnsafeOutputRoot)?;
         require_non_empty("requested_claim", &self.requested_claim)
     }
 }
@@ -159,8 +160,9 @@ impl RiprAnalysisReceiptV1 {
         for diagnostic in &self.diagnostics {
             validate_diagnostic(diagnostic)?;
         }
+        let authoritative = matches!(self.result_class, RiprProviderResultClassV1::Completed | RiprProviderResultClassV1::Findings);
         if let Some(summary) = &self.summary {
-            validate_summary(summary, &self.request.subject.seam_id, false)?;
+            validate_summary(summary, &self.request.subject.seam_id, authoritative)?;
         }
         if self.analysis_complete && self.truncated {
             return Err(error(
@@ -183,11 +185,11 @@ impl RiprAnalysisReceiptV1 {
                         "complete or findings results require canonical exposure status and summary",
                     ));
                 }
-                if let Some(summary) = &self.summary {
-                    validate_summary(summary, &self.request.subject.seam_id, true)?;
-                }
             }
             RiprProviderResultClassV1::Partial => {
+                if self.native_status.is_some() {
+                    return Err(error(RiprProviderContractErrorCodeV1::CompletenessConflict, "partial results cannot carry native exposure status"));
+                }
                 if self.analysis_complete {
                     return Err(error(
                         RiprProviderContractErrorCodeV1::CompletenessConflict,
@@ -202,6 +204,9 @@ impl RiprAnalysisReceiptV1 {
             | RiprProviderResultClassV1::InstrumentFailure
             | RiprProviderResultClassV1::Cancelled
             | RiprProviderResultClassV1::NotProven => {
+                if self.native_status.is_some() {
+                    return Err(error(RiprProviderContractErrorCodeV1::CompletenessConflict, "non-authoritative results cannot carry native exposure status"));
+                }
                 if self.analysis_complete {
                     return Err(error(
                         RiprProviderContractErrorCodeV1::CompletenessConflict,
@@ -251,30 +256,41 @@ fn validate_summary(
             "a complete result requires a nonzero analyzed-subject denominator",
         ));
     }
+    if summary.missing_discriminator_count > summary.analyzed_subject_count {
+        return Err(error(RiprProviderContractErrorCodeV1::CompletenessConflict, "missing discriminators cannot exceed analyzed subjects"));
+    }
+    if require_denominator && summary.related_tests.is_empty() {
+        return Err(error(RiprProviderContractErrorCodeV1::CompletenessConflict, "a complete result with analyzed subjects requires related test evidence"));
+    }
+    require_oracle_strength("summary.strongest_oracle", &summary.strongest_oracle)?;
     require_non_empty("summary.strongest_oracle", &summary.strongest_oracle)?;
     require_non_empty("summary.fingerprint", &summary.fingerprint)?;
     for entry in &summary.related_tests {
         require_non_empty("summary.related_tests.test_name", &entry.test_name)?;
-        validate_portable_relative_path("summary.related_tests.file", &entry.file)?;
+        validate_portable_relative_path("summary.related_tests.file", &entry.file, RiprProviderContractErrorCodeV1::MalformedIdentity)?;
         if entry.line == 0 {
             return Err(error(
                 RiprProviderContractErrorCodeV1::MalformedIdentity,
                 "summary related-test line must be positive",
             ));
         }
-        require_non_empty("summary.related_tests.oracle_kind", &entry.oracle_kind)?;
-        require_non_empty(
-            "summary.related_tests.oracle_strength",
-            &entry.oracle_strength,
-        )?;
-        require_non_empty(
-            "summary.related_tests.relation_reason",
-            &entry.relation_reason,
-        )?;
+        require_oracle_kind(&entry.oracle_kind)?;
+        require_oracle_strength("summary.related_tests.oracle_strength", &entry.oracle_strength)?;
+        require_relation_reason(&entry.relation_reason)?;
     }
     Ok(())
 }
 
+
+fn require_oracle_kind(value: &str) -> Result<OracleKind, RiprProviderContractErrorV1> {
+    [OracleKind::ExactValue, OracleKind::ExactErrorVariant, OracleKind::WholeObjectEquality, OracleKind::Snapshot, OracleKind::RelationalCheck, OracleKind::BroadError, OracleKind::SmokeOnly, OracleKind::MockExpectation, OracleKind::Unknown].into_iter().find(|kind| kind.as_str() == value).ok_or_else(|| error(RiprProviderContractErrorCodeV1::MalformedIdentity, "oracle kind is not canonical"))
+}
+fn require_oracle_strength(field: &str, value: &str) -> Result<OracleStrength, RiprProviderContractErrorV1> {
+    [OracleStrength::Strong, OracleStrength::Medium, OracleStrength::Weak, OracleStrength::Smoke, OracleStrength::None, OracleStrength::Unknown].into_iter().find(|strength| strength.as_str() == value).ok_or_else(|| error(RiprProviderContractErrorCodeV1::MalformedIdentity, format!("{field} is not canonical")))
+}
+fn require_relation_reason(value: &str) -> Result<RelationReason, RiprProviderContractErrorV1> {
+    [RelationReason::DirectOwnerCall, RelationReason::HelperOwnerCall, RelationReason::AssertionTargetAffinity, RelationReason::SameTestFile, RelationReason::SameModule, RelationReason::OwnerNamedTest, RelationReason::ImportPathAffinity, RelationReason::FixtureOwnerAffinity, RelationReason::WeakTokenSubstring, RelationReason::ReExportChainFollowed].into_iter().find(|reason| reason.as_str() == value).ok_or_else(|| error(RiprProviderContractErrorCodeV1::MalformedIdentity, "relation reason is not canonical"))
+}
 fn validate_diagnostic(
     diagnostic: &RiprProviderDiagnosticV1,
 ) -> Result<(), RiprProviderContractErrorV1> {
@@ -282,7 +298,7 @@ fn validate_diagnostic(
     require_non_empty("diagnostic.message", &diagnostic.message)?;
     require_optional_non_empty("diagnostic.next_action", diagnostic.next_action.as_deref())?;
     if let Some(path) = &diagnostic.source_path {
-        validate_portable_relative_path("diagnostic.source_path", path)?;
+        validate_portable_relative_path("diagnostic.source_path", path, RiprProviderContractErrorCodeV1::MalformedIdentity)?;
     }
     match (diagnostic.start_line, diagnostic.start_column) {
         (None, None) => Ok(()),
@@ -368,6 +384,7 @@ fn is_hex(value: &str) -> bool {
 fn validate_portable_relative_path(
     field: &str,
     value: &str,
+    error_code: RiprProviderContractErrorCodeV1,
 ) -> Result<(), RiprProviderContractErrorV1> {
     if value.is_empty()
         || value.starts_with('/')
@@ -378,7 +395,7 @@ fn validate_portable_relative_path(
         })
     {
         return Err(error(
-            RiprProviderContractErrorCodeV1::UnsafeOutputRoot,
+            error_code,
             format!("{field} must be a portable repository-relative path without traversal"),
         ));
     }
