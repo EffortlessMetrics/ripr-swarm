@@ -959,11 +959,7 @@ fn snapshot_tree(root: &Path) -> Result<TreeSnapshot, String> {
         return Ok(None);
     }
 
-    fn visit(
-        root: &Path,
-        path: &Path,
-        entries: &mut TreeSnapshotEntries,
-    ) -> Result<(), String> {
+    fn visit(root: &Path, path: &Path, entries: &mut TreeSnapshotEntries) -> Result<(), String> {
         let relative = path
             .strip_prefix(root)
             .map_err(|error| format!("snapshot path outside root: {error}"))?
@@ -995,11 +991,7 @@ fn snapshot_tree(root: &Path) -> Result<TreeSnapshot, String> {
     Ok(Some(entries))
 }
 
-fn assert_tree_unchanged(
-    root: &Path,
-    before: &TreeSnapshot,
-    label: &str,
-) -> Result<(), String> {
+fn assert_tree_unchanged(root: &Path, before: &TreeSnapshot, label: &str) -> Result<(), String> {
     let after = snapshot_tree(root)?;
     if &after != before {
         return Err(format!("{label} changed the portable tree"));
