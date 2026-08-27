@@ -5765,7 +5765,6 @@ fn check_spec_format() -> Result<(), String> {
     )
 }
 
-
 #[cfg(test)]
 #[expect(
     clippy::unwrap_used,
@@ -5773,7 +5772,6 @@ fn check_spec_format() -> Result<(), String> {
     reason = "xtask test code uses unwrap/expect for fail-fast assertion. Production paths are receipted via policy/no-panic-allowlist.toml; the test scope is governed by this single module-level expect."
 )]
 mod tests;
-
 
 #[cfg(test)]
 mod inherited_failure_tests {
