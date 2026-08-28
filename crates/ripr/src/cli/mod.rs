@@ -91,6 +91,10 @@ fn before_repair_attempt(args: &[String]) -> Result<Option<agent::AgentRepairOpt
 
 fn persist_before_repair_attempt(options: &agent::AgentRepairOptions) -> Result<(), String> {
     let root = &options.root;
+    let seam_id = options
+        .seam_id
+        .as_deref()
+        .ok_or_else(|| "before-phase repair attempt is missing its seam identity".to_string())?;
     let workflow_manifest = root.join(WORKFLOW_MANIFEST_ARTIFACT);
     let commands_markdown = root.join(WORKFLOW_COMMANDS_MARKDOWN_ARTIFACT);
     let agent_brief = root.join(WORKFLOW_AGENT_BRIEF_ARTIFACT);
@@ -98,14 +102,13 @@ fn persist_before_repair_attempt(options: &agent::AgentRepairOptions) -> Result<
     let agent_packet = root.join(WORKFLOW_AGENT_PACKET_ARTIFACT);
     let packet_text = std::fs::read_to_string(&agent_packet)
         .map_err(|error| format!("read {} failed: {error}", agent_packet.display()))?;
-    let policy =
-        crate::app::repair_attempt::edit_cage_policy_from_packet(&packet_text, &options.seam_id)?;
+    let policy = crate::app::repair_attempt::edit_cage_policy_from_packet(&packet_text, seam_id)?;
     let edit_cage_baseline = root.join("target/ripr/workflow/attempt-baseline.json");
     crate::app::repair_attempt::write_edit_cage_baseline(root, &edit_cage_baseline, &policy)?;
     let result = crate::app::repair_attempt::begin_repair_attempt(
         root,
         root,
-        &options.seam_id,
+        seam_id,
         &[
             BeforeArtifactSource {
                 role: "workflow_manifest",
@@ -228,11 +231,14 @@ mod tests {
         let Some(before) = before else {
             return Err("before phase was not selected for attempt persistence".to_string());
         };
-        if before.seam_id != "seam:sample" || before.phase != agent::AgentRepairPhase::Before {
+        if before.seam_id.as_deref() != Some("seam:sample")
+            || before.attempt_id.is_some()
+            || before.phase != agent::AgentRepairPhase::Before
+        {
             return Err(format!("unexpected before-phase options: {before:?}"));
         }
 
-        let after = before_repair_attempt(&args(&[
+        let seam_after = before_repair_attempt(&args(&[
             "ripr",
             "agent",
             "repair",
@@ -241,8 +247,22 @@ mod tests {
             "--phase",
             "after",
         ]))?;
-        if after.is_some() {
-            return Err("after phase attempted to create a new repair attempt".to_string());
+        if seam_after.is_some() {
+            return Err("seam-selected after phase attempted to create a new repair attempt".to_string());
+        }
+        let attempt_after = before_repair_attempt(&args(&[
+            "ripr",
+            "agent",
+            "repair",
+            "--attempt",
+            "repair-attempt-0123456789abcdef01234567",
+            "--phase",
+            "after",
+        ]))?;
+        if attempt_after.is_some() {
+            return Err(
+                "attempt-selected after phase attempted to create a new repair attempt".to_string(),
+            );
         }
         let unrelated = before_repair_attempt(&args(&["ripr", "check", "--help"]))?;
         if unrelated.is_some() {
