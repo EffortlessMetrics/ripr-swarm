@@ -1403,67 +1403,30 @@ fn actual_test_keys(index: &RustIndex) -> BTreeSet<ActualTestKey<'_>> {
         .collect()
 }
 
+/// Names that can shadow same-file production helpers while resolving test evidence.
+///
+/// `FunctionFact::is_test` is the parser-owned source-role authority. Reusing it here
+/// keeps `cfg(all(..., test))` and future supported test-role forms aligned with seam
+/// exclusion instead of maintaining a second lexical cfg scanner.
 pub(in crate::analysis::test_grip_evidence) fn test_scoped_function_names_by_file(
     index: &RustIndex,
 ) -> BTreeMap<PathBuf, BTreeSet<String>> {
     let mut names_by_file: BTreeMap<PathBuf, BTreeSet<String>> = BTreeMap::new();
-    for (file, facts) in &index.files {
-        let cfg_test_module_ranges = cfg_test_module_line_ranges(&facts.source);
-        for function in facts.functions.iter().filter(|function| {
-            rust_index::is_test_file(file)
-                || cfg_test_module_ranges
-                    .iter()
-                    .any(|(start, end)| *start < function.start_line && function.start_line <= *end)
-        }) {
-            names_by_file
-                .entry(file.clone())
-                .or_default()
-                .insert(function.name.clone());
+    for function in index
+        .functions
+        .iter()
+        .filter(|function| function.is_test || rust_index::is_test_file(&function.file))
+    {
+        if let Some(names) = names_by_file.get_mut(&function.file) {
+            names.insert(function.name.clone());
+        } else {
+            names_by_file.insert(
+                function.file.clone(),
+                BTreeSet::from([function.name.clone()]),
+            );
         }
     }
     names_by_file
-}
-
-pub(in crate::analysis::test_grip_evidence) fn cfg_test_module_line_ranges(
-    source: &str,
-) -> Vec<(usize, usize)> {
-    let mut pending_cfg_test = false;
-    let mut depth = 0isize;
-    let mut active_modules: Vec<(usize, isize)> = Vec::new();
-    let mut ranges = Vec::new();
-    let mut last_line = 0usize;
-    for (idx, raw_line) in source.lines().enumerate() {
-        let line_number = idx + 1;
-        last_line = line_number;
-        let line = strip_comments_and_strings(raw_line);
-        let trimmed = line.trim();
-        if trimmed.contains("#[cfg(test)]") {
-            pending_cfg_test = true;
-        }
-        let opens = line.chars().filter(|ch| *ch == '{').count() as isize;
-        let closes = line.chars().filter(|ch| *ch == '}').count() as isize;
-        if pending_cfg_test && line.contains("mod ") && opens > 0 {
-            active_modules.push((line_number, depth + opens));
-            pending_cfg_test = false;
-        } else if pending_cfg_test && !trimmed.is_empty() && !trimmed.starts_with("#[") {
-            pending_cfg_test = false;
-        }
-        depth += opens - closes;
-        while active_modules
-            .last()
-            .is_some_and(|(_start, module_depth)| depth < *module_depth)
-        {
-            if let Some((start, _module_depth)) = active_modules.pop() {
-                ranges.push((start, line_number));
-            }
-        }
-    }
-    ranges.extend(
-        active_modules
-            .into_iter()
-            .map(|(start, _module_depth)| (start, last_line)),
-    );
-    ranges
 }
 
 pub(in crate::analysis::test_grip_evidence) fn production_owner_names(
@@ -2287,3 +2250,69 @@ pub(in crate::analysis::test_grip_evidence) fn code_contains_parent_qualified_he
 // `RelationReason` and `RelationConfidence` now live in `crate::domain::evidence`.
 // They are re-exported at the top of this file so callers can still import them
 // from here without source-level changes.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analysis::facts::{FileFacts, FunctionFact, RustIndex};
+    use crate::domain::SymbolId;
+
+    #[test]
+    fn cfg_all_test_role_blocks_same_file_shadow_credit() {
+        let file = PathBuf::from("crate/src/lib.rs");
+        let production = function_fact(&file, "wrapper", 1, false);
+        let evidence_shadow = function_fact(&file, "wrapper", 6, true);
+        let source = r#"fn wrapper() {}
+
+#[cfg(all(feature = "slow", test))]
+mod tests {
+    fn wrapper() {}
+}
+"#;
+        let index = RustIndex {
+            files: BTreeMap::from([(
+                file.clone(),
+                FileFacts {
+                    path: file.clone(),
+                    functions: vec![production.clone(), evidence_shadow.clone()],
+                    source: source.to_string(),
+                    ..FileFacts::default()
+                },
+            )]),
+            functions: vec![production, evidence_shadow],
+            ..RustIndex::default()
+        };
+
+        let scoped = test_scoped_function_names_by_file(&index);
+        let scoped_names = scoped.get(&file);
+        assert!(scoped_names.is_some_and(|names| names.contains("wrapper")));
+
+        let production_names = BTreeSet::from(["wrapper".to_string()]);
+        let call = CallFact {
+            line: 8,
+            name: "wrapper".to_string(),
+            text: "wrapper()".to_string(),
+        };
+        assert!(!same_file_unit_production_helper_call_is_allowed(
+            &call,
+            scoped_names,
+            Some(&production_names),
+        ));
+    }
+
+    fn function_fact(file: &Path, name: &str, start_line: usize, is_test: bool) -> FunctionFact {
+        FunctionFact {
+            id: SymbolId(format!("symbol:{name}:{start_line}")),
+            name: name.to_string(),
+            file: file.to_path_buf(),
+            start_line,
+            end_line: start_line,
+            body: String::new(),
+            calls: Vec::new(),
+            returns: Vec::new(),
+            literals: Vec::new(),
+            is_test,
+            attrs: Vec::new(),
+        }
+    }
+}

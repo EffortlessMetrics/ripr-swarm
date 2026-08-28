@@ -5424,6 +5424,32 @@ fn routed_rust_workflow_contract_violations_with_reusable(
     }
 
     if delegated {
+        for job in ROUTED_RUST_IMPLEMENTATION_JOBS {
+            if !routed_rust_job_block_any(workflow, job, |line| {
+                line.trim_start().starts_with("runner-config:")
+            }) {
+                violations.push(format!(
+                    ".github/workflows/routed-rust.yml delegated job `{job}` must pass the reusable runner-config input"
+                ));
+            }
+        }
+        if !implementation_workflow.contains("runs-on: ${{ fromJSON(inputs.runner-config) }}") {
+            violations.push(
+                "rust-gates.yml must convert the string runner-config input with fromJSON before assigning runs-on".to_string(),
+            );
+        }
+        if !implementation_workflow.contains(
+            "runner-config:\n        description: JSON string or object accepted by jobs.<job_id>.runs-on.\n        required: true\n        type: string",
+        ) {
+            violations.push(
+                "rust-gates.yml runner-config input must remain a required string contract for JSON runner values".to_string(),
+            );
+        }
+        if workflow.matches("runner-config: '").count() < ROUTED_RUST_IMPLEMENTATION_JOBS.len() {
+            violations.push(
+                ".github/workflows/routed-rust.yml must pass JSON-string runner-config values to all four delegated jobs".to_string(),
+            );
+        }
         for (label, snippet) in [
             ("workflow_call trigger", "workflow_call:"),
             (
@@ -5450,6 +5476,11 @@ fn routed_rust_workflow_contract_violations_with_reusable(
                 ));
             }
         }
+        if !routed_rust_job_block_any(workflow, "rust-cpx42", |line| line.contains("rust-medium")) {
+            violations.push(
+                ".github/workflows/routed-rust.yml CPX42 implementation job must retain the rust-medium capacity label".to_string(),
+            );
+        }
     } else {
         for (label, snippet) in [
             (
@@ -5467,6 +5498,22 @@ fn routed_rust_workflow_contract_violations_with_reusable(
                 ));
             }
         }
+    }
+
+    if !workflow.contains("- name: Upload docs-gate reports\n        if: always()") {
+        violations.push(
+            ".github/workflows/routed-rust.yml docs-gate artifacts must upload on both successful and failed docs runs".to_string(),
+        );
+    }
+    if !implementation_workflow.contains("if: success() && inputs.run-advisory-reports") {
+        violations.push(
+            "rust-gates.yml advisory reports must require successful required proof and explicit opt-in".to_string(),
+        );
+    }
+    if !implementation_workflow.contains("if: failure() || inputs.upload-success-artifacts") {
+        violations.push(
+            "rust-gates.yml must retain failure artifacts and permit explicitly opted-in successful artifacts".to_string(),
+        );
     }
 
     let toolchain_temp_steps = implementation_workflow
