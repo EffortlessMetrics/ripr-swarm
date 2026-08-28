@@ -1,5 +1,6 @@
 use super::{FunctionFact, RustIndex, TestFact};
 use crate::analysis::extract::{extract_assertions, extract_literal_facts};
+use crate::analysis::syntax::parser_oracles_for_function;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
@@ -101,7 +102,8 @@ fn test_fact(function: &FunctionFact) -> TestFact {
         end_line: function.end_line,
         body: function.body.clone(),
         calls: function.calls.clone(),
-        assertions: extract_assertions(&function.body, function.start_line),
+        assertions: parser_oracles_for_function(&function.body, function.start_line)
+            .unwrap_or_else(|| extract_assertions(&function.body, function.start_line)),
         literals,
         attrs: function.attrs.clone(),
     }
@@ -178,6 +180,13 @@ fn qualified_test_case(input: i32, expected: i32) {
     assert_eq!(helper(input), expected);
 }
 
+#[test_case(9)]
+fn assertion_text_is_not_an_assertion(value: i32) {
+    // assert_eq!(value, 9)
+    let text = "assert_eq!(value, 9)";
+    let _ = (value, text);
+}
+
 #[case(7)]
 fn orphan_case(input: i32) {
     assert_eq!(helper(input), input);
@@ -200,13 +209,14 @@ fn ordinary_test() {
             .map(|test| test.name.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(index.functions.len(), 6);
+        assert_eq!(index.functions.len(), 7);
         assert_eq!(
             test_names,
             vec![
                 "rstest_case",
                 "test_case_case",
                 "qualified_test_case",
+                "assertion_text_is_not_an_assertion",
                 "ordinary_test"
             ]
         );
@@ -260,6 +270,16 @@ fn ordinary_test() {
                 .map(|literal| literal.value.as_str())
                 .collect::<Vec<_>>(),
             vec!["3", "6"]
+        );
+
+        let false_positive = index
+            .tests
+            .iter()
+            .find(|test| test.name == "assertion_text_is_not_an_assertion")
+            .ok_or("missing comment/string test-case fact")?;
+        assert!(
+            false_positive.assertions.is_empty(),
+            "comments and strings must not be promoted as parser-backed assertions"
         );
 
         let file = index
