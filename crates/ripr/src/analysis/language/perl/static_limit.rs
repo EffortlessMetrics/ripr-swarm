@@ -66,6 +66,11 @@ pub(super) fn for_change(
             continue;
         }
 
+        // Operational limitations remain fail-closed even though they do not
+        // earn a semantic shared taxonomy label.
+        if super::limitation_kind_blocks_strict_actionability(&limitation.kind) {
+            projection.blocks = true;
+        }
         if let Some(kind) = limitation_kind(&limitation.kind) {
             projection.blocks = true;
             select_more_specific(&mut projection.kind, kind);
@@ -233,6 +238,23 @@ mod tests {
         }
         assert_eq!(limitation_kind("narrowed_representation"), None);
         assert_eq!(limitation_kind("packet_incomplete"), None);
+    }
+
+    #[test]
+    fn perl_static_limit_keeps_operational_limitations_blocking_without_a_label() {
+        for code in [
+            "missing_test_runner",
+            "missing_diff_owner",
+            "narrowed_representation",
+            "packet_incomplete",
+            "partial_emitter",
+            "unknown",
+        ] {
+            assert!(super::super::limitation_kind_blocks_strict_actionability(
+                code
+            ));
+            assert_eq!(limitation_kind(code), None, "{code} must remain untyped");
+        }
     }
 
     #[test]
