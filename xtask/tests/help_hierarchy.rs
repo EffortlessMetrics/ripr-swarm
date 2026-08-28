@@ -135,5 +135,14 @@ fn unknown_and_retired_commands_route_to_exhaustive_help() -> Result<(), String>
             ));
         }
     }
+
+    let stderr = normalized(&rendered_error(&["help", "chek-pr"])?);
+    if !stderr.contains("cargo xtask help --all")
+        || stderr.contains("`cargo xtask help` for the full list")
+    {
+        return Err(format!(
+            "unknown help target lost exhaustive help guidance\noutput:\n{stderr}"
+        ));
+    }
     Ok(())
 }
