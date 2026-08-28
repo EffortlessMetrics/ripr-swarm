@@ -7,6 +7,12 @@ use super::*;
 const HASH: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const OTHER_HASH: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const TREE_ID: &str = "git-tree:0123456789abcdef0123456789abcdef01234567";
+const TREE_DIGEST: &str =
+    "sha256:a0ea7c116d4ed114740a21f4a4a5967e1e6e31755bb8c8896829278d75d55636";
+const SHA256_TREE_ID: &str =
+    "git-tree:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const SHA256_TREE_DIGEST: &str =
+    "sha256:6abeb43714bf5518cc497c7b6531cd712ca892edc8b5b63974645bdec678793a";
 
 fn error_code(
     result: Result<(), RiprProviderContractErrorV1>,
@@ -32,11 +38,17 @@ fn snapshot(source_view: RiprSourceViewV1) -> RiprRepositorySnapshotV1 {
         RiprSourceViewV1::Worktree => format!("worktree:{HASH}"),
         RiprSourceViewV1::CapturedSourceSet => format!("captured:{HASH}"),
     };
+    let source_digest = match source_view {
+        RiprSourceViewV1::GitTree => TREE_DIGEST,
+        RiprSourceViewV1::GitIndex
+        | RiprSourceViewV1::Worktree
+        | RiprSourceViewV1::CapturedSourceSet => HASH,
+    };
     RiprRepositorySnapshotV1 {
         repository_id: "EffortlessMetrics/ripr-swarm".into(),
         snapshot_id,
         source_view,
-        source_digest: HASH.into(),
+        source_digest: source_digest.into(),
     }
 }
 
@@ -188,6 +200,26 @@ fn every_source_view_has_one_owned_snapshot_identity_rule() {
         error_code(invalid_tree.validate()),
         Some(RiprProviderContractErrorCodeV1::MalformedIdentity)
     );
+
+    let mut substituted_tree = snapshot(RiprSourceViewV1::GitTree);
+    substituted_tree.snapshot_id =
+        "git-tree:fedcba9876543210fedcba9876543210fedcba98".into();
+    assert_eq!(
+        error_code(substituted_tree.validate()),
+        Some(RiprProviderContractErrorCodeV1::IdentityMismatch)
+    );
+
+    let mut mismatched_tree_digest = snapshot(RiprSourceViewV1::GitTree);
+    mismatched_tree_digest.source_digest = OTHER_HASH.into();
+    assert_eq!(
+        error_code(mismatched_tree_digest.validate()),
+        Some(RiprProviderContractErrorCodeV1::IdentityMismatch)
+    );
+
+    let mut sha256_tree = snapshot(RiprSourceViewV1::GitTree);
+    sha256_tree.snapshot_id = SHA256_TREE_ID.into();
+    sha256_tree.source_digest = SHA256_TREE_DIGEST.into();
+    assert_eq!(sha256_tree.validate(), Ok(()));
 
     for source_view in [
         RiprSourceViewV1::GitIndex,
