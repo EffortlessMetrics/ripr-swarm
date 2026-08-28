@@ -1523,6 +1523,9 @@ fn judgment_sidecar_public_publish_fails_closed_without_a_valid_host_run() -> Re
         Err(_) => {}
     }
     assert_tree_unchanged(&tampered_portable, &tampered_before, "tampered publication")?;
+    Ok(())
+}
+
 #[test]
 fn resolve_repository_gitdir_follows_relative_and_absolute_gitfiles() -> Result<(), String> {
     let root = scratch("resolve-gitdir")?;
