@@ -67,6 +67,8 @@ fn exact_classifier_rejects_prefix_lookalikes_and_ambiguous_attributes() {
         "#[test_matrix_config]",
         "#[cfg_attr(test, test)]",
         "#[test = \"custom\"]",
+        "#[quickcheck(foo]",
+        "#[test_case(1))]",
         "#[test] trailing_tokens",
         "#[proptest]",
         "#[doc(hidden)]",

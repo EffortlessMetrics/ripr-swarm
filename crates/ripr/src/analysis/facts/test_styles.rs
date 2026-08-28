@@ -158,6 +158,9 @@ fn normalized_test_attribute_path(attribute: &str) -> Option<String> {
         return None;
     }
     let head = body.get(..closing)?.trim();
+    if !attribute_arguments_are_balanced(head) {
+        return None;
+    }
     let path = head
         .split('(')
         .next()?
@@ -170,6 +173,26 @@ fn normalized_test_attribute_path(attribute: &str) -> Option<String> {
     } else {
         Some(path.to_string())
     }
+}
+
+fn attribute_arguments_are_balanced(head: &str) -> bool {
+    let Some(opening) = head.find('(') else {
+        return true;
+    };
+    let mut depth = 0usize;
+    for character in head[opening..].chars() {
+        match character {
+            '(' => depth = depth.saturating_add(1),
+            ')' => {
+                let Some(next_depth) = depth.checked_sub(1) else {
+                    return false;
+                };
+                depth = next_depth;
+            }
+            _ => {}
+        }
+    }
+    depth == 0
 }
 
 fn is_test_attribute_path(path: &str) -> bool {
