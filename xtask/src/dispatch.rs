@@ -1,7 +1,27 @@
 use crate::command::{XtaskCommand, print_help, unknown_command_message};
 
+#[path = "command/front_door.rs"]
+mod front_door;
 #[path = "precommit_v2.rs"]
 mod precommit_v2;
+
+fn print_help_route(args: &[String]) -> Result<(), String> {
+    match args {
+        [] => front_door::print(),
+        [flag] if flag == "--all" => {
+            // The existing empty-query renderer remains the exhaustive catalog
+            // authority. Progressive disclosure changes only the CLI route.
+            print_help(&[])?;
+            println!("\nRun `cargo xtask help` for common starting points.");
+            Ok(())
+        }
+        _ => print_help(args),
+    }
+}
+
+fn unknown_command_error(command: &str) -> String {
+    unknown_command_message(command)
+}
 
 pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
     match command {
@@ -167,8 +187,11 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
             super::run("cargo", &["publish", "-p", "ripr", "--dry-run"]).map(|_| ())
         }
         XtaskCommand::IssueIntake(args) => super::reports::issue_intake(&args),
-        XtaskCommand::Help(args) => print_help(&args),
-        XtaskCommand::Unknown(command) => Err(unknown_command_message(&command)),
+        XtaskCommand::Help(args) => print_help_route(&args),
+        XtaskCommand::Unknown(command) if matches!(command.as_str(), "--help" | "-h") => {
+            front_door::print()
+        }
+        XtaskCommand::Unknown(command) => Err(unknown_command_error(&command)),
     }
 }
 
