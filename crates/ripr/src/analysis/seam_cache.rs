@@ -1654,7 +1654,9 @@ pub(crate) enum PathDependencyResolution {
     /// `[workspace.dependencies]`, and otherwise ignores the member's own
     /// `path` (the workspace entry wins), so honoring the explicit `path`
     /// would misstate Cargo semantics. The declaration is retained as a typed
-    /// invalid edge with no resolved identity, never as a `Package` path edge.
+    /// invalid edge with no resolved identity, never as a resolvable
+    /// `Package` path edge (the `source` still records where the declaration
+    /// was seen).
     InvalidDeclaration,
 }
 
