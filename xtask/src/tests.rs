@@ -9035,6 +9035,11 @@ fn w7_source_promotion_preflight_workflow_pins_exact_unfinalized_contract() -> R
         .map_err(|error| format!("read {}: {error}", workflow_path.display()))?;
 
     let validate = |candidate: &str| -> Result<(), String> {
+        const EXECUTION_SOURCE_REREAD: &str =
+            "execution_source_main=$(git -c credential.helper= -c http.extraheader=";
+        const EXECUTION_SWARM_REREAD: &str =
+            "execution_swarm_ref=$(git -c credential.helper= -c http.extraheader=";
+        const CANONICAL_PREFLIGHT: &str = "cargo xtask source-promotion preflight";
         for marker in [
             "permissions:\n  contents: read",
             "SOURCE_PARENT: ad291d1bc936d00847d9712d2adf9ea56ca19533",
@@ -9057,14 +9062,8 @@ fn w7_source_promotion_preflight_workflow_pins_exact_unfinalized_contract() -> R
                 ));
             }
         }
-        if candidate
-            .matches("execution_source_main=$(git -c credential.helper= -c http.extraheader=")
-            .count()
-            != 1
-            || candidate
-                .matches("execution_swarm_ref=$(git -c credential.helper= -c http.extraheader=")
-                .count()
-                != 1
+        if candidate.matches(EXECUTION_SOURCE_REREAD).count() != 1
+            || candidate.matches(EXECUTION_SWARM_REREAD).count() != 1
             || candidate.contains("contents: write")
             || candidate.contains("git push")
             || candidate.contains("gh release")
@@ -9073,6 +9072,33 @@ fn w7_source_promotion_preflight_workflow_pins_exact_unfinalized_contract() -> R
             || candidate.contains("github.token")
         {
             return Err("workflow must keep one credentialless execution reread per authority and no publication surface".to_string());
+        }
+        let source_reread = candidate
+            .find(EXECUTION_SOURCE_REREAD)
+            .ok_or_else(|| "execution source reread is missing".to_string())?;
+        let swarm_reread = candidate
+            .find(EXECUTION_SWARM_REREAD)
+            .ok_or_else(|| "execution W7 reread is missing".to_string())?;
+        let canonical_preflight = candidate
+            .find(CANONICAL_PREFLIGHT)
+            .ok_or_else(|| "canonical preflight invocation is missing".to_string())?;
+        if !(source_reread < swarm_reread && swarm_reread < canonical_preflight) {
+            return Err(
+                "execution authority rereads must immediately precede the canonical preflight"
+                    .to_string(),
+            );
+        }
+        let authority_window = &candidate[source_reread..canonical_preflight];
+        let public_rest_client = ["cu", "rl "].concat();
+        if authority_window.matches("ls-remote").count() != 2
+            || authority_window.contains(&public_rest_client)
+            || authority_window.contains("gh api")
+            || authority_window.contains("git fetch")
+        {
+            return Err(
+                "no other external authority operation may intervene between rereads and preflight"
+                    .to_string(),
+            );
         }
         Ok(())
     };
@@ -9084,6 +9110,14 @@ fn w7_source_promotion_preflight_workflow_pins_exact_unfinalized_contract() -> R
         ("ruleset identity", workflow.replacen("RULESET_ID: '20661783'", "RULESET_ID: '20661784'", 1)),
         ("source live reread", workflow.replacen("execution_source_main=$(git -c credential.helper= -c http.extraheader= \\\n            ls-remote --heads https://github.com/EffortlessMetrics/ripr.git refs/heads/main)", "execution_source_main=$(git -C source rev-parse origin/main)", 1)),
         ("W7 live reread", workflow.replacen("execution_swarm_ref=$(git -c credential.helper= -c http.extraheader= \\\n            ls-remote --refs https://github.com/EffortlessMetrics/ripr-swarm.git \"$SWARM_REF\")", "execution_swarm_ref=$(git -C swarm rev-parse \"$SWARM_REF\")", 1)),
+        (
+            "preflight reordered before execution rereads",
+            workflow.replacen(
+                "          execution_source_main=$(git -c credential.helper= -c http.extraheader=",
+                "          cargo xtask source-promotion preflight # deliberate early execution mutant\n          execution_source_main=$(git -c credential.helper= -c http.extraheader=",
+                1,
+            ),
+        ),
         ("unfinalized tree", workflow.replacen(".dry_merge.reviewed_resolved_tree_verified == false", ".dry_merge.reviewed_resolved_tree_verified == true", 1)),
         ("always upload", workflow.replacen("if: always()", "if: success()", 1)),
         ("artifact authority", workflow.replacen("ruleset-20661783", "ruleset-current", 1)),
