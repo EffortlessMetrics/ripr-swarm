@@ -7,6 +7,12 @@ Use specs for behavior that users, integrations, or future agents need to rely
 on. Keep implementation details in architecture docs or ADRs unless they affect
 observable behavior.
 
+A spec status records normative disposition only. It does not establish
+implementation, proof, support, or live-work state; those are represented by
+implementation claims and PR-local slices, traceability and evidence, support
+authorities, and GitHub/worktree state. A spec remains valid until it is
+explicitly corrected, rejected, superseded, or deprecated.
+
 ## Index
 
 | Spec | Status | Topic |

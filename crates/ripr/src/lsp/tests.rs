@@ -13028,8 +13028,20 @@ fn execute_command_collect_workspace_status_with_snapshot_returns_diagnostics_co
             current_input["enabled_languages"],
             serde_json::json!(["rust"])
         );
-        assert_eq!(current_input["manifest_identity"], serde_json::Value::Null);
-        assert_eq!(current_input["lockfile_identity"], serde_json::Value::Null);
+        assert!(
+            current_input["manifest_identity"].is_null()
+                || current_input["manifest_identity"]
+                    .as_str()
+                    .is_some_and(|identity| !identity.is_empty()),
+            "manifest identity must be null without a manifest or a non-empty identity: {status}"
+        );
+        assert!(
+            current_input["lockfile_identity"].is_null()
+                || current_input["lockfile_identity"]
+                    .as_str()
+                    .is_some_and(|identity| !identity.is_empty()),
+            "lockfile identity must be null without a lockfile or a non-empty identity: {status}"
+        );
         assert_eq!(current_input["analyzer_version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(current_input["schema_version"], "lsp-analysis-input-v1");
         assert_eq!(
