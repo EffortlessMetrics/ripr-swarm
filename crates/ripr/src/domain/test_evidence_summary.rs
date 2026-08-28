@@ -278,11 +278,7 @@ mod tests {
         assert_eq!(summary.related_tests[0].oracle_strength, "strong");
         assert_eq!(summary.strongest_oracle, "strong");
         assert_eq!(summary.missing_discriminator_count, 1);
-        assert!(
-            summary
-                .fingerprint
-                .ends_with("missing:amount == threshold")
-        );
+        assert!(summary.fingerprint.ends_with("missing:amount == threshold"));
     }
 
     #[test]
