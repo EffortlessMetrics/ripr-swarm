@@ -201,15 +201,12 @@ test.only("discount boundary", () => {
         decorated: false,
         imports: Vec::new(),
     };
-    let candidates = related_test_candidates(
-        &owner,
-        &tests,
-        None,
-        &ReExportIndex::empty(),
-        None,
-    );
+    let candidates = related_test_candidates(&owner, &tests, None, &ReExportIndex::empty(), None);
 
     assert_eq!(candidates.len(), 1);
-    assert_eq!(candidates[0].relation, TypeScriptRelationKind::DirectOwnerCall);
+    assert_eq!(
+        candidates[0].relation,
+        TypeScriptRelationKind::DirectOwnerCall
+    );
     assert_eq!(candidates[0].test.name, "discount boundary");
 }
