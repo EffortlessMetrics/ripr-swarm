@@ -7383,7 +7383,7 @@ language = "rust"
             existing_comments.contains("pulls/${{ github.event.pull_request.number }}/comments")
         );
         assert!(existing_comments.contains("target/ripr/review/existing-comments.json"));
-        assert!(existing_comments.contains("capture(\"<!-- ripr:dedupe=(?<key>[^ ]+) -->\")"));
+        assert!(existing_comments.contains("capture(\"<!-- ripr:dedupe=(?<key>[^ ]+)\")"));
 
         let comment_plan = workflow_step(&workflow, "Plan RIPR inline comments");
         assert!(comment_plan.contains("env.RIPR_COMMENT_MODE != 'off'"));
@@ -7416,7 +7416,7 @@ language = "rust"
         );
         assert!(publish_comments.contains("jq -e '.summary.safe_to_publish == true'"));
         assert!(publish_comments.contains("select(.safe_to_publish == true)"));
-        assert!(publish_comments.contains("<!-- ripr:dedupe=%s -->"));
+        assert!(publish_comments.contains("published_body: compact_body"));
         assert!(publish_comments.contains("github.event.pull_request.head.sha"));
         assert!(publish_comments.contains("gh api --method POST"));
         assert!(publish_comments.contains("gh api --method PATCH"));
