@@ -14,6 +14,7 @@ pub(crate) enum XtaskCommand {
     BranchInventory(Vec<String>),
     GhPrStatus(Vec<String>),
     CiBudget(Vec<String>),
+    PerlMigrationRefresh(Vec<String>),
     ModuleHealth(Vec<String>),
     WindowsAdvisorySummary(Vec<String>),
     SuggestedFixes,
@@ -158,6 +159,7 @@ impl XtaskCommand {
             "branch-inventory" => Self::BranchInventory(rest),
             "gh-pr-status" => Self::GhPrStatus(rest),
             "ci-budget" => Self::CiBudget(rest),
+            "perl-migration-refresh" => Self::PerlMigrationRefresh(rest),
             "module-health" => Self::ModuleHealth(rest),
             "windows-advisory-summary" => Self::WindowsAdvisorySummary(rest),
             "eval-sweep" => Self::EvalSweep(rest),
@@ -442,6 +444,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "check-spec-format",
         "check-spec-numbering",
         "check-fixture-contracts",
+        "perl-migration-refresh --producer-bin <path> [--case <id>]",
         "check-evidence-promotion-honesty [--pinned-external] [--clone] [--case <id>] [--checkout-root <path>] [--timeout-secs <n>]",
         "check-traceability",
         "check-spec-ids",
@@ -1408,6 +1411,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Checks fixture contracts.",
         ),
         command_entry(
+            "perl-migration-refresh --producer-bin <path> [--case <id>]",
+            "report_only",
+            "target/ripr/reports/perl-migration-candidates/<case>.json and <case>.drift.json",
+            false,
+            false,
+            "Re-runs the pinned perl_packet_contract_migration producer command (issue #3217) with a maintainer-supplied producer binary, writes candidate packets and typed drift reports under target/ripr/reports/perl-migration-candidates/, and never writes under fixtures/; advisory only — drift exits 0 and promotion of accepted evidence is a reviewed manual act.",
+        ),
+        command_entry(
             "check-evidence-promotion-honesty [--pinned-external] [--clone] [--case <id>] [--checkout-root <path>] [--timeout-secs <n>]",
             "non_mutating_check",
             "target/ripr/reports/evidence-promotion-honesty.md, target/ripr/reports/corpus-summary.{json,md}, and optional target/ripr/reports/evidence-promotion-pinned-external.{json,md}",
@@ -1740,7 +1751,7 @@ pub(crate) fn unknown_command_message(command: &str) -> String {
         "goals" | "check-goals" | "check-campaign" | "closeout" | "pr-body"
     ) {
         return format!(
-            "unknown xtask command `{normalized}`.\nThe `{normalized}` command was retired when the .ripr/goals/ scheduler was deleted (#1701).\nLive work selection now comes from GitHub issues, PRs, and checks; implementation slices are scope records for already-selected work.\nRun `gh issue list --state open` or `cargo xtask help` for the full list of current commands."
+            "unknown xtask command `{normalized}`.\nThe `{normalized}` command was retired when the .ripr/goals/ scheduler was deleted (#1701).\nLive work selection now comes from GitHub issues, PRs, and checks; implementation slices are scope records for already-selected work.\nRun `gh issue list --state open` or `cargo xtask help --all` for the full list of current commands."
         );
     }
     let suggestion = known_commands()
@@ -1754,10 +1765,10 @@ pub(crate) fn unknown_command_message(command: &str) -> String {
         .map(|(root, _)| root);
     match suggestion {
         Some(suggestion) => format!(
-            "unknown xtask command `{normalized}`.\nDid you mean `{suggestion}`?\nRun `cargo xtask help` for the full list."
+            "unknown xtask command `{normalized}`.\nDid you mean `{suggestion}`?\nRun `cargo xtask help --all` for the full list."
         ),
         None => format!(
-            "unknown xtask command `{normalized}`.\nRun `cargo xtask help` for the full list."
+            "unknown xtask command `{normalized}`.\nRun `cargo xtask help --all` for the full list."
         ),
     }
 }

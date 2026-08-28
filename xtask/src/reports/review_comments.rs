@@ -1452,6 +1452,7 @@ mod tests {
             "mode": "fast",
             "root": normalize_path_text(&command_root_arg(&repo, &options.root)),
             "base": options.base,
+            "head": options.head,
             "summary": {
                 "weakly_exposed": 1,
                 "reachable_unrevealed": 1,
