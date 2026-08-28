@@ -104,36 +104,41 @@ mod tests {
     };
     use serde_json::json;
 
-    #[test]
-    fn gap_first_action_preserves_the_producer_owned_typed_verify_route() {
-        let spec = agent_verify_command_spec(
+    fn verify_spec() -> CommandSpec {
+        agent_verify_command_spec(
             ".",
             "target/ripr/workflow/before.json",
             "target/ripr/workflow/after.json",
             None,
-        );
-        let display = spec.display.clone();
-        let ledger = json!({
-            "records": [{
-                "gap_id": "gap-1",
-                "kind": "MissingBoundaryAssertion",
-                "language": "rust",
-                "language_status": "stable",
-                "scope": "pr_local",
-                "evidence_class": "predicate_boundary",
-                "gap_state": "actionable",
-                "policy_state": "new",
-                "repairability": "repairable",
-                "repair_route": {
-                    "route_kind": "AddBoundaryAssertion",
-                    "target_file": "tests/pricing.rs",
-                    "assertion_shape": "assert_eq!(discount(100), 90)"
-                },
-                "verification_commands": [display.clone()],
-                "command_specs": { "verify": [spec.clone()] }
-            }]
+        )
+    }
+
+    fn actionable_gap_record(display: &str, verify_specs: Option<Vec<CommandSpec>>) -> Value {
+        let mut record = json!({
+            "gap_id": "gap-1",
+            "kind": "MissingBoundaryAssertion",
+            "language": "rust",
+            "language_status": "stable",
+            "scope": "pr_local",
+            "evidence_class": "predicate_boundary",
+            "gap_state": "actionable",
+            "policy_state": "new",
+            "repairability": "repairable",
+            "repair_route": {
+                "route_kind": "AddBoundaryAssertion",
+                "target_file": "tests/pricing.rs",
+                "assertion_shape": "assert_eq!(discount(100), 90)"
+            },
+            "verification_commands": [display]
         });
-        let report = build_first_useful_action_report(FirstUsefulActionInput {
+        if let (Some(specs), Value::Object(fields)) = (verify_specs, &mut record) {
+            fields.insert("command_specs".to_string(), json!({ "verify": specs }));
+        }
+        record
+    }
+
+    fn build_gap_report(ledger: &Value) -> FirstUsefulActionReport {
+        build_first_useful_action_report(FirstUsefulActionInput {
             root: ".".to_string(),
             generated_at: "2026-08-28T00:00:00Z".to_string(),
             pr_guidance_path: None,
@@ -154,7 +159,24 @@ mod tests {
             gate_decision_json: None,
             coverage_frontier_json: None,
             editor_context_json: None,
+        })
+    }
+
+    fn parsed_gap_ledger(ledger: &Value) -> ParsedSources {
+        ParsedSources {
+            gap_ledger: Some(ledger.clone()),
+            ..ParsedSources::default()
+        }
+    }
+
+    #[test]
+    fn gap_first_action_preserves_the_producer_owned_typed_verify_route() {
+        let spec = verify_spec();
+        let display = spec.display.clone();
+        let ledger = json!({
+            "records": [actionable_gap_record(&display, Some(vec![spec.clone()]))]
         });
+        let report = build_gap_report(&ledger);
 
         assert_eq!(report.status, "actionable");
         assert_eq!(report.commands.verify.as_deref(), Some(display.as_str()));
@@ -170,13 +192,62 @@ mod tests {
     }
 
     #[test]
-    fn gap_verify_spec_reuses_the_supported_root_array_shape() {
-        let spec = agent_verify_command_spec(
-            ".",
-            "target/ripr/workflow/before.json",
-            "target/ripr/workflow/after.json",
-            None,
+    fn gap_projection_leaves_reports_without_selected_authority_unchanged() {
+        let spec = verify_spec();
+        let ledger = json!({
+            "records": [actionable_gap_record(&spec.display, Some(vec![spec]))]
+        });
+        let parsed = parsed_gap_ledger(&ledger);
+        let report = build_gap_report(&ledger);
+
+        let mut without_selection = report.clone();
+        without_selection.selected = None;
+        without_selection.commands.command_specs = None;
+        let expected = without_selection.clone();
+        assert_eq!(
+            with_gap_verify_command_spec(without_selection, &parsed),
+            expected
         );
+
+        let mut without_display = report;
+        without_display.commands.verify = None;
+        without_display.commands.command_specs = None;
+        let expected = without_display.clone();
+        assert_eq!(
+            with_gap_verify_command_spec(without_display, &parsed),
+            expected
+        );
+    }
+
+    #[test]
+    fn gap_projection_preserves_an_existing_receipt_spec() {
+        let spec = verify_spec();
+        let ledger = json!({
+            "records": [actionable_gap_record(&spec.display, Some(vec![spec.clone()]))]
+        });
+        let parsed = parsed_gap_ledger(&ledger);
+        let receipt =
+            agent_receipt_command_spec(".", "target/ripr/workflow/verify.json", "seam-1", None);
+        let mut report = build_gap_report(&ledger);
+        report.commands.command_specs = Some(ActionCommandSpecs {
+            verify: None,
+            receipt: Some(receipt.clone()),
+        });
+
+        let projected = with_gap_verify_command_spec(report, &parsed);
+
+        assert_eq!(
+            projected.commands.command_specs,
+            Some(ActionCommandSpecs {
+                verify: Some(spec),
+                receipt: Some(receipt),
+            })
+        );
+    }
+
+    #[test]
+    fn gap_verify_spec_reuses_the_supported_root_array_shape() {
+        let spec = verify_spec();
         let display = spec.display.clone();
         let ledger = json!([{
             "gap_id": "gap-1",
@@ -191,29 +262,21 @@ mod tests {
     }
 
     #[test]
-    fn gap_verify_spec_does_not_synthesize_authority_for_legacy_display_text() {
-        let display = "ripr agent verify --root . --before before.json --after after.json --json";
+    fn gap_first_action_does_not_synthesize_authority_for_legacy_display_text() {
+        let spec = verify_spec();
         let ledger = json!({
-            "records": [{
-                "gap_id": "gap-1",
-                "verification_commands": [display]
-            }]
+            "records": [actionable_gap_record(&spec.display, None)]
         });
+        let report = build_gap_report(&ledger);
 
-        assert_eq!(
-            producer_gap_verify_spec(Some(&ledger), "gap-1", display),
-            Ok(None)
-        );
+        assert_eq!(report.commands.verify.as_deref(), Some(spec.display.as_str()));
+        assert!(report.commands.command_specs.is_none());
+        assert!(report.warnings.is_empty());
     }
 
     #[test]
-    fn gap_verify_spec_rejects_typed_and_display_route_drift() {
-        let displayed = agent_verify_command_spec(
-            ".",
-            "target/ripr/workflow/before.json",
-            "target/ripr/workflow/after.json",
-            None,
-        );
+    fn gap_first_action_warns_and_withholds_a_drifted_typed_route() {
+        let displayed = verify_spec();
         let typed = agent_verify_command_spec(
             ".",
             "target/ripr/workflow/other-before.json",
@@ -221,28 +284,71 @@ mod tests {
             None,
         );
         let ledger = json!({
-            "records": [{
-                "gap_id": "gap-1",
-                "verification_commands": [displayed.display.clone()],
-                "command_specs": { "verify": [typed] }
-            }]
+            "records": [actionable_gap_record(
+                &displayed.display,
+                Some(vec![typed]),
+            )]
         });
-        let result = producer_gap_verify_spec(Some(&ledger), "gap-1", &displayed.display);
+        let report = build_gap_report(&ledger);
+
+        assert_eq!(
+            report.commands.verify.as_deref(),
+            Some(displayed.display.as_str())
+        );
+        assert!(report.commands.command_specs.is_none());
+        assert!(report.warnings.iter().any(|warning| {
+            warning.contains("producer-owned verify specs do not match the selected display route")
+        }));
+    }
+
+    #[test]
+    fn gap_verify_spec_rejects_an_ambiguous_selected_gap_id() {
+        let spec = verify_spec();
+        let record = actionable_gap_record(&spec.display, Some(vec![spec.clone()]));
+        let ledger = json!({ "records": [record.clone(), record] });
+        let result = producer_gap_verify_spec(Some(&ledger), "gap-1", &spec.display);
 
         assert!(matches!(
             result,
-            Err(reason) if reason.contains("do not match the selected display route")
+            Err(reason) if reason.contains("selected gap id gap-1 is ambiguous")
+        ));
+    }
+
+    #[test]
+    fn gap_verify_spec_treats_an_empty_typed_collection_as_legacy_only() {
+        let spec = verify_spec();
+        let ledger = json!({
+            "records": [actionable_gap_record(&spec.display, Some(Vec::new()))]
+        });
+
+        assert_eq!(
+            producer_gap_verify_spec(Some(&ledger), "gap-1", &spec.display),
+            Ok(None)
+        );
+    }
+
+    #[test]
+    fn gap_verify_spec_rejects_multiple_matching_typed_routes() {
+        let spec = verify_spec();
+        let mut alternate = spec.clone();
+        alternate.timeout_ms += 1;
+        let ledger = json!({
+            "records": [actionable_gap_record(
+                &spec.display,
+                Some(vec![spec.clone(), alternate]),
+            )]
+        });
+        let result = producer_gap_verify_spec(Some(&ledger), "gap-1", &spec.display);
+
+        assert!(matches!(
+            result,
+            Err(reason) if reason.contains("multiple producer-owned verify specs")
         ));
     }
 
     #[test]
     fn gap_verify_spec_reuses_role_validation_from_the_gap_record_boundary() {
-        let displayed = agent_verify_command_spec(
-            ".",
-            "target/ripr/workflow/before.json",
-            "target/ripr/workflow/after.json",
-            None,
-        );
+        let displayed = verify_spec();
         let receipt =
             agent_receipt_command_spec(".", "target/ripr/workflow/verify.json", "seam-1", None);
         let ledger = json!({
