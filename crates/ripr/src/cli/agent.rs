@@ -95,7 +95,8 @@ pub(super) struct AgentReviewSummaryOptions {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct AgentRepairOptions {
     pub(super) root: PathBuf,
-    pub(super) seam_id: String,
+    pub(super) seam_id: Option<String>,
+    pub(super) attempt_id: Option<String>,
     pub(super) phase: AgentRepairPhase,
 }
 
@@ -212,6 +213,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
     }
     let mut root = PathBuf::from(".");
     let mut seam_id: Option<String> = None;
+    let mut attempt_id: Option<String> = None;
     let mut phase: Option<AgentRepairPhase> = None;
     let mut i = 0usize;
     while i < args.len() {
@@ -222,7 +224,19 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
             }
             "--seam-id" => {
                 i += 1;
-                seam_id = Some(expect_value(args, i, "--seam-id")?.to_string());
+                let value = expect_value(args, i, "--seam-id")?;
+                if value.trim().is_empty() {
+                    return Err("agent repair --seam-id requires a non-empty ID".to_string());
+                }
+                seam_id = Some(value.to_string());
+            }
+            "--attempt" => {
+                i += 1;
+                let value = expect_value(args, i, "--attempt")?;
+                if value.trim().is_empty() {
+                    return Err("agent repair --attempt requires a non-empty ID".to_string());
+                }
+                attempt_id = Some(value.to_string());
             }
             "--phase" => {
                 i += 1;
@@ -241,11 +255,38 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
         }
         i += 1;
     }
-    let seam_id = seam_id.ok_or_else(|| "agent repair requires --seam-id <id>".to_string())?;
     let phase = phase.unwrap_or(AgentRepairPhase::Before);
+    match phase {
+        AgentRepairPhase::Before => {
+            if attempt_id.is_some() {
+                return Err(
+                    "agent repair --attempt is only valid with --phase after".to_string(),
+                );
+            }
+            if seam_id.is_none() {
+                return Err("agent repair --phase before requires --seam-id <id>".to_string());
+            }
+        }
+        AgentRepairPhase::After => match (seam_id.is_some(), attempt_id.is_some()) {
+            (true, true) => {
+                return Err(
+                    "agent repair --phase after accepts either --attempt <id> or --seam-id <id>, not both"
+                        .to_string(),
+                );
+            }
+            (false, false) => {
+                return Err(
+                    "agent repair --phase after requires --attempt <id> or --seam-id <id>"
+                        .to_string(),
+                );
+            }
+            _ => {}
+        },
+    }
     Ok(AgentCommand::Repair(AgentRepairOptions {
         root,
         seam_id,
+        attempt_id,
         phase,
     }))
 }
@@ -846,6 +887,110 @@ mod tests {
                     .to_string()
             )
         );
+    }
+
+    #[test]
+    fn agent_repair_parses_before_and_exact_after() {
+        assert_eq!(
+            parse_agent_args(&args(&[
+                "repair",
+                "--root",
+                "repo",
+                "--seam-id",
+                "seam:sample",
+                "--phase",
+                "before",
+            ])),
+            Ok(AgentCommand::Repair(AgentRepairOptions {
+                root: PathBuf::from("repo"),
+                seam_id: Some("seam:sample".to_string()),
+                attempt_id: None,
+                phase: AgentRepairPhase::Before,
+            }))
+        );
+        assert_eq!(
+            parse_agent_args(&args(&[
+                "repair",
+                "--root",
+                "repo",
+                "--attempt",
+                "repair-attempt-0123456789abcdef01234567",
+                "--phase",
+                "after",
+            ])),
+            Ok(AgentCommand::Repair(AgentRepairOptions {
+                root: PathBuf::from("repo"),
+                seam_id: None,
+                attempt_id: Some("repair-attempt-0123456789abcdef01234567".to_string()),
+                phase: AgentRepairPhase::After,
+            }))
+        );
+    }
+
+    #[test]
+    fn agent_repair_keeps_unambiguous_seam_after_compatibility() {
+        assert_eq!(
+            parse_agent_args(&args(&[
+                "repair",
+                "--seam-id",
+                "seam:sample",
+                "--phase",
+                "after",
+            ])),
+            Ok(AgentCommand::Repair(AgentRepairOptions {
+                root: PathBuf::from("."),
+                seam_id: Some("seam:sample".to_string()),
+                attempt_id: None,
+                phase: AgentRepairPhase::After,
+            }))
+        );
+    }
+
+    #[test]
+    fn agent_repair_rejects_ambiguous_or_phase_wrong_identity() {
+        for (argv, needle) in [
+            (
+                vec!["repair", "--phase", "before"],
+                "requires --seam-id",
+            ),
+            (
+                vec![
+                    "repair",
+                    "--attempt",
+                    "repair-attempt-0123456789abcdef01234567",
+                ],
+                "only valid with --phase after",
+            ),
+            (
+                vec!["repair", "--phase", "after"],
+                "requires --attempt <id> or --seam-id <id>",
+            ),
+            (
+                vec![
+                    "repair",
+                    "--seam-id",
+                    "seam:sample",
+                    "--attempt",
+                    "repair-attempt-0123456789abcdef01234567",
+                    "--phase",
+                    "after",
+                ],
+                "either --attempt <id> or --seam-id <id>, not both",
+            ),
+            (
+                vec!["repair", "--seam-id", "", "--phase", "before"],
+                "non-empty ID",
+            ),
+            (
+                vec!["repair", "--attempt", "", "--phase", "after"],
+                "non-empty ID",
+            ),
+        ] {
+            let error = parse_agent_args(&args(&argv))
+                .err()
+                .unwrap_or_else(|| panic!("expected {argv:?} to fail"));
+            assert!(error.contains(needle), "{argv:?} reported {error}");
+        }
     }
 
     #[test]
