@@ -17,6 +17,38 @@ impl TestDeclarationRoot {
     }
 }
 
+#[derive(Clone, Copy)]
+enum TestExecutionMode {
+    Concurrent,
+    Sequential,
+}
+
+#[derive(Clone, Copy, Default)]
+struct TestDeclarationModifiers {
+    only: bool,
+    execution_mode: Option<TestExecutionMode>,
+}
+
+impl TestDeclarationModifiers {
+    fn add(&mut self, name: &str) -> bool {
+        match name {
+            "only" if !self.only => {
+                self.only = true;
+                true
+            }
+            "concurrent" if self.execution_mode.is_none() => {
+                self.execution_mode = Some(TestExecutionMode::Concurrent);
+                true
+            }
+            "sequential" if self.execution_mode.is_none() => {
+                self.execution_mode = Some(TestExecutionMode::Sequential);
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
 pub(crate) fn extract_tests(file: &Path, source: &str) -> Vec<TypeScriptTest> {
     let allocator = Allocator::default();
     let ret = Parser::new(&allocator, source, source_type_for(file)).parse();
@@ -227,18 +259,30 @@ fn expression_is_active_declaration(
     expression: &Expression<'_>,
     root: TestDeclarationRoot,
 ) -> bool {
+    expression_is_active_declaration_with_modifiers(
+        expression,
+        root,
+        TestDeclarationModifiers::default(),
+    )
+}
+
+fn expression_is_active_declaration_with_modifiers(
+    expression: &Expression<'_>,
+    root: TestDeclarationRoot,
+    mut modifiers: TestDeclarationModifiers,
+) -> bool {
     match expression {
         Expression::Identifier(ident) => root.matches_identifier(ident.name.as_str()),
         Expression::StaticMemberExpression(member) => {
-            is_active_declaration_modifier(member.property.name.as_str())
-                && expression_is_active_declaration(&member.object, root)
+            modifiers.add(member.property.name.as_str())
+                && expression_is_active_declaration_with_modifiers(
+                    &member.object,
+                    root,
+                    modifiers,
+                )
         }
         _ => false,
     }
-}
-
-fn is_active_declaration_modifier(name: &str) -> bool {
-    matches!(name, "only" | "concurrent" | "sequential")
 }
 
 pub(crate) fn string_argument(arg: &oxc_ast::ast::Argument<'_>) -> Option<String> {
