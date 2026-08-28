@@ -17,7 +17,7 @@ const REPOSITORY_MARKERS: &[&str] = &[
 ];
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub(crate) struct WorkspaceStatus {
+pub struct WorkspaceStatus {
     pub(crate) schema_version: &'static str,
     pub(crate) workspace_state: WorkspaceState,
     pub(crate) root: RootStatus,
@@ -118,7 +118,7 @@ pub(crate) enum NoAuthority {
 }
 
 impl WorkspaceStatus {
-    pub(crate) fn resolve(explicit_root: Option<PathBuf>) -> Self {
+    pub fn resolve(explicit_root: Option<PathBuf>) -> Self {
         let resolved = resolve_root(explicit_root);
         let workspace_state = if resolved.root.state == RootState::Validated {
             WorkspaceState::Ready
