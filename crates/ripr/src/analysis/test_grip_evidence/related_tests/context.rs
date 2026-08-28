@@ -1348,10 +1348,14 @@ pub(in crate::analysis::test_grip_evidence) fn test_scoped_function_names_by_fil
         .iter()
         .filter(|function| function.is_test || rust_index::is_test_file(&function.file))
     {
-        names_by_file
-            .entry(function.file.clone())
-            .or_default()
-            .insert(function.name.clone());
+        if let Some(names) = names_by_file.get_mut(&function.file) {
+            names.insert(function.name.clone());
+        } else {
+            names_by_file.insert(
+                function.file.clone(),
+                BTreeSet::from([function.name.clone()]),
+            );
+        }
     }
     names_by_file
 }

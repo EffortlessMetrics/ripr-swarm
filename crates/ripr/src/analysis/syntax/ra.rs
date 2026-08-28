@@ -399,7 +399,7 @@ fn cfg_all_has_top_level_test(arguments: &[&str]) -> bool {
 
 /// Returns true only for the exact single-token cfg predicate `test`.
 fn cfg_term_is_test(term: Option<&[&str]>) -> bool {
-    term.is_some_and(|tokens| tokens.len() == 1 && tokens.first().copied() == Some("test"))
+    term.is_some_and(|tokens| tokens == ["test"])
 }
 
 fn collect_attr_syntax(function: &ast::Fn) -> Vec<String> {
