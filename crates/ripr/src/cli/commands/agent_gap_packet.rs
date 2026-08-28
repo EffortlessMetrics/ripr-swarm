@@ -22,7 +22,7 @@ mod tests {
     }
 
     #[test]
-    fn agent_packet_gap_ledger_renders_without_analysis() -> Result<(), String> {
+    fn legacy_agent_packet_is_review_only_without_live_source_identity() -> Result<(), String> {
         let root = unique_command_test_dir("agent-packet-gap-ledger");
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
         let gap_ledger = root.join("gap-ledger.json");
@@ -34,9 +34,18 @@ mod tests {
 
         let rendered = render_agent_packet_from_gap_ledger(&root, &gap_ledger, "gap:rust:pricing")?;
         assert!(rendered.contains(r#""source": "gap_decision_ledger""#));
+        assert!(rendered.contains(r#""status": "blocked""#));
         assert!(rendered.contains(r#""gap_id": "gap:pr:pricing""#));
-        assert!(rendered.contains(r#""repair_kind": "AddBoundaryAssertion""#));
-        assert!(rendered.contains(r#""verify_command": "cargo xtask fixtures boundary_gap""#));
+        assert!(rendered.contains(r#""queue_state": "blocked_not_evaluated""#));
+        assert!(rendered.contains(r#""staleness_status": "not_evaluated""#));
+        assert!(
+            !rendered.contains(r#""verify_command""#),
+            "legacy packet leaked verify authority: {rendered}"
+        );
+        assert!(
+            !rendered.contains(r#""allowed_edit_surface""#),
+            "legacy packet leaked edit authority: {rendered}"
+        );
         assert!(
             !rendered.contains(r#""confidence""#),
             "gap packet should not expose generic confidence: {rendered}"

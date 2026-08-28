@@ -20,17 +20,23 @@ Options:
   --root PATH        Workspace root. Defaults to current directory.
   --gap-ledger PATH  Gap decision ledger JSON. Defaults to target/ripr/reports/gap-decision-ledger.json.
   --language NAME    Language filter. Defaults to python.
-  --top N            Maximum queued packets to return. Defaults to 10.
+  --top N            Maximum visible queue candidates to return. Defaults to 10.
   --format json      Explicit JSON output. JSON is the only queue format.
   --json             Compatibility alias for JSON output.
 
 The queue command reads existing GapRecord artifacts and includes only records
 that are already eligible for `ripr agent packet --gap-ledger ... --gap-id ...`.
 It groups packets by `allowed_edit_surface` conflict group so schedulers can
-avoid parallel edits to the same test file. Staleness is reported as
-`not_evaluated` until a later receipt/ledger step compares the queue with the
-current git state. If the gap ledger omits root provenance or declares a root
-that differs from `--root`, the command emits a blocked queue with no packets.
+avoid parallel edits to the same test file. A packet is assignable only when
+producer-owned currentness validation yields `queue_state = queued` and
+`staleness_status = current`. That validation binds the ledger to its declared
+repo-exposure source, selected canonical root, exact clean HEAD, snapshot and
+content identities, and freshly reproduced GapRecords. Legacy, malformed,
+unsupported, dirty, historical, mismatched, or receipt-stale evidence remains
+visible as a command-free review candidate with an exact refresh route. The
+`source_currentness = candidate_current` record label alone is not freshness
+proof. If the gap ledger omits root provenance or declares a root that differs
+from `--root`, the command emits the existing blocked root-provenance envelope.
 "#;
 
 pub(super) const SWARM_INGEST_HELP: &str = r#"Classify one external agent result for safe repair-loop ingestion.
