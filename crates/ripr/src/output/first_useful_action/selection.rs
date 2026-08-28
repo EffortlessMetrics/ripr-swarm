@@ -1,8 +1,8 @@
 use super::{
     ActionCommandSpecs, ActionInputs, FirstUsefulActionInput, FirstUsefulActionReport,
     ParsedSources, acknowledged_report, actionable_report, baseline_only_report, gap_record_report,
-    missing_assistant_proof_report, no_actionable_report, read_error_report, receipt_report,
-    stale_report, suppressed_report, waived_report,
+    gap_records, missing_assistant_proof_report, no_actionable_report, read_error_report,
+    receipt_report, stale_report, suppressed_report, waived_report,
 };
 use crate::domain::CommandSpec;
 use crate::output::gap_decision_ledger::GapRecord;
@@ -95,12 +95,8 @@ fn producer_gap_verify_spec(
 ) -> Result<Option<CommandSpec>, String> {
     let gap_ledger =
         gap_ledger.ok_or_else(|| "selected gap report has no gap ledger input".to_string())?;
-    let records = gap_ledger
-        .get("records")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "gap ledger is missing records[]".to_string())?;
-    let mut matching_records = records
-        .iter()
+    let mut matching_records = gap_records(gap_ledger)
+        .into_iter()
         .filter(|record| record.get("gap_id").and_then(Value::as_str) == Some(gap_id));
     let record_value = matching_records
         .next()
@@ -158,6 +154,27 @@ mod tests {
                 "command_specs": { "verify": [spec.clone()] }
             }]
         });
+
+        assert_eq!(
+            producer_gap_verify_spec(Some(&ledger), "gap-1", &display),
+            Ok(Some(spec))
+        );
+    }
+
+    #[test]
+    fn gap_verify_spec_reuses_the_supported_root_array_shape() {
+        let spec = agent_verify_command_spec(
+            ".",
+            "target/ripr/workflow/before.json",
+            "target/ripr/workflow/after.json",
+            None,
+        );
+        let display = spec.display.clone();
+        let ledger = json!([{
+            "gap_id": "gap-1",
+            "verification_commands": [display.clone()],
+            "command_specs": { "verify": [spec.clone()] }
+        }]);
 
         assert_eq!(
             producer_gap_verify_spec(Some(&ledger), "gap-1", &display),
