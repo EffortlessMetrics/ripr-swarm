@@ -3897,7 +3897,6 @@ fn perl_packet_contract_migration_corpus_pins_real_producer_dispositions() -> Re
             .is_some_and(|detail| detail.contains("packet partial")),
         "partial real packet keeps the advisory limitation disposition"
     );
-    std::fs::remove_file(packet_path).map_err(|error| error.to_string())?;
 
     Ok(())
 }

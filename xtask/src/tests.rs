@@ -6697,14 +6697,28 @@ fn perl_packet_contract_migration_fixture_guard_reports_row_removal() -> Result<
             &fs::read_to_string(&contradictions_path).map_err(|err| err.to_string())?,
         )
         .map_err(|err| err.to_string())?;
+        // Remove a row whose id the corpus REQUIRES, not the first
+        // serialized row: row order is not part of the corpus contract.
+        let corpus: Value = serde_json::from_str(
+            &fs::read_to_string(fixture_root.join("corpus.json")).map_err(|err| err.to_string())?,
+        )
+        .map_err(|err| err.to_string())?;
+        let required = corpus
+            .get("required_contradiction_ids")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "required_contradiction_ids is missing".to_string())?;
+        let required_first = required[0]
+            .as_str()
+            .ok_or_else(|| "required id is not a string".to_string())?;
         let rows = contradictions
             .get_mut("contradictions")
             .and_then(Value::as_array_mut)
             .ok_or_else(|| "contradictions array is missing".to_string())?;
-        if rows.is_empty() {
-            return Err("contradictions array must not be empty".to_string());
-        }
-        rows.remove(0);
+        let position = rows
+            .iter()
+            .position(|row| row.get("id").and_then(Value::as_str) == Some(required_first))
+            .ok_or_else(|| format!("required row `{required_first}` not found"))?;
+        rows.remove(position);
         write(
             &contradictions_path,
             &serde_json::to_string_pretty(&contradictions).map_err(|err| err.to_string())?,

@@ -4886,6 +4886,7 @@ tests = [
   "xtask/src/main.rs::tests::perl_packet_contract_migration_fixture_guard_reports_packet_tamper",
   "xtask/src/main.rs::tests::perl_packet_contract_migration_fixture_guard_reports_row_removal",
   "xtask/src/main.rs::tests::perl_packet_contract_migration_fixture_guard_reports_disposition_authority_flip",
+  "xtask/src/main.rs::tests::perl_packet_contract_migration_fixture_guard_reports_input_inventory_drift",
   "xtask/src/main.rs::tests::perl_packet_contract_migration_fixture_guard_reports_input_digest_drift",
 ]
 fixtures = [

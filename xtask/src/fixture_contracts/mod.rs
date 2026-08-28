@@ -967,8 +967,15 @@ fn validate_perl_packet_contract_migration_case(
     }
 
     // Contradiction record: typed rows, required ids present, bound to the
-    // same packet digest.
+    // same packet digest. An absent pointer, unreadable file, or missing
+    // array degrades to zero recorded rows so the required-id checks below
+    // still fire — the path never skips validation.
     let contradictions_path = json_string_field(case, "contradictions").unwrap_or_default();
+    if contradictions_path.is_empty() {
+        violations.push(format!(
+            "perl packet contract migration case {case_id} is missing contradictions"
+        ));
+    }
     let contradictions = if contradictions_path.is_empty() {
         None
     } else {
@@ -999,11 +1006,15 @@ fn validate_perl_packet_contract_migration_case(
                 "perl packet contract migration case {case_id} contradictions must pin the same packet_sha256 as the corpus case"
             ));
         }
-        let Some(rows) = record.get("contradictions").and_then(Value::as_array) else {
-            violations.push(format!(
-                "perl packet contract migration case {case_id} contradictions is missing the contradictions array"
-            ));
-            return Ok(());
+        let empty_rows: Vec<Value> = Vec::new();
+        let rows: &[Value] = match record.get("contradictions").and_then(Value::as_array) {
+            Some(rows) => rows,
+            None => {
+                violations.push(format!(
+                    "perl packet contract migration case {case_id} contradictions is missing the contradictions array"
+                ));
+                &empty_rows
+            }
         };
         if rows.is_empty() {
             violations.push(format!(
