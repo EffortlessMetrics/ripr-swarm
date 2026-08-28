@@ -1,8 +1,8 @@
 use super::{
     ActionCommandSpecs, ActionInputs, FirstUsefulActionInput, FirstUsefulActionReport,
-    ParsedSources, acknowledged_report, actionable_report, baseline_only_report,
-    gap_record_report, missing_assistant_proof_report, no_actionable_report, read_error_report,
-    receipt_report, stale_report, suppressed_report, waived_report,
+    ParsedSources, acknowledged_report, actionable_report, baseline_only_report, gap_record_report,
+    missing_assistant_proof_report, no_actionable_report, read_error_report, receipt_report,
+    stale_report, suppressed_report, waived_report,
 };
 use crate::domain::CommandSpec;
 use crate::output::gap_decision_ledger::GapRecord;
@@ -93,15 +93,15 @@ fn producer_gap_verify_spec(
     gap_id: &str,
     display: &str,
 ) -> Result<Option<CommandSpec>, String> {
-    let gap_ledger = gap_ledger
-        .ok_or_else(|| "selected gap report has no gap ledger input".to_string())?;
+    let gap_ledger =
+        gap_ledger.ok_or_else(|| "selected gap report has no gap ledger input".to_string())?;
     let records = gap_ledger
         .get("records")
         .and_then(Value::as_array)
         .ok_or_else(|| "gap ledger is missing records[]".to_string())?;
-    let mut matching_records = records.iter().filter(|record| {
-        record.get("gap_id").and_then(Value::as_str) == Some(gap_id)
-    });
+    let mut matching_records = records
+        .iter()
+        .filter(|record| record.get("gap_id").and_then(Value::as_str) == Some(gap_id));
     let record_value = matching_records
         .next()
         .ok_or_else(|| format!("selected gap record {gap_id} is missing from the gap ledger"))?;
@@ -139,9 +139,7 @@ fn producer_gap_verify_spec(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::command_specs::{
-        agent_receipt_command_spec, agent_verify_command_spec,
-    };
+    use crate::agent::command_specs::{agent_receipt_command_spec, agent_verify_command_spec};
     use serde_json::json;
 
     #[test]
@@ -220,12 +218,8 @@ mod tests {
             "target/ripr/workflow/after.json",
             None,
         );
-        let receipt = agent_receipt_command_spec(
-            ".",
-            "target/ripr/workflow/verify.json",
-            "seam-1",
-            None,
-        );
+        let receipt =
+            agent_receipt_command_spec(".", "target/ripr/workflow/verify.json", "seam-1", None);
         let ledger = json!({
             "records": [{
                 "gap_id": "gap-1",
