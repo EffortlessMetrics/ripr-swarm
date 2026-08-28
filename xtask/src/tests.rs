@@ -9362,6 +9362,8 @@ jobs:
     timeout-minutes: 10
   rust-cx43:
     if: needs.route.outputs.router_target == 'cx43'
+    with:
+      runner-config: '{"labels":["rust-medium"]}'
     timeout-minutes: 60
     outputs:
       scratch_status: ${{ steps.scratch.outputs.status }}
@@ -9378,6 +9380,8 @@ jobs:
         run: rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
   rust-cpx42:
     if: needs.route.outputs.router_target == 'cpx42'
+    with:
+      runner-config: '{"labels":["rust-medium","rust-16gb"]}'
     timeout-minutes: 60
     outputs:
       scratch_status: ${{ steps.scratch.outputs.status }}
@@ -9394,6 +9398,8 @@ jobs:
         run: rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
   rust-cx53:
     if: needs.route.outputs.router_target == 'cx53'
+    with:
+      runner-config: '{"labels":["rust-large"]}'
     timeout-minutes: 60
     outputs:
       scratch_status: ${{ steps.scratch.outputs.status }}
@@ -9416,12 +9422,21 @@ jobs:
       needs.rust-cpx42.outputs.scratch_status == 'tempfail' ||
       needs.rust-cx53.outputs.scratch_status == 'tempfail'
     timeout-minutes: 90
+    with:
+      runner-config: '"ubuntu-latest"'
     steps:
       - name: Proof route dry-run (advisory)
         run: cargo xtask proof route --base "$BASE_SHA" --head "$HEAD_SHA" || true
   docs-gate:
     name: Ripr Docs Gate
     timeout-minutes: 20
+    steps:
+      - name: Upload docs-gate reports
+        if: always()
+      - name: Advisory reports
+        if: success() && inputs.run-advisory-reports
+      - name: Upload RIPR reports
+        if: failure() || inputs.upload-success-artifacts
   result:
     name: Ripr Rust Small Result
     timeout-minutes: 10
@@ -9485,16 +9500,19 @@ jobs:
     if: needs.route.outputs.router_target == 'cx43'
     uses: ./.github/workflows/rust-gates.yml
     with:
+      runner-config: '{"labels":["rust-medium"]}'
       disk-guard-threshold: 35
   rust-cpx42:
     if: needs.route.outputs.router_target == 'cpx42'
     uses: ./.github/workflows/rust-gates.yml
     with:
+      runner-config: '{"labels":["rust-medium","rust-16gb"]}'
       disk-guard-threshold: 35
   rust-cx53:
     if: needs.route.outputs.router_target == 'cx53'
     uses: ./.github/workflows/rust-gates.yml
     with:
+      runner-config: '{"labels":["rust-large"]}'
       disk-guard-threshold: 50
   rust-github:
     if: >-
@@ -9504,9 +9522,14 @@ jobs:
       needs.rust-cpx42.outputs.scratch_status == 'tempfail' ||
       needs.rust-cx53.outputs.scratch_status == 'tempfail'
     uses: ./.github/workflows/rust-gates.yml
+    with:
+      runner-config: '"ubuntu-latest"'
   docs-gate:
     name: Ripr Docs Gate
     timeout-minutes: 20
+    steps:
+      - name: Upload docs-gate reports
+        if: always()
   result:
     name: Ripr Rust Small Result
     timeout-minutes: 10
@@ -9520,6 +9543,10 @@ jobs:
 on:
   workflow_call:
     inputs:
+      runner-config:
+        description: JSON string or object accepted by jobs.<job_id>.runs-on.
+        required: true
+        type: string
       disk-guard-threshold:
         type: number
         required: false
@@ -9528,6 +9555,7 @@ on:
         value: ${{ jobs.rust-gates.outputs.scratch_status }}
 jobs:
   rust-gates:
+    runs-on: ${{ fromJSON(inputs.runner-config) }}
     timeout-minutes: 90
     outputs:
       scratch_status: ${{ steps.scratch.outputs.status }}
@@ -9542,6 +9570,10 @@ jobs:
         run: cargo xtask proof route --base "$BASE_SHA" --head "$HEAD_SHA" || true
       - name: Clean scratch
         run: rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
+      - name: Advisory reports
+        if: success() && inputs.run-advisory-reports
+      - name: Upload RIPR reports
+        if: failure() || inputs.upload-success-artifacts
 defaults:
   run:
     shell: bash
@@ -9675,6 +9707,115 @@ jobs = ["Ripr Rust Small Result"]
             .iter()
             .any(|violation| violation.contains("job `rust-cx53` must pass"))
     );
+}
+
+#[test]
+fn routed_rust_live_contract_rejects_reviewed_semantic_regressions() {
+    let workflow = include_str!("../../.github/workflows/routed-rust.yml");
+    let reusable = include_str!("../../.github/workflows/rust-gates.yml");
+    let settings = include_str!("../../.github/settings.yml");
+    let lane = include_str!("../../policy/ci-lane-whitelist.toml");
+
+    let violations = routed_rust_workflow_contract_violations_with_reusable(
+        workflow,
+        Some(reusable),
+        Some(settings),
+        Some(lane),
+    );
+    assert!(
+        violations.is_empty(),
+        "live workflow contract drift: {violations:#?}"
+    );
+
+    let regressions: Vec<(&str, String, String, &str)> = vec![
+        (
+            "delegated runner-config input",
+            workflow.replace(
+                "      runner-config: '{\"group\":\"em-ci-small\",\"labels\":[\"self-hosted\",\"linux\",\"x64\",\"em-ci\",\"cx43\",\"rust-medium\",\"trusted-pr\"]}'",
+                "      runner-config-missing: '{\"group\":\"em-ci-small\",\"labels\":[\"self-hosted\",\"linux\",\"x64\",\"em-ci\",\"cx43\",\"rust-medium\",\"trusted-pr\"]}'",
+            ),
+            reusable.to_string(),
+            "delegated job `rust-cx43`",
+        ),
+        (
+            "delegated JSON-string runner-config count",
+            workflow.replace(
+                "      runner-config: '\"ubuntu-latest\"'",
+                "      runner-config: ubuntu-latest",
+            ),
+            reusable.to_string(),
+            "JSON-string runner-config values",
+        ),
+        (
+            "runner input type",
+            workflow.to_string(),
+            reusable.replace(
+                "runner-config:\n        description: JSON string or object accepted by jobs.<job_id>.runs-on.\n        required: true\n        type: string",
+                "runner-config:\n        description: JSON string or object accepted by jobs.<job_id>.runs-on.\n        required: true\n        type: boolean",
+            ),
+            "required string contract",
+        ),
+        (
+            "runner conversion",
+            workflow.to_string(),
+            reusable.replace(
+                "runs-on: ${{ fromJSON(inputs.runner-config) }}",
+                "runs-on: ${{ inputs.runner-config }}",
+            ),
+            "fromJSON",
+        ),
+        (
+            "CPX42 label",
+            workflow.replace(
+                "cpx42\",\"rust-medium\",\"rust-16gb",
+                "cpx42\",\"rust-16gb",
+            ),
+            reusable.to_string(),
+            "rust-medium capacity",
+        ),
+        (
+            "docs artifact retention",
+            workflow.replace(
+                "- name: Upload docs-gate reports\n        if: always()",
+                "- name: Upload docs-gate reports\n        if: failure()",
+            ),
+            reusable.to_string(),
+            "docs-gate artifacts",
+        ),
+        (
+            "advisory gating",
+            workflow.to_string(),
+            reusable.replace(
+                "if: success() && inputs.run-advisory-reports",
+                "if: inputs.run-advisory-reports",
+            ),
+            "advisory reports",
+        ),
+        (
+            "failure artifact retention",
+            workflow.to_string(),
+            reusable.replace(
+                "if: failure() || inputs.upload-success-artifacts",
+                "if: inputs.upload-success-artifacts",
+            ),
+            "failure artifacts",
+        ),
+    ];
+
+    for (label, mutated_workflow, mutated_reusable, expected) in regressions {
+        let violations = routed_rust_workflow_contract_violations_with_reusable(
+            &mutated_workflow,
+            Some(&mutated_reusable),
+            Some(settings),
+            Some(lane),
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains(expected)),
+            "reviewed workflow regression `{label}` was not rejected by its expected contract: {violations:#?}"
+        );
+    }
 }
 
 #[test]
@@ -46880,6 +47021,11 @@ fn routed_rust_workflow_text() -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))
 }
 
+fn reusable_rust_workflow_text() -> Result<String, String> {
+    let path = repo_root()?.join(".github/workflows/rust-gates.yml");
+    std::fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))
+}
+
 /// Extracts the run-block lines of each `- name: <step>` whose name matches
 /// `step_name`, stopping at the next step (`- ` at the same indent).
 fn routed_rust_step_run_blocks(workflow: &str, step_name: &str) -> Vec<Vec<String>> {
@@ -46928,10 +47074,18 @@ fn require_single_bare_precommit_line(lines: &[String], context: &str) -> Result
 #[test]
 fn routed_rust_required_lanes_run_full_precommit_table() -> Result<(), String> {
     let workflow = routed_rust_workflow_text()?;
-    let blocks = routed_rust_step_run_blocks(&workflow, "Required Rust gates");
-    if blocks.len() != 4 {
+    let routed_blocks = routed_rust_step_run_blocks(&workflow, "Required Rust gates");
+    if !routed_blocks.is_empty() {
         return Err(format!(
-            "routed-rust.yml must have exactly 4 `Required Rust gates` steps, found {}",
+            "routed-rust.yml must delegate `Required Rust gates` to rust-gates.yml, found {} inline step(s)",
+            routed_blocks.len()
+        ));
+    }
+    let reusable = reusable_rust_workflow_text()?;
+    let blocks = routed_rust_step_run_blocks(&reusable, "Required Rust gates");
+    if blocks.len() != 1 {
+        return Err(format!(
+            "rust-gates.yml must have exactly 1 `Required Rust gates` step, found {}",
             blocks.len()
         ));
     }
@@ -46985,12 +47139,14 @@ fn routed_rust_docs_gate_runs_full_precommit_table() -> Result<(), String> {
 }
 
 #[test]
-fn routed_rust_precommit_invocation_count_is_five() -> Result<(), String> {
+fn routed_rust_precommit_invocation_count_matches_delegated_owner() -> Result<(), String> {
     let workflow = routed_rust_workflow_text()?;
-    let count = workflow.matches("cargo xtask precommit").count();
-    if count != 5 {
+    let reusable = reusable_rust_workflow_text()?;
+    let routed_count = workflow.matches("cargo xtask precommit").count();
+    let reusable_count = reusable.matches("cargo xtask precommit").count();
+    if routed_count != 1 || reusable_count != 1 {
         return Err(format!(
-            "routed-rust.yml must invoke `cargo xtask precommit` exactly 5 times (4 required lanes + docs-gate), found {count}"
+            "delegated Rust proof must invoke `cargo xtask precommit` once in routed-rust.yml (docs-gate) and once in rust-gates.yml, found routed={routed_count}, reusable={reusable_count}"
         ));
     }
     Ok(())
