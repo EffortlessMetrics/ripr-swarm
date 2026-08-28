@@ -13,7 +13,7 @@ vocabulary; the next section separates current wiring from target behavior.
 | `release-check` | Runs the release-surface proof without opting into every `full-ci` lane: package list, publish dry-run, and release-readiness. |
 | `ci-budget-ack` | Acknowledges an over-budget forecast at the `large` band. Budget-neutral; does not run additional lanes. |
 | `vscode` | Target label for forcing the VS Code extension lane on PRs that do not touch `editors/vscode/` but need it. |
-| `coverage` | Runs the advisory coverage lane for the labeled pull request. `full-ci` also selects coverage. |
+| `coverage` | Runs the advisory coverage lane for the labeled pull request. `full-ci` also selects `coverage`. |
 | `clippy-future` | Runs future or candidate Clippy lint lanes in advisory mode. |
 | `ripr-waive` | Target label for acknowledging a `ripr` soft-gate finding for this PR. Requires a written reason in the PR body. |
 
@@ -44,7 +44,7 @@ Current behavior:
 
 - `release-check` activates Perl and release-surface proof.
 - `full-ci` activates Perl/release proof, the named MSRV proof, VS Code
-  integration, coverage, Test Analytics, and future-Clippy advisory proof.
+  integration, `coverage`, Test Analytics, and future-Clippy advisory proof.
 - `coverage` activates the advisory coverage workflow.
 - `clippy-future` activates the future-Clippy advisory workflow.
 - `vscode`, `ci-budget-ack`, and `ripr-waive` remain documented policy
