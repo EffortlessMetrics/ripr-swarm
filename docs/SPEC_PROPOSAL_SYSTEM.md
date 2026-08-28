@@ -205,7 +205,6 @@ docs/
   status/
   handoffs/
 plans/
-.ripr/goals/
 policy/
 ```
 
