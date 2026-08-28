@@ -1,9 +1,9 @@
 use crate::command::{XtaskCommand, print_help, unknown_command_message};
 
-#[path = "precommit_v2.rs"]
-mod precommit_v2;
 #[path = "check_fast_strict.rs"]
 mod check_fast_strict;
+#[path = "precommit_v2.rs"]
+mod precommit_v2;
 
 pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
     match command {

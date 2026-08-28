@@ -148,7 +148,10 @@ fn validate_fast_report(files: &[String], report: &str) -> Result<(), String> {
     if missing.is_empty() {
         Ok(())
     } else {
-        Err(format!("required ran gate(s) absent: {}", missing.join(", ")))
+        Err(format!(
+            "required ran gate(s) absent: {}",
+            missing.join(", ")
+        ))
     }
 }
 
