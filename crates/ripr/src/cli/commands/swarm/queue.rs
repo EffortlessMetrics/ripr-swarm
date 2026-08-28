@@ -1,3 +1,5 @@
+mod projection;
+
 use crate::cli::commands_context::ensure_command_root;
 use crate::cli::commands_numeric::parse_positive_usize;
 use crate::cli::parse::expect_value;
@@ -119,13 +121,16 @@ fn render_from_gap_ledger_contents(options: &Options, contents: &str) -> Result<
             )?
         }
         GapLedgerRootStatus::Match => {
-            output::agent_seam_packets::render_agent_gap_record_queue_json(
+            // Ask the output authority for every candidate so stale typed
+            // records cannot consume the operator's assignable `--top` bound.
+            let candidates = output::agent_seam_packets::render_agent_gap_record_queue_json(
                 &root_display,
                 &gap_ledger_display,
                 &source.records,
                 &options.language,
-                options.top,
-            )?
+                source.records.len(),
+            )?;
+            projection::project_assignable_frontier(&candidates, options.top)?
         }
     };
     Ok(rendered)
@@ -214,42 +219,91 @@ mod tests {
         );
     }
 
+    fn python_swarm_queue_gap_record(
+        gap_id: &str,
+        canonical_gap_id: &str,
+        source_file: &str,
+        target_file: &str,
+        receipt: Option<serde_json::Value>,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "gap_id": gap_id,
+            "source_currentness": "candidate_current",
+            "canonical_gap_id": canonical_gap_id,
+            "kind": "MissingBoundaryAssertion",
+            "language": "python",
+            "language_status": "preview",
+            "scope": "repo",
+            "evidence_class": "predicate_boundary",
+            "gap_state": "actionable",
+            "policy_state": "new",
+            "repairability": "repairable",
+            "anchor": {
+                "file": source_file,
+                "line": 7,
+                "owner": "calculate_discount"
+            },
+            "repair_route": {
+                "route_kind": "AddBoundaryAssertion",
+                "target_file": target_file,
+                "related_test": format!("{target_file}::test_calculate_discount_boundary"),
+                "missing_discriminator": "amount == threshold",
+                "assertion_shape": "assert calculate_discount(100, 100) == 90",
+                "changed_behavior": "amount >= threshold"
+            },
+            "verification_commands": [format!("pytest {target_file}")],
+            "receipt_command": format!(
+                "ripr agent receipt --verify-json target/ripr/workflow/verify.json --seam-id {gap_id} --test-changed {target_file}"
+            ),
+            "receipt": receipt,
+            "projection_eligibility": {
+                "agent_packet": {
+                    "eligible": true,
+                    "reason": "bounded repair route"
+                }
+            }
+        })
+    }
+
     fn python_swarm_queue_gap_ledger(root: &Path) -> String {
         serde_json::json!({
             "root": output::outcome::display_path(root),
             "generated_at": "unix_ms:1778240100000",
-            "records": [{
-                "gap_id": "gap:python:pricing-boundary",
-                "source_currentness": "candidate_current",
-                "canonical_gap_id": "gap:python:src/pricing.py:calculate_discount:predicate_boundary",
-                "kind": "MissingBoundaryAssertion",
-                "language": "python",
-                "language_status": "preview",
-                "scope": "repo",
-                "evidence_class": "predicate_boundary",
-                "gap_state": "actionable",
-                "policy_state": "new",
-                "repairability": "repairable",
-                "anchor": {
-                    "file": "src/pricing.py",
-                    "line": 7,
-                    "owner": "calculate_discount"
-                },
-                "repair_route": {
-                    "route_kind": "AddBoundaryAssertion",
-                    "target_file": "tests/test_pricing.py",
-                    "assertion_shape": "assert calculate_discount(100, 100) == 90",
-                    "changed_behavior": "amount >= threshold"
-                },
-                "verification_commands": ["pytest tests/test_pricing.py"],
-                "receipt_command": "ripr agent receipt --verify-json target/ripr/workflow/verify.json --seam-id gap:python:pricing-boundary --test-changed tests/test_pricing.py",
-                "projection_eligibility": {
-                    "agent_packet": {
-                        "eligible": true,
-                        "reason": "bounded repair route"
-                    }
-                }
-            }]
+            "records": [python_swarm_queue_gap_record(
+                "gap:python:pricing-boundary",
+                "gap:python:src/pricing.py:calculate_discount:predicate_boundary",
+                "src/pricing.py",
+                "tests/test_pricing.py",
+                None,
+            )]
+        })
+        .to_string()
+    }
+
+    fn stale_first_python_swarm_queue_gap_ledger(root: &Path) -> String {
+        serde_json::json!({
+            "root": output::outcome::display_path(root),
+            "generated_at": "unix_ms:1778240100000",
+            "records": [
+                python_swarm_queue_gap_record(
+                    "gap:python:stale-pricing-boundary",
+                    "gap:python:src/pricing.py:calculate_discount:predicate_boundary:stale",
+                    "src/pricing.py",
+                    "tests/test_pricing.py",
+                    Some(serde_json::json!({
+                        "state": "receipt_found",
+                        "movement": "resolved",
+                        "path": "target/ripr/receipts/stale-pricing-boundary.json"
+                    })),
+                ),
+                python_swarm_queue_gap_record(
+                    "gap:python:current-tax-boundary",
+                    "gap:python:src/tax.py:calculate_discount:predicate_boundary:current",
+                    "src/tax.py",
+                    "tests/test_tax.py",
+                    None,
+                )
+            ]
         })
         .to_string()
     }
@@ -363,6 +417,13 @@ mod tests {
         assert_eq!(
             value
                 .get("summary")
+                .and_then(|summary| summary.get("assignable_total"))
+                .and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            value
+                .get("summary")
                 .and_then(|summary| summary.get("returned"))
                 .and_then(serde_json::Value::as_u64),
             Some(1)
@@ -377,6 +438,114 @@ mod tests {
                 .and_then(|files| files.first())
                 .and_then(serde_json::Value::as_str),
             Some("tests/test_pricing.py")
+        );
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn render_applies_top_after_typed_stale_records_are_blocked() -> Result<(), String> {
+        let root = unique_command_test_dir("swarm-queue-assignable-frontier");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        let options = Options {
+            root: root.clone(),
+            gap_ledger: root.join("gap-ledger.json"),
+            language: "python".to_string(),
+            top: 1,
+        };
+
+        let json = render_from_gap_ledger_contents(
+            &options,
+            &stale_first_python_swarm_queue_gap_ledger(&root),
+        )?;
+        let value = serde_json::from_str::<serde_json::Value>(&json)
+            .map_err(|err| format!("queue JSON should parse: {err}"))?;
+        let packet = value
+            .get("packets")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|packets| packets.first())
+            .ok_or_else(|| format!("missing assignable packet in: {json}"))?;
+        assert_eq!(
+            packet.get("gap_id").and_then(serde_json::Value::as_str),
+            Some("gap:python:current-tax-boundary")
+        );
+        assert_eq!(
+            packet
+                .get("source_index")
+                .and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            packet.get("priority").and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+
+        let blocked = value
+            .get("blocked_packets")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|packets| packets.first())
+            .ok_or_else(|| format!("missing blocked stale packet in: {json}"))?;
+        assert_eq!(
+            blocked.get("gap_id").and_then(serde_json::Value::as_str),
+            Some("gap:python:stale-pricing-boundary")
+        );
+        assert_eq!(
+            blocked
+                .get("queue_state")
+                .and_then(serde_json::Value::as_str),
+            Some("blocked_stale")
+        );
+        assert_eq!(
+            blocked
+                .get("staleness_status")
+                .and_then(serde_json::Value::as_str),
+            Some("stale")
+        );
+        for forbidden in [
+            "packet_command_args",
+            "verify_command",
+            "receipt_command",
+            "suggested_test_file",
+            "allowed_edit_surface",
+        ] {
+            assert!(
+                blocked.get(forbidden).is_none(),
+                "blocked review projection leaked {forbidden}: {blocked}"
+            );
+        }
+
+        let summary = value
+            .get("summary")
+            .and_then(serde_json::Value::as_object)
+            .ok_or_else(|| format!("missing summary in: {json}"))?;
+        assert_eq!(
+            summary
+                .get("queue_total")
+                .and_then(serde_json::Value::as_u64),
+            Some(2)
+        );
+        assert_eq!(
+            summary
+                .get("assignable_total")
+                .and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            summary.get("returned").and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            summary
+                .get("unreturned_assignable_total")
+                .and_then(serde_json::Value::as_u64),
+            Some(0)
+        );
+        assert_eq!(
+            summary
+                .get("blocked_stale_total")
+                .and_then(serde_json::Value::as_u64),
+            Some(1)
         );
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;

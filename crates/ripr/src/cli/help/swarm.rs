@@ -20,17 +20,20 @@ Options:
   --root PATH        Workspace root. Defaults to current directory.
   --gap-ledger PATH  Gap decision ledger JSON. Defaults to target/ripr/reports/gap-decision-ledger.json.
   --language NAME    Language filter. Defaults to python.
-  --top N            Maximum queued packets to return. Defaults to 10.
+  --top N            Maximum assignable packets to return. Defaults to 10.
   --format json      Explicit JSON output. JSON is the only queue format.
   --json             Compatibility alias for JSON output.
 
 The queue command reads existing GapRecord artifacts and includes only records
 that are already eligible for `ripr agent packet --gap-ledger ... --gap-id ...`.
-It groups packets by `allowed_edit_surface` conflict group so schedulers can
-avoid parallel edits to the same test file. Staleness is reported as
-`not_evaluated` until a later receipt/ledger step compares the queue with the
-current git state. If the gap ledger omits root provenance or declares a root
-that differs from `--root`, the command emits a blocked queue with no packets.
+It preserves upstream order among assignable packets and groups them by
+`allowed_edit_surface` conflict group so schedulers can avoid parallel edits to
+the same test file. Typed stale or otherwise blocked records are reported under
+`blocked_packets`; they do not consume `--top` and do not carry repair commands
+or edit surfaces. Records without receipt currentness stay `not_evaluated`; the
+queue does not relabel them as fresh. If the gap ledger omits root provenance or
+declares a root that differs from `--root`, the command emits a blocked queue
+with no packets.
 "#;
 
 pub(super) const SWARM_INGEST_HELP: &str = r#"Classify one external agent result for safe repair-loop ingestion.
