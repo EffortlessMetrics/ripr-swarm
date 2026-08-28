@@ -92,7 +92,11 @@ fn write_spec(root: &Path, text: &str) -> Result<(), String> {
 fn backdate_spec(root: &Path) -> Result<(), String> {
     let path = root.join("docs/specs/RIPR-SPEC-9999-time-independent-fixture.md");
     let old = SystemTime::UNIX_EPOCH;
-    fs::File::open(&path)
+    // Windows SetFileTime requires a write-access handle; a read-only
+    // `File::open` fails with access denied, so open for update instead.
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
         .map_err(|error| error.to_string())?
         .set_times(FileTimes::new().set_modified(old))
         .map_err(|error| error.to_string())?;
