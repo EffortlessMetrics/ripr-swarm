@@ -4484,8 +4484,20 @@ mod nested {
         .iter()
         .find(|test| test.name == "nested_module_test_observes_pipeline_target")
         .ok_or_else(|| "nested test must be indexed".to_string())?;
+    // Bind the claimed producer-owned symbol identity, not only a
+    // reconstructable path/name/line tuple.
+    assert_eq!(
+        nested_target.symbol_id().to_string(),
+        "tests/contract_tests.rs::nested::nested_module_test_observes_pipeline_target",
+        "the indexed identity must retain the nested module path"
+    );
     assert_eq!(nested_target.line(), nested_function.start_line);
     assert_eq!(nested_target.file(), nested_function.file);
+    assert_eq!(
+        pipeline_call_presence.owner(),
+        "src/pipeline.rs::render_pipeline",
+        "the credited relation must belong to the pipeline owner seam"
+    );
     assert_eq!(pipeline_evidence.activate.state, StageState::Yes);
 
     let report_seams = inventory_seams_from_index(&[PathBuf::from("src/report.rs")], &index);
