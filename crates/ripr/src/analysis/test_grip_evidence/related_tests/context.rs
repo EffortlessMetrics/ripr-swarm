@@ -281,6 +281,11 @@ pub(in crate::analysis::test_grip_evidence) struct ScopedImportedFunctionBinding
     pub(in crate::analysis::test_grip_evidence) name: String,
     start_line: usize,
     end_line: usize,
+    /// Line ranges inside `start_line..=end_line` that sit in a nested `mod`
+    /// body. Rust does not carry a `use` across a module boundary, so those
+    /// lines are not bound by this import even though they are lexically
+    /// enclosed by it.
+    nested_module_lines: Vec<(usize, usize)>,
 }
 
 impl ScopedImportedFunctionAlias {
@@ -291,7 +296,14 @@ impl ScopedImportedFunctionAlias {
         let candidates = self
             .bindings
             .iter()
-            .filter(|binding| binding.start_line <= line && line <= binding.end_line)
+            .filter(|binding| {
+                binding.start_line <= line
+                    && line <= binding.end_line
+                    && !binding
+                        .nested_module_lines
+                        .iter()
+                        .any(|(first, last)| *first <= line && line <= *last)
+            })
             .collect::<Vec<_>>();
         let max_start = candidates.iter().map(|binding| binding.start_line).max()?;
         let mut best = candidates
@@ -997,12 +1009,16 @@ pub(in crate::analysis::test_grip_evidence) fn direct_function_import_aliases(
     let mut imports = Vec::new();
     let mut line_depths_after = Vec::new();
     let mut scope_starts = vec![1usize];
-    let mut pending_use: Option<(usize, usize, String)> = None;
+    let mut module_scopes = vec![false];
+    let mut line_module_depths = Vec::new();
+    let mut pending_use: Option<(usize, usize, usize, String)> = None;
     let mut brace_depth = 0usize;
     for (line_index, line) in source.lines().enumerate() {
         let line = strip_comments_and_strings(line);
         let line_number = line_index + 1;
         let scope_start = scope_starts[brace_depth];
+        let module_depth = module_scopes.iter().filter(|scope| **scope).count();
+        line_module_depths.push(module_depth);
         let trimmed = line.trim();
         let mut is_use_fragment = false;
         if pending_use.is_some()
@@ -1015,7 +1031,7 @@ pub(in crate::analysis::test_grip_evidence) fn direct_function_import_aliases(
         {
             pending_use = None;
         }
-        if let Some((start_line, scope_depth, import)) = pending_use.as_mut() {
+        if let Some((start_line, scope_depth, use_module_depth, import)) = pending_use.as_mut() {
             is_use_fragment = true;
             import.push(' ');
             import.push_str(trimmed);
@@ -1030,7 +1046,13 @@ pub(in crate::analysis::test_grip_evidence) fn direct_function_import_aliases(
                     parsed = parsed_imports;
                 }
                 if !parsed.is_empty() {
-                    imports.push((*start_line, *scope_depth, line_number, parsed));
+                    imports.push((
+                        *start_line,
+                        *scope_depth,
+                        line_number,
+                        *use_module_depth,
+                        parsed,
+                    ));
                 }
                 pending_use = None;
             }
@@ -1045,10 +1067,10 @@ pub(in crate::analysis::test_grip_evidence) fn direct_function_import_aliases(
                     parsed = parsed_imports;
                 }
                 if !parsed.is_empty() {
-                    imports.push((scope_start, brace_depth, line_number, parsed));
+                    imports.push((scope_start, brace_depth, line_number, module_depth, parsed));
                 }
             } else {
-                pending_use = Some((scope_start, brace_depth, import.to_string()));
+                pending_use = Some((scope_start, brace_depth, module_depth, import.to_string()));
             }
         }
         let lexical_suffix = if is_use_fragment {
@@ -1056,22 +1078,28 @@ pub(in crate::analysis::test_grip_evidence) fn direct_function_import_aliases(
         } else {
             &line
         };
+        let mut segment = String::new();
         for ch in lexical_suffix.chars() {
             match ch {
                 '{' => {
                     brace_depth = brace_depth.saturating_add(1);
                     scope_starts.push(line_number);
+                    module_scopes.push(segment_declares_module(&segment));
+                    segment.clear();
                 }
                 '}' if brace_depth > 0 => {
                     brace_depth -= 1;
                     scope_starts.pop();
+                    module_scopes.pop();
+                    segment.clear();
                 }
-                _ => {}
+                ';' => segment.clear(),
+                _ => segment.push(ch),
             }
         }
         line_depths_after.push(brace_depth);
     }
-    for (start_line, scope_depth, use_line, parsed) in imports {
+    for (start_line, scope_depth, use_line, module_depth, parsed) in imports {
         let end_line = if scope_depth == 0 {
             usize::MAX
         } else {
@@ -1082,6 +1110,8 @@ pub(in crate::analysis::test_grip_evidence) fn direct_function_import_aliases(
                 .find_map(|(index, depth)| (*depth < scope_depth).then_some(index + 1))
                 .unwrap_or(line_depths_after.len())
         };
+        let nested_module_lines =
+            nested_module_line_ranges(&line_module_depths, start_line, end_line, module_depth);
         for (alias, imported) in parsed {
             aliases
                 .entry(alias)
@@ -1094,10 +1124,49 @@ pub(in crate::analysis::test_grip_evidence) fn direct_function_import_aliases(
                     name: imported.name,
                     start_line,
                     end_line,
+                    nested_module_lines: nested_module_lines.clone(),
                 });
         }
     }
     aliases
+}
+
+/// True when the code preceding an opening brace declares a module body, so
+/// the scope it opens is a Rust module boundary rather than an ordinary block.
+/// `use` bindings do not cross a module boundary.
+fn segment_declares_module(segment: &str) -> bool {
+    segment
+        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .any(|token| token == "mod")
+}
+
+/// Line ranges inside `start_line..=end_line` that sit deeper in the module
+/// tree than the import itself, and therefore are not bound by it.
+fn nested_module_line_ranges(
+    line_module_depths: &[usize],
+    start_line: usize,
+    end_line: usize,
+    module_depth: usize,
+) -> Vec<(usize, usize)> {
+    let last_line = end_line.min(line_module_depths.len());
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    let mut open: Option<(usize, usize)> = None;
+    for line in start_line..=last_line {
+        if line_module_depths[line - 1] == module_depth {
+            if let Some(range) = open.take() {
+                ranges.push(range);
+            }
+        } else {
+            match open.as_mut() {
+                Some((_, last)) => *last = line,
+                None => open = Some((line, line)),
+            }
+        }
+    }
+    if let Some(range) = open.take() {
+        ranges.push(range);
+    }
+    ranges
 }
 
 fn collect_direct_function_import_aliases_from_use_unambiguous(

@@ -12660,11 +12660,95 @@ mod other {
     Ok(())
 }
 
-/// #3413: lexical alias ancestry must survive arbitrarily nested test
-/// modules. `binding_at` resolves the nearest enclosing binding, so a
-/// nested module that rebinds an alias owns only its own scope, a nested
-/// module that does not rebind inherits its ancestor's binding, and
-/// sibling modules never borrow each other's targets.
+/// #3413: Rust does not carry a `use` across a module boundary, so a bare
+/// call in a nested `mod` that never imported the alias must stay
+/// uncredited rather than borrowing the enclosing module's binding.
+/// Ordinary blocks are not module boundaries and still resolve.
+#[test]
+fn nested_module_without_its_own_import_stays_uncredited() -> Result<(), String> {
+    // Every arm below is compilable Rust apart from the control noted in
+    // `nested_module_bare_call`, which is exactly why it must fail closed.
+    let bare = direct_function_import_aliases(concat!(
+        "use crate::alpha::compute as run;\n",
+        "fn outer() { run(); }\n",
+        "mod child {\n",
+        "    fn inner() { run(); }\n",
+        "}\n",
+        "fn tail() { run(); }\n",
+    ));
+    let bare_run = bare
+        .get("run")
+        .ok_or_else(|| "run alias should be indexed".to_string())?;
+    assert_eq!(
+        bare_run
+            .binding_at(2)
+            .map(|binding| binding.module_path.as_str()),
+        Some("alpha"),
+        "the enclosing module's own call must still resolve"
+    );
+    assert!(
+        bare_run.binding_at(4).is_none(),
+        "a nested module that never imported the alias must stay uncredited"
+    );
+    assert_eq!(
+        bare_run
+            .binding_at(6)
+            .map(|binding| binding.module_path.as_str()),
+        Some("alpha"),
+        "the outer binding must resume after the nested module closes"
+    );
+
+    // A `super::` re-export is legal Rust but is not chained to its target.
+    let reexport = direct_function_import_aliases(concat!(
+        "use crate::alpha::compute as run;\n",
+        "mod child {\n",
+        "    use super::run;\n",
+        "    fn inner() { run(); }\n",
+        "}\n",
+    ));
+    assert!(
+        reexport
+            .get("run")
+            .and_then(|alias| alias.binding_at(4))
+            .is_none(),
+        "a super re-export must stay uncredited rather than invent a target"
+    );
+
+    // Blocks, `impl` bodies, and `fn` bodies are not module boundaries: a
+    // function-local `use` shadows the file-level one inside its own block
+    // and stops applying once that block closes.
+    let blocks = direct_function_import_aliases(concat!(
+        "use crate::alpha::compute as run;\n",
+        "fn holder() {\n",
+        "    use crate::beta::compute as run;\n",
+        "    if true { run(); }\n",
+        "}\n",
+        "fn after() { run(); }\n",
+    ));
+    let block_run = blocks
+        .get("run")
+        .ok_or_else(|| "run alias should be indexed".to_string())?;
+    assert_eq!(
+        block_run
+            .binding_at(4)
+            .map(|binding| binding.module_path.as_str()),
+        Some("beta"),
+        "the nearest enclosing block binding must win inside its own block"
+    );
+    assert_eq!(
+        block_run
+            .binding_at(6)
+            .map(|binding| binding.module_path.as_str()),
+        Some("alpha"),
+        "a block-local binding must not leak past its closing brace"
+    );
+    Ok(())
+}
+
+/// #3413: lexical alias ancestry must survive nested test modules. Each
+/// module that rebinds the alias owns only its own body; a sibling module
+/// never borrows another's target, and the outer binding resumes after the
+/// nested blocks close.
 #[test]
 fn nested_test_module_alias_ancestry_resolves_through_production_path() -> Result<(), String> {
     let alpha = PathBuf::from("src/alpha.rs");
@@ -12707,6 +12791,8 @@ fn normalize_delta(input: &str) -> String {
     input.to_string()
 }
 "#;
+    // Each nested module carries its own `use`, so this fixture is
+    // compilable Rust: no arm relies on an import crossing a `mod`.
     let support = PathBuf::from("tests/support_nested.rs");
     let support_src = r#"
 use crate::alpha::compute_alpha as run;
@@ -12721,13 +12807,6 @@ mod middle {
 
     pub fn exercise_middle() -> String {
         run("middle")
-    }
-
-    #[cfg(test)]
-    mod inner_inherits {
-        pub fn exercise_inner_inherits() -> String {
-            run("inner")
-        }
     }
 
     #[cfg(test)]
@@ -12762,10 +12841,6 @@ fn nested_alias_ancestry_reaches_every_indexed_owner() {
     assert_eq!(exercise_outer(), "outer");
     assert_eq!(support_nested::exercise_tail(), "tail");
     assert_eq!(support_nested::middle::exercise_middle(), "middle");
-    assert_eq!(
-        support_nested::middle::inner_inherits::exercise_inner_inherits(),
-        "inner"
-    );
     assert_eq!(
         support_nested::middle::inner_rebinds::exercise_inner_rebinds(),
         "rebound"
@@ -12803,11 +12878,10 @@ fn nested_alias_ancestry_reaches_every_indexed_owner() {
     }
 
     // Each helper sits at a different lexical depth but reuses the alias
-    // `run`. The nearest enclosing `use` decides its target.
+    // `run`. Its own module's `use` decides its target.
     for (helper, expected_owner, expected_module) in [
         ("exercise_outer", "compute_alpha", "alpha"),
         ("exercise_middle", "compute_beta", "beta"),
-        ("exercise_inner_inherits", "compute_beta", "beta"),
         ("exercise_inner_rebinds", "compute_gamma", "gamma"),
         ("exercise_sibling", "compute_delta", "delta"),
         ("exercise_tail", "compute_alpha", "alpha"),
@@ -12903,7 +12977,7 @@ fn nested_alias_ancestry_reaches_every_indexed_owner() {
 
 /// #3413: a same-scope alias collision inside a nested test module must
 /// fail closed for that module alone. The valid outer binding is not
-/// discarded, and the conflicted nested helper is credited to nothing.
+/// discarded, before or after the conflicted module.
 #[test]
 fn nested_test_module_alias_conflict_fails_closed_without_discarding_outer_binding()
 -> Result<(), String> {
@@ -12937,6 +13011,9 @@ fn normalize_gamma(input: &str) -> String {
     input.to_string()
 }
 "#;
+    // The conflicting imports are `#[cfg]`-gated, so this is compilable
+    // Rust: only one binding survives any single configuration, and static
+    // analysis cannot tell which. That ambiguity must fail closed.
     let support = PathBuf::from("tests/support_conflict.rs");
     let support_src = r#"
 use crate::alpha::compute_alpha as run;
@@ -12947,7 +13024,9 @@ pub fn exercise_outer() -> String {
 
 #[cfg(test)]
 mod conflicted {
+    #[cfg(unix)]
     use crate::beta::compute_beta as run;
+    #[cfg(windows)]
     use crate::gamma::compute_gamma as run;
 
     pub fn exercise_conflicted() -> String {
