@@ -248,7 +248,9 @@ mod tests {
             "after",
         ]))?;
         if seam_after.is_some() {
-            return Err("seam-selected after phase attempted to create a new repair attempt".to_string());
+            return Err(
+                "seam-selected after phase attempted to create a new repair attempt".to_string(),
+            );
         }
         let attempt_after = before_repair_attempt(&args(&[
             "ripr",

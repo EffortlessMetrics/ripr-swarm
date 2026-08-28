@@ -534,7 +534,8 @@ pub(crate) fn resolve_awaiting_repair_attempt(
             manifest.state
         ));
     }
-    let before_snapshot_path = root.join(&find_manifest_artifact(&manifest, "before_snapshot")?.path);
+    let before_snapshot_path =
+        root.join(&find_manifest_artifact(&manifest, "before_snapshot")?.path);
     let packet_path = root.join(&find_manifest_artifact(&manifest, "agent_packet")?.path);
     Ok(ResolvedRepairAttempt {
         attempt_id: manifest.repair_attempt_id,
@@ -659,11 +660,7 @@ fn select_awaiting_repair_attempt_by_seam(
             matches.push((path, manifest));
         }
     }
-    matches.sort_by(|left, right| {
-        left.1
-            .repair_attempt_id
-            .cmp(&right.1.repair_attempt_id)
-    });
+    matches.sort_by(|left, right| left.1.repair_attempt_id.cmp(&right.1.repair_attempt_id));
     if matches.len() != 1 {
         return Err(format!(
             "expected exactly one awaiting repair attempt for seam `{seam_id}`, found {}; pass --attempt <id> to select the prepared work exactly",
@@ -1523,16 +1520,20 @@ mod tests {
         )?;
         if exact.attempt_id != first.manifest.repair_attempt_id
             || exact.seam_id != "seam:sample"
-            || !exact.before_snapshot_path.starts_with(repair_attempt_directory(
-                &root,
-                &first.manifest.repair_attempt_id,
-            ))
+            || !exact
+                .before_snapshot_path
+                .starts_with(repair_attempt_directory(
+                    &root,
+                    &first.manifest.repair_attempt_id,
+                ))
             || !exact.packet_path.starts_with(repair_attempt_directory(
                 &root,
                 &first.manifest.repair_attempt_id,
             ))
         {
-            return Err(format!("exact attempt resolved the wrong inputs: {exact:?}"));
+            return Err(format!(
+                "exact attempt resolved the wrong inputs: {exact:?}"
+            ));
         }
 
         let ambiguous = resolve_awaiting_repair_attempt(&root, None, Some("seam:sample"));
@@ -1573,11 +1574,8 @@ mod tests {
         std::fs::write(&test_path, "#[test]\nfn focused() {}\n")
             .map_err(|error| format!("write {} failed: {error}", test_path.display()))?;
 
-        let after = finish_repair_attempt(
-            &root,
-            &first.manifest.repair_attempt_id,
-            &exact.packet_path,
-        )?;
+        let after =
+            finish_repair_attempt(&root, &first.manifest.repair_attempt_id, &exact.packet_path)?;
         if after.attempt_id != first.manifest.repair_attempt_id
             || !after.current
             || after.verdict.status != crate::edit_cage::EditCageVerdictStatus::Compliant
