@@ -7,6 +7,10 @@
 //! (`TestGripSummaryV1`) waits on cargo-allow #2191 to freeze the
 //! cross-tool contract. See #1783.
 
+use super::test_evidence_identity::{
+    canonicalize_missing_discriminators, encode_missing_discriminators,
+};
+
 /// A per-related-test evidence summary entry.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TestEvidenceEntry {
@@ -49,8 +53,8 @@ impl TestEvidenceSummary {
     /// Build the shared summary from producer-owned entries and discriminator
     /// identities.
     ///
-    /// Diff and repo adapters must use this constructor so ordering,
-    /// strongest-oracle selection, missing-fact deduplication, and fingerprint
+    /// Adapters converging on this summary use this constructor so ordering,
+    /// strongest-oracle selection, missing-fact normalization, and fingerprint
     /// semantics cannot drift between analysis paths.
     pub(crate) fn from_parts(
         seam_id: impl Into<String>,
@@ -58,19 +62,16 @@ impl TestEvidenceSummary {
         missing_discriminators: &[String],
     ) -> Self {
         sort_entries(&mut entries);
-        let mut missing = missing_discriminators
-            .iter()
-            .map(|value| normalize_text(value))
-            .collect::<Vec<_>>();
-        missing.retain(|value| !value.is_empty());
-        missing.sort();
-        missing.dedup();
+        let missing = canonicalize_missing_discriminators(missing_discriminators);
 
         let base = Self::compute_fingerprint(&entries);
-        let fingerprint = if missing.is_empty() {
-            base
-        } else {
-            format!("{base}|missing:{}", missing.join(";"))
+        let fingerprint = match missing.as_slice() {
+            [] => base,
+            [value] => format!("{base}|missing:{value}"),
+            _ => format!(
+                "{base}|missing-set:{}",
+                encode_missing_discriminators(&missing)
+            ),
         };
 
         Self {
@@ -157,10 +158,6 @@ fn oracle_strength_for_rank(rank: u8) -> &'static str {
         1 => "none",
         _ => "unknown",
     }
-}
-
-fn normalize_text(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 #[cfg(test)]
@@ -299,5 +296,37 @@ mod tests {
         let after = TestEvidenceSummary::from_parts("gap:boundary", entries, &[]);
 
         assert_ne!(before.fingerprint, after.fingerprint);
+    }
+
+    #[test]
+    fn literal_whitespace_changes_fingerprint_without_changing_entry_profile() {
+        let compact = TestEvidenceSummary::from_parts(
+            "gap:string",
+            Vec::new(),
+            &[r#"actual == "a b""#.to_string()],
+        );
+        let spaced = TestEvidenceSummary::from_parts(
+            "gap:string",
+            Vec::new(),
+            &[r#"actual == "a  b""#.to_string()],
+        );
+
+        assert_ne!(compact.fingerprint, spaced.fingerprint);
+    }
+
+    #[test]
+    fn delimiter_partition_changes_fingerprint() {
+        let left = TestEvidenceSummary::from_parts(
+            "gap:delimiter",
+            Vec::new(),
+            &["a;b".to_string(), "c".to_string()],
+        );
+        let right = TestEvidenceSummary::from_parts(
+            "gap:delimiter",
+            Vec::new(),
+            &["a".to_string(), "b;c".to_string()],
+        );
+
+        assert_ne!(left.fingerprint, right.fingerprint);
     }
 }

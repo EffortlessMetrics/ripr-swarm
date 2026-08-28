@@ -13,6 +13,7 @@ mod language;
 mod probe;
 mod summary;
 mod support;
+mod test_evidence_identity;
 mod test_evidence_summary;
 mod verification_result;
 
