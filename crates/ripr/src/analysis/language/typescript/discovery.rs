@@ -4,18 +4,21 @@ use super::*;
 
 const TYPESCRIPT_JAVASCRIPT_EXTENSIONS: &[&str] =
     &["ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs"];
-const TEST_FILE_STEM_SUFFIXES: &[&str] = &[".test", "-test", "_test", ".spec", ".cy"];
-const TEST_DIRECTORY_NAMES: &[&str] = &["test", "tests", "__tests__", "spec"];
+const TEST_FILE_STEM_SUFFIXES: &[&str] = &[".test", "-test", "_test", ".spec"];
+const TEST_DIRECTORY_NAMES: &[&str] = &["test", "tests", "__tests__"];
+const CYPRESS_SOURCE_EXTENSIONS: &[&str] = &["ts", "tsx", "js", "jsx"];
+const JASMINE_SPEC_DIRECTORY_NAMES: &[&str] = &["spec"];
 
 /// Whether a path is a test file by convention.
 ///
-/// The adapter recognizes three bounded convention families:
+/// The adapter recognizes four bounded convention families:
 ///
 /// 1. Jest/Vitest-style `*.test.*` and `*.spec.*` files across every
 ///    TypeScript/JavaScript module extension the adapter accepts.
-/// 2. Node test-runner names: `test.*`, `test-*`, `*-test.*`, and `*_test.*`.
-/// 3. Cypress `*.cy.*` files and source files under exact `test`, `tests`,
-///    `__tests__`, or Jasmine-style `spec` directory components.
+/// 2. Node-style names: `test.*`, `test-*`, `*-test.*`, and `*_test.*`.
+/// 3. Cypress `*.cy.{js,jsx,ts,tsx}` files.
+/// 4. Source files under exact `test`, `tests`, or `__tests__` directory
+///    components, plus Jasmine-style `spec/**/[sS]pec.*` paths.
 ///
 /// Directory matching is component-based, not substring-based, so
 /// `src/latest/foo.ts`, `test-utils/foo.ts`, and `src/contest.ts` remain
@@ -23,15 +26,23 @@ const TEST_DIRECTORY_NAMES: &[&str] = &["test", "tests", "__tests__", "spec"];
 /// directory convention. Test extraction remains fail-closed: a recognized
 /// path contributes test evidence only when parsing finds supported
 /// `test()` / `it()` / `describe()` call shapes.
+///
+/// The exact test-directory rule retains the controlled ky dogfood case:
+/// `test/body-size.ts` directly exercised a changed owner but was invisible
+/// before directory classification, producing a false `no_static_path`.
 pub(crate) fn is_test_file(path: &Path) -> bool {
     has_typescript_or_javascript_extension(path)
         && (has_test_file_stem(path) || has_test_directory_component(path))
 }
 
 fn has_typescript_or_javascript_extension(path: &Path) -> bool {
+    has_extension_in(path, TYPESCRIPT_JAVASCRIPT_EXTENSIONS)
+}
+
+fn has_extension_in(path: &Path, extensions: &[&str]) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| TYPESCRIPT_JAVASCRIPT_EXTENSIONS.contains(&extension))
+        .is_some_and(|extension| extensions.contains(&extension))
 }
 
 fn has_test_file_stem(path: &Path) -> bool {
@@ -46,14 +57,25 @@ fn has_test_file_stem(path: &Path) -> bool {
         || TEST_FILE_STEM_SUFFIXES
             .iter()
             .any(|suffix| stem.ends_with(suffix))
+        || (stem.ends_with(".cy") && has_extension_in(path, CYPRESS_SOURCE_EXTENSIONS))
+        || has_jasmine_spec_stem(path, stem)
+}
+
+fn has_jasmine_spec_stem(path: &Path, stem: &str) -> bool {
+    (stem.ends_with("Spec") || stem.ends_with("spec"))
+        && has_directory_component(path, JASMINE_SPEC_DIRECTORY_NAMES)
 }
 
 fn has_test_directory_component(path: &Path) -> bool {
+    has_directory_component(path, TEST_DIRECTORY_NAMES)
+}
+
+fn has_directory_component(path: &Path, names: &[&str]) -> bool {
     path.components().any(|component| {
         component
             .as_os_str()
             .to_str()
-            .is_some_and(|name| TEST_DIRECTORY_NAMES.contains(&name))
+            .is_some_and(|name| names.contains(&name))
     })
 }
 
@@ -105,6 +127,8 @@ mod tests {
     #[test]
     fn test_file_names_cover_supported_runner_conventions() {
         for path in [
+            "src/cart.test.ts",
+            "src/cart.spec.tsx",
             "src/cart.test.mts",
             "src/cart.spec.cts",
             "src/cart-test.mjs",
@@ -119,13 +143,14 @@ mod tests {
     }
 
     #[test]
-    fn test_directories_cover_feature_named_test_files() {
+    fn test_directories_cover_feature_named_and_jasmine_test_files() {
         for path in [
             "test/body-size.ts",
             "tests/utils.ts",
             "src/__tests__/Header.tsx",
             "packages/core/test/index.mjs",
-            "spec/request_contract.js",
+            "spec/requestContractSpec.js",
+            "spec/request_contractspec.mjs",
         ] {
             assert!(is_test_file(Path::new(path)), "expected test path: {path}");
         }
@@ -139,6 +164,10 @@ mod tests {
             "src/contest.ts",
             "src/cart_test.txt",
             "spec/request_contract.md",
+            "spec/request_contract.js",
+            "spec/helpers/setup.js",
+            "src/requestContractSpec.js",
+            "src/cart.cy.mjs",
             "src/cypress.ts",
             "src/specification.ts",
         ] {
@@ -161,19 +190,19 @@ mod tests {
                 r#"describe("cart", () => { it("checks out", () => { expect(cart()).toBe(1); }); });"#,
             ),
             (
-                "spec/cart_contract.js",
+                "spec/cartContractSpec.js",
                 r#"describe("cart", () => { it("keeps its contract", () => { expect(cart()).toBe(1); }); });"#,
             ),
         ];
 
         for (path, source) in cases {
             let path = Path::new(path);
-            assert!(is_test_file(path), "expected test path: {}", path.display());
+            let display = path.display();
+            assert!(is_test_file(path), "expected test path: {display}");
             assert_eq!(
                 extract_tests(path, source).len(),
                 1,
-                "expected one extracted test for {}",
-                path.display()
+                "expected one extracted test for {display}"
             );
         }
     }
