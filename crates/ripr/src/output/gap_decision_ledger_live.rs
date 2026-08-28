@@ -5,7 +5,6 @@ use crate::output::gap_decision_ledger::{self, GapRecord};
 #[derive(Clone, Debug)]
 pub(crate) struct ParsedGapRecordSourceWithProvenance {
     pub(crate) root: Option<String>,
-    pub(crate) generated_at: Option<String>,
     pub(crate) source_kind: Option<String>,
     pub(crate) records_path: Option<String>,
     pub(crate) source_identity_error: Option<String>,
@@ -26,7 +25,6 @@ pub(crate) fn parse_gap_record_source_with_provenance_json(
 
     Ok(ParsedGapRecordSourceWithProvenance {
         root: parsed.root,
-        generated_at: parsed.generated_at,
         source_kind,
         records_path,
         source_identity_error,
