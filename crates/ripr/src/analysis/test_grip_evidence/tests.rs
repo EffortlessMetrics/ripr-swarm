@@ -4443,6 +4443,98 @@ fn aliased_wrapper_observes_pipeline_call_target() {
 }
 
 #[test]
+fn given_call_presence_when_a_module_alias_is_ambiguous_then_no_relation_is_credited()
+-> Result<(), String> {
+    let pipeline = PathBuf::from("src/pipeline.rs");
+    let pipeline_src = r#"
+pub fn render_pipeline(input: &str) -> String {
+    format_output(input)
+}
+
+pub fn exercise_pipeline() -> String {
+    render_pipeline("alpha")
+}
+
+fn format_output(input: &str) -> String {
+    input.to_string()
+}
+"#;
+    let report = PathBuf::from("src/report.rs");
+    let report_src = r#"
+pub fn render_report(input: &str) -> String {
+    format_report(input)
+}
+
+pub fn exercise_pipeline() -> String {
+    render_report("beta")
+}
+
+fn format_report(input: &str) -> String {
+    input.to_string()
+}
+"#;
+    // #3487 review: same-scope ambiguity was pinned at the resolver only. Two
+    // `#[cfg]`-gated file-scope imports bind one alias to different owners —
+    // the compiling case — and no static reading can choose between them.
+    let ambiguous = PathBuf::from("tests/ambiguous_tests.rs");
+    let ambiguous_src = r#"
+#[cfg(unix)]
+use crate::pipeline as pipe;
+#[cfg(windows)]
+use crate::report as pipe;
+
+#[test]
+fn ambiguous_alias_must_not_credit_an_owner() {
+    let format_output = pipe::exercise_pipeline();
+    assert_eq!(format_output, "alpha");
+}
+"#;
+    // Positive control in the same index: without it, an absent relation could
+    // mean the fixture never reached the production path at all.
+    let unique = PathBuf::from("tests/unique_tests.rs");
+    let unique_src = r#"
+use crate::pipeline as clear;
+
+#[test]
+fn unique_alias_is_credited() {
+    let format_output = clear::exercise_pipeline();
+    assert_eq!(format_output, "alpha");
+}
+"#;
+    let index = index_from_files(&[
+        (pipeline, pipeline_src),
+        (report, report_src),
+        (ambiguous, ambiguous_src),
+        (unique, unique_src),
+    ])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
+    let call_presence = seams
+        .iter()
+        .find(|s| {
+            s.kind() == SeamKind::CallPresence
+                && s.owner().ends_with("::render_pipeline")
+                && s.expression().contains("format_output")
+        })
+        .ok_or_else(|| "expected render_pipeline call_presence seam".to_string())?;
+
+    let evidence = evidence_for_seam(call_presence, &index);
+    let credited = evidence
+        .related_tests
+        .iter()
+        .filter(|test| test.relation_reason == RelationReason::HelperOwnerCall)
+        .map(|test| test.test_name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        credited,
+        vec!["unique_alias_is_credited"],
+        "an ambiguous same-scope alias must not credit an owner, while a unique \
+         alias in the same index still does: {:?}",
+        evidence.related_tests
+    );
+    Ok(())
+}
+
+#[test]
 fn given_call_presence_when_nested_test_module_rebinds_a_module_alias_then_each_relation_keeps_its_own_target()
 -> Result<(), String> {
     let pipeline = PathBuf::from("src/pipeline.rs");
