@@ -259,9 +259,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
     match phase {
         AgentRepairPhase::Before => {
             if attempt_id.is_some() {
-                return Err(
-                    "agent repair --attempt is only valid with --phase after".to_string(),
-                );
+                return Err("agent repair --attempt is only valid with --phase after".to_string());
             }
             if seam_id.is_none() {
                 return Err("agent repair --phase before requires --seam-id <id>".to_string());
@@ -947,12 +945,9 @@ mod tests {
     }
 
     #[test]
-    fn agent_repair_rejects_ambiguous_or_phase_wrong_identity() {
+    fn agent_repair_rejects_ambiguous_or_phase_wrong_identity() -> Result<(), String> {
         for (argv, needle) in [
-            (
-                vec!["repair", "--phase", "before"],
-                "requires --seam-id",
-            ),
+            (vec!["repair", "--phase", "before"], "requires --seam-id"),
             (
                 vec![
                     "repair",
@@ -986,11 +981,13 @@ mod tests {
                 "non-empty ID",
             ),
         ] {
-            let error = parse_agent_args(&args(&argv))
-                .err()
-                .unwrap_or_else(|| panic!("expected {argv:?} to fail"));
+            let error = match parse_agent_args(&args(&argv)) {
+                Ok(parsed) => return Err(format!("expected {argv:?} to fail, got {parsed:?}")),
+                Err(error) => error,
+            };
             assert!(error.contains(needle), "{argv:?} reported {error}");
         }
+        Ok(())
     }
 
     #[test]
