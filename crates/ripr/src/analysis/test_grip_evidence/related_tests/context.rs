@@ -310,9 +310,7 @@ impl ScopedModuleImportAlias {
         let mut nearest: Option<&ScopedModuleImportBinding> = None;
         let mut ambiguous = false;
         for binding in &self.bindings {
-            if binding.start_line > line
-                || line > binding.end_line
-            {
+            if binding.start_line > line || line > binding.end_line {
                 continue;
             }
             if binding.end_is_partial && line == binding.end_line {
