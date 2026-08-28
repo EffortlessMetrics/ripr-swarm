@@ -397,7 +397,10 @@ fn init_producer_fixture_repo(root: &Path) -> Result<(), Box<dyn std::error::Err
         std::fs::copy(fixture_root.join(relative), root.join(relative))?;
     }
     run_git(root, &["init"])?;
-    run_git(root, &["add", "Cargo.toml", "src/lib.rs", "tests/pricing.rs"])?;
+    run_git(
+        root,
+        &["add", "Cargo.toml", "src/lib.rs", "tests/pricing.rs"],
+    )?;
     let commit = run_command(
         "git",
         Some(root),
@@ -11046,7 +11049,8 @@ fn agent_verify_execute_runs_a_producer_owned_route_and_commits_a_result()
 }
 
 #[test]
-fn agent_packet_blocks_untracked_consumed_config_change() -> Result<(), Box<dyn std::error::Error>> {
+fn agent_packet_blocks_untracked_consumed_config_change() -> Result<(), Box<dyn std::error::Error>>
+{
     let (root, packet) = producer_verify_packet("untracked-config-currentness")?;
     let gap_id = packet["packets"][0]["gap_id"]
         .as_str()
@@ -11076,13 +11080,11 @@ fn agent_packet_blocks_untracked_consumed_config_change() -> Result<(), Box<dyn 
         "stale currentness must not expose assignable packets: {parsed}"
     );
     assert_eq!(
-        parsed["source_currentness"]["status"],
-        "stale",
+        parsed["source_currentness"]["status"], "stale",
         "a newly added consumed config must invalidate assignment: {parsed}"
     );
     assert_eq!(
-        parsed["blocked_candidate"]["queue_state"],
-        "blocked_stale",
+        parsed["blocked_candidate"]["queue_state"], "blocked_stale",
         "stale currentness must expose the blocked candidate disposition: {parsed}"
     );
     Ok(())

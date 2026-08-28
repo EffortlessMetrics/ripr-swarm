@@ -4185,7 +4185,8 @@ mod tests {
 
     #[test]
     fn gap_ledger_source_path_is_bound_to_invocation_cwd() -> Result<(), String> {
-        let rendered = ledger_source_path(Path::new("repo/target/ripr/reports/repo-exposure.json"))?;
+        let rendered =
+            ledger_source_path(Path::new("repo/target/ripr/reports/repo-exposure.json"))?;
         let expected_suffix = Path::new("repo/target/ripr/reports/repo-exposure.json")
             .to_string_lossy()
             .replace('\\', "/");
