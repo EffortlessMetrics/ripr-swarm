@@ -11061,11 +11061,20 @@ fn agent_packet_blocks_untracked_consumed_config_change() -> Result<(), Box<dyn 
     assert_success(&output);
     let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)?;
     assert_eq!(
-        parsed["packets"][0]["staleness_status"],
+        parsed["packets"].as_array().map(Vec::len),
+        Some(0),
+        "stale currentness must not expose assignable packets: {parsed}"
+    );
+    assert_eq!(
+        parsed["source_currentness"]["status"],
         "stale",
         "a newly added consumed config must invalidate assignment: {parsed}"
     );
-    assert_eq!(parsed["packets"][0]["queue_state"], "blocked_stale");
+    assert_eq!(
+        parsed["blocked_candidate"]["queue_state"],
+        "blocked_stale",
+        "stale currentness must expose the blocked candidate disposition: {parsed}"
+    );
     Ok(())
 }
 
