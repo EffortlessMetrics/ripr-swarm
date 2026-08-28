@@ -161,7 +161,10 @@ fn legacy_stdio_lifecycle_lists_and_reads_the_same_bounded_status() -> Result<()
         }))?,
     ]
     .concat();
-    let output = run_mcp(&root, &[&initialize[..split], &initialize[split..], &remaining])?;
+    let output = run_mcp(
+        &root,
+        &[&initialize[..split], &initialize[split..], &remaining],
+    )?;
     let responses = response_lines(&output)?;
     if responses.len() != 6 {
         return Err(format!("expected 6 MCP responses, got {}", responses.len()));
@@ -173,7 +176,9 @@ fn legacy_stdio_lifecycle_lists_and_reads_the_same_bounded_status() -> Result<()
     {
         return Err("legacy initialize did not negotiate the requested version".to_string());
     }
-    if responses[1].pointer("/result/tools/0/name").and_then(Value::as_str)
+    if responses[1]
+        .pointer("/result/tools/0/name")
+        .and_then(Value::as_str)
         != Some("ripr_workspace_status")
     {
         return Err("tools/list did not expose the status tool".to_string());
@@ -232,10 +237,7 @@ fn legacy_stdio_lifecycle_lists_and_reads_the_same_bounded_status() -> Result<()
 
 #[test]
 fn current_discovery_requires_metadata_and_rejects_legacy_ping() -> Result<(), String> {
-    let root = std::env::temp_dir().join(format!(
-        "ripr-mcp-missing-root-{}",
-        std::process::id()
-    ));
+    let root = std::env::temp_dir().join(format!("ripr-mcp-missing-root-{}", std::process::id()));
     if root.is_dir() {
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove stale test root directory: {error}"))?;

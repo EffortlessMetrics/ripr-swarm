@@ -182,9 +182,7 @@ pub(super) fn empty_result(current_protocol: bool) -> Value {
 }
 
 fn with_result_type(mut result: Value, current_protocol: bool) -> Value {
-    if current_protocol
-        && let Some(object) = result.as_object_mut()
-    {
+    if current_protocol && let Some(object) = result.as_object_mut() {
         object
             .entry("resultType".to_string())
             .or_insert_with(|| Value::String("complete".to_string()));

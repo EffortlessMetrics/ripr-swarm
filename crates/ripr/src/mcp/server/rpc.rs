@@ -24,9 +24,7 @@ pub(super) fn require_object<'a>(
         .ok_or_else(|| RpcError::invalid_params(message))
 }
 
-pub(super) fn inline_protocol_version(
-    request: &Map<String, Value>,
-) -> Result<&str, RpcError> {
+pub(super) fn inline_protocol_version(request: &Map<String, Value>) -> Result<&str, RpcError> {
     let params = required_params_object(request)?;
     let metadata = require_object(
         params,

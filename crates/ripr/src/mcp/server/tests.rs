@@ -1,4 +1,5 @@
 use super::*;
+use serde_json::json;
 
 fn status() -> WorkspaceStatus {
     WorkspaceStatus::resolve(None)
@@ -21,11 +22,7 @@ fn invalid_json_is_a_parse_error_without_an_id() -> Result<(), String> {
     if response.get("id").is_some() {
         return Err("parse error must omit unreadable id".to_string());
     }
-    if response
-        .pointer("/error/code")
-        .and_then(Value::as_i64)
-        != Some(protocol::ERROR_PARSE)
-    {
+    if response.pointer("/error/code").and_then(Value::as_i64) != Some(protocol::ERROR_PARSE) {
         return Err("parse error code drifted".to_string());
     }
     Ok(())
@@ -49,8 +46,7 @@ fn unsupported_initialize_version_negotiates_to_server_default() -> Result<(), S
         != Some(protocol::CURRENT_PROTOCOL_VERSION)
     {
         return Err(
-            "unsupported initialize version did not negotiate to the server default"
-                .to_string(),
+            "unsupported initialize version did not negotiate to the server default".to_string(),
         );
     }
     Ok(())
@@ -120,7 +116,9 @@ fn inline_request_rejects_an_unsupported_protocol_version() -> Result<(), String
     {
         return Err("unsupported inline protocol error code drifted".to_string());
     }
-    if response.pointer("/error/data/requested").and_then(Value::as_str)
+    if response
+        .pointer("/error/data/requested")
+        .and_then(Value::as_str)
         != Some("2099-01-01")
     {
         return Err("unsupported inline protocol omitted the requested version".to_string());
@@ -172,8 +170,7 @@ fn legacy_resource_miss_uses_the_legacy_resource_error() -> Result<(), String> {
 }
 
 #[test]
-fn discover_lifecycle_rejects_ping_even_when_selecting_an_older_version(
-) -> Result<(), String> {
+fn discover_lifecycle_rejects_ping_even_when_selecting_an_older_version() -> Result<(), String> {
     let mut server = McpServer::new(status());
     let discover = serde_json::to_vec(&json!({
         "jsonrpc": "2.0",

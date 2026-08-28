@@ -1,11 +1,10 @@
+use super::MAX_MESSAGE_BYTES;
 use super::protocol;
 use super::server::{McpServer, bounded_error_response};
 use crate::workspace_status::WorkspaceStatus;
 use serde_json::{Value, json};
 use std::path::PathBuf;
-use tokio::io::{
-    AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader,
-};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 
 pub(super) async fn serve_stdio(explicit_root: Option<PathBuf>) -> Result<(), String> {
     let status = WorkspaceStatus::resolve(explicit_root);
@@ -44,8 +43,8 @@ async fn write_response<W>(writer: &mut W, response: &Value) -> Result<(), Strin
 where
     W: AsyncWrite + Unpin,
 {
-    let encoded = serde_json::to_vec(response)
-        .map_err(|error| format!("serialize MCP response: {error}"))?;
+    let encoded =
+        serde_json::to_vec(response).map_err(|error| format!("serialize MCP response: {error}"))?;
     let encoded = if encoded.len() > super::MAX_RESPONSE_BYTES {
         let fallback = bounded_error_response(
             protocol::ERROR_INTERNAL,

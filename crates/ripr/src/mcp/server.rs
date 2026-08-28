@@ -8,7 +8,9 @@ use rpc::{
 };
 use serde_json::{Map, Value};
 
-pub(super) use rpc::bounded_error_response;
+pub(super) fn bounded_error_response(code: i64, message: &str, data: Option<Value>) -> Value {
+    rpc::bounded_error_response(code, message, data)
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Lifecycle {
@@ -91,9 +93,7 @@ impl McpServer {
         let result = match method {
             "initialize" => self.initialize(object),
             "server/discover" => self.discover(object),
-            "ping" if matches!(self.lifecycle, Lifecycle::New) => {
-                Ok(protocol::empty_result(false))
-            }
+            "ping" if matches!(self.lifecycle, Lifecycle::New) => Ok(protocol::empty_result(false)),
             _ => self.handle_ready_request(method, object),
         };
         Some(match result {
@@ -274,7 +274,6 @@ impl McpServer {
         .map_err(RpcError::internal)
     }
 }
-
 
 #[cfg(test)]
 mod tests;
