@@ -230,6 +230,13 @@ fn normalized_file_stem(path: &Path) -> String {
 /// authority: only the source stem itself and its `_test`/`_tests` variants
 /// count as file identity.
 ///
+/// The claim is bounded to *stem* identity, not directory-scoped identity:
+/// `src/config.rs` and `src/nested/config.rs` share a stem and are credited,
+/// exactly as `test_grip_evidence::related_tests::match_same_test_file`
+/// credits them through `tests_by_file_stem`. Narrowing only this side would
+/// re-split the two producers. Cross-package pairs are already excluded by
+/// the package prefix guards in `find_related_tests`.
+///
 /// The suffix check avoids the two `format!` allocations an equality
 /// comparison would perform for every candidate test — the same reason
 /// `test_grip_evidence::related_tests::same_test_file` documents for using
@@ -583,6 +590,71 @@ mod tests {
                 "{probe_path} must resolve file identity regardless of separators"
             );
         }
+    }
+
+    /// Fail-closed control: a probe whose path yields no stem must not relate
+    /// anything. Before the `is_empty` guard, an empty stem made
+    /// `path.contains("")` universally true, so every test in the index was
+    /// related on a signal carrying no information at all.
+    #[test]
+    fn empty_probe_stem_relates_nothing() {
+        let index = RustIndex {
+            tests: vec![test(
+                "crates/core/tests/whatever.rs",
+                "checks_value",
+                "assert_eq!(value, 3);",
+            )],
+            ..RustIndex::default()
+        };
+
+        let related = find_related_tests(&probe("", "marker"), None, &index, true, None);
+
+        assert!(
+            related.is_empty(),
+            "a probe with no derivable file stem must relate nothing, got {related:?}"
+        );
+    }
+
+    /// Bound of the claim: `SameTestFile` here means *stem* identity as the
+    /// test-grip authority defines it, not directory-scoped file identity.
+    ///
+    /// `test_grip_evidence::related_tests::match_same_test_file` resolves
+    /// candidates purely through `tests_by_file_stem`, so a same-stem file in
+    /// another directory of the same package is credited there too. This
+    /// producer matches that deliberately: making only this side
+    /// directory-aware would reintroduce the two-producers-disagree split that
+    /// #3474 closed. Cross-*package* matches remain excluded by the package
+    /// prefix guards above.
+    ///
+    /// This test pins that bound so a future narrowing is a deliberate,
+    /// paired change to both producers rather than a silent drift.
+    #[test]
+    fn same_stem_in_another_directory_is_stem_identity_not_directory_identity() {
+        let owner = function("crates/core/src/config.rs", "load_config");
+        let index = RustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test(
+                "crates/core/src/nested/config.rs",
+                "checks_value",
+                "assert_eq!(value, 3);",
+            )],
+            ..RustIndex::default()
+        };
+
+        let related = find_related_tests(
+            &probe("crates/core/src/config.rs", "marker"),
+            Some(&owner),
+            &index,
+            true,
+            None,
+        );
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(
+            related[0].1,
+            RelationReason::SameTestFile,
+            "stem identity is the authority-defined bound; see the doc on this test"
+        );
     }
 
     #[test]
