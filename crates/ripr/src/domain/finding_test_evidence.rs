@@ -209,9 +209,7 @@ mod tests {
             "diff findings must not manufacture producer-owned test targets"
         );
         assert!(
-            summary
-                .fingerprint
-                .ends_with("missing:amount == threshold"),
+            summary.fingerprint.ends_with("missing:amount == threshold"),
             "normalized missing-discriminator identity must enter movement"
         );
     }
