@@ -83,7 +83,7 @@ describe.concurrent.each([[1], [2]])("parallel %i", () => {
 }
 
 #[test]
-fn recognizes_active_modifier_chains_before_each() {
+fn recognizes_active_modifier_chains_before_each_in_either_order() {
     let tests = extract_tests(
         Path::new("tests/pricing.test.ts"),
         r#"
@@ -95,15 +95,21 @@ test.only.each([
 });
 it.concurrent.only.each([
     [1, 2, 3],
-])("adds %#", (left, right, expected) => {
+])("adds concurrently %#", (left, right, expected) => {
     expect(add(left, right)).toBe(expected);
+});
+test.only.sequential.each([
+    ["x", "x"],
+])("normalizes sequentially %#", (value, expected) => {
+    expect(normalize(value)).toBe(expected);
 });
 "#,
     );
 
-    assert_eq!(tests.len(), 2);
+    assert_eq!(tests.len(), 3);
     assert_eq!(tests[0].local_name, "discounts %#");
-    assert_eq!(tests[1].local_name, "adds %#");
+    assert_eq!(tests[1].local_name, "adds concurrently %#");
+    assert_eq!(tests[2].local_name, "normalizes sequentially %#");
     assert!(tests.iter().all(|test| test.assertions.len() == 1));
 }
 
