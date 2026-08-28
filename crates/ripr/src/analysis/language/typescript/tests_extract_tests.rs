@@ -83,7 +83,7 @@ describe.concurrent.each([[1], [2]])("parallel %i", () => {
 }
 
 #[test]
-fn recognizes_active_modifier_before_each() {
+fn recognizes_active_modifier_chains_before_each() {
     let tests = extract_tests(
         Path::new("tests/pricing.test.ts"),
         r#"
@@ -93,16 +93,22 @@ test.only.each([
 ])("discounts %#", (amount, expected) => {
     expect(applyDiscount(amount, 100)).toBe(expected);
 });
+it.concurrent.only.each([
+    [1, 2, 3],
+])("adds %#", (left, right, expected) => {
+    expect(add(left, right)).toBe(expected);
+});
 "#,
     );
 
-    assert_eq!(tests.len(), 1);
+    assert_eq!(tests.len(), 2);
     assert_eq!(tests[0].local_name, "discounts %#");
-    assert_eq!(tests[0].assertions.len(), 1);
+    assert_eq!(tests[1].local_name, "adds %#");
+    assert!(tests.iter().all(|test| test.assertions.len() == 1));
 }
 
 #[test]
-fn keeps_disabled_conditional_expected_failure_and_unknown_declarations_uncredited() {
+fn keeps_disabled_invalid_and_unknown_declarations_uncredited() {
     let tests = extract_tests(
         Path::new("tests/pricing.test.ts"),
         r#"
@@ -129,6 +135,20 @@ runner.only("unknown root", () => {
 });
 test.retry("unknown modifier", () => {
     expect(applyDiscount(100, 100)).toBe(90);
+});
+test.only.only("duplicate focus", () => {
+    expect(applyDiscount(100, 100)).toBe(90);
+});
+test.concurrent.concurrent("duplicate mode", () => {
+    expect(add(1, 2)).toBe(3);
+});
+test.concurrent.sequential("conflicting modes", () => {
+    expect(add(1, 2)).toBe(3);
+});
+describe.sequential.concurrent("conflicting suite modes", () => {
+    test("nested invalid", () => {
+        expect(normalize("x")).toBe("x");
+    });
 });
 "#,
     );
