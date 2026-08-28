@@ -1,3 +1,4 @@
+use super::super::extract::PROBE_SHAPE_UNSAFE_BOUNDARY;
 use super::super::rust_index::{FileFacts, RustIndex};
 use super::family::family_for_probe_shape;
 use crate::domain::ProbeFamily;
@@ -10,6 +11,7 @@ pub(crate) struct ParserProbeShape<'a> {
     pub(crate) start_byte: usize,
     pub(crate) text: &'a str,
     pub(crate) standalone_call: bool,
+    pub(crate) unsafe_boundary: bool,
 }
 
 pub(crate) fn parser_probe_shapes_for_changed_line<'a>(
@@ -29,20 +31,36 @@ pub(crate) fn parser_probe_shapes_for_changed_line<'a>(
         let Some(family) = family_for_probe_shape(&shape.kind) else {
             continue;
         };
-        if shape_match_rank(&shape.text, changed_text).is_none() {
+        let unsafe_boundary = shape.kind == PROBE_SHAPE_UNSAFE_BOUNDARY;
+        if !unsafe_boundary && shape_match_rank(&shape.text, changed_text).is_none() {
             continue;
         }
         let candidate = ParserProbeShape {
             family,
-            start_line: shape.start_line,
+            // Unsafe boundaries match by containment rather than source text.
+            // Project them at the changed line so diff synthesis emits one
+            // explicit canonical probe while `start_byte` keeps the stable
+            // boundary identity used for deduplication.
+            start_line: if unsafe_boundary {
+                line
+            } else {
+                shape.start_line
+            },
             start_byte: shape.start_byte,
             text: &shape.text,
             standalone_call: parser_call_shape_is_standalone(facts, shape),
+            unsafe_boundary,
         };
         if let Some(position) = selected
             .iter()
             .position(|current| current.family == candidate.family)
         {
+            if candidate.unsafe_boundary && selected[position].unsafe_boundary {
+                if candidate.start_byte > selected[position].start_byte {
+                    selected[position] = candidate;
+                }
+                continue;
+            }
             let current = &selected[position];
             let candidate_rank = shape_match_rank(candidate.text, changed_text);
             let current_rank = shape_match_rank(current.text, changed_text);
@@ -213,6 +231,63 @@ mod tests {
 
         let shapes = parser_probe_shapes_for_changed_line(&index, &path, 4, "return total");
         assert!(shapes.is_empty());
+    }
+
+    #[test]
+    fn unsafe_boundaries_match_by_span_and_prefer_the_innermost_boundary()
+    -> Result<(), String> {
+        let path = PathBuf::from("src/lib.rs");
+        let index = RustIndex {
+            files: BTreeMap::from([(
+                path.clone(),
+                FileFacts {
+                    path: path.clone(),
+                    probe_shapes: vec![
+                        ProbeShapeFact {
+                            start_line: 1,
+                            end_line: 9,
+                            start_byte: 4,
+                            kind: PROBE_SHAPE_UNSAFE_BOUNDARY.to_string(),
+                            text: "unsafe fn read_raw".to_string(),
+                        },
+                        ProbeShapeFact {
+                            start_line: 3,
+                            end_line: 7,
+                            start_byte: 40,
+                            kind: PROBE_SHAPE_UNSAFE_BOUNDARY.to_string(),
+                            text: "unsafe block".to_string(),
+                        },
+                        ProbeShapeFact {
+                            start_line: 5,
+                            end_line: 5,
+                            start_byte: 60,
+                            kind: PROBE_SHAPE_PREDICATE.to_string(),
+                            text: "value < limit".to_string(),
+                        },
+                    ],
+                    ..FileFacts::default()
+                },
+            )]),
+            ..RustIndex::default()
+        };
+
+        let shapes =
+            parser_probe_shapes_for_changed_line(&index, &path, 5, "value < limit");
+        assert_eq!(shapes.len(), 2);
+        assert!(
+            shapes
+                .iter()
+                .any(|shape| shape.family == ProbeFamily::Predicate)
+        );
+        let unsafe_shape = shapes
+            .iter()
+            .find(|shape| shape.family == ProbeFamily::StaticUnknown)
+            .ok_or_else(|| "missing unsafe boundary shape".to_string())?;
+        assert_eq!(unsafe_shape.start_line, 5);
+        assert_eq!(unsafe_shape.start_byte, 40);
+        assert_eq!(unsafe_shape.text, "unsafe block");
+        assert!(unsafe_shape.unsafe_boundary);
+        Ok(())
     }
 
     #[test]
