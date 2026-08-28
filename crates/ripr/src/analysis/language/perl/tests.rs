@@ -805,6 +805,38 @@ fn perl_strict_actionability_uses_selected_strict_evidence_for_gap_identity() ->
 }
 
 #[test]
+fn perl_strict_actionability_blocks_limitation_on_any_related_evidence() -> Result<(), String> {
+    let fixture = include_str!(
+        "../../../../../../fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json"
+    );
+    let mut packet = consume(fixture)?;
+    let mut additional_relation = packet
+        .relations
+        .first()
+        .cloned()
+        .ok_or_else(|| "missing fixture relation".to_string())?;
+    additional_relation.relation_id = "relation:return:additional-smoke".to_string();
+    packet.relations.push(additional_relation);
+    packet.limitations.push(LimitationFact {
+        limitation_id: "limitation:related-evidence:additional-smoke".to_string(),
+        kind: "framework_indirection".to_string(),
+        message: "a related test has an opaque assertion boundary".to_string(),
+        evidence_refs: vec!["relation:return:additional-smoke".to_string()],
+    });
+
+    assert_eq!(
+        packet.strict_actionability_for_change(
+            "change:lib/My/App.pm:8:return",
+            &complete_perl_actionability_context(),
+        ),
+        Err(PerlActionabilityBlocker::DynamicBoundary),
+        "a limitation attached to a non-selected related test must still block actionability"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn perl_repair_card_and_agent_packet_project_strict_actionability() -> Result<(), String> {
     let fixture = include_str!(
         "../../../../../../fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json"
