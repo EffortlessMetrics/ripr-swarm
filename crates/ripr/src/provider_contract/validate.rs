@@ -1,5 +1,7 @@
 use std::collections::BTreeSet;
 
+use sha2::{Digest, Sha256};
+
 use super::*;
 use crate::domain::{ExposureClass, OracleKind, OracleStrength, RelationReason};
 
@@ -97,6 +99,7 @@ impl RiprRepositorySnapshotV1 {
                         "git-tree snapshot object id must be 40 or 64 hexadecimal characters",
                     ));
                 }
+                require_git_tree_digest(&self.snapshot_id, &self.source_digest)?;
             }
             RiprSourceViewV1::GitIndex => {
                 require_derived_snapshot("git-index:", &self.snapshot_id, &self.source_digest)?;
@@ -467,6 +470,21 @@ fn require_excluded_claims(values: &[String]) -> Result<(), RiprProviderContract
         return Err(error(
             RiprProviderContractErrorCodeV1::MissingField,
             "provider contract must retain the complete unique excluded-claims set",
+        ));
+    }
+    Ok(())
+}
+
+fn require_git_tree_digest(
+    snapshot_id: &str,
+    source_digest: &str,
+) -> Result<(), RiprProviderContractErrorV1> {
+    let digest = Sha256::digest(snapshot_id.as_bytes());
+    let expected = format!("sha256:{digest:x}");
+    if source_digest != expected {
+        return Err(error(
+            RiprProviderContractErrorCodeV1::IdentityMismatch,
+            "git-tree source_digest must be the SHA-256 digest of the canonical snapshot_id",
         ));
     }
     Ok(())
