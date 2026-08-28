@@ -386,27 +386,3 @@ diff --git a/fixtures/evidence-promotion-honesty-corpus/corpus.json b/fixtures/e
          { "type": "maximum_class", "class": "reachable_unrevealed" }
        ]
      },
-diff --git a/fixtures/evidence-promotion-honesty-corpus/reports/perl_moose_accessor_indirection.json b/fixtures/evidence-promotion-honesty-corpus/reports/perl_moose_accessor_indirection.json
---- a/fixtures/evidence-promotion-honesty-corpus/reports/perl_moose_accessor_indirection.json
-+++ b/fixtures/evidence-promotion-honesty-corpus/reports/perl_moose_accessor_indirection.json
-@@ -81,3 +81,3 @@
-       "language": "perl",
-       "language_status": "preview",
--      "static_limit_kind": "dynamic_dispatch",
-+      "static_limit_kind": "metaprogramming",
-diff --git a/fixtures/evidence-promotion-honesty-corpus/reports/perl_monkeypatch_symbol_table.json b/fixtures/evidence-promotion-honesty-corpus/reports/perl_monkeypatch_symbol_table.json
---- a/fixtures/evidence-promotion-honesty-corpus/reports/perl_monkeypatch_symbol_table.json
-+++ b/fixtures/evidence-promotion-honesty-corpus/reports/perl_monkeypatch_symbol_table.json
-@@ -81,3 +81,3 @@
-       "language": "perl",
-       "language_status": "preview",
--      "static_limit_kind": "dynamic_dispatch",
-+      "static_limit_kind": "metaprogramming",
-diff --git a/fixtures/evidence-promotion-honesty-corpus/reports/perl_dynamic_require_eval_dispatch.json b/fixtures/evidence-promotion-honesty-corpus/reports/perl_dynamic_require_eval_dispatch.json
---- a/fixtures/evidence-promotion-honesty-corpus/reports/perl_dynamic_require_eval_dispatch.json
-+++ b/fixtures/evidence-promotion-honesty-corpus/reports/perl_dynamic_require_eval_dispatch.json
-@@ -81,3 +81,3 @@
-       "language": "perl",
-       "language_status": "preview",
--      "static_limit_kind": "dynamic_dispatch",
-+      "static_limit_kind": "metaprogramming",

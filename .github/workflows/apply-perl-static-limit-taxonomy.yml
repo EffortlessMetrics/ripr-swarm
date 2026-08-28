@@ -37,6 +37,23 @@ jobs:
           git apply --check .github/patches/perl-static-limit-taxonomy.patch
           git apply --index .github/patches/perl-static-limit-taxonomy.patch
 
+      - name: Refresh affected evidence-honesty reports
+        run: |
+          for report in \
+            fixtures/evidence-promotion-honesty-corpus/reports/perl_moose_accessor_indirection.json \
+            fixtures/evidence-promotion-honesty-corpus/reports/perl_monkeypatch_symbol_table.json \
+            fixtures/evidence-promotion-honesty-corpus/reports/perl_dynamic_require_eval_dispatch.json
+          do
+            sed -i \
+              's/"static_limit_kind": "dynamic_dispatch"/"static_limit_kind": "metaprogramming"/' \
+              "$report"
+            grep -q '"static_limit_kind": "metaprogramming"' "$report"
+            if grep -q '"static_limit_kind": "dynamic_dispatch"' "$report"; then
+              echo "stale dynamic_dispatch receipt in $report" >&2
+              exit 1
+            fi
+          done
+
       - name: Format candidate
         run: |
           cargo fmt --all
