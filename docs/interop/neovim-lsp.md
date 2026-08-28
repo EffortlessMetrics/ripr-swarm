@@ -5,7 +5,7 @@ It does not promote Neovim, generic editors, or any Neovim version range to a su
 The support claim is earned only after the journey below is run against an unmodified `ripr` binary and its receipt is reviewed.
 
 The point of the exercise is narrow: prove that ripr's portable LSP baseline works through an off-the-shelf client,
-without VS Code extension methods, client-specific shims, or source edits.
+without VS Code extension methods, client-specific shims, or ripr source edits.
 
 ## Boundary under test
 
@@ -47,6 +47,8 @@ return {
 }
 ```
 
+Save the config with `:write ++p` so Neovim creates the `lsp/` directory when needed.
+
 Enable it from `init.lua`:
 
 ```lua
@@ -65,7 +67,12 @@ ripr --version
 ripr lsp --version
 ```
 
-Both commands must resolve the same installed binary that Neovim will find on `PATH`.
+Both commands must resolve the same installed binary that Neovim will find on `PATH`. Confirm Neovim's resolved
+path before starting the server:
+
+```vim
+:lua print(vim.fn.exepath("ripr"))
+```
 
 Choose a Rust repository that:
 
@@ -181,6 +188,12 @@ For a diagnostic run, enable debug logging before starting the client:
 :lua vim.lsp.log.set_level("debug")
 ```
 
+After collecting the evidence, restore normal logging:
+
+```vim
+:lua vim.lsp.log.set_level("warn")
+```
+
 Record whether progress was visible and whether the log contains clean initialize, request, refresh, shutdown, and
 exit sequences. Redact local paths or other sensitive values before attaching excerpts to a public issue or PR.
 
@@ -237,7 +250,7 @@ Store the result as JSON using this shape. It is a proof record for #1630, not a
     "lsp_version": "exact output of ripr lsp --version",
     "binary": "resolved executable path",
     "command": ["ripr", "lsp", "--stdio"],
-    "source_modified": false
+    "ripr_source_modified": false
   },
   "platform": {
     "os": "name and version",
@@ -327,8 +340,10 @@ Store the result as JSON using this shape. It is a proof record for #1630, not a
   "measured": {
     "client_count_first_root": null,
     "client_count_two_roots": null,
-    "diagnostic_count_before_save": null,
-    "diagnostic_count_after_refresh": null,
+    "diagnostic_count_initial": null,
+    "diagnostic_count_dirty_observation": null,
+    "diagnostic_count_after_saved_refresh": null,
+    "diagnostic_count_after_restore_refresh": null,
     "refresh_duration_ms": null
   }
 }
