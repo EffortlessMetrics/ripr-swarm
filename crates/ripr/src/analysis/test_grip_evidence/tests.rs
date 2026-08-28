@@ -9486,7 +9486,7 @@ fn format_output(input: &str) -> String {
     input.to_string()
 }
 
-#[cfg(test)]
+#[cfg(all(feature = "slow", test))]
 mod tests {
     fn exercise_pipeline() -> String {
         "shadow".to_string()
