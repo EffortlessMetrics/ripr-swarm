@@ -2249,10 +2249,14 @@ impl Backend {
         params: DidChangeTextDocumentParams,
     ) -> Option<(Uri, QuarantineTransition)> {
         let uri = params.text_document.uri.clone();
+        let position_encoding = self
+            .analysis_config()
+            .map(|config| config.position_encoding)
+            .unwrap_or(tower_lsp_server::ls_types::PositionEncodingKind::UTF16);
         self.documents
             .lock()
             .ok()
-            .map(|mut documents| (uri, documents.change(params)))
+            .map(|mut documents| (uri, documents.change(params, &position_encoding)))
     }
 
     fn save_document(
@@ -2280,6 +2284,7 @@ impl Backend {
             .ok()?
             .documents
             .get(uri)
+            .filter(|state| state.buffer_text_current)
             .map(|state| state.text.clone())
     }
 

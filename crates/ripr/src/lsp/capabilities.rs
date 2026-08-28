@@ -11,8 +11,9 @@ use tower_lsp_server::ls_types::{
     CodeActionKind, CodeActionOptions, CodeActionProviderCapability, CodeLensOptions,
     DiagnosticOptions, DiagnosticServerCapabilities, ExecuteCommandOptions,
     HoverProviderCapability, InitializeParams, InitializeResult, OneOf, PositionEncodingKind,
-    ServerCapabilities, ServerInfo, TextDocumentSyncCapability, TextDocumentSyncKind,
-    WorkspaceFoldersServerCapabilities, WorkspaceServerCapabilities,
+    SaveOptions, ServerCapabilities, ServerInfo, TextDocumentSyncCapability, TextDocumentSyncKind,
+    TextDocumentSyncOptions, TextDocumentSyncSaveOptions, WorkspaceFoldersServerCapabilities,
+    WorkspaceServerCapabilities,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -49,7 +50,21 @@ pub(super) fn initialize_result_for_client(
 ) -> InitializeResult {
     InitializeResult {
         capabilities: ServerCapabilities {
-            text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
+            // RIPR-SPEC-0129 / #1625: the server owns one current
+            // in-memory buffer identity per open document, replays ordered
+            // incremental changes, and never asks clients to resend full
+            // source text on every edit or include source text on save.
+            text_document_sync: Some(TextDocumentSyncCapability::Options(
+                TextDocumentSyncOptions {
+                    open_close: Some(true),
+                    change: Some(TextDocumentSyncKind::INCREMENTAL),
+                    will_save: Some(false),
+                    will_save_wait_until: Some(false),
+                    save: Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions {
+                        include_text: Some(false),
+                    })),
+                },
+            )),
             position_encoding: Some(position_encoding),
             diagnostic_provider: supports_pull_diagnostics.then_some(
                 DiagnosticServerCapabilities::Options(DiagnosticOptions {
@@ -349,6 +364,32 @@ mod tests {
             .is_none()
         {
             return Err("pull-capable client lost pull provider".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn initialize_result_advertises_explicit_incremental_document_sync() -> Result<(), String> {
+        let Some(TextDocumentSyncCapability::Options(options)) =
+            initialize_result().capabilities.text_document_sync
+        else {
+            return Err("expected explicit textDocumentSync options".to_string());
+        };
+        if options.open_close != Some(true)
+            || options.change != Some(TextDocumentSyncKind::INCREMENTAL)
+            || options.will_save != Some(false)
+            || options.will_save_wait_until != Some(false)
+        {
+            return Err("incremental document lifecycle options drifted".to_string());
+        }
+        match options.save {
+            Some(TextDocumentSyncSaveOptions::SaveOptions(options))
+                if options.include_text == Some(false) => {}
+            _ => {
+                return Err(
+                    "didSave must be supported without requesting full source text".to_string(),
+                );
+            }
         }
         Ok(())
     }

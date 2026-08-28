@@ -428,3 +428,24 @@ The server does NOT:
 
 This spec is versioned as `editor-integration-contract-v1`. Changes to
 the layer definitions or support matrix require a spec amendment.
+
+## Incremental saved-workspace synchronization
+
+The standard editor layer advertises explicit `TextDocumentSyncOptions`:
+`openClose=true`, `change=Incremental`, `save.includeText=false`,
+`willSave=false`, and `willSaveWaitUntil=false`. The server retains one
+in-memory text and monotonically increasing version per open document and
+replays each `didChange.contentChanges` entry in order using the negotiated
+UTF-8, UTF-16, or UTF-32 position encoding.
+
+This state is transport authority only. Unsaved text is never analyzed or
+written into analysis caches, snapshots, receipts, or repair packets. The
+first clean-to-dirty transition withdraws saved-state line-local diagnostics
+through the existing document quarantine. An invalid range or an incremental
+change without a grounded full buffer fails closed as
+`buffer_content_unavailable`; later ranged changes are ignored until a full
+replacement or reopen restores current text.
+
+This slice does not claim completion of save-order confirmation, rename
+identity, reconnect restoration, or multi-client document ownership. Those
+remain explicit lifecycle work under issue #1625.

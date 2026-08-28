@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 use tower_lsp_server::ls_types::{
     Diagnostic, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    Uri, WorkspaceFolder,
+    Position, PositionEncodingKind, Range, TextDocumentContentChangeEvent, Uri, WorkspaceFolder,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -866,6 +866,10 @@ pub(super) fn content_digest(bytes: &[u8]) -> String {
 /// Why a document's line-local diagnostics are currently withdrawn.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum DocumentStalenessReason {
+    /// The server could not reconstruct the latest buffer from the received
+    /// incremental change sequence. Line-local evidence must fail closed
+    /// until a complete replacement or reopen establishes current text.
+    BufferContentUnavailable,
     /// The open buffer diverges from the saved content the committed
     /// snapshot analyzed, so saved-state line identity no longer matches
     /// the client's buffer.
@@ -878,6 +882,7 @@ pub(super) enum DocumentStalenessReason {
 impl DocumentStalenessReason {
     pub(super) fn as_str(self) -> &'static str {
         match self {
+            Self::BufferContentUnavailable => "buffer_content_unavailable",
             Self::BufferDivergesFromAnalyzedSavedContent => {
                 "buffer_diverges_from_analyzed_saved_content"
             }
@@ -887,6 +892,9 @@ impl DocumentStalenessReason {
 
     pub(super) fn description(self) -> &'static str {
         match self {
+            Self::BufferContentUnavailable => {
+                "the server could not reconstruct the current buffer from document changes"
+            }
             Self::BufferDivergesFromAnalyzedSavedContent => {
                 "the open buffer diverges from the last analyzed saved content"
             }
@@ -936,6 +944,10 @@ pub(super) struct DocumentState {
     pub(super) path: PathBuf,
     pub(super) version: Option<i32>,
     pub(super) text: String,
+    /// Whether `text` is a complete replay of the latest accepted document
+    /// version. False after an invalid or ungrounded incremental sequence;
+    /// full replacement text or a reopen can establish authority again.
+    pub(super) buffer_text_current: bool,
     /// SHA-256 of the last known saved content: seeded from persisted bytes
     /// at open (never from the didOpen text, which may carry unsaved or
     /// recovered buffer content) and updated from the didSave digest (#2129).
@@ -962,6 +974,7 @@ impl DocumentState {
             path,
             version,
             text,
+            buffer_text_current: true,
             saved_digest,
             analyzed_saved_digest: None,
             analyzed_input_identity: None,
@@ -986,6 +999,9 @@ impl DocumentState {
         &self,
         analyzed: Option<&String>,
     ) -> Option<DocumentStalenessReason> {
+        if !self.buffer_text_current {
+            return Some(DocumentStalenessReason::BufferContentUnavailable);
+        }
         match analyzed {
             None => Some(DocumentStalenessReason::NoAnalyzedSavedContent),
             Some(analyzed) if *analyzed != self.buffer_digest() => {
@@ -1043,25 +1059,42 @@ impl DocumentStore {
         transition
     }
 
-    pub(super) fn change(&mut self, params: DidChangeTextDocumentParams) -> QuarantineTransition {
+    /// Apply one ordered `textDocument/didChange` notification (#1625,
+    /// RIPR-SPEC-0129). Versions must increase monotonically. Ranged changes
+    /// are replayed against the result of the preceding change in the same
+    /// notification using the negotiated position encoding. Any invalid or
+    /// ungrounded range makes the buffer unavailable and therefore
+    /// quarantined; a later full-content replacement can re-establish it.
+    pub(super) fn change(
+        &mut self,
+        params: DidChangeTextDocumentParams,
+        position_encoding: &PositionEncodingKind,
+    ) -> QuarantineTransition {
         let uri = params.text_document.uri;
-        let version = Some(params.text_document.version);
-        let text = params
-            .content_changes
-            .into_iter()
-            .last()
-            .map(|change| change.text);
+        let version = params.text_document.version;
+        let changes = params.content_changes;
         if let Some(state) = self.documents.get_mut(&uri) {
-            state.version = version;
-            if let Some(text) = text {
-                state.text = text;
+            if state
+                .version
+                .is_some_and(|current_version| version <= current_version)
+            {
+                return QuarantineTransition::Unchanged;
             }
+            state.version = Some(version);
+            state.buffer_text_current = apply_document_changes(
+                &mut state.text,
+                state.buffer_text_current,
+                changes,
+                position_encoding,
+            );
             return state.refresh_quarantine();
         }
-        let Some(text) = text else {
-            return QuarantineTransition::Unchanged;
-        };
-        let mut state = DocumentState::new(uri.clone(), version, text);
+
+        // A didChange without didOpen has no range base. A full replacement
+        // may still establish current text; ranged deltas fail closed.
+        let mut state = DocumentState::new(uri.clone(), Some(version), String::new());
+        state.buffer_text_current =
+            apply_document_changes(&mut state.text, false, changes, position_encoding);
         let transition = state.refresh_quarantine();
         self.documents.insert(uri, state);
         transition
@@ -1085,6 +1118,7 @@ impl DocumentStore {
         }
         if let Some(text) = text {
             state.text = text;
+            state.buffer_text_current = true;
         }
         state.refresh_quarantine()
     }
@@ -1183,6 +1217,136 @@ impl DocumentStore {
     }
 }
 
+fn apply_document_changes(
+    text: &mut String,
+    mut buffer_text_current: bool,
+    changes: Vec<TextDocumentContentChangeEvent>,
+    position_encoding: &PositionEncodingKind,
+) -> bool {
+    for change in changes {
+        let TextDocumentContentChangeEvent {
+            range,
+            text: replacement,
+            ..
+        } = change;
+        match range {
+            None => {
+                *text = replacement;
+                buffer_text_current = true;
+            }
+            Some(range) if buffer_text_current => {
+                buffer_text_current =
+                    apply_incremental_change(text, range, &replacement, position_encoding);
+            }
+            Some(_) => {
+                // Keep consuming the ordered notification so a later full
+                // replacement may recover, but never apply a ranged delta to
+                // text whose current identity is unknown.
+            }
+        }
+    }
+    buffer_text_current
+}
+
+fn apply_incremental_change(
+    text: &mut String,
+    range: Range,
+    replacement: &str,
+    position_encoding: &PositionEncodingKind,
+) -> bool {
+    let Some(start) = position_to_byte_offset(text, range.start, position_encoding) else {
+        return false;
+    };
+    let Some(end) = position_to_byte_offset(text, range.end, position_encoding) else {
+        return false;
+    };
+    if start > end {
+        return false;
+    }
+    text.replace_range(start..end, replacement);
+    true
+}
+
+fn position_to_byte_offset(
+    text: &str,
+    position: Position,
+    position_encoding: &PositionEncodingKind,
+) -> Option<usize> {
+    let (line_start, line_end) = line_content_bounds(text, position.line)?;
+    let line = text.get(line_start..line_end)?;
+    let character_offset =
+        encoded_character_byte_offset(line, position.character, position_encoding)?;
+    line_start.checked_add(character_offset)
+}
+
+fn line_content_bounds(text: &str, target_line: u32) -> Option<(usize, usize)> {
+    let bytes = text.as_bytes();
+    let mut current_line = 0_u32;
+    let mut line_start = 0_usize;
+    let mut index = 0_usize;
+    loop {
+        if current_line == target_line {
+            let mut line_end = line_start;
+            while line_end < bytes.len() && !matches!(bytes[line_end], b'\r' | b'\n') {
+                line_end += 1;
+            }
+            return Some((line_start, line_end));
+        }
+        if index >= bytes.len() {
+            return None;
+        }
+        match bytes[index] {
+            b'\r' => {
+                index += 1;
+                if index < bytes.len() && bytes[index] == b'\n' {
+                    index += 1;
+                }
+                current_line = current_line.checked_add(1)?;
+                line_start = index;
+            }
+            b'\n' => {
+                index += 1;
+                current_line = current_line.checked_add(1)?;
+                line_start = index;
+            }
+            _ => index += 1,
+        }
+    }
+}
+
+fn encoded_character_byte_offset(
+    line: &str,
+    character: u32,
+    position_encoding: &PositionEncodingKind,
+) -> Option<usize> {
+    if position_encoding == &PositionEncodingKind::UTF8 {
+        let offset = usize::try_from(character).ok()?;
+        return (offset <= line.len() && line.is_char_boundary(offset)).then_some(offset);
+    }
+
+    let uses_utf32 = position_encoding == &PositionEncodingKind::UTF32;
+    let mut consumed = 0_u32;
+    for (byte_offset, value) in line.char_indices() {
+        if consumed == character {
+            return Some(byte_offset);
+        }
+        let units = if uses_utf32 {
+            1
+        } else {
+            match value.len_utf16() {
+                1 => 1,
+                2 => 2,
+                _ => return None,
+            }
+        };
+        consumed = consumed.checked_add(units)?;
+        if consumed > character {
+            return None;
+        }
+    }
+    (consumed == character).then_some(line.len())
+}
+
 fn document_path(uri: &Uri) -> PathBuf {
     path_from_file_uri(uri).unwrap_or_else(|| PathBuf::from(uri.as_str()))
 }
@@ -1200,7 +1364,7 @@ pub(super) fn format_duration(duration: Duration) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tower_lsp_server::ls_types::{Position, Range};
+    use tower_lsp_server::ls_types::VersionedTextDocumentIdentifier;
 
     fn digest_of(text: &str) -> String {
         content_digest(text.as_bytes())
@@ -1212,11 +1376,207 @@ mod tests {
             path: PathBuf::from("/workspace/src/lib.rs"),
             version: Some(1),
             text: saved_text.to_string(),
+            buffer_text_current: true,
             saved_digest: Some(digest_of(saved_text)),
             analyzed_saved_digest: Some(digest_of(saved_text)),
             analyzed_input_identity: Some("input:test".to_string()),
             quarantine: None,
         }
+    }
+
+    fn change_params(
+        uri: &Uri,
+        version: i32,
+        content_changes: Vec<TextDocumentContentChangeEvent>,
+    ) -> DidChangeTextDocumentParams {
+        DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier {
+                uri: uri.clone(),
+                version,
+            },
+            content_changes,
+        }
+    }
+
+    fn ranged_change(
+        start: (u32, u32),
+        end: (u32, u32),
+        text: &str,
+    ) -> TextDocumentContentChangeEvent {
+        TextDocumentContentChangeEvent {
+            range: Some(Range {
+                start: Position {
+                    line: start.0,
+                    character: start.1,
+                },
+                end: Position {
+                    line: end.0,
+                    character: end.1,
+                },
+            }),
+            range_length: None,
+            text: text.to_string(),
+        }
+    }
+
+    fn full_change(text: &str) -> TextDocumentContentChangeEvent {
+        TextDocumentContentChangeEvent {
+            range: None,
+            range_length: None,
+            text: text.to_string(),
+        }
+    }
+
+    #[test]
+    fn incremental_changes_replay_in_order_with_utf16_and_crlf() -> Result<(), String> {
+        let uri = test_uri("file:///workspace/src/lib.rs")?;
+        let mut store = DocumentStore::default();
+        store
+            .documents
+            .insert(uri.clone(), clean_document_state(&uri, "alpha\r\n😀x"));
+
+        let transition = store.change(
+            change_params(
+                &uri,
+                2,
+                vec![
+                    ranged_change((1, 2), (1, 3), "y"),
+                    ranged_change((1, 3), (1, 3), "!"),
+                ],
+            ),
+            &PositionEncodingKind::UTF16,
+        );
+        if transition != QuarantineTransition::Entered {
+            return Err("the first divergent incremental edit must enter quarantine".to_string());
+        }
+        let Some(state) = store.state_for_uri(&uri) else {
+            return Err("missing changed document".to_string());
+        };
+        if state.text != "alpha\r\n😀y!" || !state.buffer_text_current {
+            return Err(format!("ordered UTF-16 replay drifted: {:?}", state.text));
+        }
+        if state.version != Some(2) {
+            return Err("the accepted document version was not recorded".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn incremental_changes_honor_utf8_and_utf32_offsets() -> Result<(), String> {
+        let utf8_uri = test_uri("file:///workspace/src/utf8.rs")?;
+        let utf32_uri = test_uri("file:///workspace/src/utf32.rs")?;
+        let mut store = DocumentStore::default();
+        store
+            .documents
+            .insert(utf8_uri.clone(), clean_document_state(&utf8_uri, "éx"));
+        store
+            .documents
+            .insert(utf32_uri.clone(), clean_document_state(&utf32_uri, "é😀x"));
+
+        store.change(
+            change_params(&utf8_uri, 2, vec![ranged_change((0, 2), (0, 3), "y")]),
+            &PositionEncodingKind::UTF8,
+        );
+        store.change(
+            change_params(&utf32_uri, 2, vec![ranged_change((0, 1), (0, 2), "z")]),
+            &PositionEncodingKind::UTF32,
+        );
+
+        if store
+            .state_for_uri(&utf8_uri)
+            .map(|state| state.text.as_str())
+            != Some("éy")
+        {
+            return Err("UTF-8 byte offsets were not replayed correctly".to_string());
+        }
+        if store
+            .state_for_uri(&utf32_uri)
+            .map(|state| state.text.as_str())
+            != Some("ézx")
+        {
+            return Err("UTF-32 scalar offsets were not replayed correctly".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_incremental_range_fails_closed_until_full_replacement() -> Result<(), String> {
+        let uri = test_uri("file:///workspace/src/lib.rs")?;
+        let mut store = DocumentStore::default();
+        store
+            .documents
+            .insert(uri.clone(), clean_document_state(&uri, "😀x"));
+
+        let transition = store.change(
+            change_params(&uri, 2, vec![ranged_change((0, 1), (0, 1), "?")]),
+            &PositionEncodingKind::UTF16,
+        );
+        if transition != QuarantineTransition::Entered {
+            return Err("a range inside a UTF-16 surrogate must fail closed".to_string());
+        }
+        let Some(state) = store.state_for_uri_mut(&uri) else {
+            return Err("missing failed document state".to_string());
+        };
+        if state.buffer_text_current {
+            return Err("invalid replay must revoke buffer-text authority".to_string());
+        }
+        let Some(quarantine) = state.quarantine.as_mut() else {
+            return Err("invalid replay must quarantine the document".to_string());
+        };
+        if quarantine.reason != DocumentStalenessReason::BufferContentUnavailable {
+            return Err("invalid replay exposed the wrong typed reason".to_string());
+        }
+        quarantine.withdrawal_disclosed = true;
+
+        let transition = store.change(
+            change_params(&uri, 3, vec![ranged_change((0, 0), (0, 0), "ignored")]),
+            &PositionEncodingKind::UTF16,
+        );
+        if transition != QuarantineTransition::Unchanged {
+            return Err("ranged edits cannot mutate unavailable text".to_string());
+        }
+        let transition = store.change(
+            change_params(&uri, 4, vec![full_change("😀x")]),
+            &PositionEncodingKind::UTF16,
+        );
+        if transition
+            != (QuarantineTransition::Exited {
+                was_disclosed: true,
+            })
+        {
+            return Err("a later full replacement must recover the quarantine episode".to_string());
+        }
+        let Some(state) = store.state_for_uri(&uri) else {
+            return Err("missing recovered document state".to_string());
+        };
+        if !state.buffer_text_current || state.text != "😀x" {
+            return Err("full replacement did not restore current text".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn stale_or_duplicate_document_versions_are_ignored() -> Result<(), String> {
+        let uri = test_uri("file:///workspace/src/lib.rs")?;
+        let mut store = DocumentStore::default();
+        let mut state = clean_document_state(&uri, "fn saved() {}");
+        state.version = Some(7);
+        store.documents.insert(uri.clone(), state);
+
+        let transition = store.change(
+            change_params(&uri, 7, vec![full_change("fn stale() {}")]),
+            &PositionEncodingKind::UTF16,
+        );
+        if transition != QuarantineTransition::Unchanged {
+            return Err("a duplicate document version must be ignored".to_string());
+        }
+        let Some(state) = store.state_for_uri(&uri) else {
+            return Err("missing document after duplicate version".to_string());
+        };
+        if state.text != "fn saved() {}" || state.version != Some(7) || state.is_quarantined() {
+            return Err("duplicate version mutated authoritative document state".to_string());
+        }
+        Ok(())
     }
 
     #[test]
