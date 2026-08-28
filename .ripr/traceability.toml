@@ -2329,6 +2329,8 @@ tests = [
   "crates/ripr/src/analysis/language/python/python_tests.rs::sink_alignment_is_unknown_without_strong_oracle",
   "crates/ripr/src/analysis/language/python/python_tests.rs::sink_alignment_for_module_owner_preserves_observes_decision",
   "crates/ripr/src/analysis/language/python/python_tests.rs::sink_alignment_changed_sink_join_format",
+  "crates/ripr/src/analysis/language/python/python_tests.rs::analyze_diff_suppresses_multiline_docstring_interior_change",
+  "crates/ripr/src/analysis/language/python/python_tests.rs::analyze_diff_does_not_hide_code_replaced_by_multiline_docstring",
   "crates/ripr/src/output/python_repair_card.rs::tests::side_effect_test_shape_specializes_cli_exit_and_output_cards",
   "crates/ripr/src/output/python_repair_card.rs::tests::field_cards_suggest_direct_assertion_shapes",
   "crates/ripr/src/output/python_repair_card.rs::tests::pytest_boundary_cards_suggest_parametrized_rows_without_expected_values",
@@ -2392,6 +2394,7 @@ fixtures = [
   "fixtures/python_related_test_name_similarity",
   "fixtures/python_fixture_name_relation",
   "fixtures/python_unrelated_test_mention",
+  "fixtures/python_noop_multiline_docstring_interior",
   "fixtures/python_dynamic_dispatch_limit",
   "fixtures/python_decorator_indirection_limit",
   "fixtures/python_mocked_module_limit",
@@ -7225,6 +7228,30 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0166"
+name = "rust subprocess binary reach limitation"
+spec = "docs/specs/RIPR-SPEC-0166-rust-subprocess-binary-reach-limitation.md"
+tests = [
+  "crates/ripr/src/analysis/language/rust.rs::tests::cargo_binary_invocation_shape_is_conservative_and_deterministic",
+  "crates/ripr/src/analysis/language/rust.rs::tests::subprocess_limit_only_applies_to_binary_source_paths_and_integration_tests",
+  "crates/ripr/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable",
+  "crates/ripr/src/domain/language.rs::tests::static_limit_kind_describe_is_present_and_distinct",
+  "crates/ripr/src/lsp/gap_artifacts.rs::tests::validation_accepts_rust_subprocess_binary_static_limit_kind",
+]
+fixtures = ["fixtures/benches_harness_evidence"]
+code = [
+  "crates/ripr/src/domain/language.rs",
+  "crates/ripr/src/analysis/language/rust.rs",
+  "crates/ripr/src/lsp/gap_artifacts.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0166-rust-subprocess-binary-reach-limitation.md",
+  "docs/OUTPUT_SCHEMA.md",
+  "docs/STATIC_LIMITS.md",
+]
+metrics = ["unit_test_pass_rate", "golden_fixture_pass_rate"]
+
+[[behavior]]
 id = "RIPR-SPEC-0118"
 name = "rust integration public-API path limitation"
 spec = "docs/specs/RIPR-SPEC-0118-rust-integration-public-api-path-limitation.md"
@@ -8425,6 +8452,32 @@ outputs = []
 metrics = [
   "unit_test_pass_rate",
   "golden_fixture_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0167"
+name = "Hexagonal source-to-swarm convergence architecture"
+spec = "docs/specs/RIPR-SPEC-0167-convergence-architecture.md"
+tests = [
+  "xtask/src/convergence/architecture.rs::tests",
+]
+fixtures = [
+  "fixtures/convergence",
+]
+code = [
+  "xtask/src/convergence/mod.rs",
+  "xtask/src/convergence/types/mod.rs",
+  "xtask/src/convergence/ports.rs",
+  "xtask/src/convergence/domain/mod.rs",
+  "xtask/src/convergence/adapters/mod.rs",
+  "xtask/src/convergence/commands/mod.rs",
+  "xtask/src/convergence/architecture.rs",
+  "xtask/src/main.rs",
+]
+outputs = []
+metrics = [
+  "architecture_gate_pass_rate",
+  "convergence_port_compile_pass_rate",
 ]
 
 [[behavior]]
