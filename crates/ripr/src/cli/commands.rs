@@ -13,6 +13,7 @@ use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_f
 use crate::output;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use crate::cli::commands_agent_support::{
     agent_brief_lines_from_diff, agent_brief_owners_for_lines,
@@ -21,6 +22,40 @@ use crate::cli::commands_options::*;
 use crate::cli::commands_timestamps::generated_at_unix_ms;
 
 const DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS: u64 = 120_000;
+
+fn record_review_comments_error(
+    receipt: &mut crate::output::review_comments_receipt::ReviewCommentsRunReceipt,
+    receipt_path: &Path,
+    phase: &str,
+    error: String,
+) -> String {
+    receipt.failed(phase, &error);
+    match receipt.write_atomic(receipt_path) {
+        Ok(()) => error,
+        Err(receipt_error) => {
+            format!("{error}; failed to persist terminal receipt: {receipt_error}")
+        }
+    }
+}
+
+fn enforce_review_comments_deadline(
+    receipt: &mut crate::output::review_comments_receipt::ReviewCommentsRunReceipt,
+    receipt_path: &Path,
+    started: Instant,
+    timeout_ms: u64,
+    phase: &str,
+) -> Result<(), String> {
+    if started.elapsed() < Duration::from_millis(timeout_ms) {
+        return Ok(());
+    }
+    receipt.limited_timeout(phase);
+    receipt.write_atomic(receipt_path).map_err(|error| {
+        format!(
+            "review-comments timed out during {phase}; failed to persist terminal receipt: {error}"
+        )
+    })?;
+    Err(format!("review-comments timed out during {phase}"))
+}
 
 fn load_review_comments_analysis_outcome(
     path: Option<&Path>,
@@ -1269,6 +1304,7 @@ fn review_comments_with_diff_loader(
         output::outcome::display_path(&options.out),
         output::outcome::display_path(&markdown_path),
     ];
+    let started = Instant::now();
     let mut receipt = output::review_comments_receipt::ReviewCommentsRunReceipt::new(
         &input.root,
         &options.base,
@@ -1336,7 +1372,9 @@ fn review_comments_with_diff_loader(
 
     receipt.phase("configuration", "diff_discovery");
     receipt.write_atomic(&receipt_path)?;
-    let diff_text = load_diff(&input.root, &options.base, &options.head)?;
+    let diff_text = load_diff(&input.root, &options.base, &options.head).map_err(|error| {
+        record_review_comments_error(&mut receipt, &receipt_path, "diff_discovery", error)
+    })?;
     if analysis::working_tree_has_tracked_changes(&input.root) {
         eprintln!(
             "ripr: warning: working tree has uncommitted tracked changes; \
@@ -1344,10 +1382,24 @@ fn review_comments_with_diff_loader(
             options.base, options.head
         );
     }
+    enforce_review_comments_deadline(
+        &mut receipt,
+        &receipt_path,
+        started,
+        options.timeout_ms,
+        "diff_discovery",
+    )?;
     receipt.phase("diff_discovery", "language_facts");
     receipt.write_atomic(&receipt_path)?;
     let changed_lines = agent_brief_lines_from_diff(&input.root, &diff_text);
     let changed_owners = agent_brief_owners_for_lines(&input.root, &changed_lines);
+    enforce_review_comments_deadline(
+        &mut receipt,
+        &receipt_path,
+        started,
+        options.timeout_ms,
+        "language_facts",
+    )?;
     receipt.phase("language_facts", "canonical_analysis");
     receipt.write_atomic(&receipt_path)?;
     let working_set = AgentBriefResolvedWorkingSet::base(options.base.clone(), changed_lines)
@@ -1362,6 +1414,16 @@ fn review_comments_with_diff_loader(
         &config,
         &working_set.files,
         &changed_owner_names,
+    )
+    .map_err(|error| {
+        record_review_comments_error(&mut receipt, &receipt_path, "canonical_analysis", error)
+    })?;
+    enforce_review_comments_deadline(
+        &mut receipt,
+        &receipt_path,
+        started,
+        options.timeout_ms,
+        "canonical_analysis",
     )?;
     receipt.phase("canonical_analysis", "route_construction");
     receipt.write_atomic(&receipt_path)?;
@@ -1371,6 +1433,13 @@ fn review_comments_with_diff_loader(
         output::review_comments::DEFAULT_REVIEW_MAX_SUMMARY_ITEMS,
         AgentBriefPolicy::from_config(&config),
     );
+    enforce_review_comments_deadline(
+        &mut receipt,
+        &receipt_path,
+        started,
+        options.timeout_ms,
+        "route_construction",
+    )?;
     receipt.phase("route_construction", "static_rendering");
     receipt.write_atomic(&receipt_path)?;
     let analysis_scope = output::review_comments::ReviewCommentsAnalysisScope::limited_diff_scope(
@@ -1382,7 +1451,10 @@ fn review_comments_with_diff_loader(
         &input.root,
         &options.base,
         &diff_text,
-    )?;
+    )
+    .map_err(|error| {
+        record_review_comments_error(&mut receipt, &receipt_path, "static_rendering", error)
+    })?;
     let render_context = output::review_comments::ReviewCommentsRenderContext {
         root: &input.root,
         base: &options.base,
@@ -1396,7 +1468,10 @@ fn review_comments_with_diff_loader(
         &selection,
         &analysis_scope,
         analysis_outcome.as_ref(),
-    )?;
+    )
+    .map_err(|error| {
+        record_review_comments_error(&mut receipt, &receipt_path, "static_rendering", error)
+    })?;
     let rendered_md = output::review_comments::render_review_comments_markdown_with_scope(
         &render_context,
         &working_set,
@@ -1404,11 +1479,25 @@ fn review_comments_with_diff_loader(
         &analysis_scope,
         analysis_outcome.as_ref(),
     );
+    enforce_review_comments_deadline(
+        &mut receipt,
+        &receipt_path,
+        started,
+        options.timeout_ms,
+        "static_rendering",
+    )?;
     receipt.phase("static_rendering", "artifact_io");
     receipt.write_atomic(&receipt_path)?;
     let rendered_json = output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&markdown_path, &rendered_md)?;
+    enforce_review_comments_deadline(
+        &mut receipt,
+        &receipt_path,
+        started,
+        options.timeout_ms,
+        "artifact_io",
+    )?;
     receipt.complete(&artifacts);
     let rendered_json = output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
     write_text_file(&options.out, &rendered_json)?;
@@ -6232,6 +6321,20 @@ language = "rust"
         );
 
         assert_eq!(result, Err("synthetic diff failure".to_string()));
+        let receipt_path = out.with_file_name("run-receipt.json");
+        let receipt_json = std::fs::read_to_string(&receipt_path)
+            .map_err(|err| format!("read failed receipt: {err}"))?;
+        let receipt: serde_json::Value = serde_json::from_str(&receipt_json)
+            .map_err(|err| format!("parse failed receipt: {err}"))?;
+        assert_eq!(receipt["status"], "failed");
+        assert_eq!(receipt["active_phase"], "diff_discovery");
+        assert_eq!(receipt["limitations"][0]["category"], "analysis_failed");
+        assert_eq!(
+            receipt["limitations"][0]["repair_route"],
+            "synthetic diff failure"
+        );
+        assert_eq!(receipt["non_claims"][1], "no complete route inventory");
+        assert_eq!(receipt["non_claims"][2], "no all-clear");
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
         Ok(())
     }
@@ -7280,7 +7383,7 @@ language = "rust"
             existing_comments.contains("pulls/${{ github.event.pull_request.number }}/comments")
         );
         assert!(existing_comments.contains("target/ripr/review/existing-comments.json"));
-        assert!(existing_comments.contains("capture(\"<!-- ripr:dedupe=(?<key>[^ ]+) -->\")"));
+        assert!(existing_comments.contains("capture(\"<!-- ripr:dedupe=(?<key>[^ ]+)\")"));
 
         let comment_plan = workflow_step(&workflow, "Plan RIPR inline comments");
         assert!(comment_plan.contains("env.RIPR_COMMENT_MODE != 'off'"));
@@ -7313,7 +7416,7 @@ language = "rust"
         );
         assert!(publish_comments.contains("jq -e '.summary.safe_to_publish == true'"));
         assert!(publish_comments.contains("select(.safe_to_publish == true)"));
-        assert!(publish_comments.contains("<!-- ripr:dedupe=%s -->"));
+        assert!(publish_comments.contains("published_body: compact_body"));
         assert!(publish_comments.contains("github.event.pull_request.head.sha"));
         assert!(publish_comments.contains("gh api --method POST"));
         assert!(publish_comments.contains("gh api --method PATCH"));
