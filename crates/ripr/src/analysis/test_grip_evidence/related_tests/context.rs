@@ -285,6 +285,9 @@ struct ScopedModuleImportBinding {
     module_path: String,
     start_line: usize,
     end_line: usize,
+    /// The owning scope closes part-way through `end_line`, with code after
+    /// the closing brace. See `LexicalUseScan::line_closes_scope_midline`.
+    end_is_partial: bool,
 }
 
 impl ScopedModuleImportAlias {
@@ -310,6 +313,12 @@ impl ScopedModuleImportAlias {
             if binding.start_line > line || line > binding.end_line {
                 continue;
             }
+            if binding.end_is_partial && line == binding.end_line {
+                // The scope closes part-way through this line, so the call may
+                // sit either side of the closing brace. Line coordinates cannot
+                // tell which, and guessing would credit the wrong owner.
+                return None;
+            }
             match nearest {
                 Some(current) if current.start_line > binding.start_line => {}
                 Some(current) if current.start_line == binding.start_line => {
@@ -332,6 +341,9 @@ pub(in crate::analysis::test_grip_evidence) struct ScopedImportedFunctionBinding
     pub(in crate::analysis::test_grip_evidence) name: String,
     start_line: usize,
     end_line: usize,
+    /// The owning scope closes part-way through `end_line`, with code after
+    /// the closing brace. See `LexicalUseScan::line_closes_scope_midline`.
+    end_is_partial: bool,
 }
 
 impl ScopedImportedFunctionAlias {
@@ -339,6 +351,15 @@ impl ScopedImportedFunctionAlias {
         &self,
         line: usize,
     ) -> Option<&ScopedImportedFunctionBinding> {
+        if self
+            .bindings
+            .iter()
+            .any(|binding| binding.end_is_partial && binding.end_line == line)
+        {
+            // See `ScopedModuleImportAlias::module_path_at`: a scope closing
+            // part-way through this line leaves the call unattributable.
+            return None;
+        }
         let candidates = self
             .bindings
             .iter()
@@ -1017,6 +1038,7 @@ pub(in crate::analysis::test_grip_evidence) fn module_import_aliases(
                     module_path,
                     start_line: statement.start_line,
                     end_line,
+                    end_is_partial: scan.end_is_partial(end_line),
                 });
         }
     }
@@ -1096,6 +1118,10 @@ struct LexicalUseStatement {
 struct LexicalUseScan {
     statements: Vec<LexicalUseStatement>,
     line_depths_after: Vec<usize>,
+    /// Per line: a `}` closed a scope and code still follows it on that line
+    /// (`} run();`). A call on such a line may precede or follow the brace,
+    /// and line coordinates alone cannot say which.
+    line_closes_scope_midline: Vec<bool>,
 }
 
 impl LexicalUseScan {
@@ -1110,6 +1136,14 @@ impl LexicalUseScan {
             .find_map(|(index, depth)| (*depth < statement.scope_depth).then_some(index + 1))
             .unwrap_or(self.line_depths_after.len())
     }
+
+    fn end_is_partial(&self, end_line: usize) -> bool {
+        end_line
+            .checked_sub(1)
+            .and_then(|index| self.line_closes_scope_midline.get(index))
+            .copied()
+            .unwrap_or(false)
+    }
 }
 
 /// Collect every `use` statement with its owning lexical scope.
@@ -1120,6 +1154,7 @@ impl LexicalUseScan {
 fn scan_lexical_use_statements(source: &str) -> LexicalUseScan {
     let mut statements = Vec::new();
     let mut line_depths_after = Vec::new();
+    let mut line_closes_scope_midline = Vec::new();
     let mut scope_starts = vec![1usize];
     let mut pending_use: Option<(usize, usize, String)> = None;
     let mut brace_depth = 0usize;
@@ -1178,7 +1213,8 @@ fn scan_lexical_use_statements(source: &str) -> LexicalUseScan {
         } else {
             &line
         };
-        for ch in lexical_suffix.chars() {
+        let mut last_scope_close = None;
+        for (index, ch) in lexical_suffix.chars().enumerate() {
             match ch {
                 '{' => {
                     brace_depth = brace_depth.saturating_add(1);
@@ -1187,15 +1223,25 @@ fn scan_lexical_use_statements(source: &str) -> LexicalUseScan {
                 '}' if brace_depth > 0 => {
                     brace_depth -= 1;
                     scope_starts.pop();
+                    last_scope_close = Some(index);
                 }
                 _ => {}
             }
         }
+        // A bare statement terminator after the brace carries no call, so it
+        // does not make the line ambiguous.
+        line_closes_scope_midline.push(last_scope_close.is_some_and(|index| {
+            lexical_suffix
+                .chars()
+                .skip(index + 1)
+                .any(|ch| !ch.is_whitespace() && ch != ';')
+        }));
         line_depths_after.push(brace_depth);
     }
     LexicalUseScan {
         statements,
         line_depths_after,
+        line_closes_scope_midline,
     }
 }
 
@@ -1226,6 +1272,7 @@ pub(in crate::analysis::test_grip_evidence) fn direct_function_import_aliases(
                     name: imported.name,
                     start_line: statement.start_line,
                     end_line,
+                    end_is_partial: scan.end_is_partial(end_line),
                 });
         }
     }

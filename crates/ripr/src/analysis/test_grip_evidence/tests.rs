@@ -655,6 +655,61 @@ fn outer_after() {
 }
 
 #[test]
+fn alias_resolution_fails_closed_when_a_scope_closes_mid_line() -> Result<(), String> {
+    // #3487 review (Codex P1): a block can close part-way through a line with
+    // a call after the brace. Rust binds that call to the outer alias, but a
+    // line coordinate cannot say which side of the brace the call sits on, so
+    // neither binding may be credited.
+    let source = "fn f() {\n    {\n        use crate::child as pipe;\n        helper();\n    } pipe::compute();\n}\nuse crate::outer as pipe;";
+    let pipe = module_import_aliases(source)
+        .get("pipe")
+        .cloned()
+        .ok_or_else(|| "pipe alias should be indexed".to_string())?;
+    assert_eq!(
+        pipe.module_path_at(3),
+        Some("child"),
+        "a line fully inside the block still resolves to the block binding"
+    );
+    assert!(
+        pipe.module_path_at(5).is_none(),
+        "a call on a line where the scope closes mid-line must stay unresolved"
+    );
+    assert_eq!(
+        pipe.module_path_at(7),
+        Some("outer"),
+        "a line after the block resolves to the outer binding"
+    );
+
+    let function_source = "fn f() {\n    {\n        use crate::child::compute as run;\n        helper();\n    } run();\n}\nuse crate::outer::compute as run;";
+    let run = direct_function_import_aliases(function_source)
+        .get("run")
+        .cloned()
+        .ok_or_else(|| "run alias should be indexed".to_string())?;
+    assert_eq!(
+        run.binding_at(3)
+            .map(|binding| binding.module_path.as_str()),
+        Some("child")
+    );
+    assert!(
+        run.binding_at(5).is_none(),
+        "the direct-function path must fail closed on the same layout"
+    );
+
+    // A brace that closes at end of line, with only a statement terminator
+    // after it, carries no call and stays resolvable.
+    let terminated =
+        "fn f() {\n    {\n        use crate::child as pipe;\n        pipe::compute();\n    };\n}";
+    assert_eq!(
+        module_import_aliases(terminated)
+            .get("pipe")
+            .and_then(|alias| alias.module_path_at(5)),
+        Some("child"),
+        "a closing brace with only a statement terminator after it stays resolvable"
+    );
+    Ok(())
+}
+
+#[test]
 fn direct_helper_import_aliases_fail_closed_on_same_scope_alias_conflicts() {
     let allowed =
         std::collections::BTreeSet::from(["outer_owner".to_string(), "nested_owner".to_string()]);
