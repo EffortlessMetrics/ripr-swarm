@@ -1465,10 +1465,6 @@ impl PerlFactPacket {
         let change = self
             .change(change_id)
             .ok_or(PerlActionabilityBlocker::MissingChange)?;
-        if self.has_blocking_dynamic_boundary(change, None) {
-            return Err(PerlActionabilityBlocker::DynamicBoundary);
-        }
-
         let owner = self
             .owner(&change.owner_id)
             .ok_or(PerlActionabilityBlocker::MissingCanonicalGapId)?;
@@ -1506,17 +1502,15 @@ impl PerlFactPacket {
         if evidence.oracle_shape.as_deref() != Some(expected_oracle_shape) {
             return Err(PerlActionabilityBlocker::OracleShapeMismatch);
         }
+        if static_limit::for_change(self, change, &related).blocks {
+            return Err(PerlActionabilityBlocker::DynamicBoundary);
+        }
         let gap = self
             .canonical_gap_identity_for_change_with_assertion_shape(
                 change_id,
                 expected_oracle_shape,
             )
             .ok_or(PerlActionabilityBlocker::MissingCanonicalGapId)?;
-        if self.has_blocking_dynamic_boundary(change, Some(evidence))
-            || self.has_blocking_limitation(change, evidence)
-        {
-            return Err(PerlActionabilityBlocker::DynamicBoundary);
-        }
 
         let verify_command = evidence
             .verify_command
