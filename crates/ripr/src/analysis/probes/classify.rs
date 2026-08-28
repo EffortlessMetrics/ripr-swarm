@@ -147,11 +147,7 @@ fn unsafe_boundary_syntax_range(
             return Some(function.syntax().text_range());
         }
     }
-    for block in root
-        .syntax()
-        .descendants()
-        .filter_map(ast::BlockExpr::cast)
-    {
+    for block in root.syntax().descendants().filter_map(ast::BlockExpr::cast) {
         let Some(token) = block.unsafe_token() else {
             continue;
         };
@@ -400,8 +396,7 @@ mod tests {
     #[test]
     fn unsafe_boundary_rejects_shared_edge_lines_with_outside_code() -> Result<(), String> {
         let path = PathBuf::from("src/lib.rs");
-        let source =
-            "pub fn read(ptr: *const u8) -> u8 { let limit = 2; unsafe { ptr.read() } }\n";
+        let source = "pub fn read(ptr: *const u8) -> u8 { let limit = 2; unsafe { ptr.read() } }\n";
         let block_start = source
             .find("unsafe {")
             .ok_or_else(|| "missing unsafe block token".to_string())?;
@@ -460,12 +455,8 @@ mod tests {
             ..RustIndex::default()
         };
 
-        let shapes = parser_probe_shapes_for_changed_line(
-            &index,
-            &path,
-            2,
-            "unsafe { ptr.add(1).read() }",
-        );
+        let shapes =
+            parser_probe_shapes_for_changed_line(&index, &path, 2, "unsafe { ptr.add(1).read() }");
         assert_eq!(shapes.len(), 1);
         assert_eq!(shapes[0].family, ProbeFamily::StaticUnknown);
         Ok(())
