@@ -53,8 +53,8 @@ namespace:
 
 This file is the repo-native source-of-truth control-plane guide for RIPR's
 existing artifacts. Its role is to explain and link the repo-owned artifacts,
-not to replace the execution manifest, support-tier files, traceability ledger,
-or campaign history.
+not to replace agent-local execution state, support-tier files, traceability
+ledgers, or campaign history.
 
 ## Lifecycle
 
@@ -122,9 +122,9 @@ To prevent overloading individual docs:
 When in doubt about where something belongs, ask which question the reader
 will be asking when they reach for the doc. A reader asking "why does this
 exist?" wants the proposal. A reader asking "what must `ripr` do?" wants
-the spec. A reader asking "what is the agent doing right now?" wants the
-active manifest. A reader asking "what shipped last week?" wants the
-handoffs.
+the spec. A reader asking "what is being worked on right now?" wants the
+live GitHub/worktree state. A reader asking "what shipped last week?" wants
+the handoffs.
 
 ## Agent neutrality
 
