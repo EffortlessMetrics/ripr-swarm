@@ -1740,7 +1740,7 @@ pub(crate) fn unknown_command_message(command: &str) -> String {
         "goals" | "check-goals" | "check-campaign" | "closeout" | "pr-body"
     ) {
         return format!(
-            "unknown xtask command `{normalized}`.\nThe `{normalized}` command was retired when the .ripr/goals/ scheduler was deleted (#1701).\nLive work selection now comes from GitHub issues, PRs, and checks; implementation slices are scope records for already-selected work.\nRun `gh issue list --state open` or `cargo xtask help` for the full list of current commands."
+            "unknown xtask command `{normalized}`.\nThe `{normalized}` command was retired when the .ripr/goals/ scheduler was deleted (#1701).\nLive work selection now comes from GitHub issues, PRs, and checks; implementation slices are scope records for already-selected work.\nRun `gh issue list --state open` or `cargo xtask help --all` for the full list of current commands."
         );
     }
     let suggestion = known_commands()
@@ -1754,10 +1754,10 @@ pub(crate) fn unknown_command_message(command: &str) -> String {
         .map(|(root, _)| root);
     match suggestion {
         Some(suggestion) => format!(
-            "unknown xtask command `{normalized}`.\nDid you mean `{suggestion}`?\nRun `cargo xtask help` for the full list."
+            "unknown xtask command `{normalized}`.\nDid you mean `{suggestion}`?\nRun `cargo xtask help --all` for the full list."
         ),
         None => format!(
-            "unknown xtask command `{normalized}`.\nRun `cargo xtask help` for the full list."
+            "unknown xtask command `{normalized}`.\nRun `cargo xtask help --all` for the full list."
         ),
     }
 }
