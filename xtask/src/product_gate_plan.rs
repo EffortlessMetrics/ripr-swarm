@@ -150,7 +150,7 @@ impl ProductGatePlan {
             Some("selector authority is missing; the complete product route is required")
         } else if subject.trust_class == ProductGateTrustClass::ExternalTree {
             Some(
-                "external-tree applicability is not yet established; the complete product route is required",
+                "external-tree applicability is not yet demonstrated; the complete product route is required",
             )
         } else {
             None
@@ -364,7 +364,7 @@ mod tests {
         assert_eq!(
             plan.full_route_reason,
             Some(
-                "external-tree applicability is not yet established; the complete product route is required",
+                "external-tree applicability is not yet demonstrated; the complete product route is required",
             )
         );
         assert!(
