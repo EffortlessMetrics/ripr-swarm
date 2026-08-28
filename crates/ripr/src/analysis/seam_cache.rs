@@ -3346,7 +3346,7 @@ mod tests {
             assert_eq!(edges[0].resolution, PathDependencyResolution::Resolved);
             assert_eq!(
                 edges[1].resolved_path.as_deref(),
-                Some("crates/mý äpp/..\\\\shared")
+                Some("crates/mý äpp/..\\shared")
             );
             assert_eq!(edges[1].resolution, PathDependencyResolution::TargetMissing);
         }
@@ -3362,9 +3362,9 @@ mod tests {
     #[test]
     fn path_dependency_helpers_preserve_unix_colons_and_backslashes() {
         assert!(!is_absolute_declared_path("a:b"));
-        assert!(!is_absolute_declared_path(r"..\\shared"));
+        assert!(!is_absolute_declared_path(r"..\shared"));
         assert_eq!(
-            resolve_repo_relative("crates/app", r"..\\shared"),
+            resolve_repo_relative("crates/app", r"..\shared"),
             ("crates/app/..\\shared".to_string(), false)
         );
     }
