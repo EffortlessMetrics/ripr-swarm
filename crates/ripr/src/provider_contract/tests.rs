@@ -7,8 +7,7 @@ use super::*;
 const HASH: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const OTHER_HASH: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const TREE_ID: &str = "git-tree:0123456789abcdef0123456789abcdef01234567";
-const TREE_DIGEST: &str =
-    "sha256:a0ea7c116d4ed114740a21f4a4a5967e1e6e31755bb8c8896829278d75d55636";
+const TREE_DIGEST: &str = "sha256:a0ea7c116d4ed114740a21f4a4a5967e1e6e31755bb8c8896829278d75d55636";
 const SHA256_TREE_ID: &str =
     "git-tree:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const SHA256_TREE_DIGEST: &str =
@@ -202,8 +201,7 @@ fn every_source_view_has_one_owned_snapshot_identity_rule() {
     );
 
     let mut substituted_tree = snapshot(RiprSourceViewV1::GitTree);
-    substituted_tree.snapshot_id =
-        "git-tree:fedcba9876543210fedcba9876543210fedcba98".into();
+    substituted_tree.snapshot_id = "git-tree:fedcba9876543210fedcba9876543210fedcba98".into();
     assert_eq!(
         error_code(substituted_tree.validate()),
         Some(RiprProviderContractErrorCodeV1::IdentityMismatch)

@@ -1,6 +1,4 @@
-use ripr::{
-    RiprProviderContractErrorCodeV1, RiprRepositorySnapshotV1, RiprSourceViewV1,
-};
+use ripr::{RiprProviderContractErrorCodeV1, RiprRepositorySnapshotV1, RiprSourceViewV1};
 
 const UPPERCASE_TREE_ID: &str = "git-tree:0123456789ABCDEF0123456789ABCDEF01234567";
 const UPPERCASE_TREE_DIGEST: &str =
