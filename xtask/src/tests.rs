@@ -9362,6 +9362,8 @@ jobs:
     timeout-minutes: 10
   rust-cx43:
     if: needs.route.outputs.router_target == 'cx43'
+    with:
+      runner-config: '{"labels":["rust-medium"]}'
     timeout-minutes: 60
     outputs:
       scratch_status: ${{ steps.scratch.outputs.status }}
@@ -9378,6 +9380,8 @@ jobs:
         run: rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
   rust-cpx42:
     if: needs.route.outputs.router_target == 'cpx42'
+    with:
+      runner-config: '{"labels":["rust-medium","rust-16gb"]}'
     timeout-minutes: 60
     outputs:
       scratch_status: ${{ steps.scratch.outputs.status }}
@@ -9394,6 +9398,8 @@ jobs:
         run: rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
   rust-cx53:
     if: needs.route.outputs.router_target == 'cx53'
+    with:
+      runner-config: '{"labels":["rust-large"]}'
     timeout-minutes: 60
     outputs:
       scratch_status: ${{ steps.scratch.outputs.status }}
@@ -9416,6 +9422,8 @@ jobs:
       needs.rust-cpx42.outputs.scratch_status == 'tempfail' ||
       needs.rust-cx53.outputs.scratch_status == 'tempfail'
     timeout-minutes: 90
+    with:
+      runner-config: '"ubuntu-latest"'
     steps:
       - name: Proof route dry-run (advisory)
         run: cargo xtask proof route --base "$BASE_SHA" --head "$HEAD_SHA" || true
@@ -9528,6 +9536,10 @@ jobs:
 on:
   workflow_call:
     inputs:
+      runner-config:
+        description: JSON string or object accepted by jobs.<job_id>.runs-on.
+        required: true
+        type: string
       disk-guard-threshold:
         type: number
         required: false
@@ -9536,6 +9548,7 @@ on:
         value: ${{ jobs.rust-gates.outputs.scratch_status }}
 jobs:
   rust-gates:
+    runs-on: ${{ fromJSON(inputs.runner-config) }}
     timeout-minutes: 90
     outputs:
       scratch_status: ${{ steps.scratch.outputs.status }}
