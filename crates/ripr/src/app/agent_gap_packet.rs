@@ -15,15 +15,14 @@ pub(crate) fn render_agent_packet_from_gap_ledger(
             gap_ledger.display()
         )
     })?;
-    let source = output::gap_decision_ledger_live::parse_gap_record_source_with_provenance_json(
-        &contents,
-    )
-    .map_err(|err| {
-        format!(
-            "agent packet --gap-ledger {} is invalid: {err}",
-            gap_ledger.display()
-        )
-    })?;
+    let source =
+        output::gap_decision_ledger_live::parse_gap_record_source_with_provenance_json(&contents)
+            .map_err(|err| {
+            format!(
+                "agent packet --gap-ledger {} is invalid: {err}",
+                gap_ledger.display()
+            )
+        })?;
     let record = source
         .records
         .iter()

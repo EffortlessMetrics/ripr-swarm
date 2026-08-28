@@ -21,15 +21,14 @@ fn render_from_gap_ledger_contents_with_live_currentness(
     options: &Options,
     contents: &str,
 ) -> Result<Option<String>, String> {
-    let source = output::gap_decision_ledger_live::parse_gap_record_source_with_provenance_json(
-        contents,
-    )
-    .map_err(|err| {
-        format!(
-            "swarm queue --gap-ledger {} is invalid: {err}",
-            options.gap_ledger.display()
-        )
-    })?;
+    let source =
+        output::gap_decision_ledger_live::parse_gap_record_source_with_provenance_json(contents)
+            .map_err(|err| {
+                format!(
+                    "swarm queue --gap-ledger {} is invalid: {err}",
+                    options.gap_ledger.display()
+                )
+            })?;
     if gap_ledger_root_status(&options.root, source.root.as_deref()) != GapLedgerRootStatus::Match {
         return Ok(None);
     }
@@ -74,7 +73,9 @@ mod live_currentness_tests {
             &options,
             &python_swarm_queue_gap_ledger(&root),
         )?
-        .ok_or_else(|| "matching-root ledger unexpectedly delegated to legacy rendering".to_string())?;
+        .ok_or_else(|| {
+            "matching-root ledger unexpectedly delegated to legacy rendering".to_string()
+        })?;
         let value = serde_json::from_str::<serde_json::Value>(&rendered)
             .map_err(|error| format!("live queue JSON should parse: {error}"))?;
         assert_eq!(

@@ -107,11 +107,7 @@ impl GapRecordSourceCurrentness {
 pub(crate) fn evaluate_gap_record_source_currentness(
     input: GapRecordSourceInput<'_>,
 ) -> GapRecordSourceCurrentness {
-    let refresh_commands = refresh_commands(
-        input.root,
-        input.gap_ledger_path,
-        input.records_path,
-    );
+    let refresh_commands = refresh_commands(input.root, input.gap_ledger_path, input.records_path);
     let source_kind_owned = input.source_kind.map(ToString::to_string);
     let source_path_owned = input.records_path.map(ToString::to_string);
 
@@ -119,9 +115,7 @@ pub(crate) fn evaluate_gap_record_source_currentness(
         Ok(root) => root,
         Err(error) => {
             return GapRecordSourceCurrentness::not_evaluated(
-                format!(
-                    "selected root could not be canonicalized for live currentness: {error}"
-                ),
+                format!("selected root could not be canonicalized for live currentness: {error}"),
                 refresh_commands,
                 source_kind_owned,
                 source_path_owned,
@@ -259,11 +253,8 @@ pub(crate) fn evaluate_gap_record_source_currentness(
     };
 
     let source_display = crate::output::outcome::display_path(&canonical_source_path);
-    let derived_records = match derive_repo_exposure_records(
-        &canonical_root,
-        &source_display,
-        raw,
-    ) {
+    let derived_records = match derive_repo_exposure_records(&canonical_root, &source_display, raw)
+    {
         Ok(records) => records,
         Err(error) => {
             return GapRecordSourceCurrentness::not_evaluated(
@@ -380,24 +371,12 @@ mod tests {
     #[test]
     fn exact_currentness_requires_current_artifact_and_matching_records() {
         assert!(
-            classify_validated_source(
-                ArtifactCurrentness::Current,
-                true,
-                Vec::new(),
-                None,
-                None,
-            )
-            .is_assignable()
+            classify_validated_source(ArtifactCurrentness::Current, true, Vec::new(), None, None,)
+                .is_assignable()
         );
         assert_eq!(
-            classify_validated_source(
-                ArtifactCurrentness::Current,
-                false,
-                Vec::new(),
-                None,
-                None,
-            )
-            .status,
+            classify_validated_source(ArtifactCurrentness::Current, false, Vec::new(), None, None,)
+                .status,
             STALE
         );
         assert_eq!(

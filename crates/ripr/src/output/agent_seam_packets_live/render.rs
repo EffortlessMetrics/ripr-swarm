@@ -93,10 +93,7 @@ pub(crate) fn render_agent_gap_record_queue_json_with_currentness(
         json!(stale_total + not_evaluated_total),
     );
 
-    object.insert(
-        "source_currentness".to_string(),
-        source_currentness.json(),
-    );
+    object.insert("source_currentness".to_string(), source_currentness.json());
     object.insert(
         "assignment_policy".to_string(),
         json!({
@@ -235,11 +232,15 @@ fn effective_packet_currentness(
     let status = object
         .get("staleness_status")
         .and_then(Value::as_str)
-        .ok_or_else(|| "agent packet currentness candidate is missing staleness_status".to_string())?;
+        .ok_or_else(|| {
+            "agent packet currentness candidate is missing staleness_status".to_string()
+        })?;
     let reason = object
         .get("staleness_reason")
         .and_then(Value::as_str)
-        .ok_or_else(|| "agent packet currentness candidate is missing staleness_reason".to_string())?;
+        .ok_or_else(|| {
+            "agent packet currentness candidate is missing staleness_reason".to_string()
+        })?;
 
     match (queue_state, status) {
         (BLOCKED_STALE, STALE) => Ok(GapRecordSourceCurrentness::stale(
@@ -506,12 +507,8 @@ mod tests {
             .get("blocked_candidate")
             .ok_or_else(|| format!("missing blocked candidate: {packet}"))?;
         assert_eq!(
-            queue_candidate
-                .get("queue_state")
-                .and_then(Value::as_str),
-            blocked_candidate
-                .get("queue_state")
-                .and_then(Value::as_str)
+            queue_candidate.get("queue_state").and_then(Value::as_str),
+            blocked_candidate.get("queue_state").and_then(Value::as_str)
         );
         assert_eq!(
             queue_candidate

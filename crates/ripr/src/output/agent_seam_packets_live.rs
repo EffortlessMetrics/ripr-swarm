@@ -1,4 +1,6 @@
+#[path = "agent_seam_packets_live/currentness.rs"]
 mod currentness;
+#[path = "agent_seam_packets_live/render.rs"]
 mod render;
 
 pub(crate) use crate::output::agent_seam_packets_legacy::*;

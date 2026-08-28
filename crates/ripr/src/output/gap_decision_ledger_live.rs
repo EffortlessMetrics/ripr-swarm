@@ -45,10 +45,7 @@ fn provenance_string(
         );
     };
     let Some(value) = inputs.get(field) else {
-        return (
-            None,
-            Some(format!("gap ledger inputs.{field} is missing")),
-        );
+        return (None, Some(format!("gap ledger inputs.{field} is missing")));
     };
     let Some(value) = value.as_str() else {
         return (
@@ -94,8 +91,7 @@ mod tests {
 
     #[test]
     fn legacy_ledger_keeps_missing_provenance_explicit() -> Result<(), String> {
-        let source =
-            parse_gap_record_source_with_provenance_json(r#"{"root":".","records":[]}"#)?;
+        let source = parse_gap_record_source_with_provenance_json(r#"{"root":".","records":[]}"#)?;
         assert_eq!(source.source_kind, None);
         assert_eq!(source.records_path, None);
         assert!(
