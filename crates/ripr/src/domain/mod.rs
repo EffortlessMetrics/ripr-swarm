@@ -6,12 +6,14 @@ mod command_spec;
 pub mod context_packet;
 mod diagnostic_witness;
 mod evidence;
+mod finding_test_evidence;
 mod fix_instruction;
 mod git_candidate;
 mod language;
 mod probe;
 mod summary;
 mod support;
+mod test_evidence_identity;
 mod test_evidence_summary;
 mod verification_result;
 
