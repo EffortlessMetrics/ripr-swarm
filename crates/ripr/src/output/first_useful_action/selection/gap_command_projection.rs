@@ -3,6 +3,8 @@ use crate::domain::CommandSpec;
 use crate::output::gap_decision_ledger::GapRecord;
 use serde_json::Value;
 
+const MAX_WARNING_GAP_ID_CHARS: usize = 128;
+
 /// Preserve producer-owned typed command authority when first-action selects a
 /// gap record.
 ///
@@ -42,12 +44,21 @@ pub(super) fn with_gap_verify_command_spec(
         Err(reason) => {
             clear_verify_command_spec(&mut report);
             report.warnings.push(format!(
-                "typed gap verification route unavailable for {gap_id}: {reason}"
+                "typed gap verification route unavailable for {}: {reason}",
+                bounded_gap_id(&gap_id)
             ));
         }
     }
 
     report
+}
+
+fn bounded_gap_id(gap_id: &str) -> String {
+    let mut bounded: String = gap_id.chars().take(MAX_WARNING_GAP_ID_CHARS).collect();
+    if bounded.chars().count() < gap_id.chars().count() {
+        bounded.push_str("...");
+    }
+    bounded
 }
 
 fn clear_verify_command_spec(report: &mut FirstUsefulActionReport) {
@@ -89,6 +100,9 @@ fn producer_gap_verify_spec(
 
     let record: GapRecord = serde_json::from_value(record_value.clone())
         .map_err(|error| format!("selected gap record {gap_id} is invalid: {error}"))?;
+    if record.source_currentness.as_deref() != Some("candidate_current") {
+        return Ok(None);
+    }
     let Some(command_specs) = record.command_specs else {
         return Ok(None);
     };
@@ -140,6 +154,7 @@ mod tests {
             "evidence_class": "predicate_boundary",
             "gap_state": "actionable",
             "policy_state": "new",
+            "source_currentness": "candidate_current",
             "repairability": "repairable",
             "repair_route": {
                 "route_kind": "AddBoundaryAssertion",
@@ -394,6 +409,36 @@ mod tests {
             producer_gap_verify_spec(Some(&ledger), "gap-1", &spec.display),
             Ok(None)
         );
+    }
+
+    #[test]
+    fn gap_projection_does_not_promote_non_current_source_authority() {
+        let spec = verify_spec();
+        let mut record = actionable_gap_record(&spec.display, Some(vec![spec.clone()]));
+        record["source_currentness"] = json!("historical");
+        let ledger = json!({ "records": [record] });
+        let report = build_gap_report(&ledger);
+
+        assert!(report.commands.command_specs.is_none());
+    }
+
+    #[test]
+    fn gap_projection_bounds_warning_gap_id() {
+        let spec = verify_spec();
+        let long_id = "g".repeat(MAX_WARNING_GAP_ID_CHARS + 40);
+        let mut record = actionable_gap_record(&spec.display.clone(), Some(vec![spec]));
+        record["gap_id"] = json!(long_id);
+        record["command_specs"]["verify"][0]["display"] = json!("different");
+        let ledger = json!({ "records": [record] });
+        let report = build_gap_report(&ledger);
+
+        let warning = report.warnings.first();
+        assert!(warning.is_some());
+        if let Some(warning) = warning {
+            assert!(warning.len() < 256);
+            assert!(warning.contains(&format!("{}...", "g".repeat(MAX_WARNING_GAP_ID_CHARS))));
+            assert!(!warning.contains(&"g".repeat(MAX_WARNING_GAP_ID_CHARS + 1)));
+        }
     }
 
     #[test]
