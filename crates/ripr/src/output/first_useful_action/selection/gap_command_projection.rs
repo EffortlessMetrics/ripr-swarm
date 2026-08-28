@@ -64,9 +64,11 @@ fn bounded_gap_id(gap_id: &str) -> String {
 }
 
 fn bounded_warning(warning: &str) -> String {
-    let mut bounded: String = warning.chars().take(MAX_WARNING_CHARS).collect();
+    let suffix = "...";
+    let limit = MAX_WARNING_CHARS.saturating_sub(suffix.chars().count());
+    let mut bounded: String = warning.chars().take(limit).collect();
     if bounded.chars().count() < warning.chars().count() {
-        bounded.push_str("...");
+        bounded.push_str(suffix);
     }
     bounded
 }
@@ -445,7 +447,7 @@ mod tests {
         let warning = report.warnings.first();
         assert!(warning.is_some());
         if let Some(warning) = warning {
-            assert!(warning.len() < 256);
+            assert!(warning.len() <= MAX_WARNING_CHARS);
             assert!(warning.contains(&format!("{}...", "g".repeat(MAX_WARNING_GAP_ID_CHARS))));
             assert!(!warning.contains(&"g".repeat(MAX_WARNING_GAP_ID_CHARS + 1)));
         }
