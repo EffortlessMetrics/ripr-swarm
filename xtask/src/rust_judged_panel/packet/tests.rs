@@ -1018,20 +1018,13 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 fn repository_root() -> Result<PathBuf, String> {
-    let output = std::process::Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .output()
-        .map_err(|error| format!("failed to run git rev-parse: {error}"))?;
-    if !output.status.success() {
-        return Err("git rev-parse --show-toplevel failed".to_string());
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "xtask manifest lacks repository parent".to_string())?;
+    if root.as_os_str().is_empty() {
+        return Err("repository root resolved to an empty path".to_string());
     }
-    let root = std::str::from_utf8(&output.stdout)
-        .map_err(|error| format!("invalid utf-8 in git output: {error}"))?
-        .trim();
-    if root.is_empty() {
-        return Err("git rev-parse --show-toplevel returned an empty path".to_string());
-    }
-    Ok(PathBuf::from(root))
+    Ok(root.to_path_buf())
 }
 
 type TreeSnapshotEntries = Vec<(String, bool, Vec<u8>)>;
