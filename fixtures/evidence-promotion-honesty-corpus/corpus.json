@@ -1020,7 +1020,7 @@
       "assertions": [
         { "type": "must_not_report_clean" },
         { "type": "must_disclose_scope" },
-        { "type": "must_emit_limitation", "expected_limit_kind": "dynamic_dispatch" },
+        { "type": "must_emit_limitation", "expected_limit_kind": "metaprogramming" },
         { "type": "must_not_emit_repair_packet" },
         { "type": "must_not_have_verify_command" },
         { "type": "must_not_have_receipt_command" },
@@ -1038,7 +1038,7 @@
       "assertions": [
         { "type": "must_not_report_clean" },
         { "type": "must_disclose_scope" },
-        { "type": "must_emit_limitation", "expected_limit_kind": "dynamic_dispatch" },
+        { "type": "must_emit_limitation", "expected_limit_kind": "metaprogramming" },
         { "type": "must_not_emit_repair_packet" },
         { "type": "must_not_have_verify_command" },
         { "type": "must_not_have_receipt_command" },
@@ -1074,7 +1074,7 @@
       "assertions": [
         { "type": "must_not_report_clean" },
         { "type": "must_disclose_scope" },
-        { "type": "must_emit_limitation", "expected_limit_kind": "dynamic_dispatch" },
+        { "type": "must_emit_limitation", "expected_limit_kind": "metaprogramming" },
         { "type": "must_not_emit_repair_packet" },
         { "type": "must_not_have_verify_command" },
         { "type": "must_not_have_receipt_command" },

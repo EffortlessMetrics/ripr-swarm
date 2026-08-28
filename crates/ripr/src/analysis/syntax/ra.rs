@@ -76,6 +76,32 @@ pub(crate) fn rust_include_directives(
     Ok(directives)
 }
 
+/// Re-extract oracles from a promoted function with the parser-backed rules
+/// used by ordinary Rust tests. Comments and string contents therefore cannot
+/// become assertion evidence. `None` means the function text was not
+/// parser-valid; callers may use their existing lexical fallback then.
+pub(crate) fn parser_oracles_for_function(
+    function_text: &str,
+    function_start_line: usize,
+) -> Option<Vec<OracleFact>> {
+    let parse = SourceFile::parse(function_text, Edition::CURRENT);
+    if !parse.errors().is_empty() {
+        return None;
+    }
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    let line_index = LineIndex::new(function_text);
+    let mut oracles = extract_parser_oracles(&function, function_text, &line_index);
+    let line_offset = function_start_line.saturating_sub(1);
+    for oracle in &mut oracles {
+        oracle.line += line_offset;
+    }
+    Some(oracles)
+}
+
 fn include_literal_path(expression: &str) -> Option<PathBuf> {
     let (_, arguments) = expression.split_once('!')?;
     let arguments = arguments.trim();
