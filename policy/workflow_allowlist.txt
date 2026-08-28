@@ -22,7 +22,6 @@
 .github/workflows/security.yml|1|Security workflow installs cargo-deny as a normal binary, then runs the standard cargo-deny command without requiring Docker.
 .github/workflows/server-archive-qualification.yml|82|Exact measured largest run block after preserving curl transport status, bounded rate-limit tokens, response digests, and strict public ruleset shape diagnostics; credential-free, artifact-only qualification delegates packaging and manifest generation to Rust xtask commands.
 .github/workflows/source-of-truth.yml|10|Advisory source-of-truth workflow runs three xtask checks and writes a short advisory summary.
-.github/workflows/apply-perl-static-limit-taxonomy.yml|71|Branch-scoped Perl taxonomy candidate verification runs the bounded formatter, focused tests, evidence-honesty check, Clippy, and patch hygiene commands; the candidate workflow is temporary and should be retired after the taxonomy lane lands.
 .github/workflows/test-analytics.yml|1|Test analytics workflow keeps each run block to one cargo or echo command.
 .github/workflows/ub-review.yml|0|ub-review workflow delegates entirely to the EffortlessMetrics/ub-review action (no inline run blocks); see #1469.
 .github/workflows/windows-advisory.yml|15|Advisory Windows lane runs a multi-step log-to-verdict pipeline in YAML; the cargo xtask windows-advisory-summary command is the verdict authority.
