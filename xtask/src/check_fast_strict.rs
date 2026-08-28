@@ -7,51 +7,46 @@ const SELECTOR_REPORT: &str = "check-fast-selector.md";
 pub(super) fn run() -> Result<(), String> {
     super::super::ensure_reports_dir()?;
     let mut discover = super::super::changed_files_vs_origin_main;
-    let mut write_selector_report = |body: &str| super::super::write_report(SELECTOR_REPORT, body);
-    run_with(
+    let mut write_receipt = |status: &str, reason: &str, count: usize, detail: &str| {
+        super::super::write_report(
+            SELECTOR_REPORT,
+            &selector_report(status, reason, count, detail),
+        )
+    };
+    run_transaction(
         &mut discover,
         super::super::check_fast,
         || {
             fs::read_to_string(FAST_REPORT_PATH)
                 .map_err(|error| format!("read {FAST_REPORT_PATH}: {error}"))
         },
-        &mut write_selector_report,
+        &mut write_receipt,
     )
 }
 
-fn run_with<D, F, R, W>(
+fn run_transaction<D, F, R, W>(
     discover: &mut D,
     run_fast: F,
     read_fast_report: R,
-    write_selector_report: &mut W,
+    write_receipt: &mut W,
 ) -> Result<(), String>
 where
     D: FnMut() -> Result<Vec<String>, String>,
     F: FnOnce() -> Result<(), String>,
     R: FnOnce() -> Result<String, String>,
-    W: FnMut(&str) -> Result<(), String>,
+    W: FnMut(&str, &str, usize, &str) -> Result<(), String>,
 {
     let before = match discover() {
         Ok(files) => files,
         Err(error) => {
             let primary = format!("check-fast selector unavailable for {BASE_REF}: {error}");
-            return fail_with_receipt(
-                write_selector_report,
-                &[],
-                "selector_unavailable",
-                &primary,
-            );
+            return fail(write_receipt, "selector_unavailable", 0, &primary);
         }
     };
 
     if let Err(error) = run_fast() {
         let primary = format!("check-fast gate failed after selector establishment: {error}");
-        return fail_with_receipt(
-            write_selector_report,
-            &before,
-            "fast_gate_failed",
-            &primary,
-        );
+        return fail(write_receipt, "fast_gate_failed", before.len(), &primary);
     }
 
     let after = match discover() {
@@ -60,59 +55,56 @@ where
             let primary = format!(
                 "check-fast selector became unavailable after the gate run for {BASE_REF}: {error}"
             );
-            return fail_with_receipt(
-                write_selector_report,
-                &before,
+            return fail(
+                write_receipt,
                 "selector_unavailable_after_run",
+                before.len(),
                 &primary,
             );
         }
     };
-
     if before != after {
         let primary = format!(
             "check-fast selector changed during the gate run: before={} file(s), after={} file(s)",
             before.len(),
             after.len()
         );
-        return fail_with_receipt(
-            write_selector_report,
-            &before,
+        return fail(
+            write_receipt,
             "selector_changed_during_run",
+            before.len(),
             &primary,
         );
     }
 
-    let fast_report = match read_fast_report() {
+    let report = match read_fast_report() {
         Ok(report) => report,
         Err(error) => {
             let primary = format!("check-fast success report unavailable: {error}");
-            return fail_with_receipt(
-                write_selector_report,
-                &before,
+            return fail(
+                write_receipt,
                 "fast_report_unavailable",
+                before.len(),
                 &primary,
             );
         }
     };
-
-    if let Err(error) = validate_fast_report(&before, &fast_report) {
+    if let Err(error) = validate_fast_report(&before, &report) {
         let primary = format!("check-fast report does not match its selector: {error}");
-        return fail_with_receipt(
-            write_selector_report,
-            &before,
+        return fail(
+            write_receipt,
             "fast_report_mismatch",
+            before.len(),
             &primary,
         );
     }
 
-    write_selector_report(&selector_report(
+    write_receipt(
         "pass",
         "stable",
-        "matched",
-        &before,
+        before.len(),
         "selector and conditional gate receipt agree",
-    ))
+    )
     .map_err(|error| format!("write {SELECTOR_REPORT}: {error}"))
 }
 
@@ -156,24 +148,15 @@ fn validate_fast_report(files: &[String], report: &str) -> Result<(), String> {
     if missing.is_empty() {
         Ok(())
     } else {
-        Err(format!(
-            "required ran gate(s) absent: {}",
-            missing.join(", ")
-        ))
+        Err(format!("required ran gate(s) absent: {}", missing.join(", ")))
     }
 }
 
-fn fail_with_receipt<W>(
-    write_selector_report: &mut W,
-    files: &[String],
-    failure: &str,
-    primary: &str,
-) -> Result<(), String>
+fn fail<W>(write_receipt: &mut W, reason: &str, count: usize, primary: &str) -> Result<(), String>
 where
-    W: FnMut(&str) -> Result<(), String>,
+    W: FnMut(&str, &str, usize, &str) -> Result<(), String>,
 {
-    let report = selector_report("failed", failure, "not_accepted", files, primary);
-    match write_selector_report(&report) {
+    match write_receipt("failed", reason, count, primary) {
         Ok(()) => Err(primary.to_string()),
         Err(report_error) => Err(format!(
             "{primary}; additionally failed to write {SELECTOR_REPORT}: {report_error}"
@@ -181,56 +164,48 @@ where
     }
 }
 
-fn selector_report(
-    status: &str,
-    selector: &str,
-    fast_report: &str,
-    files: &[String],
-    detail: &str,
-) -> String {
-    let mut body = format!(
-        "# check-fast selector\n\n- Status: {status}\n- Base ref: {BASE_REF}\n- Selector: {selector}\n- Fast report: {fast_report}\n- Changed files: {}\n- Detail: {}\n\n## Paths\n\n",
-        files.len(),
-        bounded_detail(detail)
-    );
-    if files.is_empty() {
-        body.push_str("- none\n");
-    } else {
-        for path in files {
-            body.push_str(&format!("- `{}`\n", path.replace('`', "\\`")));
-        }
-    }
-    body
-}
-
-fn bounded_detail(detail: &str) -> String {
-    let flattened = detail.lines().collect::<Vec<_>>().join(" ");
-    let mut bounded = flattened.chars().take(400).collect::<String>();
-    if flattened.chars().count() > 400 {
-        bounded.push('…');
-    }
-    bounded
+fn selector_report(status: &str, reason: &str, count: usize, detail: &str) -> String {
+    let detail = detail.lines().next().unwrap_or("none");
+    format!(
+        "# check-fast selector\n\nStatus: {status}\nBase ref: {BASE_REF}\nSelector: {reason}\nChanged files: {count}\nDetail: {detail}\n"
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use std::cell::{Cell, RefCell};
 
-    use super::run_with;
+    use super::{run_transaction, selector_report};
 
-    const EMPTY_FAST_REPORT: &str = "# check-fast report\n\nStatus: pass\n\nRan:\n- fmt --check\n- check-static-language\n- check-command-catalog\n- check-generated\n- check-generated-clean\n- check-lint-policy\n\nSkipped:\n- check-no-panic-family\n- check-allow-attributes\n- check-file-policy\n- clippy\n- check-fixture-contracts\n";
+    const EMPTY_FAST_REPORT: &str = concat!(
+        "# check-fast report\n\n",
+        "Status: pass\n\n",
+        "Ran:\n",
+        "- fmt --check\n",
+        "- check-static-language\n",
+        "- check-command-catalog\n",
+        "- check-generated\n",
+        "- check-generated-clean\n",
+        "- check-lint-policy\n\n",
+        "Skipped:\n",
+        "- check-no-panic-family\n",
+        "- check-allow-attributes\n",
+        "- check-file-policy\n",
+        "- clippy\n",
+        "- check-fixture-contracts\n",
+    );
 
     #[test]
     fn selector_failure_stops_before_fast_gate() -> Result<(), String> {
         let fast_ran = Cell::new(false);
-        let receipts = RefCell::new(Vec::new());
+        let receipt = RefCell::new(String::new());
         let mut discover = || Err("origin/main unavailable".to_string());
-        let mut write = |body: &str| {
-            receipts.borrow_mut().push(body.to_string());
+        let mut write = |status: &str, reason: &str, count: usize, detail: &str| {
+            *receipt.borrow_mut() = selector_report(status, reason, count, detail);
             Ok(())
         };
 
-        let result = run_with(
+        let result = run_transaction(
             &mut discover,
             || {
                 fast_ran.set(true);
@@ -245,36 +220,29 @@ mod tests {
         if fast_ran.get() {
             return Err("fast gate ran without selector authority".to_string());
         }
-        let receipts = receipts.borrow();
-        let Some(receipt) = receipts.first() else {
-            return Err("selector failure emitted no receipt".to_string());
-        };
-        if !receipt.contains("selector_unavailable") {
-            return Err(format!("unexpected selector failure receipt: {receipt}"));
+        if !receipt.borrow().contains("Selector: selector_unavailable") {
+            return Err(format!("unexpected selector receipt: {}", receipt.borrow()));
         }
         Ok(())
     }
 
     #[test]
     fn legitimate_empty_selection_is_distinct_from_failure() -> Result<(), String> {
-        let receipts = RefCell::new(Vec::new());
+        let receipt = RefCell::new(String::new());
         let mut discover = || Ok(Vec::new());
-        let mut write = |body: &str| {
-            receipts.borrow_mut().push(body.to_string());
+        let mut write = |status: &str, reason: &str, count: usize, detail: &str| {
+            *receipt.borrow_mut() = selector_report(status, reason, count, detail);
             Ok(())
         };
 
-        run_with(
+        run_transaction(
             &mut discover,
             || Ok(()),
             || Ok(EMPTY_FAST_REPORT.to_string()),
             &mut write,
         )?;
-        let receipts = receipts.borrow();
-        let Some(receipt) = receipts.first() else {
-            return Err("empty selector emitted no receipt".to_string());
-        };
-        if !receipt.contains("- Status: pass") || !receipt.contains("- Changed files: 0") {
+        let receipt = receipt.borrow();
+        if !receipt.contains("Status: pass") || !receipt.contains("Changed files: 0") {
             return Err(format!("empty selector receipt is ambiguous: {receipt}"));
         }
         Ok(())
@@ -282,15 +250,15 @@ mod tests {
 
     #[test]
     fn selected_rust_path_requires_rust_gate_receipt() -> Result<(), String> {
-        let receipts = RefCell::new(Vec::new());
+        let receipt = RefCell::new(String::new());
         let selected = vec!["xtask/src/check_fast_strict.rs".to_string()];
         let mut discover = || Ok(selected.clone());
-        let mut write = |body: &str| {
-            receipts.borrow_mut().push(body.to_string());
+        let mut write = |status: &str, reason: &str, count: usize, detail: &str| {
+            *receipt.borrow_mut() = selector_report(status, reason, count, detail);
             Ok(())
         };
 
-        let result = run_with(
+        let result = run_transaction(
             &mut discover,
             || Ok(()),
             || Ok(EMPTY_FAST_REPORT.to_string()),
@@ -303,12 +271,8 @@ mod tests {
         if !error.contains("check-no-panic-family") || !error.contains("clippy") {
             return Err(format!("missing Rust gates were not identified: {error}"));
         }
-        let receipts = receipts.borrow();
-        let Some(receipt) = receipts.first() else {
-            return Err("Rust gate mismatch emitted no selector receipt".to_string());
-        };
-        if !receipt.contains("fast_report_mismatch") {
-            return Err(format!("unexpected Rust mismatch receipt: {receipt}"));
+        if !receipt.borrow().contains("Selector: fast_report_mismatch") {
+            return Err(format!("unexpected mismatch receipt: {}", receipt.borrow()));
         }
         Ok(())
     }
