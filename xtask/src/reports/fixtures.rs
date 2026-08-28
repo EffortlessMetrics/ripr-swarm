@@ -366,6 +366,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "gap-decision-ledger"
                     | "perl_lsp_facts_exporter"
                     | "perl-real-repo-evals"
+                    | "perl_packet_contract_migration"
                     | "python"
                     | "python-eval-sweep"
                     | "python-judged-pr-panel"
