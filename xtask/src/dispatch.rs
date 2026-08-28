@@ -2,6 +2,8 @@ use crate::command::{XtaskCommand, print_help, unknown_command_message};
 
 #[path = "precommit_v2.rs"]
 mod precommit_v2;
+#[path = "check_fast_strict.rs"]
+mod check_fast_strict;
 
 pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
     match command {
@@ -22,7 +24,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::EvalSweep(args) => super::reports::eval_sweep(&args),
         XtaskCommand::SuggestedFixes => super::suggested_fixes(),
         XtaskCommand::Precommit => precommit_v2::run(),
-        XtaskCommand::CheckFast => super::check_fast(),
+        XtaskCommand::CheckFast => check_fast_strict::run(),
         XtaskCommand::CheckPr => super::check_pr(),
         XtaskCommand::Fixtures(args) => super::reports::fixtures_with_args(&args),
         XtaskCommand::Goldens(args) => super::reports::goldens(&args),
