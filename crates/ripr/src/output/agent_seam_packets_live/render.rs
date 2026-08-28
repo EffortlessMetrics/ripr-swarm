@@ -306,6 +306,7 @@ fn strip_assignment_authority(object: &mut serde_json::Map<String, Value>) {
         "packet_command_args",
         "verify_command",
         "receipt_command",
+        "verification_commands",
         "command_specs",
         "suggested_test_file",
         "suggested_test_name",

@@ -12618,9 +12618,10 @@ or invalid relevant configuration therefore fails closed as stale or
 `not_evaluated`.
 
 `staleness_status = "not_evaluated"` is a stop-and-refresh state, not freshness
-proof. Stale, mismatched, or unresolved sources use `queue_state =
-"blocked_stale"` and retain a `staleness_reason`; schedulers must refresh
-instead of assigning them. Any non-assignable packet also carries its bounded
+proof. Stale or mismatched sources use `queue_state = "blocked_stale"`, while
+unresolved identities and invalid source artifacts use
+`queue_state = "blocked_not_evaluated"`; each retains a
+`staleness_reason`, and schedulers must refresh instead of assigning them. Any non-assignable packet also carries its bounded
 `refresh_commands`; command arguments are shell-escaped and the packet’s
 `command_specs` are removed from the assignable projection when currentness is
 not current. `summary.stale_total` counts visible stale packets.

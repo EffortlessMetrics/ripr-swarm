@@ -10934,6 +10934,8 @@ fn producer_verify_packet(
         &root_arg,
         "--out",
         &ledger_arg,
+        "--out-md",
+        &root.join("gap-ledger.md").to_string_lossy(),
     ]);
     assert_success(&ledger);
 
@@ -11087,6 +11089,13 @@ fn agent_packet_blocks_untracked_consumed_config_change() -> Result<(), Box<dyn 
         parsed["blocked_candidate"]["queue_state"], "blocked_stale",
         "stale currentness must expose the blocked candidate disposition: {parsed}"
     );
+    assert!(
+        parsed["blocked_candidate"]
+            .get("verification_commands")
+            .is_none(),
+        "stale candidate must not expose verification command authority: {parsed}"
+    );
+    std::fs::remove_dir_all(&root)?;
     Ok(())
 }
 
