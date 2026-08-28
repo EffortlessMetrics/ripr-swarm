@@ -742,7 +742,7 @@ mod tests {
         remove_stale_candidate(candidate_text)?;
         if candidate.exists() {
             let _ = std::fs::remove_dir_all(&root);
-            return Err("stale candidate survived removal".to_string());
+            return Err("stale candidate was not removed".to_string());
         }
         // A missing file is not an error; a failing removal is.
         remove_stale_candidate(candidate_text)?;
