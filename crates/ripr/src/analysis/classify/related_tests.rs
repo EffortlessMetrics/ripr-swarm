@@ -215,7 +215,8 @@ fn normalized_file_stem(path: &Path) -> String {
     normalize_path(path)
         .rsplit('/')
         .next()
-        .and_then(|file| file.rsplit_once('.').map(|(stem, _)| stem).or(Some(file)))
+        .and_then(|file| Path::new(file).file_stem())
+        .and_then(|stem| stem.to_str())
         .unwrap_or_default()
         .to_string()
 }
@@ -782,6 +783,36 @@ mod tests {
             windows_related[0].0.assertions[0].text, assertion_text,
             "path normalization must not rewrite assertion text"
         );
+    }
+
+    #[test]
+    fn given_dotfile_probe_when_associated_then_only_matching_companion_is_related() {
+        let matching_test = test_with_assertions(
+            "crates/ripr/tests/.config.rs",
+            "checks_config_value",
+            "assert_eq!(value, 3);",
+            Vec::new(),
+        );
+        let unrelated_test = test_with_assertions(
+            "crates/ripr/tests/config.rs",
+            "checks_value",
+            "assert_eq!(value, 3);",
+            Vec::new(),
+        );
+        let index = RustIndex {
+            tests: vec![matching_test, unrelated_test],
+            ..RustIndex::default()
+        };
+        let forward_probe = struct_field_probe("crates/ripr/src/.config", "marker");
+        let windows_probe = struct_field_probe("crates\\ripr\\src\\.config", "marker");
+
+        for probe in [forward_probe, windows_probe] {
+            let related = find_related_tests(&probe, None, &index, true, None);
+
+            assert_eq!(related.len(), 1);
+            assert_eq!(related[0].0.file, Path::new("crates/ripr/tests/.config.rs"));
+            assert_eq!(related[0].1, RelationReason::SameTestFile);
+        }
     }
 
     // --- #1054 repro ---
