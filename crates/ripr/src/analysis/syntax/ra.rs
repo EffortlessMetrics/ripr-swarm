@@ -328,6 +328,7 @@ fn has_test_attribute(function: &ast::Fn) -> bool {
     })
 }
 
+/// Returns whether a function is nested in a module gated by a test-only cfg.
 fn is_cfg_test_module_member(function: &ast::Fn) -> bool {
     function
         .syntax()
@@ -340,6 +341,7 @@ fn is_cfg_test_module_member(function: &ast::Fn) -> bool {
         })
 }
 
+/// Recognizes plain `cfg(test)` and direct top-level `test` conjuncts in `cfg(all(...))`.
 fn cfg_attribute_requires_test(attr: &ast::Attr) -> bool {
     let tokens = attr
         .syntax()
@@ -367,6 +369,7 @@ fn cfg_attribute_requires_test(attr: &ast::Attr) -> bool {
     }
 }
 
+/// Checks cfg predicate tokens for a direct, top-level `test` term.
 fn cfg_all_has_top_level_test(arguments: &[&str]) -> bool {
     let mut depth = 0usize;
     let mut term_start = 0usize;
@@ -393,6 +396,7 @@ fn cfg_all_has_top_level_test(arguments: &[&str]) -> bool {
     depth == 0 && cfg_term_is_test(arguments.get(term_start..))
 }
 
+/// Returns true only for the exact single-token cfg predicate `test`.
 fn cfg_term_is_test(term: Option<&[&str]>) -> bool {
     term.is_some_and(|tokens| tokens.len() == 1 && tokens.first().copied() == Some("test"))
 }
