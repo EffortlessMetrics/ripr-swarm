@@ -16,6 +16,7 @@ mod metrics;
 mod module_health;
 mod mutation;
 mod operator;
+mod perl_migration;
 mod pr;
 mod pr_causal_delta;
 mod pr_evidence;
@@ -104,6 +105,7 @@ pub(crate) use mutation::{
     parse_mutation_outcomes_json, read_mutation_input_json,
 };
 pub(crate) use operator::operator_cockpit_report;
+pub(crate) use perl_migration::perl_migration_refresh;
 pub(crate) use pr::{critic, gh_pr_status, pr_summary, pr_triage_report};
 pub(crate) use pr_evidence::ripr_pr;
 pub(crate) use pr_evidence_summary::ripr_pr_summary;

@@ -6614,6 +6614,160 @@ fn perl_real_repo_eval_fixture_guard_reports_contract_drift() -> Result<(), Stri
     Ok(())
 }
 
+use super::fixture_contracts::{
+    validate_perl_packet_contract_migration_corpus,
+    validate_perl_packet_contract_migration_corpus_at,
+};
+
+fn perl_packet_contract_migration_corpus_path() -> Result<PathBuf, String> {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "xtask manifest must have workspace parent".to_string())?;
+    Ok(repo_root.join("fixtures/perl_packet_contract_migration/corpus.json"))
+}
+
+fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<(), String> {
+    fs::create_dir_all(destination).map_err(|err| err.to_string())?;
+    for entry in fs::read_dir(source).map_err(|err| err.to_string())? {
+        let entry = entry.map_err(|err| err.to_string())?;
+        let target = destination.join(entry.file_name());
+        if entry.file_type().map_err(|err| err.to_string())?.is_dir() {
+            copy_dir_recursive(&entry.path(), &target)?;
+        } else {
+            fs::copy(entry.path(), &target).map_err(|err| err.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// Copies the committed perl packet contract migration fixture into the temp
+/// cwd under `fixtures/...` so the corpus's repo-root-relative paths resolve
+/// against the copy, then returns the copied fixture root.
+fn copy_perl_packet_contract_migration_fixture(root: &Path) -> Result<PathBuf, String> {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+    let fixture_root = root.join("fixtures/perl_packet_contract_migration");
+    copy_dir_recursive(
+        &repo_root.join("fixtures/perl_packet_contract_migration"),
+        &fixture_root,
+    )?;
+    Ok(fixture_root)
+}
+
+#[test]
+fn perl_packet_contract_migration_fixture_corpus_is_valid() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let corpus = perl_packet_contract_migration_corpus_path()?;
+        let mut violations = Vec::new();
+        validate_perl_packet_contract_migration_corpus_at(&corpus, &mut violations)?;
+        assert_eq!(violations, Vec::<String>::new());
+
+        let mut root_violations = Vec::new();
+        validate_perl_packet_contract_migration_corpus(&mut root_violations)?;
+        assert_eq!(root_violations, Vec::<String>::new());
+        Ok(())
+    })
+}
+
+#[test]
+fn perl_packet_contract_migration_fixture_guard_reports_packet_tamper() -> Result<(), String> {
+    with_temp_cwd("perl-packet-contract-migration-packet-tamper", |root| {
+        let fixture_root = copy_perl_packet_contract_migration_fixture(root)?;
+        let packet = fixture_root.join("producer-packets/v1/ordinary_discount.json");
+        let mut bytes = fs::read(&packet).map_err(|err| err.to_string())?;
+        bytes.push(b' ');
+        fs::write(&packet, &bytes).map_err(|err| err.to_string())?;
+
+        let mut violations = Vec::new();
+        validate_perl_packet_contract_migration_corpus_at(
+            &fixture_root.join("corpus.json"),
+            &mut violations,
+        )?;
+        let report = violations.join("\n");
+        assert!(report.contains("packet digest drift"));
+        Ok(())
+    })
+}
+
+#[test]
+fn perl_packet_contract_migration_fixture_guard_reports_row_removal() -> Result<(), String> {
+    with_temp_cwd("perl-packet-contract-migration-row-removal", |root| {
+        let fixture_root = copy_perl_packet_contract_migration_fixture(root)?;
+        let contradictions_path = fixture_root.join("expected/contradictions.v1.json");
+        let mut contradictions: Value = serde_json::from_str(
+            &fs::read_to_string(&contradictions_path).map_err(|err| err.to_string())?,
+        )
+        .map_err(|err| err.to_string())?;
+        let rows = contradictions
+            .get_mut("contradictions")
+            .and_then(Value::as_array_mut)
+            .ok_or_else(|| "contradictions array is missing".to_string())?;
+        if rows.is_empty() {
+            return Err("contradictions array must not be empty".to_string());
+        }
+        rows.remove(0);
+        write(
+            &contradictions_path,
+            &serde_json::to_string_pretty(&contradictions).map_err(|err| err.to_string())?,
+        );
+
+        let mut violations = Vec::new();
+        validate_perl_packet_contract_migration_corpus_at(
+            &fixture_root.join("corpus.json"),
+            &mut violations,
+        )?;
+        let report = violations.join("\n");
+        assert!(report.contains("missing required contradiction row"));
+        Ok(())
+    })
+}
+
+#[test]
+fn perl_packet_contract_migration_fixture_guard_reports_disposition_authority_flip()
+-> Result<(), String> {
+    with_temp_cwd("perl-packet-contract-migration-authority-flip", |root| {
+        let fixture_root = copy_perl_packet_contract_migration_fixture(root)?;
+        let dispositions_path = fixture_root.join("expected/consumer-dispositions.v1.json");
+        let mut dispositions: Value = serde_json::from_str(
+            &fs::read_to_string(&dispositions_path).map_err(|err| err.to_string())?,
+        )
+        .map_err(|err| err.to_string())?;
+        dispositions["pipeline"]["canonical_gap_emitted"] = Value::Bool(true);
+        write(
+            &dispositions_path,
+            &serde_json::to_string_pretty(&dispositions).map_err(|err| err.to_string())?,
+        );
+
+        let mut violations = Vec::new();
+        validate_perl_packet_contract_migration_corpus_at(
+            &fixture_root.join("corpus.json"),
+            &mut violations,
+        )?;
+        let report = violations.join("\n");
+        assert!(report.contains("must stay false"));
+        Ok(())
+    })
+}
+
+#[test]
+fn perl_packet_contract_migration_fixture_guard_reports_input_digest_drift() -> Result<(), String> {
+    with_temp_cwd("perl-packet-contract-migration-input-drift", |root| {
+        let fixture_root = copy_perl_packet_contract_migration_fixture(root)?;
+        let input = fixture_root.join("producer-inputs/ordinary_discount/lib/App/Discount.pm");
+        let mut bytes = fs::read(&input).map_err(|err| err.to_string())?;
+        bytes.push(b' ');
+        fs::write(&input, &bytes).map_err(|err| err.to_string())?;
+
+        let mut violations = Vec::new();
+        validate_perl_packet_contract_migration_corpus_at(
+            &fixture_root.join("corpus.json"),
+            &mut violations,
+        )?;
+        let report = violations.join("\n");
+        assert!(report.contains("digest drift"));
+        Ok(())
+    })
+}
+
 fn gap_decision_ledger_corpus_path() -> Result<PathBuf, String> {
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()

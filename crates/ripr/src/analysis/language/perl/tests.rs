@@ -3710,3 +3710,146 @@ fn perl_to_domain_oracle_mapping_preserves_signal_kinds() -> Result<(), String> 
 
     Ok(())
 }
+
+/// Migration-oracle corpus pin (#3217, PR 1 of the #3216 Perl v2 consumer
+/// train): the committed packet was emitted by the real `perl-ripr-facts`
+/// producer (see `fixtures/perl_packet_contract_migration/corpus.json` for
+/// the pinned producer commit/version/command). The packet bytes are consumed
+/// exactly as committed — no normalization — with the analysis root pointed
+/// at the committed producer inputs so the file-digest freshness check runs
+/// for real. This test pins the current consumer disposition of a real
+/// packet; the recorded contradictions live in
+/// `expected/contradictions.v1.json` and are validated by
+/// `cargo xtask check-fixture-contracts`.
+#[test]
+fn perl_packet_contract_migration_corpus_pins_real_producer_dispositions() -> Result<(), String> {
+    let packet_text = include_str!(
+        "../../../../../../fixtures/perl_packet_contract_migration/producer-packets/v1/ordinary_discount.json"
+    );
+
+    // Analysis root at the committed producer inputs: the ingestion
+    // freshness check recomputes each file digest against the on-disk
+    // committed bytes (both must match the packet's declared digests).
+    let input_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/perl_packet_contract_migration/producer-inputs/ordinary_discount");
+    let mut options = packet_test_options();
+    options.root = input_root;
+
+    let packet = PerlAdapter
+        .consume_fact_packet(packet_text, &options)
+        .map_err(|err| format!("real producer packet must decode and validate: {err}"))?;
+
+    // Pinned producer identity (must match corpus.json).
+    assert_eq!(packet.producer.name, "perl-lsp");
+    assert_eq!(packet.producer.version, "0.17.0");
+    assert_eq!(packet.schema_version, crate::app::PERL_FACT_PACKET_SCHEMA);
+    assert_eq!(packet.packet_status, PacketStatus::Partial);
+
+    // Observed contradiction facts pinned so silently "fixing" the packet
+    // without a reviewed corpus update fails here too (see
+    // expected/contradictions.v1.json for the full typed rows).
+    assert_eq!(packet.root.path_style, "posix", "path_style drift pinned");
+    let owner = packet
+        .owner("owner:lib/App/Discount.pm:sub:App::Discount::discount:51-174")
+        .ok_or("real producer owner id changed shape")?;
+    assert!(
+        !owner.owner_id.starts_with("perl:"),
+        "owner id scheme drift pinned: real producer ids do not carry the `perl:` qualifier"
+    );
+    assert!(
+        packet.canonical_owner_identity(&owner.owner_id).is_none(),
+        "real producer owner ids cannot yield a canonical owner identity"
+    );
+    let change = &packet.changes[0];
+    assert!(
+        change.changed_text_digest.starts_with("fnv64:"),
+        "change digest recipe drift pinned"
+    );
+    assert_eq!(
+        change.missing_discriminator, None,
+        "missing_discriminator always null in this producer slice"
+    );
+    assert!(
+        change.provenance_refs.is_empty(),
+        "change facts carry no provenance refs in this producer slice"
+    );
+    let limitation_kinds: Vec<&str> = packet.limitations.iter().map(|l| l.kind.as_str()).collect();
+    for kind in [
+        "unverified_provenance",
+        "range_precision",
+        "partial_inference",
+    ] {
+        assert!(
+            limitation_kinds.contains(&kind),
+            "producer limitation kind `{kind}` outside the SPEC-0064 enumeration must stay pinned"
+        );
+        assert!(
+            !super::limitation_kind_blocks_strict_actionability(kind),
+            "unrecognized producer limitation kind `{kind}` must not silently gain blocking power"
+        );
+    }
+    let provenance_range = packet
+        .provenance
+        .iter()
+        .find(|p| p.provenance_id == "prov:test_discovery:file:t/discount.t")
+        .ok_or("missing test_discovery provenance")?;
+    assert!(
+        matches!(&provenance_range.range, Some(serde_json::Value::String(text)) if text == "3:0-3:14"),
+        "provenance range string shape drift pinned"
+    );
+    assert_eq!(
+        packet.owners[1].range.start_line, 5,
+        "zero-based coordinate basis pinned (declaration is on one-based line 6)"
+    );
+    assert_eq!(
+        packet.input.diff_id, None,
+        "diff_id null despite supplied diff"
+    );
+
+    // Pipeline disposition (expected/consumer-dispositions.v1.json): one
+    // sink-aligned finding, no canonical gap, advisory-only partial packet.
+    let findings = super::packet_to_findings(&packet);
+    assert_eq!(
+        findings.len(),
+        1,
+        "real packet projects exactly one finding"
+    );
+    assert_eq!(
+        findings[0].class,
+        ExposureClass::Exposed,
+        "sink-aligned strong exact oracle over a direct_owner_call relation projects exposed"
+    );
+    assert!(
+        findings[0].canonical_gap.is_none(),
+        "partial packet must not emit canonical gap debt"
+    );
+    assert!(
+        packet
+            .canonical_gap_identity_for_change(&change.change_id)
+            .is_none(),
+        "partial packet cannot derive a canonical gap identity"
+    );
+
+    // The partial status keeps the diff projection advisory with a named
+    // language limitation (same non-abort contract as hand-authored partial
+    // packets).
+    let packet_path = std::env::temp_dir().join(format!(
+        "ripr-perl-migration-corpus-{}.json",
+        std::process::id()
+    ));
+    std::fs::write(&packet_path, packet_text).map_err(|error| error.to_string())?;
+    options.perl_facts_path = Some(packet_path.clone());
+    let result = PerlAdapter.analyze_diff(&options, &OraclePolicy::default(), &[])?;
+    assert_eq!(result.findings.len(), 1);
+    assert_eq!(result.limitations.len(), 1);
+    assert!(
+        result.limitations[0]
+            .bounded_detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("packet partial")),
+        "partial real packet keeps the advisory limitation disposition"
+    );
+    std::fs::remove_file(packet_path).map_err(|error| error.to_string())?;
+
+    Ok(())
+}
