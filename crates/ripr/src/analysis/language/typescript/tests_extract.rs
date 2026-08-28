@@ -298,28 +298,59 @@ test.sequential("serial", () => {
     }
 
     #[test]
-    fn recurses_active_describe_modifiers_and_parameterized_suites() {
+    fn recurses_active_describe_modifiers() {
         let tests = extract_tests(
             Path::new("tests/pricing.test.ts"),
             r#"
-describe.concurrent.each([[100], [150]])("amount %i", () => {
-    describe.only("pricing", () => {
-        test.sequential("discount", () => {
-            expect(applyDiscount(100, 100)).toBe(90);
-        });
+describe.only("focused suite", () => {
+    test("focused case", () => {
+        expect(applyDiscount(100, 100)).toBe(90);
+    });
+});
+describe.concurrent("parallel suite", () => {
+    it("parallel case", () => {
+        expect(add(1, 2)).toBe(3);
+    });
+});
+describe.sequential("serial suite", () => {
+    test("serial case", () => {
+        expect(normalize("x")).toBe("x");
     });
 });
 "#,
         );
 
-        assert_eq!(tests.len(), 1);
-        assert_eq!(tests[0].name, "amount %i pricing discount");
-        assert_eq!(tests[0].local_name, "discount");
-        assert_eq!(
-            tests[0].describe_names,
-            vec!["amount %i".to_string(), "pricing".to_string()]
+        assert_eq!(tests.len(), 3);
+        assert_eq!(tests[0].name, "focused suite focused case");
+        assert_eq!(tests[1].name, "parallel suite parallel case");
+        assert_eq!(tests[2].name, "serial suite serial case");
+        assert!(tests.iter().all(|test| test.describe_names.len() == 1));
+    }
+
+    #[test]
+    fn recurses_bare_and_modified_parameterized_suites() {
+        let tests = extract_tests(
+            Path::new("tests/pricing.test.ts"),
+            r#"
+describe.each([[100], [150]])("amount %i", () => {
+    test("discount", () => {
+        expect(applyDiscount(100, 100)).toBe(90);
+    });
+});
+describe.concurrent.each([[1], [2]])("parallel %i", () => {
+    it.only("adds", () => {
+        expect(add(1, 2)).toBe(3);
+    });
+});
+"#,
         );
-        assert_eq!(tests[0].assertions.len(), 1);
+
+        assert_eq!(tests.len(), 2);
+        assert_eq!(tests[0].name, "amount %i discount");
+        assert_eq!(tests[0].describe_names, vec!["amount %i".to_string()]);
+        assert_eq!(tests[1].name, "parallel %i adds");
+        assert_eq!(tests[1].describe_names, vec!["parallel %i".to_string()]);
+        assert!(tests.iter().all(|test| test.assertions.len() == 1));
     }
 
     #[test]
