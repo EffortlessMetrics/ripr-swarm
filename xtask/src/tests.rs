@@ -9430,6 +9430,13 @@ jobs:
   docs-gate:
     name: Ripr Docs Gate
     timeout-minutes: 20
+    steps:
+      - name: Upload docs-gate reports
+        if: always()
+      - name: Advisory reports
+        if: success() && inputs.run-advisory-reports
+      - name: Upload RIPR reports
+        if: failure() || inputs.upload-success-artifacts
   result:
     name: Ripr Rust Small Result
     timeout-minutes: 10
