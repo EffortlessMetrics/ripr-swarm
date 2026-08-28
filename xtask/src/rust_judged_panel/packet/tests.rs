@@ -150,11 +150,29 @@ fn rust_judged_panel_packet_public_publish_validates_disposable_host_run() -> Re
         &repository.join("metrics/rust-judged-behavior-panel"),
         &root.0.join("metrics/rust-judged-behavior-panel"),
     )?;
-    fs::write(
-        root.0.join(".git"),
-        format!("gitdir: {}\n", repository.join(".git").display()),
-    )
-    .map_err(|error| format!("bind disposable fixture to repository git data: {error}"))?;
+    // A linked worktree's `.git` is a gitfile (`gitdir: <real git dir>`), not
+    // a git directory. The fixture's gitfile must bind to the real git data,
+    // so follow the gitfile chain once; a normal checkout resolves to itself.
+    let repository_git = repository.join(".git");
+    let gitdir = if repository_git.is_file() {
+        let link = fs::read_to_string(&repository_git)
+            .map_err(|error| format!("read worktree gitfile: {error}"))?;
+        let target = link
+            .strip_prefix("gitdir: ")
+            .map(str::trim)
+            .ok_or_else(|| "worktree `.git` gitfile has no `gitdir:` prefix".to_string())?
+            .to_string();
+        if !Path::new(&target).is_dir() {
+            return Err(format!(
+                "worktree gitfile points at `{target}`, which is not a git directory"
+            ));
+        }
+        target
+    } else {
+        repository_git.display().to_string()
+    };
+    fs::write(root.0.join(".git"), format!("gitdir: {gitdir}\n"))
+        .map_err(|error| format!("bind disposable fixture to repository git data: {error}"))?;
     let state = crate::rust_judged_panel::subject::repository_state(repository)?;
     let subjects_path = root.0.join(SUBJECTS_PATH);
     let mut authority: serde_json::Value = read_strict_json(&subjects_path, "subject authority")?;
