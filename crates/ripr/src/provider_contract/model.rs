@@ -66,8 +66,8 @@ pub enum RiprSourceViewV1 {
 pub struct RiprRepositorySnapshotV1 {
     pub repository_id: String,
     /// Canonical source-view identity. Git trees use
-    /// `git-tree:<40-or-64-hex-object-id>`; derived views embed their SHA-256
-    /// source digest after the view prefix.
+    /// `git-tree:<40-or-64-lowercase-hex-object-id>`; derived views embed their
+    /// SHA-256 source digest after the view prefix.
     pub snapshot_id: String,
     pub source_view: RiprSourceViewV1,
     /// Portable SHA-256 identity binding. For a Git tree, hash the exact UTF-8
