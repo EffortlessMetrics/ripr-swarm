@@ -140,6 +140,54 @@ fn rust_judged_panel_packet_retained_validator_reaches_committed_generation() ->
     super::validate_at(root, &manifest)
 }
 
+/// Resolve `<repository>/.git` to the real git directory it names.
+///
+/// A linked worktree's `.git` is a gitfile (`gitdir: <path>`), not a git
+/// directory, so the disposable fixture cannot bind to it directly. Git
+/// interprets a relative gitdir against the directory containing the gitfile,
+/// so resolve it there before returning; a normal checkout (`.git` is a
+/// directory) resolves to itself.
+fn resolve_repository_gitdir(repository: &Path) -> Result<String, String> {
+    let repository_git = repository.join(".git");
+    if repository_git.is_dir() {
+        return Ok(repository_git.display().to_string());
+    }
+    if !repository_git.is_file() {
+        return Err(format!(
+            "`{}` is neither a git directory nor a gitfile",
+            repository_git.display()
+        ));
+    }
+    let link = fs::read_to_string(&repository_git)
+        .map_err(|error| format!("read worktree gitfile: {error}"))?;
+    let target = link
+        .trim()
+        .strip_prefix("gitdir: ")
+        .ok_or_else(|| "worktree `.git` gitfile has no `gitdir:` prefix".to_string())?;
+    // `join` replaces the base when the gitdir is absolute, so both spellings
+    // resolve against the gitfile's directory, exactly as Git does. Normalize
+    // the joined path lexically (`wt/../meta` -> `meta`) so the fixture binds
+    // to a clean absolute gitdir.
+    let resolved = repository.join(target);
+    let mut normalized = PathBuf::new();
+    for component in resolved.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            component => normalized.push(component.as_os_str()),
+        }
+    }
+    if !normalized.is_dir() {
+        return Err(format!(
+            "worktree gitfile points at `{}`, which is not a git directory",
+            normalized.display()
+        ));
+    }
+    Ok(normalized.display().to_string())
+}
+
 #[test]
 fn rust_judged_panel_packet_public_publish_validates_disposable_host_run() -> Result<(), String> {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -150,11 +198,12 @@ fn rust_judged_panel_packet_public_publish_validates_disposable_host_run() -> Re
         &repository.join("metrics/rust-judged-behavior-panel"),
         &root.0.join("metrics/rust-judged-behavior-panel"),
     )?;
-    fs::write(
-        root.0.join(".git"),
-        format!("gitdir: {}\n", repository.join(".git").display()),
-    )
-    .map_err(|error| format!("bind disposable fixture to repository git data: {error}"))?;
+    // A linked worktree's `.git` is a gitfile (`gitdir: <real git dir>`), not
+    // a git directory. The fixture's gitfile must bind to the real git data,
+    // so follow the gitfile chain once; a normal checkout resolves to itself.
+    let gitdir = resolve_repository_gitdir(repository)?;
+    fs::write(root.0.join(".git"), format!("gitdir: {gitdir}\n"))
+        .map_err(|error| format!("bind disposable fixture to repository git data: {error}"))?;
     let state = crate::rust_judged_panel::subject::repository_state(repository)?;
     let subjects_path = root.0.join(SUBJECTS_PATH);
     let mut authority: serde_json::Value = read_strict_json(&subjects_path, "subject authority")?;
@@ -1474,5 +1523,55 @@ fn judgment_sidecar_public_publish_fails_closed_without_a_valid_host_run() -> Re
         Err(_) => {}
     }
     assert_tree_unchanged(&tampered_portable, &tampered_before, "tampered publication")?;
+    Ok(())
+}
+
+#[test]
+fn resolve_repository_gitdir_follows_relative_and_absolute_gitfiles() -> Result<(), String> {
+    let root = scratch("resolve-gitdir")?;
+    // A normal checkout: `.git` is a directory and resolves to itself.
+    let checkout = root.join("checkout");
+    fs::create_dir_all(checkout.join(".git")).map_err(|error| error.to_string())?;
+    let resolved = resolve_repository_gitdir(&checkout)?;
+    if resolved != checkout.join(".git").display().to_string() {
+        return Err("directory `.git` did not resolve to itself".to_string());
+    }
+    // A linked worktree with a RELATIVE gitdir (interpreted against the
+    // gitfile's directory, per git): the resolved gitdir must be absolute
+    // and point at the real git data so a fixture can rebind to it.
+    let real_git = root.join("meta").join("real-git");
+    fs::create_dir_all(&real_git).map_err(|error| error.to_string())?;
+    let worktree = root.join("wt");
+    fs::create_dir_all(&worktree).map_err(|error| error.to_string())?;
+    fs::write(worktree.join(".git"), "gitdir: ../meta/real-git\n")
+        .map_err(|error| error.to_string())?;
+    let resolved = resolve_repository_gitdir(&worktree)?;
+    if resolved != real_git.display().to_string() {
+        return Err(format!(
+            "relative gitdir resolved to `{resolved}` instead of `{}`",
+            real_git.display()
+        ));
+    }
+    // An ABSOLUTE gitdir must also resolve through `join`'s absolute-path
+    // replacement.
+    fs::write(
+        worktree.join(".git"),
+        format!("gitdir: {}\n", real_git.display()),
+    )
+    .map_err(|error| error.to_string())?;
+    let resolved = resolve_repository_gitdir(&worktree)?;
+    if resolved != real_git.display().to_string() {
+        return Err("absolute gitdir did not resolve to the real git dir".to_string());
+    }
+    // A dangling gitdir is a named error, never a silent bind.
+    fs::write(worktree.join(".git"), "gitdir: ../meta/missing\n")
+        .map_err(|error| error.to_string())?;
+    let error = resolve_repository_gitdir(&worktree)
+        .err()
+        .ok_or_else(|| "dangling gitdir was accepted".to_string())?;
+    if !error.contains("is not a git directory") {
+        return Err(format!("unexpected dangling-gitdir error: {error}"));
+    }
+    fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
     Ok(())
 }

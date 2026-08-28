@@ -360,7 +360,12 @@ fn production_target_evidence_rejects_symlink_escape() -> Result<(), String> {
     let outside = authority_fixture_root("symlink-outside")?;
     let link = root.join("src/escaped.rs");
     if let Err(error) = symlink_file(outside.join("src/lib.rs"), &link) {
-        if error.kind() == std::io::ErrorKind::PermissionDenied {
+        // Unprivileged Windows hosts report ERROR_PRIVILEGE_NOT_HELD
+        // (os error 1314) instead of PermissionDenied, so both mean "this
+        // host cannot create the fixture" and skip the containment check.
+        let privilege_missing = error.kind() == std::io::ErrorKind::PermissionDenied
+            || error.raw_os_error() == Some(1314);
+        if privilege_missing {
             eprintln!(
                 "skipping symlink containment check: fixture creation is not permitted ({error})"
             );
