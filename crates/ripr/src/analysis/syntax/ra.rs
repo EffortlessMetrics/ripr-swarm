@@ -6,6 +6,7 @@ use ra_ap_syntax::{
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use super::super::extract::PROBE_SHAPE_UNSAFE_BOUNDARY;
 use super::super::facts::FileFacts;
 use super::{RaRustSyntaxAdapter, RustSyntaxAdapter, SyntaxNodeFact, TextRange};
 use crate::analysis::rust_index::{
@@ -328,30 +329,77 @@ fn has_test_attribute(function: &ast::Fn) -> bool {
     })
 }
 
+/// Returns whether a function is nested in a module gated by a test-only cfg.
 fn is_cfg_test_module_member(function: &ast::Fn) -> bool {
     function
         .syntax()
         .ancestors()
         .filter_map(ast::Module::cast)
         .any(|module| {
-            module.attrs().any(|attr| {
-                let compact = attr
-                    .syntax()
-                    .text()
-                    .to_string()
-                    .chars()
-                    .filter(|ch| !ch.is_whitespace())
-                    .collect::<String>();
-                // #3284: `#[cfg(all(test, ...))]` gates the module on test
-                // plus other predicates, which still means harness-only in
-                // every non-test build that satisfies the other conjuncts
-                // is NOT guaranteed — but the module is compiled under
-                // test, so its helpers are evidence role. `any(test, ..)`
-                // and `not(test)` stay excluded: they compile outside
-                // test builds.
-                compact == "#[cfg(test)]" || compact.starts_with("#[cfg(all(test,")
-            })
+            module
+                .attrs()
+                .any(|attr| cfg_attribute_requires_test(&attr))
         })
+}
+
+/// Recognizes plain `cfg(test)` and direct top-level `test` conjuncts in `cfg(all(...))`.
+fn cfg_attribute_requires_test(attr: &ast::Attr) -> bool {
+    let tokens = attr
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .collect::<Vec<_>>();
+    let token_text = tokens.iter().map(|token| token.text()).collect::<Vec<_>>();
+
+    match token_text.as_slice() {
+        ["#", "[", "cfg", "(", "test", ")", "]"] => true,
+        [
+            "#",
+            "[",
+            "cfg",
+            "(",
+            "all",
+            "(",
+            arguments @ ..,
+            ")",
+            ")",
+            "]",
+        ] => cfg_all_has_top_level_test(arguments),
+        _ => false,
+    }
+}
+
+/// Checks cfg predicate tokens for a direct, top-level `test` term.
+fn cfg_all_has_top_level_test(arguments: &[&str]) -> bool {
+    let mut depth = 0usize;
+    let mut term_start = 0usize;
+
+    for (index, token) in arguments.iter().enumerate() {
+        match *token {
+            "(" | "[" | "{" => depth += 1,
+            ")" | "]" | "}" => {
+                let Some(next_depth) = depth.checked_sub(1) else {
+                    return false;
+                };
+                depth = next_depth;
+            }
+            "," if depth == 0 => {
+                if cfg_term_is_test(arguments.get(term_start..index)) {
+                    return true;
+                }
+                term_start = index + 1;
+            }
+            _ => {}
+        }
+    }
+
+    depth == 0 && cfg_term_is_test(arguments.get(term_start..))
+}
+
+/// Returns true only for the exact single-token cfg predicate `test`.
+fn cfg_term_is_test(term: Option<&[&str]>) -> bool {
+    term.is_some_and(|tokens| tokens == ["test"])
 }
 
 fn collect_attr_syntax(function: &ast::Fn) -> Vec<String> {
@@ -367,6 +415,8 @@ fn extract_parser_probe_shapes(
     line_index: &LineIndex,
 ) -> Vec<ProbeShapeFact> {
     let mut shapes = Vec::new();
+    push_unsafe_boundary_probe_shapes(&mut shapes, function, line_index);
+
     for if_expr in function
         .syntax()
         .descendants()
@@ -613,6 +663,45 @@ fn extract_parser_probe_shapes(
             && a.text == b.text
     });
     shapes
+}
+
+fn push_unsafe_boundary_probe_shapes(
+    shapes: &mut Vec<ProbeShapeFact>,
+    function: &ast::Fn,
+    line_index: &LineIndex,
+) {
+    if let Some(unsafe_token) = function.unsafe_token() {
+        let name = function
+            .name()
+            .map(|name| name.text().to_string())
+            .unwrap_or_else(|| "<anonymous>".to_string());
+        push_probe_shape_with_text(
+            shapes,
+            line_index,
+            PROBE_SHAPE_UNSAFE_BOUNDARY,
+            unsafe_token.text_range().start(),
+            function.syntax().text_range().end(),
+            format!("unsafe fn {name}"),
+        );
+    }
+
+    for block in function
+        .syntax()
+        .descendants()
+        .filter_map(ast::BlockExpr::cast)
+    {
+        let Some(unsafe_token) = block.unsafe_token() else {
+            continue;
+        };
+        push_probe_shape_with_text(
+            shapes,
+            line_index,
+            PROBE_SHAPE_UNSAFE_BOUNDARY,
+            unsafe_token.text_range().start(),
+            block.syntax().text_range().end(),
+            "unsafe block".to_string(),
+        );
+    }
 }
 
 fn push_probe_shape(
@@ -1191,6 +1280,48 @@ pub fn validate(value: i32) -> Result<i32, String> {
     }
 
     #[test]
+    fn ra_adapter_extracts_unsafe_execution_boundaries_without_lexical_false_positives()
+    -> Result<(), Box<dyn Error>> {
+        let root = temp_dir("ra_unsafe_boundaries")?;
+        fs::create_dir_all(root.join("src"))?;
+        write_manifest(&root)?;
+        fs::write(
+            root.join("src/lib.rs"),
+            r#"pub unsafe fn read_raw_unchecked(ptr: *const u8) -> u8 {
+    ptr.read()
+}
+
+pub fn read_raw(ptr: *const u8) -> u8 {
+    let marker = "unsafe { not syntax }";
+    // unsafe fn fake() {}
+    unsafe {
+        ptr.read()
+    }
+}
+"#,
+        )?;
+
+        let adapter = RaRustSyntaxAdapter;
+        let text = fs::read_to_string(root.join("src/lib.rs"))?;
+        let facts = adapter.summarize_file(&root.join("src/lib.rs"), &text)?;
+        let boundaries = facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.kind == PROBE_SHAPE_UNSAFE_BOUNDARY)
+            .map(|shape| (shape.text.clone(), shape.start_line, shape.end_line))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            boundaries,
+            vec![
+                ("unsafe fn read_raw_unchecked".to_string(), 1, 3),
+                ("unsafe block".to_string(), 8, 10),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
     fn ra_adapter_does_not_promote_nested_constructor_arguments_to_returns()
     -> Result<(), Box<dyn Error>> {
         let root = temp_dir("ra_nested_constructor_returns")?;
@@ -1267,8 +1398,7 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
 
 #[cfg(test)]
 mod cfg_all_test_tests {
-    use super::RaRustSyntaxAdapter;
-    use super::RustSyntaxAdapter;
+    use super::{RaRustSyntaxAdapter, RustSyntaxAdapter, cfg_all_has_top_level_test};
     use std::fs;
     use std::path::PathBuf;
 
@@ -1295,17 +1425,48 @@ edition='2024'
     }
 
     #[test]
+    fn cfg_all_test_conjunct_is_order_insensitive_and_token_safe() {
+        let positive: &[&[&str]] = &[
+            &["test"],
+            &["test", ",", "feature", "=", "\"slow\""],
+            &["feature", "=", "\"slow\"", ",", "test"],
+            &["unix", ",", "test", ",", "feature", "=", "r#\"slow,test\"#"],
+        ];
+        for arguments in positive {
+            assert!(
+                cfg_all_has_top_level_test(arguments),
+                "top-level test conjunct must require test cfg: {arguments:?}"
+            );
+        }
+
+        let negative: &[&[&str]] = &[
+            &["any", "(", "test", ",", "feature", "=", "\"slow\"", ")"],
+            &["not", "(", "test", ")"],
+            &[
+                "any", "(", "test", ",", "feature", "=", "\"slow\"", ")", ",", "unix",
+            ],
+            &["feature", "=", "\"slow,test\"", ",", "unix"],
+            &["target_os", "=", "\"test\""],
+        ];
+        for arguments in negative {
+            assert!(
+                !cfg_all_has_top_level_test(arguments),
+                "alternative, negated, nested, or literal test token must stay production: {arguments:?}"
+            );
+        }
+    }
+
+    #[test]
     fn cfg_all_test_module_members_carry_evidence_role() -> Result<(), String> {
-        // #3284: a module gated on `cfg(all(test, feature))` compiles under
-        // test; its helpers are harness plumbing and must carry the
-        // evidence role, exactly like plain `#[cfg(test)]`. `not(test)`
-        // and `any(test, ..)` stay production.
+        // A direct `test` conjunct makes the module harness-only regardless of
+        // conjunct order. Trivia and literals cannot manufacture a conjunct;
+        // alternatives, negation, and nested alternatives stay production.
         let root = temp_dir("ra_cfg_all_test")?;
         fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
         write_manifest(&root)?;
         fs::write(
             root.join("src/lib.rs"),
-            "pub fn production_control() -> i32 { 1 }\n\n#[cfg(all(test, feature = \"slow\"))]\nmod slow_tests {\n    fn helper_under_all_test() -> i32 { production_control() }\n\n    #[test]\n    fn runs() { let _ = helper_under_all_test(); }\n}\n\n#[cfg(not(test))]\nmod prod_only {\n    pub fn production_shape() -> i32 { 2 }\n}\n",
+            "pub fn production_control() -> i32 { 1 }\n\n#[cfg(all(test, feature = \"slow\"))]\nmod test_first {\n    fn helper_test_first() -> i32 { production_control() }\n}\n\n#[cfg(all(feature = \"slow\", test))]\nmod test_second {\n    fn helper_test_second() -> i32 { production_control() }\n}\n\n#[cfg(all(feature = \"slow\" /* fake ,test, */, test))]\nmod commented_test {\n    fn helper_commented_test() -> i32 { production_control() }\n}\n\n#[cfg(any(test, feature = \"slow\"))]\nmod any_control {\n    pub fn any_shape() -> i32 { 2 }\n}\n\n#[cfg(all(any(test, feature = \"slow\"), unix))]\nmod nested_any_control {\n    pub fn nested_any_shape() -> i32 { 3 }\n}\n\n#[cfg(all(feature = \"slow,test\", unix))]\nmod string_control {\n    pub fn string_content_shape() -> i32 { 4 }\n}\n\n#[cfg(all(feature = r#\"slow,test\"#, unix))]\nmod raw_string_control {\n    pub fn raw_string_content_shape() -> i32 { 5 }\n}\n\n#[cfg(all(feature = \"slow\" /*,test,*/, unix))]\nmod comment_control {\n    pub fn comment_content_shape() -> i32 { 6 }\n}\n\n#[cfg(not(test))]\nmod prod_only {\n    pub fn production_shape() -> i32 { 7 }\n}\n",
         )
         .map_err(|error| error.to_string())?;
         let facts = RaRustSyntaxAdapter
@@ -1314,21 +1475,35 @@ edition='2024'
                 &fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?,
             )
             .map_err(|error| error.to_string())?;
-        let helper = facts
-            .functions
-            .iter()
-            .find(|function| function.name == "helper_under_all_test")
-            .ok_or("helper missing from facts")?;
-        assert!(
-            helper.is_test,
-            "cfg(all(test, ..)) members are evidence role"
-        );
-        let prod = facts
-            .functions
-            .iter()
-            .find(|function| function.name == "production_shape")
-            .ok_or("cfg(not(test)) fn missing from facts")?;
-        assert!(!prod.is_test, "cfg(not(test)) members stay production");
+
+        for name in [
+            "helper_test_first",
+            "helper_test_second",
+            "helper_commented_test",
+        ] {
+            let function = facts
+                .functions
+                .iter()
+                .find(|function| function.name == name)
+                .ok_or_else(|| format!("{name} missing from facts"))?;
+            assert!(function.is_test, "{name} must carry evidence role");
+        }
+
+        for name in [
+            "any_shape",
+            "nested_any_shape",
+            "string_content_shape",
+            "raw_string_content_shape",
+            "comment_content_shape",
+            "production_shape",
+        ] {
+            let function = facts
+                .functions
+                .iter()
+                .find(|function| function.name == name)
+                .ok_or_else(|| format!("{name} missing from facts"))?;
+            assert!(!function.is_test, "{name} must stay production role");
+        }
         Ok(())
     }
 }
