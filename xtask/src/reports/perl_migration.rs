@@ -699,11 +699,11 @@ mod tests {
     #[test]
     fn producer_invocation_replaces_program_and_out_placeholder() -> Result<(), String> {
         let argv = build_producer_invocation(
-            "F:/bin/perl-ripr-facts.exe",
+            "bin/perl-ripr-facts.exe",
             &sample_case(),
             "target/ripr/reports/perl-migration-candidates/ordinary_discount.json",
         )?;
-        if argv[0] != "F:/bin/perl-ripr-facts.exe" {
+        if argv[0] != "bin/perl-ripr-facts.exe" {
             return Err(format!(
                 "leading token should be the supplied binary: {argv:?}"
             ));
@@ -986,7 +986,7 @@ mod tests {
 
         let identical = build_report(
             &case,
-            "F:/bin/perl-ripr-facts.exe",
+            "bin/perl-ripr-facts.exe",
             candidate_path,
             &pinned_bytes,
             &pinned_bytes,
@@ -1038,7 +1038,7 @@ mod tests {
             .map_err(|err| format!("drifted serialize: {err}"))?;
         let drifted = build_report(
             &case,
-            "F:/bin/perl-ripr-facts.exe",
+            "bin/perl-ripr-facts.exe",
             candidate_path,
             &pinned_bytes,
             &candidate_bytes,
