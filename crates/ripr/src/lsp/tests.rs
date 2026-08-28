@@ -86,10 +86,13 @@ fn server_path_text(path: &Path) -> String {
 fn initialize_result_exposes_existing_lsp_capabilities() -> Result<(), String> {
     let result = initialize_result();
 
-    assert_eq!(
-        result.capabilities.text_document_sync,
-        Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL))
-    );
+    let Some(TextDocumentSyncCapability::Options(sync)) =
+        result.capabilities.text_document_sync.as_ref()
+    else {
+        return Err("expected explicit text-document sync options".to_string());
+    };
+    assert_eq!(sync.open_close, Some(true));
+    assert_eq!(sync.change, Some(TextDocumentSyncKind::INCREMENTAL));
     assert_eq!(
         result.capabilities.hover_provider,
         Some(HoverProviderCapability::Simple(true))
