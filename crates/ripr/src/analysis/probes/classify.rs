@@ -234,8 +234,7 @@ mod tests {
     }
 
     #[test]
-    fn unsafe_boundaries_match_by_span_and_prefer_the_innermost_boundary()
-    -> Result<(), String> {
+    fn unsafe_boundaries_match_by_span_and_prefer_the_innermost_boundary() -> Result<(), String> {
         let path = PathBuf::from("src/lib.rs");
         let index = RustIndex {
             files: BTreeMap::from([(
@@ -271,8 +270,7 @@ mod tests {
             ..RustIndex::default()
         };
 
-        let shapes =
-            parser_probe_shapes_for_changed_line(&index, &path, 5, "value < limit");
+        let shapes = parser_probe_shapes_for_changed_line(&index, &path, 5, "value < limit");
         assert_eq!(shapes.len(), 2);
         assert!(
             shapes
