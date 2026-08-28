@@ -2001,21 +2001,24 @@ fn portable_manifest_dir_text(manifest_path: &Path) -> Option<String> {
 /// they cannot be represented as repo-relative identities without observing
 /// the host filesystem root.
 fn is_absolute_declared_path(declared: &str) -> bool {
-    // Apply host path semantics before portable display normalization. On
-    // Unix, `\\` is a legal filename character and `a:b` is relative; on
-    // Windows, the platform path implementation handles drive and UNC roots.
+    // A `/`-rooted path is absolute on every host: Cargo on Windows still
+    // resolves `/opt/shared` against the current drive root. Remaining
+    // forms (drive and UNC roots) follow host path semantics, so on Unix
+    // `a:b` and `..\\shared` stay relative.
+    if declared.starts_with('/') {
+        return true;
+    }
     Path::new(declared).is_absolute()
 }
 
 /// Lexically resolve a `/`-separated declared path against a `/`-separated
-/// repo-relative directory, without touching the filesystem. `\` has already
-/// been normalized to `/` by the caller, matching the workspace-wide portable
-/// path convention. Returns the normalized identity; `escaped` is true when
-/// resolution climbs above the scan root, in which case the identity keeps
-/// its leading `..` segments.
+/// repo-relative directory, without touching the filesystem. The caller
+/// passes the host resolution form: on Windows hosts `\` has been normalized
+/// to `/`; on Unix hosts `\` is a legal filename character and is preserved.
+/// Returns the normalized identity; `escaped` is true when resolution climbs
+/// above the scan root, in which case the identity keeps its leading `..`
+/// segments.
 fn resolve_repo_relative(base: &str, declared: &str) -> (String, bool) {
-    #[cfg(windows)]
-    let declared = declared.to_string();
     let mut components: Vec<&str> = base
         .split('/')
         .filter(|component| !component.is_empty() && *component != ".")
@@ -2091,7 +2094,14 @@ fn collect_path_dependency_edges(
             let workspace_inherited =
                 dep_table.get("workspace").and_then(toml::Value::as_bool) == Some(true);
             if let Some(declared) = dep_table.get("path").and_then(toml::Value::as_str) {
-                let declared = declared.replace('\\', "/");
+                // The recorded declaration keeps the manifest's raw spelling;
+                // only resolution applies host path semantics (`\` is a
+                // separator on Windows hosts, a filename character on Unix).
+                let declared = declared.to_string();
+                #[cfg(windows)]
+                let resolution_form = declared.replace('\\', "/");
+                #[cfg(not(windows))]
+                let resolution_form = declared.clone();
                 if workspace_inherited {
                     // `path` + `workspace = true` is Cargo-invalid: Cargo
                     // rejects it when the name is absent from
@@ -2111,10 +2121,10 @@ fn collect_path_dependency_edges(
                     });
                     continue;
                 }
-                let (resolved_path, resolution) = if is_absolute_declared_path(&declared) {
+                let (resolved_path, resolution) = if is_absolute_declared_path(&resolution_form) {
                     (None, PathDependencyResolution::UnsupportedAbsolutePath)
                 } else {
-                    let (resolved, escaped) = resolve_repo_relative(manifest_dir, &declared);
+                    let (resolved, escaped) = resolve_repo_relative(manifest_dir, &resolution_form);
                     let resolution = if escaped {
                         PathDependencyResolution::ResolvedOutsideWorkspace
                     } else if root.join(&resolved).is_dir() {
@@ -2138,19 +2148,25 @@ fn collect_path_dependency_edges(
                 workspace_inherited_count += 1;
                 match workspace_dependency_path(workspace_tables, manifest_dir, dependency_name) {
                     Some((root_dir, Some(declared))) => {
-                        let (resolved_path, resolution) = if is_absolute_declared_path(&declared) {
-                            (None, PathDependencyResolution::UnsupportedAbsolutePath)
-                        } else {
-                            let (resolved, escaped) = resolve_repo_relative(&root_dir, &declared);
-                            let resolution = if escaped {
-                                PathDependencyResolution::ResolvedOutsideWorkspace
-                            } else if root.join(&resolved).is_dir() {
-                                PathDependencyResolution::Resolved
+                        #[cfg(windows)]
+                        let resolution_form = declared.replace('\\', "/");
+                        #[cfg(not(windows))]
+                        let resolution_form = declared.clone();
+                        let (resolved_path, resolution) =
+                            if is_absolute_declared_path(&resolution_form) {
+                                (None, PathDependencyResolution::UnsupportedAbsolutePath)
                             } else {
-                                PathDependencyResolution::TargetMissing
+                                let (resolved, escaped) =
+                                    resolve_repo_relative(&root_dir, &resolution_form);
+                                let resolution = if escaped {
+                                    PathDependencyResolution::ResolvedOutsideWorkspace
+                                } else if root.join(&resolved).is_dir() {
+                                    PathDependencyResolution::Resolved
+                                } else {
+                                    PathDependencyResolution::TargetMissing
+                                };
+                                (Some(resolved), resolution)
                             };
-                            (Some(resolved), resolution)
-                        };
                         edges.push(PathDependencyEdge {
                             from_manifest: manifest_text.to_string(),
                             section,
