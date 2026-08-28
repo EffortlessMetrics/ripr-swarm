@@ -18,6 +18,7 @@ One candidate implements the claim, carries discriminating evidence, extends the
 2. Establish the inherited baseline floor before the first mutation:
    - run `cargo xtask worktree doctor` and read its report;
    - on a new candidate, run `cargo xtask check-fast` before editing and bind the result to the recorded base SHA. This is a cheap floor, not a claim that every full gate passes;
+   - independently require `git diff --name-only origin/main...HEAD` to succeed before citing `check-fast`. Zero changed paths are expected only when `HEAD` is the recorded base. The current command can otherwise collapse selector failure into an empty set, so an unverified zero-path result is `INSTRUMENT_FAILURE`, not pass;
    - when resuming an already-mutated candidate, run the same diagnostics immediately and reproduce any apparent inherited failure on the exact base before attributing it;
    - run full `cargo xtask precommit` on the exact base only when the selected claim is a baseline repair or a later candidate failure needs an authoritative comparison;
    - route a real base failure separately unless the selected claim is the baseline repair. Do not absorb unrelated drift into this candidate.
@@ -48,9 +49,9 @@ One candidate implements the claim, carries discriminating evidence, extends the
    - security, privacy, platform, packaging, compatibility, performance, and user-facing claim honesty where relevant.
 10. Repair accepted findings through the same candidate.
 11. Commit the coherent candidate so broad verification and review bind to one exact Git object. An uncommitted worktree cannot receive an exact-head disposition.
-12. Run `cargo xtask check-fast` again on that exact committed head as the first broad candidate gate, then run `cargo xtask precommit`, focused tests, and changed-surface gates. `check-fast` selects conditional gates from the committed diff; do not cite it as coverage for uncommitted files it did not select. Read the emitted reports, not only the exit code. If repair changes the head, recommit and rerun the affected dimensions before review.
+12. Run `cargo xtask check-fast` again on that exact committed head as the first broad candidate gate, then run `cargo xtask precommit`, focused tests, and changed-surface gates. Before citing `check-fast`, compare the independently resolved committed path set with its reported changed-file count and ran/skipped gate categories; an unexpected zero, omitted path category, or selector failure is `INSTRUMENT_FAILURE`. Run the affected gates directly and do not convert that partial route to pass. Read the emitted reports, not only the exit code. If repair changes the head, recommit and rerun the affected dimensions before review.
 13. Route that committed head to `review-pr`. Candidate challenge during implementation is not the final substantive PR review, and green checks or an empty thread list do not replace it.
-14. Before PR publication, unavailable hosted checks, artifacts, and external review normally produce `REVIEW_INCOMPLETE`. Route the exact candidate to `finish-pr` for publication and re-enter `review-pr` on the published head before merge convergence.
+14. Before PR publication, unavailable hosted checks, artifacts, and external review normally produce `REVIEW_INCOMPLETE`. Route the exact candidate to `finish-pr` for publication and re-enter `review-pr` on the published PR head before merge convergence.
 15. When `review-pr` returns `REPAIR_REQUIRED`, repair the same candidate, recommit, and refresh only affected proof/review dimensions before reviewing again.
 
 # Mutation boundary
