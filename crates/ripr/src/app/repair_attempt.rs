@@ -134,30 +134,42 @@ pub(crate) fn receipt_binding(
         seam_id,
     )?;
     validate_trusted_head_surface(&root, &policy)?;
-    let manifests_root = root.join(REPAIR_ATTEMPT_DIRECTORY);
-    let mut matches = Vec::new();
-    for entry in std::fs::read_dir(&manifests_root)
-        .map_err(|error| format!("read {} failed: {error}", manifests_root.display()))?
-    {
-        let entry = entry.map_err(|error| format!("read repair attempt entry failed: {error}"))?;
-        let path = entry.path().join(REPAIR_ATTEMPT_MANIFEST);
-        if !path.is_file() {
-            continue;
+    let (manifest_path, manifest) = if let Some(attempt_id) = attempt_id {
+        let attempt_id = RepairAttemptId::parse(attempt_id.to_string())?;
+        let loaded = load_repair_attempt_by_id(&root, &attempt_id)?;
+        if loaded.1.seam_id != seam_id {
+            return Err(format!(
+                "repair attempt {} belongs to seam `{}`, not `{seam_id}`",
+                attempt_id.as_str(),
+                loaded.1.seam_id
+            ));
         }
-        let manifest = read_repair_attempt_manifest_at(&root, &path)?;
-        if manifest.seam_id == seam_id
-            && attempt_id.is_none_or(|id| manifest.repair_attempt_id.as_str() == id)
+        loaded
+    } else {
+        let manifests_root = root.join(REPAIR_ATTEMPT_DIRECTORY);
+        let mut matches = Vec::new();
+        for entry in std::fs::read_dir(&manifests_root)
+            .map_err(|error| format!("read {} failed: {error}", manifests_root.display()))?
         {
-            matches.push((path, manifest));
+            let entry =
+                entry.map_err(|error| format!("read repair attempt entry failed: {error}"))?;
+            let path = entry.path().join(REPAIR_ATTEMPT_MANIFEST);
+            if !path.is_file() {
+                continue;
+            }
+            let manifest = read_repair_attempt_manifest_at(&root, &path)?;
+            if manifest.seam_id == seam_id {
+                matches.push((path, manifest));
+            }
         }
-    }
-    if matches.len() != 1 {
-        return Err(format!(
-            "receipt requires exactly one repair attempt for seam `{seam_id}`, found {}",
-            matches.len()
-        ));
-    }
-    let (manifest_path, manifest) = matches.pop().ok_or_else(|| "missing attempt".to_string())?;
+        if matches.len() != 1 {
+            return Err(format!(
+                "receipt requires exactly one repair attempt for seam `{seam_id}`, found {}",
+                matches.len()
+            ));
+        }
+        matches.pop().ok_or_else(|| "missing attempt".to_string())?
+    };
     let after = manifest
         .after
         .as_ref()
@@ -213,6 +225,55 @@ pub(crate) fn receipt_binding(
         "current": after.current,
         "edit_cage_verdict": after.verdict,
     }))
+}
+
+/// Ensure a verify document consumed for an exact attempt names that attempt's
+/// retained before snapshot and its committed content digest.
+pub(crate) fn validate_verify_binding(
+    root: &Path,
+    attempt_id: &str,
+    verify_before_path: &str,
+    verify_before_sha256: &str,
+) -> Result<(), String> {
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
+    let attempt_id = RepairAttemptId::parse(attempt_id.to_string())?;
+    let (_, manifest) = load_repair_attempt_by_id(&root, &attempt_id)?;
+    let expected = find_manifest_artifact(&manifest, "before_snapshot")?;
+    let expected_path = root
+        .join(&expected.path)
+        .canonicalize()
+        .map_err(|error| format!("canonicalize retained before snapshot failed: {error}"))?;
+    let actual_path = root
+        .join(verify_before_path)
+        .canonicalize()
+        .map_err(|error| format!("canonicalize verify before snapshot failed: {error}"))?;
+    if actual_path != expected_path {
+        return Err(format!(
+            "verify before snapshot {} is not the retained snapshot for attempt {}",
+            actual_path.display(),
+            attempt_id.as_str()
+        ));
+    }
+    let before_snapshot = std::fs::read_to_string(&expected_path).map_err(|error| {
+        format!(
+            "read retained before snapshot {} failed: {error}",
+            expected_path.display()
+        )
+    })?;
+    let validated = crate::agent::artifact::validate_repo_exposure_artifact(
+        &root,
+        &before_snapshot,
+        "repair attempt before",
+    )?;
+    if verify_before_sha256 != validated.content_sha256 {
+        return Err(format!(
+            "verify before snapshot digest does not match attempt {}",
+            attempt_id.as_str()
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug)]

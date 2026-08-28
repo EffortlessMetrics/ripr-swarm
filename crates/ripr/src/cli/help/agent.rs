@@ -190,18 +190,25 @@ tests, edit files, change cache behavior, or touch LSP/MCP surfaces.
 "#;
 pub(super) const AGENT_REPAIR_HELP: &str = r#"Run the primary two-phase repair transaction for one named gap.
 
-Usage: ripr agent repair [--root PATH] --seam-id ID [--phase before|after]
+Usage: ripr agent repair [--root PATH] --seam-id ID --phase before
+       ripr agent repair [--root PATH] (--attempt ID|--seam-id ID) --phase after
 
 Options:
   --root PATH          Workspace root. Defaults to current directory.
-  --seam-id ID         Select one visible seam by ID.
-  --phase before|after Which half of the repair loop to run. Defaults to `before`.
+  --seam-id ID         Select one visible seam by ID; required for `before` and
+                       the compatibility selector for `after`.
+  --attempt ID         Select one durable repair attempt; valid only for `after`.
+  --phase before|after Which half of the repair loop to run.
 
 The ordinary repair path is:
 
   ripr agent repair --seam-id ID --phase before
   # edit one focused test outside RIPR
-  ripr agent repair --seam-id ID --phase after
+  ripr agent repair --attempt ID --phase after
+
+Use `--attempt ID` for the normal after phase. `--seam-id ID` remains a
+compatibility route and fails closed when multiple awaiting attempts share a
+seam.
 
 The before phase writes the pre-edit repo-exposure snapshot and repair packet.
 The after phase writes the post-edit snapshot, persists static verification

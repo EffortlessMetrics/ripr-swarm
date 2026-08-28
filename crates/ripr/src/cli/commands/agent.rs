@@ -270,6 +270,20 @@ fn run_agent_receipt_for_attempt(
     })?;
     let validated =
         app::agent_receipt::validate_agent_receipt_verify_json(&options.root, &verify_json)?;
+    if let Some(attempt_id) = attempt_id {
+        let before_sha256 = validated
+            .verify
+            .get("inputs")
+            .and_then(|inputs| inputs.get("before_content_sha256"))
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "agent verify JSON is missing before_content_sha256".to_string())?;
+        crate::app::repair_attempt::validate_verify_binding(
+            &options.root,
+            attempt_id,
+            &validated.input_paths.before,
+            before_sha256,
+        )?;
+    }
     let compatibility_packet_path = options.root.join("target/ripr/workflow/agent-packet.json");
     let packet_path = attempt_packet_path.unwrap_or(&compatibility_packet_path);
     let attempts_root = options
