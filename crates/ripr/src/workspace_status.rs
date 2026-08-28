@@ -331,7 +331,12 @@ mod tests {
         if encoded.contains(&canonical) {
             return Err("serialized status leaked the canonical root path".to_string());
         }
-        if status.root.identity.as_deref().is_none_or(|value| !value.starts_with("root:sha256:")) {
+        if status
+            .root
+            .identity
+            .as_deref()
+            .is_none_or(|value| !value.starts_with("root:sha256:"))
+        {
             return Err("root identity must be a bounded hash".to_string());
         }
 

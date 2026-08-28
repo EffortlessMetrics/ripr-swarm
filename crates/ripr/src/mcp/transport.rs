@@ -1,3 +1,4 @@
+#[cfg(test)]
 use super::MAX_MESSAGE_BYTES;
 use super::protocol;
 use super::server::{McpServer, bounded_error_response};
