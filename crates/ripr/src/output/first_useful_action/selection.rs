@@ -139,7 +139,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn gap_verify_spec_preserves_the_producer_owned_route() {
+    fn gap_first_action_preserves_the_producer_owned_typed_verify_route() {
         let spec = agent_verify_command_spec(
             ".",
             "target/ripr/workflow/before.json",
@@ -150,15 +150,58 @@ mod tests {
         let ledger = json!({
             "records": [{
                 "gap_id": "gap-1",
+                "kind": "MissingBoundaryAssertion",
+                "language": "rust",
+                "language_status": "stable",
+                "scope": "pr_local",
+                "evidence_class": "predicate_boundary",
+                "gap_state": "actionable",
+                "policy_state": "new",
+                "repairability": "repairable",
+                "repair_route": {
+                    "route_kind": "AddBoundaryAssertion",
+                    "target_file": "tests/pricing.rs",
+                    "assertion_shape": "assert_eq!(discount(100), 90)"
+                },
                 "verification_commands": [display.clone()],
                 "command_specs": { "verify": [spec.clone()] }
             }]
         });
+        let report =
+            super::super::build_first_useful_action_report(FirstUsefulActionInput {
+                root: ".".to_string(),
+                generated_at: "2026-08-28T00:00:00Z".to_string(),
+                pr_guidance_path: None,
+                assistant_proof_path: None,
+                gap_ledger_path: Some("gap-ledger.json".to_string()),
+                ledger_path: None,
+                baseline_delta_path: None,
+                receipt_path: None,
+                gate_decision_path: None,
+                coverage_frontier_path: None,
+                editor_context_path: None,
+                pr_guidance_json: None,
+                assistant_proof_json: None,
+                gap_ledger_json: Some(Ok(ledger.to_string())),
+                ledger_json: None,
+                baseline_delta_json: None,
+                receipt_json: None,
+                gate_decision_json: None,
+                coverage_frontier_json: None,
+                editor_context_json: None,
+            });
 
+        assert_eq!(report.status, "actionable");
+        assert_eq!(report.commands.verify.as_deref(), Some(display.as_str()));
         assert_eq!(
-            producer_gap_verify_spec(Some(&ledger), "gap-1", &display),
-            Ok(Some(spec))
+            report
+                .commands
+                .command_specs
+                .as_ref()
+                .and_then(|specs| specs.verify.as_ref()),
+            Some(&spec)
         );
+        assert!(report.warnings.is_empty());
     }
 
     #[test]
