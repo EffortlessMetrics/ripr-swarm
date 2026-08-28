@@ -11,10 +11,12 @@
 | **Curated learnings** | [Knowledge library](LIBRARY.md) |
 | **Agent workflows** | [Agent workflows](AGENT_WORKFLOWS.md) |
 | **Editor integration** | [LSP repair workflow](LSP_AGENT_REPAIR_WORKFLOW.md) |
+| **Portable LSP client proof** | [Neovim standard-LSP recipe](interop/neovim-lsp.md) |
 | **Preview languages** | [Language adapter preview](LANGUAGE_ADAPTER_PREVIEW.md) |
 | **Verification & badges** | [Verification contract](VERIFICATION.md) |
 | **Triage a finding** | [Finding triage guide](how-to/triage-a-finding.md) |
 | **Support tiers** | [Support tiers](status/SUPPORT_TIERS.md) |
+| **Sibling-tool contracts** | [Interop and learning ledger](interop/sibling-tools.md) |
 
 ## Reference
 

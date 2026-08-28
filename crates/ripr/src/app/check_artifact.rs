@@ -420,8 +420,20 @@ fn closed_analysis_options_view(options: &AnalysisOptions) -> (bool, Option<&Pat
         resolve_tsconfig_paths: _, // recorded via the config identity allowlist
         perl_facts_path,
         git_timeout: _, // resource bound (#2303), not analysis identity: a
-                        // deadline never changes what the analysis computes,
-                        // only whether a hung git invocation aborts the run
+        // deadline never changes what the analysis computes,
+        // only whether a hung git invocation aborts the run
+        resolved_subject_identity: _, // derived, not caller input: the R2
+        // producer sets it on the internal options clone only (#3278);
+        // the caller-visible subject flows through `git_candidate`
+        git_candidate: _, // unreachable at write time: `run_check` rejects
+        // Git candidate subjects before analysis, so an
+        // artifact can never carry one until #3277/#3278
+        // record the subject's resolved identity here
+        production_like_targets: _, // recorded via the config identity
+                                    // allowlist: the opt-in originates in
+                                    // `[analysis]` (#3283), which the
+                                    // versioned config identity already
+                                    // hashes field-by-field
     } = options;
     (*include_unchanged_tests, perl_facts_path.as_deref())
 }

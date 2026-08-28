@@ -495,11 +495,11 @@ fn looks_like_field_store_of(line: &str, receiver: &str) -> bool {
 /// flagged (the value continues to flow).
 fn value_is_swallowed(text: &str) -> bool {
     let trimmed = text.trim();
-    // Pattern 1: `let _ = <expr>;`  — wildcard-discard binding.
-    // Also `let _: <ty> = <expr>;`  — typed wildcard discard (#2401).
-    // Must match both so the flow stage agrees with the infection stage's
-    // `is_wildcard_discard` (infection.rs:112), which already handles both.
-    if trimmed.starts_with("let _ =") || trimmed.starts_with("let _:") {
+    // Pattern 1: wildcard-discard binding — `let _ = expr;` and
+    // `let _: <ty> = expr;` across any legal whitespace (#2401, #3233).
+    // Same shared predicate as the infection stage's `is_wildcard_discard`,
+    // so the flow and infection contracts cannot drift apart again.
+    if super::text::is_wildcard_discard_binding(trimmed) {
         return true;
     }
     // Pattern 2: trailing `.ok();`  — result converted to Option and dropped
@@ -1083,6 +1083,31 @@ mod tests {
             FlowSinkKind::Unknown,
             "typed wildcard `let _:` must be swallowed, matching infection stage"
         );
+    }
+
+    #[test]
+    fn whitespace_padded_wildcard_discards_are_still_swallowed() {
+        // #3233: whitespace is not semantically meaningful between `let`,
+        // `_`, and the binding token. Both stages consume the shared
+        // predicate, so these tokenizations must not resurrect a flow sink.
+        for expression in [
+            "let _ : i32 = compute(x);",
+            "let _=compute(x);",
+            "let   _   =   compute(x);",
+        ] {
+            let probe = probe(ProbeFamily::SideEffect, expression, 2);
+            let sinks = local_flow_sinks(&probe, None);
+            assert_eq!(
+                sinks.len(),
+                1,
+                "`{expression}` must produce exactly one sink"
+            );
+            assert_eq!(
+                sinks[0].kind,
+                FlowSinkKind::Unknown,
+                "`{expression}` must be swallowed across whitespace shapes"
+            );
+        }
     }
 
     #[test]

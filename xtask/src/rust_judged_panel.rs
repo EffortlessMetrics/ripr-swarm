@@ -6,6 +6,10 @@ use ra_ap_syntax::{Edition, SourceFile, SyntaxKind};
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 
+mod host_run;
+mod packet;
+mod subject;
+
 pub(crate) const MANIFEST_PATH: &str = "metrics/rust-judged-behavior-panel/manifest.json";
 const DIFF_ROOT: &str = "metrics/rust-judged-behavior-panel/diffs";
 const RERUN_COMMAND: &str = "cargo xtask rust-judged-panel check";
@@ -240,16 +244,32 @@ fn parse_json_without_duplicate_keys(body: &str) -> Result<serde_json::Value, se
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
     match args {
         [subcommand] if subcommand == "check" => {
-            let manifest = load_and_validate_at(Path::new("."), Path::new(MANIFEST_PATH))?;
+            let manifest = check_at(Path::new("."))?;
             println!(
-                "Rust judged panel seed valid: manifest={MANIFEST_PATH} items={} directions={}",
+                "Rust judged panel seed, subjects, and portable packets valid: manifest={MANIFEST_PATH} items={} directions={}",
                 manifest.items.len(),
                 manifest.required_directions.join(",")
             );
             Ok(())
         }
+        [subcommand] if subcommand == "replay" => {
+            let manifest = check_seed_at(Path::new("."))?;
+            host_run::run(Path::new("."), &manifest, None)
+        }
+        [subcommand, flag, output] if subcommand == "replay" && flag == "--out" => {
+            let manifest = check_seed_at(Path::new("."))?;
+            host_run::run(Path::new("."), &manifest, Some(output))
+        }
+        [subcommand] if subcommand == "packet" => {
+            let manifest = check_seed_at(Path::new("."))?;
+            packet::publish(Path::new("."), &manifest, packet::DEFAULT_HOST_CURRENT)
+        }
+        [subcommand, flag, current] if subcommand == "packet" && flag == "--host-current" => {
+            let manifest = check_seed_at(Path::new("."))?;
+            packet::publish(Path::new("."), &manifest, current)
+        }
         [] => Err(format!(
-            "rust-judged-panel requires the `check` subcommand\nrerun: {RERUN_COMMAND}"
+            "rust-judged-panel requires `check`, `replay [--out target/ripr/<path>]`, or `packet [--host-current target/ripr/<path>/current.json]`\nrerun: {RERUN_COMMAND}"
         )),
         _ => Err(format!(
             "unknown rust-judged-panel arguments `{}`\nrerun: {RERUN_COMMAND}",
@@ -259,7 +279,19 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
 }
 
 pub(crate) fn check_canonical() -> Result<(), String> {
-    load_and_validate_at(Path::new("."), Path::new(MANIFEST_PATH)).map(|_| ())
+    check_at(Path::new(".")).map(|_| ())
+}
+
+fn check_at(root: &Path) -> Result<RustJudgedPanelManifest, String> {
+    let manifest = check_seed_at(root)?;
+    packet::validate_at(root, &manifest)?;
+    Ok(manifest)
+}
+
+fn check_seed_at(root: &Path) -> Result<RustJudgedPanelManifest, String> {
+    let manifest = load_and_validate_at(root, Path::new(MANIFEST_PATH))?;
+    subject::validate_at(root, &manifest)?;
+    Ok(manifest)
 }
 
 pub(crate) fn load_and_validate_at(
@@ -1135,7 +1167,7 @@ mod tests {
     fn symlink_file(source: &Path, target: &Path) -> Result<bool, String> {
         match std::os::windows::fs::symlink_file(source, target) {
             Ok(()) => Ok(true),
-            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(false),
+            Err(error) if symlink_unsupported(&error) => Ok(false),
             Err(error) => Err(error.to_string()),
         }
     }
@@ -1151,10 +1183,24 @@ mod tests {
     fn symlink_dir(source: &Path, target: &Path) -> Result<bool, String> {
         match std::os::windows::fs::symlink_dir(source, target) {
             Ok(()) => Ok(true),
-            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(false),
+            Err(error) if symlink_unsupported(&error) => Ok(false),
             Err(error) => Err(error.to_string()),
         }
     }
+
+    /// Windows maps `ERROR_PRIVILEGE_NOT_HELD` (1314) to an `ErrorKind` that
+    /// is not `PermissionDenied` on this toolchain, so both the kind and the
+    /// raw code must read as "symlinks unsupported" for the
+    /// `*_when_supported` tests to skip instead of fail (#3289).
+    #[cfg(windows)]
+    fn symlink_unsupported(error: &std::io::Error) -> bool {
+        error.kind() == std::io::ErrorKind::PermissionDenied
+            || error.raw_os_error() == Some(WINDOWS_ERROR_PRIVILEGE_NOT_HELD)
+    }
+
+    /// `ERROR_PRIVILEGE_NOT_HELD`.
+    #[cfg(windows)]
+    const WINDOWS_ERROR_PRIVILEGE_NOT_HELD: i32 = 1314;
 
     fn valid_item(
         id: &str,

@@ -17,6 +17,7 @@
 //! repo-exposure report's 0.1, because the packet is a separate
 //! contract aimed at coding agents rather than reviewers.
 
+use crate::agent::command_specs::{command_display_is_nonblank, command_displays_are_complete};
 use crate::agent::loop_commands::{
     WORKFLOW_AFTER_SNAPSHOT_ARTIFACT, WORKFLOW_AGENT_RECEIPT_ARTIFACT,
     WORKFLOW_AGENT_VERIFY_ARTIFACT, WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, agent_receipt_command,
@@ -1207,8 +1208,8 @@ pub(crate) fn validate_agent_gap_record_packet(record: &GapRecord) -> Result<(),
     let Some(route) = record.repair_route.as_ref() else {
         return Err("requires a repair_route".to_string());
     };
-    if record.verification_commands.is_empty() {
-        return Err("requires verification_commands".to_string());
+    if !command_displays_are_complete(&record.verification_commands) {
+        return Err("requires nonblank verification_commands".to_string());
     }
     if record.repairability != "repairable" && route.route_kind != "InspectStaticLimit" {
         return Err("requires a repairable gap or bounded inspection route".to_string());
@@ -1219,10 +1220,9 @@ pub(crate) fn validate_agent_gap_record_packet(record: &GapRecord) -> Result<(),
     if record
         .receipt_command
         .as_deref()
-        .and_then(non_empty)
-        .is_none()
+        .is_none_or(|command| !command_display_is_nonblank(command))
     {
-        return Err("requires receipt_command".to_string());
+        return Err("requires nonblank receipt_command".to_string());
     }
     Ok(())
 }
@@ -3032,7 +3032,8 @@ mod tests {
     fn typed_gap_record() -> Result<GapRecord, String> {
         let mut record = crate::output::gap_decision_ledger::parse_gap_records_json(
             r#"{"records":[{
-              "gap_id":"gap:rust:typed-packet",
+              "gap_id": "gap:rust:typed-packet",
+              "source_currentness": "candidate_current",
               "kind":"MissingBoundaryAssertion",
               "language":"rust",
               "language_status":"stable",
@@ -3664,7 +3665,8 @@ mod tests {
     fn gap_record_packet_carries_shared_repair_route_and_stop_conditions() -> Result<(), String> {
         let records = crate::output::gap_decision_ledger::parse_gap_records_json(
             r#"{"records":[{
-              "gap_id":"gap:pr:pricing",
+              "gap_id": "gap:pr:pricing",
+              "source_currentness": "candidate_current",
               "canonical_gap_id":"gap:rust:pricing",
               "kind":"MissingBoundaryAssertion",
               "language":"rust",
@@ -4203,7 +4205,8 @@ mod tests {
     fn gap_record_packet_bounds_python_preview_to_suggested_test_file() -> Result<(), String> {
         let records = crate::output::gap_decision_ledger::parse_gap_records_json(
             r#"{"records":[{
-              "gap_id":"gap:python:pricing-boundary",
+              "gap_id": "gap:python:pricing-boundary",
+              "source_currentness": "candidate_current",
               "canonical_gap_id":"gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold",
               "kind":"MissingBoundaryAssertion",
               "language":"python",
@@ -4325,7 +4328,8 @@ mod tests {
         let records = crate::output::gap_decision_ledger::parse_gap_records_json(
             r#"{"records":[
             {
-              "gap_id":"gap:python:pricing-boundary",
+              "gap_id": "gap:python:pricing-boundary",
+              "source_currentness": "candidate_current",
               "canonical_gap_id":"gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold",
               "kind":"MissingBoundaryAssertion",
               "language":"python",
@@ -4349,7 +4353,8 @@ mod tests {
               "projection_eligibility":{"agent_packet":{"eligible":true,"reason":"bounded repair route"}}
             },
             {
-              "gap_id":"gap:python:pricing-return",
+              "gap_id": "gap:python:pricing-return",
+              "source_currentness": "candidate_current",
               "canonical_gap_id":"gap:python:src/pricing.py:calculate_discount:return_value:expected_discount",
               "kind":"MissingValueAssertion",
               "language":"python",
@@ -4373,7 +4378,8 @@ mod tests {
               "projection_eligibility":{"agent_packet":{"eligible":true,"reason":"bounded repair route"}}
             },
             {
-              "gap_id":"gap:python:already-observed",
+              "gap_id": "gap:python:already-observed",
+              "source_currentness": "candidate_current",
               "kind":"NoActionAlreadyObserved",
               "language":"python",
               "language_status":"preview",
@@ -4386,7 +4392,8 @@ mod tests {
               "projection_eligibility":{"agent_packet":{"eligible":false,"reason":"already_observed"}}
             },
             {
-              "gap_id":"gap:rust:pricing",
+              "gap_id": "gap:rust:pricing",
+              "source_currentness": "candidate_current",
               "kind":"MissingBoundaryAssertion",
               "language":"rust",
               "language_status":"stable",
@@ -4514,7 +4521,8 @@ mod tests {
     fn gap_record_queue_marks_receipt_closed_python_packets_stale() -> Result<(), String> {
         let records = crate::output::gap_decision_ledger::parse_gap_records_json(
             r#"{"records":[{
-              "gap_id":"gap:python:pricing-boundary",
+              "gap_id": "gap:python:pricing-boundary",
+              "source_currentness": "candidate_current",
               "canonical_gap_id":"gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold",
               "kind":"MissingBoundaryAssertion",
               "language":"python",
@@ -4594,7 +4602,8 @@ mod tests {
             (RECEIPT_GAP_MISMATCH, "different gap"),
         ] {
             let ledger = r#"{"records":[{
-              "gap_id":"gap:python:pricing-boundary",
+              "gap_id": "gap:python:pricing-boundary",
+              "source_currentness": "candidate_current",
               "canonical_gap_id":"gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold",
               "kind":"MissingBoundaryAssertion",
               "language":"python",
@@ -4672,7 +4681,8 @@ mod tests {
     fn gap_record_queue_wrong_root_blocks_packets() -> Result<(), String> {
         let records = crate::output::gap_decision_ledger::parse_gap_records_json(
             r#"{"records":[{
-              "gap_id":"gap:python:pricing-boundary",
+              "gap_id": "gap:python:pricing-boundary",
+              "source_currentness": "candidate_current",
               "canonical_gap_id":"gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold",
               "kind":"MissingBoundaryAssertion",
               "language":"python",
@@ -4752,7 +4762,8 @@ mod tests {
     fn gap_record_queue_missing_root_blocks_packets() -> Result<(), String> {
         let records = crate::output::gap_decision_ledger::parse_gap_records_json(
             r#"{"records":[{
-              "gap_id":"gap:python:pricing-boundary",
+              "gap_id": "gap:python:pricing-boundary",
+              "source_currentness": "candidate_current",
               "canonical_gap_id":"gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold",
               "kind":"MissingBoundaryAssertion",
               "language":"python",
@@ -4830,7 +4841,8 @@ mod tests {
     {
         let records = crate::output::gap_decision_ledger::parse_gap_records_json(
             r#"{"records":[{
-              "gap_id":"gap:pr:pricing",
+              "gap_id": "gap:pr:pricing",
+              "source_currentness": "candidate_current",
               "canonical_gap_id":"gap:rust:pricing",
               "kind":"MissingBoundaryAssertion",
               "language":"rust",
@@ -4892,7 +4904,8 @@ mod tests {
     fn gap_record_packet_rejects_missing_allowed_edit_surface() -> Result<(), String> {
         let records = crate::output::gap_decision_ledger::parse_gap_records_json(
             r#"{"records":[{
-              "gap_id":"gap:no-edit-surface",
+              "gap_id": "gap:no-edit-surface",
+              "source_currentness": "candidate_current",
               "canonical_gap_id":"gap:rust:no-edit-surface",
               "kind":"MissingBoundaryAssertion",
               "language":"rust",
@@ -4931,7 +4944,8 @@ mod tests {
     fn gap_record_packet_rejects_missing_receipt_command() -> Result<(), String> {
         let records = crate::output::gap_decision_ledger::parse_gap_records_json(
             r#"{"records":[{
-              "gap_id":"gap:missing-receipt",
+              "gap_id": "gap:missing-receipt",
+              "source_currentness": "candidate_current",
               "canonical_gap_id":"gap:rust:missing-receipt",
               "kind":"MissingBoundaryAssertion",
               "language":"rust",
@@ -4961,8 +4975,55 @@ mod tests {
             .ok_or_else(|| "expected parsed gap record".to_string())?;
         assert_eq!(
             render_agent_gap_record_packet_json("gap-ledger.json", record),
-            Err("requires receipt_command".to_string())
+            Err("requires nonblank receipt_command".to_string())
         );
+        Ok(())
+    }
+
+    #[test]
+    fn gap_record_packet_and_queue_reject_blank_or_mixed_legacy_commands() -> Result<(), String> {
+        let valid = typed_gap_record()?;
+        for invalid_commands in [
+            vec![" \t ".to_string()],
+            vec!["cargo test -p ripr".to_string(), "  ".to_string()],
+        ] {
+            let record = GapRecord {
+                verification_commands: invalid_commands,
+                ..valid.clone()
+            };
+            let error = render_agent_gap_record_packet_json("gap-ledger.json", &record)
+                .err()
+                .ok_or_else(|| "blank verification route produced an agent packet".to_string())?;
+            if error != "requires nonblank verification_commands" {
+                return Err(format!("unexpected blank-route rejection: {error}"));
+            }
+            let queue = render_agent_gap_record_queue_json(
+                ".",
+                "gap-ledger.json",
+                std::slice::from_ref(&record),
+                "rust",
+                10,
+            )?;
+            let queue: Value = serde_json::from_str(&queue)
+                .map_err(|error| format!("parse blank-route queue: {error}"))?;
+            if queue
+                .get("packets")
+                .and_then(Value::as_array)
+                .is_none_or(|packets| !packets.is_empty())
+            {
+                return Err(format!("blank verification route entered queue: {queue}"));
+            }
+        }
+
+        let blank_receipt = GapRecord {
+            receipt_command: Some(" \t ".to_string()),
+            ..valid
+        };
+        if render_agent_gap_record_packet_json("gap-ledger.json", &blank_receipt)
+            != Err("requires nonblank receipt_command".to_string())
+        {
+            return Err("blank receipt route produced an agent packet".to_string());
+        }
         Ok(())
     }
 
@@ -4970,7 +5031,8 @@ mod tests {
     fn gap_record_packet_rejects_ineligible_no_action_records() -> Result<(), String> {
         let records = crate::output::gap_decision_ledger::parse_gap_records_json(
             r#"{"records":[{
-              "gap_id":"gap:already-observed",
+              "gap_id": "gap:already-observed",
+              "source_currentness": "candidate_current",
               "kind":"NoActionAlreadyObserved",
               "language":"rust",
               "language_status":"stable",

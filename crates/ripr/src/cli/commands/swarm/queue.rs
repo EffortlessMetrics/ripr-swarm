@@ -220,6 +220,7 @@ mod tests {
             "generated_at": "unix_ms:1778240100000",
             "records": [{
                 "gap_id": "gap:python:pricing-boundary",
+                "source_currentness": "candidate_current",
                 "canonical_gap_id": "gap:python:src/pricing.py:calculate_discount:predicate_boundary",
                 "kind": "MissingBoundaryAssertion",
                 "language": "python",

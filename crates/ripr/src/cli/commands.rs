@@ -3215,6 +3215,7 @@ fn run_diff_check_from_file(
         perl_facts_path: None,
         suppression_policy: None,
         git_timeout: None,
+        git_candidate: None,
     };
     apply_to_check_input(&mut input, config, options.explicit);
     app::check_workspace_with_config(input, config)
@@ -3988,6 +3989,67 @@ mod tests {
     }
 
     #[test]
+    fn reports_gap_ledger_fails_closed_for_blank_and_mixed_verification_routes()
+    -> Result<(), String> {
+        for (case, commands) in [
+            ("blank", serde_json::json!([" \t "])),
+            ("mixed", serde_json::json!(["cargo test", "  "])),
+        ] {
+            let dir = unique_command_test_dir(&format!("gap-ledger-{case}-verify"));
+            std::fs::create_dir_all(&dir)
+                .map_err(|error| format!("create {case} gap-ledger dir: {error}"))?;
+            let corpus_text = std::fs::read_to_string(
+                repo_root().join("fixtures/gap-decision-ledger/corpus.json"),
+            )
+            .map_err(|error| format!("read gap-ledger corpus: {error}"))?;
+            let corpus: serde_json::Value = serde_json::from_str(&corpus_text)
+                .map_err(|error| format!("parse gap-ledger corpus: {error}"))?;
+            let mut record = corpus
+                .get("cases")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|cases| cases.first())
+                .and_then(|case| case.get("expected_gap_record"))
+                .cloned()
+                .ok_or_else(|| "gap-ledger corpus first expected record missing".to_string())?;
+            record["verification_commands"] = commands;
+            let records = dir.join("records.json");
+            std::fs::write(
+                &records,
+                serde_json::json!({"records": [record]}).to_string(),
+            )
+            .map_err(|error| format!("write {case} gap-ledger records: {error}"))?;
+            let out = dir.join("gap-decision-ledger.json");
+            let out_md = dir.join("gap-decision-ledger.md");
+
+            reports(&args(&[
+                "gap-ledger",
+                "--records",
+                &records.display().to_string(),
+                "--out",
+                &out.display().to_string(),
+                "--out-md",
+                &out_md.display().to_string(),
+            ]))?;
+
+            let json_text = std::fs::read_to_string(&out)
+                .map_err(|error| format!("read {case} gap-ledger JSON: {error}"))?;
+            let value: serde_json::Value = serde_json::from_str(&json_text)
+                .map_err(|error| format!("parse {case} gap-ledger JSON: {error}"))?;
+            assert_eq!(value["summary"]["projection_pr_comment_eligible"], 0);
+            assert_eq!(value["summary"]["projection_gate_candidate"], 0);
+            assert_eq!(value["summary"]["projection_agent_packet_eligible"], 0);
+            let markdown = std::fs::read_to_string(&out_md)
+                .map_err(|error| format!("read {case} gap-ledger Markdown: {error}"))?;
+            assert!(markdown.contains("Verify: `unavailable_incomplete_command_list`"));
+            assert!(!markdown.contains("  - `cargo test`"));
+
+            std::fs::remove_dir_all(&dir)
+                .map_err(|error| format!("remove {case} gap-ledger dir: {error}"))?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn reports_gap_ledger_derives_output_contract_gap_from_check_output() -> Result<(), String> {
         let dir = unique_command_test_dir("gap-ledger-check-output");
         std::fs::create_dir_all(&dir)
@@ -4193,6 +4255,10 @@ mod tests {
         r#"{
   "schema_version": "0.1",
   "tool": "ripr",
+  "findings": [
+    {"id": "help-label-decl", "source_currentness": "candidate_current"},
+    {"id": "help-label-literal", "source_currentness": "candidate_current"}
+  ],
   "finding_alignment": {
     "scope": "supported_classes",
     "items": [
@@ -4461,7 +4527,8 @@ mod tests {
                         "config_identity": null,
                         "base_revision": "main",
                         "input_identity": input_identity,
-                        "snapshot_identity": null
+                        "snapshot_identity": null,
+                        "git_candidate_subject": null
                     },
                     "counts": {
                         "changed_file_count": 0,
@@ -5886,6 +5953,7 @@ language = "rust"
   "records": [
     {
       "gap_id": "gap:pr:pricing:threshold-boundary",
+      "source_currentness": "candidate_current",
       "canonical_gap_id": "gap:rust:pricing:discount:threshold-boundary",
       "kind": "MissingBoundaryAssertion",
       "language": "rust",
@@ -6312,7 +6380,7 @@ language = "rust"
         let out = root.join("target/ripr/review/comments.json");
         std::fs::write(
             &gap_ledger,
-            r#"{"records":[{"gap_id":"gap:pr:pricing","seam_id":"seam:pricing:threshold-boundary","kind":"MissingBoundaryAssertion","language":"rust","language_status":"stable","scope":"pr_local","evidence_class":"predicate_boundary","gap_state":"actionable","policy_state":"new","repairability":"repairable","anchor":{"file":"src/pricing.rs","line":42,"dedupe_fingerprint":"gap:pricing"},"repair_route":{"route_kind":"AddBoundaryAssertion","target_file":"tests/pricing.rs","assertion_shape":"assert_eq!(discount(100, 100), 90)","changed_behavior":"amount == threshold"},"verification_commands":["cargo xtask fixtures boundary_gap"],"projection_eligibility":{"pr_comment":{"eligible":true,"reason":"stable_anchor_and_repair_route"}}}]}"#,
+            r#"{"records":[{"gap_id":"gap:pr:pricing","source_currentness":"candidate_current","seam_id":"seam:pricing:threshold-boundary","kind":"MissingBoundaryAssertion","language":"rust","language_status":"stable","scope":"pr_local","evidence_class":"predicate_boundary","gap_state":"actionable","policy_state":"new","repairability":"repairable","anchor":{"file":"src/pricing.rs","line":42,"dedupe_fingerprint":"gap:pricing"},"repair_route":{"route_kind":"AddBoundaryAssertion","target_file":"tests/pricing.rs","assertion_shape":"assert_eq!(discount(100, 100), 90)","changed_behavior":"amount == threshold"},"verification_commands":["cargo xtask fixtures boundary_gap"],"projection_eligibility":{"pr_comment":{"eligible":true,"reason":"stable_anchor_and_repair_route"}}}]}"#,
         )
         .map_err(|err| format!("write gap ledger: {err}"))?;
 

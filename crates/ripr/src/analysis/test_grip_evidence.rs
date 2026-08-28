@@ -85,6 +85,16 @@ pub(crate) struct TestTargetEvidence {
     test_kind: TestKind,
     relation: RelationReason,
     provenance: TestTargetProvenance,
+    workspace_identity: String,
+    currentness: TestTargetCurrentness,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum TestTargetCurrentness {
+    /// Only indexed, on-disk byte-current targets are emitted as evidence;
+    /// stale, missing, or invalid targets are rejected before serialization.
+    Current,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,6 +119,7 @@ impl TestTargetEvidence {
         line: usize,
         test_kind: TestKind,
         relation: RelationReason,
+        workspace_identity: String,
     ) -> Self {
         Self {
             symbol_id,
@@ -117,11 +128,23 @@ impl TestTargetEvidence {
             test_kind,
             relation,
             provenance: TestTargetProvenance::RustIndexFunction,
+            workspace_identity,
+            currentness: TestTargetCurrentness::Current,
         }
     }
 
     pub(crate) fn symbol_id(&self) -> &SymbolId {
         &self.symbol_id
+    }
+
+    #[cfg(test)]
+    pub(crate) fn file(&self) -> &Path {
+        &self.file
+    }
+
+    #[cfg(test)]
+    pub(crate) fn line(&self) -> usize {
+        self.line
     }
 }
 
@@ -147,6 +170,8 @@ impl TestTargetEvidence {
             },
             relation: RelationReason::DirectOwnerCall,
             provenance: TestTargetProvenance::FixtureOnly,
+            workspace_identity: "fixture".to_string(),
+            currentness: TestTargetCurrentness::Current,
         }
     }
 }
@@ -1583,7 +1608,41 @@ fn error_variant_oracle_matches_seam_variant(seam: &RepoSeam, oracle_text: &str)
     };
 
     // Credit only when the oracle names the seam's exact variant.
-    oracle_variants.iter().any(|v| v == &seam_variant)
+    if !oracle_variants.iter().any(|v| v == &seam_variant) {
+        return false;
+    }
+    // Tuple-variant payload guard (#3244 review): when the seam expression
+    // constructs the variant with string-literal payloads, the oracle must
+    // construct the same path with the same literals. Naming the variant
+    // while observing a different payload is identity coincidence, not
+    // discrimination — the token-coincidence over-credit family. Seams whose
+    // payloads carry no string literals stay identity-creditable: there is
+    // nothing statically observable to compare.
+    tuple_variant_payload_oracle_matches_seam(seam, oracle_text)
+}
+
+/// Payload-level complement to the variant-identity route above. The
+/// discriminator was already reduced to the bare variant identity, so the
+/// seam's own expression is the payload source; the oracle must construct
+/// the same constructor path with the same string literals.
+fn tuple_variant_payload_oracle_matches_seam(seam: &RepoSeam, oracle_text: &str) -> bool {
+    use super::classify::error_constructor_payloads;
+
+    let seam_payloads = error_constructor_payloads(seam.expression());
+    if !seam_payloads
+        .iter()
+        .any(|payload| !payload.string_literals.is_empty())
+    {
+        return true;
+    }
+    let oracle_payloads = error_constructor_payloads(oracle_text);
+    seam_payloads.iter().any(|seam_payload| {
+        !seam_payload.string_literals.is_empty()
+            && oracle_payloads.iter().any(|oracle| {
+                oracle.path == seam_payload.path
+                    && oracle.string_literals == seam_payload.string_literals
+            })
+    })
 }
 
 fn error_constructor_payload_oracle_matches_seam(seam_text: &str, oracle_text: &str) -> bool {
@@ -1928,9 +1987,21 @@ fn test_target_evidence(
     relation: RelationReason,
 ) -> Option<TestTargetEvidence> {
     let file = index.files.get(&test.file)?;
-    let function = file.functions.iter().find(|function| {
-        function.is_test && function.name == test.name && function.start_line == test.start_line
-    })?;
+    let matches: Vec<&FunctionSummary> = file
+        .functions
+        .iter()
+        .filter(|function| {
+            function.is_test && function.name == test.name && function.start_line == test.start_line
+        })
+        .collect();
+    if matches.len() != 1 {
+        return None;
+    }
+    let authority = index.workspace_authority.as_ref()?;
+    if !authority.validates_target(&test.file, seam.file(), &file.source) {
+        return None;
+    }
+    let function = matches[0];
     Some(TestTargetEvidence::from_index(
         function.id.clone(),
         function.file.clone(),
@@ -1941,6 +2012,7 @@ fn test_target_evidence(
             TestKind::Integration
         },
         relation,
+        authority.workspace_identity.clone(),
     ))
 }
 

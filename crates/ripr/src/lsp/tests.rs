@@ -620,6 +620,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
         observed_sink: None,
         oracle_alignment: None,
         alignment_reason: None,
+        source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
     };
 
     // Build snapshot satisfying is_consistent().
@@ -10131,11 +10132,13 @@ fn workspace_diagnostics_scope_changed_test_file_findings_out_of_projection() ->
         "pub fn gate_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
     )
     .map_err(|err| format!("write changed production file failed: {err}"))?;
+    std::fs::create_dir_all(root.path().join("examples/demo/src"))
+        .map_err(|err| format!("create examples dir failed: {err}"))?;
     std::fs::write(
-        root.path().join("src/tests.rs"),
+        root.path().join("examples/demo/src/lib.rs"),
         "pub fn helper_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
     )
-    .map_err(|err| format!("write changed src/tests.rs failed: {err}"))?;
+    .map_err(|err| format!("write changed examples/demo/src/lib.rs failed: {err}"))?;
     std::fs::write(
         root.path().join("tests/end_to_end.rs"),
         "#[test]\nfn end_to_end_changed() {\n    let value = if true { 1 } else { 2 };\n    assert_eq!(value, 1);\n}\n",
@@ -10151,28 +10154,29 @@ fn workspace_diagnostics_scope_changed_test_file_findings_out_of_projection() ->
     if production_count == 0 {
         return Err("changed production file received no LSP diagnostics".to_string());
     }
-    for scoped_out in ["src/tests.rs", "tests/end_to_end.rs"] {
-        let count = lsp_test_scope_diagnostic_count(&diagnostics, root.path(), scoped_out)?;
-        if count != 0 {
-            return Err(format!(
-                "out-of-scope test file {scoped_out} received {count} line-local LSP diagnostics"
-            ));
-        }
-    }
-    if diagnostics
-        .snapshot
-        .findings
-        .iter()
-        .any(|finding| finding.probe.location.file.ends_with("src/tests.rs"))
-    {
+    // #3285: the partition consumes the same source-role model as seeding,
+    // so a nested-src example (a production subject — the declared
+    // divergence) KEEPS its editor projection instead of being dropped.
+    let nested_example_count =
+        lsp_test_scope_diagnostic_count(&diagnostics, root.path(), "examples/demo/src/lib.rs")?;
+    if nested_example_count == 0 {
         return Err(
-            "out-of-scope src/tests.rs finding must not remain in the snapshot".to_string(),
+            "a nested-src example is a production subject and must keep its editor projection"
+                .to_string(),
         );
     }
-    if diagnostics.snapshot.out_of_scope_test_file_findings == 0 {
-        return Err(
-            "suppressed test-file findings must be disclosed with a non-zero count".to_string(),
-        );
+    let test_only_count =
+        lsp_test_scope_diagnostic_count(&diagnostics, root.path(), "tests/end_to_end.rs")?;
+    if test_only_count != 0 {
+        return Err(format!(
+            "evidence-role test file received {test_only_count} line-local LSP diagnostics"
+        ));
+    }
+    if diagnostics.snapshot.out_of_scope_test_file_findings != 0 {
+        return Err(format!(
+            "a converged partition suppresses nothing the seeding model already excluded: {}",
+            diagnostics.snapshot.out_of_scope_test_file_findings
+        ));
     }
     Ok(())
 }
@@ -10182,11 +10186,13 @@ fn workspace_diagnostics_test_only_diff_publishes_no_line_local_diagnostics() ->
 {
     let root = unique_lsp_test_root("lsp-test-file-scope-test-only")?;
     init_lsp_test_scope_repo(root.path())?;
+    std::fs::create_dir_all(root.path().join("examples"))
+        .map_err(|err| format!("create examples dir failed: {err}"))?;
     std::fs::write(
-        root.path().join("src/tests.rs"),
-        "pub fn helper_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
+        root.path().join("examples/demo.rs"),
+        "fn main() {\n    let value = if true { 1 } else { 2 };\n    println!(\"{value}\");\n}\n",
     )
-    .map_err(|err| format!("write changed src/tests.rs failed: {err}"))?;
+    .map_err(|err| format!("write changed examples/demo.rs failed: {err}"))?;
     std::fs::write(
         root.path().join("tests/end_to_end.rs"),
         "#[test]\nfn end_to_end_changed() {\n    let value = if true { 1 } else { 2 };\n    assert_eq!(value, 1);\n}\n",
@@ -10210,10 +10216,11 @@ fn workspace_diagnostics_test_only_diff_publishes_no_line_local_diagnostics() ->
     if !diagnostics.snapshot.findings.is_empty() {
         return Err("test-only diff findings must be scoped out of the LSP snapshot".to_string());
     }
-    if diagnostics.snapshot.out_of_scope_test_file_findings == 0 {
-        return Err(
-            "test-only diff must disclose the suppressed test-file findings count".to_string(),
-        );
+    if diagnostics.snapshot.out_of_scope_test_file_findings != 0 {
+        return Err(format!(
+            "seeding already excludes evidence role; the converged partition suppresses nothing: {}",
+            diagnostics.snapshot.out_of_scope_test_file_findings
+        ));
     }
     Ok(())
 }
@@ -11401,6 +11408,7 @@ fn sample_finding() -> Finding {
         observed_sink: None,
         oracle_alignment: None,
         alignment_reason: None,
+        source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
     }
 }
 
@@ -13020,8 +13028,20 @@ fn execute_command_collect_workspace_status_with_snapshot_returns_diagnostics_co
             current_input["enabled_languages"],
             serde_json::json!(["rust"])
         );
-        assert_eq!(current_input["manifest_identity"], serde_json::Value::Null);
-        assert_eq!(current_input["lockfile_identity"], serde_json::Value::Null);
+        assert!(
+            current_input["manifest_identity"].is_null()
+                || current_input["manifest_identity"]
+                    .as_str()
+                    .is_some_and(|identity| !identity.is_empty()),
+            "manifest identity must be null without a manifest or a non-empty identity: {status}"
+        );
+        assert!(
+            current_input["lockfile_identity"].is_null()
+                || current_input["lockfile_identity"]
+                    .as_str()
+                    .is_some_and(|identity| !identity.is_empty()),
+            "lockfile identity must be null without a lockfile or a non-empty identity: {status}"
+        );
         assert_eq!(current_input["analyzer_version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(current_input["schema_version"], "lsp-analysis-input-v1");
         assert_eq!(
@@ -17232,4 +17252,60 @@ fn framed_lsp_component_degradation_is_typed_logged_and_recovers() -> Result<(),
         drop(temp);
         Ok(())
     })
+}
+
+#[test]
+fn workspace_diagnostics_production_like_opt_in_target_keeps_editor_projection()
+-> Result<(), String> {
+    // #3285: the out-of-scope partition must consume the producer-owned
+    // source-role model, not the legacy path predicate. An opted-in
+    // `production_like_targets` target seeds CLI findings; the editor
+    // partition must keep them (the divergence was documented in-code
+    // since #3283).
+    let root = unique_lsp_test_root("lsp-production-like-opt-in")?;
+    init_lsp_test_scope_repo(root.path())?;
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn gate_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
+    )
+    .map_err(|err| format!("write changed production file failed: {err}"))?;
+    std::fs::write(
+        root.path().join("tests/api_contract.rs"),
+        "pub fn contract_helper(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
+    )
+    .map_err(|err| format!("write changed opt-in target failed: {err}"))?;
+    commit_lsp_test_scope_change(root.path(), "change production and opt-in target")?;
+
+    let mut repo_config = crate::config::RiprConfig::default();
+    repo_config
+        .analysis
+        .production_like_targets
+        .insert(std::path::PathBuf::from("tests/api_contract.rs"));
+    let config = LspAnalysisConfig {
+        base_ref: Some("HEAD~1".to_string()),
+        mode: Mode::Instant,
+        diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
+        repo_config,
+        ..LspAnalysisConfig::default()
+    };
+
+    let diagnostics = workspace_diagnostics_with_config(root.path(), &config, true)?;
+
+    let opt_in_count =
+        lsp_test_scope_diagnostic_count(&diagnostics, root.path(), "tests/api_contract.rs")?;
+    if opt_in_count == 0 {
+        return Err(
+            "the opted-in production-like target's findings must stay in the editor projection"
+                .to_string(),
+        );
+    }
+    // Sibling test targets stay evidence-only: nothing seeds them, so no
+    // diagnostics and no out-of-scope suppression ambiguity.
+    if diagnostics.snapshot.out_of_scope_test_file_findings != 0 {
+        return Err(format!(
+            "no out-of-scope drop should occur when seeding already excludes evidence role: {}",
+            diagnostics.snapshot.out_of_scope_test_file_findings
+        ));
+    }
+    Ok(())
 }

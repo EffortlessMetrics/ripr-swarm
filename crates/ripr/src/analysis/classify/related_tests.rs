@@ -13,6 +13,7 @@ pub(in crate::analysis) fn find_related_tests<'a>(
     owner_fn: Option<&FunctionSummary>,
     index: &'a RustIndex,
     workspace_complete: bool,
+    helper_chain: Option<&super::helper_transfer::HelperChain>,
 ) -> Vec<(&'a TestSummary, RelationReason)> {
     let mut related: Vec<(&TestSummary, RelationReason)> = Vec::new();
     let owner_name = owner_fn.map(|f| f.name.as_str()).unwrap_or("");
@@ -59,6 +60,22 @@ pub(in crate::analysis) fn find_related_tests<'a>(
         None
     };
 
+    // #3235: an absolute owner/probe path without a `crates/` segment carries
+    // no derivable package scope, and the old behavior treated that as "no
+    // scoping needed", silently disabling the package guard. When the
+    // candidate test's path is *also* absolute, a weak match cannot be scoped
+    // at all, so fail closed: only the strong uniquely-owned call path (#2971)
+    // may admit. A *relative* test file keeps current behavior — the
+    // mixed-form companion flow (absolute probe, relative test files) is
+    // production-pinned. A future producer that supplies absolute test paths
+    // must carry an explicit relativization authority instead of relying on
+    // ambient prefix stripping.
+    let owner_scope_unscopable = owner_fn
+        .is_some_and(|owner| owner_package_prefix.is_none() && path_is_absolute_form(&owner.file));
+    let struct_scope_unscopable = owner_fn.is_none()
+        && struct_package_prefix.is_none()
+        && path_is_absolute_form(&probe.location.file);
+
     // Probe tokens that are long enough to assert ownership via assertion text.
     let long_probe_tokens: Vec<&str> = probe_tokens
         .iter()
@@ -73,6 +90,17 @@ pub(in crate::analysis) fn find_related_tests<'a>(
         let calls_owner = !owner_name.is_empty()
             && (test.calls.iter().any(|call| call.name == owner_name)
                 || body_contains_owner_call(&test.body, owner_name));
+        // #3296 review: the test-to-entry edge must also be a direct
+        // free-function call site — a method or qualified call sharing
+        // the entry's terminal name is not callee identity.
+        let calls_helper_entry = helper_chain.is_some_and(|chain| {
+            test.calls.iter().any(|call| {
+                chain.hops.iter().any(|hop| {
+                    hop.caller.name == call.name
+                        && super::helper_transfer::is_direct_call_site(&call.text, &hop.caller.name)
+                })
+            })
+        });
 
         // #2971: Only apply the package-prefix guard to weak signals — tests
         // that do not directly call the owner, OR tests that call a bare name
@@ -81,6 +109,7 @@ pub(in crate::analysis) fn find_related_tests<'a>(
         if let Some(prefix) = &owner_package_prefix
             && !normalize_path(&test.file).starts_with(prefix)
             && !(calls_owner && owner_name_is_unique)
+            && !calls_helper_entry
         {
             continue;
         }
@@ -88,6 +117,17 @@ pub(in crate::analysis) fn find_related_tests<'a>(
         if let Some(prefix) = &struct_package_prefix
             && !normalize_path(&test.file).starts_with(prefix)
         {
+            continue;
+        }
+        // #3235: unscopable-absolute owner against an absolute test file —
+        // no package comparison is possible, so weak matches fail closed.
+        if owner_scope_unscopable
+            && path_is_absolute_form(&test.file)
+            && !(calls_owner && owner_name_is_unique)
+        {
+            continue;
+        }
+        if struct_scope_unscopable && path_is_absolute_form(&test.file) {
             continue;
         }
 
@@ -106,14 +146,35 @@ pub(in crate::analysis) fn find_related_tests<'a>(
 
         let test_name = test.name.to_ascii_lowercase();
         let owner_name_lc = owner_name.to_ascii_lowercase();
-        let file_path_matches = normalize_path(&test.file).contains(file_name);
+        let same_test_file = same_test_file(&probe.location.file, &test.file);
+        // Keep the broad path-token association available to callers, but do
+        // not publish it as file identity.  A short source stem such as
+        // `config` can occur in unrelated test paths (for example
+        // `reconfigure.rs`).
+        let file_path_token_matches =
+            !file_name.is_empty() && normalize_path(&test.file).contains(file_name);
         let owner_name_in_test = !owner_name_lc.is_empty() && test_name.contains(&owner_name_lc);
         let token_in_test_name = probe_tokens
             .iter()
             .any(|token| token.len() > 2 && test_name.contains(&token.to_ascii_lowercase()));
-        let same_file_or_named = file_path_matches || owner_name_in_test || token_in_test_name;
+        let same_file_or_named =
+            same_test_file || file_path_token_matches || owner_name_in_test || token_in_test_name;
 
-        if !calls_owner && !assertions_reference_owner && !same_file_or_named {
+        // #3296 helper transfer: a test that calls a resolved hop's
+        // caller directly reaches the owner through the bounded chain
+        // (same authority the activation rows consume). The chain is
+        // resolved once per probe above the test loop (#3296 review
+        // M1 — the per-test re-resolution was O(tests x functions)).
+        let helper_chain_reaches = !calls_owner
+            && !assertions_reference_owner
+            && !same_file_or_named
+            && calls_helper_entry;
+
+        if !calls_owner
+            && !assertions_reference_owner
+            && !same_file_or_named
+            && !helper_chain_reaches
+        {
             continue;
         }
 
@@ -123,19 +184,24 @@ pub(in crate::analysis) fn find_related_tests<'a>(
         let reason = if calls_owner {
             // The test directly calls or mentions the changed owner function.
             RelationReason::DirectOwnerCall
+        } else if helper_chain_reaches {
+            // The test calls a function that reaches the owner through
+            // the bounded helper-transfer chain (#3296).
+            RelationReason::HelperOwnerCall
         } else if assertions_reference_owner {
             // Struct/field probe whose tokens appear in assertion observed_tokens.
             RelationReason::AssertionTargetAffinity
         } else if owner_name_in_test {
             // Test name contains the owner function name.
             RelationReason::OwnerNamedTest
-        } else if file_path_matches {
-            // Test file path contains the probe's source file stem.
+        } else if same_test_file {
+            // Test file uses the probe's source stem or one of the canonical
+            // `_test`/`_tests` companion conventions.
             RelationReason::SameTestFile
         } else {
-            // Probe token substring appears in the test name — the broadest,
-            // least precise match branch (`same_file_or_named` token path).
-            // `token_in_test_name` must be true here (guarded above).
+            // A path or test-name token substring is the broadest, least
+            // precise match branch. `same_file_or_named` guarantees that one
+            // of those weak signals is present here.
             RelationReason::WeakTokenSubstring
         };
 
@@ -147,11 +213,40 @@ pub(in crate::analysis) fn find_related_tests<'a>(
     related
 }
 
+/// Return whether `test_file` is the canonical companion test file for
+/// `probe_file`.  This intentionally mirrors the stronger test-grip
+/// authority: only the source stem itself and its `_test`/`_tests` variants
+/// count as file identity.  Paths are compared by stem, so host-specific
+/// separators do not affect the result.
+fn same_test_file(probe_file: &Path, test_file: &Path) -> bool {
+    let Some(probe_stem) = probe_file.file_stem().and_then(|stem| stem.to_str()) else {
+        return false;
+    };
+    let Some(test_stem) = test_file.file_stem().and_then(|stem| stem.to_str()) else {
+        return false;
+    };
+    test_stem == probe_stem
+        || test_stem == format!("{probe_stem}_test")
+        || test_stem == format!("{probe_stem}_tests")
+}
+
 fn normalize_path(path: &Path) -> String {
     path.to_string_lossy()
         .replace('\\', "/")
         .trim_start_matches("./")
         .to_string()
+}
+
+/// #3235: one authority for recognizing an absolute path form on any host —
+/// Unix-rooted, Windows drive-prefixed, or host-absolute. Shared by
+/// `package_prefix` (which cannot derive a package scope from such a path
+/// without a `crates/` segment) and the package guards in
+/// `find_related_tests`, which fail closed when both sides of a candidate
+/// relation are unscopable absolute paths.
+fn path_is_absolute_form(path: &Path) -> bool {
+    let normalized = normalize_path(path);
+    let has_drive_prefix = normalized.as_bytes().get(1).copied() == Some(b':');
+    path.is_absolute() || normalized.starts_with('/') || has_drive_prefix
 }
 
 fn package_prefix(path: &Path) -> Option<String> {
@@ -165,8 +260,7 @@ fn package_prefix(path: &Path) -> Option<String> {
     {
         return Some(format!("crates/{crate_name}/"));
     }
-    let has_drive_prefix = normalized.as_bytes().get(1).copied() == Some(b':');
-    if path.is_absolute() || normalized.starts_with('/') || has_drive_prefix {
+    if path_is_absolute_form(path) {
         return None;
     }
     for marker in ["/src/", "/tests/"] {
@@ -254,7 +348,7 @@ mod tests {
         };
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
-        let related = find_related_tests(&probe, Some(&owner), &index, true);
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].0.name, "crate_a_score_test");
@@ -279,7 +373,7 @@ mod tests {
         };
         let probe = probe("crates/digest/src/lib.rs", "compute_hash(input)");
 
-        let related = find_related_tests(&probe, Some(&owner), &index, true);
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
 
         assert_eq!(
             related.len(),
@@ -317,7 +411,7 @@ mod tests {
         };
         let probe = probe("src/lib.rs", "self.persist(amount * 9)");
 
-        let related = find_related_tests(&probe, Some(&owner), &index, true);
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
 
         assert_eq!(related.len(), 1, "method owner must keep its calling test");
         assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
@@ -346,7 +440,7 @@ mod tests {
         let probe = probe("crates/digest/src/lib.rs", "compute_hash(input)");
 
         // The only difference from the positive control.
-        let related = find_related_tests(&probe, Some(&owner), &index, false);
+        let related = find_related_tests(&probe, Some(&owner), &index, false, None);
 
         assert!(
             related.is_empty(),
@@ -382,7 +476,7 @@ mod tests {
         };
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
-        let related = find_related_tests(&probe, Some(&owner), &index, true);
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
 
         // The crate_a test is in-package and passes; the crate_b test is
         // cross-crate and filtered despite calling `score()` because the name
@@ -407,11 +501,67 @@ mod tests {
         };
         let probe = probe("src/lib.rs", "score + 1");
 
-        let related = find_related_tests(&probe, Some(&owner), &index, true);
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
 
         assert_eq!(related.len(), 2);
         assert_eq!(related[0].0.file, PathBuf::from("tests/a_case.rs"));
         assert_eq!(related[1].0.file, PathBuf::from("tests/z_case.rs"));
+    }
+
+    #[test]
+    fn path_substring_match_is_weak_not_same_test_file() {
+        let owner = function("crates/core/src/config.rs", "load_config");
+        let index = RustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test(
+                "crates/core/tests/reconfigure.rs",
+                "checks_value",
+                "assert_eq!(value, 3);",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = probe("crates/core/src/config.rs", "marker");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
+    }
+
+    #[test]
+    fn canonical_companion_stems_remain_same_test_file() {
+        let owner = function("crates/core/src/config.rs", "load_config");
+        let index = RustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![
+                test(
+                    "crates/core/tests/config.rs",
+                    "config_file",
+                    "assert!(true);",
+                ),
+                test(
+                    "crates/core/tests/config_test.rs",
+                    "config_test_file",
+                    "assert!(true);",
+                ),
+                test(
+                    "crates/core/tests/config_tests.rs",
+                    "config_tests_file",
+                    "assert!(true);",
+                ),
+            ],
+            ..RustIndex::default()
+        };
+        let probe = probe("crates/core/src/config.rs", "marker");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
+
+        assert_eq!(related.len(), 3);
+        assert!(
+            related
+                .iter()
+                .all(|(_, reason)| *reason == RelationReason::SameTestFile)
+        );
     }
 
     #[test]
@@ -427,7 +577,7 @@ mod tests {
         };
         let probe = probe("src/lib.rs", "vat >= threshold");
 
-        let related = find_related_tests(&probe, Some(&owner), &index, true);
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].0.name, "vat_boundary_is_checked_by_macro");
@@ -457,7 +607,7 @@ mod tests {
         };
         let probe = probe("src/internal.rs", "if a >= b");
 
-        let related = find_related_tests(&probe, Some(&owner), &index, true);
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
 
         assert!(
             related.is_empty(),
@@ -485,7 +635,7 @@ mod tests {
         };
         let probe = probe("src/internal.rs", "if a >= b");
 
-        let related = find_related_tests(&probe, Some(&owner), &index, true);
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
@@ -663,7 +813,7 @@ mod tests {
         // Struct field probe: expression contains `open_in` (7 chars, >= 5)
         let probe = struct_field_probe("crates/ripr/src/config.rs", "open_in");
 
-        let related = find_related_tests(&probe, None, &index, true);
+        let related = find_related_tests(&probe, None, &index, true, None);
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].0.name, "repo_lane_deserializes_fields_correctly");
@@ -704,8 +854,8 @@ mod tests {
         let probe_open_in = struct_field_probe("crates/ripr/src/config.rs", "open_in");
         let probe_open_cap = struct_field_probe("crates/ripr/src/config.rs", "open_cap");
 
-        let related_in = find_related_tests(&probe_open_in, None, &index, true);
-        let related_cap = find_related_tests(&probe_open_cap, None, &index, true);
+        let related_in = find_related_tests(&probe_open_in, None, &index, true, None);
+        let related_cap = find_related_tests(&probe_open_cap, None, &index, true, None);
 
         assert_eq!(
             related_in.len(),
@@ -752,7 +902,7 @@ mod tests {
         // Probe expression is `port` (4 chars) — below the >= 5 threshold.
         let probe = struct_field_probe("crates/ripr/src/scheduler.rs", "port");
 
-        let related = find_related_tests(&probe, None, &index, true);
+        let related = find_related_tests(&probe, None, &index, true, None);
 
         assert!(
             related.is_empty(),
@@ -789,7 +939,7 @@ mod tests {
         // assertions_reference_owner signal must NOT fire.
         let probe = probe("src/lib.rs", "amount >= discount_threshold");
 
-        let related = find_related_tests(&probe, Some(&owner), &index, true);
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
 
         assert!(
             related.is_empty(),
@@ -812,7 +962,7 @@ mod tests {
             "pub(crate) state: GateWatchdogState",
         );
 
-        let related = find_related_tests(&probe, None, &index, true);
+        let related = find_related_tests(&probe, None, &index, true, None);
         let Some((test, reason)) = related.first() else {
             return Err(
                 "absolute root probe did not match its relative companion test".to_string(),
@@ -841,9 +991,119 @@ mod tests {
             "pub(crate) state: State",
         );
 
-        let related = find_related_tests(&probe, None, &index, true);
+        let related = find_related_tests(&probe, None, &index, true, None);
         if !related.is_empty() {
             return Err(format!("cross-crate test must stay unrelated: {related:?}"));
+        }
+        Ok(())
+    }
+
+    /// #3235: two non-`crates/` packages addressed by absolute paths carry no
+    /// derivable package scope. Before the fail-closed guard the prefix came
+    /// back `None` and the package scoping was silently disabled, admitting
+    /// wrong-package name/token coincidences. The fixture is a pure weak
+    /// match — the test never calls the owner, only its name contains it.
+    #[test]
+    fn given_absolute_owner_and_absolute_wrong_package_test_when_weak_match_then_filtered() {
+        let owner = function("/ws/pkg-a/src/lib.rs", "score");
+        let index = RustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "/ws/pkg-b/tests/coincidence.rs",
+                "pkg_b_score_named_test",
+                "observe(&input);",
+                "observe",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = probe("/ws/pkg-a/src/lib.rs", "score + 1");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
+
+        assert!(
+            related.is_empty(),
+            "wrong-package weak match across unscopable absolute paths must be filtered: {related:?}"
+        );
+    }
+
+    /// #3235 positive control: the #2971 strong path still admits a
+    /// cross-package test that calls a uniquely-named owner even when both
+    /// paths are absolute — failing closed must not break the deliberate
+    /// unique-owner bypass.
+    #[test]
+    fn given_absolute_paths_when_unique_owner_is_called_cross_package_then_retained() {
+        let owner = function("/ws/pkg-a/src/lib.rs", "compute_hash");
+        let index = RustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "/ws/pkg-b/tests/integration.rs",
+                "hash_integration_test",
+                "let result = compute_hash(b\"input\");",
+                "compute_hash",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = probe("/ws/pkg-a/src/lib.rs", "compute_hash(input)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
+
+        assert_eq!(
+            related.len(),
+            1,
+            "uniquely-owned call must stay admitted across absolute paths"
+        );
+        assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    /// #3235: the Windows drive-prefixed form must fail closed through the
+    /// same authority as the Unix-rooted form on every host. Pure weak match:
+    /// the test never calls the owner. The tokens are built at runtime so no
+    /// literal drive-letter path sits in the source tree.
+    #[test]
+    fn given_drive_prefixed_owner_and_absolute_wrong_package_test_when_weak_match_then_filtered() {
+        let owner_file = format!("F:{}ws/pkg-a/src/lib.rs", '/');
+        let wrong_package_test = format!("F:{}ws/pkg-b/tests/coincidence.rs", '/');
+        let owner = function(&owner_file, "score");
+        let index = RustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                &wrong_package_test,
+                "pkg_b_score_named_test",
+                "observe(&input);",
+                "observe",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = probe(&owner_file, "score + 1");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
+
+        assert!(
+            related.is_empty(),
+            "drive-prefixed wrong-package weak match must be filtered: {related:?}"
+        );
+    }
+
+    /// #3235 struct-probe symmetry: an unscopable-absolute module-level probe
+    /// against an absolute wrong-package test fails closed too.
+    #[test]
+    fn given_absolute_struct_probe_and_absolute_wrong_package_test_when_weak_match_then_filtered()
+    -> Result<(), String> {
+        let index = RustIndex {
+            tests: vec![test(
+                "/ws/pkg-b/tests/gate_watchdog_tests.rs",
+                "gate_watchdog_is_exact",
+                "observe(&input);",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = struct_field_probe("/ws/pkg-a/src/gate_watchdog.rs", "pub(crate) state: State");
+
+        let related = find_related_tests(&probe, None, &index, true, None);
+        if !related.is_empty() {
+            return Err(format!(
+                "struct-probe wrong-package weak match must be filtered: {related:?}"
+            ));
         }
         Ok(())
     }

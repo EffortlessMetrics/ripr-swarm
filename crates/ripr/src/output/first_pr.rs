@@ -2784,6 +2784,46 @@ mod tests {
     }
 
     #[test]
+    fn python_no_strong_oracle_check_output_is_selected_for_start_here() -> Result<(), String> {
+        let repo = temp_python_repo("first-pr-python-no-strong-oracle")?;
+        write_json(
+            &repo.join(DEFAULT_CHECK_OUTPUT),
+            serde_json::from_str(include_str!(
+                "../../../../fixtures/python_boundary_gap/expected/check.json"
+            ))
+            .map_err(|error| format!("parse boundary Python fixture: {error}"))?,
+        )?;
+        let options = FirstPrOptions {
+            check_output: Some(DEFAULT_CHECK_OUTPUT.to_string()),
+            ..FirstPrOptions::default()
+        };
+        write_first_pr(&repo, &options)?;
+
+        let ledger = read_packet(&repo.join(DEFAULT_GAP_LEDGER))?;
+        if ledger["records"][0]["projection_eligibility"]["agent_packet"]["eligible"] != true
+            || ledger["summary"]["projection_agent_packet_eligible"] != 1
+            || ledger["records"][0]["receipt_command"].is_null()
+        {
+            return Err(
+                "boundary fixture did not materialize eligible receipt-backed ledger record"
+                    .to_string(),
+            );
+        }
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        if packet["status"] != "actionable"
+            || packet["selected"]["state"] != "top_gap"
+            || packet["commands"]["agent_packet"].is_null()
+            || packet["commands"]["verify"].is_null()
+            || packet["commands"]["receipt"].is_null()
+        {
+            return Err(
+                "boundary fixture did not produce a concrete first-PR packet route".to_string(),
+            );
+        }
+        cleanup(&repo)
+    }
+
+    #[test]
     fn python_preview_projection_eligibility_fails_closed() {
         let mut record = ledger_with_python_repairable_gap()["records"][0].clone();
         let record_ref = &record;
@@ -3022,6 +3062,7 @@ mod tests {
             "records": [
                 {
                     "gap_id": "gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold",
+                    "source_currentness": "candidate_current",
                     "canonical_gap_id": "gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold",
                     "kind": "MissingBoundaryAssertion",
                     "language": "python",
@@ -3076,8 +3117,11 @@ mod tests {
             "findings": [
                 {
                     "id": "probe:app_pricing.py:2:python_preview",
+                    "source_currentness": "candidate_current",
                     "classification": "weakly_exposed",
+                    "source_currentness": "candidate_current",
                     "oracle_alignment": "direct",
+                    "alignment_reason": "strong_oracle_observes_owner_name",
                     "probe": {
                         "file": "app/pricing.py",
                         "line": 2,

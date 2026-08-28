@@ -437,10 +437,12 @@ pub(super) fn wrap_human_prose(
 /// Called unconditionally; emits nothing when `preview_language_advisories`
 /// is empty (pure-Rust scope). See RIPR-SPEC-0082.
 ///
-/// Two wordings per the `enabled` flag:
+/// Three wordings per the producer-owned completion state:
 ///
-/// - `enabled` — the preview adapter ran; the empty/partial result is advisory
-///   and may be incomplete, not Rust-grade clean.
+/// - enabled and completed — the preview adapter ran; the empty/partial result
+///   is advisory and may be incomplete, not Rust-grade clean.
+/// - enabled but failed — the files were routed but not analyzed to adapter
+///   completion; the typed `language_runs` status is disclosed.
 /// - not enabled — the files were detected but not analyzed because the
 ///   preview adapter is not enabled in `ripr.toml`; the empty result must not
 ///   be read as clean. A copy-paste-ready TOML block is appended so enabling
@@ -453,16 +455,25 @@ fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
         } else {
             format!("{language}(s)")
         };
-        if advisory.enabled {
+        if advisory.analyzed(&output.language_runs) {
             out.push_str(&format!(
                 "\nNote: {} {} analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.\n",
                 advisory.file_count, file_label,
             ));
-        } else {
+        } else if !advisory.enabled {
             let language_lowercase = advisory.language.to_lowercase();
             out.push_str(&format!(
                 "\nNote: this diff contains {} {}. The {} adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.\n\nTo enable, add to ripr.toml:\n\n[languages]\nenabled = [\"rust\", \"{language_lowercase}\"]\n",
                 advisory.file_count, file_label, language,
+            ));
+        } else if let Some(run) = advisory.non_success_run(&output.language_runs) {
+            out.push_str(&format!(
+                "\nNote: the {language} preview adapter did not complete successfully ({}), so {} {} were not analyzed — this is NOT a clean Rust-grade result.\n",
+                run.status.as_str(), advisory.file_count, file_label,
+            ));
+        } else {
+            out.push_str(&format!(
+                "\nNote: the {language} preview adapter was enabled but no {file_label} were routed, so nothing was analyzed — this is NOT a clean Rust-grade result.\n"
             ));
         }
     }
@@ -948,6 +959,66 @@ mod tests {
             !digest.contains("Missing discriminator:"),
             "exposed digest must not claim a missing discriminator; got:\n{digest}"
         );
+    }
+
+    // #3317 follow-up (RIPR-SPEC-0162): the why-hint must not assert the
+    // propagation the class marks unknown, and unknown-class limitation
+    // prose renders under the Analyzer limit label — while a real
+    // missing discriminator keeps its own label.
+    #[test]
+    fn propagation_unknown_wording_is_honest() -> Result<(), String> {
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::PropagationUnknown;
+        finding.ripr.propagate = stage(
+            StageState::Unknown,
+            Confidence::Low,
+            "Propagation is not statically obvious from syntax-first analysis",
+        );
+        finding.missing = vec![
+            "No clear propagation path from changed behavior to an observable sink".to_string(),
+        ];
+        finding.activation.missing_discriminators = Vec::new();
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+        );
+        if !digest.contains(
+            "Why propagation_unknown: the path from the changed behavior to an observable sink is not statically clear",
+        ) {
+            return Err(format!("honest why-hint missing:
+{digest}"));
+        }
+        if digest.contains("the change propagates but") {
+            return Err(format!(
+                "the hint must not assert the propagation the class marks unknown:
+{digest}"
+            ));
+        }
+        if !digest.contains(
+            "  Analyzer limit: No clear propagation path from changed behavior to an observable sink",
+        ) {
+            return Err(format!("analyzer-limit label missing:
+{digest}"));
+        }
+        // A real missing discriminator keeps the discriminator label even
+        // on the unknown classes.
+        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "end == start".to_string(),
+            reason: "no related test call uses end equal to start".to_string(),
+            flow_sink: None,
+        }];
+        finding.missing = vec!["No strong discriminator was detected".to_string()];
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+        );
+        if !digest.contains("  Missing discriminator: No strong discriminator was detected") {
+            return Err(format!(
+                "a finding with a real missing discriminator keeps its label:
+{digest}"
+            ));
+        }
+        Ok(())
     }
 
     #[test]
@@ -2139,6 +2210,7 @@ mod tests {
             observed_sink: None,
             oracle_alignment: None,
             alignment_reason: None,
+            source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
         }
     }
 
@@ -2184,6 +2256,7 @@ mod tests {
             observed_sink: None,
             oracle_alignment: None,
             alignment_reason: None,
+            source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
         }
     }
 

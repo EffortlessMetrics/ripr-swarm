@@ -36,6 +36,12 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
         if suppressed_ids.contains(finding.id.as_str()) {
             continue;
         }
+        // Candidate-actionable eligibility (#3281): annotations are current
+        // PR obligations; base-side evidence and unresolved subjects remain
+        // visible on the check JSON and human surfaces.
+        if !finding.is_candidate_actionable() {
+            continue;
+        }
         let Some(annotation_level) = config
             .severity()
             .for_exposure(&finding.class)
@@ -394,6 +400,7 @@ mod tests {
                 observed_sink: None,
                 oracle_alignment: None,
                 alignment_reason: None,
+                source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
             }],
             preview_language_advisories: Vec::new(),
             language_runs: Vec::new(),
@@ -461,6 +468,7 @@ mod tests {
                 observed_sink: None,
                 oracle_alignment: None,
                 alignment_reason: None,
+                source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
             }],
             preview_language_advisories: Vec::new(),
             language_runs: Vec::new(),
@@ -731,6 +739,7 @@ mod tests {
                 observed_sink: None,
                 oracle_alignment: None,
                 alignment_reason: None,
+                source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
             }],
             preview_language_advisories: Vec::new(),
             language_runs: Vec::new(),
@@ -1011,6 +1020,7 @@ mod tests {
                 observed_sink: None,
                 oracle_alignment: None,
                 alignment_reason: None,
+                source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
             }],
             preview_language_advisories: Vec::new(),
             language_runs: Vec::new(),
@@ -1031,5 +1041,34 @@ mod tests {
             !rendered.contains(r"src\pricing.ts"),
             "backslash path must not appear in github annotation; got:\n{rendered}"
         );
+    }
+
+    #[test]
+    fn base_deleted_findings_emit_no_github_annotations() -> Result<(), String> {
+        // RIPR-SPEC-0152: annotations are current PR obligations; the
+        // candidate-current twin keeps its annotation.
+        let mut base = output_with_unknown_finding();
+        let Some(finding) = base.findings.first_mut() else {
+            return Err("fixture finding expected".to_string());
+        };
+        finding.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        let annotations = super::render_with_config(&base, &crate::config::RiprConfig::default());
+        assert!(
+            !annotations.contains("::notice file=src/lib.rs")
+                && !annotations.contains("::warning file=src/lib.rs"),
+            "base-deleted finding must not annotate: {annotations}"
+        );
+
+        let mut current = output_with_unknown_finding();
+        if let Some(finding) = current.findings.first_mut() {
+            finding.source_currentness = crate::domain::SourceCurrentness::CandidateCurrent;
+        }
+        let annotations =
+            super::render_with_config(&current, &crate::config::RiprConfig::default());
+        assert!(
+            annotations.contains("::notice file=src/lib.rs"),
+            "candidate-current twin keeps its annotation"
+        );
+        Ok(())
     }
 }

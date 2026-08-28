@@ -1,6 +1,19 @@
 # RIPR-SPEC-0086: Python Tier A External-Repo Eval Sweep
 
-Status: proposed
+Status: accepted
+
+Acceptance note (2026-08-14): #1161 landed the Tier A `cargo xtask
+eval-sweep` command (`xtask/src/command.rs` dispatch plus
+`xtask/src/reports/eval_sweep.rs`). The run algorithm's classification
+contract was completed by #3259, which threads the captured exit status
+into `classify` — a nonzero exit after parseable JSON reads `crash`, as
+step 3 requires, pinned by classifier and `run_check` boundary tests on
+both hosts. The Required Evidence golden exists as
+`rendered_report_matches_golden_from_fixed_run_vector`: byte-exact JSON
+and Markdown from a fixed two-run vector (stable `ok`, unstable
+`parse_failure`), so every rendering change must re-bless it
+deliberately. Tier B judgment semantics live in RIPR-SPEC-0092, which
+remains proposed.
 
 Owner: language-adapter / swarm
 
@@ -8,7 +21,10 @@ Linked proposal:
 
 - None. This is a standalone evidence-tooling contract; it adds no product
   library behavior and no public API. It anchors the eval-sweep-driven Python
-  reliability campaign tracked in `.ripr/goals/python-repair-routing.toml`.
+  reliability campaign tracked by
+  [#1160](https://github.com/EffortlessMetrics/ripr-swarm/issues/1160) and
+  `plans/python-repair-routing/` (the former `.ripr/goals/` tracker was
+  deleted with the goals scheduler, #2056).
 
 Linked ADRs:
 
@@ -17,7 +33,7 @@ Linked ADRs:
 
 Linked plan:
 
-- None.
+- [RIPR-PLAN-0017: Python Repair Routing Implementation Plan](../../plans/python-repair-routing/implementation-plan.md)
 
 Linked issues:
 
@@ -25,7 +41,12 @@ Linked issues:
 
 Linked PRs:
 
-- (this PR)
+- [#1161](https://github.com/EffortlessMetrics/ripr-swarm/pull/1161) — Tier A
+  command and report implementation.
+- [#3259](https://github.com/EffortlessMetrics/ripr-swarm/pull/3259) — captured
+  exit-status classification and boundary regressions.
+- [#3261](https://github.com/EffortlessMetrics/ripr-swarm/pull/3261) — fixed-run
+  JSON/Markdown golden test and accepted lifecycle reconciliation.
 
 ## Problem
 
@@ -183,6 +204,10 @@ repos_total = 3, repos_run = 0 (all skipped_missing_checkout)
 - `eval_sweep::count_distributions_counts_packet_completeness_presence` -> packet-presence counts.
 - `eval_sweep::report_includes_distribution_and_gate_is_unaffected` -> distributions render and never change the gate.
 - `eval_sweep::distribution_does_not_rescue_not_run_gate` -> `not_run` preserved.
+- `eval_sweep::run_check_classifies_failure_exit_with_valid_json_as_crash` ->
+  captured failure-exit boundary through the real run path.
+- `eval_sweep::rendered_report_matches_golden_from_fixed_run_vector` ->
+  byte-exact JSON/Markdown rendering from the fixed two-run vector.
 
 ## Implementation Mapping
 
@@ -207,4 +232,3 @@ repos_total = 3, repos_run = 0 (all skipped_missing_checkout)
 | `classification_counts` | per-repo + aggregate 7-way exposure-class distribution (descriptive; never gates) |
 | `alignment_counts` | per-repo + aggregate `oracle_alignment` distribution (`direct`/`alias`/`changed_sink_token`/`orthogonal`/`unknown`/`absent`, Python-only) plus repair-packet presence counts (`repair_placement`/`verify_command`/`python_repair_card`) |
 | `gate_status` | `not_run` if `repos_run == 0`; else `pass` iff `crash_rate == 0` and `gap_id_stability_rate == 1.0`; else `review` (distributions never affect this) |
-

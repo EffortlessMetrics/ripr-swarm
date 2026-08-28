@@ -6489,6 +6489,7 @@ mod gap_record_context_tests {
         write_gap_ledger(&root)?;
         let args_value = serde_json::json!({
             "gap_id": "gap:pr:pricing:threshold-boundary",
+            "source_currentness": "candidate_current",
             "gap_ledger": DEFAULT_GAP_DECISION_LEDGER_OUT,
         });
         let args = args_value
@@ -6522,6 +6523,7 @@ mod gap_record_context_tests {
         write_gap_ledger(&root)?;
         let args_value = serde_json::json!({
             "gap_id": "gap:rust:pricing:threshold-boundary",
+            "source_currentness": "candidate_current",
             "gap_ledger": DEFAULT_GAP_DECISION_LEDGER_OUT,
         });
         let args = args_value
@@ -6547,6 +6549,7 @@ mod gap_record_context_tests {
         write_gap_ledger(&root)?;
         let args_value = serde_json::json!({
             "gap_id": "gap:pr:pricing:threshold-boundary",
+            "source_currentness": "candidate_current",
         });
         let args = args_value
             .as_object()
@@ -6592,6 +6595,7 @@ mod gap_record_context_tests {
   "records": [
     {
       "gap_id": "gap:pr:pricing:threshold-boundary",
+      "source_currentness": "candidate_current",
       "canonical_gap_id": "gap:rust:pricing:threshold-boundary",
       "kind": "MissingBoundaryAssertion",
       "language": "rust",
@@ -6662,6 +6666,7 @@ mod gap_record_context_tests {
         let root = temp_root()?;
         let args_value = serde_json::json!({
             "gap_id": "gap:pr:pricing:threshold-boundary",
+            "source_currentness": "candidate_current",
             "gap_ledger": DEFAULT_GAP_DECISION_LEDGER_OUT,
         });
         let args = args_value
@@ -6687,6 +6692,7 @@ mod gap_record_context_tests {
             .map_err(|err| format!("write malformed ledger in {} failed: {err}", root.display()))?;
         let args_value = serde_json::json!({
             "gap_id": "gap:pr:pricing:threshold-boundary",
+            "source_currentness": "candidate_current",
             "gap_ledger": DEFAULT_GAP_DECISION_LEDGER_OUT,
         });
         let args = args_value
@@ -6709,6 +6715,7 @@ mod gap_record_context_tests {
         write_gap_ledger(&root)?;
         let args_value = serde_json::json!({
             "gap_id": "gap:pr:unknown:missing",
+            "source_currentness": "candidate_current",
             "gap_ledger": DEFAULT_GAP_DECISION_LEDGER_OUT,
         });
         let args = args_value
@@ -6729,6 +6736,7 @@ mod gap_record_context_tests {
         write_gap_ledger(&root)?;
         let args_value = serde_json::json!({
             "gap_id": "gap:pr:pricing:threshold-boundary",
+            "source_currentness": "candidate_current",
             "gap_ledger": "   ",
         });
         let args = args_value
@@ -7547,6 +7555,7 @@ mod delivery_selection_parity_tests {
             "diagnostic_id": "gap:pricing",
             "source": "gap_decision_ledger",
             "gap_id": "gap:rust:pricing:threshold-boundary",
+            "source_currentness": "candidate_current",
             "language": "rust",
             "language_status": "supported",
             "repairability": "actionable",

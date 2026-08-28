@@ -52,7 +52,7 @@ fn sorted_unique(files: impl IntoIterator<Item = PathBuf>) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::workspace::{discover_rust_files, is_production_rust_path};
+    use crate::analysis::workspace::discover_rust_files;
     use std::fs;
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -164,9 +164,21 @@ mod tests {
     }
 
     #[test]
-    fn production_path_excludes_xtask_automation() {
-        assert!(!is_production_rust_path(Path::new("xtask/src/main.rs")));
-        assert!(is_production_rust_path(Path::new("crates/ripr/src/lib.rs")));
+    fn source_role_excludes_xtask_automation() {
+        assert!(
+            !crate::analysis::workspace::classify_with(
+                Path::new("xtask/src/main.rs"),
+                &crate::analysis::workspace::SourceRoleContext::empty(),
+            )
+            .seeds_production_findings()
+        );
+        assert!(
+            crate::analysis::workspace::classify_with(
+                Path::new("crates/ripr/src/lib.rs"),
+                &crate::analysis::workspace::SourceRoleContext::empty(),
+            )
+            .seeds_production_findings()
+        );
     }
 
     #[test]

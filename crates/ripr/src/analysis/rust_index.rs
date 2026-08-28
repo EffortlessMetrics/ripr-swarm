@@ -1,3 +1,5 @@
+#[cfg(test)]
+use super::facts::RustIncludeLimitation;
 use crate::config::OraclePolicy;
 #[cfg(test)]
 use crate::domain::{OracleKind, OracleStrength};
@@ -6,12 +8,13 @@ use std::path::{Path, PathBuf};
 #[cfg(test)]
 pub(crate) use super::extract::contains_macro_invocation;
 pub(crate) use super::extract::{
-    PROBE_SHAPE_CALL_DELETION, PROBE_SHAPE_ERROR_PATH, PROBE_SHAPE_FIELD_CONSTRUCTION,
-    PROBE_SHAPE_MATCH_ARM, PROBE_SHAPE_PREDICATE, PROBE_SHAPE_RETURN_VALUE,
-    PROBE_SHAPE_SIDE_EFFECT, classify_assertion, extract_assertions, extract_call_facts,
-    extract_identifier_tokens, extract_line_scanned_oracles, extract_literal_facts,
-    extract_literals, extract_return_facts, is_known_probe_shape,
-    is_unwrap_err_bound_error_assertion, unwrap_err_bound_variables,
+    OracleTextShape, PROBE_SHAPE_CALL_DELETION, PROBE_SHAPE_ERROR_PATH,
+    PROBE_SHAPE_FIELD_CONSTRUCTION, PROBE_SHAPE_MATCH_ARM, PROBE_SHAPE_PREDICATE,
+    PROBE_SHAPE_RETURN_VALUE, PROBE_SHAPE_SIDE_EFFECT, classify_assertion,
+    err_return_guard_oracles, extract_assertions, extract_call_facts, extract_identifier_tokens,
+    extract_line_scanned_oracles, extract_literal_facts, extract_literals, extract_return_facts,
+    has_oracle_text_shape, is_known_probe_shape, is_unwrap_err_bound_error_assertion,
+    unwrap_err_bound_variables,
 };
 pub(crate) use super::facts::build_index_from_loaded_files_with_cache;
 #[cfg(test)]
@@ -71,6 +74,33 @@ fn escaped_path_display(path: &Path) -> String {
 /// Returns a stable disclosure when indexed Rust files used lexical fallback.
 pub(crate) fn lexical_fallback_disclosure(index: &RustIndex) -> Option<String> {
     lexical_fallback_disclosure_for_files(&lexical_fallback_files(index))
+}
+
+pub(crate) fn compilation_unit_path(index: &RustIndex, file: &Path) -> PathBuf {
+    super::facts::compilation_unit_path_from_parents(&index.include_parents, file)
+}
+
+pub(crate) fn include_resolution_disclosure(index: &RustIndex) -> Option<String> {
+    if index.include_limitations.is_empty() {
+        return None;
+    }
+    let details = index
+        .include_limitations
+        .iter()
+        .map(|limitation| {
+            format!(
+                "{}:{}:{}",
+                escaped_path_display(&limitation.parent),
+                limitation.line,
+                limitation.reason_code
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "ripr: {} Rust include boundary limitation(s): {details}; affected compilation-unit relations remain fail-closed.",
+        index.include_limitations.len()
+    ))
 }
 
 pub(crate) fn apply_oracle_policy(index: &mut RustIndex, policy: &OraclePolicy) {
@@ -797,6 +827,26 @@ fn feature_gated_test() {}
             lexical_fallback_disclosure_for_files(&files).as_deref(),
             Some(
                 "ripr: lexical fallback was used for 2 Rust file(s): src/line\\nreturn\\r\\t\\x1b[31m.rs, src/unit\\u{0007}.rs; repo seam inventory may under-credit these files because lexical fallback emits no probe shapes."
+            )
+        );
+    }
+
+    #[test]
+    fn include_resolution_disclosure_names_stable_reason_and_source() {
+        let index = RustIndex {
+            include_limitations: vec![RustIncludeLimitation {
+                parent: PathBuf::from("src/lib.rs"),
+                line: 7,
+                expression: "include!(concat!(...))".to_string(),
+                reason_code: "rust_include_dynamic_expression".to_string(),
+            }],
+            ..RustIndex::default()
+        };
+
+        assert_eq!(
+            include_resolution_disclosure(&index).as_deref(),
+            Some(
+                "ripr: 1 Rust include boundary limitation(s): src/lib.rs:7:rust_include_dynamic_expression; affected compilation-unit relations remain fail-closed."
             )
         );
     }

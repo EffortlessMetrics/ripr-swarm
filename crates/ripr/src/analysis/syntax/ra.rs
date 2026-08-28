@@ -4,7 +4,7 @@ use ra_ap_syntax::{
     ast::{self, HasAttrs, HasName},
 };
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::super::facts::FileFacts;
 use super::{RaRustSyntaxAdapter, RustSyntaxAdapter, SyntaxNodeFact, TextRange};
@@ -12,10 +12,115 @@ use crate::analysis::rust_index::{
     FunctionFact, OracleFact, PROBE_SHAPE_CALL_DELETION, PROBE_SHAPE_ERROR_PATH,
     PROBE_SHAPE_FIELD_CONSTRUCTION, PROBE_SHAPE_MATCH_ARM, PROBE_SHAPE_PREDICATE,
     PROBE_SHAPE_RETURN_VALUE, PROBE_SHAPE_SIDE_EFFECT, ProbeShapeFact, TestFact,
-    classify_assertion, extract_call_facts, extract_identifier_tokens,
+    classify_assertion, err_return_guard_oracles, extract_call_facts, extract_identifier_tokens,
     extract_line_scanned_oracles, extract_literal_facts, extract_return_facts,
     is_unwrap_err_bound_error_assertion, unwrap_err_bound_variables,
 };
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RustIncludeDirective {
+    pub(crate) line: usize,
+    pub(crate) expression: String,
+    pub(crate) literal_path: Option<PathBuf>,
+    pub(crate) is_file_level: bool,
+}
+
+/// Extract actual `include!` macro nodes from parser-backed Rust syntax.
+/// Comments, string contents, and similarly named macros never enter this
+/// producer. Non-literal token trees remain explicit unsupported directives.
+pub(crate) fn rust_include_directives(
+    _path: &Path,
+    text: &str,
+    max_directives: usize,
+) -> Result<Vec<RustIncludeDirective>, String> {
+    let parse = SourceFile::parse(text, Edition::CURRENT);
+    if !parse.errors().is_empty() {
+        return Err("rust_include_parent_parse_unavailable".to_string());
+    }
+    let line_index = LineIndex::new(text);
+    let mut directives = Vec::new();
+    for macro_call in parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::MacroCall::cast)
+    {
+        let range = macro_call.syntax().text_range();
+        let expression = slice_text(text, range.start(), range.end());
+        let Some((callee, _)) = expression.split_once('!') else {
+            continue;
+        };
+        if callee.trim() != "include" {
+            continue;
+        }
+        directives.push(RustIncludeDirective {
+            line: line_index.line(range.start()),
+            literal_path: include_literal_path(&expression),
+            is_file_level: !macro_call
+                .syntax()
+                .ancestors()
+                .skip(1)
+                .any(|node| ast::Module::can_cast(node.kind())),
+            expression,
+        });
+        if directives.len() > max_directives {
+            break;
+        }
+    }
+    directives.sort_by(|left, right| {
+        left.line
+            .cmp(&right.line)
+            .then(left.expression.cmp(&right.expression))
+    });
+    Ok(directives)
+}
+
+fn include_literal_path(expression: &str) -> Option<PathBuf> {
+    let (_, arguments) = expression.split_once('!')?;
+    let arguments = arguments.trim();
+    let arguments = arguments.strip_suffix(';').unwrap_or(arguments).trim();
+    let inner = match (arguments.chars().next()?, arguments.chars().last()?) {
+        ('(', ')') | ('{', '}') | ('[', ']') => arguments.get(1..arguments.len() - 1)?.trim(),
+        _ => return None,
+    };
+    parse_rust_string_literal(inner).map(PathBuf::from)
+}
+
+fn parse_rust_string_literal(literal: &str) -> Option<String> {
+    if let Some(body) = literal
+        .strip_prefix('"')
+        .and_then(|body| body.strip_suffix('"'))
+    {
+        let mut decoded = String::new();
+        let mut chars = body.chars();
+        while let Some(ch) = chars.next() {
+            if ch != '\\' {
+                decoded.push(ch);
+                continue;
+            }
+            match chars.next()? {
+                '\\' => decoded.push('\\'),
+                '"' => decoded.push('"'),
+                'n' => decoded.push('\n'),
+                'r' => decoded.push('\r'),
+                't' => decoded.push('\t'),
+                '0' => decoded.push('\0'),
+                _ => return None,
+            }
+        }
+        return Some(decoded);
+    }
+
+    let hash_count = literal
+        .strip_prefix('r')?
+        .chars()
+        .take_while(|ch| *ch == '#')
+        .count();
+    let prefix_len = 1 + hash_count;
+    let suffix = format!("\"{}", "#".repeat(hash_count));
+    let body = literal.get(prefix_len..)?.strip_prefix('"')?;
+    body.strip_suffix(&suffix).map(ToString::to_string)
+}
 
 impl RustSyntaxAdapter for RaRustSyntaxAdapter {
     fn summarize_file(&self, path: &Path, text: &str) -> Result<FileFacts, String> {
@@ -60,7 +165,13 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
         let returns = extract_return_facts(&body, start_line);
         let literals = extract_literal_facts(&body, start_line);
         let probe_shapes = extract_parser_probe_shapes(&function, text, &line_index);
-        let is_test = has_test_attribute(&function);
+        // A plain helper inside an inline `#[cfg(test)]` module is test
+        // infrastructure even when it has no `#[test]` attribute. Classify
+        // that role at the producer boundary so diff probes, seam inventory,
+        // evidence relation, and every downstream renderer consume the same
+        // fact instead of re-inferring it independently.
+        let has_test_attribute = has_test_attribute(&function);
+        let is_test = has_test_attribute || is_cfg_test_module_member(&function);
         let attrs = collect_attr_syntax(&function);
 
         file_calls.extend(calls.clone());
@@ -82,7 +193,7 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
             attrs: attrs.clone(),
         };
 
-        if is_test {
+        if has_test_attribute {
             tests.push(TestFact {
                 name,
                 file: path_buf.clone(),
@@ -215,6 +326,32 @@ fn has_test_attribute(function: &ast::Fn) -> bool {
             || compact == "#[rstest]"
             || compact.starts_with("#[rstest(")
     })
+}
+
+fn is_cfg_test_module_member(function: &ast::Fn) -> bool {
+    function
+        .syntax()
+        .ancestors()
+        .filter_map(ast::Module::cast)
+        .any(|module| {
+            module.attrs().any(|attr| {
+                let compact = attr
+                    .syntax()
+                    .text()
+                    .to_string()
+                    .chars()
+                    .filter(|ch| !ch.is_whitespace())
+                    .collect::<String>();
+                // #3284: `#[cfg(all(test, ...))]` gates the module on test
+                // plus other predicates, which still means harness-only in
+                // every non-test build that satisfies the other conjuncts
+                // is NOT guaranteed — but the module is compiled under
+                // test, so its helpers are evidence role. `any(test, ..)`
+                // and `not(test)` stay excluded: they compile outside
+                // test builds.
+                compact == "#[cfg(test)]" || compact.starts_with("#[cfg(all(test,")
+            })
+        })
 }
 
 fn collect_attr_syntax(function: &ast::Fn) -> Vec<String> {
@@ -702,6 +839,11 @@ fn extract_parser_oracles(
     }
 
     let function_start = line_index.line(function.syntax().text_range().start());
+    // #3284: terminal Err-return guards credit as their assertion twins
+    // on the parser path too, so both adapters agree.
+    for oracle in err_return_guard_oracles(&function_text, function_start) {
+        assertions.push(oracle);
+    }
     for oracle in
         extract_line_scanned_oracles(&function.syntax().text().to_string(), function_start)
     {
@@ -944,6 +1086,72 @@ fn integration_smoke() {
     }
 
     #[test]
+    fn ra_adapter_marks_inline_cfg_test_helpers_as_test_role() -> Result<(), Box<dyn Error>> {
+        let root = temp_dir("ra_cfg_test_helpers")?;
+        fs::create_dir_all(root.join("src"))?;
+        write_manifest(&root)?;
+        fs::write(
+            root.join("src/lib.rs"),
+            r#"
+pub fn production_control(value: i32) -> Result<i32, String> {
+    if value < 0 { return Err("negative".to_string()); }
+    Ok(value)
+}
+
+#[cfg(test)]
+mod tests {
+    fn helper_returns_result(value: i32) -> Result<(), String> {
+        if value < 0 { return Err("negative".to_string()); }
+        Ok(())
+    }
+
+    #[test]
+    fn helper_is_evidence() {
+        helper_returns_result(1).expect("fixture should pass");
+    }
+}
+"#,
+        )?;
+
+        let adapter = RaRustSyntaxAdapter;
+        let text = fs::read_to_string(root.join("src/lib.rs"))?;
+        let facts = adapter.summarize_file(&root.join("src/lib.rs"), &text)?;
+        let helper = facts
+            .functions
+            .iter()
+            .find(|function| function.name == "helper_returns_result")
+            .ok_or("missing cfg(test) helper fact")?;
+
+        assert!(
+            helper.is_test,
+            "cfg(test) helper must be producer-owned test role"
+        );
+        assert!(
+            facts
+                .tests
+                .iter()
+                .any(|test| test.name == "helper_is_evidence"),
+            "actual test function remains available as evidence input"
+        );
+        assert!(
+            facts
+                .tests
+                .iter()
+                .all(|test| test.name != "helper_returns_result"),
+            "cfg(test) helper must not be promoted to a test fact"
+        );
+        assert!(
+            facts
+                .functions
+                .iter()
+                .find(|function| function.name == "production_control")
+                .is_some_and(|function| !function.is_test),
+            "production control must remain production role"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn ra_adapter_extracts_probe_shapes() -> Result<(), Box<dyn Error>> {
         let root = temp_dir("ra_probe_shapes")?;
         fs::create_dir_all(root.join("src"))?;
@@ -1054,5 +1262,141 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
         );
 
         assert!(nodes.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod cfg_all_test_tests {
+    use super::RaRustSyntaxAdapter;
+    use super::RustSyntaxAdapter;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn temp_dir(name: &str) -> Result<PathBuf, String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!("ripr-{name}-{stamp}"));
+        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+        Ok(dir)
+    }
+
+    fn write_manifest(root: &std::path::Path) -> Result<(), String> {
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]
+name='test'
+version='0.1.0'
+edition='2024'
+",
+        )
+        .map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn cfg_all_test_module_members_carry_evidence_role() -> Result<(), String> {
+        // #3284: a module gated on `cfg(all(test, feature))` compiles under
+        // test; its helpers are harness plumbing and must carry the
+        // evidence role, exactly like plain `#[cfg(test)]`. `not(test)`
+        // and `any(test, ..)` stay production.
+        let root = temp_dir("ra_cfg_all_test")?;
+        fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        write_manifest(&root)?;
+        fs::write(
+            root.join("src/lib.rs"),
+            "pub fn production_control() -> i32 { 1 }\n\n#[cfg(all(test, feature = \"slow\"))]\nmod slow_tests {\n    fn helper_under_all_test() -> i32 { production_control() }\n\n    #[test]\n    fn runs() { let _ = helper_under_all_test(); }\n}\n\n#[cfg(not(test))]\nmod prod_only {\n    pub fn production_shape() -> i32 { 2 }\n}\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let facts = RaRustSyntaxAdapter
+            .summarize_file(
+                &root.join("src/lib.rs"),
+                &fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?;
+        let helper = facts
+            .functions
+            .iter()
+            .find(|function| function.name == "helper_under_all_test")
+            .ok_or("helper missing from facts")?;
+        assert!(
+            helper.is_test,
+            "cfg(all(test, ..)) members are evidence role"
+        );
+        let prod = facts
+            .functions
+            .iter()
+            .find(|function| function.name == "production_shape")
+            .ok_or("cfg(not(test)) fn missing from facts")?;
+        assert!(!prod.is_test, "cfg(not(test)) members stay production");
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod guard_pipeline_debug_tests {
+    use super::RaRustSyntaxAdapter;
+    use super::RustSyntaxAdapter;
+
+    #[test]
+    fn parser_path_credits_err_guard_in_test_facts() -> Result<(), String> {
+        let source = "use parity_err_guard::discounted_total;\n\n#[test]\nfn boundary_matches_expected() -> Result<(), String> {\n    let actual = discounted_total(100, 100);\n    let expected = 90;\n    if actual != expected {\n        return Err(format!(\"actual={actual:?}\"));\n    }\n    Ok(())\n}\n";
+        let facts = RaRustSyntaxAdapter
+            .summarize_file(std::path::Path::new("tests/pricing.rs"), source)
+            .map_err(|error| error.to_string())?;
+        let test = facts
+            .tests
+            .iter()
+            .find(|test| test.name == "boundary_matches_expected")
+            .ok_or_else(|| format!("test missing: {:?}", facts.tests))?;
+        assert!(
+            test.assertions
+                .iter()
+                .any(|oracle| oracle.kind == crate::domain::OracleKind::RelationalCheck),
+            "guard must credit through the parser path: {:?}",
+            test.assertions
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod include_directive_tests {
+    use super::rust_include_directives;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn parser_extracts_only_real_include_macros_and_decodes_literals() -> Result<(), String> {
+        let source = r###"
+// include!("comment.rs");
+const SAMPLE: &str = "include!(\"string.rs\")";
+include!("plain.rs");
+include!(r#"raw.rs"#);
+include!("escaped\\path.rs");
+include!("quoted\"file.rs");
+include!(concat!(env!("OUT_DIR"), "/generated.rs"));
+mod nested { include!("nested.rs"); }
+"###;
+
+        let directives = rust_include_directives(Path::new("src/lib.rs"), source, 16)?;
+        let literals = directives
+            .iter()
+            .filter_map(|directive| directive.literal_path.clone())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            literals,
+            vec![
+                PathBuf::from("plain.rs"),
+                PathBuf::from("raw.rs"),
+                PathBuf::from("escaped\\path.rs"),
+                PathBuf::from("quoted\"file.rs"),
+                PathBuf::from("nested.rs")
+            ]
+        );
+        assert_eq!(directives.len(), 6);
+        assert!(directives[4].literal_path.is_none());
+        assert!(!directives[5].is_file_level);
+        Ok(())
     }
 }

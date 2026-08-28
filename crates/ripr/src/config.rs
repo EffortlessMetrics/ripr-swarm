@@ -231,10 +231,13 @@ pub(crate) fn check_artifact_config_identity_hash(config: &RiprConfig) -> String
 /// comparable). Closed set: when the producer starts consuming another config
 /// field, add it here in the same PR; do not widen the filter to whole
 /// sections.
-pub(crate) const REPO_EXPOSURE_CONSUMED_CONFIG_FIELDS: [&str; 3] = [
+pub(crate) const REPO_EXPOSURE_CONSUMED_CONFIG_FIELDS: [&str; 4] = [
     "oracles.broad_error_strength",
     "oracles.mock_expectation_strength",
     "oracles.snapshot_strength",
+    // The production-like opt-in changes which files are production
+    // subjects in the repo seam inventory (#3283).
+    "analysis.production_like_targets",
 ];
 
 /// Canonical config identity for the repo-exposure artifact input identity
@@ -294,6 +297,16 @@ impl RiprConfig {
                 config.analysis.mode = Some(parse_mode_value(&mode)?);
             }
             config.analysis.include_unchanged_tests = analysis.include_unchanged_tests;
+            if let Some(targets) = analysis.production_like_targets {
+                let mut parsed = std::collections::BTreeSet::new();
+                for target in targets {
+                    parsed.insert(parse_relative_path(
+                        "analysis.production_like_targets",
+                        &target,
+                    )?);
+                }
+                config.analysis.production_like_targets = parsed;
+            }
         }
         if let Some(oracles) = raw.oracles {
             if let Some(strength) = oracles.snapshot_strength {
@@ -513,6 +526,7 @@ struct RawBunUbProfileConfig {
 struct RawAnalysisConfig {
     mode: Option<String>,
     include_unchanged_tests: Option<bool>,
+    production_like_targets: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -799,3 +813,32 @@ fn parse_relative_path(field: &str, value: &str) -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests;
+
+/// The config a bound immutable-subject run uses (#3279 R4): the
+/// candidate tree's own `ripr.toml` when the tree carries one, else the
+/// default config. The worktree file (already loaded as `worktree`)
+/// contributes nothing — `source_path`/`source_text` are cleared so the
+/// recorded identity cannot claim the worktree file as its source.
+pub(crate) fn config_for_candidate(
+    subject: &crate::domain::GitCandidateSubject,
+    worktree: &RiprConfig,
+) -> Result<RiprConfig, String> {
+    let bytes = crate::analysis::git_candidate_execution::candidate_config_bytes(
+        subject,
+        Some(std::time::Duration::from_secs(30)),
+    )
+    .map_err(|error| error.to_string())?;
+    let Some(text) = bytes else {
+        // Pure default: no worktree fact may enter a subject run
+        // (#3279 review B1 — the worktree's enabled-languages list is
+        // mutable state, and toggling it flipped subject completeness).
+        // Binary capability is already inside the default config.
+        let _ = worktree;
+        return Ok(RiprConfig::default());
+    };
+    let mut config =
+        parse_config(&text).map_err(|err| format!("candidate tree ripr.toml: {err}"))?;
+    config.source_path = None;
+    config.source_text = Some(text);
+    Ok(config)
+}

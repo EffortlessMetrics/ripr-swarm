@@ -231,7 +231,27 @@ fn write_pr_evidence_error_packet(
 
     println!("Wrote {PR_EVIDENCE_JSON}");
     println!("Wrote {PR_EVIDENCE_MD}");
-    Ok(())
+    Err(reject_pr_evidence_error_packet(&packet).unwrap_or_else(|| {
+        "PR evidence producer failed; review-comments must not run: unknown producer error"
+            .to_string()
+    }))
+}
+
+/// Return the fail-closed error for a producer error packet, if present.
+///
+/// This is the single status-level actionability authority shared by the
+/// public `ripr pr-evidence` command and the xtask compatibility wrapper.
+pub fn reject_pr_evidence_error_packet(packet: &Value) -> Option<String> {
+    (packet.get("status").and_then(Value::as_str) == Some("error")).then(|| {
+        format!(
+            "PR evidence producer failed; review-comments must not run: {}",
+            packet["warnings"]
+                .as_array()
+                .and_then(|warnings| warnings.first())
+                .and_then(|warning| warning["message"].as_str())
+                .unwrap_or("unknown producer error")
+        )
+    })
 }
 
 fn check_pr_evidence(repo: &Path, options: &PrEvidenceOptions) -> Result<(), String> {
@@ -244,6 +264,9 @@ fn check_pr_evidence(repo: &Path, options: &PrEvidenceOptions) -> Result<(), Str
         .map_err(|err| format!("missing or unreadable {PR_EVIDENCE_JSON}: {err}"))?;
     let packet: Value = serde_json::from_str(&text)
         .map_err(|err| format!("{PR_EVIDENCE_JSON} is not valid JSON: {err}"))?;
+    if let Some(error) = reject_pr_evidence_error_packet(&packet) {
+        return Err(error);
+    }
     let violations = validate_packet_value(
         &packet,
         options,
@@ -310,6 +333,7 @@ fn run_ripr_check(repo: &Path, options: &PrEvidenceOptions) -> Result<String, St
         perl_facts_path: None,
         suppression_policy: None,
         git_timeout: None,
+        git_candidate: None,
     };
     let output = check_workspace(input)?;
     render_check(&output, &OutputFormat::Json)
@@ -349,9 +373,41 @@ fn pr_evidence_packet(
     check_value: &Value,
 ) -> Value {
     let check_summary = check_value.get("summary").and_then(Value::as_object);
-    let weakly_exposed = count_field(check_summary, "weakly_exposed");
-    let reachable_unrevealed = count_field(check_summary, "reachable_unrevealed");
-    let no_static_path = count_field(check_summary, "no_static_path");
+    // Candidate-actionable eligibility (#3281): PR routing counts current
+    // candidate-side obligations, not base-side evidence. Recompute the
+    // three severe-gap classes from the findings array when it is present;
+    // fall back to the classification summary only when it is not.
+    let candidate_current_counts =
+        check_value
+            .get("findings")
+            .and_then(Value::as_array)
+            .map(|findings| {
+                let mut weakly_exposed = 0;
+                let mut reachable_unrevealed = 0;
+                let mut no_static_path = 0;
+                for finding in findings {
+                    if finding.get("source_currentness").and_then(Value::as_str)
+                        != Some("candidate_current")
+                    {
+                        continue;
+                    }
+                    match finding.get("classification").and_then(Value::as_str) {
+                        Some("weakly_exposed") => weakly_exposed += 1,
+                        Some("reachable_unrevealed") => reachable_unrevealed += 1,
+                        Some("no_static_path") => no_static_path += 1,
+                        _ => {}
+                    }
+                }
+                (weakly_exposed, reachable_unrevealed, no_static_path)
+            });
+    let (weakly_exposed, reachable_unrevealed, no_static_path) = candidate_current_counts
+        .unwrap_or_else(|| {
+            (
+                count_field(check_summary, "weakly_exposed"),
+                count_field(check_summary, "reachable_unrevealed"),
+                count_field(check_summary, "no_static_path"),
+            )
+        });
     let severe_gaps = weakly_exposed + reachable_unrevealed + no_static_path;
     let ripr_severe_gap = severe_gaps > 0;
     let mut warnings = Vec::new();
@@ -439,6 +495,11 @@ fn targeted_mutation_route(check_value: &Value, required: bool) -> Value {
         let Some(classification) = finding.get("classification").and_then(Value::as_str) else {
             continue;
         };
+        // Candidate-actionable eligibility (#3281): mutation candidates are
+        // current obligations; base-side evidence never names a head target.
+        if finding.get("source_currentness").and_then(Value::as_str) != Some("candidate_current") {
+            continue;
+        }
         if !matches!(
             classification,
             "weakly_exposed" | "reachable_unrevealed" | "no_static_path"
@@ -975,15 +1036,38 @@ mod tests {
                 "reachable_unrevealed": 1,
                 "no_static_path": 0
             },
-            "findings": [{
-                "classification": "weakly_exposed",
-                "probe": {
-                    "family": "predicate",
-                    "file": "src/lib.rs",
-                    "line": 8,
-                    "expression": "amount >= threshold"
+            "findings": [
+                {
+                    "classification": "weakly_exposed",
+                    "source_currentness": "candidate_current",
+                    "probe": {
+                        "family": "predicate",
+                        "file": "src/lib.rs",
+                        "line": 8,
+                        "expression": "amount >= threshold"
+                    }
+                },
+                {
+                    "classification": "weakly_exposed",
+                    "source_currentness": "candidate_current",
+                    "probe": {
+                        "family": "predicate",
+                        "file": "src/other.rs",
+                        "line": 3,
+                        "expression": "other >= bound"
+                    }
+                },
+                {
+                    "classification": "reachable_unrevealed",
+                    "source_currentness": "candidate_current",
+                    "probe": {
+                        "family": "side_effect",
+                        "file": "src/lib.rs",
+                        "line": 12,
+                        "expression": "publish(event)"
+                    }
                 }
-            }]
+            ]
         });
         let changed = vec!["src/lib.rs".to_string(), "tests/lib.rs".to_string()];
         let packet = pr_evidence_packet(&options(), &changed, &check);
@@ -1016,6 +1100,7 @@ mod tests {
                 "summary": {"weakly_exposed": 1, "reachable_unrevealed": 0, "no_static_path": 0},
                 "findings": [{
                     "classification": "weakly_exposed",
+                    "source_currentness": "candidate_current",
                     "probe": {"family": "call_presence", "file": "src/lib.rs", "line": 8, "expression": "publish(event)"}
                 }]
             }),
@@ -1051,29 +1136,37 @@ mod tests {
         .map(|(operator, _)| {
             json!({
                 "classification": "weakly_exposed",
+                "source_currentness": "candidate_current",
                 "probe": {"family": "predicate", "file": "src/lib.rs", "line": 8, "expression": format!("value {operator} limit")}
             })
         })
         .collect::<Vec<_>>();
         findings.push(json!({
             "classification": "weakly_exposed",
+            "source_currentness": "candidate_current",
             "probe": {"family": "predicate", "file": "src/lib.rs", "line": 8, "expression": "value >= limit"}
         }));
         findings.push(json!({
             "classification": "weakly_exposed",
+            "source_currentness": "candidate_current",
             "probe": {"family": "call_presence", "file": "src/lib.rs", "line": 9, "expression": "publish(value)"}
         }));
-        findings.push(json!({"classification": "weakly_exposed"}));
+        findings.push(
+            json!({"classification": "weakly_exposed", "source_currentness": "candidate_current"}),
+        );
         findings.push(json!({
             "classification": "weakly_exposed",
+            "source_currentness": "candidate_current",
             "probe": {"family": "predicate", "line": 10, "expression": "value >= limit"}
         }));
         findings.push(json!({
             "classification": "weakly_exposed",
+            "source_currentness": "candidate_current",
             "probe": {"family": "predicate", "file": "src/lib.rs", "expression": "value >= limit"}
         }));
         findings.push(json!({
             "classification": "weakly_exposed",
+            "source_currentness": "candidate_current",
             "probe": {"family": "predicate", "file": "src/lib.rs", "line": 11, "expression": "value + limit"}
         }));
         let route = targeted_mutation_route(&json!({"findings": findings}), true);
@@ -1090,8 +1183,8 @@ mod tests {
             &json!({
                 "summary": {"weakly_exposed": 1, "reachable_unrevealed": 0, "no_static_path": 0},
                 "findings": [
-                    {"classification": "weakly_exposed", "probe": {"family": "predicate", "file": "src/lib.rs", "line": 8, "expression": "value >= limit"}},
-                    {"classification": "weakly_exposed", "probe": {"family": "call_presence", "file": "src/lib.rs", "line": 9, "expression": "publish(value)"}}
+                    {"classification": "weakly_exposed", "source_currentness": "candidate_current", "probe": {"family": "predicate", "file": "src/lib.rs", "line": 8, "expression": "value >= limit"}},
+                    {"classification": "weakly_exposed", "source_currentness": "candidate_current", "probe": {"family": "call_presence", "file": "src/lib.rs", "line": 9, "expression": "publish(value)"}}
                 ]
             }),
         );
@@ -1225,10 +1318,23 @@ mod tests {
             head: "HEAD".to_string(),
             ..options()
         };
-        write_pr_evidence_with_runner(&repo, &options, |_repo, _options| {
-            Err("ripr check for PR evidence failed; retry command: ripr pr-evidence --base HEAD~1 --head HEAD --root .".to_string())
-        })?;
-        check_pr_evidence(&repo, &options)?;
+        let generation_error = match write_pr_evidence_with_runner(
+            &repo,
+            &options,
+            |_repo, _options| {
+                Err("ripr check for PR evidence failed; retry command: ripr pr-evidence --base HEAD~1 --head HEAD --root .".to_string())
+            },
+        ) {
+            Ok(()) => return Err("producer failure did not fail closed".to_string()),
+            Err(error) => error,
+        };
+        assert!(generation_error.contains("producer failed"));
+
+        let check_error = match check_pr_evidence(&repo, &options) {
+            Ok(()) => return Err("standalone check accepted preserved error packet".to_string()),
+            Err(error) => error,
+        };
+        assert!(check_error.contains("producer failed"));
 
         let packet_text = fs::read_to_string(repo.join(PR_EVIDENCE_JSON))
             .map_err(|err| format!("read packet: {err}"))?;

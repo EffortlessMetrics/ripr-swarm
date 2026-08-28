@@ -22,6 +22,7 @@ mod agent_skills;
 mod branch_inventory;
 mod cache;
 mod command;
+pub mod convergence;
 mod dispatch;
 mod dogfood;
 mod evidence_audit;
@@ -30,6 +31,7 @@ mod evidence_quality;
 mod fixture_contracts;
 mod no_panic;
 mod policy;
+mod product_gate_plan;
 mod public_api_surface;
 mod repo_readiness;
 mod schema_pattern;
@@ -817,6 +819,12 @@ struct CheckPrGateFailure {
     reproduce: String,
     bounded_error: String,
     not_run: Vec<String>,
+    baseline: BaselineFailureComparison,
+}
+
+struct BaselineFailureComparison {
+    status: &'static str,
+    detail: String,
 }
 
 /// Run the gates in order and stop at the first failure (#3036). On failure,
@@ -840,6 +848,7 @@ fn run_check_pr_gates(
                     .iter()
                     .map(|later| later.name.to_string())
                     .collect(),
+                baseline: compare_failure_with_origin_main(gate.name),
             };
             write_failure_report(&failure).map_err(|write_err| {
                 format!(
@@ -851,6 +860,122 @@ fn run_check_pr_gates(
         }
     }
     Ok(())
+}
+
+fn compare_failure_with_origin_main(gate_name: &str) -> BaselineFailureComparison {
+    let divergence = match run_output(
+        "git",
+        &["rev-list", "--left-right", "--count", "origin/main...HEAD"],
+    ) {
+        Ok(value) => value,
+        Err(err) => {
+            return BaselineFailureComparison {
+                status: "NOT_PROVEN",
+                detail: format!("origin/main is unavailable: {err}"),
+            };
+        }
+    };
+    let mut counts = divergence.split_whitespace();
+    let behind = counts.next().and_then(|value| value.parse::<u64>().ok());
+    let ahead = counts.next().and_then(|value| value.parse::<u64>().ok());
+    if matches!((behind, ahead), (Some(0), Some(_))) {
+        return BaselineFailureComparison {
+            status: "NOT_PROVEN",
+            detail: "the branch is not behind origin/main".to_string(),
+        };
+    }
+    if !matches!((behind, ahead), (Some(_), Some(_))) {
+        return BaselineFailureComparison {
+            status: "NOT_PROVEN",
+            detail: format!("could not parse origin/main divergence: {divergence:?}"),
+        };
+    }
+    if gate_name == "ci-fast" {
+        return BaselineFailureComparison {
+            status: "NOT_PROVEN",
+            detail: "ci-fast has no stable inner-failure identity for an inherited comparison"
+                .to_string(),
+        };
+    }
+    let root = match std::env::current_dir() {
+        Ok(root) => root,
+        Err(err) => {
+            return BaselineFailureComparison {
+                status: "NOT_PROVEN",
+                detail: format!("could not resolve the PR checkout: {err}"),
+            };
+        }
+    };
+    let worktree = root
+        .join("target")
+        .join("tmp")
+        .join("check-pr")
+        .join("origin-main");
+    if let Err(err) = fs::create_dir_all(worktree.parent().unwrap_or(&worktree)) {
+        return BaselineFailureComparison {
+            status: "NOT_PROVEN",
+            detail: format!("could not create the comparison directory: {err}"),
+        };
+    }
+    let worktree_text = worktree.to_string_lossy().into_owned();
+    let _ = run("git", &["worktree", "prune", "--expire", "now"]);
+    if worktree.exists() {
+        let _ = run("git", &["worktree", "remove", "--force", &worktree_text]);
+        if let Err(err) = fs::remove_dir_all(&worktree) {
+            return BaselineFailureComparison {
+                status: "NOT_PROVEN",
+                detail: format!("could not clear the previous comparison worktree: {err}"),
+            };
+        }
+    }
+    if let Err(err) = run(
+        "git",
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            "--quiet",
+            &worktree_text,
+            "origin/main",
+        ],
+    ) {
+        return BaselineFailureComparison {
+            status: "NOT_PROVEN",
+            detail: format!("could not create the origin/main comparison worktree: {err}"),
+        };
+    }
+    let result = run_origin_gate(gate_name, &worktree);
+    let cleanup = run("git", &["worktree", "remove", "--force", &worktree_text]);
+    if let Err(err) = cleanup {
+        eprintln!("warning: failed to remove comparison worktree: {err}");
+    }
+    match result {
+        Ok(()) => BaselineFailureComparison {
+            status: "PR_INTRODUCED",
+            detail: "the gate passed on origin/main and failed on this branch".to_string(),
+        },
+        Err(err) => BaselineFailureComparison {
+            status: "INHERITED",
+            detail: format!("the same gate failed on origin/main: {err}"),
+        },
+    }
+}
+
+fn run_origin_gate(gate_name: &str, worktree: &Path) -> Result<(), String> {
+    let args: &[&str] = match gate_name {
+        "ci-fast" => &["xtask", "ci-fast"],
+        "clippy" => &[
+            "clippy",
+            "--workspace",
+            "--all-targets",
+            "--",
+            "-D",
+            "warnings",
+        ],
+        "doc" => &["doc", "--workspace", "--no-deps"],
+        _ => return Err(format!("unsupported check-pr gate: {gate_name}")),
+    };
+    run_in_dir(Path::new("cargo"), args, worktree).map(|_| ())
 }
 
 /// Bound the retained first-failure evidence to five lines with CRLF
@@ -4158,6 +4283,10 @@ fn check_pr_report(failure: Option<&CheckPrGateFailure>) -> String {
                 body.push_str(&format!("- `{name}`\n"));
             }
         }
+        body.push_str(&format!(
+            "\n## Inherited-failure comparison (advisory)\n\nStatus: {}\nDetail: {}\n",
+            failure.baseline.status, failure.baseline.detail
+        ));
     }
     let pr_summary_entry = if failure.is_some() {
         // The failure path returns before pr_summary() runs, so advertising
@@ -4772,6 +4901,7 @@ fn check_workflows_impl() -> Result<(), String> {
         ));
         violations.extend(workflow_bare_self_hosted_violations(&normalized, &text));
         violations.extend(workflow_plain_scalar_comment_violations(&normalized, &text));
+        violations.extend(scratch_gc_concurrency_violations(&normalized, &text));
         for block in extract_workflow_run_blocks(&text) {
             if block.non_empty_lines > budget.max_non_empty_lines {
                 violations.push(format!(
@@ -4821,6 +4951,66 @@ fn check_workflows_impl() -> Result<(), String> {
         },
         &violations,
     )
+}
+
+/// Keep the scratch-GC matrix isolated by pool.
+///
+/// A workflow-level concurrency group serializes the whole matrix behind the
+/// slowest or unavailable self-hosted pool. The resulting pending-run
+/// eviction is especially dangerous here because `cancelled` is not a failed
+/// workflow and therefore produces no useful CI signal.
+fn scratch_gc_concurrency_violations(path: &str, text: &str) -> Vec<String> {
+    const WORKFLOW: &str = ".github/workflows/scratch-gc.yml";
+    const GROUP: &str = "group: scratch-gc-${{ github.repository }}-${{ matrix.pool }}";
+
+    if path != WORKFLOW {
+        return Vec::new();
+    }
+
+    let lines: Vec<&str> = text.lines().collect();
+    let has_top_level_concurrency = lines
+        .iter()
+        .any(|line| line.trim_start().len() == line.len() && line.trim() == "concurrency:");
+    let mut in_scratch_job = false;
+    let mut in_concurrency = false;
+    let mut concurrency_lines = Vec::new();
+    for line in &lines {
+        let indent = line.len() - line.trim_start().len();
+        if *line == "  scratch-gc:" {
+            in_scratch_job = true;
+            continue;
+        }
+        if in_scratch_job && indent == 2 && !line.trim().is_empty() {
+            in_scratch_job = false;
+            in_concurrency = false;
+        }
+        if in_scratch_job && indent == 4 && line.trim() == "concurrency:" {
+            in_concurrency = true;
+            continue;
+        }
+        if in_concurrency {
+            if indent <= 4 && !line.trim().is_empty() {
+                in_concurrency = false;
+            } else {
+                concurrency_lines.push(line.trim());
+            }
+        }
+    }
+    let has_pool_group = concurrency_lines.contains(&GROUP);
+    let has_non_cancelling_pool_queue = concurrency_lines.contains(&"cancel-in-progress: false");
+
+    let mut violations = Vec::new();
+    if has_top_level_concurrency {
+        violations.push(format!(
+            "{WORKFLOW}: scratch-GC concurrency must be job-level and keyed by matrix.pool; workflow-level concurrency starves the matrix when one pool is unavailable"
+        ));
+    }
+    if !has_pool_group || !has_non_cancelling_pool_queue {
+        violations.push(format!(
+            "{WORKFLOW}: scratch-GC must preserve a non-cancelling per-pool concurrency group ({GROUP})"
+        ));
+    }
+    violations
 }
 
 /// Workflow automation must not perform review-thread resolution without adjudication.
@@ -4987,11 +5177,17 @@ fn routed_rust_workflow_contract_violations_for_repo() -> Result<Vec<String>, St
     }
 
     let workflow = read_text_lossy(workflow_path)?;
+    let reusable_workflow = if workflow.contains(ROUTED_RUST_REUSABLE_WORKFLOW_REF) {
+        optional_policy_text(ROUTED_RUST_REUSABLE_WORKFLOW_PATH)?
+    } else {
+        None
+    };
     let settings = optional_policy_text(".github/settings.yml")?;
     let lane_whitelist = optional_policy_text("policy/ci-lane-whitelist.toml")?;
 
-    Ok(routed_rust_workflow_contract_violations(
+    Ok(routed_rust_workflow_contract_violations_with_reusable(
         &workflow,
+        reusable_workflow.as_deref(),
         settings.as_deref(),
         lane_whitelist.as_deref(),
     ))
@@ -5019,10 +5215,19 @@ const ROUTED_RUST_DEADLINE_JOBS: [&str; 8] = [
     "result",
 ];
 
-/// Whether the named job block in a workflow text sets `timeout-minutes`.
+const ROUTED_RUST_IMPLEMENTATION_JOBS: [&str; 4] =
+    ["rust-cx43", "rust-cpx42", "rust-cx53", "rust-github"];
+const ROUTED_RUST_REUSABLE_WORKFLOW_PATH: &str = ".github/workflows/rust-gates.yml";
+const ROUTED_RUST_REUSABLE_WORKFLOW_REF: &str = "uses: ./.github/workflows/rust-gates.yml";
+
+/// Whether any line in the named job block satisfies `predicate`.
 /// Job keys are exactly two-space-indented `name:` lines under `jobs:`;
 /// anything deeper belongs to the current block.
-fn routed_rust_job_block_has_deadline(workflow: &str, job: &str) -> bool {
+fn routed_rust_job_block_any(
+    workflow: &str,
+    job: &str,
+    mut predicate: impl FnMut(&str) -> bool,
+) -> bool {
     let job_header = format!("{job}:");
     let mut in_block = false;
     for line in workflow.lines() {
@@ -5034,19 +5239,109 @@ fn routed_rust_job_block_has_deadline(workflow: &str, job: &str) -> bool {
             in_block = line.trim() == job_header;
             continue;
         }
-        if in_block && !line.trim_start().starts_with('#') && line.contains("timeout-minutes:") {
+        if in_block && !line.is_empty() && !line.starts_with(' ') {
+            break;
+        }
+        if in_block && predicate(line) {
             return true;
         }
     }
     false
 }
 
+fn routed_rust_job_block_has_deadline(workflow: &str, job: &str) -> bool {
+    routed_rust_job_block_any(workflow, job, |line| {
+        !line.trim_start().starts_with('#') && line.contains("timeout-minutes:")
+    })
+}
+
+fn routed_rust_job_uses_reusable_workflow(workflow: &str, job: &str) -> bool {
+    routed_rust_job_block_any(workflow, job, |line| {
+        line.strip_prefix("    ") == Some(ROUTED_RUST_REUSABLE_WORKFLOW_REF)
+    })
+}
+
+fn routed_rust_job_block_has_with_value(workflow: &str, job: &str, value: &str) -> bool {
+    let mut in_with = false;
+    routed_rust_job_block_any(workflow, job, |line| {
+        if line == "    with:" {
+            in_with = true;
+            return false;
+        }
+        if in_with && line.starts_with("    ") && !line.starts_with("     ") {
+            in_with = false;
+        }
+        in_with && line.strip_prefix("      ") == Some(value)
+    })
+}
+
+fn reusable_workflow_jobs(workflow: &str) -> Vec<String> {
+    let mut jobs = Vec::new();
+    let mut in_jobs = false;
+    for line in workflow.lines() {
+        if line.trim_end() == "jobs:" {
+            in_jobs = true;
+            continue;
+        }
+        if in_jobs && !line.is_empty() && !line.starts_with(' ') {
+            break;
+        }
+        if in_jobs
+            && line.starts_with("  ")
+            && !line.starts_with("   ")
+            && line.trim_end().ends_with(':')
+            && !line.trim_start().starts_with('-')
+        {
+            jobs.push(line.trim().trim_end_matches(':').to_string());
+        }
+    }
+    jobs
+}
+
+#[cfg(test)]
 fn routed_rust_workflow_contract_violations(
     workflow: &str,
     settings: Option<&str>,
     lane_whitelist: Option<&str>,
 ) -> Vec<String> {
+    routed_rust_workflow_contract_violations_with_reusable(workflow, None, settings, lane_whitelist)
+}
+
+fn routed_rust_workflow_contract_violations_with_reusable(
+    workflow: &str,
+    reusable_workflow: Option<&str>,
+    settings: Option<&str>,
+    lane_whitelist: Option<&str>,
+) -> Vec<String> {
     let mut violations = Vec::new();
+    let delegated_jobs: Vec<&str> = ROUTED_RUST_IMPLEMENTATION_JOBS
+        .iter()
+        .copied()
+        .filter(|job| routed_rust_job_uses_reusable_workflow(workflow, job))
+        .collect();
+    let delegated = !delegated_jobs.is_empty();
+
+    if !delegated_jobs.is_empty() && delegated_jobs.len() != ROUTED_RUST_IMPLEMENTATION_JOBS.len() {
+        violations.push(format!(
+            ".github/workflows/routed-rust.yml must keep all four implementation jobs inline or delegate all four to `{ROUTED_RUST_REUSABLE_WORKFLOW_PATH}`; delegated {} of 4",
+            delegated_jobs.len()
+        ));
+    }
+
+    let implementation_workflow = if delegated {
+        match reusable_workflow {
+            Some(reusable) => reusable,
+            None => {
+                violations.push(format!(
+                    ".github/workflows/routed-rust.yml delegates implementation jobs to missing `{ROUTED_RUST_REUSABLE_WORKFLOW_PATH}`"
+                ));
+                ""
+            }
+        }
+    } else {
+        workflow
+    };
+    let implementation_copies = if delegated { 1 } else { 3 };
     let required_workflow_snippets = [
         (
             "org runner discovery",
@@ -5092,10 +5387,6 @@ fn routed_rust_workflow_contract_violations(
             "needs.detect-docs-only.result == 'success'",
         ),
         (
-            "self-hosted scratch tempfail output",
-            "scratch_status: ${{ steps.scratch.outputs.status }}",
-        ),
-        (
             "CX43 tempfail fallback predicate",
             "needs.rust-cx43.outputs.scratch_status == 'tempfail'",
         ),
@@ -5115,18 +5406,6 @@ fn routed_rust_workflow_contract_violations(
             "normalized docs detection failure",
             "docs-surface detection result was $DOCS_DETECT_RESULT",
         ),
-        (
-            "CX43 scratch free-space floor",
-            "ci-disk-guard /mnt/ci-scratch 35",
-        ),
-        (
-            "CPX42 scratch free-space floor",
-            "ci-disk-guard /mnt/ci-scratch 35",
-        ),
-        (
-            "CX53 scratch free-space floor",
-            "ci-disk-guard /mnt/ci-scratch 50",
-        ),
     ];
 
     for (label, snippet) in required_workflow_snippets {
@@ -5137,23 +5416,83 @@ fn routed_rust_workflow_contract_violations(
         }
     }
 
-    let toolchain_temp_steps = workflow.matches("name: Prepare toolchain temp").count();
-    let toolchain_temp_mkdirs = workflow.matches("run: mkdir -p \"$TMPDIR\"").count();
-    if toolchain_temp_steps < 3 || toolchain_temp_mkdirs < 3 {
+    let scratch_tempfail_output = "scratch_status: ${{ steps.scratch.outputs.status }}";
+    if !implementation_workflow.contains(scratch_tempfail_output) {
         violations.push(format!(
-            ".github/workflows/routed-rust.yml must include `Prepare toolchain temp` before setup for all three self-hosted implementation jobs; found {toolchain_temp_steps} step(s) and {toolchain_temp_mkdirs} mkdir command(s)"
+            "routed Rust implementation authority is missing self-hosted scratch tempfail output: `{scratch_tempfail_output}`"
+        ));
+    }
+
+    if delegated {
+        for (label, snippet) in [
+            ("workflow_call trigger", "workflow_call:"),
+            (
+                "workflow_call scratch-status output",
+                "      scratch_status:\n        value: ${{ jobs.rust-gates.outputs.scratch_status }}",
+            ),
+            ("disk-guard threshold input", "disk-guard-threshold:"),
+            (
+                "parameterized scratch free-space floor",
+                "ci-disk-guard /mnt/ci-scratch \"${{ inputs.disk-guard-threshold }}\"",
+            ),
+        ] {
+            if !implementation_workflow.contains(snippet) {
+                violations.push(format!(
+                    "{ROUTED_RUST_REUSABLE_WORKFLOW_PATH} is missing {label}: `{snippet}`"
+                ));
+            }
+        }
+        for (job, threshold) in [("rust-cx43", 35), ("rust-cpx42", 35), ("rust-cx53", 50)] {
+            let value = format!("disk-guard-threshold: {threshold}");
+            if !routed_rust_job_block_has_with_value(workflow, job, &value) {
+                violations.push(format!(
+                    ".github/workflows/routed-rust.yml delegated job `{job}` must pass `with.{value}`"
+                ));
+            }
+        }
+    } else {
+        for (label, snippet) in [
+            (
+                "CX43/CPX42 scratch free-space floor",
+                "ci-disk-guard /mnt/ci-scratch 35",
+            ),
+            (
+                "CX53 scratch free-space floor",
+                "ci-disk-guard /mnt/ci-scratch 50",
+            ),
+        ] {
+            if !workflow.contains(snippet) {
+                violations.push(format!(
+                    ".github/workflows/routed-rust.yml is missing {label}: `{snippet}`"
+                ));
+            }
+        }
+    }
+
+    let toolchain_temp_steps = implementation_workflow
+        .matches("name: Prepare toolchain temp")
+        .count();
+    let toolchain_temp_mkdirs = implementation_workflow
+        .matches("run: mkdir -p \"$TMPDIR\"")
+        .count();
+    if toolchain_temp_steps < implementation_copies || toolchain_temp_mkdirs < implementation_copies
+    {
+        violations.push(format!(
+            "routed Rust implementation authority must include `Prepare toolchain temp` before setup; expected {implementation_copies} copy/copies, found {toolchain_temp_steps} step(s) and {toolchain_temp_mkdirs} mkdir command(s)"
         ));
     }
 
     let scratch_cargo_home =
         "CARGO_HOME: /mnt/ci-scratch/cargo-home/${{ github.run_id }}-${{ github.run_attempt }}";
-    let scratch_cargo_homes = workflow.matches(scratch_cargo_home).count();
-    let scratch_cargo_home_cleanups = workflow
+    let scratch_cargo_homes = implementation_workflow.matches(scratch_cargo_home).count();
+    let scratch_cargo_home_cleanups = implementation_workflow
         .matches("rm -rf \"$CARGO_HOME\" \"$CARGO_TARGET_DIR\" \"$TMPDIR\"")
         .count();
-    if scratch_cargo_homes < 3 || scratch_cargo_home_cleanups < 3 {
+    if scratch_cargo_homes < implementation_copies
+        || scratch_cargo_home_cleanups < implementation_copies
+    {
         violations.push(format!(
-            ".github/workflows/routed-rust.yml must use scratch CARGO_HOME and clean it for all three self-hosted implementation jobs; found {scratch_cargo_homes} scratch home(s) and {scratch_cargo_home_cleanups} cleanup command(s)"
+            "routed Rust implementation authority must use scratch CARGO_HOME and clean it; expected {implementation_copies} copy/copies, found {scratch_cargo_homes} scratch home(s) and {scratch_cargo_home_cleanups} cleanup command(s)"
         ));
     }
 
@@ -5162,12 +5501,13 @@ fn routed_rust_workflow_contract_violations(
     // appended with `|| true` so a route-computation failure never fails the
     // lane, and it runs on all three self-hosted jobs and the hosted fallback so
     // the artifact cannot silently regress. No lane is skipped or gated by it.
-    let proof_route_dry_runs = workflow
+    let proof_route_dry_runs = implementation_workflow
         .matches("cargo xtask proof route --base \"$BASE_SHA\" --head \"$HEAD_SHA\" || true")
         .count();
-    if proof_route_dry_runs < 4 {
+    let expected_proof_route_dry_runs = if delegated { 1 } else { 4 };
+    if proof_route_dry_runs < expected_proof_route_dry_runs {
         violations.push(format!(
-            ".github/workflows/routed-rust.yml must emit the advisory proof-route dry-run artifact (`cargo xtask proof route --base \"$BASE_SHA\" --head \"$HEAD_SHA\" || true`) on the PR-evidence path of all three self-hosted jobs and the hosted fallback; found {proof_route_dry_runs} occurrence(s)"
+            "routed Rust implementation authority must emit the advisory proof-route dry-run artifact (`cargo xtask proof route --base \"$BASE_SHA\" --head \"$HEAD_SHA\" || true`); expected {expected_proof_route_dry_runs} copy/copies, found {proof_route_dry_runs}"
         ));
     }
 
@@ -5178,9 +5518,28 @@ fn routed_rust_workflow_contract_violations(
     // duplicate or stray `timeout-minutes:` token elsewhere cannot stand in
     // for a job that lost its deadline.
     for job in ROUTED_RUST_DEADLINE_JOBS {
+        if delegated_jobs.contains(&job) {
+            continue;
+        }
         if !routed_rust_job_block_has_deadline(workflow, job) {
             violations.push(format!(
                 ".github/workflows/routed-rust.yml job `{job}` must set an explicit `timeout-minutes` job deadline so a hung step fails in bounded time"
+            ));
+        }
+    }
+    if delegated {
+        let reusable_jobs = reusable_workflow_jobs(implementation_workflow);
+        if reusable_jobs.is_empty() {
+            violations.push(format!(
+                "{ROUTED_RUST_REUSABLE_WORKFLOW_PATH} deadline check analyzed zero `jobs:` entries"
+            ));
+        }
+        for job in reusable_jobs
+            .into_iter()
+            .filter(|job| !routed_rust_job_block_has_deadline(implementation_workflow, job))
+        {
+            violations.push(format!(
+                "{ROUTED_RUST_REUSABLE_WORKFLOW_PATH} job `{job}` must set an explicit `timeout-minutes` deadline"
             ));
         }
     }
@@ -5376,20 +5735,6 @@ fn check_spec_format() -> Result<(), String> {
             Some("proposed" | "planned" | "accepted" | "deprecated") => {}
             Some(value) => violations.push(format!("{normalized} has invalid status `{value}`")),
             None => violations.push(format!("{normalized} is missing `Status: ...`")),
-        }
-        // #2708: flag proposed specs older than 90 days without review.
-        // Accepted/deprecated specs are exempt — they have been reviewed.
-        if status.as_deref() == Some("proposed")
-            && let Ok(metadata) = std::fs::metadata(&path)
-            && let Ok(modified) = metadata.modified()
-            && let Ok(elapsed) = modified.elapsed()
-            && elapsed.as_secs() > 90 * 24 * 60 * 60
-        {
-            let days = elapsed.as_secs() / (24 * 60 * 60);
-            violations.push(format!(
-                "{normalized} has been `proposed` for {days} days without review; \
-                 promote to `accepted`, re-scope, or add evidence to justify the status"
-            ));
         }
         for heading in required_spec_headings() {
             if !has_markdown_heading(&text, heading) {
@@ -11535,6 +11880,18 @@ fn check_architecture() -> Result<(), String> {
         }
     }
 
+    for file in files
+        .iter()
+        .filter(|file| convergence::architecture::is_source_candidate(file))
+    {
+        let text = read_text_lossy(Path::new(file))?;
+        violations.extend(convergence::architecture::source_violations(file, &text));
+    }
+
+    violations.extend(convergence::architecture::required_surface_violations(
+        &files,
+    ));
+
     // RIPR-SPEC-0087 §8 (issue #2028): repair-packet authority coupling guard.
     for file in &files {
         if !file.starts_with("crates/ripr/src/") || !file.ends_with(".rs") {
@@ -11563,6 +11920,8 @@ fn check_architecture() -> Result<(), String> {
                 "Move rendering logic into output modules.",
                 "Keep domain model types independent from CLI, LSP, output, and JSON adapters.",
                 "Keep analysis logic out of CLI, LSP, and output adapters.",
+                "Keep convergence types and domain code independent from infrastructure adapters.",
+                "Route convergence command I/O and mutation through the bounded convergence ports.",
                 "Update policy/architecture.txt only when the architecture rule itself changes.",
             ],
             rerun_command: "cargo xtask check-architecture",
@@ -11910,7 +12269,7 @@ fn check_output_contracts() -> Result<(), String> {
             }
             "exposure_class" | "severity" | "probe_family" | "delta" | "flow_sink"
             | "stage_state" | "confidence" | "oracle_kind" | "oracle_strength" | "stop_reason"
-            | "value_context" | "oracle_alignment" => {
+            | "value_context" | "oracle_alignment" | "source_currentness" => {
                 require_contract_value(
                     "crates/ripr/src/domain/",
                     &domain,
@@ -18290,6 +18649,26 @@ pub(crate) fn read_file_policy_allowlist(path: &str) -> Result<Vec<GlobAllow>, S
         .collect())
 }
 
+pub(crate) fn read_file_policy_test_commands(path: &str) -> Result<Vec<(usize, String)>, String> {
+    let entries = parse_file_policy_allowlist(path)?;
+    Ok(entries
+        .into_iter()
+        .flat_map(|entry| {
+            entry
+                .covered_by
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|command| is_cargo_test_command(command))
+                .map(move |command| (entry.line, command))
+        })
+        .collect())
+}
+
+pub(crate) fn is_cargo_test_command(command: &str) -> bool {
+    let mut words = command.split_whitespace();
+    words.next() == Some("cargo") && words.next() == Some("test")
+}
+
 fn parse_file_policy_allowlist(path: &str) -> Result<Vec<FilePolicyAllowEntry>, String> {
     let text = read_text_lossy(Path::new(path))?;
     let mut entries = Vec::new();
@@ -19757,3 +20136,23 @@ synonym (e.g. {hint}). To intentionally allow this line, append \
     reason = "xtask test code uses unwrap/expect for fail-fast assertion. Production paths are receipted via policy/no-panic-allowlist.toml; the test scope is governed by this single module-level expect."
 )]
 mod tests;
+
+#[cfg(test)]
+mod inherited_failure_tests {
+    use super::*;
+    #[test]
+    fn failure_report_preserves_not_proven_baseline_state() {
+        let report = check_pr_report(Some(&CheckPrGateFailure {
+            name: "clippy".to_string(),
+            reproduce: "cargo clippy".to_string(),
+            bounded_error: "error".to_string(),
+            not_run: vec![],
+            baseline: BaselineFailureComparison {
+                status: "NOT_PROVEN",
+                detail: "unavailable".to_string(),
+            },
+        }));
+        assert!(report.contains("Inherited-failure comparison"));
+        assert!(report.contains("Status: NOT_PROVEN"));
+    }
+}

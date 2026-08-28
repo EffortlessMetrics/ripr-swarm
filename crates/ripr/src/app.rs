@@ -5,6 +5,7 @@ pub(crate) mod agent_review_summary;
 pub(crate) mod agent_status;
 pub(crate) mod agent_workflow;
 pub(crate) mod analysis_outcome_artifact;
+pub(crate) mod analysis_subject;
 pub(crate) mod annotations;
 pub(crate) mod causal_projection;
 mod check;
@@ -13,11 +14,13 @@ mod context;
 mod explain;
 pub(crate) mod impacted_evidence;
 mod navigation;
-pub(crate) mod pr_evidence;
+pub mod pr_evidence;
+pub use pr_evidence::reject_pr_evidence_error_packet;
 /// Shared PR-evidence summary projection used by the `ripr` binary and the
 /// compatibility `xtask` route.
 pub mod pr_summary;
 pub(crate) mod receipt;
+pub(crate) mod repair_attempt;
 pub(crate) mod ripr_plus;
 mod selector;
 pub(crate) mod temp_diff;
@@ -98,6 +101,13 @@ pub struct CheckInput {
     /// `RIPR_GIT_TIMEOUT` env var (default: 5 minutes); the LSP refresh path
     /// populates it from the `gitTimeoutMs` session option.
     pub git_timeout: Option<std::time::Duration>,
+    /// Immutable Git candidate subject (#3237 / #3276 R1). When `Some`, the
+    /// run must consume base and candidate bytes from the named Git tree
+    /// objects — never the worktree or live index. Mutually exclusive with
+    /// `diff_file` and `base`. The object producer (#3277) executes the
+    /// subject in diff mode; worktree and repo modes fail closed with a
+    /// named error rather than falling back to worktree analysis.
+    pub git_candidate: Option<crate::domain::GitCandidateSubject>,
 }
 
 impl Default for CheckInput {
@@ -112,6 +122,7 @@ impl Default for CheckInput {
             perl_facts_path: None,
             suppression_policy: None,
             git_timeout: None,
+            git_candidate: None,
         }
     }
 }

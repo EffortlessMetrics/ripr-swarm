@@ -102,6 +102,7 @@ pub(crate) struct AttemptDelta {
     pub(crate) changes: Vec<AttemptPathChange>,
 }
 
+#[derive(Serialize, Deserialize)]
 pub(crate) struct AttemptBaseline {
     root: PathBuf,
     head: String,
@@ -109,18 +110,26 @@ pub(crate) struct AttemptBaseline {
     paths: BTreeMap<String, RepositoryPathState>,
     ambiguous: bool,
     #[cfg(windows)]
+    #[serde(skip, default)]
     _unknown_ignored_write_guards: Vec<fs::File>,
     #[cfg(windows)]
+    #[serde(skip, default)]
     _expected_write_authorities: Vec<winsafe::guard::CloseHandleGuard<winsafe::HFILE>>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+impl AttemptBaseline {
+    pub(crate) fn root(&self) -> &Path {
+        &self.root
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 struct RepositoryPathState {
     index_entry: Option<String>,
     worktree_identity: WorktreeIdentity,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 enum WorktreeIdentity {
     Missing,
     File {
@@ -135,7 +144,7 @@ enum WorktreeIdentity {
     Other,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 struct BoundedFileSnapshot {
     len: u64,
     modified: Duration,
@@ -161,9 +170,16 @@ pub(crate) fn capture_attempt_baseline(
 pub(crate) fn evaluate_repository_edit_cage(
     baseline: &AttemptBaseline,
 ) -> Result<EditCageVerdict, String> {
+    Ok(evaluate_repository_edit_cage_with_delta(baseline)?.1)
+}
+
+pub(crate) fn evaluate_repository_edit_cage_with_delta(
+    baseline: &AttemptBaseline,
+) -> Result<(AttemptDelta, EditCageVerdict), String> {
     let after = capture_repository_state(baseline.root.clone(), baseline.policy.clone())?;
     let delta = delta_from_repository_states(baseline, &after);
-    Ok(evaluate_edit_cage(&baseline.policy, &delta))
+    let verdict = evaluate_edit_cage(&baseline.policy, &delta);
+    Ok((delta, verdict))
 }
 
 fn capture_repository_state(
@@ -196,6 +212,13 @@ fn capture_repository_state(
     #[cfg(windows)]
     let mut expected_write_authorities = Vec::new();
     for (path, ignored_path) in inventory {
+        // The before-phase serialization lock is an authority artifact, not
+        // an agent edit. It is necessarily held while the baseline is
+        // captured, so probing its metadata would make every real repair
+        // incomparable on Windows.
+        if path == "target/ripr/repair-attempts/.before.lock" {
+            continue;
+        }
         let expected_write = policy
             .expected_operational_writes
             .iter()
@@ -935,6 +958,18 @@ pub(crate) struct EditCagePolicy {
     /// Command-declared generated or receipt writes that may occur alongside
     /// the authored test edit. They never satisfy `selected_target` movement.
     pub(crate) expected_operational_writes: Vec<CagePathRule>,
+}
+
+impl EditCagePolicy {
+    pub(crate) fn allows_path(&self, path: &str) -> bool {
+        self.allowed_edit_surface
+            .iter()
+            .any(|rule| rule.matches(path))
+            || self
+                .expected_operational_writes
+                .iter()
+                .any(|rule| rule.matches(path))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]

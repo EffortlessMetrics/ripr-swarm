@@ -251,6 +251,13 @@ fn run_agent_verify_execute(options: AgentVerifyExecuteOptions) -> Result<(), St
 }
 
 fn run_agent_receipt(options: AgentReceiptOptions) -> Result<(), String> {
+    run_agent_receipt_for_attempt(options, None)
+}
+
+fn run_agent_receipt_for_attempt(
+    options: AgentReceiptOptions,
+    attempt_id: Option<&str>,
+) -> Result<(), String> {
     ensure_command_root(&options.root, "agent receipt")?;
 
     let verify_path = validate_agent_receipt_verify_path(&options.root, &options.verify_json)?;
@@ -262,6 +269,20 @@ fn run_agent_receipt(options: AgentReceiptOptions) -> Result<(), String> {
     })?;
     let validated =
         app::agent_receipt::validate_agent_receipt_verify_json(&options.root, &verify_json)?;
+    let packet_path = options.root.join("target/ripr/workflow/agent-packet.json");
+    let attempts_root = options
+        .root
+        .join(crate::app::repair_attempt::REPAIR_ATTEMPT_DIRECTORY);
+    let repair_attempt_binding = if packet_path.exists() || attempts_root.exists() {
+        Some(crate::app::repair_attempt::receipt_binding(
+            &options.root,
+            &options.seam_id,
+            &packet_path,
+            attempt_id,
+        )?)
+    } else {
+        None
+    };
     let input_paths = &validated.input_paths;
     let provenance = build_agent_receipt_provenance(
         &options.root,
@@ -304,6 +325,14 @@ fn run_agent_receipt(options: AgentReceiptOptions) -> Result<(), String> {
         provenance,
         analysis_outcome,
     )?;
+    let mut receipt: serde_json::Value = serde_json::from_str(&rendered)
+        .map_err(|error| format!("parse rendered agent receipt failed: {error}"))?;
+    if let Some(binding) = repair_attempt_binding {
+        receipt["repair_attempt"] = binding;
+    }
+    let rendered = serde_json::to_string_pretty(&receipt)
+        .map_err(|error| format!("serialize bound agent receipt failed: {error}"))?
+        + "\n";
 
     match options.out {
         Some(path) => {
@@ -433,6 +462,7 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
             // stale after artifact from an earlier run.
             write_agent_repo_exposure_snapshot(root, &after)?;
 
+            let packet_path = root.join("target/ripr/workflow/agent-packet.json");
             // Review summaries consume the canonical diff-scoped producer
             // outcome. Generate it from the same current root before issuing
             // the receipt so the built-in repair route cannot report a clean
@@ -451,15 +481,28 @@ fn run_agent_repair(options: AgentRepairOptions) -> Result<(), String> {
             write_text_file(&verify_json, &rendered_verify)?;
             print!("{rendered_verify}");
 
-            run_agent_receipt(AgentReceiptOptions {
-                root: root.clone(),
-                verify_json: verify_json.clone(),
-                seam_id: seam_id.clone(),
-                test_changed: None,
-                commands_run: Vec::new(),
-                json: true,
-                out: Some(root.join("target/ripr/reports/agent-receipt.json")),
-            })?;
+            // Finish only after all command-owned after artifacts exist. This
+            // makes the durable delta the exact delta the receipt binds, while
+            // the receipt itself remains outside the measured edit window.
+            let cage_after =
+                crate::app::repair_attempt::finish_repair_attempt(root, seam_id, &packet_path)?;
+            eprintln!(
+                "ripr: edit-cage verdict for attempt `{seam_id}`: {:?}",
+                cage_after.verdict.status
+            );
+
+            run_agent_receipt_for_attempt(
+                AgentReceiptOptions {
+                    root: root.clone(),
+                    verify_json: verify_json.clone(),
+                    seam_id: seam_id.clone(),
+                    test_changed: None,
+                    commands_run: Vec::new(),
+                    json: true,
+                    out: Some(root.join("target/ripr/reports/agent-receipt.json")),
+                },
+                Some(cage_after.attempt_id.as_str()),
+            )?;
 
             run_agent_status(AgentStatusOptions {
                 root: root.clone(),

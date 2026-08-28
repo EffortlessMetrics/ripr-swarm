@@ -9,7 +9,7 @@ use crate::output::agent_seam_packets::{
     gap_record_packet_do_not_do,
 };
 use crate::output::next_step::reconcile_next_step;
-use crate::output::perl_preview_card::{perl_preview_card, perl_preview_card_json_value};
+use crate::output::perl_preview_card::perl_preview_card_json;
 use crate::output::preview_actionability::{
     preview_actionability_for, preview_actionability_json_value,
     projected_preview_actionability_evidence, projected_preview_actionability_missing,
@@ -272,25 +272,34 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
         out.push_str(",\n  \"preview_languages\": [\n");
         let advisories = &output.preview_language_advisories;
         for (idx, adv) in advisories.iter().enumerate() {
+            let analyzed = adv.analyzed(&output.language_runs);
+            let failed_run = adv.non_success_run(&output.language_runs);
             out.push_str("    {\n");
             field(&mut out, 3, "language", &adv.language, true);
             number_field(&mut out, 3, "file_count", adv.file_count, true);
             array_field(&mut out, 3, "sample_paths", &adv.sample_paths, true);
             out.push_str(&format!(
                 "      \"enabled\": {},\n      \"analyzed\": {},\n",
-                adv.enabled,
-                adv.enabled && adv.file_count > 0
+                adv.enabled, analyzed
             ));
             field(&mut out, 3, "category", "preview_language_advisory", true);
             let why_owned;
-            let why: &str = if adv.enabled {
+            let why: &str = if analyzed {
                 "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
-            } else {
+            } else if !adv.enabled {
                 why_owned = format!(
                     "preview adapter not enabled; files detected but not analyzed; empty result is not Rust-grade clean; to enable add to ripr.toml: [languages] enabled = [\"rust\", \"{}\"]",
                     adv.language
                 );
                 &why_owned
+            } else if let Some(run) = failed_run {
+                why_owned = format!(
+                    "preview adapter did not complete successfully ({}); files detected but not analyzed; empty result is not Rust-grade clean",
+                    run.status.as_str()
+                );
+                &why_owned
+            } else {
+                "preview adapter enabled but no files were routed; files not analyzed; empty result is not Rust-grade clean"
             };
             field(&mut out, 3, "why", why, false);
             out.push_str("    }");
@@ -478,11 +487,13 @@ fn finding_json_with_config_and_counts(
     out.push_str(",\n");
     activation_json(out, finding, indent + 1);
     out.push_str(",\n");
+    let shared_text = shared_assertion_text_map(&finding.activation.observed_values);
     value_facts_array_json(
         out,
         "observed_values",
         &finding.activation.observed_values,
         indent + 1,
+        &shared_text,
     );
     out.push_str(",\n");
     missing_discriminators_array_json(
@@ -544,13 +555,8 @@ fn finding_json_with_config_and_counts(
             out.push_str(",\n");
         }
     }
-    if let Some(card) = perl_preview_card(finding) {
-        json_value_field(
-            out,
-            indent + 1,
-            "perl_preview_card",
-            &perl_preview_card_json_value(&card),
-        );
+    if let Some(card) = perl_preview_card_json(finding) {
+        json_value_field(out, indent + 1, "perl_preview_card", &card);
         out.push_str(",\n");
     }
     if let Some(actionability) = preview_actionability_for(finding) {
@@ -593,115 +599,58 @@ fn finding_json_with_config_and_counts(
         &reconciled_step,
         true,
     );
-    let has_language = finding.language.is_some();
-    let has_status = finding.language_status.is_some();
-    let has_owner_kind = finding.owner_kind.is_some();
-    let has_static_limit_kind = finding.static_limit_kind.is_some();
-    let static_limitation = static_limitation_json_value(finding);
-    let has_static_limitation = static_limitation.is_some();
-    let has_changed_sink = finding.changed_sink.is_some();
-    let has_observed_sink = finding.observed_sink.is_some();
-    let has_oracle_alignment = finding.oracle_alignment.is_some();
-    let has_alignment_reason = finding.alignment_reason.is_some();
-    // The Python sink-alignment fields are the final optional fields, so every
-    // preceding optional field must also account for them when deciding whether
-    // to emit a trailing comma.
-    let has_alignment =
-        has_changed_sink || has_observed_sink || has_oracle_alignment || has_alignment_reason;
+    // `source_currentness` is always emitted as the final finding field
+    // (#3280), so every preceding optional field unconditionally carries a
+    // trailing comma.
     field(
         out,
         indent + 1,
         "suggested_next_action",
         &reconciled_step,
-        has_language
-            || has_status
-            || has_owner_kind
-            || has_static_limit_kind
-            || has_static_limitation
-            || has_alignment,
+        true,
     );
     if let Some(language) = finding.language {
-        field(
-            out,
-            indent + 1,
-            "language",
-            language.as_str(),
-            has_status
-                || has_owner_kind
-                || has_static_limit_kind
-                || has_static_limitation
-                || has_alignment,
-        );
+        field(out, indent + 1, "language", language.as_str(), true);
     }
     if let Some(status) = finding.language_status {
-        field(
-            out,
-            indent + 1,
-            "language_status",
-            status.as_str(),
-            has_owner_kind || has_static_limit_kind || has_static_limitation || has_alignment,
-        );
+        field(out, indent + 1, "language_status", status.as_str(), true);
     }
     if let Some(kind) = finding.owner_kind {
-        field(
-            out,
-            indent + 1,
-            "owner_kind",
-            kind.as_str(),
-            has_static_limit_kind || has_static_limitation || has_alignment,
-        );
+        field(out, indent + 1, "owner_kind", kind.as_str(), true);
     }
     if let Some(kind) = finding.static_limit_kind {
-        field(
-            out,
-            indent + 1,
-            "static_limit_kind",
-            kind.as_str(),
-            has_static_limitation || has_alignment,
-        );
+        field(out, indent + 1, "static_limit_kind", kind.as_str(), true);
     }
-    if let Some(static_limitation) = &static_limitation {
+    if let Some(static_limitation) = &static_limitation_json_value(finding) {
         json_value_field(out, indent + 1, "static_limitation", static_limitation);
-        if has_alignment {
-            out.push_str(",\n");
-        } else {
-            out.push('\n');
-        }
+        out.push_str(",\n");
     }
     // Python oracle sink-alignment (additive optional, RIPR-SPEC-0028): why a
     // strong oracle did or did not credit `exposed`. Present only on Python
     // findings; absent on Rust/TypeScript. `oracle_alignment` is a controlled
     // enum (`ORACLE_ALIGNMENT_VALUES`).
     if let Some(changed_sink) = &finding.changed_sink {
-        field(
-            out,
-            indent + 1,
-            "changed_sink",
-            changed_sink,
-            has_observed_sink || has_oracle_alignment || has_alignment_reason,
-        );
+        field(out, indent + 1, "changed_sink", changed_sink, true);
     }
     if let Some(observed_sink) = &finding.observed_sink {
-        field(
-            out,
-            indent + 1,
-            "observed_sink",
-            observed_sink,
-            has_oracle_alignment || has_alignment_reason,
-        );
+        field(out, indent + 1, "observed_sink", observed_sink, true);
     }
     if let Some(oracle_alignment) = &finding.oracle_alignment {
-        field(
-            out,
-            indent + 1,
-            "oracle_alignment",
-            oracle_alignment,
-            has_alignment_reason,
-        );
+        field(out, indent + 1, "oracle_alignment", oracle_alignment, true);
     }
     if let Some(alignment_reason) = &finding.alignment_reason {
-        field(out, indent + 1, "alignment_reason", alignment_reason, false);
+        field(out, indent + 1, "alignment_reason", alignment_reason, true);
     }
+    // Producer-owned source-currentness disposition (#3280): always
+    // emitted, with `unresolved_subject` as the explicit unknown for
+    // producers that do not resolve it.
+    field(
+        out,
+        indent + 1,
+        "source_currentness",
+        finding.source_currentness.as_str(),
+        false,
+    );
     out.push_str(&format!("{sp}}}"));
 }
 
@@ -874,11 +823,13 @@ fn strongest_related_test(finding: &Finding) -> Option<&RelatedTest> {
 fn activation_json(out: &mut String, finding: &Finding, indent: usize) {
     let sp = "  ".repeat(indent);
     out.push_str(&format!("{sp}\"activation\": {{\n"));
+    let shared_text = shared_assertion_text_map(&finding.activation.observed_values);
     value_facts_array_json(
         out,
         "observed_values",
         &finding.activation.observed_values,
         indent + 1,
+        &shared_text,
     );
     out.push_str(",\n");
     missing_discriminators_array_json(
@@ -904,10 +855,16 @@ fn flow_sinks_json(out: &mut String, finding: &Finding, indent: usize) {
     out.push_str(&format!("{}]", "  ".repeat(indent)));
 }
 
-fn value_facts_array_json(out: &mut String, name: &str, facts: &[ValueFact], indent: usize) {
+fn value_facts_array_json(
+    out: &mut String,
+    name: &str,
+    facts: &[ValueFact],
+    indent: usize,
+    shared_text: &BTreeMap<usize, String>,
+) {
     out.push_str(&format!("{}\"{name}\": [\n", "  ".repeat(indent)));
     for (idx, value) in facts.iter().enumerate() {
-        value_fact_json(out, value, indent + 1);
+        value_fact_json(out, value, indent + 1, shared_text);
         if idx + 1 != facts.len() {
             out.push(',');
         }
@@ -933,12 +890,34 @@ fn missing_discriminators_array_json(
     out.push_str(&format!("{}]", "  ".repeat(indent)));
 }
 
-fn value_fact_json(out: &mut String, fact: &ValueFact, indent: usize) {
+fn value_fact_json(
+    out: &mut String,
+    fact: &ValueFact,
+    indent: usize,
+    shared_text: &BTreeMap<usize, String>,
+) {
     let sp = "  ".repeat(indent);
     out.push_str(&format!("{sp}{{\n"));
     number_field(out, indent + 1, "line", fact.line, true);
     field(out, indent + 1, "value", &fact.value, true);
-    field(out, indent + 1, "context", fact.context.as_str(), false);
+    // Additive (#3295 deferred follow-up): when this fact's retained
+    // text is NOT the shared assertion source for its line, it carries
+    // computed-value provenance (operation chain, source inputs, chain
+    // depth) that the line-keyed `assertion_texts` map cannot express.
+    // Surface it per-value; plain assertion-source facts stay deduped.
+    let provenance_differs = shared_text
+        .get(&fact.line)
+        .is_none_or(|shared| *shared != fact.text);
+    field(
+        out,
+        indent + 1,
+        "context",
+        fact.context.as_str(),
+        provenance_differs,
+    );
+    if provenance_differs {
+        field(out, indent + 1, "provenance", &fact.text, false);
+    }
     out.push_str(&format!("{sp}}}"));
 }
 
@@ -954,13 +933,10 @@ fn value_fact_json(out: &mut String, fact: &ValueFact, indent: usize) {
 /// finding, only one text is retained.  This is a low-probability edge case; a
 /// future schema could use `"file:line"` composite keys.
 fn assertion_texts_json(out: &mut String, facts: &[ValueFact], indent: usize) {
+    let map = shared_assertion_text_map(facts);
     let sp = "  ".repeat(indent);
     let isp = "  ".repeat(indent + 1);
     // BTreeMap gives deterministic (ascending) key order.
-    let mut map: BTreeMap<usize, &str> = BTreeMap::new();
-    for fact in facts {
-        map.entry(fact.line).or_insert(fact.text.as_str());
-    }
     out.push_str(&format!("{sp}\"assertion_texts\": {{\n"));
     let entries: Vec<_> = map.into_iter().collect();
     for (idx, (line, text)) in entries.iter().enumerate() {
@@ -971,6 +947,18 @@ fn assertion_texts_json(out: &mut String, facts: &[ValueFact], indent: usize) {
         ));
     }
     out.push_str(&format!("{sp}}}"));
+}
+
+/// The line -> first-retained-text map behind `assertion_texts`. The
+/// per-value `provenance` field uses the same map to decide whether a
+/// fact's text is the shared assertion source or a distinct
+/// provenance-bearing string.
+fn shared_assertion_text_map(facts: &[ValueFact]) -> BTreeMap<usize, String> {
+    let mut map: BTreeMap<usize, String> = BTreeMap::new();
+    for fact in facts {
+        map.entry(fact.line).or_insert_with(|| fact.text.clone());
+    }
+    map
 }
 
 fn missing_discriminator_json(out: &mut String, fact: &MissingDiscriminatorFact, indent: usize) {
@@ -1334,4 +1322,90 @@ pub(super) fn related_test_json(out: &mut String, test: &RelatedTest, indent: us
         );
     }
     out.push_str(&format!("{sp}}}"));
+}
+
+#[cfg(test)]
+mod provenance_tests {
+    use super::*;
+    use crate::domain::{ValueContext, ValueFact};
+
+    fn fact(line: usize, value: &str, text: &str) -> ValueFact {
+        ValueFact {
+            line,
+            text: text.to_string(),
+            value: value.to_string(),
+            context: ValueContext::FunctionArgument,
+        }
+    }
+
+    fn render(facts: &[ValueFact]) -> Vec<serde_json::Value> {
+        let shared = shared_assertion_text_map(facts);
+        let mut out = String::new();
+        value_facts_array_json(&mut out, "observed_values", facts, 0, &shared);
+        serde_json::from_str::<serde_json::Value>(&format!("{{{out}}}"))
+            .map_err(|error| error.to_string())
+            .and_then(|value| {
+                value
+                    .get("observed_values")
+                    .cloned()
+                    .ok_or_else(|| "missing observed_values key".to_string())
+            })
+            .and_then(|value| serde_json::from_value(value).map_err(|error| error.to_string()))
+            .unwrap_or_default()
+    }
+
+    // The deferred #3295 follow-up: a computed fact whose text differs
+    // from the line's shared assertion source carries per-value
+    // provenance; a plain assertion-source fact stays deduped.
+    #[test]
+    fn provenance_appears_only_for_non_shared_fact_text() -> Result<(), String> {
+        let facts = [
+            fact(
+                5,
+                "\"matched\"",
+                "assert_eq!(body_of(\"pre-fix\"), \"matched\");",
+            ),
+            fact(
+                5,
+                "body == \"fix\"",
+                "assert_eq!(body_of(\"pre-fix\"), \"matched\"); | body = \"fix\" via strip_prefix -> map_or",
+            ),
+        ];
+        let parsed = render(&facts);
+        if parsed.len() != 2 {
+            let shared = shared_assertion_text_map(&facts);
+            let mut raw = String::new();
+            value_facts_array_json(&mut raw, "observed_values", &facts, 0, &shared);
+            return Err(format!("expected 2 facts, got {}: {raw}", parsed.len()));
+        }
+        assert!(
+            parsed[0].get("provenance").is_none(),
+            "shared-source fact must stay deduped: {parsed:?}"
+        );
+        let provenance = parsed[1]
+            .get("provenance")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| format!("computed fact must carry provenance: {parsed:?}"))?;
+        assert!(
+            provenance.contains("via strip_prefix"),
+            "provenance must carry the evaluation chain: {provenance}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn all_shared_facts_omit_provenance() -> Result<(), String> {
+        let facts = [fact(9, "50", "assert_eq!(score(50), 50);")];
+        let parsed = render(&facts);
+        assert_eq!(
+            parsed.len(),
+            1,
+            "one fact in, one fact out (and the render must parse)"
+        );
+        assert!(
+            parsed[0].get("provenance").is_none(),
+            "deduped fact must not carry provenance: {parsed:?}"
+        );
+        Ok(())
+    }
 }

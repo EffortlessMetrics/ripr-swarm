@@ -20,6 +20,10 @@
 # Adding a line means accepting a public compatibility expectation. Removing
 # an item without removing its line fails the gate in the other direction.
 
+# PR #3298: owner ripr/provider-contract; reason: intentional versioned
+# read-only provider DTO and validator contract; covered_by:
+# cargo test -p ripr --lib provider_contract, cargo xtask check-public-api.
+
 pub const ripr::lsp::diagnostic_budget::DEFAULT_MAX_INLINE_DETAIL_BYTES
 pub const ripr::lsp::diagnostic_budget::DEFAULT_MAX_ITEMS_PER_DOCUMENT
 pub const ripr::lsp::diagnostic_budget::DEFAULT_MAX_ITEMS_PER_WORKSPACE_RESPONSE
@@ -50,6 +54,11 @@ pub const ripr::output::start_here_state::START_HERE_UNSAFE_COMMAND
 pub const ripr::output::start_here_state::START_HERE_UNSAFE_PATH
 pub const ripr::output::start_here_state::START_HERE_UNSUPPORTED_SCHEMA
 pub const ripr::output::start_here_state::START_HERE_WRONG_ROOT
+pub use ripr::RIPR_ANALYSIS_RECEIPT_SCHEMA_VERSION
+pub use ripr::RIPR_ANALYSIS_REQUEST_SCHEMA_VERSION
+pub use ripr::RIPR_PROVIDER_CAPABILITY_SCHEMA_VERSION
+pub use ripr::RIPR_PROVIDER_CLAIM_BOUNDARY
+pub use ripr::RIPR_REQUIRED_EXCLUDED_CLAIMS
 pub enum ripr::analysis::AnalysisMode
 pub enum ripr::analysis::LanguageRunStatus
 pub enum ripr::app::Mode
@@ -59,6 +68,7 @@ pub enum ripr::lsp::diagnostic_budget::DiagnosticOverflowReason
 pub enum ripr::lsp::diagnostic_budget::OmittedDiagnosticReason
 pub fn ripr::analysis::run_analysis
 pub fn ripr::analysis::run_repo_analysis
+pub fn ripr::app::pr_evidence::reject_pr_evidence_error_packet
 pub fn ripr::app::render_check
 pub fn ripr::cli::run
 pub fn ripr::lsp::diagnostic_budget::build_budget_items_from_diagnostics
@@ -78,6 +88,7 @@ pub fn ripr::output::start_here_state::start_here_output_state_is_known
 pub fn ripr::set_verbose
 pub mod ripr::analysis
 pub mod ripr::app
+pub mod ripr::app::pr_evidence
 pub mod ripr::app::pr_summary
 pub mod ripr::cli
 pub mod ripr::config
@@ -91,6 +102,7 @@ pub mod ripr::output::human
 pub mod ripr::output::json
 pub mod ripr::output::receipt_lifecycle
 pub mod ripr::output::start_here_state
+pub mod ripr::provider_contract
 pub struct ripr::analysis::AnalysisOptions
 pub struct ripr::analysis::AnalysisResult
 pub struct ripr::analysis::LanguageRun
@@ -106,11 +118,35 @@ pub struct ripr::lsp::diagnostic_budget::DiagnosticBudgetResult
 pub struct ripr::lsp::diagnostic_budget::DiagnosticSelectionKey
 pub struct ripr::lsp::diagnostic_budget::OmittedDiagnosticItem
 pub struct ripr::lsp::diagnostic_budget::SelectedDiagnosticItem
+pub use ripr::RiprAnalysisReceiptV1
+pub use ripr::RiprAnalysisRequestV1
+pub use ripr::RiprEvidenceSubjectV1
+pub use ripr::RiprProviderCapabilityDescriptorV1
+pub use ripr::RiprProviderCapabilitySetV1
+pub use ripr::RiprProviderEvidenceEntryV1
+pub use ripr::RiprProviderEvidenceSummaryV1
+pub use ripr::RiprProviderCapabilityV1
+pub use ripr::RiprProviderContractErrorCodeV1
+pub use ripr::RiprProviderContractErrorV1
+pub use ripr::RiprProviderDiagnosticV1
+pub use ripr::RiprProviderNativeStatusV1
+pub use ripr::RiprProviderResultClassV1
+pub use ripr::RiprRepositorySnapshotV1
+pub use ripr::RiprSourceViewV1
+pub use ripr::TestEvidenceEntry
+pub use ripr::TestEvidenceSummary
 pub use ripr::CheckInput
 pub use ripr::CheckOutput
 pub use ripr::CheckSuppressionOutcome
 pub use ripr::ExposureClass
 pub use ripr::Finding
+pub use ripr::GitCandidateBase
+pub use ripr::GitCandidateDiffSemantics
+pub use ripr::GitCandidateSubject
+pub use ripr::GitCandidateSubjectError
+pub use ripr::GitHashFormat
+pub use ripr::GitObjectId
+pub use ripr::GitTreeish
 pub use ripr::LanguageFileCount
 pub use ripr::LanguageRun
 pub use ripr::LanguageRunStatus
@@ -122,6 +158,7 @@ pub use ripr::PreviewLanguageAdvisory
 pub use ripr::Probe
 pub use ripr::ProbeFamily
 pub use ripr::RiprEvidence
+pub use ripr::SourceCurrentness
 pub use ripr::Summary
 pub use ripr::SuppressedCheckFinding
 pub use ripr::analysis::PARTIAL_DIFF_LANGUAGE_TIER_VERSION
@@ -144,6 +181,7 @@ pub use ripr::app::pr_summary::PrEvidenceSummaryJson
 pub use ripr::app::pr_summary::build_pr_evidence_summary
 pub use ripr::app::pr_summary::render_evidence_summary_md
 pub use ripr::app::pr_summary::render_pr_evidence_summary_json
+pub use ripr::app::reject_pr_evidence_error_packet
 pub use ripr::app::repo_seam_inventory_input
 pub use ripr::check_workspace
 pub use ripr::collect_context
@@ -191,6 +229,13 @@ pub use ripr::domain::FixInstructionSummary
 pub use ripr::domain::FlowSinkFact
 pub use ripr::domain::FlowSinkKind
 pub use ripr::domain::GapState
+pub use ripr::domain::GitCandidateBase
+pub use ripr::domain::GitCandidateDiffSemantics
+pub use ripr::domain::GitCandidateSubject
+pub use ripr::domain::GitCandidateSubjectError
+pub use ripr::domain::GitHashFormat
+pub use ripr::domain::GitObjectId
+pub use ripr::domain::GitTreeish
 pub use ripr::domain::LanguageFileCount
 pub use ripr::domain::LanguageId
 pub use ripr::domain::LanguageStatus
@@ -208,6 +253,8 @@ pub use ripr::domain::RelationConfidence
 pub use ripr::domain::RelationReason
 pub use ripr::domain::RevealEvidence
 pub use ripr::domain::RiprEvidence
+pub use ripr::domain::SOURCE_CURRENTNESS_VALUES
+pub use ripr::domain::SourceCurrentness
 pub use ripr::domain::SourceLocation
 pub use ripr::domain::StageEvidence
 pub use ripr::domain::StageState
@@ -233,4 +280,6 @@ pub use ripr::lsp::DiagnosticBatch
 pub use ripr::lsp::workspace_diagnostic_batches
 pub use ripr::output::json::render
 pub use ripr::output::json::render_context_packet
+pub use ripr::reject_pr_evidence_error_packet
 pub use ripr::render_check
+pub use ripr::provider_contract::*

@@ -1,3 +1,4 @@
+use crate::agent::command_specs::{command_display_is_nonblank, command_displays_are_complete};
 use crate::agent::loop_commands::shell_arg;
 use crate::domain::{CommandRole, CommandSpec};
 use crate::output::receipt_write::receipt_write_command;
@@ -126,6 +127,12 @@ pub(crate) struct GapRecord {
     pub(crate) evidence_ids: Vec<String>,
     #[serde(default)]
     pub(crate) projection_eligibility: BTreeMap<String, ProjectionEligibility>,
+    /// Which revision owns the source finding (#3281): `candidate_current`
+    /// for established head-side evidence; `None` for sources that predate the
+    /// field (legacy pinned reports). Authority projections require
+    /// `candidate_current`; markdown advisory visibility does not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) source_currentness: Option<String>,
     #[serde(default)]
     pub(crate) verification_commands: Vec<String>,
     /// Producer-owned typed routes. These are the machine-facing authority;
@@ -626,11 +633,43 @@ fn gap_records_from_check_output_json(contents: &str) -> Result<Vec<GapRecord>, 
     }
 
     let mut records = Vec::new();
+    // Alignment items group findings that fresh renders only admit when
+    // candidate-actionable (#3281); rendered payloads carry the per-finding
+    // dispositions alongside, so an item's record is candidate-current only
+    // when every raw finding it grouped is — conservative when the payload
+    // predates the field (empty set ⇒ unknown ⇒ authorities off).
+    let candidate_current_ids: std::collections::BTreeSet<String> = findings
+        .map(|findings| {
+            findings
+                .iter()
+                .filter(|finding| {
+                    finding.get("source_currentness").and_then(Value::as_str)
+                        == Some("candidate_current")
+                })
+                .filter_map(|finding| finding.get("id").and_then(Value::as_str))
+                .map(ToString::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
     if let Some(items) = items {
         for (index, item) in items.iter().enumerate() {
-            let Some(record) = gap_record_from_finding_alignment_item(item, index) else {
+            let Some(mut record) = gap_record_from_finding_alignment_item(item, index) else {
                 continue;
             };
+            let raw_ids = item
+                .get("raw_findings")
+                .and_then(Value::as_array)
+                .map(|raws| {
+                    raws.iter()
+                        .filter_map(|raw| raw.get("source_id").and_then(Value::as_str))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let item_is_current =
+                !raw_ids.is_empty() && raw_ids.iter().all(|id| candidate_current_ids.contains(*id));
+            if item_is_current {
+                record.source_currentness = Some("candidate_current".to_string());
+            }
             if record.gap_id.is_empty() {
                 return Err(format!(
                     "finding_alignment item {index} produced an empty gap_id"
@@ -641,7 +680,18 @@ fn gap_records_from_check_output_json(contents: &str) -> Result<Vec<GapRecord>, 
     }
     if let Some(findings) = findings {
         for (index, finding) in findings.iter().enumerate() {
-            let Some(record) = gap_record_from_python_repair_finding(finding, index)
+            // Candidate-actionable eligibility (#3281): established base-side
+            // evidence never becomes a gap record. Missing fields (legacy
+            // pinned reports) and the explicit unknown keep forming
+            // bounded records; their authority projections stay off via
+            // `projection_eligible`.
+            if matches!(
+                finding.get("source_currentness").and_then(Value::as_str),
+                Some("base_deleted") | Some("moved_or_renamed")
+            ) {
+                continue;
+            }
+            let Some(mut record) = gap_record_from_python_repair_finding(finding, index)
                 .or_else(|| gap_record_from_typescript_repair_finding(finding, index))
                 .or_else(|| gap_record_from_python_static_limit_finding(finding, index))
                 .or_else(|| gap_record_from_python_no_action_finding(finding, index))
@@ -649,6 +699,10 @@ fn gap_records_from_check_output_json(contents: &str) -> Result<Vec<GapRecord>, 
             else {
                 continue;
             };
+            record.source_currentness = finding
+                .get("source_currentness")
+                .and_then(Value::as_str)
+                .map(str::to_string);
             if record.gap_id.is_empty() {
                 return Err(format!("finding {index} produced an empty gap_id"));
             }
@@ -675,9 +729,12 @@ fn gap_records_from_repo_exposure_json(contents: &str) -> Result<Vec<GapRecord>,
                 format!("seam {index} contains invalid typed command specs: {error}")
             })?;
         }
-        let Some(record) = gap_record_from_repo_exposure_seam(seam) else {
+        let Some(mut record) = gap_record_from_repo_exposure_seam(seam) else {
             continue;
         };
+        // Repo-exposure seams are classified from the current tree, so
+        // their source is candidate-side by construction (#3281).
+        record.source_currentness = Some("candidate_current".to_string());
         if record.gap_id.is_empty() {
             return Err(format!("seam {index} produced an empty gap_id"));
         }
@@ -698,7 +755,8 @@ fn gap_record_from_repo_exposure_seam(seam: &Value) -> Option<GapRecord> {
     let repair_route =
         repair_route_from_evidence(evidence, canonical_item, seam_kind, repairability);
     let verify_command = string_at(canonical_item, &["verify_command"])
-        .or_else(|| string_at(evidence, &["recommendation", "verify_command"]));
+        .or_else(|| string_at(evidence, &["recommendation", "verify_command"]))
+        .filter(|command| command_display_is_nonblank(command));
     let verification_commands = verify_command
         .map(|command| vec![command.to_string()])
         .unwrap_or_default();
@@ -725,6 +783,7 @@ fn gap_record_from_repo_exposure_seam(seam: &Value) -> Option<GapRecord> {
         .map(ToString::to_string);
     let receipt_command = string_at(canonical_item, &["receipt_command"])
         .or_else(|| string_at(evidence, &["receipt_command"]))
+        .filter(|command| command_display_is_nonblank(command))
         .map(ToString::to_string);
     let command_specs = match command_specs_from_value(Some(canonical_item)) {
         Ok((verify, receipt)) if !verify.is_empty() || !receipt.is_empty() => {
@@ -755,12 +814,13 @@ fn gap_record_from_repo_exposure_seam(seam: &Value) -> Option<GapRecord> {
     let projection_eligibility = projection_eligibility_from_repo_evidence(
         repairability,
         repair_route.is_some(),
-        !verification_commands.is_empty(),
+        command_displays_are_complete(&verification_commands),
         anchor.file.is_some() && anchor.line.is_some(),
         gap_state,
     );
 
     Some(GapRecord {
+        source_currentness: None,
         gap_id,
         canonical_gap_id,
         seam_id: Some(seam_id.to_string()),
@@ -907,7 +967,9 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
     let suggested_test_name =
         string_at(card, &["suggested_location", "test_name"]).map(ToString::to_string);
     let related_test_line = first_related_test_line(finding);
-    let verify_command = string_at(card, &["verify", "command"]).map(ToString::to_string);
+    let verify_command = string_at(card, &["verify", "command"])
+        .filter(|command| command_display_is_nonblank(command))
+        .map(ToString::to_string);
     let repair_action = string_at(card, &["repair_action"]).unwrap_or("add_or_strengthen_test");
     let repairability = if suggested_test_file.is_some() && verify_command.is_some() {
         "repairable"
@@ -942,19 +1004,30 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
     let mut projection_eligibility = projection_eligibility_from_pr_evidence(
         repairability,
         repair_route.is_some(),
-        !verification_commands.is_empty(),
+        command_displays_are_complete(&verification_commands),
         anchor.file.is_some() && anchor.line.is_some(),
         "actionable",
     );
-    if string_at(finding, &["oracle_alignment"]) != Some("direct") {
-        insert_projection(
-            &mut projection_eligibility,
-            "agent_packet",
-            false,
-            "python_oracle_alignment_not_direct",
-        );
-    }
-    let receipt_command = string_at(card, &["receipt", "command"]).map(ToString::to_string);
+    let (agent_packet_eligible, agent_packet_reason) = python_agent_packet_eligibility(
+        repairability,
+        repair_route.is_some(),
+        command_displays_are_complete(&verification_commands),
+        anchor.file.is_some() && anchor.line.is_some(),
+        "actionable",
+        string_at(finding, &["oracle_alignment"]),
+        string_at(finding, &["alignment_reason"]),
+    );
+    insert_projection(
+        &mut projection_eligibility,
+        "agent_packet",
+        agent_packet_eligible,
+        agent_packet_reason,
+    );
+    let receipt_command = (repairability == "repairable")
+        .then(|| string_at(card, &["receipt", "command"]))
+        .flatten()
+        .filter(|command| command_display_is_nonblank(command))
+        .map(ToString::to_string);
     let mut evidence_ids = Vec::new();
     if let Some(id) = string_at(finding, &["id"]) {
         evidence_ids.push(id.to_string());
@@ -964,6 +1037,7 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
     }
 
     Some(GapRecord {
+        source_currentness: None,
         gap_id: format!("gap:pr:{canonical_gap_id}"),
         canonical_gap_id,
         seam_id: None,
@@ -1002,6 +1076,40 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
             .unwrap_or("preview_advisory_only")
             .to_string(),
     })
+}
+
+fn python_agent_packet_eligibility(
+    repairability: &str,
+    has_repair_route: bool,
+    has_verify_command: bool,
+    has_local_anchor: bool,
+    gap_state: &str,
+    oracle_alignment: Option<&str>,
+    alignment_reason: Option<&str>,
+) -> (bool, &'static str) {
+    let ordinary_requirements = repairability == "repairable"
+        && has_repair_route
+        && has_verify_command
+        && has_local_anchor
+        && gap_state == "actionable";
+    if !ordinary_requirements {
+        return (
+            false,
+            "python_not_repairable_or_missing_route_verify_anchor",
+        );
+    }
+    match (oracle_alignment, alignment_reason) {
+        (Some("direct"), Some("strong_oracle_observes_owner_name")) => {
+            (true, "python_direct_owner_oracle")
+        }
+        (Some("direct"), Some("strong_oracle_observes_owner_method_on_bound_receiver")) => {
+            (true, "python_direct_bound_receiver_oracle")
+        }
+        (Some("unknown"), Some("no_strong_oracle")) => {
+            (true, "python_no_strong_oracle_with_bounded_repair_route")
+        }
+        _ => (false, "python_oracle_alignment_pair_not_delegatable"),
+    }
 }
 
 /// ADR-0019 §83-86 bespoke builder (Campaign 31 item 6 formal scope-down).
@@ -1062,7 +1170,9 @@ fn gap_record_from_typescript_repair_finding(finding: &Value, index: usize) -> O
         });
     let target_test = string_at(packet, &["target_test"]).map(ToString::to_string);
     let target_line = first_related_test_line(finding);
-    let verify_command = string_at(packet, &["verify_command"]).map(ToString::to_string);
+    let verify_command = string_at(packet, &["verify_command"])
+        .filter(|command| command_display_is_nonblank(command))
+        .map(ToString::to_string);
     let repairability = if target_file.is_some() && verify_command.is_some() {
         "repairable"
     } else {
@@ -1101,7 +1211,7 @@ fn gap_record_from_typescript_repair_finding(finding: &Value, index: usize) -> O
     let projection_eligibility = projection_eligibility_from_pr_evidence(
         repairability,
         repair_route.is_some(),
-        !verification_commands.is_empty(),
+        command_displays_are_complete(&verification_commands),
         anchor.file.is_some() && anchor.line.is_some(),
         "actionable",
     );
@@ -1119,6 +1229,7 @@ fn gap_record_from_typescript_repair_finding(finding: &Value, index: usize) -> O
     }
 
     Some(GapRecord {
+        source_currentness: None,
         gap_id: format!("gap:pr:{canonical_gap_id}"),
         canonical_gap_id,
         seam_id: None,
@@ -1151,7 +1262,11 @@ fn gap_record_from_typescript_repair_finding(finding: &Value, index: usize) -> O
         projection_eligibility,
         verification_commands,
         command_specs: None,
-        receipt_command: string_at(packet, &["receipt_command"]).map(ToString::to_string),
+        receipt_command: (repairability == "repairable")
+            .then(|| string_at(packet, &["receipt_command"]))
+            .flatten()
+            .filter(|command| command_display_is_nonblank(command))
+            .map(ToString::to_string),
         regeneration_commands: Vec::new(),
         receipt: None,
         safe_gate_predicate: None,
@@ -1276,6 +1391,7 @@ fn gap_record_from_perl_preview_finding(finding: &Value, index: usize) -> Option
     ]);
 
     Some(GapRecord {
+        source_currentness: None,
         gap_id: format!("gap:pr:{canonical_gap_id}"),
         canonical_gap_id,
         seam_id: None,
@@ -1320,7 +1436,7 @@ fn gap_record_from_perl_preview_finding(finding: &Value, index: usize) -> Option
     })
     .filter(|record| {
         record.repair_route.is_some()
-            && !record.verification_commands.is_empty()
+            && command_displays_are_complete(&record.verification_commands)
             && has_local_anchor
     })
 }
@@ -1369,6 +1485,7 @@ fn gap_record_from_python_static_limit_finding(finding: &Value, index: usize) ->
     }
 
     Some(GapRecord {
+        source_currentness: None,
         gap_id: format!("gap:pr:{canonical_gap_id}"),
         canonical_gap_id,
         seam_id: None,
@@ -1460,6 +1577,7 @@ fn gap_record_from_python_no_action_finding(finding: &Value, index: usize) -> Op
         gap_id: format!("gap:pr:{canonical_gap_id}"),
         canonical_gap_id,
         seam_id: None,
+        source_currentness: None,
         kind: kind.to_string(),
         language: "python".to_string(),
         language_status: string_at(finding, &["language_status"])
@@ -1780,13 +1898,14 @@ fn gap_record_from_finding_alignment_item(item: &Value, index: usize) -> Option<
     let projection_eligibility = projection_eligibility_from_pr_evidence(
         repairability,
         repair_route.is_some(),
-        !verification_commands.is_empty(),
+        command_displays_are_complete(&verification_commands),
         anchor.file.is_some() && anchor.line.is_some(),
         gap_state,
     );
 
     Some(GapRecord {
         gap_id: format!("gap:pr:{canonical_gap_id}"),
+        source_currentness: None,
         canonical_gap_id: canonical_gap_id.clone(),
         seam_id: string_at(item, &["seam_id"]).map(ToString::to_string),
         kind: gap_kind_from_evidence(gap_state, evidence_class).to_string(),
@@ -2151,6 +2270,7 @@ fn summarize_records(records: &[GapRecord]) -> GapDecisionLedgerSummary {
         ..GapDecisionLedgerSummary::default()
     };
     for record in records {
+        let commands_complete = command_displays_are_complete(&record.verification_commands);
         if record.repairability == "repairable" {
             summary.repairable_total += 1;
         }
@@ -2168,25 +2288,25 @@ fn summarize_records(records: &[GapRecord]) -> GapDecisionLedgerSummary {
         if record.scope == "artifact_missing" {
             summary.missing_artifact_total += 1;
         }
-        if projection_eligible(record, "pr_comment") {
+        if commands_complete && projection_eligible(record, "pr_comment") {
             summary.projection_pr_comment_eligible += 1;
         }
-        if projection_eligible(record, "gate_candidate") {
+        if commands_complete && projection_eligible(record, "gate_candidate") {
             summary.projection_gate_candidate += 1;
         }
-        if projection_eligible(record, "agent_packet") {
+        if commands_complete && projection_eligible(record, "agent_packet") {
             summary.projection_agent_packet_eligible += 1;
         }
-        if projection_eligible(record, "ripr_zero_count") {
+        if commands_complete && projection_eligible(record, "ripr_zero_count") {
             summary.ripr_zero_target_count += 1;
         }
-        if projection_eligible(record, "ripr_plus_count") {
+        if commands_complete && projection_eligible(record, "ripr_plus_count") {
             summary.ripr_plus_target_count += 1;
         }
         if record.language_status == "preview"
-            && !projection_eligible(record, "gate_candidate")
-            && !projection_eligible(record, "ripr_zero_count")
-            && !projection_eligible(record, "ripr_plus_count")
+            && !(commands_complete && projection_eligible(record, "gate_candidate"))
+            && !(commands_complete && projection_eligible(record, "ripr_zero_count"))
+            && !(commands_complete && projection_eligible(record, "ripr_plus_count"))
         {
             summary.preview_ineligible_total += 1;
         }
@@ -2229,7 +2349,9 @@ fn validate_record(record: &GapRecord, warnings: &mut Vec<String>) {
             fallback_gap_id(record)
         ));
     }
-    if record.repairability == "repairable" && record.verification_commands.is_empty() {
+    if record.repairability == "repairable"
+        && !command_displays_are_complete(&record.verification_commands)
+    {
         warnings.push(format!(
             "gap record {} is repairable but missing verification_commands",
             fallback_gap_id(record)
@@ -2281,7 +2403,7 @@ pub(crate) fn safe_gate_predicate_satisfied(record: &GapRecord) -> bool {
         && matches!(record.policy_state.as_str(), "new" | "blocked")
         && record.repairability == "repairable"
         && record.repair_route.is_some()
-        && !record.verification_commands.is_empty()
+        && command_displays_are_complete(&record.verification_commands)
         && predicate.policy_target_enabled
         && !predicate.suppressed
         && !predicate.waived
@@ -2292,6 +2414,22 @@ pub(crate) fn safe_gate_predicate_satisfied(record: &GapRecord) -> bool {
 }
 
 pub(crate) fn projection_eligible(record: &GapRecord, projection: &str) -> bool {
+    // RIPR-SPEC-0152: authority projections require the record's source to
+    // be established candidate-current. Advisory visibility (markdown) is
+    // unaffected, so base-side and unresolved records stay inspectable
+    // without becoming obligations.
+    if matches!(
+        projection,
+        "agent_packet"
+            | "pr_comment"
+            | "gate_candidate"
+            | "ripr_zero_count"
+            | "ripr_plus_count"
+            | "lsp_diagnostic"
+    ) && record.source_currentness.as_deref() != Some("candidate_current")
+    {
+        return false;
+    }
     record
         .projection_eligibility
         .get(projection)
@@ -2368,11 +2506,13 @@ fn render_record_markdown(record: &GapRecord, out: &mut String) {
             eligible.join("`, `")
         ));
     }
-    if !record.verification_commands.is_empty() {
+    if command_displays_are_complete(&record.verification_commands) {
         out.push_str("- Verify:\n");
         for command in &record.verification_commands {
             out.push_str(&format!("  - `{}`\n", md_inline(command)));
         }
+    } else if !record.verification_commands.is_empty() {
+        out.push_str("- Verify: `unavailable_incomplete_command_list`\n");
     }
     if !record.regeneration_commands.is_empty() {
         out.push_str("- Regenerate:\n");
@@ -2380,7 +2520,11 @@ fn render_record_markdown(record: &GapRecord, out: &mut String) {
             out.push_str(&format!("  - `{}`\n", md_inline(command)));
         }
     }
-    if let Some(command) = &record.receipt_command {
+    if let Some(command) = record
+        .receipt_command
+        .as_deref()
+        .filter(|command| command_display_is_nonblank(command))
+    {
         out.push_str("- Receipt:\n");
         out.push_str(&format!("  - `{}`\n", md_inline(command)));
     }
@@ -2426,6 +2570,8 @@ fn md_inline(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::path::Path;
 
     fn corpus() -> String {
         include_str!("../../../../fixtures/gap-decision-ledger/corpus.json").to_string()
@@ -2446,6 +2592,55 @@ mod tests {
             "../../../../fixtures/python_adversarial_same_method_other_class/expected/check.json"
         )
         .to_string()
+    }
+
+    fn python_boundary_gap_check_output() -> String {
+        include_str!("../../../../fixtures/python_boundary_gap/expected/check.json").to_string()
+    }
+
+    fn require_one_record_per_python_repair_card(
+        records: &[GapRecord],
+        source_ids: &BTreeSet<String>,
+        fixture: &str,
+    ) -> Result<(), String> {
+        for record in records.iter().filter(|record| {
+            record.language == "python"
+                && record.gap_state == "actionable"
+                && record.static_limit_kind.as_deref() == Some("python_preview")
+                && record.repair_route.is_some()
+        }) {
+            if !source_ids.contains(&record.canonical_gap_id) {
+                return Err(format!(
+                    "unexpected produced Python repair-card record: {fixture}/{}",
+                    record.canonical_gap_id
+                ));
+            }
+        }
+        for canonical_gap_id in source_ids {
+            let produced = records
+                .iter()
+                .filter(|record| record.canonical_gap_id == *canonical_gap_id)
+                .count();
+            if produced != 1 {
+                return Err(format!(
+                    "repair card must produce exactly one ledger record: {fixture}/{canonical_gap_id} produced={produced}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn insert_unique_python_repair_card_source_id(
+        source_ids: &mut BTreeSet<String>,
+        canonical_gap_id: &str,
+        fixture: &str,
+    ) -> Result<(), String> {
+        if !source_ids.insert(canonical_gap_id.to_string()) {
+            return Err(format!(
+                "duplicate source repair-card canonical gap id: {fixture}/{canonical_gap_id}"
+            ));
+        }
+        Ok(())
     }
 
     fn typescript_preview_gap_before_check_output() -> String {
@@ -2535,6 +2730,10 @@ mod tests {
         let report = report_from_check_output(serde_json::json!({
             "schema_version": "0.1",
             "tool": "ripr",
+            "findings": [
+                {"id": "help-label-decl", "source_currentness": "candidate_current"},
+                {"id": "help-label-literal", "source_currentness": "candidate_current"}
+            ],
             "finding_alignment": {
                 "scope": "supported_classes",
                 "items": [
@@ -2768,6 +2967,7 @@ mod tests {
             "records": [
                 {
                     "gap_id": "gap:bad",
+                    "source_currentness": "candidate_current",
                     "canonical_gap_id": "gap:bad",
                     "kind": "MissingBoundaryAssertion",
                     "language": "typescript",
@@ -3004,6 +3204,26 @@ mod tests {
         let anchor = r.anchor.as_ref().ok_or("expected anchor")?;
         assert_eq!(anchor.file.as_deref(), Some("src/lib.rs"));
         assert_eq!(anchor.line, Some(10));
+        Ok(())
+    }
+
+    #[test]
+    fn repo_exposure_whitespace_verify_cannot_authorize_rust_projections() -> Result<(), String> {
+        let mut seam =
+            make_repo_exposure_seam("actionable", "add_focused_test", "predicate_boundary");
+        seam["evidence_record"]["canonical_item"]["verify_command"] =
+            Value::String(" \t ".to_string());
+        seam["evidence_record"]["recommendation"]["verify_command"] =
+            Value::String("  ".to_string());
+        let payload = serde_json::json!({"seams": [seam]});
+        let records = gap_records_from_repo_exposure_json(&payload.to_string())?;
+        let record = records
+            .first()
+            .ok_or_else(|| "whitespace Rust seam did not produce a record".to_string())?;
+        assert!(record.verification_commands.is_empty());
+        assert!(!projection_eligible(record, "pr_comment"));
+        assert!(!projection_eligible(record, "agent_packet"));
+        assert!(!projection_eligible(record, "gate_candidate"));
         Ok(())
     }
 
@@ -3247,6 +3467,7 @@ mod tests {
         let payload = serde_json::json!({
             "findings": [{
                 "id": "probe:src_pricing.py:2:python_preview",
+                "source_currentness": "candidate_current",
                 "canonical_gap_id": "gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold",
                 "canonical_gap": {
                     "file": "src/pricing.py",
@@ -3259,6 +3480,7 @@ mod tests {
                     "family": "predicate"
                 },
                 "oracle_alignment": "direct",
+                "alignment_reason": "strong_oracle_observes_owner_name",
                 "related_tests": [{
                     "name": "test_calculate_discount_smoke",
                     "file": "tests/test_pricing.py",
@@ -3399,12 +3621,357 @@ mod tests {
     }
 
     #[test]
+    fn check_output_python_no_strong_oracle_card_is_agent_packet_eligible() -> Result<(), String> {
+        let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: "fixtures/python_boundary_gap/input".to_string(),
+            generated_at: "test".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "fixtures/python_boundary_gap/expected/check.json".to_string(),
+            records_json: Ok(python_boundary_gap_check_output()),
+        });
+        if report.records.len() != 1 {
+            return Err(format!(
+                "boundary fixture must yield one record: {:?}",
+                report.warnings
+            ));
+        }
+        let record = &report.records[0];
+        if !projection_eligible(record, "agent_packet")
+            || record.receipt_command.as_deref().is_none_or(str::is_empty)
+            || report.summary.projection_agent_packet_eligible != 1
+        {
+            return Err("bounded unknown/no_strong_oracle record was not delegatable".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn check_output_python_whitespace_verify_is_not_repairable_or_receipt_backed()
+    -> Result<(), String> {
+        let mut check_output: Value = serde_json::from_str(&python_boundary_gap_check_output())
+            .map_err(|error| format!("parse Python boundary fixture: {error}"))?;
+        let command = check_output
+            .get_mut("findings")
+            .and_then(Value::as_array_mut)
+            .and_then(|findings| findings.first_mut())
+            .and_then(|finding| finding.get_mut("python_repair_card"))
+            .and_then(|card| card.get_mut("verify"))
+            .and_then(|verify| verify.get_mut("command"))
+            .ok_or_else(|| "Python boundary fixture verify command missing".to_string())?;
+        *command = Value::String(" \t ".to_string());
+
+        let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: "fixtures/python_boundary_gap/input".to_string(),
+            generated_at: "test".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "mutated-python-boundary-check.json".to_string(),
+            records_json: Ok(check_output.to_string()),
+        });
+        let record = report
+            .records
+            .first()
+            .ok_or_else(|| "whitespace mutation did not produce an advisory record".to_string())?;
+        if record.repairability != "unknown"
+            || record.repair_route.is_some()
+            || !record.verification_commands.is_empty()
+            || record.receipt_command.is_some()
+            || projection_eligible(record, "agent_packet")
+            || projection_eligible(record, "pr_comment")
+            || report.summary.projection_agent_packet_eligible != 0
+        {
+            return Err(format!(
+                "whitespace verify retained repair authority: {record:?}"
+            ));
+        }
+        let markdown = render_gap_decision_ledger_markdown(&report);
+        if markdown.contains("- Verify:") || markdown.contains("- Receipt:") {
+            return Err(format!(
+                "whitespace verify or derived receipt leaked into Markdown: {markdown}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn python_agent_packet_alignment_pairs_fail_closed() -> Result<(), String> {
+        let accepted = [
+            ("direct", "strong_oracle_observes_owner_name"),
+            (
+                "direct",
+                "strong_oracle_observes_owner_method_on_bound_receiver",
+            ),
+            ("unknown", "no_strong_oracle"),
+        ];
+        for (alignment, reason) in accepted {
+            if !python_agent_packet_eligibility(
+                "repairable",
+                true,
+                true,
+                true,
+                "actionable",
+                Some(alignment),
+                Some(reason),
+            )
+            .0
+            {
+                return Err(format!("expected accepted pair {alignment}/{reason}"));
+            }
+        }
+        let denied = [
+            (
+                Some("orthogonal"),
+                Some("strong_oracle_observes_different_sink"),
+            ),
+            (Some("unknown"), Some("strong_oracle_observes_owner_name")),
+            (Some("direct"), Some("no_strong_oracle")),
+            (Some("mystery"), Some("no_strong_oracle")),
+            (Some("unknown"), Some("mystery")),
+            (Some("unknown"), None),
+            (None, Some("no_strong_oracle")),
+            (None, None),
+        ];
+        for (alignment, reason) in denied {
+            if python_agent_packet_eligibility(
+                "repairable",
+                true,
+                true,
+                true,
+                "actionable",
+                alignment,
+                reason,
+            )
+            .0
+            {
+                return Err(format!("unexpected accepted pair {alignment:?}/{reason:?}"));
+            }
+        }
+        for requirements in [
+            ("unknown", true, true, true, "actionable"),
+            ("repairable", false, true, true, "actionable"),
+            ("repairable", true, false, true, "actionable"),
+            ("repairable", true, true, false, "actionable"),
+            ("repairable", true, true, true, "report_only"),
+        ] {
+            if python_agent_packet_eligibility(
+                requirements.0,
+                requirements.1,
+                requirements.2,
+                requirements.3,
+                requirements.4,
+                Some("unknown"),
+                Some("no_strong_oracle"),
+            )
+            .0
+            {
+                return Err(format!(
+                    "ordinary requirements failed closed: {requirements:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn python_repair_card_corpus_pins_alignment_inventory() -> Result<(), String> {
+        let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .ok_or_else(|| "workspace root missing".to_string())?
+            .join("fixtures");
+        let mut direct = 0usize;
+        let mut no_strong = 0usize;
+        let mut orthogonal = 0usize;
+        for entry in fs::read_dir(&fixture_root).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            let check = entry.path().join("expected/check.json");
+            if !name.starts_with("python") || !check.is_file() {
+                continue;
+            }
+            let text = fs::read_to_string(&check).map_err(|error| error.to_string())?;
+            let value: Value = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+            let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+                root: name.clone(),
+                generated_at: "test".to_string(),
+                source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+                records_path: check.display().to_string(),
+                records_json: Ok(text),
+            });
+            let repair_card_findings: Vec<&Value> = value
+                .get("findings")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter(|finding| finding.get("python_repair_card").is_some())
+                .collect();
+            let mut source_ids = BTreeSet::new();
+            for finding in &repair_card_findings {
+                let canonical_gap_id =
+                    string_at(finding, &["python_repair_card", "canonical_gap_id"])
+                        .or_else(|| string_at(finding, &["canonical_gap_id"]))
+                        .ok_or_else(|| format!("repair card has no canonical gap id: {name}"))?;
+                insert_unique_python_repair_card_source_id(
+                    &mut source_ids,
+                    canonical_gap_id,
+                    &name,
+                )?;
+            }
+            require_one_record_per_python_repair_card(&report.records, &source_ids, &name)?;
+            for finding in repair_card_findings {
+                let pair = (
+                    string_at(finding, &["oracle_alignment"]),
+                    string_at(finding, &["alignment_reason"]),
+                );
+                let canonical_gap_id =
+                    string_at(finding, &["python_repair_card", "canonical_gap_id"])
+                        .or_else(|| string_at(finding, &["canonical_gap_id"]))
+                        .ok_or_else(|| format!("repair card has no canonical gap id: {name}"))?;
+                let record = report
+                    .records
+                    .iter()
+                    .find(|record| record.canonical_gap_id == canonical_gap_id)
+                    .ok_or_else(|| {
+                        format!("repair card record missing from ledger: {name}/{canonical_gap_id}")
+                    })?;
+                let eligible = projection_eligible(record, "agent_packet");
+                match pair {
+                    (Some("direct"), Some("strong_oracle_observes_owner_name")) => {
+                        direct += 1;
+                        if !eligible {
+                            return Err(format!("direct fixture denied: {name}"));
+                        }
+                    }
+                    (Some("unknown"), Some("no_strong_oracle")) => {
+                        no_strong += 1;
+                        if !eligible {
+                            return Err(format!("no-strong fixture denied: {name}"));
+                        }
+                    }
+                    (Some("orthogonal"), Some("strong_oracle_observes_different_sink")) => {
+                        orthogonal += 1;
+                        if eligible {
+                            return Err(format!("orthogonal fixture eligible: {name}"));
+                        }
+                    }
+                    other => {
+                        return Err(format!(
+                            "unexpected repair-card alignment in {name}: {other:?}"
+                        ));
+                    }
+                }
+            }
+        }
+        if (direct, no_strong, orthogonal) != (2, 28, 10) {
+            return Err(format!(
+                "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn python_repair_card_corpus_rejects_duplicate_produced_record() -> Result<(), String> {
+        let mut report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: "fixtures/python_boundary_gap/input".to_string(),
+            generated_at: "test".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "fixtures/python_boundary_gap/expected/check.json".to_string(),
+            records_json: Ok(python_boundary_gap_check_output()),
+        });
+        let record = report
+            .records
+            .first()
+            .cloned()
+            .ok_or_else(|| "boundary fixture must produce a record".to_string())?;
+        let source_ids = BTreeSet::from([record.canonical_gap_id.clone()]);
+        report.records.push(record);
+
+        let error = require_one_record_per_python_repair_card(
+            &report.records,
+            &source_ids,
+            "python_boundary_gap",
+        )
+        .err()
+        .ok_or_else(|| "duplicate produced record passed corpus oracle".to_string())?;
+        if !error.contains("produced=2") {
+            return Err(format!("unexpected duplicate-record error: {error}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn python_repair_card_corpus_cardinality_mutations_fail_closed() -> Result<(), String> {
+        let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: "fixtures/python_boundary_gap/input".to_string(),
+            generated_at: "test".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "fixtures/python_boundary_gap/expected/check.json".to_string(),
+            records_json: Ok(python_boundary_gap_check_output()),
+        });
+        let record = report
+            .records
+            .first()
+            .cloned()
+            .ok_or_else(|| "boundary fixture must produce a record".to_string())?;
+        let source_ids = BTreeSet::from([record.canonical_gap_id.clone()]);
+
+        let missing_error =
+            require_one_record_per_python_repair_card(&[], &source_ids, "python_boundary_gap")
+                .err()
+                .ok_or_else(|| "missing produced record passed corpus oracle".to_string())?;
+        if !missing_error.contains("produced=0") {
+            return Err(format!("unexpected missing-record error: {missing_error}"));
+        }
+
+        let mut extra_record = record;
+        extra_record.canonical_gap_id = "gap:python:synthetic:extra-repair-card".to_string();
+        extra_record.gap_id = format!("gap:pr:{}", extra_record.canonical_gap_id);
+        let mut extra_records = report.records.clone();
+        extra_records.push(extra_record);
+        let extra_error = require_one_record_per_python_repair_card(
+            &extra_records,
+            &source_ids,
+            "python_boundary_gap",
+        )
+        .err()
+        .ok_or_else(|| "extra produced repair-card record passed corpus oracle".to_string())?;
+        if !extra_error.contains("unexpected produced Python repair-card record") {
+            return Err(format!("unexpected extra-record error: {extra_error}"));
+        }
+
+        let mut duplicate_source_ids = BTreeSet::new();
+        let source_id = source_ids
+            .first()
+            .ok_or_else(|| "source repair-card id missing".to_string())?;
+        insert_unique_python_repair_card_source_id(
+            &mut duplicate_source_ids,
+            source_id,
+            "python_boundary_gap",
+        )?;
+        let duplicate_source_error = insert_unique_python_repair_card_source_id(
+            &mut duplicate_source_ids,
+            source_id,
+            "python_boundary_gap",
+        )
+        .err()
+        .ok_or_else(|| "duplicate source repair-card id passed corpus oracle".to_string())?;
+        if !duplicate_source_error.contains("duplicate source repair-card canonical gap id") {
+            return Err(format!(
+                "unexpected duplicate-source error: {duplicate_source_error}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn check_output_typescript_repair_packet_becomes_agent_packet_gap_record() -> Result<(), String>
     {
         let payload = serde_json::json!({
             "findings": [{
                 "id": "probe:src_discount.ts:typescript_preview:2396aec1",
+                "source_currentness": "candidate_current",
                 "classification": "weakly_exposed",
+                "source_currentness": "candidate_current",
                 "probe": {
                     "file": "src/discount.ts",
                     "line": 2,
@@ -3522,6 +4089,39 @@ mod tests {
     }
 
     #[test]
+    fn check_output_typescript_whitespace_verify_stays_non_actionable() -> Result<(), String> {
+        let mut payload: Value =
+            serde_json::from_str(&typescript_preview_gap_before_check_output())
+                .map_err(|error| format!("parse TypeScript fixture: {error}"))?;
+        let command = payload
+            .get_mut("findings")
+            .and_then(Value::as_array_mut)
+            .and_then(|findings| findings.first_mut())
+            .and_then(|finding| finding.get_mut("typescript_repair_packet"))
+            .and_then(|packet| packet.get_mut("verify_command"))
+            .ok_or_else(|| "TypeScript fixture verify command missing".to_string())?;
+        *command = Value::String(" \t ".to_string());
+        let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: ".".to_string(),
+            generated_at: "test".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "mutated-typescript-check.json".to_string(),
+            records_json: Ok(payload.to_string()),
+        });
+        let record = report
+            .records
+            .first()
+            .ok_or_else(|| "whitespace TypeScript packet did not produce a record".to_string())?;
+        assert_eq!(record.repairability, "unknown");
+        assert!(record.repair_route.is_none());
+        assert!(record.verification_commands.is_empty());
+        assert!(record.receipt_command.is_none());
+        assert!(!projection_eligible(record, "agent_packet"));
+        assert_eq!(report.summary.projection_agent_packet_eligible, 0);
+        Ok(())
+    }
+
+    #[test]
     fn check_output_typescript_fixture_synthesizes_receipt_write_for_packet() -> Result<(), String>
     {
         let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
@@ -3595,6 +4195,7 @@ mod tests {
         let payload = r#"{
             "findings": [{
                 "id": "probe:lib_My_App_pm:8:perl_return",
+                "source_currentness": "candidate_current",
                 "canonical_gap_id": "gap:perl:lib/My/App.pm:My::App::discount:return_value:exact_return_assertion:return_value",
                 "canonical_gap": {
                     "file": "lib/My/App.pm",
@@ -3778,6 +4379,7 @@ mod tests {
             "findings": [
                 {
                     "id": "probe:src_discount.py:2:python_preview",
+                    "source_currentness": "candidate_current",
                     "canonical_gap_id": "gap:python:src/discount.py:apply_discount:predicate_boundary:predicate:amount>=threshold",
                     "canonical_gap": {
                         "language": "python",
@@ -3786,6 +4388,7 @@ mod tests {
                         "behavior_kind": "predicate_boundary"
                     },
                     "classification": "exposed",
+                    "source_currentness": "candidate_current",
                     "probe": {
                         "family": "predicate_boundary",
                         "file": "src/discount.py",
@@ -3797,6 +4400,7 @@ mod tests {
                 },
                 {
                     "id": "probe:src_pricing.py:2:python_preview",
+                    "source_currentness": "candidate_current",
                     "canonical_gap_id": "gap:python:src/pricing.py:apply_discount:return_value:return_value:amount-10",
                     "canonical_gap": {
                         "language": "python",
@@ -3805,6 +4409,7 @@ mod tests {
                         "behavior_kind": "return_value"
                     },
                     "classification": "no_static_path",
+                    "source_currentness": "candidate_current",
                     "probe": {
                         "family": "return_value",
                         "file": "src/pricing.py",
@@ -3816,6 +4421,7 @@ mod tests {
                 },
                 {
                     "id": "probe:src_pricing.py:3:python_preview",
+                    "source_currentness": "candidate_current",
                     "canonical_gap_id": "gap:python:src/pricing.py:shipping_fee:return_value:return_value:amount+2",
                     "canonical_gap": {
                         "language": "python",
@@ -3824,6 +4430,7 @@ mod tests {
                         "behavior_kind": "return_value"
                     },
                     "classification": "weakly_exposed",
+                    "source_currentness": "candidate_current",
                     "probe": {
                         "family": "return_value",
                         "file": "src/pricing.py",
@@ -4100,6 +4707,7 @@ mod tests {
         };
         let good_record = GapRecord {
             gap_id: "gap:test".to_string(),
+            source_currentness: Some("candidate_current".to_string()),
             language: "rust".to_string(),
             language_status: "stable".to_string(),
             scope: "pr_local".to_string(),
@@ -4115,6 +4723,17 @@ mod tests {
             ..GapRecord::default()
         };
         assert!(safe_gate_predicate_satisfied(&good_record));
+
+        for invalid_commands in [
+            vec!["  ".to_string()],
+            vec!["cargo test".to_string(), " \t".to_string()],
+        ] {
+            let invalid = GapRecord {
+                verification_commands: invalid_commands,
+                ..good_record.clone()
+            };
+            assert!(!safe_gate_predicate_satisfied(&invalid));
+        }
 
         // Missing predicate → false
         let no_predicate = GapRecord {
@@ -4252,6 +4871,7 @@ mod tests {
     fn validate_record_warns_on_blank_kind() {
         let record = GapRecord {
             gap_id: "gap:test".to_string(),
+            source_currentness: Some("candidate_current".to_string()),
             kind: "".to_string(),
             ..GapRecord::default()
         };
@@ -4266,6 +4886,7 @@ mod tests {
         insert_projection(&mut projections, "pr_comment", true, "test");
         let record = GapRecord {
             gap_id: "gap:test".to_string(),
+            source_currentness: Some("candidate_current".to_string()),
             kind: "SomeKind".to_string(),
             projection_eligibility: projections,
             anchor: Some(GapAnchor {
@@ -4287,6 +4908,7 @@ mod tests {
     fn validate_record_warns_artifact_missing_without_regeneration_commands() {
         let record = GapRecord {
             gap_id: "gap:test".to_string(),
+            source_currentness: Some("candidate_current".to_string()),
             kind: "MissingArtifact".to_string(),
             scope: "artifact_missing".to_string(),
             regeneration_commands: vec![],
@@ -4305,6 +4927,7 @@ mod tests {
     fn validate_record_no_warnings_for_clean_record() {
         let record = GapRecord {
             gap_id: "gap:clean".to_string(),
+            source_currentness: Some("candidate_current".to_string()),
             kind: "NoActionAlreadyObserved".to_string(),
             repairability: "no_action".to_string(),
             ..GapRecord::default()
@@ -4328,30 +4951,35 @@ mod tests {
         let records = vec![
             GapRecord {
                 gap_id: "gap:r1".to_string(),
+                source_currentness: Some("candidate_current".to_string()),
                 kind: "MissingValueAssertion".to_string(),
                 repairability: "repairable".to_string(),
                 ..GapRecord::default()
             },
             GapRecord {
                 gap_id: "gap:r2".to_string(),
+                source_currentness: Some("candidate_current".to_string()),
                 kind: "StaticLimitation".to_string(),
                 repairability: "analyzer_limitation".to_string(),
                 ..GapRecord::default()
             },
             GapRecord {
                 gap_id: "gap:r3".to_string(),
+                source_currentness: Some("candidate_current".to_string()),
                 kind: "NoActionAlreadyObserved".to_string(),
                 repairability: "no_action".to_string(),
                 ..GapRecord::default()
             },
             GapRecord {
                 gap_id: "gap:r4".to_string(),
+                source_currentness: Some("candidate_current".to_string()),
                 kind: "NoActionInternal".to_string(),
                 repairability: "no_action".to_string(),
                 ..GapRecord::default()
             },
             GapRecord {
                 gap_id: "gap:r5".to_string(),
+                source_currentness: Some("candidate_current".to_string()),
                 kind: "MissingArtifact".to_string(),
                 scope: "artifact_missing".to_string(),
                 repairability: "unknown".to_string(),
@@ -4359,13 +4987,16 @@ mod tests {
             },
             GapRecord {
                 gap_id: "gap:r6".to_string(),
+                source_currentness: Some("candidate_current".to_string()),
                 kind: "MissingOutputContract".to_string(),
                 projection_eligibility: projections_gate.clone(),
+                verification_commands: vec!["cargo test".to_string()],
                 repairability: "no_action".to_string(),
                 ..GapRecord::default()
             },
             GapRecord {
                 gap_id: "gap:r7".to_string(),
+                source_currentness: Some("candidate_current".to_string()),
                 kind: "MissingValueAssertion".to_string(),
                 language_status: "preview".to_string(),
                 repairability: "no_action".to_string(),
@@ -4373,6 +5004,7 @@ mod tests {
             },
             GapRecord {
                 gap_id: "gap:r8".to_string(),
+                source_currentness: Some("candidate_current".to_string()),
                 kind: "MissingValueAssertion".to_string(),
                 repairability: "no_action".to_string(),
                 receipt: Some(GapReceipt {
@@ -4383,6 +5015,7 @@ mod tests {
             },
             GapRecord {
                 gap_id: "gap:r9".to_string(),
+                source_currentness: Some("candidate_current".to_string()),
                 kind: "MissingValueAssertion".to_string(),
                 repairability: "no_action".to_string(),
                 receipt: Some(GapReceipt {
@@ -4410,12 +5043,46 @@ mod tests {
         assert_eq!(summary.preview_ineligible_total, 1);
     }
 
+    #[test]
+    fn summarize_records_rejects_blank_and_mixed_projection_commands() {
+        let mut projections = BTreeMap::new();
+        for projection in [
+            "pr_comment",
+            "gate_candidate",
+            "agent_packet",
+            "ripr_zero_count",
+            "ripr_plus_count",
+        ] {
+            insert_projection(&mut projections, projection, true, "caller-declared");
+        }
+        for commands in [
+            vec![" \t ".to_string()],
+            vec!["cargo test".to_string(), "  ".to_string()],
+        ] {
+            let summary = summarize_records(&[GapRecord {
+                gap_id: "gap:invalid-commands".to_string(),
+                source_currentness: Some("candidate_current".to_string()),
+                language_status: "preview".to_string(),
+                projection_eligibility: projections.clone(),
+                verification_commands: commands,
+                ..GapRecord::default()
+            }]);
+            assert_eq!(summary.projection_pr_comment_eligible, 0);
+            assert_eq!(summary.projection_gate_candidate, 0);
+            assert_eq!(summary.projection_agent_packet_eligible, 0);
+            assert_eq!(summary.ripr_zero_target_count, 0);
+            assert_eq!(summary.ripr_plus_target_count, 0);
+            assert_eq!(summary.preview_ineligible_total, 1);
+        }
+    }
+
     // ── render_record_markdown covers no-anchor, no-repair, no-projections ──
 
     #[test]
     fn render_record_markdown_without_optional_fields() {
         let record = GapRecord {
             gap_id: "gap:bare".to_string(),
+            source_currentness: Some("candidate_current".to_string()),
             kind: "NoActionAlreadyObserved".to_string(),
             scope: "repo_scoped".to_string(),
             policy_state: "baseline".to_string(),
@@ -4445,9 +5112,30 @@ mod tests {
     }
 
     #[test]
+    fn render_record_markdown_fails_closed_for_blank_or_mixed_verification_commands() {
+        for commands in [
+            vec![" \t ".to_string()],
+            vec!["cargo test".to_string(), "  ".to_string()],
+        ] {
+            let record = GapRecord {
+                gap_id: "gap:incomplete-verify".to_string(),
+                source_currentness: Some("candidate_current".to_string()),
+                verification_commands: commands,
+                ..GapRecord::default()
+            };
+            let mut out = String::new();
+            render_record_markdown(&record, &mut out);
+            assert!(out.contains("Verify: `unavailable_incomplete_command_list`"));
+            assert!(!out.contains("  - `cargo test`"));
+            assert!(!out.contains("  - `  `"));
+        }
+    }
+
+    #[test]
     fn render_record_markdown_with_anchor_no_line_no_owner() {
         let record = GapRecord {
             gap_id: "gap:anchor".to_string(),
+            source_currentness: Some("candidate_current".to_string()),
             kind: "MissingBoundaryAssertion".to_string(),
             anchor: Some(GapAnchor {
                 file: Some("src/lib.rs".to_string()),
@@ -4467,6 +5155,7 @@ mod tests {
     fn render_record_markdown_repair_route_with_no_target_file_no_assertion() {
         let record = GapRecord {
             gap_id: "gap:nofile".to_string(),
+            source_currentness: Some("candidate_current".to_string()),
             kind: "MissingValueAssertion".to_string(),
             repair_route: Some(GapRepairRoute {
                 route_kind: "AddValueAssertion".to_string(),
@@ -5246,5 +5935,116 @@ mod tests {
             "missing typed-spec context: {error}"
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod candidate_actionable_ledger_tests {
+    use super::build_gap_decision_ledger_report;
+    use crate::output::gap_decision_ledger::GapDecisionLedgerInput;
+    use crate::output::gap_decision_ledger::GapDecisionLedgerSourceKind;
+
+    #[test]
+    fn base_deleted_findings_project_to_no_gap_records() -> Result<(), String> {
+        // RIPR-SPEC-0152: base-side evidence never becomes a gap record on
+        // any authority; the candidate-current twin keeps its record.
+        let payload = serde_json::json!({
+            "findings": [
+                {
+                    "id": "probe:src_pricing.py:2:python_preview",
+                    "source_currentness": "base_deleted",
+                    "classification": "weakly_exposed",
+                    "probe": {"file": "src/pricing.py", "line": 2, "family": "predicate"},
+                    "python_repair_card": {
+                        "canonical_gap_id": "gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold",
+                        "language": "python",
+                        "language_status": "preview",
+                        "authority_boundary": "preview_advisory_only",
+                        "repair_action": "strengthen_existing_test",
+                        "changed_owner": "calculate_discount",
+                        "changed_behavior": "predicate_boundary changed",
+                        "missing_discriminator": "amount == threshold",
+                        "suggested_assertion": "Assert the boundary.",
+                        "suggested_location": {"test_file": "tests/test_pricing.py", "test_name": "test_smoke"},
+                        "verify": {"command": "pytest tests/test_pricing.py::test_smoke"},
+                        "receipt": {"command": null, "status": "unavailable_until_python_gap_ledger"},
+                        "stop_conditions": ["Stop if the owner cannot be imported."],
+                        "limits": ["preview_advisory_only"]
+                    },
+                    "related_tests": [{"name": "test_smoke", "file": "tests/test_pricing.py", "line": 4}],
+                    "oracle_alignment": "direct",
+                    "alignment_reason": "strong_oracle_observes_owner_name",
+                    "canonical_gap_id": "gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold"
+                }
+            ]
+        })
+        .to_string();
+        let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: "fixtures/probe".to_string(),
+            generated_at: "test".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "fixtures/probe/expected/check.json".to_string(),
+            records_json: Ok(payload),
+        });
+        assert!(
+            report.records.is_empty(),
+            "base-deleted finding must not become a gap record"
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod source_currentness_authority_tests {
+    use super::GapRecord;
+    use super::projection_eligible;
+    use std::collections::BTreeMap;
+
+    fn record_with(currentness: Option<&str>) -> GapRecord {
+        let mut projections = BTreeMap::new();
+        projections.insert(
+            "agent_packet".to_string(),
+            super::ProjectionEligibility {
+                eligible: true,
+                reason: "test".to_string(),
+            },
+        );
+        projections.insert(
+            "markdown_advisory".to_string(),
+            super::ProjectionEligibility {
+                eligible: true,
+                reason: "test".to_string(),
+            },
+        );
+        GapRecord {
+            projection_eligibility: projections,
+            source_currentness: currentness.map(ToString::to_string),
+            ..GapRecord::default()
+        }
+    }
+
+    #[test]
+    fn authority_projections_require_proven_candidate_currentness() {
+        // RIPR-SPEC-0152: even an explicitly-eligible map cannot make a
+        // non-current or unknown record an authority obligation; advisory
+        // visibility is unaffected.
+        let current = record_with(Some("candidate_current"));
+        assert!(projection_eligible(&current, "agent_packet"));
+        for value in [
+            Some("base_deleted"),
+            Some("moved_or_renamed"),
+            Some("unresolved_subject"),
+            None,
+        ] {
+            let record = record_with(value);
+            assert!(
+                !projection_eligible(&record, "agent_packet"),
+                "authority must stay off for {value:?}"
+            );
+            assert!(
+                projection_eligible(&record, "markdown_advisory"),
+                "advisory visibility must survive for {value:?}"
+            );
+        }
     }
 }

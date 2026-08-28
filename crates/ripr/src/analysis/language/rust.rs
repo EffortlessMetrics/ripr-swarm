@@ -16,7 +16,9 @@ use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult,
 use crate::analysis::cancellation;
 use crate::analysis::facts::{FunctionSummary, RustIndex};
 use crate::config::OraclePolicy;
-use crate::domain::{ExposureClass, Finding, Probe, StaticLimitKind, StopReason};
+use crate::domain::{
+    ExposureClass, Finding, Probe, SourceCurrentness, StaticLimitKind, StopReason,
+};
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -709,7 +711,62 @@ fn apply_rust_no_static_path_limit(finding: &mut Finding, probe: &Probe, index: 
                 &witness,
                 &owner_name,
             ));
+    } else if let Some(test) = find_subprocess_binary_test(index, &probe.location.file) {
+        finding.static_limit_kind = Some(StaticLimitKind::RustSubprocessBinaryReachUnresolved);
+        finding.evidence.push(
+            "An integration test invokes a Cargo-built binary, but ripr cannot yet map that binary back to the changed owner; no subprocess reach or receipt claim is made.".to_string(),
+        );
+        finding.evidence.push(format!(
+            "Where to inspect: {}:{} ({})",
+            test.file.display(),
+            test.start_line,
+            test.name
+        ));
     }
+}
+
+fn find_subprocess_binary_test<'a>(
+    index: &'a RustIndex,
+    owner_file: &Path,
+) -> Option<&'a crate::analysis::facts::TestFact> {
+    if !is_binary_source_path(owner_file) {
+        return None;
+    }
+    index
+        .tests
+        .iter()
+        .filter(|test| rust_index::is_test_file(&test.file))
+        .filter(|test| is_cargo_binary_invocation(&test.body))
+        .min_by(|left, right| {
+            left.file
+                .cmp(&right.file)
+                .then(left.start_line.cmp(&right.start_line))
+                .then(left.name.cmp(&right.name))
+        })
+}
+
+fn is_binary_source_path(path: &Path) -> bool {
+    let components: Vec<_> = path.components().collect();
+    components
+        .windows(2)
+        .any(|window| window[0].as_os_str() == "src" && window[1].as_os_str() == "main.rs")
+        || components
+            .windows(2)
+            .any(|window| window[0].as_os_str() == "src" && window[1].as_os_str() == "bin")
+}
+
+fn is_cargo_binary_invocation(body: &str) -> bool {
+    let compact: String = body
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    let has_cargo_bin_env = compact.contains("Command::new(env!(\"CARGO_BIN_EXE_")
+        && (compact.contains(".output(") || compact.contains(".status("));
+    let has_assert_cmd_binary = compact.contains("cargo_bin(\"")
+        && (compact.contains(".assert(")
+            || compact.contains(".output(")
+            || compact.contains(".status("));
+    has_cargo_bin_env || has_assert_cmd_binary
 }
 
 fn apply_rust_macro_wrapped_assertion_limit(finding: &mut Finding, index: &RustIndex) {
@@ -740,6 +797,198 @@ fn apply_rust_macro_wrapped_assertion_limit(finding: &mut Finding, index: &RustI
     finding
         .evidence
         .extend(rust_macro_assertion_limitation_detail_lines(&witness));
+}
+
+/// Name the bounded value-propagation limitation from #3215 without
+/// pretending that syntax-first analysis proved the equality boundary.
+///
+/// This deliberately recognizes only a changed `let` binding whose value is
+/// produced by `find`/`rfind` or `len_utf8`, normalized through `map_or`, and
+/// whose same-owner body later compares that binding. Other helper, loop,
+/// coercion, and data-flow shapes remain unchanged and fail closed as before.
+fn apply_rust_value_propagation_limit(finding: &mut Finding, probe: &Probe, index: &RustIndex) {
+    if finding.class != ExposureClass::StaticUnknown
+        || finding.static_limit_kind.is_some()
+        || finding.related_tests.is_empty()
+    {
+        return;
+    }
+    let Some((binding, rhs)) = changed_let_binding(&probe.expression) else {
+        return;
+    };
+    let masked_rhs = mask_rust_comments_and_strings(rhs);
+    if !masked_rhs.contains(".map_or(")
+        || !(masked_rhs.contains(".find(")
+            || masked_rhs.contains(".rfind(")
+            || masked_rhs.contains(".len_utf8("))
+    {
+        return;
+    }
+    let Some(owner_id) = probe.owner.as_ref() else {
+        return;
+    };
+    let Some(owner) = index
+        .functions
+        .iter()
+        .find(|function| &function.id == owner_id)
+    else {
+        return;
+    };
+    let Some(predicate) = find_value_propagation_predicate(&owner.body, binding) else {
+        return;
+    };
+
+    finding.static_limit_kind = Some(StaticLimitKind::RustValuePropagationUnresolved);
+    finding
+        .stop_reasons
+        .push(StopReason::PropagationEvidenceUnknown);
+    finding.evidence.push(format!(
+        "limitation_last_established_edge: changed binding `{binding}` uses `{rhs}`"
+    ));
+    finding.evidence.push(format!(
+        "limitation_first_unresolved_edge: `{binding}` value propagation into equality predicate `{}`",
+        predicate.trim()
+    ));
+    finding
+        .evidence
+        .push("limitation_analyzer_route: analysis/rust-value-propagation".to_string());
+    finding.evidence.push(
+        "limitation_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"
+            .to_string(),
+    );
+}
+
+/// #3294: attach the changed-binding relation evidence to a retargeted
+/// probe's finding. The probe is predicate-shaped and classifies through
+/// the normal predicate path; this only discloses the causal link (which
+/// binding and initializer fed the predicate) and the operand-value
+/// limitation. It never changes the class, adds a stop reason, or
+/// prescribes a repair — the operand values stay unresolved until a
+/// later slice evaluates them.
+fn attach_changed_binding_predicate_evidence(
+    finding: &mut Finding,
+    relation: &Option<probes::ChangedBindingPredicateUse>,
+) {
+    let Some(relation) = relation else {
+        return;
+    };
+    // The relation names both causal values when the diff carries the
+    // old initializer; the probe's before/after already hold them, and
+    // the relation line states them together.
+    let initializer_range = match finding.probe.before.as_deref() {
+        Some(before) if before != relation.initializer => {
+            format!("`{before}` -> `{}`", relation.initializer)
+        }
+        _ => format!("`{}`", relation.initializer),
+    };
+    finding.evidence.push(format!(
+        "binding_predicate_relation: changed binding `{}` initializer {initializer_range} flows into predicate operand at line {}",
+        relation.binding, relation.predicate_line
+    ));
+    if let probes::BindingValueResolution::Unresolved { earliest_operation } =
+        &relation.value_resolution
+    {
+        // Neutral prefixes: this is a value disclosure on a
+        // predicate-shaped finding, not a `static_limit_kind` record,
+        // so it deliberately stays outside the structured
+        // `limitation_*` evidence contract (#3294 review).
+        finding.evidence.push(format!(
+            "binding_predicate_value_unresolved: operand value of `{}` unresolved at earliest initializer operation `{}`",
+            relation.binding, earliest_operation
+        ));
+        finding.evidence.push(
+            "binding_predicate_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"
+                .to_string(),
+        );
+    }
+}
+
+/// Find an equality predicate that refers to the established binding after
+/// its declaration. Comments, strings, member names, and later shadowing are
+/// intentionally excluded so this limitation remains fail-closed.
+fn find_value_propagation_predicate<'a>(body: &'a str, binding: &str) -> Option<&'a str> {
+    let masked = mask_rust_comments_and_strings(body);
+    let mut established = false;
+    let mut shadowed = false;
+    for (line, masked_line) in body.lines().zip(masked.lines()) {
+        let trimmed = masked_line.trim();
+        if trimmed.starts_with("let ") {
+            let is_binding_declaration = trimmed
+                .split_once('=')
+                .is_some_and(|(lhs, _)| contains_identifier_token(lhs, binding));
+            if is_binding_declaration && established {
+                shadowed = true;
+            }
+            established = is_binding_declaration || established;
+            continue;
+        }
+        if shadowed || !established || !binding_equality_predicate(trimmed, binding) {
+            continue;
+        }
+        let mut search = 0;
+        while let Some(offset) = trimmed[search..].find(binding) {
+            let start = search + offset;
+            let before = trimmed[..start].chars().next_back();
+            let after = trimmed[start + binding.len()..].chars().next();
+            if !before.is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+                && !after.is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+                && !trimmed[..start].trim_end().ends_with('.')
+            {
+                return Some(line);
+            }
+            search = start.saturating_add(binding.len());
+        }
+    }
+    None
+}
+
+fn binding_equality_predicate(line: &str, binding: &str) -> bool {
+    if line.contains("!=") {
+        return false;
+    }
+    let Some((left, right)) = line.split_once("==") else {
+        return false;
+    };
+    let left = left
+        .rsplit_once("&&")
+        .or_else(|| left.rsplit_once("||"))
+        .map_or(left, |(_, operand)| operand);
+    let right = right
+        .split_once("&&")
+        .or_else(|| right.split_once("||"))
+        .map_or(right, |(operand, _)| operand);
+    [left, right].into_iter().any(|side| {
+        let Some(start) = side.find(binding) else {
+            return false;
+        };
+        let before = side[..start].chars().next_back();
+        let after = side[start + binding.len()..].chars().next();
+        !before.is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric() || ch == '.')
+            && !after.is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+    })
+}
+
+/// A simple `let <ident> = <rhs>;` line. Shared by the #3271 limitation
+/// and the #3294 binding-predicate relation so both agree on what a
+/// changed binding is.
+pub(crate) fn changed_let_binding(expression: &str) -> Option<(&str, &str)> {
+    let text = expression.trim().trim_end_matches(';').trim();
+    let rest = text.strip_prefix("let ")?;
+    let (lhs, rhs) = rest.split_once('=')?;
+    let binding = lhs.trim().strip_prefix("mut ").unwrap_or(lhs.trim());
+    if binding.is_empty()
+        || !binding
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    {
+        return None;
+    }
+    Some((binding, rhs.trim()))
+}
+
+fn contains_identifier_token(text: &str, ident: &str) -> bool {
+    text.split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+        .any(|token| token == ident)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -818,7 +1067,7 @@ fn unresolved_assertion_macro_invocations(body: &str, start_line: usize) -> Vec<
     invocations
 }
 
-fn mask_rust_comments_and_strings(text: &str) -> String {
+pub(crate) fn mask_rust_comments_and_strings(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut masked = bytes.to_vec();
     let mut index = 0usize;
@@ -1351,11 +1600,24 @@ impl RustAdapter {
         let cached =
             rust_index::build_index_from_loaded_files_with_cache(&options.root, &loaded_files)?;
         let mut index = cached.index;
+        if let Some(disclosure) = rust_index::include_resolution_disclosure(&index) {
+            eprintln!("{disclosure}");
+        }
         rust_index::apply_oracle_policy(&mut index, oracle_policy);
 
         let mut findings = Vec::new();
         let mut changed_rust_files = 0usize;
         let mut candidate_lines = BTreeSet::new();
+
+        // Authoritative source-role context (#3283): declared Cargo
+        // test/bench targets confirm evidence role outside the default
+        // layouts, and the repository opt-in restores production-like
+        // analysis for selected targets.
+        let mut source_role_context = workspace::context_for_files(
+            &options.root,
+            analyzable_rust_files.iter().map(|path| path.as_path()),
+        );
+        source_role_context.production_like_targets = options.production_like_targets.clone();
 
         // #2971: The cross-crate calls_owner bypass in find_related_tests
         // requires a workspace-complete function index. In Instant/Draft/Fast
@@ -1383,20 +1645,30 @@ impl RustAdapter {
             })
         {
             changed_rust_files += 1;
-            if rust_index::is_test_file(&changed.path) {
+            // Producer-owned source role (#3283): only production
+            // subjects and explicitly opted-in production-like targets
+            // seed diff probes; Cargo benches, examples, integration
+            // tests, and confirmed test-target files stay indexed
+            // evidence without harness-plumbing obligations.
+            let role = workspace::classify_with(&changed.path, &source_role_context);
+            if !role.seeds_production_findings() {
                 continue;
             }
             // Cooperative cancellation (#1972): check once per changed file
             // and once per probe so a superseded or deadline-expired refresh
             // exits the classify loop promptly.
             cancellation::checkpoint()?;
-            let probes = probes::probes_for_file(&options.root, changed, &index);
-            for probe in probes {
+            let probes = probes::probes_for_file_with_relations(&options.root, changed, &index);
+            for (probe, binding_relation) in probes {
                 candidate_lines.insert((probe.location.file.clone(), probe.location.line));
                 cancellation::checkpoint()?;
                 let mut finding =
                     classifier::classify_probe(&probe, &index, workspace_index_complete);
                 finding.language = Some(LanguageId::Rust);
+                // Producer-owned source currentness (#3280): resolved from the diff
+                // evidence that seeded the probe, before any limitation shaping.
+                finding.source_currentness =
+                    probes::resolve_probe_source_currentness(changed, &probe);
                 // `language_status` is omitted for Rust per RIPR-SPEC-0026.
                 // RIPR-SPEC-0114: when the direct-call classifier finds no related
                 // test (no_static_path + empty related_tests), run the bounded
@@ -1414,6 +1686,12 @@ impl RustAdapter {
                 // the seam. This is an oracle limitation, not macro expansion
                 // or promotion.
                 apply_rust_macro_wrapped_assertion_limit(&mut finding, &index);
+                apply_rust_value_propagation_limit(&mut finding, &probe, &index);
+                // #3294: a retargeted changed-binding probe keeps its
+                // predicate-shaped classification, but the finding still
+                // discloses the operand-value limitation it inherited from the
+                // changed initializer.
+                attach_changed_binding_predicate_evidence(&mut finding, &binding_relation);
                 // Fail closed on cross-language seams: when the probe owner
                 // carries an FFI/binding attribute, replace any Rust-gap
                 // static_limit_kind with the cross-language limitation so
@@ -1504,9 +1782,23 @@ impl RustAdapter {
         // not an unbounded read+index that can exhaust host memory.
         let scope_limit = repo_index_file_limit_from_env(std::env::var(REPO_INDEX_FILE_LIMIT_ENV))?;
         enforce_repo_index_file_limit(analyzable_rust_files.len(), scope_limit)?;
+        // Producer-owned source role (#3283): the repo production set
+        // routes through the same role as diff seeding — layout plus
+        // declared Cargo targets plus the production-like opt-in.
+        let repo_source_role_context = {
+            let mut context = workspace::context_for_files(
+                &options.root,
+                analyzable_rust_files.iter().map(|path| path.as_path()),
+            );
+            context.production_like_targets = options.production_like_targets.clone();
+            context
+        };
         let production_files = analyzable_rust_files
             .iter()
-            .filter(|path| workspace::is_production_rust_path(path))
+            .filter(|path| {
+                workspace::classify_with(path, &repo_source_role_context)
+                    .seeds_production_findings()
+            })
             .cloned()
             .collect::<Vec<_>>();
 
@@ -1534,6 +1826,9 @@ impl RustAdapter {
         if let Some(disclosure) = rust_index::lexical_fallback_disclosure(&index) {
             eprintln!("{disclosure}");
         }
+        if let Some(disclosure) = rust_index::include_resolution_disclosure(&index) {
+            eprintln!("{disclosure}");
+        }
         rust_index::apply_oracle_policy(&mut index, oracle_policy);
 
         let mut findings = Vec::new();
@@ -1543,11 +1838,16 @@ impl RustAdapter {
             for probe in probes {
                 let mut finding = classifier::classify_probe(&probe, &index, true);
                 finding.language = Some(LanguageId::Rust);
+                // Repo mode seeds probes from the current tree, so every
+                // finding's source is candidate-side by construction
+                // (#3280).
+                finding.source_currentness = SourceCurrentness::CandidateCurrent;
                 // `language_status` is omitted for Rust per RIPR-SPEC-0026.
                 // RIPR-SPEC-0114 + 0115 + 0117: no_static_path limitation
                 // disclosure for repo-mode (same logic as diff-mode).
                 apply_rust_no_static_path_limit(&mut finding, &probe, &index);
                 apply_rust_macro_wrapped_assertion_limit(&mut finding, &index);
+                apply_rust_value_propagation_limit(&mut finding, &probe, &index);
                 // Fail closed on cross-language seams (#910).
                 if let Some(limit) = cross_language_limit_kind(&probe, &index, &finding.class) {
                     finding.static_limit_kind = Some(limit);
@@ -1575,16 +1875,18 @@ mod tests {
         apply_rust_macro_wrapped_assertion_limit, changed_rust_line_count,
         cross_language_limit_kind, diff_changed_rust_line_limit_from_env,
         diff_identity_from_changed_files, diff_index_file_limit_from_env,
-        enforce_changed_rust_line_limit, enforce_repo_index_file_limit, is_generated_rust_file,
-        is_generated_rust_file_with_patterns, macro_reach_limit_kind, owner_has_ffi_attr,
-        partial_diff_budgets_from_env, partition_canonical_form,
-        replace_witnessed_no_path_infection_summary, repo_index_file_limit_from_env,
-        select_partial_diff_partition, select_partial_diff_partition_with_identity, sha256_hex,
-        transitive_reach_limit_kind,
+        enforce_changed_rust_line_limit, enforce_repo_index_file_limit, is_binary_source_path,
+        is_cargo_binary_invocation, is_generated_rust_file, is_generated_rust_file_with_patterns,
+        macro_reach_limit_kind, owner_has_ffi_attr, partial_diff_budgets_from_env,
+        partition_canonical_form, replace_witnessed_no_path_infection_summary,
+        repo_index_file_limit_from_env, select_partial_diff_partition,
+        select_partial_diff_partition_with_identity, sha256_hex, transitive_reach_limit_kind,
     };
     use crate::analysis::cancellation;
     use crate::analysis::diff::{ChangedFile, ChangedLine};
-    use crate::analysis::facts::{CallFact, FunctionSummary, LiteralFact, RustIndex, TestSummary};
+    use crate::analysis::facts::{
+        CallFact, FunctionSummary, LiteralFact, RustIndex, TestFact, TestSummary,
+    };
     use crate::analysis::language::{LanguageAdapter, LanguageId};
     use crate::analysis::{AnalysisMode, AnalysisOptions, diff};
     use crate::config::OraclePolicy;
@@ -1660,10 +1962,13 @@ mod tests {
                 base: None,
                 diff_file: None,
                 mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
                 git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
             },
             &OraclePolicy::default(),
             &changed_files,
@@ -1699,6 +2004,420 @@ mod tests {
             result.findings
         );
         Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_skips_inline_cfg_test_helpers_but_keeps_production_controls()
+    -> Result<(), String> {
+        let root = temp_root("inline-cfg-test-role")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='inline-cfg-test-role'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        write(
+            &root.join("src/lib.rs"),
+            "pub fn production_control(value: i32) -> Result<i32, String> {\n    if value < 0 { return Err(\"negative\".to_string()); }\n    Ok(value)\n}\n\n#[cfg(test)]\nmod tests {\n    fn helper_returns_result(value: i32) -> Result<(), String> {\n        if value < 0 { return Err(\"negative\".to_string()); }\n        Ok(())\n    }\n\n    #[test]\n    fn equivalent_assertion() {\n        if helper_returns_result(1).is_err() { return; }\n    }\n}\n",
+        )?;
+        write(
+            &root.join("src/test_helper.rs"),
+            "pub fn production_helper(value: i32) -> i32 {\n    if value < 0 { 0 } else { value }\n}\n",
+        )?;
+        let changed_files = diff::parse_unified_diff(
+            "diff --git a/src/lib.rs b/src/lib.rs\nnew file mode 100644\n--- /dev/null\n+++ b/src/lib.rs\n@@ -0,0 +1,18 @@\n+pub fn production_control(value: i32) -> Result<i32, String> {\n+    if value < 0 { return Err(\"negative\".to_string()); }\n+    Ok(value)\n+}\n+\n+#[cfg(test)]\n+mod tests {\n+    fn helper_returns_result(value: i32) -> Result<(), String> {\n+        if value < 0 { return Err(\"negative\".to_string()); }\n+        Ok(())\n+    }\n+\n+    #[test]\n+    fn equivalent_assertion() {\n+        if helper_returns_result(1).is_err() { return; }\n+    }\n+}\n\n diff --git a/src/test_helper.rs b/src/test_helper.rs\nnew file mode 100644\n--- /dev/null\n+++ b/src/test_helper.rs\n@@ -0,0 +1,3 @@\n+pub fn production_helper(value: i32) -> i32 {\n+    if value < 0 { 0 } else { value }\n+}\n",
+        );
+
+        let result = RustAdapter.analyze_diff(
+            &AnalysisOptions {
+                root,
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+            },
+            &OraclePolicy::default(),
+            &changed_files,
+        )?;
+
+        assert!(
+            result.findings.iter().any(|finding| {
+                finding
+                    .probe
+                    .owner
+                    .as_ref()
+                    .is_some_and(|owner| owner.0.contains("production_control"))
+            }),
+            "production control must remain a finding: {:?}",
+            result.findings
+        );
+        assert!(
+            result.findings.iter().any(|finding| {
+                finding
+                    .probe
+                    .owner
+                    .as_ref()
+                    .is_some_and(|owner| owner.0.contains("production_helper"))
+            }),
+            "src/test_helper.rs must remain production by semantic role: {:?}",
+            result.findings
+        );
+        assert!(
+            result.findings.iter().all(|finding| {
+                !finding
+                    .probe
+                    .owner
+                    .as_ref()
+                    .is_some_and(|owner| owner.0.contains("tests::helper_returns_result"))
+            }),
+            "inline cfg(test) helper must not become a production finding: {:?}",
+            result.findings
+        );
+        Ok(())
+    }
+
+    // Shared end-to-end shape for the #3271/#3294 binding-value family:
+    // a small crate whose changed `let` initializer feeds an equality
+    // predicate in the same function, with exact-value tests touching
+    // the boundary from both sides.
+    fn binding_value_crate(
+        name: &str,
+        changed_line_number: usize,
+        old_line: &str,
+        changed_line: &str,
+        predicate_line: &str,
+    ) -> Result<
+        (
+            std::path::PathBuf,
+            super::super::adapter::LanguageDiffResult,
+        ),
+        String,
+    > {
+        let root = temp_root(name)?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='value-propagation'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        let start_line = if changed_line_number == 2 {
+            changed_line
+        } else {
+            "    let start = delim.chars().next().map_or(0, |ch| ch.len_utf8());"
+        };
+        let end_line = if changed_line_number == 3 {
+            changed_line
+        } else {
+            "    let end = input.rfind(delim).map_or(0, |idx| idx);"
+        };
+        let source = format!(
+            "pub fn split(input: &str, delim: &str) -> usize {{\n{start_line}\n{end_line}\n{predicate_line}\n    0\n}}\n"
+        );
+        write(&root.join("src/lib.rs"), &source)?;
+        write(
+            &root.join("tests/split.rs"),
+            "#[test]\nfn empty_delimiter_splits_at_start() {\n    assert_eq!(split(\"abc\", \"\"), 1);\n}\n#[test]\nfn nonempty_delimiter_splits() {\n    assert_eq!(split(\"abc\", \"b\"), 0);\n}\n",
+        )?;
+        let diff_text = format!(
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{changed_line_number},1 +{changed_line_number},1 @@\n-{old_line}\n+{changed_line}\n"
+        );
+        let changed_files = diff::parse_unified_diff(&diff_text);
+        let result = RustAdapter.analyze_diff(
+            &AnalysisOptions {
+                root: root.clone(),
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+            },
+            &OraclePolicy::default(),
+            &changed_files,
+        )?;
+        Ok((root, result))
+    }
+
+    // #3294: a changed binding that reaches its same-function equality
+    // predicate directly retargets the probe to the predicate. The
+    // finding is predicate-shaped, the generic changed-syntax limitation
+    // is gone, and the operand-value limitation names the earliest
+    // initializer operation.
+    #[test]
+    fn diff_analysis_retargets_changed_binding_to_predicate_use() -> Result<(), String> {
+        let (root, result) = binding_value_crate(
+            "rfind-binding-predicate",
+            3,
+            "    let end = input.rfind(delim).map_or(0, |idx| idx);",
+            "    let end = input.rfind(delim).map_or(1, |idx| idx);",
+            "    if end == start { return 1; }",
+        )?;
+        let finding = result
+            .findings
+            .iter()
+            .find(|finding| {
+                finding.probe.family == ProbeFamily::Predicate
+                    && finding.probe.expression.contains("end == start")
+            })
+            .ok_or_else(|| format!("missing retargeted finding: {:?}", result.findings))?;
+        assert_eq!(finding.probe.location.line, 4, "probe sits on the use");
+        assert_ne!(finding.class, ExposureClass::StaticUnknown);
+        assert!(finding.static_limit_kind.is_none());
+        assert!(
+            finding.evidence.iter().any(|line| line
+                .contains("binding_predicate_relation: changed binding `end` initializer")),
+            "relation evidence missing: {:?}",
+            finding.evidence
+        );
+        assert!(
+            finding.evidence.iter().any(|line| line.contains(
+                "binding_predicate_value_unresolved: operand value of `end` unresolved at earliest initializer operation `.rfind(`"
+            )),
+            "earliest operation evidence missing: {:?}",
+            finding.evidence
+        );
+        assert!(
+            !result.findings.iter().any(|finding| finding
+                .evidence
+                .iter()
+                .any(|line| line.contains("not mapped to a high-confidence probe family"))),
+            "the generic changed-syntax limitation must be absent: {:?}",
+            result.findings
+        );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    // #3294: the same retarget for the `len_utf8` operand binding.
+    #[test]
+    fn diff_analysis_retargets_len_utf8_binding_to_predicate_use() -> Result<(), String> {
+        let (root, result) = binding_value_crate(
+            "len-utf8-binding-predicate",
+            2,
+            "    let start = delim.chars().next().map_or(0, |ch| ch.len_utf8());",
+            "    let start = delim.chars().next().map_or(1, |ch| ch.len_utf8());",
+            "    if end == start { return 1; }",
+        )?;
+        let finding = result
+            .findings
+            .iter()
+            .find(|finding| {
+                finding.probe.family == ProbeFamily::Predicate
+                    && finding.probe.expression.contains("end == start")
+            })
+            .ok_or_else(|| format!("missing retargeted finding: {:?}", result.findings))?;
+        assert!(
+            finding.evidence.iter().any(|line| line.contains(
+                "binding_predicate_value_unresolved: operand value of `start` unresolved at earliest initializer operation `.chars(`"
+            )),
+            "earliest operation evidence missing: {:?}",
+            finding.evidence
+        );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    // #3294: an initializer ripr cannot evaluate at all (`input.len()`)
+    // still retargets — the predicate is named, the operand value stays
+    // unresolved at the earliest call.
+    #[test]
+    fn diff_analysis_retargets_unbounded_initializer_naming_earliest_call() -> Result<(), String> {
+        let (root, result) = binding_value_crate(
+            "unbounded-binding-predicate",
+            3,
+            "    let end = input.rfind(delim).map_or(0, |idx| idx);",
+            "    let end = input.len();",
+            "    if end == start { return 1; }",
+        )?;
+        let finding = result
+            .findings
+            .iter()
+            .find(|finding| {
+                finding.probe.family == ProbeFamily::Predicate
+                    && finding.probe.expression.contains("end == start")
+            })
+            .ok_or_else(|| format!("missing retargeted finding: {:?}", result.findings))?;
+        assert!(
+            finding.evidence.iter().any(|line| line.contains(
+                "binding_predicate_value_unresolved: operand value of `end` unresolved at earliest initializer operation `input.len(`"
+            )),
+            "earliest call evidence missing: {:?}",
+            finding.evidence
+        );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    // #3295: the exact test inputs evaluate the changed and sibling
+    // bindings, so the equality boundary is observed (infection yes at
+    // the changed boundary) instead of `observed end values: unknown`.
+    #[test]
+    fn diff_analysis_evaluates_exact_boundary_from_test_inputs() -> Result<(), String> {
+        let root = temp_root("exact-boundary-evaluation")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]
+name='value-propagation'
+version='0.1.0'
+edition='2024'
+",
+        )?;
+        write(
+            &root.join("src/lib.rs"),
+            "pub fn split_after(input: &str, delim: char) -> &str {
+    let end = input.rfind(delim).map_or(1, |idx| idx);
+    let start = delim.len_utf8();
+    if end == start {
+        &input[..end]
+    } else {
+        input
+    }
+}
+",
+        )?;
+        write(
+            &root.join("tests/split.rs"),
+            "use value_propagation::split_after;
+#[test]
+fn absent_delimiter_boundary_returns_head() {
+    assert_eq!(split_after(\"ab\", 'x'), \"a\");
+}
+",
+        )?;
+        let diff_text = "diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -2,1 +2,1 @@
+-    let end = input.rfind(delim).map_or(0, |idx| idx);
++    let end = input.rfind(delim).map_or(1, |idx| idx);
+";
+        let changed_files = diff::parse_unified_diff(diff_text);
+        let result = RustAdapter.analyze_diff(
+            &AnalysisOptions {
+                root: root.clone(),
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+            },
+            &OraclePolicy::default(),
+            &changed_files,
+        )?;
+        let finding = result
+            .findings
+            .iter()
+            .find(|finding| {
+                finding.probe.family == ProbeFamily::Predicate
+                    && finding.probe.expression.contains("end == start")
+            })
+            .ok_or_else(|| format!("missing retargeted finding: {:?}", result.findings))?;
+        assert_eq!(
+            finding.ripr.infect.state,
+            StageState::Yes,
+            "the exact inputs end=1, start=1 observe the boundary: {finding:?}"
+        );
+        assert!(
+            finding
+                .activation
+                .observed_values
+                .iter()
+                .any(|fact| fact.value == "end == start"),
+            "the boundary equality must be an observed value: {:?}",
+            finding.activation.observed_values
+        );
+        assert!(
+            finding
+                .activation
+                .missing_discriminators
+                .iter()
+                .all(|fact| fact.value != "end == start"),
+            "the boundary discriminator is no longer missing: {:?}",
+            finding.activation.missing_discriminators
+        );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    // #3271 stays the fallback for shapes #3294 cannot relate: a
+    // predicate use behind a macro invocation is blocked by the
+    // relation, so the generic static-unknown finding keeps the
+    // value-propagation limitation.
+    #[test]
+    fn diff_analysis_keeps_value_propagation_limitation_for_macro_guarded_use() -> Result<(), String>
+    {
+        let (root, result) = binding_value_crate(
+            "macro-guarded-value-limit",
+            3,
+            "    let end = input.rfind(delim).map_or(0, |idx| idx);",
+            "    let end = input.rfind(delim).map_or(1, |idx| idx);",
+            "    ensure!(end == start);",
+        )?;
+        let finding = result
+            .findings
+            .iter()
+            .find(|finding| finding.probe.expression.contains("let end"))
+            .ok_or_else(|| format!("missing changed binding finding: {:?}", result.findings))?;
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        assert_eq!(
+            finding
+                .static_limit_kind
+                .as_ref()
+                .map(StaticLimitKind::as_str),
+            Some("rust_value_propagation_unresolved")
+        );
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .any(|line| line.contains("analysis/rust-value-propagation"))
+        );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn value_propagation_predicate_ignores_non_entity_text_and_shadowing() {
+        let body = r#"
+    let end = input.rfind(delim).map_or(0, |idx| idx);
+    let copied = end;
+    // end == start is only documentation.
+    let text = "end == start";
+    if other.end == start { return 0; }
+    let end = 1;
+    if end == start { return 1; }
+"#;
+        assert!(super::find_value_propagation_predicate(body, "end").is_none());
+    }
+
+    #[test]
+    fn value_propagation_predicate_rejects_mixed_operator_line() {
+        let body = "    let end = input.rfind(delim).map_or(0, |idx| idx);\n    if end != start && other == marker { return 0; }\n";
+        assert!(super::find_value_propagation_predicate(body, "end").is_none());
+    }
+
+    #[test]
+    fn value_propagation_predicate_rejects_binding_outside_equality_operand() {
+        let body = "    let end = input.rfind(delim).map_or(0, |idx| idx);\n    if other == marker && end > 0 { return 0; }\n";
+        assert!(super::find_value_propagation_predicate(body, "end").is_none());
+    }
+
+    #[test]
+    fn value_propagation_predicate_rejects_map_or_else_shape() {
+        let rhs =
+            super::mask_rust_comments_and_strings("input.find(delim).map_or_else(|| 0, |idx| idx)");
+        assert!(!rhs.contains(".map_or("));
     }
 
     #[test]
@@ -2474,10 +3193,13 @@ mod tests {
                 base: None,
                 diff_file: None,
                 mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
                 git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
             },
             &OraclePolicy::default(),
             &changed_files,
@@ -2565,6 +3287,49 @@ mod tests {
             transitive_reach_limit_kind(Path::new("src/lib.rs")),
             StaticLimitKind::RustTransitiveReachUnresolved
         );
+    }
+
+    #[test]
+    fn cargo_binary_invocation_shape_is_conservative_and_deterministic() {
+        assert!(is_cargo_binary_invocation(
+            r#"let output = Command::new(env!("CARGO_BIN_EXE_worker"))
+                .output().expect("binary output");
+            assert!(output.status.success());"#
+        ));
+        assert!(is_cargo_binary_invocation(
+            r#"Command::cargo_bin("worker").unwrap().assert().success();"#
+        ));
+        assert!(!is_cargo_binary_invocation(
+            r#"Command::new("sh").arg("-c").output().unwrap();"#
+        ));
+        assert!(!is_cargo_binary_invocation(
+            r#"let _binary = env!("CARGO_BIN_EXE_worker");
+            Command::new("sh").status().unwrap();"#
+        ));
+        assert!(!is_cargo_binary_invocation(
+            r#"assert!(output.stdout.contains("receipt:"));"#
+        ));
+    }
+
+    #[test]
+    fn subprocess_limit_only_applies_to_binary_source_paths_and_integration_tests() {
+        let mut index = RustIndex::default();
+        index.tests.push(TestFact {
+            name: "cli_receipt".to_string(),
+            file: PathBuf::from("tests/cli.rs"),
+            start_line: 12,
+            end_line: 18,
+            body: r#"Command::new(env!("CARGO_BIN_EXE_worker")).output().unwrap();"#.to_string(),
+            calls: Vec::new(),
+            assertions: Vec::new(),
+            literals: Vec::new(),
+            attrs: Vec::new(),
+        });
+        assert!(is_binary_source_path(Path::new("src/main.rs")));
+        assert!(super::find_subprocess_binary_test(&index, Path::new("src/main.rs")).is_some());
+        assert!(super::find_subprocess_binary_test(&index, Path::new("src/lib.rs")).is_none());
+        index.tests[0].file = PathBuf::from("src/lib.rs");
+        assert!(super::find_subprocess_binary_test(&index, Path::new("src/main.rs")).is_none());
     }
 
     #[test]
@@ -2901,6 +3666,7 @@ let _ = (result, note, raw);"##,
             observed_sink: None,
             oracle_alignment: None,
             alignment_reason: None,
+            source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
         }
     }
 
@@ -3069,10 +3835,13 @@ let _ = (result, note, raw);"##,
             base: None,
             diff_file: None,
             mode: AnalysisMode::Ready,
+            resolved_subject_identity: None,
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
             git_timeout: None,
+            git_candidate: None,
+            production_like_targets: Default::default(),
         };
         let policy = OraclePolicy::default();
         let result = cancellation::with_token(&token, || {
@@ -3123,6 +3892,289 @@ let _ = (result, note, raw);"##,
                 "expected a deadline-exceeded cancellation from the classify loop, got: {error}"
             ));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_treats_cargo_benches_as_evidence_not_production() -> Result<(), String> {
+        // #3283: benches/** is excluded from the repo production set today,
+        // but the diff path seeds production probes from changed bench files
+        // — harness plumbing (`iter!`, black_box, Ok(()) returns) generates
+        // recursive obligations. A changed bench must stay indexed evidence
+        // without seeding production findings, exactly like tests/**.
+        let root = temp_root("benches-are-evidence")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='bench-role'\nversion='0.1.0'\nedition='2024'\n\n[[bench]]\nname='exposure'\nharness = false\n",
+        )?;
+        write(
+            &root.join("src/lib.rs"),
+            "pub fn price(amount: i32) -> i32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n",
+        )?;
+        write(
+            &root.join("benches/exposure.rs"),
+            "use criterion::Criterion;\nfn bench_price(c: &mut Criterion) {\n    c.bench_function(\"price\", |b| b.iter(|| price(120)));\n}\ncriterion_group!(benches, bench_price);\ncriterion_main!(benches);\n",
+        )?;
+        let changed_files = diff::parse_unified_diff(
+            "diff --git a/src/lib.rs b/src/lib.rs\n\
+         new file mode 100644\n\
+         --- /dev/null\n\
+         +++ b/src/lib.rs\n\
+         @@ -0,0 +1,3 @@\n\
+         +pub fn price(amount: i32) -> i32 {\n\
+         +    if amount > 100 { amount - 10 } else { amount }\n\
+         +}\n\
+         diff --git a/benches/exposure.rs b/benches/exposure.rs\n\
+         new file mode 100644\n\
+         --- /dev/null\n\
+         +++ b/benches/exposure.rs\n\
+         @@ -0,0 +1,6 @@\n\
+         +use criterion::Criterion;\n\
+         +fn bench_price(c: &mut Criterion) {\n\
+         +    c.bench_function(\"price\", |b| b.iter(|| price(120)));\n\
+         +}\n\
+         +criterion_group!(benches, bench_price);\n\
+         +criterion_main!(benches);\n",
+        );
+
+        let result = RustAdapter.analyze_diff(
+            &AnalysisOptions {
+                root,
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+            },
+            &OraclePolicy::default(),
+            &changed_files,
+        )?;
+
+        assert_eq!(
+            result.changed_files, 2,
+            "changed-file accounting must retain the bench file"
+        );
+        assert!(
+            result.findings.iter().all(|finding| !finding
+                .probe
+                .location
+                .file
+                .to_string_lossy()
+                .replace('\\', "/")
+                .contains("benches/")),
+            "bench harness plumbing must not become production probes: {:?}",
+            result.findings
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_confirms_declared_test_targets_but_not_unconfirmed_names() -> Result<(), String>
+    {
+        // #3283: a `[[test]]` target with an explicit path confirms
+        // evidence role outside tests/; the same filename without a
+        // declaration stays a production subject.
+        let root = temp_root("declared-test-target")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='declared-target'\nversion='0.1.0'\nedition='2024'\n\n[[test]]\nname='contract'\npath='src/contract_test.rs'\n",
+        )?;
+        write(
+            &root.join("src/lib.rs"),
+            "pub fn price(amount: i32) -> i32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n",
+        )?;
+        write(
+            &root.join("src/contract_test.rs"),
+            "fn setup_price(amount: i32) -> i32 {\n    if amount < 0 { 0 } else { price(amount) }\n}\n\n#[test]\nfn price_at_boundary() {\n    assert_eq!(setup_price(100), 90);\n}\n",
+        )?;
+        write(
+            &root.join("src/unconfirmed_test.rs"),
+            "pub fn helper_path(amount: i32) -> i32 {\n    if amount < 0 { 0 } else { amount }\n}\n",
+        )?;
+        let changed_files = diff::parse_unified_diff(
+            "diff --git a/src/lib.rs b/src/lib.rs\n\
+             new file mode 100644\n\
+             --- /dev/null\n\
+             +++ b/src/lib.rs\n\
+             @@ -0,0 +1,3 @@\n\
+             +pub fn price(amount: i32) -> i32 {\n\
+             +    if amount > 100 { amount - 10 } else { amount }\n\
+             +}\n\
+             diff --git a/src/contract_test.rs b/src/contract_test.rs\n\
+             new file mode 100644\n\
+             --- /dev/null\n\
+             +++ b/src/contract_test.rs\n\
+             @@ -0,0 +1,8 @@\n\
+             +fn setup_price(amount: i32) -> i32 {\n\
+             +    if amount < 0 { 0 } else { price(amount) }\n\
+             +}\n\
+             +\n\
+             +#[test]\n\
+             +fn price_at_boundary() {\n\
+             +    assert_eq!(setup_price(100), 90);\n\
+             +}\n\
+             diff --git a/src/unconfirmed_test.rs b/src/unconfirmed_test.rs\n\
+             new file mode 100644\n\
+             --- /dev/null\n\
+             +++ b/src/unconfirmed_test.rs\n\
+             @@ -0,0 +1,3 @@\n\
+             +pub fn helper_path(amount: i32) -> i32 {\n\
+             +    if amount < 0 { 0 } else { amount }\n\
+             +}\n",
+        );
+        let result = RustAdapter.analyze_diff(
+            &AnalysisOptions {
+                root,
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+            },
+            &OraclePolicy::default(),
+            &changed_files,
+        )?;
+        let path_text = |finding: &crate::domain::Finding| {
+            finding
+                .probe
+                .location
+                .file
+                .to_string_lossy()
+                .replace('\\', "/")
+        };
+        assert!(
+            result
+                .findings
+                .iter()
+                .all(|finding| !path_text(finding).ends_with("src/contract_test.rs")),
+            "a declared [[test]] target must not seed production probes: {:?}",
+            result.findings
+        );
+        assert!(
+            result
+                .findings
+                .iter()
+                .any(|finding| path_text(finding).ends_with("src/unconfirmed_test.rs")),
+            "an unconfirmed *_test.rs filename stays a production subject: {:?}",
+            result.findings
+        );
+        // The confirmed target's test still relates to the changed owner:
+        // evidence stays indexed and usable.
+        assert!(
+            result
+                .findings
+                .iter()
+                .any(|finding| path_text(finding).ends_with("src/lib.rs")
+                    && finding
+                        .related_tests
+                        .iter()
+                        .any(|test| test.name == "price_at_boundary")),
+            "the declared target's test must remain usable evidence: {:?}",
+            result.findings
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_opt_in_restores_production_like_analysis() -> Result<(), String> {
+        // #3283: `production_like_targets` restores ordinary production
+        // analysis for the selected target only.
+        let root = temp_root("production-like-opt-in")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='opt-in'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        write(
+            &root.join("src/lib.rs"),
+            "pub fn price(amount: i32) -> i32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n",
+        )?;
+        write(
+            &root.join("tests/api_contract.rs"),
+            "pub fn contract_helper(amount: i32) -> i32 {\n    if amount < 0 { 0 } else { amount }\n}\n",
+        )?;
+        write(
+            &root.join("tests/other.rs"),
+            "pub fn other_helper(amount: i32) -> i32 {\n    if amount < 0 { 0 } else { amount }\n}\n",
+        )?;
+        let changed_files = diff::parse_unified_diff(
+            "diff --git a/src/lib.rs b/src/lib.rs\n\
+             new file mode 100644\n\
+             --- /dev/null\n\
+             +++ b/src/lib.rs\n\
+             @@ -0,0 +1,3 @@\n\
+             +pub fn price(amount: i32) -> i32 {\n\
+             +    if amount > 100 { amount - 10 } else { amount }\n\
+             +}\n\
+             diff --git a/tests/api_contract.rs b/tests/api_contract.rs\n\
+             new file mode 100644\n\
+             --- /dev/null\n\
+             +++ b/tests/api_contract.rs\n\
+             @@ -0,0 +1,3 @@\n\
+             +pub fn contract_helper(amount: i32) -> i32 {\n\
+             +    if amount < 0 { 0 } else { amount }\n\
+             +}\n\
+             diff --git a/tests/other.rs b/tests/other.rs\n\
+             new file mode 100644\n\
+             --- /dev/null\n\
+             +++ b/tests/other.rs\n\
+             @@ -0,0 +1,3 @@\n\
+             +pub fn other_helper(amount: i32) -> i32 {\n\
+             +    if amount < 0 { 0 } else { amount }\n\
+             +}\n",
+        );
+        let mut production_like = std::collections::BTreeSet::new();
+        production_like.insert(std::path::PathBuf::from("tests/api_contract.rs"));
+        let result = RustAdapter.analyze_diff(
+            &AnalysisOptions {
+                root,
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: production_like,
+            },
+            &OraclePolicy::default(),
+            &changed_files,
+        )?;
+        let path_text = |finding: &crate::domain::Finding| {
+            finding
+                .probe
+                .location
+                .file
+                .to_string_lossy()
+                .replace('\\', "/")
+        };
+        assert!(
+            result
+                .findings
+                .iter()
+                .any(|finding| path_text(finding).ends_with("tests/api_contract.rs")),
+            "the opted-in target is analyzed as production-like: {:?}",
+            result.findings
+        );
+        assert!(
+            result
+                .findings
+                .iter()
+                .all(|finding| !path_text(finding).ends_with("tests/other.rs")),
+            "sibling test targets stay evidence-only: {:?}",
+            result.findings
+        );
         Ok(())
     }
 }

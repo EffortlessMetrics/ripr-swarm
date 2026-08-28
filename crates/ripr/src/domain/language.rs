@@ -163,6 +163,16 @@ pub enum StaticLimitKind {
     /// oracle. The classification stays reachable-but-undiscriminated; this
     /// label names the unresolved assertion macro, not a coverage claim.
     RustMacroWrappedAssertionUnresolved,
+    /// A changed Rust let binding uses a bounded value-producing operation,
+    /// but the syntax-first analyzer cannot carry that value into the
+    /// same-owner equality predicate. Classification remains `static_unknown`;
+    /// this is a named limitation, not a coverage or repair claim.
+    RustValuePropagationUnresolved,
+    /// An integration test invokes a Cargo-built binary, but ripr does not
+    /// yet map that binary target back to the changed owner. The
+    /// classification stays `no_static_path`; this is a named limitation,
+    /// not a subprocess reach or receipt claim.
+    RustSubprocessBinaryReachUnresolved,
 }
 
 impl StaticLimitKind {
@@ -192,6 +202,10 @@ impl StaticLimitKind {
             }
             StaticLimitKind::RustMacroWrappedAssertionUnresolved => {
                 "rust_macro_wrapped_assertion_unresolved"
+            }
+            StaticLimitKind::RustValuePropagationUnresolved => "rust_value_propagation_unresolved",
+            StaticLimitKind::RustSubprocessBinaryReachUnresolved => {
+                "rust_subprocess_binary_reach_unresolved"
             }
         }
     }
@@ -268,6 +282,16 @@ impl StaticLimitKind {
                 "A reachable Rust test uses an assertion-like macro that ripr does not classify, \
                  so the assertion semantics are unresolved. This is a named limitation, not a \
                  coverage claim."
+            }
+            StaticLimitKind::RustValuePropagationUnresolved => {
+                "A changed Rust value binding uses a bounded string or character operation, but \
+                 ripr cannot carry that value into the same-owner equality predicate. This is a \
+                 named analyzer limitation, not a coverage or repair claim."
+            }
+            StaticLimitKind::RustSubprocessBinaryReachUnresolved => {
+                "An integration test invokes a Cargo-built binary, but ripr cannot yet map that \
+                 executable back to the changed owner. This is a named subprocess boundary \
+                 limitation, not a reach, receipt, or coverage claim."
             }
         }
     }
@@ -368,6 +392,14 @@ mod tests {
             "rust_integration_public_api_path_unresolved"
         );
         assert_eq!(
+            StaticLimitKind::RustValuePropagationUnresolved.as_str(),
+            "rust_value_propagation_unresolved"
+        );
+        assert_eq!(
+            StaticLimitKind::RustSubprocessBinaryReachUnresolved.as_str(),
+            "rust_subprocess_binary_reach_unresolved"
+        );
+        assert_eq!(
             StaticLimitKind::RustMacroReachUnresolved.as_str(),
             "rust_macro_reach_unresolved"
         );
@@ -399,6 +431,8 @@ mod tests {
             StaticLimitKind::RustMacroReachUnresolved,
             StaticLimitKind::RustMacroWrappedTestCallUnresolved,
             StaticLimitKind::RustMacroWrappedAssertionUnresolved,
+            StaticLimitKind::RustValuePropagationUnresolved,
+            StaticLimitKind::RustSubprocessBinaryReachUnresolved,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
         // static-language vocabulary is enforced repo-wide by

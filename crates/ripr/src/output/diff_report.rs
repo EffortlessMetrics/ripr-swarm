@@ -114,9 +114,9 @@ pub(crate) struct DiffPreviewLanguageAdvisory {
     pub(crate) file_count: usize,
     /// Up to three sample file paths (normalized, forward-slash).
     pub(crate) sample_paths: Vec<String>,
-    /// Whether the preview adapter was enabled (ran) for this analysis.
+    /// Whether the preview adapter was configured and available for this analysis.
     pub(crate) enabled: bool,
-    /// Whether the files were analyzed (mirrors `enabled`).
+    /// Whether the adapter completed successfully for the routed files.
     pub(crate) analyzed: bool,
     /// Advisory category tag.
     pub(crate) category: &'static str,
@@ -268,21 +268,32 @@ pub(crate) fn build_diff_report(
         preview_languages: output
             .preview_language_advisories
             .iter()
-            .map(|advisory| DiffPreviewLanguageAdvisory {
+            .map(|advisory| {
+                let analyzed = advisory.analyzed(&output.language_runs);
+                let failed_run = advisory.non_success_run(&output.language_runs);
+                DiffPreviewLanguageAdvisory {
                 language: advisory.language.clone(),
                 file_count: advisory.file_count,
                 sample_paths: advisory.sample_paths.clone(),
                 enabled: advisory.enabled,
-                analyzed: advisory.enabled,
+                analyzed,
                 category: "preview_language_advisory",
-                why: if advisory.enabled {
+                why: if analyzed {
                     "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean".to_string()
-                } else {
+                } else if !advisory.enabled {
                     format!(
                         "preview adapter not enabled; files detected but not analyzed; empty result is not Rust-grade clean; to enable add to ripr.toml: [languages] enabled = [\"rust\", \"{}\"]",
                         advisory.language
                     )
+                } else if let Some(run) = failed_run {
+                    format!(
+                        "preview adapter did not complete successfully ({}); files detected but not analyzed; empty result is not Rust-grade clean",
+                        run.status.as_str()
+                    )
+                } else {
+                    "preview adapter enabled but no files were routed; files not analyzed; empty result is not Rust-grade clean".to_string()
                 },
+            }
             })
             .collect(),
     }
@@ -640,6 +651,7 @@ mod tests {
             observed_sink: None,
             oracle_alignment: None,
             alignment_reason: None,
+            source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
         }
     }
 

@@ -65,7 +65,7 @@ impl OwnerContext {
             .and_then(|s| s.to_str())
             .unwrap_or("")
             .to_string();
-        let module_path = owner_file.and_then(module_path_for);
+        let module_path = owner_file.and_then(|file| module_path_for_index(context.index, file));
         let prefix = owner_fn.and_then(|f| package_prefix(&f.file));
         let fixture_names = owner_file
             .and_then(|file| context.index.files.get(file))
@@ -615,6 +615,10 @@ pub(super) fn module_path_for(file: &Path) -> Option<String> {
     }
 }
 
+pub(super) fn module_path_for_index(index: &RustIndex, file: &Path) -> Option<String> {
+    module_path_for(&rust_index::compilation_unit_path(index, file))
+}
+
 /// Two files share a module if any non-leaf segment of the owner's
 /// module path appears as a prefix of the test's module path. The leaf
 /// stem is excluded so this does not duplicate `same_test_file`.
@@ -694,25 +698,53 @@ pub(super) fn strip_comments_and_strings(line: &str) -> String {
     };
     let mut out = String::with_capacity(without_comment.len());
     let mut in_string = false;
+    let mut in_char = false;
     let mut escaped = false;
-    for ch in without_comment.chars() {
-        if in_string {
+    let mut chars = without_comment.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if in_string || in_char {
             if escaped {
                 escaped = false;
                 continue;
             }
             match ch {
                 '\\' => escaped = true,
-                '"' => in_string = false,
+                '"' if in_string => in_string = false,
+                '\'' if in_char => in_char = false,
                 _ => {}
             }
             continue;
         }
-        if ch == '"' {
-            in_string = true;
-            continue;
+        match ch {
+            '"' => in_string = true,
+            '\'' => {
+                let mut lookahead = chars.clone();
+                let is_char_literal = match lookahead.next() {
+                    Some('\\') => {
+                        if lookahead.next() == Some('u') {
+                            if lookahead.next() == Some('{') {
+                                for next in lookahead.by_ref() {
+                                    if next == '}' {
+                                        break;
+                                    }
+                                }
+                            }
+                        } else {
+                            lookahead.next();
+                        }
+                        lookahead.next() == Some('\'')
+                    }
+                    Some(_) => lookahead.next() == Some('\''),
+                    None => false,
+                };
+                if is_char_literal {
+                    in_char = true;
+                } else {
+                    out.push(ch);
+                }
+            }
+            _ => out.push(ch),
         }
-        out.push(ch);
     }
     out
 }

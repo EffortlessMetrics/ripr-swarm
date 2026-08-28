@@ -39,18 +39,71 @@ A gap-only panel cannot measure either side correctly.
 - `manifest.json` — selected, unjudged cases. Every judgment label is `null`.
 - `diffs/*.diff` — the exact changed production behavior for each synthetic
   seed case.
+- `subjects.json` and `subjects/*` — independent checked source, test, config,
+  diff, semantic-selection, and deterministic Git identity authority for later
+  replay materialization.
 
 The seed records the test/oracle evidence required for later reconstruction.
-A subsequent execution PR must materialize exact repositories, source/test
-artifacts, RIPR binary/config identities, and current output before any label is
-populated.
+The subject authority proves that the three selected repositories materialize
+at exact base/head/tree identities from independently hashed inputs. A later
+execution PR must still build and invoke RIPR and retain host run receipts before
+any replay result exists or any label is populated.
 
 `cargo xtask rust-judged-panel check` is the retained semantic guard for this
-seed. It validates the typed manifest contract, selected directions, explicit
-null-as-unjudged state, and exact Rust-token anchors on added diff lines. The
-same checker is reached by required precommit policy. Passing it establishes
-only that the selected seed is internally coherent; it does not establish an
-analyzer result, replay identity, judgment, rate, or support claim.
+seed, its subject authority, and the complete portable packet set. It validates the typed manifest contract,
+selected directions, explicit null-as-unjudged state, exact Rust-token anchors,
+subject digests, manifest joins, deterministic Git materialization, exact
+direction-specific packet joins, packet self-digests, and the complete
+packet-index/current chain. The same
+checker is reached by required precommit policy. Passing it establishes only
+that the selected seed, independent subject inputs, and retained bounded static
+projection are internally coherent. It does not build or run RIPR, consult the
+ignored host receipts, or establish analyzer correctness, judgment, mutation,
+rate, badge, gate, or support.
+
+## Host-bound replay receipts
+
+`cargo xtask rust-judged-panel replay --out target/ripr/rust-judged-panel`
+owns a fresh `cargo build -p ripr --locked --offline` in a run-local target,
+then invokes those exact hashed bytes against all three materialized subjects.
+It retains byte-exact stdout/stderr plus typed source, build, binary, host,
+argv, config, diff, process, timeout, and analyzer-input identities below the
+ignored `target/` tree.
+
+Each attempt is staged under an exclusive lock. Only a validated three-case
+generation receives `run-index.json`, is moved into the immutable `runs/`
+namespace, and advances `current.json` last. A failed, partial, or concurrent
+attempt cannot become current. The build has no network fallback: an offline
+cache miss is a failed attempt.
+
+These files are host-bound run receipts. They do not by themselves select or
+bless findings, interpret quiet output, populate judgments, or support a
+mutation, rate, gate, badge, or support-tier claim.
+
+## Portable bounded projection
+
+`cargo xtask rust-judged-panel packet --host-current
+target/ripr/rust-judged-panel/current.json` first validates the complete
+host-current/index/receipt/raw chain, then projects all three cases into the
+checked `portable/` generation. Packets bind the governed subject, exact run
+plan and input identity, exact probe path/line/family/expression and enclosing
+Rust owner, observed class, and direction-specific witness. `should_stay_quiet`
+is exactly one `exposed` finding with no action evidence; the macro case is a
+complete `no_static_path` finding with its named static limitation, not a
+timeout or incomplete run.
+
+Each packet separates its portable semantic self-identity from host provenance.
+Absolute checkout roots, run IDs, host targets, binary and raw-output digests
+are excluded from the semantic digest, while the packet retains relative
+host-receipt/raw references and their digests for provenance on the producing
+host. The ignored raw files are intentionally unavailable in a clean checkout;
+the retained checker revalidates the packet against the manifest and subject
+authority without pretending to re-run or re-open that host evidence.
+
+Publication stages and validates all three packets, publishes one immutable
+content-addressed generation, then advances `portable/current.json` last under
+an exclusive writer lock. A partial or concurrent attempt is non-authoritative.
+Judgment remains explicitly null and runtime calibration remains `not_run`.
 
 ## Item contract
 
@@ -117,3 +170,14 @@ materialize exact replay repositories and analysis identities
 No analyzer change, automated judgment, mutation execution, provider call,
 generated test, repair assignment, gate, or support-tier promotion is made by
 this seed.
+
+Additional stated boundaries (audit #3297, see `AUDIT-3198.md`):
+
+- Retained attestations are **reviewed, unsigned** authority. They
+  establish reviewed coherence, not cryptographic authenticity; a
+  coherent full-authority rewrite is rejected by the digest chain, and
+  authenticity beyond review remains out of scope.
+- **Windows junction/reparse-point confinement is `NOT_ESTABLISHED`.**
+  The symlink-escape discriminators run only where symlink support
+  exists; no junction- or reparse-point proof has been produced on any
+  host. This is a stated boundary, not a claim.

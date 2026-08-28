@@ -46,7 +46,7 @@ impl<'a> CompactGripContext<'a> {
         let unambiguous_test_helper_owner_calls_by_name =
             unambiguous_test_helper_owner_calls_by_name(&helper_owner_calls_by_file);
         let helper_owner_calls_by_module_path =
-            helper_owner_calls_by_module_path(&helper_owner_calls_by_file);
+            helper_owner_calls_by_module_path(index, &helper_owner_calls_by_file);
         let direct_helper_import_aliases_by_file =
             direct_helper_import_aliases_by_file(index, &helper_owner_calls_by_module_path);
         let production_helper_owner_calls_by_package =
@@ -57,6 +57,8 @@ impl<'a> CompactGripContext<'a> {
             ambiguous_target_affinity_owner_calls_by_package(index);
         let target_affinity_production_owner_calls_by_module_path =
             target_affinity_production_owner_calls_by_module_path(index);
+        let unambiguous_production_owner_names_by_package =
+            unambiguous_production_owner_names_by_package(index);
         let module_import_aliases_by_file = module_import_aliases_by_file(index);
         let function_names_by_file = local_function_names_by_file(index);
         let test_scoped_function_names_by_file = test_scoped_function_names_by_file(index);
@@ -73,6 +75,10 @@ impl<'a> CompactGripContext<'a> {
             .iter()
             .enumerate()
             .map(|(test_index, test)| {
+                let test_scoped_function_names = test_scoped_function_names_by_file.get(&test.file);
+                let production_owner_names = package_scope(&test.file).and_then(|package| {
+                    unambiguous_production_owner_names_by_package.get(&package)
+                });
                 let call_names = test
                     .calls
                     .iter()
@@ -96,11 +102,15 @@ impl<'a> CompactGripContext<'a> {
                     &call_names,
                     &helper_owner_lookup,
                     module_import_aliases,
+                    test_scoped_function_names,
+                    production_owner_names,
                 );
                 helper_owner_call_names.extend(same_file_helper_owner_call_names_for_test(
                     test,
                     &call_names,
                     &same_file_helper_owner_calls_by_file,
+                    test_scoped_function_names,
+                    production_owner_names,
                 ));
                 let mut target_affinity_owner_call_names =
                     helper_owner_call_names_from_qualified_calls(
@@ -127,7 +137,8 @@ impl<'a> CompactGripContext<'a> {
                         test,
                         &target_affinity_production_owner_calls_by_package,
                         local_function_names,
-                        test_scoped_function_names_by_file.get(&test.file),
+                        test_scoped_function_names,
+                        production_owner_names,
                     ),
                 );
                 for call_name in &call_names {
@@ -163,7 +174,7 @@ impl<'a> CompactGripContext<'a> {
                 CompactTest {
                     test,
                     path_normalized: normalize_path(&test.file),
-                    module_path: module_path_for(&test.file),
+                    module_path: module_path_for_index(index, &test.file),
                     name_lower: test.name.to_ascii_lowercase(),
                     call_names,
                     assertion_tokens,
@@ -244,6 +255,8 @@ pub(in crate::analysis::test_grip_evidence) type ModuleImportAliasesByFile =
     BTreeMap<PathBuf, BTreeMap<String, String>>;
 pub(in crate::analysis::test_grip_evidence) type DirectFunctionImportAliasesByFile =
     BTreeMap<PathBuf, BTreeMap<String, ImportedFunctionAlias>>;
+pub(in crate::analysis::test_grip_evidence) type ScopedDirectFunctionImportAliasesByFile =
+    BTreeMap<PathBuf, BTreeMap<String, ScopedImportedFunctionAlias>>;
 pub(in crate::analysis::test_grip_evidence) type ProductionOwnerNamesByPackage =
     BTreeMap<String, BTreeSet<String>>;
 pub(in crate::analysis::test_grip_evidence) type OwnerNamesByModulePath =
@@ -255,6 +268,38 @@ pub(in crate::analysis::test_grip_evidence) type OwnerNamesByPackageAndModulePat
 pub(in crate::analysis::test_grip_evidence) struct ImportedFunctionAlias {
     module_path: String,
     name: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::analysis::test_grip_evidence) struct ScopedImportedFunctionAlias {
+    bindings: Vec<ScopedImportedFunctionBinding>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::analysis::test_grip_evidence) struct ScopedImportedFunctionBinding {
+    pub(in crate::analysis::test_grip_evidence) module_path: String,
+    pub(in crate::analysis::test_grip_evidence) name: String,
+    start_line: usize,
+    end_line: usize,
+}
+
+impl ScopedImportedFunctionAlias {
+    pub(in crate::analysis::test_grip_evidence) fn binding_at(
+        &self,
+        line: usize,
+    ) -> Option<&ScopedImportedFunctionBinding> {
+        let candidates = self
+            .bindings
+            .iter()
+            .filter(|binding| binding.start_line <= line && line <= binding.end_line)
+            .collect::<Vec<_>>();
+        let max_start = candidates.iter().map(|binding| binding.start_line).max()?;
+        let mut best = candidates
+            .into_iter()
+            .filter(|binding| binding.start_line == max_start);
+        let binding = best.next()?;
+        best.next().is_none().then_some(binding)
+    }
 }
 
 pub(in crate::analysis::test_grip_evidence) struct HelperOwnerCallLookup<'a> {
@@ -270,6 +315,8 @@ pub(in crate::analysis::test_grip_evidence) fn same_file_helper_owner_call_names
     test: &TestSummary,
     call_names: &BTreeSet<String>,
     helpers: &HelperOwnerCallsByFile,
+    test_scoped_function_names: Option<&BTreeSet<String>>,
+    production_owner_names: Option<&BTreeSet<String>>,
 ) -> BTreeSet<String> {
     if rust_index::is_test_file(&test.file) {
         return BTreeSet::new();
@@ -277,9 +324,17 @@ pub(in crate::analysis::test_grip_evidence) fn same_file_helper_owner_call_names
     let Some(file_helpers) = helpers.get(&test.file) else {
         return BTreeSet::new();
     };
-    call_names
+    test.calls
         .iter()
-        .filter_map(|call_name| file_helpers.get(call_name))
+        .filter(|call| call_names.contains(&call.name))
+        .filter(|call| {
+            same_file_unit_production_helper_call_is_allowed(
+                call,
+                test_scoped_function_names,
+                production_owner_names,
+            )
+        })
+        .filter_map(|call| file_helpers.get(&call.name))
         .flat_map(|owner_calls| owner_calls.iter().cloned())
         .collect()
 }
@@ -307,7 +362,14 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_file_with_f
         unambiguous_production_owner_names_by_package(index);
     let owner_names_by_module_path = production_owner_names_by_module_path(index);
     let production_owner_names = production_owner_names(index);
-    for function in index.functions.iter().filter(|function| !function.is_test) {
+    let actual_tests = actual_test_keys(index);
+    for function in index.functions.iter().filter(|function| {
+        !actual_tests.contains(&ActualTestKey {
+            file: &function.file,
+            name: &function.name,
+            start_line: function.start_line,
+        })
+    }) {
         let helper_name_lower = function.name.to_ascii_lowercase();
         let local_function_names = function_names_by_file.get(&function.file);
         let external_owner_names =
@@ -350,7 +412,7 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_file_with_f
 
 pub(in crate::analysis::test_grip_evidence) fn strict_direct_imported_owner_calls_for_helper(
     function: &FunctionSummary,
-    direct_function_import_aliases: Option<&BTreeMap<String, ImportedFunctionAlias>>,
+    direct_function_import_aliases: Option<&BTreeMap<String, ScopedImportedFunctionAlias>>,
     unambiguous_production_owner_names: Option<&BTreeSet<String>>,
     owner_names_by_module_path: &OwnerNamesByModulePath,
 ) -> BTreeSet<String> {
@@ -456,6 +518,7 @@ pub(in crate::analysis::test_grip_evidence) fn unambiguous_test_helper_owner_cal
 }
 
 pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_module_path(
+    index: &RustIndex,
     helpers: &HelperOwnerCallsByFile,
 ) -> HelperOwnerCallsByModulePath {
     helpers
@@ -464,7 +527,7 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_module_path
             if !rust_index::is_test_file(file) {
                 return None;
             }
-            let module_path = module_path_for(file)?.replace('/', "::");
+            let module_path = module_path_for_index(index, file)?.replace('/', "::");
             Some((module_path, file_helpers.clone()))
         })
         .collect()
@@ -601,7 +664,7 @@ pub(in crate::analysis::test_grip_evidence) fn target_affinity_production_owner_
         .iter()
         .filter(|function| !function.is_test && !rust_index::is_test_file(&function.file))
     {
-        let Some(module_path) = module_path_for(&function.file) else {
+        let Some(module_path) = module_path_for_index(index, &function.file) else {
             continue;
         };
         let Some(package) = package_scope(&function.file) else {
@@ -634,7 +697,7 @@ pub(in crate::analysis::test_grip_evidence) fn target_affinity_direct_owner_call
     function: &FunctionSummary,
     local_function_names: &BTreeSet<String>,
     imported_module_aliases: Option<&BTreeMap<String, String>>,
-    direct_function_import_aliases: Option<&BTreeMap<String, ImportedFunctionAlias>>,
+    direct_function_import_aliases: Option<&BTreeMap<String, ScopedImportedFunctionAlias>>,
     unambiguous_production_owner_names: Option<&BTreeSet<String>>,
     owner_names_by_module_path: &OwnerNamesByModulePath,
     crate_local_owner_names_by_module_path: Option<&OwnerNamesByModulePath>,
@@ -720,7 +783,7 @@ pub(in crate::analysis::test_grip_evidence) fn code_contains_crate_qualified_hel
 
 pub(in crate::analysis::test_grip_evidence) fn direct_imported_owner_calls_for_function(
     function: &FunctionSummary,
-    direct_function_import_aliases: Option<&BTreeMap<String, ImportedFunctionAlias>>,
+    direct_function_import_aliases: Option<&BTreeMap<String, ScopedImportedFunctionAlias>>,
     unambiguous_production_owner_names: Option<&BTreeSet<String>>,
     owner_names_by_module_path: &OwnerNamesByModulePath,
 ) -> BTreeSet<String> {
@@ -735,7 +798,11 @@ pub(in crate::analysis::test_grip_evidence) fn direct_imported_owner_calls_for_f
         .iter()
         .filter(|call| call.name != function.name)
         .filter(|call| call_text_contains_named_call(&call.text, &call.name))
-        .filter_map(|call| direct_function_import_aliases.get(&call.name))
+        .filter_map(|call| {
+            direct_function_import_aliases
+                .get(&call.name)
+                .and_then(|imported| imported.binding_at(call.line))
+        })
         .filter(|imported| unambiguous_production_owner_names.contains(&imported.name))
         .filter(|imported| {
             owner_names_by_module_path
@@ -796,7 +863,7 @@ pub(in crate::analysis::test_grip_evidence) fn production_owner_names_by_module_
         .iter()
         .filter(|function| !function.is_test && !rust_index::is_test_file(&function.file))
     {
-        let Some(module_path) = module_path_for(&function.file) else {
+        let Some(module_path) = module_path_for_index(index, &function.file) else {
             continue;
         };
         by_module_path
@@ -819,7 +886,7 @@ pub(in crate::analysis::test_grip_evidence) fn production_owner_names_by_package
         let Some(package) = package_scope(&function.file) else {
             continue;
         };
-        let Some(module_path) = module_path_for(&function.file) else {
+        let Some(module_path) = module_path_for_index(index, &function.file) else {
             continue;
         };
         by_package
@@ -847,7 +914,7 @@ pub(in crate::analysis::test_grip_evidence) fn module_import_aliases_by_file(
 
 pub(in crate::analysis::test_grip_evidence) fn direct_function_import_aliases_by_file(
     index: &RustIndex,
-) -> DirectFunctionImportAliasesByFile {
+) -> ScopedDirectFunctionImportAliasesByFile {
     index
         .files
         .iter()
@@ -925,16 +992,140 @@ pub(in crate::analysis::test_grip_evidence) fn update_brace_depth(
 
 pub(in crate::analysis::test_grip_evidence) fn direct_function_import_aliases(
     source: &str,
-) -> BTreeMap<String, ImportedFunctionAlias> {
+) -> BTreeMap<String, ScopedImportedFunctionAlias> {
     let mut aliases = BTreeMap::new();
-    for line in source.lines() {
+    let mut imports = Vec::new();
+    let mut line_depths_after = Vec::new();
+    let mut scope_starts = vec![1usize];
+    let mut pending_use: Option<(usize, usize, String)> = None;
+    let mut brace_depth = 0usize;
+    for (line_index, line) in source.lines().enumerate() {
         let line = strip_comments_and_strings(line);
-        let Some(import) = line.trim().strip_prefix("use ") else {
-            continue;
+        let line_number = line_index + 1;
+        let scope_start = scope_starts[brace_depth];
+        let trimmed = line.trim();
+        let mut is_use_fragment = false;
+        if pending_use.is_some()
+            && [
+                "use ", "fn ", "pub ", "mod ", "impl ", "struct ", "enum ", "const ", "static ",
+                "type ", "#[",
+            ]
+            .iter()
+            .any(|prefix| trimmed.starts_with(prefix))
+        {
+            pending_use = None;
+        }
+        if let Some((start_line, scope_depth, import)) = pending_use.as_mut() {
+            is_use_fragment = true;
+            import.push(' ');
+            import.push_str(trimmed);
+            if trimmed.contains(';') {
+                let mut parsed = BTreeMap::new();
+                let import_text = import
+                    .split_once(';')
+                    .map_or(import.as_str(), |(head, _)| head);
+                if let Some(parsed_imports) =
+                    collect_direct_function_import_aliases_from_use_unambiguous(import_text)
+                {
+                    parsed = parsed_imports;
+                }
+                if !parsed.is_empty() {
+                    imports.push((*start_line, *scope_depth, line_number, parsed));
+                }
+                pending_use = None;
+            }
+        } else if let Some(import) = trimmed.strip_prefix("use ") {
+            is_use_fragment = true;
+            let mut parsed = BTreeMap::new();
+            if import.contains(';') {
+                let import_text = import.split_once(';').map_or(import, |(head, _)| head);
+                if let Some(parsed_imports) =
+                    collect_direct_function_import_aliases_from_use_unambiguous(import_text)
+                {
+                    parsed = parsed_imports;
+                }
+                if !parsed.is_empty() {
+                    imports.push((scope_start, brace_depth, line_number, parsed));
+                }
+            } else {
+                pending_use = Some((scope_start, brace_depth, import.to_string()));
+            }
+        }
+        let lexical_suffix = if is_use_fragment {
+            line.split_once(';').map_or("", |(_, suffix)| suffix)
+        } else {
+            &line
         };
-        collect_direct_function_import_aliases_from_use(import.trim(), &mut aliases);
+        for ch in lexical_suffix.chars() {
+            match ch {
+                '{' => {
+                    brace_depth = brace_depth.saturating_add(1);
+                    scope_starts.push(line_number);
+                }
+                '}' if brace_depth > 0 => {
+                    brace_depth -= 1;
+                    scope_starts.pop();
+                }
+                _ => {}
+            }
+        }
+        line_depths_after.push(brace_depth);
+    }
+    for (start_line, scope_depth, use_line, parsed) in imports {
+        let end_line = if scope_depth == 0 {
+            usize::MAX
+        } else {
+            line_depths_after
+                .iter()
+                .enumerate()
+                .skip(use_line - 1)
+                .find_map(|(index, depth)| (*depth < scope_depth).then_some(index + 1))
+                .unwrap_or(line_depths_after.len())
+        };
+        for (alias, imported) in parsed {
+            aliases
+                .entry(alias)
+                .or_insert_with(|| ScopedImportedFunctionAlias {
+                    bindings: Vec::new(),
+                })
+                .bindings
+                .push(ScopedImportedFunctionBinding {
+                    module_path: imported.module_path,
+                    name: imported.name,
+                    start_line,
+                    end_line,
+                });
+        }
     }
     aliases
+}
+
+fn collect_direct_function_import_aliases_from_use_unambiguous(
+    import: &str,
+) -> Option<BTreeMap<String, ImportedFunctionAlias>> {
+    let import = import.trim_end_matches(';').trim();
+    let mut aliases = BTreeMap::new();
+    if let Some((base, rest)) = import.split_once("::{") {
+        let module_path = normalize_module_import_path(base)?;
+        let body = rest.strip_suffix('}')?;
+        for item in body.split(',').map(str::trim) {
+            if item.contains("::") || item.contains('{') || item.contains('}') {
+                continue;
+            }
+            let mut candidate = BTreeMap::new();
+            collect_direct_function_import_alias(item, &module_path, &mut candidate);
+            for (alias, imported) in candidate {
+                if aliases.insert(alias, imported).is_some() {
+                    return None;
+                }
+            }
+        }
+        return Some(aliases);
+    }
+    let (module_path, item) = import.rsplit_once("::")?;
+    let module_path = normalize_module_import_path(module_path)?;
+    collect_direct_function_import_alias(item.trim(), &module_path, &mut aliases);
+    Some(aliases)
 }
 
 pub(in crate::analysis::test_grip_evidence) fn collect_module_import_aliases_from_use(
@@ -1002,32 +1193,6 @@ pub(in crate::analysis::test_grip_evidence) fn collect_direct_helper_import_alia
     };
     let Some(module_path) = normalize_helper_module_import_path(module_path, allowed_module_paths)
     else {
-        return;
-    };
-    collect_direct_function_import_alias(item.trim(), &module_path, aliases);
-}
-
-pub(in crate::analysis::test_grip_evidence) fn collect_direct_function_import_aliases_from_use(
-    import: &str,
-    aliases: &mut BTreeMap<String, ImportedFunctionAlias>,
-) {
-    let import = import.trim_end_matches(';').trim();
-    if let Some((base, rest)) = import.split_once("::{") {
-        let Some(module_path) = normalize_module_import_path(base) else {
-            return;
-        };
-        let Some(body) = rest.strip_suffix('}') else {
-            return;
-        };
-        for item in body.split(',').map(str::trim) {
-            collect_direct_function_import_alias(item, &module_path, aliases);
-        }
-        return;
-    }
-    let Some((module_path, item)) = import.rsplit_once("::") else {
-        return;
-    };
-    let Some(module_path) = normalize_module_import_path(module_path) else {
         return;
     };
     collect_direct_function_import_alias(item.trim(), &module_path, aliases);
@@ -1122,13 +1287,51 @@ pub(in crate::analysis::test_grip_evidence) fn local_function_names_by_file(
     index: &RustIndex,
 ) -> BTreeMap<PathBuf, BTreeSet<String>> {
     let mut names_by_file: BTreeMap<PathBuf, BTreeSet<String>> = BTreeMap::new();
-    for function in index.functions.iter().filter(|function| !function.is_test) {
+    // #3286: local-name resolution must see cfg(test)-module helpers too —
+    // excluding them would misread a helper's call to a sibling test-module
+    // function as a potential owner call.
+    let actual_tests = actual_test_keys(index);
+    for function in index.functions.iter().filter(|function| {
+        !actual_tests.contains(&ActualTestKey {
+            file: &function.file,
+            name: &function.name,
+            start_line: function.start_line,
+        })
+    }) {
         names_by_file
             .entry(function.file.clone())
             .or_default()
             .insert(function.name.clone());
     }
     names_by_file
+}
+
+/// Borrowed (file, name, start_line) identity of a function that is an
+/// actual executable test (`TestFact` member), so graph-admission lookups
+/// need no per-function key clones. #3273 widened
+/// `FunctionFact::is_test` to cover plain helpers inside inline
+/// `#[cfg(test)]` modules; those helpers are evidence-role, not tests, so
+/// helper-graph admission must exclude only real tests (#3286) while
+/// seam/production-owner filters keep using the wider role. The
+/// start_line component makes the key exact identity rather than a
+/// same-file same-name over-exclusion.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct ActualTestKey<'a> {
+    file: &'a Path,
+    name: &'a str,
+    start_line: usize,
+}
+
+fn actual_test_keys(index: &RustIndex) -> BTreeSet<ActualTestKey<'_>> {
+    index
+        .tests
+        .iter()
+        .map(|test| ActualTestKey {
+            file: test.file.as_path(),
+            name: test.name.as_str(),
+            start_line: test.start_line,
+        })
+        .collect()
 }
 
 pub(in crate::analysis::test_grip_evidence) fn test_scoped_function_names_by_file(
@@ -1138,11 +1341,10 @@ pub(in crate::analysis::test_grip_evidence) fn test_scoped_function_names_by_fil
     for (file, facts) in &index.files {
         let cfg_test_module_ranges = cfg_test_module_line_ranges(&facts.source);
         for function in facts.functions.iter().filter(|function| {
-            !function.is_test
-                && (rust_index::is_test_file(file)
-                    || cfg_test_module_ranges.iter().any(|(start, end)| {
-                        *start < function.start_line && function.start_line <= *end
-                    }))
+            rust_index::is_test_file(file)
+                || cfg_test_module_ranges
+                    .iter()
+                    .any(|(start, end)| *start < function.start_line && function.start_line <= *end)
         }) {
             names_by_file
                 .entry(file.clone())
@@ -1739,6 +1941,8 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_call_names_for_test(
     call_names: &BTreeSet<String>,
     lookup: &HelperOwnerCallLookup<'_>,
     module_import_aliases: Option<&BTreeMap<String, String>>,
+    test_scoped_function_names: Option<&BTreeSet<String>>,
+    production_owner_names: Option<&BTreeSet<String>>,
 ) -> BTreeSet<String> {
     let mut owner_names = helper_owner_call_names_from_qualified_calls(
         &test.calls,
@@ -1753,11 +1957,18 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_call_names_for_test(
         local_function_names,
     ));
     if let Some(file_helpers) = lookup.helpers.get(&test.file) {
-        for helper_name in call_names {
-            if let Some(helper_owner_names) = file_helpers.get(helper_name) {
+        for call in test.calls.iter().filter(|call| {
+            call_names.contains(&call.name)
+                && same_file_unit_production_helper_call_is_allowed(
+                    call,
+                    test_scoped_function_names,
+                    production_owner_names,
+                )
+        }) {
+            if let Some(helper_owner_names) = file_helpers.get(&call.name) {
                 owner_names.extend(helper_owner_names.iter().cloned());
             }
-            if let Some(helper_owner_names) = lookup.unique_helpers.get(helper_name) {
+            if let Some(helper_owner_names) = lookup.unique_helpers.get(&call.name) {
                 owner_names.extend(helper_owner_names.iter().cloned());
             }
         }
@@ -1951,6 +2162,7 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_call_names_from_same
     production_helpers: &HelperOwnerCallsByPackage,
     local_function_names: Option<&BTreeSet<String>>,
     test_scoped_function_names: Option<&BTreeSet<String>>,
+    production_owner_names: Option<&BTreeSet<String>>,
 ) -> BTreeSet<String> {
     let Some(local_function_names) = local_function_names else {
         return BTreeSet::new();
@@ -1965,7 +2177,11 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_call_names_from_same
         .iter()
         .filter(|call| local_function_names.contains(&call.name))
         .filter(|call| {
-            same_file_unit_production_helper_call_is_allowed(call, test_scoped_function_names)
+            same_file_unit_production_helper_call_is_allowed(
+                call,
+                test_scoped_function_names,
+                production_owner_names,
+            )
         })
         .filter_map(|call| package_helpers.get(&call.name))
         .flat_map(|owner_names| owner_names.iter().cloned())
@@ -1975,12 +2191,14 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_call_names_from_same
 pub(in crate::analysis::test_grip_evidence) fn same_file_unit_production_helper_call_is_allowed(
     call: &CallFact,
     test_scoped_function_names: Option<&BTreeSet<String>>,
+    production_owner_names: Option<&BTreeSet<String>>,
 ) -> bool {
     let cleaned = strip_comments_and_strings(&call.text);
     if code_contains_parent_qualified_helper_call(&cleaned, &call.name) {
         return true;
     }
-    !test_scoped_function_names.is_some_and(|names| names.contains(&call.name))
+    !(test_scoped_function_names.is_some_and(|names| names.contains(&call.name))
+        && production_owner_names.is_some_and(|names| names.contains(&call.name)))
         && call_text_contains_named_call(&cleaned, &call.name)
 }
 

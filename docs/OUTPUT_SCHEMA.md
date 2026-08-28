@@ -626,15 +626,38 @@ The evidence-first fields are additive in schema `0.2`:
 - `evidence_path` is an ordered, human-readable summary of reachability,
   infection, propagation, observation, discrimination, local flow, related test
   oracles, observed values, and missing discriminator evidence.
+- `identity.git_candidate_subject` (additive, no `schema_version` bump,
+  #3278) appears in the `analysis_outcome.outcome.identity` object
+  as a non-null object exactly when the run analyzed an immutable Git
+  candidate (`--candidate-tree`); the key itself is always present, and
+  ordinary runs leave it `null`. It binds directly to the resolved producer
+  state — `subject_kind` (`tree_to_tree`), `base_tree` and
+  `candidate_tree` object IDs, and `diff_identity` (SHA-256 of the
+  derived base→candidate unified diff). A consumer compares the emitted
+  `candidate_tree` with its supplied OID without parsing prose;
+  ordinary runs leave the field `null`.
 - `assertion_texts` (added in schema `0.2`) is a finding-level JSON object
   mapping line-number strings to assertion source text.  Per-value objects in
   `observed_values` no longer carry a redundant `text` field; downstream
   consumers recover the assertion source via
   `finding.assertion_texts[line.to_string()]`.  **Known limitation**: the map
   is keyed by line number only, so if two assertions in different source files
-  share the same line number within one finding, only one text is retained.
-  This is a low-probability edge case; a future schema could use `"file:line"`
-  composite keys.
+  share the same line number within one finding, only one text is retained
+  **in this map** — differing texts are retained per-value via the optional
+  `provenance` field described below. This is a low-probability edge case; a
+  future schema could use `"file:line"` composite keys.
+- Per-value objects in `observed_values` carry an **optional `provenance`**
+  field (additive, no `schema_version` bump, #3295 follow-up). It carries
+  the fact's retained source text **whenever it differs from the shared
+  assertion source for its line** — the exact texts the line-keyed
+  `assertion_texts` map drops. That includes call-source text for plain
+  `function_argument` facts and, for facts computed by the bounded
+  value-transfer evaluator (`#3295`) or the helper-transfer chain
+  (`#3296`), the full evaluation chain with bound inputs and chain depth
+  (e.g.
+  `assert_eq!(…); | body = "fix" via strip_prefix -> map_or over label = "pre-fix" (chain depth 2)`).
+  Facts whose text **is** the plain assertion source stay deduped and omit
+  the field, so `assertion_texts` remains the recovery path for them.
 - `flow_sinks`, `observed_values`, and `missing_discriminators` promote the
   nested activation evidence for consumers that want direct finding-level
   access.
@@ -701,6 +724,37 @@ The evidence-first fields are additive in schema `0.2`:
     "oracle_alignment": "orthogonal",
     "alignment_reason": "strong_oracle_observes_different_sink" }
   ```
+- `source_currentness` is an additive per-finding field (#3280, parent #3212)
+  that states which revision owns the finding's actionable source. It is
+  always emitted and does **not** bump `schema_version` (still `0.2`). The
+  value is a controlled enum (`SOURCE_CURRENTNESS_VALUES`):
+  - `candidate_current` — the finding's source expression is present in the
+    candidate (head-side) source at the recorded `probe.file`/`probe.line`;
+    the location is a candidate edit target.
+  RIPR-SPEC-0152 routes every actionability surface through this field:
+  badge gaps and unknowns, alignment items, gap records (authority
+  projections only for `candidate_current`), start-here triage, the LSP
+  actionable profile, SARIF results, GitHub annotations, and PR severe-gap
+  counts exclude non-current findings while denominators keep everything;
+  TS/JS/Python findings now resolve `candidate_current` from their
+  head-side probes and Perl stays the explicit unknown.
+  - `base_deleted` — the expression was removed on the candidate side. The
+    retained evidence is base-side and the finding is not a candidate edit
+    target; `probe.line` still records the projected new-side coordinate in
+    this slice, and consumer re-coordination of deleted-side evidence is
+    the #3212 projection slice.
+  - `moved_or_renamed` — the same expression re-appears elsewhere in the
+    candidate file, but the producer cannot prove the exact candidate
+    identity of the source; not a candidate edit target.
+  - `unresolved_subject` — the producing surface does not resolve source
+    currentness (preview-language findings today); the explicit unknown, and
+    the backward-compatibility value when reading artifacts written before
+    the field existed.
+  For Rust diff findings the disposition is resolved from the diff evidence
+  that seeded the probe; repo-mode findings are `candidate_current` by
+  construction (they seed from the current tree). In this slice the field is
+  informational for consumers: gate and actionability policy follow in the
+  #3212 projection slice.
 - `repair_placement` is an additive optional object for preview-language
   findings that can statically name a bounded test location and command before
   full repair-card projection. It currently appears for direct weak Python
@@ -1214,11 +1268,13 @@ JSON fields:
   `rust_integration_public_api_path_unresolved`, or
   `rust_macro_reach_unresolved`, or
   `rust_macro_wrapped_test_call_unresolved`, or
-  `rust_macro_wrapped_assertion_unresolved`.
+  `rust_macro_wrapped_assertion_unresolved`, or
+  `rust_value_propagation_unresolved`.
 - `static_limitation` is an additive optional per-finding object emitted only
   when a finding with `static_limit_kind` also carries a complete structured
   limitation detail. Current Rust transitive-reach, integration public-API path,
-  macro-reach, direct test macro-call, and macro-wrapped assertion limitations
+  macro-reach, direct test macro-call, macro-wrapped assertion, and
+  value-propagation limitations
   populate it from the same evidence lines rendered in human output. Fields are
   `kind`, `last_established_edge`, `first_unresolved_edge`, `analyzer_route`,
   and `non_claim`. The object is absent for static limits that do not have all
@@ -1436,6 +1492,8 @@ suppression.
 - `rust_macro_wrapped_test_call_unresolved` -- (RIPR-SPEC-0119, additive) A Rust test directly invokes a same-repo macro whose definition mentions the changed owner. ripr does not expand macros, so classification stays `no_static_path`; this is a named limitation, not a reach, coverage, or oracle claim.
 
 - `rust_macro_wrapped_assertion_unresolved` -- (RIPR-SPEC-0120, additive) A Rust test reaches the changed owner, but its assertion-like custom macro is not classified as an oracle. Classification stays `reachable_unrevealed`; this is a named limitation, not an oracle, coverage, or repair-packet claim.
+
+- `rust_value_propagation_unresolved` -- (RIPR-SPEC-0150, additive) A changed Rust value-producing binding reaches a same-owner equality predicate through a bounded `map_or` shape that ripr cannot fully resolve. Classification stays `static_unknown`; this is a named limitation, not a propagation, coverage, or repair claim.
 
 Reserved `flow_sink` values:
 
@@ -2019,7 +2077,10 @@ producer-owned facts: `fix_site` and `oracle_location` are absent when the
 producer cannot identify them, and `suggested_assertion` remains `null` until
 the producer supplies a symbol-resolved assertion template. `limitations[]`
 names unavailable evidence; renderers must not infer it from paths, lines,
-classes, or prose.
+classes, or prose. `source_currentness` (RIPR-SPEC-0152) mirrors the finding's
+disposition: agent consumers must not treat a `base_deleted`,
+`moved_or_renamed`, or `unresolved_subject` packet as a candidate edit
+target.
 
 ## Repo Seam Inventory
 
@@ -6307,7 +6368,7 @@ JSON shape:
     "before_content_sha256": "sha256:<64-hex-digest>",
     "after_content_sha256": "sha256:<64-hex-digest>"
   },
-  "artifact_currentness": "current",
+  "artifact_currentness": "historical_before_current_after",
   "summary": {
     "improved": 1,
     "changed": 0,
@@ -6392,8 +6453,20 @@ Field contract:
   `current`, `historical_noncurrent`, `historical_before_current_after`,
   `current_before_historical_after`, `dirty_before`, `dirty_after`, or
   `dirty_both`. A dirty side names the side (`dirty_before`, `dirty_after`,
-  or `dirty_both`); the clean expected transaction is
-  `historical_before_current_after`. It does not claim
+  or `dirty_both`). `historical_before_current_after` is the expected
+  before/after transaction shape — the repository moved past the before
+  artifact while the after artifact is bound to the current HEAD — and is a
+  revision-movement disclosure, not a cleanliness certificate: a historical
+  side is classified by head mismatch alone, and the worktree state
+  remembered at production time does not participate in that
+  classification, so a historical artifact produced on a dirty worktree
+  still renders a `historical_*` pair token (#3229).
+  `current_before_historical_after` is a reachable accepted outcome when the
+  checked-out HEAD is the before artifact's revision and the after artifact
+  is bound to a descendant revision. A fully current pair (both artifacts
+  current at the same clean revision) fails the movement gate before any
+  output is rendered, so `current` closes the vocabulary without being a
+  reachable successful verify outcome. The field does not claim
   that tests ran or that the static gap is correct.
 - `summary.improved` - matched seams whose after `SeamGripClass` ranks higher
   than before.

@@ -41,11 +41,13 @@ pub(crate) use seam_inventory::{
     SeamLimitSource, apply_pilot_seam_budget,
     inventory_changed_test_classified_seams_at_with_config_node,
     inventory_classified_seams_at_with_config, inventory_compact_classified_seams_at_with_config,
-    inventory_diff_scoped_classified_seams_at_with_config, inventory_seams_at,
+    inventory_diff_scoped_classified_seams_at_with_config, inventory_seams_at_with_config,
     workspace_cache_key_at_with_config,
 };
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
-pub(crate) use workspace::is_production_rust_path;
+pub(crate) use workspace::SourceRoleContext;
+pub(crate) use workspace::classify_with;
+pub(crate) use workspace::context_for_files;
 
 /// Re-export workspace discovery helpers for the output layer so it can
 /// detect TS-predominant workspaces without importing through analysis::workspace
@@ -167,10 +169,13 @@ pub(crate) fn targeted_typescript_findings_for_scope(
         base: None,
         diff_file: None,
         mode: AnalysisMode::Draft,
+        resolved_subject_identity: None,
         include_unchanged_tests: config.analysis().include_unchanged_tests().unwrap_or(true),
         resolve_tsconfig_paths: config.typescript().resolve_tsconfig_paths(),
         perl_facts_path: None,
         git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
     };
     let result = TypeScriptAdapter.analyze_diff(
         &options,
@@ -413,6 +418,22 @@ pub struct AnalysisOptions {
     /// behavior, byte-identical to the pre-#2303 path. Only the LSP refresh
     /// path sets this (from the `gitTimeoutMs` session option).
     pub git_timeout: Option<std::time::Duration>,
+    /// Explicit production-like test-infrastructure opt-in (#3283):
+    /// workspace-relative targets this repository wants analyzed as
+    /// production behavior even though their layout or Cargo target
+    /// declares evidence role. Empty by default.
+    pub production_like_targets: std::collections::BTreeSet<std::path::PathBuf>,
+    /// Immutable Git candidate subject (#3237 / #3276 R1). Threaded from
+    /// `CheckInput` so the object producer (#3277) can consume it here;
+    /// no current analysis path executes it, and `run_check` rejects
+    /// subject inputs before analysis begins.
+    pub git_candidate: Option<crate::domain::GitCandidateSubject>,
+    /// Internal (#3278 R3): the R2 producer's resolved subject identity,
+    /// set only on the materialized-candidate options clone so the
+    /// outcome identity block projects machine-visible base/candidate/
+    /// diff identities. Never caller-settable.
+    pub(crate) resolved_subject_identity:
+        Option<crate::analysis_outcome::GitCandidateSubjectIdentity>,
 }
 
 /// Advisory record for one compiled preview-language adapter whose files are
@@ -427,8 +448,10 @@ pub struct AnalysisOptions {
 /// The `enabled` flag distinguishes the two honesty cases per
 /// RIPR-SPEC-0082:
 ///
-/// - `enabled == true` — the adapter ran; an empty result is advisory and may
-///   be incomplete, not a Rust-grade clean result.
+/// - `enabled == true` — the adapter was configured and available. Whether it
+///   completed successfully is derived from the matching `language_runs`
+///   failure record; an empty result is advisory and may be incomplete, not a
+///   Rust-grade clean result.
 /// - `enabled == false` — the adapter is preview and NOT enabled, so these
 ///   files were not analyzed at all; the empty result must not be read as
 ///   clean.
@@ -440,11 +463,33 @@ pub struct PreviewLanguageAdvisory {
     pub file_count: usize,
     /// Up to three sample file paths (normalized, forward-slash).
     pub sample_paths: Vec<String>,
-    /// Whether this preview adapter was enabled (ran) for this analysis.
+    /// Whether this preview adapter was configured and available for this
+    /// analysis.
     ///
     /// `false` means the preview-language files were detected in scope but not
     /// analyzed because the adapter is not enabled in `ripr.toml`.
     pub enabled: bool,
+}
+
+impl PreviewLanguageAdvisory {
+    /// Returns the producer-owned non-success record for this advisory, when
+    /// the adapter did not complete successfully.
+    pub(crate) fn non_success_run<'a>(
+        &self,
+        language_runs: &'a [LanguageRun],
+    ) -> Option<&'a LanguageRun> {
+        language_runs
+            .iter()
+            .find(|run| run.language == self.language && run.status != LanguageRunStatus::Ok)
+    }
+
+    /// Whether the routed files were actually analyzed to adapter completion.
+    ///
+    /// Successful preview runs are omitted from `language_runs`; any matching
+    /// non-success entry therefore closes this readiness claim fail-closed.
+    pub(crate) fn analyzed(&self, language_runs: &[LanguageRun]) -> bool {
+        self.enabled && self.file_count > 0 && self.non_success_run(language_runs).is_none()
+    }
 }
 
 /// Per-language run status for one language adapter invocation.
@@ -532,7 +577,20 @@ pub struct AnalysisResult {
 /// behaviorally identical to the pre-Campaign-27 Rust-only pipeline.
 const DEFAULT_LANGUAGES: &[language::LanguageId] = &[language::LanguageId::Rust];
 
+/// Rejects immutable Git candidate subjects at the direct analysis entry
+/// points (#3276): executing a subject here would silently fall back to
+/// worktree/diff semantics. Subject inputs are bound, validated, and —
+/// once the object producer lands (#3277) — consumed through the
+/// `check_workspace*` entries only.
+fn reject_git_candidate_subject(options: &AnalysisOptions) -> Result<(), String> {
+    if options.git_candidate.is_some() {
+        return Err(crate::domain::GitCandidateSubjectError::ExecutionUnsupported.to_string());
+    }
+    Ok(())
+}
+
 pub fn run_analysis(options: &AnalysisOptions) -> Result<AnalysisResult, String> {
+    reject_git_candidate_subject(options)?;
     run_analysis_with_oracle_policy(options, &OraclePolicy::default(), DEFAULT_LANGUAGES)
 }
 
@@ -573,6 +631,7 @@ pub(crate) fn run_worktree_analysis_with_oracle_policy_and_generated_file_patter
 }
 
 pub fn run_repo_analysis(options: &AnalysisOptions) -> Result<AnalysisResult, String> {
+    reject_git_candidate_subject(options)?;
     run_repo_analysis_with_oracle_policy(options, &OraclePolicy::default(), DEFAULT_LANGUAGES)
 }
 
@@ -795,6 +854,9 @@ index 0000000..1111111 100644
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
             git_timeout: None,
+            git_candidate: None,
+            resolved_subject_identity: None,
+            production_like_targets: Default::default(),
         })
         .unwrap();
         assert!(!out.findings.is_empty());
@@ -814,6 +876,9 @@ index 0000000..1111111 100644
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
             git_timeout: None,
+            git_candidate: None,
+            resolved_subject_identity: None,
+            production_like_targets: Default::default(),
         })
         .unwrap();
         assert!(instant.findings.iter().any(|finding| {
@@ -864,6 +929,9 @@ fn premium_customer_gets_discount() {
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
             git_timeout: None,
+            git_candidate: None,
+            resolved_subject_identity: None,
+            production_like_targets: Default::default(),
         })?;
 
         if out.findings.is_empty() {
@@ -1009,6 +1077,9 @@ fn test_with_predicate() {
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
             git_timeout: None,
+            git_candidate: None,
+            resolved_subject_identity: None,
+            production_like_targets: Default::default(),
         })?;
 
         for finding in &out.findings {
@@ -1074,6 +1145,9 @@ index 0000000..1111111 100644
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
             git_timeout: None,
+            git_candidate: None,
+            resolved_subject_identity: None,
+            production_like_targets: Default::default(),
         })?;
 
         if !diff_out.findings.is_empty() {
@@ -1089,11 +1163,76 @@ index 0000000..1111111 100644
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
             git_timeout: None,
+            git_candidate: None,
+            resolved_subject_identity: None,
+            production_like_targets: Default::default(),
         })?;
 
         if repo_out.findings.is_empty() {
             return Err("expected at least one finding from repo analysis".to_string());
         }
+        Ok(())
+    }
+}
+
+pub(crate) mod git_candidate_execution;
+
+#[cfg(test)]
+mod git_candidate_entry_tests {
+    use super::*;
+    use crate::domain::{GitCandidateBase, GitCandidateSubject, GitObjectId};
+
+    fn subject_options() -> Result<AnalysisOptions, String> {
+        Ok(AnalysisOptions {
+            git_candidate: Some(GitCandidateSubject::new(
+                std::env::temp_dir(),
+                GitCandidateBase::EmptyTree,
+                GitObjectId::parse(
+                    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                )
+                .map_err(|error| error.to_string())?,
+            )),
+            resolved_subject_identity: None,
+            ..default_options_for_entry_test()?
+        })
+    }
+
+    fn default_options_for_entry_test() -> Result<AnalysisOptions, String> {
+        Ok(AnalysisOptions {
+            root: std::env::temp_dir(),
+            base: None,
+            diff_file: None,
+            mode: AnalysisMode::Draft,
+            include_unchanged_tests: true,
+            resolve_tsconfig_paths: false,
+            perl_facts_path: None,
+            git_timeout: None,
+            git_candidate: None,
+            resolved_subject_identity: None,
+            production_like_targets: Default::default(),
+        })
+    }
+
+    #[test]
+    fn direct_analysis_entries_reject_git_candidate_subjects() -> Result<(), String> {
+        // #3276: the direct public entries must never execute a subject
+        // against worktree/diff semantics. The named error is the single
+        // authority (GitCandidateSubjectError::ExecutionUnsupported).
+        let options = subject_options()?;
+        let error = run_analysis(&options)
+            .err()
+            .unwrap_or_else(|| "expected rejection".to_string());
+        assert!(
+            error.contains("refusing to fall back"),
+            "run_analysis must fail closed: {error:?}"
+        );
+        let repo_error = run_repo_analysis(&options)
+            .err()
+            .unwrap_or_else(|| "expected rejection".to_string());
+        assert!(
+            repo_error.contains("refusing to fall back"),
+            "run_repo_analysis must fail closed: {repo_error:?}"
+        );
         Ok(())
     }
 }

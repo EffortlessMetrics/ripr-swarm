@@ -12,13 +12,33 @@ use crate::domain::*;
 
 pub fn classify_probe(probe: &Probe, index: &RustIndex, workspace_complete: bool) -> Finding {
     let owner_fn = resolve_owner_function(probe, index);
-    let related_tests = find_related_tests(probe, owner_fn, index, workspace_complete);
+    // #3296: one chain resolution per probe, shared by the relation
+    // stage and the activation rows (single authority, single scan).
+    let helper_chain = owner_fn.and_then(|owner| {
+        let chain = super::classify::resolve_chain(&owner.name, index, workspace_complete, &[]);
+        (!chain.hops.is_empty()).then_some(chain)
+    });
+    let related_tests = find_related_tests(
+        probe,
+        owner_fn,
+        index,
+        workspace_complete,
+        helper_chain.as_ref(),
+    );
     // RIPR-SPEC-0133: detect assertion-shaped owners (oracles) here, where the
     // full index is available; the context carries the verdict so guidance can
     // be reframed. The exposure class is never changed by this flag.
     let owner_assertion_shaped =
         owner_fn.is_some_and(|owner| is_assertion_shaped_owner(owner, index));
-    let context = ProbeContext::new(probe, owner_fn, related_tests, owner_assertion_shaped);
+    let context = ProbeContext::new(
+        probe,
+        owner_fn,
+        related_tests,
+        owner_assertion_shaped,
+        index,
+        workspace_complete,
+    )
+    .with_helper_chain(helper_chain);
     let reveal_expression = parser_expression_for_probe(
         index,
         &probe.location.file,
@@ -1562,6 +1582,8 @@ mod tests {
                     ..FileFacts::default()
                 },
             )]),
+            workspace_authority: None,
+            ..RustIndex::default()
         };
         let probe = Probe {
             id: ProbeId("probe:watchdog-reason".to_string()),
@@ -1621,6 +1643,8 @@ mod tests {
                     ..FileFacts::default()
                 },
             )]),
+            workspace_authority: None,
+            ..RustIndex::default()
         };
         let probe = Probe {
             id: ProbeId("probe:watchdog-reason".to_string()),

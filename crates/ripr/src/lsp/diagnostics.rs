@@ -6,6 +6,7 @@ use super::gap_artifacts::{
 };
 use super::state::{AnalysisSnapshot, RefreshMetadata};
 use super::uri::{absolute_join, display_path, file_uri_for_path, path_from_file_uri};
+use crate::agent::command_specs::{command_display_is_nonblank, command_displays_are_complete};
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::cancellation::AnalysisCancellationToken;
 use crate::analysis::inventory_classified_seams_at_with_config;
@@ -395,16 +396,21 @@ pub(super) fn finding_is_visible_in_profile(
     finding: &Finding,
 ) -> bool {
     match profile {
+        // The Full profile keeps base-side evidence visible as historical
+        // context; the Actionable profile is an obligation surface and only
+        // candidate-current findings qualify (#3281).
         LspDiagnosticProfile::Full => true,
         LspDiagnosticProfile::Actionable => {
-            matches!(
-                finding.class,
-                ExposureClass::WeaklyExposed
-                    | ExposureClass::ReachableUnrevealed
-                    | ExposureClass::NoStaticPath
-            ) && DiagnosticWitness::from_finding(finding).is_some_and(|witness| {
-                !witness.missing_discriminators.is_empty() && witness.fix_site.is_some()
-            })
+            finding.is_candidate_actionable()
+                && matches!(
+                    finding.class,
+                    ExposureClass::WeaklyExposed
+                        | ExposureClass::ReachableUnrevealed
+                        | ExposureClass::NoStaticPath
+                )
+                && DiagnosticWitness::from_finding(finding).is_some_and(|witness| {
+                    !witness.missing_discriminators.is_empty() && witness.fix_site.is_some()
+                })
         }
     }
 }
@@ -761,15 +767,15 @@ pub(super) fn workspace_diagnostics_with_config(
     let partial_scope = output.partial_scope;
     // Scope the LSP projection to production Rust anchors, matching the CLI
     // review surface (`changed_production_files_plus_immediate_callers`).
-    // Diff probe seeding already skips `tests/` trees, but the seeding
-    // predicate is narrower than the shared production classifier
-    // (`workspace::is_production_rust_path`): `src/tests.rs`, `examples/`,
-    // `benches/`, and other non-production trees can still seed findings.
-    // Dropping them here — with the suppressed count disclosed on the
-    // snapshot — keeps the editor from pinning line-local gap diagnostics in
-    // files the review surface explicitly treats as out of scope (#2130).
+    // Since #3285 the partition consumes the same producer-owned
+    // source-role model as diff seeding — `tests/`, cargo-discoverable
+    // `benches/`/`examples/` shapes, declared targets, and the
+    // `production_like_targets` opt-in — so an opted-in target keeps its
+    // editor projection and the partition suppresses nothing seeding
+    // already excluded. The suppressed count stays on the snapshot as the
+    // typed safety net against anchor-model divergence (#2130).
     let (findings, out_of_scope_test_file_findings) =
-        partition_out_of_scope_test_file_findings(&root, output.findings);
+        partition_out_of_scope_test_file_findings(&root, config.repo_config(), output.findings);
 
     // Typed component-outcome authority (#1997, RIPR-SPEC-0141): every
     // optional analysis component records one bounded outcome on the
@@ -1713,13 +1719,17 @@ fn finding_is_advisory(finding: &Finding) -> bool {
     finding.static_limit_kind.is_some() || finding.language_status == Some(LanguageStatus::Preview)
 }
 
-/// A gap record has a complete repair packet when it is repairable, carries
-/// at least one verification command, and has a receipt command.
+/// A gap record has a complete repair packet when it is repairable, carries a
+/// non-empty verification list whose every display is non-whitespace after
+/// trimming, and has a receipt command that is non-whitespace after trimming.
 /// WARNING is only appropriate when the packet is complete and actionable.
 fn gap_record_has_complete_packet(record: &GapRecord) -> bool {
     record.repairability == "repairable"
-        && !record.verification_commands.is_empty()
-        && record.receipt_command.is_some()
+        && command_displays_are_complete(&record.verification_commands)
+        && record
+            .receipt_command
+            .as_deref()
+            .is_some_and(command_display_is_nonblank)
 }
 
 /// A gap record is advisory when it is from a preview language or carries a
@@ -1733,8 +1743,8 @@ fn gap_record_is_advisory(record: &GapRecord) -> bool {
 /// packet AND is not advisory. All other cases → INFORMATION.
 ///
 /// This enforces the hard rule: no WARNING without a complete repair packet.
-/// A complete packet requires `repairability == "repairable"`,
-/// non-empty `verification_commands`, and `receipt_command.is_some()`.
+/// A complete packet requires `repairability == "repairable"`, an all-nonblank
+/// `verification_commands` list, and a trim-nonblank `receipt_command`.
 /// Advisory records (preview language or static_limit_kind present) are
 /// clamped to INFORMATION even when the packet looks complete.
 fn gap_record_diagnostic_severity(record: &GapRecord) -> DiagnosticSeverity {
@@ -2254,21 +2264,34 @@ fn absolute_finding_path(root: &Path, finding: &Finding) -> PathBuf {
 /// Split diff-analysis findings into the production scope the LSP publishes
 /// and the out-of-scope tail it must not pin as line-local diagnostics.
 ///
-/// The scope predicate is the shared `workspace::is_production_rust_path`
-/// classifier — the same production/test boundary the CLI review surface and
-/// the seam inventory use — not a parallel LSP-only test-path matcher. It is
+/// The scope predicate is the producer-owned source-role model (#3285) —
+/// the same authority the CLI seeding surface and the seam inventory use —
+/// not a parallel LSP-only test-path matcher. It is
 /// applied only to Rust anchors (`.rs`); other languages keep their own
 /// adapter-owned test-file handling. Paths are relativized against the
 /// workspace root first so an absolute anchor cannot be misclassified by a
 /// root prefix component (e.g. a checkout under a `target/` parent).
 fn partition_out_of_scope_test_file_findings(
     root: &Path,
+    config: &crate::config::RiprConfig,
     findings: Vec<Finding>,
 ) -> (Vec<Finding>, usize) {
+    // #3285: the partition consumes the producer-owned source-role
+    // model — the same authority diff seeding and the seam inventory
+    // use — so an opted-in production-like target keeps its editor
+    // projection and every role judgment (declared Cargo targets
+    // included) agrees across surfaces.
+    let mut context = crate::analysis::context_for_files(
+        root,
+        findings
+            .iter()
+            .map(|finding| finding.probe.location.file.as_path()),
+    );
+    context.production_like_targets = config.analysis().production_like_targets().clone();
     let mut scoped = Vec::with_capacity(findings.len());
     let mut out_of_scope = 0usize;
     for finding in findings {
-        if finding_anchor_is_out_of_scope_rust_path(root, &finding) {
+        if finding_anchor_is_out_of_scope_rust_path(root, &context, &finding) {
             out_of_scope += 1;
         } else {
             scoped.push(finding);
@@ -2277,7 +2300,11 @@ fn partition_out_of_scope_test_file_findings(
     (scoped, out_of_scope)
 }
 
-fn finding_anchor_is_out_of_scope_rust_path(root: &Path, finding: &Finding) -> bool {
+fn finding_anchor_is_out_of_scope_rust_path(
+    root: &Path,
+    context: &crate::analysis::SourceRoleContext,
+    finding: &Finding,
+) -> bool {
     let file = &finding.probe.location.file;
     if file.extension().and_then(|ext| ext.to_str()) != Some("rs") {
         return false;
@@ -2287,7 +2314,7 @@ fn finding_anchor_is_out_of_scope_rust_path(root: &Path, finding: &Finding) -> b
     } else {
         file.as_path()
     };
-    !crate::analysis::is_production_rust_path(relative)
+    !crate::analysis::classify_with(relative, context).seeds_production_findings()
 }
 
 #[cfg(test)]
@@ -2853,6 +2880,7 @@ mod seam_diagnostic_tests {
             },
         );
         GapRecord {
+        source_currentness: Some("candidate_current".to_string()),
             gap_id: "gap:pr:pricing:threshold-boundary".to_string(),
             canonical_gap_id: "gap:rust:pricing:threshold-boundary".to_string(),
             seam_id: None,
@@ -3074,6 +3102,7 @@ mod diagnostic_policy_tests {
             observed_sink: None,
             oracle_alignment: None,
             alignment_reason: None,
+            source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
         }
     }
 
@@ -3151,6 +3180,7 @@ mod diagnostic_policy_tests {
             },
         );
         GapRecord {
+            source_currentness: Some("candidate_current".to_string()),
             gap_id: "gap:pr:pricing:policy-test".to_string(),
             canonical_gap_id: "gap:rust:pricing:policy-test".to_string(),
             seam_id: None,
@@ -3273,6 +3303,49 @@ mod diagnostic_policy_tests {
             ));
         }
         Ok(())
+    }
+
+    #[test]
+    fn actionable_profile_excludes_base_side_evidence() {
+        // RIPR-SPEC-0152: the actionable profile is an obligation surface;
+        // the full profile keeps base-side evidence visible as history.
+        // Both findings carry the same witness-enriched shape; only the
+        // currentness differs.
+        let witness = || {
+            let mut finding = policy_finding();
+            finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+                value: "Price::Boundary".to_string(),
+                reason: "exact boundary is not observed".to_string(),
+                flow_sink: None,
+            }];
+            finding.related_tests.push(RelatedTest {
+                name: "checks_boundary".to_string(),
+                file: std::path::PathBuf::from("tests/pricing.rs"),
+                line: 12,
+                oracle: Some("assert_eq!(price, expected)".to_string()),
+                oracle_kind: OracleKind::ExactValue,
+                oracle_strength: OracleStrength::Strong,
+                relation_reason: None,
+                relation_confidence: None,
+            });
+            finding
+        };
+        let mut deleted = witness();
+        deleted.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        assert!(
+            !finding_is_visible_in_profile(LspDiagnosticProfile::Actionable, &deleted),
+            "base-deleted evidence is not an actionable diagnostic"
+        );
+        assert!(
+            finding_is_visible_in_profile(LspDiagnosticProfile::Full, &deleted),
+            "the full profile keeps base-side evidence visible"
+        );
+        let mut current = witness();
+        current.source_currentness = crate::domain::SourceCurrentness::CandidateCurrent;
+        assert!(
+            finding_is_visible_in_profile(LspDiagnosticProfile::Actionable, &current),
+            "the candidate-current twin keeps its actionable diagnostic"
+        );
     }
 
     #[test]
@@ -3429,6 +3502,20 @@ mod diagnostic_policy_tests {
             ));
         }
 
+        for invalid_commands in [
+            vec![" \t ".to_string()],
+            vec!["cargo test".to_string(), "  ".to_string()],
+        ] {
+            let mut blank_verify = complete.clone();
+            blank_verify.verification_commands = invalid_commands;
+            let severity = gap_record_diagnostic_severity(&blank_verify);
+            if severity != DiagnosticSeverity::INFORMATION {
+                return Err(format!(
+                    "expected INFORMATION for blank verification display, got {severity:?}"
+                ));
+            }
+        }
+
         // Missing receipt_command → INFORMATION.
         let mut no_receipt = complete.clone();
         no_receipt.receipt_command = None;
@@ -3436,6 +3523,15 @@ mod diagnostic_policy_tests {
         if severity != DiagnosticSeverity::INFORMATION {
             return Err(format!(
                 "expected INFORMATION when receipt_command missing, got {severity:?}"
+            ));
+        }
+
+        let mut blank_receipt = complete.clone();
+        blank_receipt.receipt_command = Some(" \t ".to_string());
+        let severity = gap_record_diagnostic_severity(&blank_receipt);
+        if severity != DiagnosticSeverity::INFORMATION {
+            return Err(format!(
+                "expected INFORMATION for blank receipt display, got {severity:?}"
             ));
         }
 
@@ -3980,6 +4076,7 @@ mod lsp_next_step_parity_tests {
             observed_sink: None,
             oracle_alignment: None,
             alignment_reason: None,
+            source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
         }
     }
 

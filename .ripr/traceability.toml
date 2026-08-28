@@ -38,6 +38,7 @@ tests = [
   "crates/ripr/src/analysis/value_resolution.rs::tests::field_assignment_values_fail_closed_for_unresolved_or_ambiguous_expressions"
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap",
   "fixtures/boundary_gap_multiline_assert",
   "fixtures/boundary_gap_nested_tests",
@@ -114,6 +115,7 @@ tests = [
   "crates/ripr/src/domain/command_spec.rs::tests::mismatched_authority_is_rejected",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap",
   "fixtures/boundary_gap_multiline_assert",
   "fixtures/boundary_gap_nested_tests",
@@ -192,6 +194,7 @@ tests = [
   "xtask/src/main.rs::test_efficiency_signals_likely_vacuous_and_possibly_circular_tests"
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/CALIBRATION_CORPUS.md"
 ]
 code = [
@@ -420,6 +423,7 @@ tests = [
   "editors/vscode/test/suite/extension.test.ts::status bar reports stale saved-workspace analysis after Rust edits"
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap",
   "fixtures/rust_constructor_field_observation",
   "fixtures/rust_constructor_field_wrong_field_observer"
@@ -508,6 +512,7 @@ tests = [
   "xtask/src/main.rs::mutation_calibration_reports_are_advisory_and_structured"
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap",
   "fixtures/boundary_gap/calibration/runtime-fixtures-v1",
   "fixtures/boundary_gap/calibration/runtime-fixtures-v2",
@@ -731,6 +736,7 @@ tests = [
   "editors/vscode/test/suite/extension.test.ts::defaults-first check mode is draft"
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap",
   "fixtures/opaque_fixture_builder",
   "fixtures/strong_error_oracle",
@@ -861,6 +867,7 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::editor_agent_loop_fixture_outputs_match_expected"
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap"
 ]
 code = [
@@ -950,6 +957,7 @@ tests = [
   "xtask/src/reports/operator.rs::tests::operator_cockpit_matches_editor_agent_loop_fixture"
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap/expected/editor-agent-loop/agent-receipt.json",
   "fixtures/boundary_gap/expected/llm-work-loop/happy/review-summary.json",
   "fixtures/boundary_gap/expected/llm-work-loop/unchanged/review-summary.json",
@@ -1037,6 +1045,7 @@ tests = [
   "crates/ripr/src/output/review_comments.rs::review_comments_pr_guidance_fixtures_pin_required_cases"
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap/expected/pr-guidance"
 ]
 code = [
@@ -1083,6 +1092,7 @@ tests = [
   "xtask/src/reports/recommendation.rs::tests::recommendation_calibration_fixture_matches_checked_reports"
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap/expected/recommendation-calibration/README.md",
   "fixtures/boundary_gap/expected/recommendation-calibration/expectations.json",
   "fixtures/boundary_gap/expected/recommendation-calibration/recommendation-calibration.json",
@@ -1165,6 +1175,7 @@ tests = [
   "xtask/src/main.rs::tests::dogfood_gate_adoption_scenarios_have_checked_receipts",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap/expected/calibrated-gate",
   "fixtures/boundary_gap/expected/gate-adoption",
   "fixtures/gate_baseline_fallback_disclosure",
@@ -1308,6 +1319,7 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::baseline_update_removes_resolved_without_adopting_new_debt",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap/expected/baseline-debt-delta/mixed/baseline.json",
   "fixtures/boundary_gap/expected/baseline-debt-delta/mixed/current-gate-decision.json",
   "fixtures/boundary_gap/expected/baseline-debt-delta/mixed/baseline-debt-delta.json",
@@ -1371,6 +1383,7 @@ tests = [
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_matches_smoke_fixture",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap/expected/baseline-debt-delta/mixed/baseline.json",
   "fixtures/boundary_gap/expected/baseline-debt-delta/mixed/baseline-debt-delta.json",
 ]
@@ -1433,6 +1446,7 @@ tests = [
   "crates/ripr/src/cli/commands.rs::tests::coverage_grip_frontier_writes_json_and_markdown_reports",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap/expected/pr-evidence-ledger/mixed/gate-decision.json",
   "fixtures/boundary_gap/expected/pr-evidence-ledger/mixed/baseline-debt-delta.json",
   "fixtures/boundary_gap/expected/pr-evidence-ledger/mixed/ripr-zero-status.json",
@@ -1502,6 +1516,7 @@ tests = [
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_matches_smoke_fixture",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap/expected/test-oracle-assistant-loop/canonical/README.md",
   "fixtures/boundary_gap/expected/test-oracle-assistant-loop/canonical/pr-guidance.json",
   "fixtures/boundary_gap/expected/test-oracle-assistant-loop/canonical/pr-evidence-ledger.json",
@@ -1568,6 +1583,7 @@ tests = [
   "xtask/src/main.rs::dogfood_first_action_scenarios_have_checked_receipts",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap/expected/first-useful-action/README.md",
   "fixtures/boundary_gap/expected/first-useful-action/corpus.json",
   "fixtures/boundary_gap/expected/first-useful-action/actionable/first-useful-action.json",
@@ -1676,6 +1692,7 @@ tests = [
   "xtask::tests::evidence_record_contract_fixture_guard_requires_oracle_semantics",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap/expected/evidence-record-contract/corpus.json",
   "fixtures/boundary_gap/expected/evidence-record-contract/README.md",
 ]
@@ -1728,6 +1745,7 @@ tests = [
   "crates/ripr/src/cli/commands.rs::init_generated_github_workflow_matches_smoke_fixture",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap/expected/assistant-loop-health/corpus.json",
   "fixtures/boundary_gap/expected/assistant-loop-health/proofs/complete-improved-proof.json",
   "fixtures/boundary_gap/expected/assistant-loop-health/proofs/partial-missing-optional-proof.json",
@@ -1809,6 +1827,7 @@ tests = [
   "xtask/src/main.rs::dogfood_pr_review_front_panel_scenarios_have_checked_receipts",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap/expected/pr-review-front-panel/corpus.json",
   "fixtures/boundary_gap/expected/pr-review-front-panel/advisory-only/pr-review-front-panel.json",
   "fixtures/boundary_gap/expected/pr-review-front-panel/advisory-only/pr-review-front-panel.md",
@@ -1900,6 +1919,7 @@ tests = [
   "crates/ripr/src/cli/commands.rs::init_generated_github_workflow_matches_smoke_fixture",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap/expected/report-packet-index/README.md",
   "fixtures/boundary_gap/expected/report-packet-index/corpus.json",
   "fixtures/boundary_gap/expected/report-packet-index/complete-packet/index.json",
@@ -1979,6 +1999,7 @@ tests = [
   "xtask/src/main.rs::dogfood_pr_inline_comment_scenarios_have_checked_receipts",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap/expected/pr-inline-comment-publisher/README.md",
   "fixtures/boundary_gap/expected/pr-inline-comment-publisher/corpus.json",
   "fixtures/boundary_gap/expected/pr-inline-comment-publisher/publishable-changed-line/comment-publish-plan.json",
@@ -2061,6 +2082,7 @@ tests = [
   "crates/ripr/src/output/json/mod.rs",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/typescript_mocked_module_limit",
 ]
 code = [
@@ -2165,6 +2187,7 @@ tests = [
   "xtask/src/main.rs::tests::typescript_preview_false_actionable_audit_cases_are_checked",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/typescript_boundary_gap",
   "fixtures/typescript_strong_oracle",
   "fixtures/typescript_return_value_shape",
@@ -2306,6 +2329,8 @@ tests = [
   "crates/ripr/src/analysis/language/python/python_tests.rs::sink_alignment_is_unknown_without_strong_oracle",
   "crates/ripr/src/analysis/language/python/python_tests.rs::sink_alignment_for_module_owner_preserves_observes_decision",
   "crates/ripr/src/analysis/language/python/python_tests.rs::sink_alignment_changed_sink_join_format",
+  "crates/ripr/src/analysis/language/python/python_tests.rs::analyze_diff_suppresses_multiline_docstring_interior_change",
+  "crates/ripr/src/analysis/language/python/python_tests.rs::analyze_diff_does_not_hide_code_replaced_by_multiline_docstring",
   "crates/ripr/src/output/python_repair_card.rs::tests::side_effect_test_shape_specializes_cli_exit_and_output_cards",
   "crates/ripr/src/output/python_repair_card.rs::tests::field_cards_suggest_direct_assertion_shapes",
   "crates/ripr/src/output/python_repair_card.rs::tests::pytest_boundary_cards_suggest_parametrized_rows_without_expected_values",
@@ -2331,6 +2356,7 @@ tests = [
   "xtask::tests::dogfood_python_real_repo_eval_receipts_are_checked",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/python/basic",
   "fixtures/python_boundary_gap",
   "fixtures/python_parametrized_boundary_repair_gap",
@@ -2368,6 +2394,7 @@ fixtures = [
   "fixtures/python_related_test_name_similarity",
   "fixtures/python_fixture_name_relation",
   "fixtures/python_unrelated_test_mention",
+  "fixtures/python_noop_multiline_docstring_interior",
   "fixtures/python_dynamic_dispatch_limit",
   "fixtures/python_decorator_indirection_limit",
   "fixtures/python_mocked_module_limit",
@@ -2627,6 +2654,7 @@ tests = [
   "xtask::tests::report_commands_dispatch_through_report_facades",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/actionable-gap-outcomes-corpus",
 ]
 code = [
@@ -2695,6 +2723,7 @@ tests = [
   "xtask::tests::lane1_evidence_quality_failure_guard_reports_contract_drift",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap/expected/evidence-quality-failures/corpus.json",
   "fixtures/boundary_gap/expected/evidence-quality-failures/README.md",
 ]
@@ -2728,6 +2757,7 @@ tests = [
   "xtask::tests::lane1_evidence_quality_failure_corpus_is_valid",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap/expected/evidence-quality-failures/corpus.json",
 ]
 code = [
@@ -2889,6 +2919,7 @@ tests = [
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::duplicative_equality_assertion_stays_weak_oracle",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/evidence-quality-benchmark/corpus.json",
 ]
 code = [
@@ -2926,6 +2957,7 @@ tests = [
   "xtask/src/main.rs",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/python_disabled",
   "fixtures/python_missing_import_graph_limit",
   "fixtures/typescript_mocked_module_limit",
@@ -2988,6 +3020,7 @@ tests = [
   "xtask/src/main.rs",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/python_disabled",
   "fixtures/python_missing_import_graph_limit",
   "fixtures/typescript_mocked_module_limit",
@@ -3053,6 +3086,7 @@ tests = [
   "xtask/src/main.rs::tests::dogfood_generated_ci_cockpit_receipts_are_checked",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
 ]
 code = [
   "crates/ripr/src/cli/commands.rs",
@@ -3117,6 +3151,7 @@ tests = [
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_matches_smoke_fixture",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
 ]
 code = [
   "crates/ripr/src/output/policy_operations.rs",
@@ -3171,6 +3206,7 @@ tests = [
   "xtask/src/main.rs::tests::evidence_quality_trend_reports_runtime_confidence_static_only_classes",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap/calibration/runtime-fixtures-v3",
 ]
 code = [
@@ -3232,6 +3268,7 @@ tests = [
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_matches_smoke_fixture",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
 ]
 code = [
   "crates/ripr/src/output/policy_history.rs",
@@ -3284,6 +3321,7 @@ tests = [
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_matches_smoke_fixture",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
 ]
 code = [
   "crates/ripr/src/output/policy_promotion.rs",
@@ -3341,6 +3379,7 @@ tests = [
   "xtask/src/main.rs::tests::evidence_quality_benchmark_requires_static_limitation_category_at_case_level",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/evidence-quality-benchmark/corpus.json",
 ]
 code = [
@@ -3397,6 +3436,7 @@ tests = [
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_matches_smoke_fixture",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
 ]
 code = [
   "crates/ripr/src/output/policy_preview_promotion.rs",
@@ -3456,6 +3496,7 @@ tests = [
   "xtask/src/main.rs::tests::dogfood_finding_alignment_scenarios_have_checked_receipts",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/evidence-quality-benchmark/corpus.json",
   "fixtures/finding-alignment-dogfood/corpus.json",
 ]
@@ -3557,6 +3598,7 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::check_repo_badge_json_can_use_gap_ledger_targets",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/gap-decision-ledger/corpus.json",
 ]
 code = [
@@ -3620,6 +3662,7 @@ tests = [
   "crates/ripr/src/lsp/diagnostics.rs::tests::append_gap_record_diagnostics_fails_closed_for_invalid_artifacts",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/editor_gap_cockpit",
 ]
 code = [
@@ -3708,6 +3751,7 @@ tests = [
   "xtask/src/main.rs",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/evidence-quality-benchmark/corpus.json",
   "fixtures/finding-alignment-dogfood/corpus.json",
 ]
@@ -3762,6 +3806,7 @@ tests = [
   "editors/vscode/test/suite/extension.test.ts::status bar reports unavailable server without hanging on modal UI",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
 ]
 code = [
   "editors/vscode/src/client.ts",
@@ -3805,6 +3850,7 @@ tests = [
   "editors/vscode/test/suite/extension.test.ts::copyContext copies first repair packets without LSP fallback",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
 ]
 code = [
   "crates/ripr/src/lsp/actions.rs",
@@ -3856,6 +3902,7 @@ tests = [
   "xtask/src/main.rs::tests::targeted_test_outcome_json_and_markdown_are_structured",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap/calibration/targeted-test-outcome.json",
   "fixtures/boundary_gap/calibration/targeted-test-outcome.md",
   "fixtures/first_successful_pr",
@@ -3920,6 +3967,7 @@ tests = [
   "editors/vscode/test/suite/extension.test.ts",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/editor_first_pr_bridge",
 ]
 code = [
@@ -3994,6 +4042,7 @@ tests = [
   "crates/ripr/src/output/first_useful_action.rs::first_useful_action_matches_unchanged_after_attempt_fixture",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/actionable-gap-outcomes-corpus/corpus.json",
   "fixtures/first_successful_pr",
   "fixtures/boundary_gap/expected/pr-evidence-ledger/mixed/pr-evidence-ledger.md",
@@ -4070,6 +4119,7 @@ tests = [
   "editors/vscode/test/suite/extension.test.ts",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/editor_adoption_assurance",
 ]
 code = [
@@ -4144,6 +4194,7 @@ tests = [
   "editors/vscode/test/suite/extension.test.ts::editor adoption baseline keeps setup receipt and first-pr projection read-only",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/editor_actionable_gap_queue",
 ]
 code = [
@@ -4213,6 +4264,7 @@ tests = [
   "xtask::tests::evidence_quality_trend_reports_finding_alignment_presentation_text_deltas",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "badges/ripr.json",
   "badges/ripr-plus.json",
 ]
@@ -4282,6 +4334,7 @@ tests = [
   "crates/ripr/src/output/outcome/mod.rs::tests::targeted_test_outcome_python_output_fixture_matches_expected_receipts",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/swarm-plan-packet-corpus",
   "fixtures/actionable-gap-outcomes-corpus",
   "fixtures/surface-projection-alignment",
@@ -4396,6 +4449,7 @@ tests = [
   "crates/ripr/src/output/swarm_ingest.rs::python_preview_closed_agent_result_fixture_matches_expected_json",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/swarm-plan-packet-corpus",
   "fixtures/actionable-gap-outcomes-corpus",
   "fixtures/first_successful_pr/python-preview-gap/inputs/agent-results/closed.json",
@@ -4454,6 +4508,7 @@ tests = [
   "xtask::tests::dogfood_user_surface_projection_alignment_rejects_limited_static_limitation_backlog_projection",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/editor_actionable_gap_queue",
   "fixtures/swarm-plan-packet-corpus",
   "fixtures/actionable-gap-outcomes-corpus",
@@ -4625,6 +4680,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::classify_change_returns_no_static_path_when_no_related_test",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap/expected/evidence-quality-failures/corpus.json",
   "fixtures/swarm-plan-packet-corpus",
   "fixtures/editor_actionable_gap_queue",
@@ -4696,6 +4752,7 @@ tests = [
   "crates/ripr/src/lsp/gap_artifacts.rs::tests::actionable_gaps_report_rejects_cross_language_target_unresolved_packet",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/typescript-bun-ub-calibration",
   "fixtures/cross-language-oracle-graph-corpus",
   "fixtures/bun-ub-cross-language-dogfood",
@@ -4760,6 +4817,7 @@ tests = [
   "crates/ripr/src/output/human.rs::tests::render_finding_includes_bun_cross_language_grip",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/typescript-bun-ub-calibration",
   "fixtures/cross-language-oracle-graph-corpus",
   "fixtures/bun-ub-cross-language-dogfood",
@@ -4825,6 +4883,7 @@ tests = [
   "crates/ripr/tests/perl_two_binary_harness.rs::two_binary_proof_three_outcomes_against_real_perllsp",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/perl_lsp_facts_exporter",
   "fixtures/perl-real-repo-evals",
 ]
@@ -4937,6 +4996,7 @@ tests = [
   "xtask/src/verification_contracts.rs::check_verification_contracts"
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "tests/fixtures/verification/ripr/gate-decision.valid.json",
   "fixtures/gap-decision-ledger/corpus.json",
   "fixtures/boundary_gap/expected/calibrated-gate",
@@ -4989,6 +5049,7 @@ tests = [
   "crates/ripr/src/output/pr_inline_comment_publish_plan.rs::tests::inline_comment_publish_plan_uses_spec0068_inline_cap_token"
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap/expected/pr-guidance",
   "fixtures/boundary_gap/expected/pr-inline-comment-publisher"
 ]
@@ -5517,6 +5578,7 @@ tests = [
   "xtask/src/main.rs::tests::dogfood_typescript_false_actionable_audit_summary_flags_packet_ready_rows"
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/ts_pkg_discovery_single_package",
   "fixtures/ts_pkg_discovery_monorepo",
   "fixtures/ts_pkg_discovery_no_package",
@@ -5566,9 +5628,12 @@ id = "RIPR-SPEC-0086"
 name = "python tier a eval sweep"
 spec = "docs/specs/RIPR-SPEC-0086-python-eval-sweep.md"
 tests = [
-  "xtask/src/reports/eval_sweep.rs"
+  "xtask/src/reports/eval_sweep.rs",
+  "xtask/src/reports/eval_sweep.rs::tests::run_check_classifies_failure_exit_with_valid_json_as_crash",
+  "xtask/src/reports/eval_sweep.rs::tests::rendered_report_matches_golden_from_fixed_run_vector"
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/python-eval-sweep"
 ]
 code = [
@@ -5617,6 +5682,7 @@ tests = [
   "xtask/src/main.rs::repair_packet_authority_guard_tests::guard_ignores_non_call_mentions_and_out_of_scope_paths"
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   # Complete-contract fixture (flips repair_packet_ready: true)
   "fixtures/ts_repair_packet_complete",
   "fixtures/first_successful_pr/typescript-preview-gap",
@@ -5671,6 +5737,7 @@ tests = [
   "crates/ripr/src/output/preview_actionability.rs::tests::actionable_repair_route_falls_back_to_discriminator_then_generic"
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/ts_repair_packet_complete",
   "fixtures/ts_dynamic_oracle",
   "fixtures/ts_heuristic_relation",
@@ -5710,6 +5777,7 @@ tests = [
   "crates/ripr/src/output/repo_exposure.rs::tests::markdown_does_not_emit_ts_guidance_when_rust_seams_present"
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/ts_full_repo_guidance"
 ]
 code = [
@@ -5748,6 +5816,7 @@ tests = [
   "crates/ripr/src/output/human.rs::tests::render_all_no_path_disclosure_counts_linked_related_tests"
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/all_no_path_disclosure"
 ]
 code = [
@@ -5792,19 +5861,19 @@ metrics = [
 id = "RIPR-SPEC-0092"
 name = "python tier b judged-diff panel schema"
 spec = "docs/specs/RIPR-SPEC-0092-python-judged-pr-panel.md"
-tests = [
-  "xtask/src/main.rs"
-]
+tests = []
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/python-judged-pr-panel"
 ]
 code = [
-  "xtask/src/main.rs"
+  "xtask/src/reports/fixtures.rs::is_manifest_only_fixture_dir"
 ]
 outputs = [
-  "docs/specs/RIPR-SPEC-0092-python-judged-pr-panel.md",
   "fixtures/python-judged-pr-panel/manifest.json",
-  "fixtures/python-judged-pr-panel/SPEC.md"
+  "fixtures/python-judged-pr-panel/SPEC.md",
+  "fixtures/python-judged-pr-panel/starter-judged.json",
+  "fixtures/python-judged-pr-panel/scaled-judged.json"
 ]
 metrics = [
   "false_actionable_rate",
@@ -5822,6 +5891,7 @@ tests = [
   "crates/ripr/src/analysis/classify/reveal.rs::tests::non_match_arm_probe_family_match_only_keeps_discriminate_yes"
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/match_arm_blind",
   "fixtures/match_arm_observer"
 ]
@@ -5859,6 +5929,7 @@ tests = [
   "crates/ripr/src/analysis/classify/reveal.rs::tests::match_arm_variant_token_match_keeps_discriminate_yes"
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/observation_unverified_return_value",
   "fixtures/observation_verified_return_value",
   "fixtures/observation_unverified_field_construction",
@@ -5906,6 +5977,7 @@ tests = [
   "crates/ripr/src/domain/evidence.rs"
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/typescript_reexport_single_hop",
   "fixtures/typescript_reexport_no_false_credit",
   "fixtures/typescript_reexport_two_hop_limit"
@@ -5950,6 +6022,7 @@ tests = [
   "crates/ripr/src/analysis/classify/flow.rs::tests::self_field_push_stays_state_write_not_downgraded"
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/infect_wildcard_discard",
   "fixtures/infect_value_returned",
   "fixtures/propagate_swallowed_ok",
@@ -5996,6 +6069,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::extract_tests_maps_object_rejects_tothrow_to_exact_error_variant_oracle",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/typescript_tothrow_exact_oracle",
   "fixtures/typescript_broad_tothrow",
 ]
@@ -6106,6 +6180,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/package.rs::tests::gap3_vitest_pnpm_lockfile_no_limitation",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/ts_runner_detect_ava_devdep",
   "fixtures/ts_runner_detect_ava_script",
   "fixtures/typescript_monorepo_package_local",
@@ -6241,6 +6316,7 @@ tests = [
   "crates/ripr/src/analysis/classify/reveal.rs::tests::exact_variant_assertion_matches_matching_probe",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/unwrap_err_variant_positive",
   "fixtures/unwrap_err_variant_single_line",
   "fixtures/unwrap_err_sibling_variant",
@@ -6273,6 +6349,7 @@ tests = [
   "crates/ripr/src/analysis/classifier.rs::tests::given_broad_is_err_assertion_when_error_variant_changes_then_oracle_is_weak",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/error_path_sibling_oracle_fake_clean",
 ]
 code = [
@@ -6329,6 +6406,7 @@ tests = [
   "xtask/src/main.rs::validate_evidence_promotion_honesty_corpus_at",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/evidence-promotion-honesty-corpus",
   "fixtures/evidence-promotion-honesty-corpus/patches/semver-matches-greater.diff",
   "fixtures/evidence-promotion-honesty-corpus/reports/scope-clean-complete-empty-may-be-clean.json",
@@ -6393,6 +6471,7 @@ tests = [
   "crates/ripr/src/analysis/classify/decision.rs::confidence_score_cap_does_not_change_classification",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/infect_value_returned",
   "fixtures/infect_wildcard_discard",
   "fixtures/observation_unverified_field_construction",
@@ -6444,6 +6523,7 @@ tests = [
   "crates/ripr/src/output/gate.rs::tests::new_unsuppressed_config_error_produces_null_basis_and_zero_count_with_reason",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap/expected/calibrated-gate",
   "fixtures/boundary_gap/expected/gate-adoption",
 ]
@@ -6494,6 +6574,7 @@ tests = [
   "crates/ripr/src/output/human.rs::tests::render_emits_all_no_path_disclosure_for_infection_unknown_findings",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/all_no_path_disclosure",
   "fixtures/unrelated_test_mentions_token",
   "fixtures/multi_hunk_removed_line_wrong_target",
@@ -6507,6 +6588,32 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0113-honest-no-static-path-messaging.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0150"
+name = "Rust bounded value-propagation limitation"
+spec = "docs/specs/RIPR-SPEC-0150-rust-value-propagation-limitation.md"
+tests = [
+  "crates/ripr/src/analysis/language/rust.rs::tests::diff_analysis_names_rfind_value_propagation_limitation",
+  "crates/ripr/src/analysis/language/rust.rs::tests::diff_analysis_names_len_utf8_value_propagation_limitation",
+  "crates/ripr/src/analysis/language/rust.rs::tests::diff_analysis_keeps_unbounded_value_shapes_fail_closed",
+  "crates/ripr/src/analysis/language/rust.rs::tests::value_propagation_predicate_ignores_non_entity_text_and_shadowing",
+  "crates/ripr/src/analysis/language/rust.rs::tests::value_propagation_predicate_rejects_map_or_else_shape",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/language/rust.rs",
+  "crates/ripr/src/domain/language.rs",
+  "crates/ripr/src/lsp/gap_artifacts.rs",
+]
+outputs = [
+  "docs/OUTPUT_SCHEMA.md",
+  "docs/STATIC_LIMITS.md",
 ]
 metrics = [
   "unit_test_pass_rate",
@@ -6550,6 +6657,7 @@ tests = [
   "xtask/src/reports/source_promotion.rs::tests::disposable_dry_merge_reports_clean_non_conflicting_history",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/source_promotion/diverged-conflict.json",
   "fixtures/source_promotion/SPEC.md",
 ]
@@ -6701,6 +6809,7 @@ tests = [
   "xtask/src/reports/release_denominator.rs::tests::adjudication_review_refs_require_a_complete_slug_shape",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/release_denominator/complete.json",
   "fixtures/release_denominator/current-main-provisional.json",
   "fixtures/release_denominator/reconcile-required.json",
@@ -6733,6 +6842,7 @@ tests = [
   "xtask/src/reports/release_scope.rs::tests::report_json_has_an_explicit_authority_boundary",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/release_scope/accepted-outcome-a.json",
 ]
 code = [
@@ -6802,6 +6912,7 @@ tests = [
   "crates/ripr/tests/verification_result.rs::serialized_result_conforms_to_the_published_schema",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/assurance_vocabulary",
   "fixtures/assurance_vocabulary/assurance/corpus.json",
 ]
@@ -6902,6 +7013,7 @@ tests = [
   "xtask/src/reports/release_negative.rs::tests::report_markdown_renders_case_matrix_and_dispositions",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap/expected/editor-agent-loop/agent-verify.json",
   "fixtures/boundary_gap/expected/editor-agent-loop/agent-receipt.json",
 ]
@@ -6944,6 +7056,7 @@ tests = [
   "crates/ripr/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/rust_transitive_reach_positive",
   "fixtures/rust_transitive_reach_test_helper_chain",
   "fixtures/rust_transitive_reach_negative",
@@ -6986,6 +7099,7 @@ tests = [
   "xtask/src/main.rs::tests::evidence_promotion_semantic_assertions_reject_no_tests_claim_with_witness",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/rust_transitive_reach_positive",
   "fixtures/rust_transitive_reach_test_helper_chain",
   "fixtures/rust_transitive_reach_negative",
@@ -7058,6 +7172,7 @@ tests = [
   "crates/ripr/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/rust_macro_reach_limitation",
   "fixtures/evidence-promotion-honesty-corpus",
 ]
@@ -7092,6 +7207,7 @@ tests = [
   "crates/ripr/src/lsp/gap_artifacts.rs::tests::validation_accepts_rust_macro_wrapped_assertion_static_limit_kind",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/rust_macro_wrapped_assertion_limitation",
   "fixtures/evidence-promotion-honesty-corpus",
 ]
@@ -7112,6 +7228,30 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0166"
+name = "rust subprocess binary reach limitation"
+spec = "docs/specs/RIPR-SPEC-0166-rust-subprocess-binary-reach-limitation.md"
+tests = [
+  "crates/ripr/src/analysis/language/rust.rs::tests::cargo_binary_invocation_shape_is_conservative_and_deterministic",
+  "crates/ripr/src/analysis/language/rust.rs::tests::subprocess_limit_only_applies_to_binary_source_paths_and_integration_tests",
+  "crates/ripr/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable",
+  "crates/ripr/src/domain/language.rs::tests::static_limit_kind_describe_is_present_and_distinct",
+  "crates/ripr/src/lsp/gap_artifacts.rs::tests::validation_accepts_rust_subprocess_binary_static_limit_kind",
+]
+fixtures = ["fixtures/benches_harness_evidence"]
+code = [
+  "crates/ripr/src/domain/language.rs",
+  "crates/ripr/src/analysis/language/rust.rs",
+  "crates/ripr/src/lsp/gap_artifacts.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0166-rust-subprocess-binary-reach-limitation.md",
+  "docs/OUTPUT_SCHEMA.md",
+  "docs/STATIC_LIMITS.md",
+]
+metrics = ["unit_test_pass_rate", "golden_fixture_pass_rate"]
+
+[[behavior]]
 id = "RIPR-SPEC-0118"
 name = "rust integration public-API path limitation"
 spec = "docs/specs/RIPR-SPEC-0118-rust-integration-public-api-path-limitation.md"
@@ -7122,6 +7262,7 @@ tests = [
   "crates/ripr/src/lsp/gap_artifacts.rs::tests::validation_accepts_rust_integration_public_api_static_limit_kind",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/rust_transitive_reach_positive",
   "fixtures/rust_transitive_reach_test_helper_chain",
   "fixtures/evidence-promotion-honesty-corpus",
@@ -7155,6 +7296,7 @@ tests = [
   "crates/ripr/src/lsp/gap_artifacts.rs::tests::validation_accepts_rust_macro_wrapped_test_call_static_limit_kind",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/rust_macro_wrapped_test_call_limitation",
   "fixtures/rust_macro_reach_limitation",
   "fixtures/evidence-promotion-honesty-corpus",
@@ -7288,6 +7430,7 @@ tests = [
   "xtask/src/reports/targeted_rerun.rs::tests::percentile_uses_sorted_nearest_rank",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap/input",
   "benchmarks/targeted_rerun_benchmark/input",
 ]
@@ -7316,6 +7459,7 @@ name = "Rust missing-discriminator evidence fixtures"
 spec = "docs/specs/RIPR-SPEC-0125-rust-missing-discriminator-evidence-fixtures.md"
 tests = []
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/rust_missing_discriminator_evidence",
   "fixtures/rust_missing_discriminator_evidence/pilot-mappings.json",
 ]
@@ -7343,6 +7487,7 @@ tests = [
   "crates/ripr/src/lsp/diagnostics.rs::seam_diagnostic_tests::diagnostic_data_field_carries_seam_id_and_grip_class",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap/expected/lsp-diagnostics.json",
 ]
 code = [
@@ -7555,6 +7700,7 @@ tests = [
   "crates/ripr/src/lsp/agent_protocol.rs::tests::source_edit_boundary_is_explicitly_read_only",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/lsp_agent_protocol",
   "fixtures/lsp_agent_protocol/capability.json",
   "fixtures/lsp_agent_protocol/requests",
@@ -7615,6 +7761,7 @@ tests = [
   "crates/ripr/src/analysis/classifier.rs::tests::given_assertion_heavy_owner_with_production_caller_when_classifying_then_guidance_is_standard",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/assertion_shaped_oracle_test_file",
   "fixtures/assertion_shaped_oracle_cfg_test",
   "fixtures/assertion_shaped_control_production_owner",
@@ -7998,6 +8145,7 @@ tests = [
   "xtask/src/reports/candidate_control.rs::tests::negative_candidate_state_fixture_covers_each_false_ready_boundary",
 ]
 fixtures = [
+  "fixtures/benches_harness_evidence",
   "fixtures/release_control/complete.json",
   "fixtures/release_control/reconcile-required.json",
   "fixtures/release_control/candidate-state-negative.json",
@@ -8013,6 +8161,426 @@ outputs = [
   "docs/specs/RIPR-SPEC-0144-release-control-lens.md",
   "docs/OUTPUT_SCHEMA.md",
 ]
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0151"
+name = "Finding source currentness"
+spec = "docs/specs/RIPR-SPEC-0151-source-currentness.md"
+tests = [
+  "crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::removed_only_probe_resolves_base_deleted_and_keeps_new_side_coordinate",
+  "crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::moved_expression_resolves_moved_or_renamed",
+  "crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::added_probe_keeps_new_side_line_and_resolves_candidate_current",
+  "crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::resolver_stays_unresolved_without_diff_evidence",
+]
+fixtures = [
+  "fixtures/benches_harness_evidence",
+  "fixtures/multi_hunk_removed_line_wrong_target",
+]
+code = [
+  "crates/ripr/src/domain/probe.rs",
+  "crates/ripr/src/analysis/probes/diff.rs",
+  "crates/ripr/src/analysis/language/rust.rs",
+  "crates/ripr/src/output/json/report.rs",
+]
+outputs = [
+  "docs/OUTPUT_SCHEMA.md",
+  "policy/output_contracts.txt",
+]
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0152"
+name = "Candidate-actionable projection authority"
+spec = "docs/specs/RIPR-SPEC-0152-candidate-actionable-projection.md"
+tests = [
+  "crates/ripr/src/domain/probe.rs::candidate_actionable_predicate_tests::only_proven_candidate_currentness_permits_action",
+  "crates/ripr/src/domain/probe.rs::candidate_actionable_predicate_tests::delta_rule_resolves_head_side_probes_only",
+  "crates/ripr/src/output/badge/tests.rs::base_deleted_findings_never_count_as_exposure_gaps",
+  "crates/ripr/src/output/json/finding_alignment.rs::tests::base_deleted_findings_form_no_alignment_items",
+  "crates/ripr/src/output/gap_decision_ledger.rs::candidate_actionable_ledger_tests::base_deleted_findings_project_to_no_gap_records",
+  "crates/ripr/src/output/gap_decision_ledger.rs::source_currentness_authority_tests::authority_projections_require_proven_candidate_currentness",
+  "crates/ripr/src/lsp/diagnostics.rs::diagnostic_policy_tests::actionable_profile_excludes_base_side_evidence",
+  "crates/ripr/src/output/sarif.rs::tests::base_deleted_findings_emit_no_sarif_results",
+  "crates/ripr/src/output/github.rs::tests::base_deleted_findings_emit_no_github_annotations",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/domain/probe.rs",
+  "crates/ripr/src/output/badge/summaries.rs",
+  "crates/ripr/src/output/json/finding_alignment.rs",
+  "crates/ripr/src/output/gap_decision_ledger.rs",
+  "crates/ripr/src/output/human/triage.rs",
+  "crates/ripr/src/lsp/diagnostics.rs",
+  "crates/ripr/src/output/sarif.rs",
+  "crates/ripr/src/output/github.rs",
+  "crates/ripr/src/app/pr_evidence.rs",
+  "crates/ripr/src/domain/context_packet.rs",
+]
+outputs = [
+  "docs/OUTPUT_SCHEMA.md",
+  "policy/output_contracts.txt",
+]
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0153"
+name = "Rust producer-owned source role"
+spec = "docs/specs/RIPR-SPEC-0153-rust-source-role.md"
+tests = [
+  "crates/ripr/src/analysis/workspace/source_role.rs::tests::layout_classifies_evidence_and_production",
+  "crates/ripr/src/analysis/workspace/source_role.rs::tests::cargo_autodiscovery_shapes_govern_benches_and_examples",
+  "crates/ripr/src/analysis/workspace/source_role.rs::tests::declared_targets_and_opt_in_override_layout",
+  "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::explicit_test_and_bench_paths_are_extracted",
+  "crates/ripr/src/analysis/language/rust.rs::tests::diff_analysis_treats_cargo_benches_as_evidence_not_production",
+  "crates/ripr/src/analysis/language/rust.rs::tests::diff_analysis_confirms_declared_test_targets_but_not_unconfirmed_names",
+  "crates/ripr/src/analysis/language/rust.rs::tests::diff_analysis_opt_in_restores_production_like_analysis",
+  "crates/ripr/src/config/tests.rs::parse_config_reads_production_like_targets",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/workspace/source_role.rs",
+  "crates/ripr/src/analysis/workspace/cargo_targets.rs",
+  "crates/ripr/src/analysis/language/rust.rs",
+  "crates/ripr/src/analysis/seam_inventory.rs",
+  "crates/ripr/src/config.rs",
+  "crates/ripr/src/config/model.rs",
+]
+outputs = []
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0154"
+name = "Assertion-form parity"
+spec = "docs/specs/RIPR-SPEC-0154-assertion-form-parity.md"
+tests = [
+  "crates/ripr/src/analysis/extract/oracles/scan.rs::err_guard_parity_tests::err_return_guard_is_an_oracle_equal_to_its_assert_twin",
+  "crates/ripr/src/analysis/extract/oracles/scan.rs::err_guard_parity_tests::guard_conditions_without_structural_equivalence_stay_unrecognized",
+  "crates/ripr/src/analysis/syntax/ra.rs::guard_pipeline_debug_tests::parser_path_credits_err_guard_in_test_facts",
+  "crates/ripr/src/analysis/probes/repo.rs::cfg_test_leak_tests::cfg_test_module_probe_shapes_seed_no_repo_probes",
+  "crates/ripr/src/analysis/syntax/ra.rs::cfg_all_test_tests::cfg_all_test_module_members_carry_evidence_role",
+]
+fixtures = [
+  "fixtures/assertion_form_parity_assert_msg",
+  "fixtures/assertion_form_parity_err_guard",
+]
+code = [
+  "crates/ripr/src/analysis/extract/oracles/scan.rs",
+  "crates/ripr/src/analysis/syntax/ra.rs",
+  "crates/ripr/src/analysis/probes/repo.rs",
+  "crates/ripr/src/analysis/seam_cache.rs",
+]
+outputs = []
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0155"
+name = "Cross-surface source-role projection"
+spec = "docs/specs/RIPR-SPEC-0155-cross-surface-role-projection.md"
+tests = [
+  "crates/ripr/src/lsp/tests.rs::workspace_diagnostics_production_like_opt_in_target_keeps_editor_projection",
+  "crates/ripr/src/lsp/tests.rs::workspace_diagnostics_scope_changed_test_file_findings_out_of_projection",
+  "crates/ripr/src/lsp/tests.rs::workspace_diagnostics_test_only_diff_publishes_no_line_local_diagnostics",
+  "crates/ripr/src/analysis/workspace/source_role.rs::tests::repo_production_contract_carries_over_exactly",
+  "crates/ripr/src/analysis/workspace/select.rs::tests::source_role_excludes_xtask_automation",
+]
+fixtures = [
+  "fixtures/source_role_harness_suppression",
+]
+code = [
+  "crates/ripr/src/lsp/diagnostics.rs",
+  "crates/ripr/src/lsp/state.rs",
+  "crates/ripr/src/analysis/workspace/classify.rs",
+  "crates/ripr/src/analysis/workspace/select.rs",
+  "crates/ripr/src/analysis/seam_inventory.rs",
+]
+outputs = []
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0156"
+name = "Currentness editor projection and qualification corpus"
+spec = "docs/specs/RIPR-SPEC-0156-currentness-editor-projection.md"
+tests = [
+  "crates/ripr/src/lsp/lens.rs::currentness_lens_tests::base_deleted_findings_get_no_code_lens",
+]
+fixtures = [
+  "fixtures/currentness_matrix_tail",
+  "fixtures/currentness_matrix_reuse",
+  "fixtures/currentness_matrix_move",
+  "fixtures/currentness_matrix_whole_delete",
+]
+code = [
+  "crates/ripr/src/lsp/lens.rs",
+]
+outputs = []
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0157"
+name = "Changed-binding to predicate-operand relation"
+spec = "docs/specs/RIPR-SPEC-0157-changed-binding-predicate-relation.md"
+tests = [
+  "crates/ripr/src/analysis/probes/binding_predicate.rs::tests",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::changed_binding_initializer_retargets_to_predicate_use",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::shadowed_binding_initializer_keeps_static_unknown",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::retarget_skips_predicate_lines_that_are_changed",
+  "crates/ripr/src/analysis/language/rust.rs::tests::diff_analysis_retargets_changed_binding_to_predicate_use",
+  "crates/ripr/src/analysis/language/rust.rs::tests::diff_analysis_retargets_len_utf8_binding_to_predicate_use",
+  "crates/ripr/src/analysis/language/rust.rs::tests::diff_analysis_retargets_unbounded_initializer_naming_earliest_call",
+  "crates/ripr/src/analysis/language/rust.rs::tests::diff_analysis_keeps_value_propagation_limitation_for_macro_guarded_use",
+]
+fixtures = [
+  "fixtures/binding_predicate_equality_boundary",
+  "fixtures/binding_predicate_positions",
+  "fixtures/binding_predicate_two_uses",
+  "fixtures/binding_predicate_scope_controls",
+]
+code = [
+  "crates/ripr/src/analysis/probes/binding_predicate.rs",
+  "crates/ripr/src/analysis/probes/diff.rs",
+  "crates/ripr/src/analysis/language/rust.rs",
+]
+outputs = []
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0158"
+name = "Bounded value transfer from exact test inputs"
+spec = "docs/specs/RIPR-SPEC-0158-bounded-value-transfer.md"
+tests = [
+  "crates/ripr/src/analysis/classify/value_transfer.rs::tests",
+  "crates/ripr/src/analysis/classify/activation.rs::tests::activation_evidence_resolves_computed_local_boundary_operands",
+  "crates/ripr/src/analysis/language/rust.rs::tests::diff_analysis_evaluates_exact_boundary_from_test_inputs",
+]
+fixtures = [
+  "fixtures/binding_predicate_equality_boundary",
+  "fixtures/binding_value_family_matrix",
+  "fixtures/binding_value_fail_closed",
+]
+code = [
+  "crates/ripr/src/analysis/classify/value_transfer.rs",
+  "crates/ripr/src/analysis/classify/activation.rs",
+]
+outputs = []
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0159"
+name = "Bounded helper-call transfer"
+spec = "docs/specs/RIPR-SPEC-0159-bounded-helper-transfer.md"
+tests = [
+  "crates/ripr/src/analysis/classify/helper_transfer.rs::tests",
+]
+fixtures = [
+  "fixtures/helper_chain_one_hop",
+  "fixtures/helper_chain_multi_hop",
+  "fixtures/helper_chain_controls",
+]
+code = [
+  "crates/ripr/src/analysis/classify/helper_transfer.rs",
+  "crates/ripr/src/analysis/classify/related_tests.rs",
+  "crates/ripr/src/analysis/classify/activation.rs",
+]
+outputs = []
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0160"
+name = "Immutable Git candidate CLI and output surface"
+spec = "docs/specs/RIPR-SPEC-0160-immutable-candidate-surface.md"
+tests = [
+  "crates/ripr/src/cli/commands/check.rs::candidate_tree_tests",
+  "crates/ripr/src/analysis/git_candidate_execution.rs::tests",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/cli/commands/check.rs",
+  "crates/ripr/src/analysis/pipeline.rs",
+  "crates/ripr/src/analysis_outcome.rs",
+]
+outputs = []
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0161"
+name = "Immutable candidate isolation and parity qualification"
+spec = "docs/specs/RIPR-SPEC-0161-immutable-candidate-qualification.md"
+tests = [
+  "crates/ripr/tests/immutable_candidate_falsifier.rs",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/config.rs",
+  "crates/ripr/src/analysis/git_candidate_execution.rs",
+  "crates/ripr/src/analysis/pipeline.rs",
+]
+outputs = []
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0167"
+name = "Hexagonal source-to-swarm convergence architecture"
+spec = "docs/specs/RIPR-SPEC-0167-convergence-architecture.md"
+tests = [
+  "xtask/src/convergence/architecture.rs::tests",
+]
+fixtures = [
+  "fixtures/convergence",
+]
+code = [
+  "xtask/src/convergence/mod.rs",
+  "xtask/src/convergence/types/mod.rs",
+  "xtask/src/convergence/ports.rs",
+  "xtask/src/convergence/domain/mod.rs",
+  "xtask/src/convergence/adapters/mod.rs",
+  "xtask/src/convergence/commands/mod.rs",
+  "xtask/src/convergence/architecture.rs",
+  "xtask/src/main.rs",
+]
+outputs = []
+metrics = [
+  "architecture_gate_pass_rate",
+  "convergence_port_compile_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0165"
+name = "Bounded recursive helper evaluation"
+spec = "docs/specs/RIPR-SPEC-0165-bounded-recursive-helper-evaluation.md"
+tests = [
+  "crates/ripr/src/analysis/classify/match_transfer.rs::tests",
+  "crates/ripr/src/analysis/classify/helper_transfer.rs::tests",
+]
+fixtures = [
+  "fixtures/recursive_positive",
+  "fixtures/recursive_controls",
+]
+code = [
+  "crates/ripr/src/analysis/classify/helper_transfer.rs",
+  "crates/ripr/src/analysis/classify/match_transfer.rs",
+  "crates/ripr/src/analysis/classify/activation.rs",
+]
+outputs = []
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0164"
+name = "Bounded literal match-arm transfer"
+spec = "docs/specs/RIPR-SPEC-0164-literal-match-arm-transfer.md"
+tests = [
+  "crates/ripr/src/analysis/classify/match_transfer.rs::tests",
+]
+fixtures = [
+  "fixtures/match_arm_positive",
+  "fixtures/match_arm_controls",
+]
+code = [
+  "crates/ripr/src/analysis/classify/match_transfer.rs",
+  "crates/ripr/src/analysis/classify/helper_transfer.rs",
+]
+outputs = []
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0163"
+name = "Bounded scanner-state transitions"
+spec = "docs/specs/RIPR-SPEC-0163-scanner-state-transitions.md"
+tests = [
+  "crates/ripr/src/analysis/classify/scanner_transfer.rs::tests",
+  "crates/ripr/src/analysis/classify/scanner_transfer.rs::string_state_tests",
+]
+fixtures = [
+  "fixtures/scanner_positive",
+  "fixtures/scanner_controls",
+]
+code = [
+  "crates/ripr/src/analysis/classify/scanner_transfer.rs",
+  "crates/ripr/src/analysis/classify/helper_transfer.rs",
+  "crates/ripr/src/analysis/classify/activation.rs",
+]
+outputs = []
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0162"
+name = "Honest propagation_unknown human wording"
+spec = "docs/specs/RIPR-SPEC-0162-propagation-unknown-wording.md"
+tests = [
+  "crates/ripr/src/output/human.rs::tests::propagation_unknown_wording_is_honest",
+]
+fixtures = [
+  "fixtures/assertion_shaped_control_production_caller",
+  "fixtures/binding_predicate_equality_boundary",
+  "fixtures/binding_predicate_scope_controls",
+  "fixtures/binding_value_family_matrix",
+  "fixtures/helper_chain_multi_hop",
+  "fixtures/helper_chain_one_hop",
+  "fixtures/infect_wildcard_discard",
+  "fixtures/lsp_agent_protocol",
+  "fixtures/observation_unverified_field_construction",
+  "fixtures/observation_verified_field_construction",
+  "fixtures/propagate_stdout_macro",
+  "fixtures/propagate_swallowed_ok",
+  "fixtures/python_adversarial_changed_sink_non_delta_operand",
+  "fixtures/python_decorator_indirection_limit",
+  "fixtures/python_dynamic_dispatch_limit",
+  "fixtures/python_dynamic_import_limit",
+  "fixtures/rust_async_fn_owner",
+  "fixtures/rust_constructor_field_observation",
+  "fixtures/rust_constructor_field_wrong_field_observer",
+  "fixtures/rust_long_expression_display_bound",
+  "fixtures/source_role_harness_suppression",
+]
+code = [
+  "crates/ripr/src/output/human/sections.rs",
+]
+outputs = []
 metrics = [
   "unit_test_pass_rate",
   "golden_fixture_pass_rate",

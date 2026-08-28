@@ -297,6 +297,43 @@ impl LanguageAdapter for PerlAdapter {
 /// This hotfix is classification **conservative-or-stricter** only. The full
 /// `WeaklyExposed`-with-sink-alignment matrix lands in PR H2, once the
 /// producer contract can prove the changed sink was observed.
+/// Domain projection for a Perl oracle kind (#3228). Single mapping
+/// authority: `packet_to_findings` and the focused oracle-mapping test both
+/// consume this helper, so changing a projection is a reviewable decision the
+/// test observes instead of a parallel test-only match proving itself. The
+/// match is exhaustive by design — a newly added Perl oracle kind is a
+/// compile error here rather than a silent wildcard fallthrough to Unknown.
+fn perl_oracle_kind_to_domain(kind: OracleKind) -> crate::domain::OracleKind {
+    use crate::domain::OracleKind as DomainOracleKind;
+    match kind {
+        OracleKind::ExactReturnAssertion => DomainOracleKind::ExactValue,
+        OracleKind::PredicateBoundaryAssertion => DomainOracleKind::RelationalCheck,
+        OracleKind::SmokeOk => DomainOracleKind::SmokeOnly,
+        OracleKind::ExceptionObserver
+        | OracleKind::HashOrObjectFieldAssertion
+        | OracleKind::OutputObserver
+        | OracleKind::WarnObserver
+        | OracleKind::LogObserver
+        | OracleKind::MentionOnly
+        | OracleKind::DiesOnly
+        | OracleKind::UnknownHelper
+        | OracleKind::DynamicFrameworkIndirection
+        | OracleKind::Unknown => DomainOracleKind::Unknown,
+    }
+}
+
+/// Domain projection for a Perl oracle strength (#3228): same
+/// single-authority contract as `perl_oracle_kind_to_domain`.
+fn perl_oracle_strength_to_domain(strength: OracleStrength) -> crate::domain::OracleStrength {
+    use crate::domain::OracleStrength as DomainOracleStrength;
+    match strength {
+        OracleStrength::StrongExact => DomainOracleStrength::Strong,
+        OracleStrength::WeakSmoke => DomainOracleStrength::Smoke,
+        OracleStrength::WeakBroad => DomainOracleStrength::Weak,
+        OracleStrength::MentionOnly | OracleStrength::Unknown => DomainOracleStrength::Unknown,
+    }
+}
+
 fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
     use crate::domain::{
         ActivationEvidence, Confidence as RiprConfidence, DeltaKind, ExposureClass,
@@ -360,23 +397,11 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
                     line: test_line,
                     oracle: oracle.and_then(|o| o.expression.clone()),
                     oracle_kind: oracle
-                        .map(|o| match o.kind {
-                            OracleKind::ExactReturnAssertion => DomainOracleKind::ExactValue,
-                            OracleKind::PredicateBoundaryAssertion => {
-                                DomainOracleKind::RelationalCheck
-                            }
-                            OracleKind::SmokeOk => DomainOracleKind::SmokeOnly,
-                            _ => DomainOracleKind::Unknown,
-                        })
+                        .map(|o| perl_oracle_kind_to_domain(o.kind))
                         .unwrap_or(DomainOracleKind::Unknown),
                     oracle_strength: ev
                         .oracle_strength
-                        .map(|strength| match strength {
-                            OracleStrength::StrongExact => DomainOracleStrength::Strong,
-                            OracleStrength::WeakSmoke => DomainOracleStrength::Smoke,
-                            OracleStrength::WeakBroad => DomainOracleStrength::Weak,
-                            _ => DomainOracleStrength::Unknown,
-                        })
+                        .map(perl_oracle_strength_to_domain)
                         .unwrap_or(DomainOracleStrength::Unknown),
                     relation_reason: perl_relation_reason,
                     relation_confidence: perl_relation_confidence,
@@ -655,6 +680,10 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
             observed_sink: None,
             oracle_alignment: None,
             alignment_reason: None,
+            // Source currentness is resolved by the producer that observed the diff
+            // evidence; this constructor has none, so the disposition stays the
+            // explicit unknown (#3280).
+            source_currentness: crate::domain::SourceCurrentness::UnresolvedSubject,
         });
     }
 
