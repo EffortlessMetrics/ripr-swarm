@@ -159,7 +159,7 @@ fn normalized_test_attribute_path(attribute: &str) -> Option<String> {
     }
     let head = body.get(..closing)?.trim();
     let path = head
-        .split(|character| character == '(')
+        .split('(')
         .next()?
         .chars()
         .filter(|character| !character.is_whitespace())
