@@ -1,6 +1,5 @@
 use super::currentness::{
-    BLOCKED_STALE, CURRENT, GapRecordSourceCurrentness, NOT_EVALUATED,
-    QUEUED, STALE,
+    BLOCKED_STALE, CURRENT, GapRecordSourceCurrentness, NOT_EVALUATED, QUEUED, STALE,
 };
 use crate::app::causal_projection::CausalDeltaArtifact;
 use crate::output::agent_seam_packets_legacy as legacy;
