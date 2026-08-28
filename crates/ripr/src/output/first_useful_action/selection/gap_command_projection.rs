@@ -4,6 +4,7 @@ use crate::output::gap_decision_ledger::GapRecord;
 use serde_json::Value;
 
 const MAX_WARNING_GAP_ID_CHARS: usize = 128;
+const MAX_WARNING_CHARS: usize = 256;
 
 /// Preserve producer-owned typed command authority when first-action selects a
 /// gap record.
@@ -43,10 +44,11 @@ pub(super) fn with_gap_verify_command_spec(
         Ok(None) => clear_verify_command_spec(&mut report),
         Err(reason) => {
             clear_verify_command_spec(&mut report);
-            report.warnings.push(format!(
+            let warning = format!(
                 "typed gap verification route unavailable for {}: {reason}",
                 bounded_gap_id(&gap_id)
-            ));
+            );
+            report.warnings.push(bounded_warning(&warning));
         }
     }
 
@@ -56,6 +58,14 @@ pub(super) fn with_gap_verify_command_spec(
 fn bounded_gap_id(gap_id: &str) -> String {
     let mut bounded: String = gap_id.chars().take(MAX_WARNING_GAP_ID_CHARS).collect();
     if bounded.chars().count() < gap_id.chars().count() {
+        bounded.push_str("...");
+    }
+    bounded
+}
+
+fn bounded_warning(warning: &str) -> String {
+    let mut bounded: String = warning.chars().take(MAX_WARNING_CHARS).collect();
+    if bounded.chars().count() < warning.chars().count() {
         bounded.push_str("...");
     }
     bounded
