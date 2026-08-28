@@ -1372,13 +1372,6 @@ fn review_comments_with_diff_loader(
 
     receipt.phase("configuration", "diff_discovery");
     receipt.write_atomic(&receipt_path)?;
-    enforce_review_comments_deadline(
-        &mut receipt,
-        &receipt_path,
-        started,
-        options.timeout_ms,
-        "diff_discovery",
-    )?;
     let diff_text = load_diff(&input.root, &options.base, &options.head).map_err(|error| {
         record_review_comments_error(&mut receipt, &receipt_path, "diff_discovery", error)
     })?;
@@ -1389,7 +1382,17 @@ fn review_comments_with_diff_loader(
             options.base, options.head
         );
     }
+    enforce_review_comments_deadline(
+        &mut receipt,
+        &receipt_path,
+        started,
+        options.timeout_ms,
+        "diff_discovery",
+    )?;
     receipt.phase("diff_discovery", "language_facts");
+    receipt.write_atomic(&receipt_path)?;
+    let changed_lines = agent_brief_lines_from_diff(&input.root, &diff_text);
+    let changed_owners = agent_brief_owners_for_lines(&input.root, &changed_lines);
     enforce_review_comments_deadline(
         &mut receipt,
         &receipt_path,
@@ -1397,17 +1400,7 @@ fn review_comments_with_diff_loader(
         options.timeout_ms,
         "language_facts",
     )?;
-    receipt.write_atomic(&receipt_path)?;
-    let changed_lines = agent_brief_lines_from_diff(&input.root, &diff_text);
-    let changed_owners = agent_brief_owners_for_lines(&input.root, &changed_lines);
     receipt.phase("language_facts", "canonical_analysis");
-    enforce_review_comments_deadline(
-        &mut receipt,
-        &receipt_path,
-        started,
-        options.timeout_ms,
-        "canonical_analysis",
-    )?;
     receipt.write_atomic(&receipt_path)?;
     let working_set = AgentBriefResolvedWorkingSet::base(options.base.clone(), changed_lines)
         .with_changed_owners(changed_owners);
@@ -1425,14 +1418,14 @@ fn review_comments_with_diff_loader(
     .map_err(|error| {
         record_review_comments_error(&mut receipt, &receipt_path, "canonical_analysis", error)
     })?;
-    receipt.phase("canonical_analysis", "route_construction");
     enforce_review_comments_deadline(
         &mut receipt,
         &receipt_path,
         started,
         options.timeout_ms,
-        "route_construction",
+        "canonical_analysis",
     )?;
+    receipt.phase("canonical_analysis", "route_construction");
     receipt.write_atomic(&receipt_path)?;
     let selection = select_agent_brief_seams(
         &scoped_inventory.classified,
@@ -1440,14 +1433,14 @@ fn review_comments_with_diff_loader(
         output::review_comments::DEFAULT_REVIEW_MAX_SUMMARY_ITEMS,
         AgentBriefPolicy::from_config(&config),
     );
-    receipt.phase("route_construction", "static_rendering");
     enforce_review_comments_deadline(
         &mut receipt,
         &receipt_path,
         started,
         options.timeout_ms,
-        "static_rendering",
+        "route_construction",
     )?;
+    receipt.phase("route_construction", "static_rendering");
     receipt.write_atomic(&receipt_path)?;
     let analysis_scope = output::review_comments::ReviewCommentsAnalysisScope::limited_diff_scope(
         &working_set,
@@ -1486,11 +1479,25 @@ fn review_comments_with_diff_loader(
         &analysis_scope,
         analysis_outcome.as_ref(),
     );
+    enforce_review_comments_deadline(
+        &mut receipt,
+        &receipt_path,
+        started,
+        options.timeout_ms,
+        "static_rendering",
+    )?;
     receipt.phase("static_rendering", "artifact_io");
     receipt.write_atomic(&receipt_path)?;
     let rendered_json = output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
     write_text_file(&options.out, &rendered_json)?;
     write_text_file(&markdown_path, &rendered_md)?;
+    enforce_review_comments_deadline(
+        &mut receipt,
+        &receipt_path,
+        started,
+        options.timeout_ms,
+        "artifact_io",
+    )?;
     receipt.complete(&artifacts);
     let rendered_json = output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
     write_text_file(&options.out, &rendered_json)?;
