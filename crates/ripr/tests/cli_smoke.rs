@@ -11266,7 +11266,10 @@ fn agent_verify_execute_reports_result_write_failure() -> Result<(), Box<dyn std
 fn agent_verify_execute_refuses_a_tampered_input_before_executing()
 -> Result<(), Box<dyn std::error::Error>> {
     let (root, _) = producer_verify_packet("verify-execute-tampered")?;
-    std::fs::write(root.join("after.json"), "not-a-repo-exposure-artifact")?;
+    std::fs::write(
+        root.join("target/ripr/pilot/after.repo-exposure.json"),
+        "not-a-repo-exposure-artifact",
+    )?;
     let output = run_command(
         env!("CARGO_BIN_EXE_ripr"),
         Some(&root),
