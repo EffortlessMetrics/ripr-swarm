@@ -90,6 +90,16 @@ artifact_families = []
 description = "Mechanical repository policy checks."
 
 [[lane]]
+id = "output-contracts"
+posture = "required"
+workflow = ".github/workflows/ci.yml"
+jobs = ["rust"]
+commands = ["cargo xtask check-output-contracts", "cargo xtask check-fixture-contracts", "cargo xtask check-generated"]
+estimated_lem = 4
+artifact_families = ["ripr-evidence"]
+description = "Output, fixture, and generated artifact contract checks."
+
+[[lane]]
 id = "traceability"
 posture = "required"
 workflow = ".github/workflows/ci.yml"
