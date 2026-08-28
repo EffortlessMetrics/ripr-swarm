@@ -9729,6 +9729,24 @@ fn routed_rust_live_contract_rejects_reviewed_semantic_regressions() {
 
     let regressions: Vec<(&str, String, String, &str)> = vec![
         (
+            "delegated runner-config input",
+            workflow.replace(
+                "      runner-config: '{\"group\":\"em-ci-small\",\"labels\":[\"self-hosted\",\"linux\",\"x64\",\"em-ci\",\"cx43\",\"rust-medium\",\"trusted-pr\"]}'",
+                "      runner-config-missing: '{\"group\":\"em-ci-small\",\"labels\":[\"self-hosted\",\"linux\",\"x64\",\"em-ci\",\"cx43\",\"rust-medium\",\"trusted-pr\"]}'",
+            ),
+            reusable.to_string(),
+            "delegated job `rust-cx43`",
+        ),
+        (
+            "delegated JSON-string runner-config count",
+            workflow.replace(
+                "      runner-config: '\"ubuntu-latest\"'",
+                "      runner-config: ubuntu-latest",
+            ),
+            reusable.to_string(),
+            "JSON-string runner-config values",
+        ),
+        (
             "runner input type",
             workflow.to_string(),
             reusable.replace(
