@@ -1460,7 +1460,7 @@ fn review_comments_with_diff_loader(
         &diff_text,
     )
     .map_err(|error| {
-        record_review_comments_error(&mut receipt, &receipt_path, "route_construction", error)
+        record_review_comments_error(&mut receipt, &receipt_path, "static_rendering", error)
     })?;
     let render_context = output::review_comments::ReviewCommentsRenderContext {
         root: &input.root,
