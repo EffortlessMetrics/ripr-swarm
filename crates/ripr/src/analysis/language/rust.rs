@@ -2009,21 +2009,21 @@ mod tests {
     #[test]
     fn diff_analysis_skips_inline_cfg_test_helpers_but_keeps_production_controls()
     -> Result<(), String> {
-        let root = temp_root("inline-cfg-test-role")?;
+        let root = temp_root("inline-cfg-test-second-role")?;
         write(
             &root.join("Cargo.toml"),
             "[package]\nname='inline-cfg-test-role'\nversion='0.1.0'\nedition='2024'\n",
         )?;
         write(
             &root.join("src/lib.rs"),
-            "pub fn production_control(value: i32) -> Result<i32, String> {\n    if value < 0 { return Err(\"negative\".to_string()); }\n    Ok(value)\n}\n\n#[cfg(test)]\nmod tests {\n    fn helper_returns_result(value: i32) -> Result<(), String> {\n        if value < 0 { return Err(\"negative\".to_string()); }\n        Ok(())\n    }\n\n    #[test]\n    fn equivalent_assertion() {\n        if helper_returns_result(1).is_err() { return; }\n    }\n}\n",
+            "pub fn production_control(value: i32) -> Result<i32, String> {\n    if value < 0 { return Err(\"negative\".to_string()); }\n    Ok(value)\n}\n\n#[cfg(all(feature = \"slow\", test))]\nmod tests {\n    fn helper_returns_result(value: i32) -> Result<(), String> {\n        if value < 0 { return Err(\"negative\".to_string()); }\n        Ok(())\n    }\n\n    #[test]\n    fn equivalent_assertion() {\n        if helper_returns_result(1).is_err() { return; }\n    }\n}\n",
         )?;
         write(
             &root.join("src/test_helper.rs"),
             "pub fn production_helper(value: i32) -> i32 {\n    if value < 0 { 0 } else { value }\n}\n",
         )?;
         let changed_files = diff::parse_unified_diff(
-            "diff --git a/src/lib.rs b/src/lib.rs\nnew file mode 100644\n--- /dev/null\n+++ b/src/lib.rs\n@@ -0,0 +1,18 @@\n+pub fn production_control(value: i32) -> Result<i32, String> {\n+    if value < 0 { return Err(\"negative\".to_string()); }\n+    Ok(value)\n+}\n+\n+#[cfg(test)]\n+mod tests {\n+    fn helper_returns_result(value: i32) -> Result<(), String> {\n+        if value < 0 { return Err(\"negative\".to_string()); }\n+        Ok(())\n+    }\n+\n+    #[test]\n+    fn equivalent_assertion() {\n+        if helper_returns_result(1).is_err() { return; }\n+    }\n+}\n\n diff --git a/src/test_helper.rs b/src/test_helper.rs\nnew file mode 100644\n--- /dev/null\n+++ b/src/test_helper.rs\n@@ -0,0 +1,3 @@\n+pub fn production_helper(value: i32) -> i32 {\n+    if value < 0 { 0 } else { value }\n+}\n",
+            "diff --git a/src/lib.rs b/src/lib.rs\nnew file mode 100644\n--- /dev/null\n+++ b/src/lib.rs\n@@ -0,0 +1,18 @@\n+pub fn production_control(value: i32) -> Result<i32, String> {\n+    if value < 0 { return Err(\"negative\".to_string()); }\n+    Ok(value)\n+}\n+\n+#[cfg(all(feature = \"slow\", test))]\n+mod tests {\n+    fn helper_returns_result(value: i32) -> Result<(), String> {\n+        if value < 0 { return Err(\"negative\".to_string()); }\n+        Ok(())\n+    }\n+\n+    #[test]\n+    fn equivalent_assertion() {\n+        if helper_returns_result(1).is_err() { return; }\n+    }\n+}\n\n diff --git a/src/test_helper.rs b/src/test_helper.rs\nnew file mode 100644\n--- /dev/null\n+++ b/src/test_helper.rs\n@@ -0,0 +1,3 @@\n+pub fn production_helper(value: i32) -> i32 {\n+    if value < 0 { 0 } else { value }\n+}\n",
         );
 
         let result = RustAdapter.analyze_diff(
@@ -2074,7 +2074,7 @@ mod tests {
                     .as_ref()
                     .is_some_and(|owner| owner.0.contains("tests::helper_returns_result"))
             }),
-            "inline cfg(test) helper must not become a production finding: {:?}",
+            "test-second cfg(all(...)) helper must not become a production finding: {:?}",
             result.findings
         );
         Ok(())
