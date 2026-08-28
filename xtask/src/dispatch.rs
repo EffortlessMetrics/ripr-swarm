@@ -20,10 +20,7 @@ fn print_help_route(args: &[String]) -> Result<(), String> {
 }
 
 fn unknown_command_error(command: &str) -> String {
-    unknown_command_message(command).replace(
-        "`cargo xtask help`",
-        "`cargo xtask help --all`",
-    )
+    unknown_command_message(command).replace("`cargo xtask help`", "`cargo xtask help --all`")
 }
 
 pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {

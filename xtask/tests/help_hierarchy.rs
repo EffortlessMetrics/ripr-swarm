@@ -92,7 +92,9 @@ fn exhaustive_help_preserves_the_ci_marked_command_catalog() -> Result<(), Strin
         }
     }
     if stdout.contains("check-supply-chain [CI]") {
-        return Err("exhaustive help marked advisory check-supply-chain as CI-enforced".to_string());
+        return Err(
+            "exhaustive help marked advisory check-supply-chain as CI-enforced".to_string(),
+        );
     }
     Ok(())
 }
