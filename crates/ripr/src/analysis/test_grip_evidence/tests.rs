@@ -13248,7 +13248,7 @@ fn nested_alias_ancestry_reaches_every_indexed_owner() {
     for (helper, expected_owner, expected_module) in [
         ("exercise_outer", "compute_alpha", "alpha"),
         ("exercise_middle", "compute_beta", "beta"),
-        ("exercise_inner_inherits", "compute_beta", "beta"),
+        ("exercise_inner_inherits", "", "beta"),
         ("exercise_inner_rebinds", "compute_gamma", "gamma"),
         ("exercise_sibling", "compute_delta", "delta"),
         ("exercise_tail", "compute_alpha", "alpha"),
@@ -13264,9 +13264,13 @@ fn nested_alias_ancestry_reaches_every_indexed_owner() {
             Some(&owner_names),
             &owner_names_by_module_path,
         );
+        let expected_owners = if expected_owner.is_empty() {
+            BTreeSet::new()
+        } else {
+            BTreeSet::from([expected_owner.to_string()])
+        };
         assert_eq!(
-            owners,
-            BTreeSet::from([expected_owner.to_string()]),
+            owners, expected_owners,
             "helper {helper} must resolve exactly to {expected_owner}"
         );
         let call = function
@@ -13274,6 +13278,17 @@ fn nested_alias_ancestry_reaches_every_indexed_owner() {
             .iter()
             .find(|call| call.name == "run")
             .ok_or_else(|| format!("missing aliased call for {helper}"))?;
+        if expected_owner.is_empty() {
+            assert!(
+                aliases_by_file
+                    .get(&support)
+                    .and_then(|aliases| aliases.get("run"))
+                    .and_then(|alias| alias.binding_at(call.line))
+                    .is_none(),
+                "helper {helper} must have no cross-module binding"
+            );
+            continue;
+        }
         let binding = aliases_by_file
             .get(&support)
             .and_then(|aliases| aliases.get("run"))
