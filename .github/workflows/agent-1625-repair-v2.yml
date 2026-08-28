@@ -1,0 +1,73 @@
+name: agent-1625-incremental-document-sync-repair-v2
+
+on:
+  push:
+    branches:
+      - agent/1625-incremental-document-sync
+
+permissions:
+  contents: write
+
+concurrency:
+  group: agent-1625-incremental-document-sync-repair-v2
+  cancel-in-progress: false
+
+jobs:
+  implement-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/1625-incremental-document-sync
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build bounded incremental-sync candidate
+        run: |
+          python3 .github/agent-1625-repair-v2.py
+          cargo fmt --all
+          git diff --check
+
+      - name: Publish exact candidate head
+        id: candidate
+        run: |
+          rm .github/agent-1625-patch.py
+          rm .github/agent-1625-repair.py
+          rm .github/agent-1625-repair-v2.py
+          rm .github/workflows/agent-1625-incremental-document-sync.yml
+          rm .github/workflows/agent-1625-repair.yml
+          rm .github/workflows/agent-1625-repair-v2.yml
+          git config user.name "EffortlessSteven"
+          git config user.email "git@effortlesssteven.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix(lsp): replay incremental document changes"
+          git push origin HEAD:agent/1625-incremental-document-sync
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "candidate_head=$(git rev-parse HEAD)"
+
+      - name: Focused document synchronization proof
+        run: |
+          test "$(git rev-parse HEAD)" = "${{ steps.candidate.outputs.sha }}"
+          cargo fmt --all -- --check
+          cargo test -p ripr --lib lsp::state -- --nocapture
+          cargo test -p ripr --lib lsp::capabilities -- --nocapture
+          cargo check -p ripr
+          cargo clippy -p ripr --lib -- -D warnings
+          cargo xtask check-spec-format
+          cargo xtask check-traceability
+
+      - name: Repository precommit proof
+        run: |
+          help="$(cargo xtask --help)"
+          if grep -q "precommit" <<<"$help"; then
+            cargo xtask precommit
+          else
+            cargo xtask check-pr
+          fi
