@@ -37,11 +37,7 @@ pub(super) fn promote_explicit_test_case_functions(index: &mut RustIndex) {
         {
             function.is_test = true;
         }
-        if file
-            .tests
-            .iter()
-            .all(|existing| test_key(existing) != key)
-        {
+        if file.tests.iter().all(|existing| test_key(existing) != key) {
             file.tests.push(test.clone());
             file.tests.sort_by(|left, right| {
                 left.start_line
@@ -152,8 +148,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_test_case_attributes_feed_the_ordinary_rust_index()
-    -> Result<(), Box<dyn Error>> {
+    fn explicit_test_case_attributes_feed_the_ordinary_rust_index() -> Result<(), Box<dyn Error>> {
         let root = temp_dir("test-case-attributes")?;
         fs::create_dir_all(root.0.join("tests"))?;
         fs::write(
