@@ -9698,20 +9698,20 @@ fn routed_rust_live_contract_rejects_reviewed_semantic_regressions() {
     let regressions: Vec<(&str, String, String, &str)> = vec![
         (
             "runner input type",
+            workflow.to_string(),
             reusable.replace(
                 "runner-config:\n        description: JSON string or object accepted by jobs.<job_id>.runs-on.\n        required: true\n        type: string",
                 "runner-config:\n        description: JSON string or object accepted by jobs.<job_id>.runs-on.\n        required: true\n        type: boolean",
             ),
-            reusable.to_string(),
             "required string contract",
         ),
         (
             "runner conversion",
+            workflow.to_string(),
             reusable.replace(
                 "runs-on: ${{ fromJSON(inputs.runner-config) }}",
                 "runs-on: ${{ inputs.runner-config }}",
             ),
-            reusable.to_string(),
             "fromJSON",
         ),
         (
@@ -46971,6 +46971,11 @@ fn routed_rust_workflow_text() -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))
 }
 
+fn reusable_rust_workflow_text() -> Result<String, String> {
+    let path = repo_root()?.join(".github/workflows/rust-gates.yml");
+    std::fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))
+}
+
 /// Extracts the run-block lines of each `- name: <step>` whose name matches
 /// `step_name`, stopping at the next step (`- ` at the same indent).
 fn routed_rust_step_run_blocks(workflow: &str, step_name: &str) -> Vec<Vec<String>> {
@@ -47076,12 +47081,14 @@ fn routed_rust_docs_gate_runs_full_precommit_table() -> Result<(), String> {
 }
 
 #[test]
-fn routed_rust_precommit_invocation_count_is_five() -> Result<(), String> {
+fn routed_rust_precommit_invocation_count_matches_delegated_owner() -> Result<(), String> {
     let workflow = routed_rust_workflow_text()?;
-    let count = workflow.matches("cargo xtask precommit").count();
-    if count != 5 {
+    let reusable = reusable_rust_workflow_text()?;
+    let routed_count = workflow.matches("cargo xtask precommit").count();
+    let reusable_count = reusable.matches("cargo xtask precommit").count();
+    if routed_count != 1 || reusable_count != 1 {
         return Err(format!(
-            "routed-rust.yml must invoke `cargo xtask precommit` exactly 5 times (4 required lanes + docs-gate), found {count}"
+            "delegated Rust proof must invoke `cargo xtask precommit` once in routed-rust.yml (docs-gate) and once in rust-gates.yml, found routed={routed_count}, reusable={reusable_count}"
         ));
     }
     Ok(())
