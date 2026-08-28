@@ -134,6 +134,7 @@ fn build_index_from_loaded_files_with_cache_and_adapters(
         insert_file_summary(&mut index, file.clone(), summary);
         cancellation::checkpoint()?;
     }
+    super::includes::resolve_repository_local_includes(root, &mut index);
     index.workspace_authority = Some(WorkspaceRootAuthority::from_index(root, &index.files));
     Ok(CachedRustIndex {
         index,
@@ -174,6 +175,7 @@ fn build_index_with_adapters(
             cancellation::checkpoint()?;
         }
     }
+    super::includes::resolve_repository_local_includes(root, &mut index);
     index.workspace_authority = Some(WorkspaceRootAuthority::from_index(root, &index.files));
     Ok(index)
 }

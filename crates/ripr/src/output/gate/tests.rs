@@ -56,9 +56,13 @@ fn gate_inline_failure_detail_names_seam_location_and_inspection_command() -> Re
         .repair_route
         .missing_discriminator
         .as_deref()
-        .expect("fixture must provide the missing discriminator");
+        .ok_or_else(|| "fixture must provide the missing discriminator".to_owned())?;
+    let static_class = decision
+        .static_class
+        .as_deref()
+        .ok_or_else(|| "fixture must provide the static classification".to_owned())?;
     assert!(
-        inline.contains(&format!(" ({})", decision.static_class.as_deref().unwrap())),
+        inline.contains(&format!(" ({static_class})")),
         "inline detail missing static classification: {inline}"
     );
     assert!(
@@ -74,7 +78,9 @@ fn gate_inline_failure_detail_names_seam_location_and_inspection_command() -> Re
         "inline detail missing seam location: {inline}"
     );
     assert!(
-        inline.contains("`ripr agent brief --root . --seam-id 8f7fa8644fd12280 --json ...`"),
+        inline.contains(
+            "`ripr agent brief --root . --seam-id 8f7fa8644fd12280 --json > target/ripr/workflow/agent-brief.json`",
+        ),
         "inline detail missing inspection command: {inline}"
     );
     Ok(())

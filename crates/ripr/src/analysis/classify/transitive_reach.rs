@@ -929,6 +929,7 @@ mod tests {
             tests,
             functions: Vec::new(),
             workspace_authority: None,
+            ..RustIndex::default()
         }
     }
 

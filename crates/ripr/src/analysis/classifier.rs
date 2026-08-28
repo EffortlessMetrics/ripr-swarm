@@ -1583,6 +1583,7 @@ mod tests {
                 },
             )]),
             workspace_authority: None,
+            ..RustIndex::default()
         };
         let probe = Probe {
             id: ProbeId("probe:watchdog-reason".to_string()),
@@ -1643,6 +1644,7 @@ mod tests {
                 },
             )]),
             workspace_authority: None,
+            ..RustIndex::default()
         };
         let probe = Probe {
             id: ProbeId("probe:watchdog-reason".to_string()),

@@ -69,6 +69,12 @@ impl std::ops::Deref for TempRoot {
     }
 }
 
+impl AsRef<Path> for TempRoot {
+    fn as_ref(&self) -> &Path {
+        self.as_path()
+    }
+}
+
 impl Drop for TempRoot {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
@@ -97,7 +103,7 @@ fn backdate_spec(root: &Path) -> Result<(), String> {
     if modified
         .duration_since(UNIX_EPOCH)
         .map_err(|error| error.to_string())?
-        >= Duration::from_secs(86_400)
+        >= Duration::from_hours(24)
     {
         return Err("fixture spec mtime was not backdated".to_owned());
     }
@@ -155,7 +161,7 @@ fn old_proposed_spec_remains_structurally_valid() -> Result<(), String> {
         ])
         .env("GIT_AUTHOR_DATE", "2000-01-01T00:00:00Z")
         .env("GIT_COMMITTER_DATE", "2000-01-01T00:00:00Z")
-        .current_dir(root.as_path())
+        .current_dir(&root)
         .output()
         .map_err(|error| error.to_string())?;
     if !commit.status.success() {
