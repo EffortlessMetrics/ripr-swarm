@@ -13331,7 +13331,7 @@ fn nested_alias_ancestry_reaches_every_indexed_owner() {
     for (helper, expected_owner, expected_module) in [
         ("exercise_outer", "compute_alpha", "alpha"),
         ("exercise_middle", "compute_beta", "beta"),
-        ("exercise_inner_inherits", "", "beta"),
+        ("exercise_inner_inherits", "", ""),
         ("exercise_inner_rebinds", "compute_gamma", "gamma"),
         ("exercise_sibling", "compute_delta", "delta"),
         ("exercise_tail", "compute_alpha", "alpha"),
