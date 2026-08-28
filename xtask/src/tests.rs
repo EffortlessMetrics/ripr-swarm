@@ -9485,16 +9485,19 @@ jobs:
     if: needs.route.outputs.router_target == 'cx43'
     uses: ./.github/workflows/rust-gates.yml
     with:
+      runner-config: '{"labels":["rust-medium"]}'
       disk-guard-threshold: 35
   rust-cpx42:
     if: needs.route.outputs.router_target == 'cpx42'
     uses: ./.github/workflows/rust-gates.yml
     with:
+      runner-config: '{"labels":["rust-medium","rust-16gb"]}'
       disk-guard-threshold: 35
   rust-cx53:
     if: needs.route.outputs.router_target == 'cx53'
     uses: ./.github/workflows/rust-gates.yml
     with:
+      runner-config: '{"labels":["rust-large"]}'
       disk-guard-threshold: 50
   rust-github:
     if: >-
@@ -9504,9 +9507,14 @@ jobs:
       needs.rust-cpx42.outputs.scratch_status == 'tempfail' ||
       needs.rust-cx53.outputs.scratch_status == 'tempfail'
     uses: ./.github/workflows/rust-gates.yml
+    with:
+      runner-config: '"ubuntu-latest"'
   docs-gate:
     name: Ripr Docs Gate
     timeout-minutes: 20
+    steps:
+      - name: Upload docs-gate reports
+        if: always()
   result:
     name: Ripr Rust Small Result
     timeout-minutes: 10
@@ -9542,6 +9550,10 @@ jobs:
         run: cargo xtask proof route --base "$BASE_SHA" --head "$HEAD_SHA" || true
       - name: Clean scratch
         run: rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
+      - name: Advisory reports
+        if: success() && inputs.run-advisory-reports
+      - name: Upload RIPR reports
+        if: failure() || inputs.upload-success-artifacts
 defaults:
   run:
     shell: bash
@@ -47024,10 +47036,18 @@ fn require_single_bare_precommit_line(lines: &[String], context: &str) -> Result
 #[test]
 fn routed_rust_required_lanes_run_full_precommit_table() -> Result<(), String> {
     let workflow = routed_rust_workflow_text()?;
-    let blocks = routed_rust_step_run_blocks(&workflow, "Required Rust gates");
-    if blocks.len() != 4 {
+    let routed_blocks = routed_rust_step_run_blocks(&workflow, "Required Rust gates");
+    if !routed_blocks.is_empty() {
         return Err(format!(
-            "routed-rust.yml must have exactly 4 `Required Rust gates` steps, found {}",
+            "routed-rust.yml must delegate `Required Rust gates` to rust-gates.yml, found {} inline step(s)",
+            routed_blocks.len()
+        ));
+    }
+    let reusable = reusable_rust_workflow_text()?;
+    let blocks = routed_rust_step_run_blocks(&reusable, "Required Rust gates");
+    if blocks.len() != 1 {
+        return Err(format!(
+            "rust-gates.yml must have exactly 1 `Required Rust gates` step, found {}",
             blocks.len()
         ));
     }
