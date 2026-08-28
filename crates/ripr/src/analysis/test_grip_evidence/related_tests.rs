@@ -65,7 +65,7 @@ impl OwnerContext {
             .and_then(|s| s.to_str())
             .unwrap_or("")
             .to_string();
-        let module_path = owner_file.and_then(module_path_for);
+        let module_path = owner_file.and_then(|file| module_path_for_index(context.index, file));
         let prefix = owner_fn.and_then(|f| package_prefix(&f.file));
         let fixture_names = owner_file
             .and_then(|file| context.index.files.get(file))
@@ -613,6 +613,10 @@ pub(super) fn module_path_for(file: &Path) -> Option<String> {
     } else {
         Some(trimmed.to_string())
     }
+}
+
+pub(super) fn module_path_for_index(index: &RustIndex, file: &Path) -> Option<String> {
+    module_path_for(&rust_index::compilation_unit_path(index, file))
 }
 
 /// Two files share a module if any non-leaf segment of the owner's

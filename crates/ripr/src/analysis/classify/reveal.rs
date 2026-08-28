@@ -1,4 +1,6 @@
-use super::super::rust_index::{OracleFact, TestSummary, extract_identifier_tokens};
+use super::super::rust_index::{
+    OracleFact, OracleTextShape, TestSummary, extract_identifier_tokens, has_oracle_text_shape,
+};
 use super::rust_string_literals;
 use crate::domain::*;
 
@@ -120,8 +122,8 @@ fn effect_target_tokens(expression: &str) -> Vec<String> {
 /// kind-matches an effect seam: a mock/expectation, a snapshot, or a
 /// whole-object equality capturing the resulting state. This is intentionally
 /// narrower than `oracle_matches_family` for effect families — it excludes the
-/// broad `text.contains("assert")` / `text.contains("expect")` substring
-/// matches, so a plain non-observing assertion (e.g. `assert!(result)`) does
+/// broad assertion-or-expectation text shape, so a plain non-observing assertion
+/// (e.g. `assert!(result)`) does
 /// **not** clear `observation_unverified`. Only a real expectation/snapshot
 /// observer does.
 fn effect_observer_confirms(assertion: &OracleFact) -> bool {
@@ -570,6 +572,23 @@ const ORACLE_FAMILY_MATCHES: &[(ProbeFamily, OracleKind)] = &[
     (ProbeFamily::MatchArm, OracleKind::Snapshot),
 ];
 
+/// Family-specific text fallbacks are typed separately from parsed
+/// [`OracleKind`] relationships. They preserve support for conservative custom
+/// assertion helpers while keeping text recognition in the assertion-pattern
+/// owner rather than in reveal classification.
+const ORACLE_FAMILY_TEXT_SHAPES: &[(ProbeFamily, OracleTextShape)] = &[
+    (ProbeFamily::ErrorPath, OracleTextShape::ErrorPath),
+    (ProbeFamily::SideEffect, OracleTextShape::SideEffect),
+    (
+        ProbeFamily::FieldConstruction,
+        OracleTextShape::MemberAccess,
+    ),
+    (
+        ProbeFamily::CallDeletion,
+        OracleTextShape::AssertionOrExpectation,
+    ),
+];
+
 /// Family-specific strength overrides. A missing entry preserves the
 /// classifier's parsed assertion strength; entries are only for kinds whose
 /// relative strength is fixed by the probe family.
@@ -745,57 +764,12 @@ fn oracle_matches_family(family: &ProbeFamily, assertion: &OracleFact) -> bool {
     let typed_match = ORACLE_FAMILY_MATCHES
         .iter()
         .any(|(rule_family, rule_kind)| rule_family == family && rule_kind == &assertion.kind);
-    let text = assertion.text.as_str();
-    let text_match = match family {
-        ProbeFamily::ErrorPath => text.contains("Error::") || text.contains("Err"),
-        ProbeFamily::SideEffect => {
-            text.contains("expect")
-                || text.contains("mock")
-                || text.contains("saved")
-                || text.contains("published")
-        }
-        ProbeFamily::FieldConstruction => contains_member_access(text),
-        ProbeFamily::CallDeletion => text.contains("assert") || text.contains("expect"),
-        ProbeFamily::Predicate
-        | ProbeFamily::ReturnValue
-        | ProbeFamily::MatchArm
-        | ProbeFamily::StaticUnknown => false,
-    };
-    typed_match || text_match
-}
-
-/// Returns true when the assertion contains a Rust-style member access.
-///
-/// A bare dot is not enough: decimal literals such as `3.14` and range
-/// operators also contain dots without observing a constructed field.
-/// String-literal contents are also excluded: `assert_eq!(msg, "a.b")`
-/// contains a dot between two alphabetic chars but does not observe a
-/// constructed field (#2904).
-fn contains_member_access(text: &str) -> bool {
-    let mut in_string = false;
-    let mut escaped = false;
-    let mut prev_was_dot = false;
-    for (_, ch) in text.char_indices() {
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                in_string = false;
-            }
-            continue;
-        }
-        if ch == '"' {
-            in_string = true;
-            continue;
-        }
-        if prev_was_dot && (ch == '_' || ch.is_alphabetic()) {
-            return true;
-        }
-        prev_was_dot = ch == '.';
-    }
-    false
+    let text_shape_match = ORACLE_FAMILY_TEXT_SHAPES
+        .iter()
+        .any(|(rule_family, shape)| {
+            rule_family == family && has_oracle_text_shape(&assertion.text, *shape)
+        });
+    typed_match || text_shape_match
 }
 
 fn probe_relative_oracle_strength(family: &ProbeFamily, assertion: &OracleFact) -> OracleStrength {
@@ -1229,6 +1203,14 @@ mod tests {
                 "score().unwrap();",
                 OracleKind::SmokeOnly,
                 OracleStrength::Smoke
+            )
+        ));
+        assert!(!oracle_matches_family(
+            &ProbeFamily::ReturnValue,
+            &oracle(
+                "assert_custom(score());",
+                OracleKind::Unknown,
+                OracleStrength::Unknown
             )
         ));
         assert!(oracle_matches_family(
