@@ -28,6 +28,15 @@ What user or integration problem does this behavior solve?
 
 What should `ripr` do?
 
+## Non-Goals
+
+What is intentionally out of scope?
+
+Requirement-level v2 blocks and PR-local implementation slices belong in their
+respective authorities; do not duplicate their normative prose here.
+Maintenance-review metadata is optional and non-normative. Acceptance of this
+document does not imply implementation, evidence, or support.
+
 ## Required Evidence
 
 What data, output, or diagnostics must be present?
@@ -39,10 +48,6 @@ What data, output, or diagnostics must be present?
 ## Outputs
 
 -
-
-## Non-Goals
-
-What is intentionally out of scope?
 
 ## Acceptance Examples
 
@@ -64,7 +69,8 @@ Which commands and CI lanes prove it?
 
 ## Metrics
 
-What moves this from experimental to stabilizing or stable?
+What measurements show the behavior is working? Promotion decisions belong to
+the applicable support and release authorities.
 
 -
 

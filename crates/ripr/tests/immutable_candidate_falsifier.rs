@@ -11,6 +11,7 @@
 //! the declared non-portable telemetry.
 
 use serde_json::Value;
+use serial_test::serial;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -137,6 +138,7 @@ fn run_subject_with_base(
 /// the live index (a staged blob). The output must be semantically
 /// identical to the clean run.
 #[test]
+#[serial]
 fn post_bind_mutations_do_not_change_immutable_output() -> Result<(), String> {
     let (guard, base, candidate) = fixture_repo("mutations")?;
     let root = &guard.0;
@@ -162,6 +164,7 @@ fn post_bind_mutations_do_not_change_immutable_output() -> Result<(), String> {
 /// ordering must agree with the subject run after removing only the
 /// declared non-portable telemetry (identity block, mode string, root).
 #[test]
+#[serial]
 fn same_tree_immutable_and_committed_analysis_agree() -> Result<(), String> {
     let (guard, base, candidate) = fixture_repo("parity")?;
     let root = &guard.0;
@@ -204,6 +207,7 @@ fn same_tree_immutable_and_committed_analysis_agree() -> Result<(), String> {
 /// per-format empty-tree OID, and the probe paths name the repository,
 /// never the ephemeral materialization directory.
 #[test]
+#[serial]
 fn emitted_identities_match_the_request_and_paths_are_replayable() -> Result<(), String> {
     let (guard, _base, candidate) = fixture_repo("identity")?;
     let root = &guard.0;
@@ -235,6 +239,7 @@ fn emitted_identities_match_the_request_and_paths_are_replayable() -> Result<(),
 /// file in the candidate commit, rename another, and dirty the worktree
 /// copies of both — the subject run still resolves from objects.
 #[test]
+#[serial]
 fn delete_and_rename_shapes_resolve_without_worktree_fallback() -> Result<(), String> {
     let root = unique_root("shapes");
     std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
@@ -289,6 +294,7 @@ fn delete_and_rename_shapes_resolve_without_worktree_fallback() -> Result<(), St
 /// Invalid inputs stay named incomplete states — never clean zero
 /// findings: a missing tree, and a malformed OID.
 #[test]
+#[serial]
 fn invalid_subjects_fail_closed_never_clean() -> Result<(), String> {
     let (guard, base, _candidate) = fixture_repo("invalid")?;
     let root = &guard.0;
@@ -322,6 +328,7 @@ fn invalid_subjects_fail_closed_never_clean() -> Result<(), String> {
 /// outputs must DIFFER from the subject run, so a regression that made
 /// the subject path read the worktree would flip this assertion.
 #[test]
+#[serial]
 fn removal_experiment_subject_differs_from_worktree_substitution() -> Result<(), String> {
     let (guard, base, candidate) = fixture_repo("removal")?;
     let root = &guard.0;
@@ -375,6 +382,7 @@ fn removal_experiment_subject_differs_from_worktree_substitution() -> Result<(),
 /// with the pure default — toggling the worktree ripr.toml (including
 /// its enabled-languages list) must not change the subject output.
 #[test]
+#[serial]
 fn treeless_config_subject_ignores_worktree_language_toggle() -> Result<(), String> {
     let root = unique_root("treeless");
     std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
@@ -433,6 +441,7 @@ enabled = [\"rust\", \"python\"]
 /// candidate tree fails closed with a named error naming the entry —
 /// never a worktree fallback, never clean zero findings.
 #[test]
+#[serial]
 fn type_change_fails_closed_naming_the_entry() -> Result<(), String> {
     let root = unique_root("typechange");
     std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
@@ -489,6 +498,7 @@ edition='2024'
 }
 
 #[test]
+#[serial]
 fn temporary_candidate_state_is_cleaned() -> Result<(), String> {
     let (guard, base, candidate) = fixture_repo("cleanup")?;
     let root = &guard.0;
@@ -505,14 +515,19 @@ fn temporary_candidate_state_is_cleaned() -> Result<(), String> {
             .map(|entry| entry.file_name().to_string_lossy().to_string())
             .collect()
     };
+    // Concurrent corpus tests and an interrupted prior run may leave
+    // sibling roots in the shared parent. Snapshot before this run so the
+    // assertion covers only roots introduced by this invocation; a sibling
+    // root that drops during the settle window is harmless, while a new
+    // root that remains is a real leak.
+    let before = children(&parent);
     run_subject(root, &base, &candidate)?;
-    // Concurrent corpus tests materialize into the same shared parent, so
-    // a single snapshot can see a sibling test's root mid-flight. A
-    // genuinely leaked root persists; a concurrent run's root drops when
-    // that test finishes — settle briefly and require emptiness.
     let mut persisted = Vec::new();
     for _ in 0..12 {
-        persisted = children(&parent);
+        persisted = children(&parent)
+            .into_iter()
+            .filter(|child| !before.contains(child))
+            .collect();
         if persisted.is_empty() {
             break;
         }
