@@ -13101,11 +13101,94 @@ mod other {
     Ok(())
 }
 
-/// #3413: lexical alias ancestry must survive arbitrarily nested test
-/// modules. `binding_at` resolves the nearest enclosing binding, so a
-/// nested module that rebinds an alias owns only its own scope, a nested
-/// module that does not rebind inherits its ancestor's binding, and
-/// sibling modules never borrow each other's targets.
+/// #3413: Rust does not carry a `use` across a module boundary, so a bare
+/// call in a nested `mod` that never imported the alias must stay
+/// uncredited rather than borrowing the enclosing module's binding.
+/// Ordinary blocks are not module boundaries and still resolve.
+#[test]
+fn nested_module_without_its_own_import_stays_uncredited() -> Result<(), String> {
+    let bare = direct_function_import_aliases(concat!(
+        "use crate::alpha::compute as run;\n",
+        "fn outer() { run(); }\n",
+        "mod child {\n",
+        "    fn inner() { run(); }\n",
+        "}\n",
+        "fn tail() { run(); }\n",
+    ));
+    let bare_run = bare
+        .get("run")
+        .ok_or_else(|| "run alias should be indexed".to_string())?;
+    assert_eq!(
+        bare_run
+            .binding_at(2)
+            .map(|binding| binding.module_path.as_str()),
+        Some("alpha"),
+        "the enclosing module's own call must still resolve"
+    );
+    assert!(
+        bare_run.binding_at(4).is_none(),
+        "a nested module that never imported the alias must stay uncredited"
+    );
+    assert_eq!(
+        bare_run
+            .binding_at(6)
+            .map(|binding| binding.module_path.as_str()),
+        Some("alpha"),
+        "the outer binding must resume after the nested module closes"
+    );
+
+    // A `super::` re-export is legal Rust but is not chained to its target.
+    let reexport = direct_function_import_aliases(concat!(
+        "use crate::alpha::compute as run;\n",
+        "mod child {\n",
+        "    use super::run;\n",
+        "    fn inner() { run(); }\n",
+        "}\n",
+    ));
+    assert!(
+        reexport
+            .get("run")
+            .and_then(|alias| alias.binding_at(4))
+            .is_none(),
+        "a super re-export must stay uncredited rather than invent a target"
+    );
+
+    // Blocks, `impl` bodies, and `fn` bodies are not module boundaries: a
+    // function-local `use` shadows the file-level one inside its own block
+    // and stops applying once that block closes.
+    let blocks = direct_function_import_aliases(concat!(
+        "use crate::alpha::compute as run;\n",
+        "fn holder() {\n",
+        "    use crate::beta::compute as run;\n",
+        "    if true { run(); }\n",
+        "}\n",
+        "fn after() { run(); }\n",
+    ));
+    let block_run = blocks
+        .get("run")
+        .ok_or_else(|| "run alias should be indexed".to_string())?;
+    assert_eq!(
+        block_run
+            .binding_at(4)
+            .map(|binding| binding.module_path.as_str()),
+        Some("beta"),
+        "the nearest enclosing block binding must win inside its own block"
+    );
+    assert_eq!(
+        block_run
+            .binding_at(6)
+            .map(|binding| binding.module_path.as_str()),
+        Some("alpha"),
+        "a block-local binding must not leak past its closing brace"
+    );
+    Ok(())
+}
+
+/// #3413: lexical alias ancestry must survive nested test modules. Each
+/// module that rebinds the alias owns only its own body; a nested module
+/// that never imported it stays uncredited rather than inheriting, a
+/// sibling module never borrows another's target, and the outer binding
+/// resumes after the nested blocks close.
 #[test]
 fn nested_test_module_alias_ancestry_resolves_through_production_path() -> Result<(), String> {
     let alpha = PathBuf::from("src/alpha.rs");
