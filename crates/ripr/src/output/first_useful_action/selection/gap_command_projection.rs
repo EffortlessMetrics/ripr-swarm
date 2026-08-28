@@ -308,6 +308,7 @@ mod tests {
         let display = spec.display.clone();
         let ledger = json!([{
             "gap_id": "gap-1",
+            "source_currentness": "candidate_current",
             "verification_commands": [display.clone()],
             "command_specs": { "verify": [spec.clone()] }
         }]);
