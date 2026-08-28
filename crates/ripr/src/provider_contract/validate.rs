@@ -93,10 +93,10 @@ impl RiprRepositorySnapshotV1 {
                         "git-tree snapshot_id must use git-tree:<object-id>",
                     )
                 })?;
-                if !is_hex(object_id) || !matches!(object_id.len(), 40 | 64) {
+                if !is_lower_hex(object_id) || !matches!(object_id.len(), 40 | 64) {
                     return Err(error(
                         RiprProviderContractErrorCodeV1::MalformedIdentity,
-                        "git-tree snapshot object id must be 40 or 64 hexadecimal characters",
+                        "git-tree snapshot object id must be 40 or 64 lowercase hexadecimal characters",
                     ));
                 }
                 require_git_tree_digest(&self.snapshot_id, &self.source_digest)?;
@@ -519,6 +519,12 @@ fn require_sha256(field: &str, value: &str) -> Result<(), RiprProviderContractEr
         ));
     }
     Ok(())
+}
+
+fn is_lower_hex(value: &str) -> bool {
+    value
+        .bytes()
+        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
 fn is_hex(value: &str) -> bool {
