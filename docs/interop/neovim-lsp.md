@@ -1,42 +1,37 @@
 # Neovim standard-LSP proof recipe
 
-This recipe is a **candidate proof surface for [#1630](https://github.com/EffortlessMetrics/ripr-swarm/issues/1630)**.
-It does not promote Neovim, generic editors, or any Neovim version range to a supported tier.
-The support claim is earned only after the journey below is run against an unmodified `ripr` binary and its receipt is reviewed.
+This is a **candidate proof surface for [#1630](https://github.com/EffortlessMetrics/ripr-swarm/issues/1630)**,
+not a Neovim support claim. The claim is earned only after this journey is run against an unmodified `ripr` binary
+and its receipt is reviewed.
 
-The point of the exercise is narrow: prove that ripr's portable LSP baseline works through an off-the-shelf client,
-without VS Code extension methods, client-specific shims, or ripr source edits.
+The boundary is ripr's portable LSP baseline through an off-the-shelf client: no VS Code methods, protocol shims,
+report parsing, or ripr source edits.
 
-## Boundary under test
+## Boundary
 
-| Surface | Contract used here |
+| Surface | Contract |
 |---|---|
-| Client | Neovim's built-in `vim.lsp` client |
-| Server command | `ripr lsp --stdio` |
+| Client | Neovim built-in `vim.lsp` |
+| Server | `ripr lsp --stdio` |
 | Language | Rust |
-| Root selection | `ripr.toml`, then `.git`, then `Cargo.toml` |
-| Initialization | Standard LSP initialize request; no ripr-specific initialization options |
-| Configuration | Standard `workspace/configuration` handling |
-| Refresh | Server-owned `ripr.refresh` through `workspace/executeCommand` |
-| Source authority | Saved workspace on disk |
-| Enhanced actions | Not expected; `riprEditor` and `riprAgent` capabilities are intentionally absent |
+| Root priority | `ripr.toml`, then `.git`, then `Cargo.toml` |
+| Configuration | Standard `workspace/configuration`; no ripr initialization options |
+| Refresh | `ripr.refresh` via standard `workspace/executeCommand` |
+| Authority | Saved workspace on disk |
+| Enhanced actions | `riprEditor` and `riprAgent` absent |
 
-Neovim should start one ripr client per resolved root. That makes the root used in `initialize` explicit and avoids
-silently folding independent repositories into one server session.
+The config starts one client per resolved root. Run it only on a Neovim build that provides
+`vim.lsp.config()` / `vim.lsp.enable()`, and record the exact version; one receipt does not prove a version range.
 
-This recipe uses `vim.lsp.config()` / `vim.lsp.enable()` era APIs. Run it only on a Neovim build that provides those
-APIs, and record the exact version in the receipt. A successful run establishes evidence for that version; it does
-not establish a version range.
+## Configure
 
-## Configure the client
-
-Create `lsp/ripr.lua` under Neovim's configuration directory. From Neovim, this opens the exact path:
+Open `lsp/ripr.lua`:
 
 ```vim
 :execute 'edit' stdpath('config') .. '/lsp/ripr.lua'
 ```
 
-Use this configuration:
+Add and save with `:write ++p`:
 
 ```lua
 return {
@@ -47,321 +42,256 @@ return {
 }
 ```
 
-Save the config with `:write ++p` so Neovim creates the `lsp/` directory when needed.
-
 Enable it from `init.lua`:
 
 ```lua
 vim.lsp.enable("ripr")
 ```
 
-Do not add `init_options`, custom handlers, command rewrites, or VS Code compatibility methods for the baseline run.
-A client-side workaround may be useful later, but it would invalidate this proof.
+Do not add `init_options`, custom handlers, command rewrites, or compatibility methods.
 
 ## Preconditions
 
-Run these from the same environment that launches Neovim:
+Run from the environment that launches Neovim:
 
 ```text
 ripr --version
 ripr lsp --version
+nvim --version
 ```
 
-Both commands must resolve the same installed binary that Neovim will find on `PATH`. Confirm Neovim's resolved
-path before starting the server:
+Confirm Neovim's executable resolution:
 
 ```vim
 :lua print(vim.fn.exepath("ripr"))
 ```
 
-Choose a Rust repository that:
+Use a disposable Rust fixture with a known finding whose expression contains non-ASCII text and whose evidence names
+a related test. Then repeat on an authorized real repository, or record the actual exclusion against #1579. The
+fixture must be safe to restore, have a stable root marker, and not be open under a different ripr build.
 
-- has at least one known ripr finding with diagnostic, hover, code-action, and code-lens evidence;
-- can be modified and restored safely;
-- has a stable root marker;
-- is not already open in another Neovim process running a different ripr build.
+## Journey
 
-This recipe intentionally covers Rust only. Preview-language adapters need their own client proof because filetype,
-root, and capability behavior can differ.
+Record each result as `pass`, `fail`, `limited`, or `not_run`. Preserve the first failure and relevant log excerpt.
 
-## Run the client journey
+### 1. Initialize and capture the first state
 
-Record every result as `pass`, `fail`, `limited`, or `not_run`. Preserve the first failure and the relevant log
-excerpt rather than smoothing the run into a single pass/fail claim.
-
-### 1. Initialize and attach
-
-Open a Rust source file below the chosen root, then run:
+Open the fixture file:
 
 ```vim
 :checkhealth vim.lsp
 :lua print(vim.inspect(vim.lsp.get_clients({ name = "ripr", bufnr = 0 })))
+:lua local c = assert(vim.lsp.get_clients({ name = "ripr", bufnr = 0 })[1]); print(vim.inspect({ offset_encoding = c.offset_encoding, client_capabilities = c.capabilities, server_capabilities = c.server_capabilities }))
 ```
 
-Confirm:
+Confirm one initialized client, `client.config.cmd == {"ripr","lsp","--stdio"}`, and the intended `root_dir`.
+Record the first honest no-snapshot, pending, diagnostic, or typed-limitation state. When Neovim does not expose a
+custom status notification, record that presentation limit and use diagnostics, hover, progress, and the LSP log.
 
-- exactly one ripr client is attached to the buffer;
-- `client.config.cmd` is `ripr lsp --stdio`;
-- `client.root_dir` is the intended repository root;
-- the client reached `initialized = true`;
-- no extension-private method was required during startup.
+### 2. Prove Unicode range, hover, and related evidence
 
-Capture the negotiated position encoding and the server capabilities from the client object.
-
-### 2. Observe diagnostics
-
-Open a file and location with a known ripr finding. Inspect both presentation and retained diagnostic data:
+Place the cursor on the known seam:
 
 ```vim
 :lua print(vim.inspect(vim.diagnostic.get(0)))
+:lua vim.lsp.buf.hover()
 ```
 
-Confirm that the expected diagnostic appears at the correct range and severity. Inspect
-`user_data.lsp.relatedInformation` when present and record whether Neovim retained the related evidence even when it
-did not render every field in the default UI.
+Confirm that the range selects the expected non-ASCII expression; code and canonical identity match the expected
+finding or limitation; `user_data.lsp.relatedInformation`, when present, names the expected related test and range;
+and hover describes the same observation. Related evidence retained in protocol data but omitted by the default UI
+is a client presentation limit, not missing server evidence.
 
-This distinction matters: missing presentation is a client-adapter limitation; missing protocol evidence is a server
-or negotiation failure.
-
-### 3. Exercise hover, code actions, and code lenses
-
-Place the cursor on the known seam and run:
+### 3. Inspect actions and lenses
 
 ```vim
-:lua vim.lsp.buf.hover()
 :lua vim.lsp.buf.code_action()
 :lua vim.lsp.codelens.enable(true, { bufnr = 0 })
 :lua print(vim.inspect(vim.lsp.codelens.get({ bufnr = 0 })))
+:lua vim.lsp.buf.code_action({ filter = function(action, client_id) print(vim.inspect({ client_id = client_id, action = action })); return true end })
 ```
 
-Confirm:
+Compare every offered command with `server_capabilities.executeCommandProvider.commands`. Zero unknown client-command
+IDs may be offered. VS Code-only actions may be absent or inert with a named disabled reason; they must not execute.
+Record unsupported or partial client presentation as `limited`.
 
-- hover returns the expected ripr explanation;
-- at least the expected standard code action is visible;
-- code lenses can be requested and inspected;
-- any action that is absent because enhanced client capabilities were not advertised is recorded as `limited`, not
-  silently treated as a server failure.
+### 4. Prove saved refresh and unchanged delivery
 
-Run a lens only when its effect is understood and reversible:
+Make a finding-changing edit without saving and record the observation. It is non-authoritative:
+[#1625](https://github.com/EffortlessMetrics/ripr-swarm/issues/1625) owns dirty-buffer synchronization.
 
-```vim
-:lua vim.lsp.codelens.run()
-```
-
-### 4. Prove saved-workspace refresh
-
-Make a small change that should alter the known finding, but do not save it yet.
-
-Record what changes, if anything, while the buffer is dirty. This observation is not a dirty-buffer correctness
-claim: ripr's current portable contract is saved-workspace truth, and [#1625](https://github.com/EffortlessMetrics/ripr-swarm/issues/1625)
-owns the remaining synchronization boundary.
-
-Save the file:
+Save, then invoke the server-owned standard command:
 
 ```vim
 :write
-```
-
-Then invoke the server's advertised standard command through the attached client:
-
-```vim
 :lua local c = assert(vim.lsp.get_clients({ name = "ripr", bufnr = 0 })[1], "ripr is not attached"); c:exec_cmd({ title = "Refresh RIPR", command = "ripr.refresh" }, { bufnr = 0 })
 ```
 
-Confirm that diagnostics, hover, and code lenses converge on the saved file without restarting Neovim or editing
-ripr source.
+Confirm diagnostics, hover, related information, and lenses converge on saved state without restarting. Refresh again
+without another change and confirm semantic delivery is unchanged. Restore the fixture, save, refresh, and confirm
+the original observation returns.
 
-Restore the file, save again, refresh again, and confirm that the original evidence returns.
+### 5. Prove root change and isolation
 
-### 5. Observe progress and logs
-
-While refresh or analysis is running:
-
-```vim
-:lua print(vim.lsp.status())
-:lua print(vim.lsp.log.get_filename())
-```
-
-For a diagnostic run, enable debug logging before starting the client:
-
-```vim
-:lua vim.lsp.log.set_level("debug")
-```
-
-After collecting the evidence, restore normal logging:
-
-```vim
-:lua vim.lsp.log.set_level("warn")
-```
-
-Record whether progress was visible and whether the log contains clean initialize, request, refresh, shutdown, and
-exit sequences. Redact local paths or other sensitive values before attaching excerpts to a public issue or PR.
-
-### 6. Prove root isolation
-
-Open Rust files from two independent repositories in the same Neovim process. Inspect the clients:
+Open Rust files from two independent repositories:
 
 ```vim
 :lua print(vim.inspect(vim.lsp.get_clients({ name = "ripr" })))
 ```
 
-Confirm:
+Confirm one correctly rooted client per repository, no cross-root buffer attachment or diagnostics, and no dependence
+on Neovim's process-wide working directory. A future multi-folder session needs a separate receipt.
 
-- each repository has a client whose `root_dir` matches that repository;
-- buffers do not attach to the other repository's client;
-- diagnostics and refresh stay within the selected root;
-- the result does not depend on changing Neovim's process-wide working directory.
+### 6. Observe progress, logs, and shutdown
 
-If ripr later supports one multi-folder server session as a deliberate contract, prove that separately. This recipe
-tests the simpler and less ambiguous one-client-per-root baseline.
+```vim
+:lua print(vim.lsp.status())
+:lua print(vim.lsp.log.get_filename())
+:lua vim.lsp.log.set_level("debug")
+```
 
-### 7. Shut down cleanly
+Record initialize, configuration pull, document, diagnostic, hover, action, lens, refresh, shutdown, and exit traffic
+where present; redact local paths before publication. Restore normal logging with
+`:lua vim.lsp.log.set_level("warn")`.
 
-Stop the attached ripr client through Neovim:
+Stop the clients:
 
 ```vim
 :lsp stop ripr
 ```
 
-Alternatively, exercise the programmatic path and allow up to one second before force-stop:
+Or:
 
 ```vim
 :lua for _, c in ipairs(vim.lsp.get_clients({ name = "ripr" })) do c:stop(1000) end
 ```
 
-Confirm that the server receives shutdown/exit, the client disappears from `vim.lsp.get_clients()`, and no orphaned
-`ripr lsp --stdio` process remains. Record the platform-specific process check used.
+Confirm shutdown/exit and no orphaned `ripr lsp --stdio` process. Record the platform-specific process check.
+
+### 7. Attempt the real repository
+
+Repeat the journey on an authorized real repository. Otherwise record `not_run` with the actual reason and add the
+attempt or exclusion to #1579. A fixture receipt is not real-repository evidence.
 
 ## Receipt
 
-Store the result as JSON using this shape. It is a proof record for #1630, not a stable ripr output schema.
+This JSON is a proof record for #1630, not a stable ripr output schema.
 
 ```json
 {
   "schema": "ripr-neovim-standard-lsp-proof/v1",
   "captured_at": "YYYY-MM-DDTHH:MM:SSZ",
+  "scope": "fixture|authorized_real_repository",
   "client": {
     "name": "Neovim",
-    "version": "exact output of nvim --version",
+    "version": "exact nvim --version output",
     "configuration": "built-in vim.lsp; no LSP plugin"
   },
   "server": {
-    "ripr_version": "exact output of ripr --version",
-    "lsp_version": "exact output of ripr lsp --version",
-    "binary": "resolved executable path",
+    "ripr_version": "exact ripr --version output",
+    "lsp_version": "exact ripr lsp --version output",
+    "protocol": "LSP over stdio",
     "command": ["ripr", "lsp", "--stdio"],
     "ripr_source_modified": false
   },
-  "platform": {
-    "os": "name and version",
-    "arch": "architecture",
-    "shell": "launch environment"
-  },
+  "platform": {"os": "name and version", "arch": "architecture", "shell": "launch environment"},
   "workspace": {
     "language": "rust",
-    "fixture_or_repository": "public identifier or redacted local description",
+    "fixture_or_repository": "public identifier or stable token",
     "root_marker": "ripr.toml|.git|Cargo.toml",
-    "resolved_root": "path or redacted stable token",
-    "second_root": "path, redacted stable token, or null"
+    "resolved_root": "stable token",
+    "second_root": null,
+    "configuration": {
+      "repository_config": "ripr.toml|none|other",
+      "base_ref": null,
+      "check_mode": null,
+      "diagnostic_profile": null,
+      "seam_diagnostics": null
+    }
   },
   "negotiated": {
-    "position_encoding": "utf-8|utf-16|utf-32",
+    "position_encoding": "utf-8|utf-16|utf-32|unknown",
+    "diagnostic_mode": "push|pull|mixed|unknown",
+    "client_capabilities": {},
     "server_capabilities": {},
     "extension_private_methods_used": []
   },
+  "canonical_observation": {
+    "kind": "diagnostic|limitation|none",
+    "code": null,
+    "diagnostic_id": null,
+    "canonical_gap_id": null,
+    "seam_id": null,
+    "finding_id": null,
+    "range": null,
+    "related_locations": [],
+    "hover": {"state": "pass|fail|limited|not_run", "evidence": ""},
+    "position_range_parity": {"state": "pass|fail|limited|not_run", "evidence": ""},
+    "unknown_client_commands_offered": null
+  },
   "journey": {
-    "initialize": {
-      "state": "pass|fail|limited|not_run",
-      "evidence": ""
-    },
+    "initialize": {"state": "pass|fail|limited|not_run", "evidence": ""},
+    "initial_state": {"state": "pass|fail|limited|not_run", "evidence": ""},
     "diagnostics": {
       "state": "pass|fail|limited|not_run",
       "evidence": "",
       "related_information_retained": null
     },
-    "hover": {
-      "state": "pass|fail|limited|not_run",
-      "evidence": ""
-    },
-    "code_actions": {
-      "state": "pass|fail|limited|not_run",
-      "evidence": ""
-    },
-    "code_lens": {
-      "state": "pass|fail|limited|not_run",
-      "evidence": ""
-    },
+    "code_actions": {"state": "pass|fail|limited|not_run", "evidence": ""},
+    "code_lens": {"state": "pass|fail|limited|not_run", "evidence": ""},
     "dirty_buffer_observation": {
       "state": "pass|fail|limited|not_run",
       "evidence": "",
       "authoritative": false
     },
-    "save_refresh": {
-      "state": "pass|fail|limited|not_run",
-      "evidence": ""
-    },
-    "progress": {
-      "state": "pass|fail|limited|not_run",
-      "evidence": ""
-    },
-    "root_isolation": {
-      "state": "pass|fail|limited|not_run",
-      "evidence": ""
-    },
+    "save_refresh": {"state": "pass|fail|limited|not_run", "evidence": ""},
+    "unchanged_delivery": {"state": "pass|fail|limited|not_run", "evidence": ""},
+    "root_change": {"state": "pass|fail|limited|not_run", "evidence": ""},
+    "progress_and_logs": {"state": "pass|fail|limited|not_run", "evidence": ""},
     "shutdown": {
       "state": "pass|fail|limited|not_run",
       "evidence": "",
       "orphan_processes": null
+    },
+    "real_repository_attempt": {
+      "state": "pass|fail|limited|not_run",
+      "evidence": "",
+      "exclusion_reason": null
     }
   },
-  "canonical_observation": {
-    "source_authority": "saved_workspace",
-    "first_failure": null,
-    "known_limits": [
-      "No Neovim version range is claimed by this receipt.",
-      "Dirty buffers are observational until the #1625 synchronization contract is earned.",
-      "VS Code-enhanced actions are outside the standard-client baseline."
-    ]
-  },
   "normalized_sequence": [
-    "initialize",
-    "initialized",
-    "textDocument/didOpen",
-    "diagnostic publication or pull",
-    "textDocument/hover",
-    "textDocument/codeAction",
-    "textDocument/codeLens",
-    "textDocument/didChange",
-    "textDocument/didSave",
-    "workspace/executeCommand:ripr.refresh",
-    "shutdown",
-    "exit"
+    "initialize", "initialized", "workspace/configuration", "textDocument/didOpen",
+    "diagnostic publication or pull", "textDocument/hover", "textDocument/codeAction",
+    "textDocument/codeLens", "textDocument/didChange", "textDocument/didSave",
+    "workspace/executeCommand:ripr.refresh", "shutdown", "exit"
   ],
   "measured": {
+    "client_binary": null,
+    "server_binary": null,
+    "resolved_root_path": null,
     "client_count_first_root": null,
     "client_count_two_roots": null,
     "diagnostic_count_initial": null,
-    "diagnostic_count_dirty_observation": null,
+    "diagnostic_count_dirty": null,
     "diagnostic_count_after_saved_refresh": null,
+    "diagnostic_count_after_unchanged_refresh": null,
     "diagnostic_count_after_restore_refresh": null,
     "refresh_duration_ms": null
-  }
+  },
+  "first_failure": null,
+  "known_limits": [
+    "No Neovim version range is claimed.",
+    "Dirty buffers are observational until #1625 is earned.",
+    "VS Code-enhanced actions are outside this baseline."
+  ]
 }
 ```
 
-Replace placeholders with measured values. Do not report zero counts merely because the client UI hid a field; derive
-them from the retained LSP data or mark them unknown.
+Keep timing and absolute paths in `measured`; use stable tokens elsewhere. Do not report zero because the UI hid a
+field—derive it from retained protocol data or leave it unknown.
 
 ## Acceptance boundary
 
-A reviewed receipt may establish that a specific Neovim build can complete ripr's standard LSP journey on the tested
-platform and fixture. It does not by itself establish:
-
-- dirty-buffer authority;
-- generic support for all Neovim versions or platforms;
-- parity with the VS Code extension;
-- support for preview-language adapters;
-- compatibility with LSP proxy plugins, headless agent clients, or MCP;
-- mutation execution through the editor.
-
-Those are separate claims with separate evidence.
+A reviewed receipt may establish one exact Neovim build on the tested platform and fixture. It does not establish
+dirty-buffer authority, a generic version/platform range, VS Code parity, preview-language support, proxy or MCP
+compatibility, headless-agent support, or mutation execution. Those require separate evidence.
