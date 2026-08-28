@@ -4903,7 +4903,6 @@ code = [
   "crates/ripr/src/output/github.rs",
   "crates/ripr/src/output/gap_decision_ledger.rs",
   "xtask/src/fixture_contracts/mod.rs",
-  "xtask/src/reports/perl_migration.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0064-perl-fact-packet-contract.md",
