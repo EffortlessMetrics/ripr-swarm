@@ -145,7 +145,9 @@ fn starts_character_literal(mut chars: std::iter::Peekable<std::str::Chars<'_>>)
     }
 }
 
-fn raw_string_hash_count(mut chars: std::iter::Peekable<std::str::Chars<'_>>) -> Option<usize> {
+fn raw_string_hash_count(
+    mut chars: std::iter::Peekable<std::str::Chars<'_>>,
+) -> Option<usize> {
     let mut hash_count = 0usize;
     while chars.peek() == Some(&'#') {
         let _ = chars.next();
