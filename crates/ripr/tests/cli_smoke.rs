@@ -11090,6 +11090,58 @@ fn agent_packet_blocks_untracked_consumed_config_change() -> Result<(), Box<dyn 
     Ok(())
 }
 
+/// The public swarm queue must expose a producer-validated current source as
+/// assignable, then withdraw that authority when the selected repository HEAD
+/// moves without refreshing the source and ledger.
+#[test]
+fn swarm_queue_assigns_current_source_and_blocks_changed_head()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (root, _) = producer_verify_packet("swarm-queue-currentness")?;
+    let queue_args = [
+        "swarm",
+        "queue",
+        "--root",
+        ".",
+        "--gap-ledger",
+        "gap-ledger.json",
+        "--language",
+        "rust",
+        "--top",
+        "1",
+        "--format",
+        "json",
+    ];
+
+    let current = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &queue_args)?;
+    assert_success(&current);
+    let current: serde_json::Value = serde_json::from_slice(&current.stdout)?;
+    assert_eq!(current["source_currentness"]["status"], "current");
+    assert_eq!(current["source_currentness"]["queue_state"], "queued");
+    assert_eq!(current["summary"]["assignable_total"], 1);
+    assert_eq!(current["packets"].as_array().map(Vec::len), Some(1));
+    assert_eq!(current["packets"][0]["queue_state"], "queued");
+    assert_eq!(current["packets"][0]["staleness_status"], "current");
+    assert_eq!(current["packets"][0]["assignment"]["eligible"], true);
+    assert!(current["packets"][0]["command_specs"]["verify"].is_array());
+
+    advance_fixture_head(&root, "queue currentness movement")?;
+    let stale = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &queue_args)?;
+    assert_success(&stale);
+    let stale: serde_json::Value = serde_json::from_slice(&stale.stdout)?;
+    assert_eq!(stale["status"], "blocked");
+    assert_eq!(stale["source_currentness"]["status"], "stale");
+    assert_eq!(stale["source_currentness"]["queue_state"], "blocked_stale");
+    assert_eq!(stale["summary"]["assignable_total"], 0);
+    assert_eq!(stale["packets"].as_array().map(Vec::len), Some(1));
+    assert_eq!(stale["packets"][0]["queue_state"], "blocked_stale");
+    assert_eq!(stale["packets"][0]["staleness_status"], "stale");
+    assert_eq!(stale["packets"][0]["assignment"]["eligible"], false);
+    assert!(stale["packets"][0].get("command_specs").is_none());
+
+    std::fs::remove_dir_all(&root)?;
+    Ok(())
+}
+
 /// Every refusal is a typed disposition on stdout, not a bare stderr string,
 /// and no refusal commits a result.
 #[test]
