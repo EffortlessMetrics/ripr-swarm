@@ -280,4 +280,48 @@ fn ordinary_test() {
         );
         Ok(())
     }
+
+    #[test]
+    fn cached_index_also_promotes_explicit_test_case_functions() -> Result<(), Box<dyn Error>> {
+        let root = temp_dir("cached-test-case-attributes")?;
+        let file = PathBuf::from("tests/cached_parameterized.rs");
+        let source = br#"
+#[test_case(1)]
+#[test_case(2)]
+fn stacked_test_case(value: i32) {
+    assert_eq!(value, value);
+}
+"#
+        .to_vec();
+        let files = [(file.clone(), source)];
+
+        let cold =
+            crate::analysis::facts::build_index_from_loaded_files_with_cache(&root.0, &files)?;
+        let warm =
+            crate::analysis::facts::build_index_from_loaded_files_with_cache(&root.0, &files)?;
+
+        for index in [&cold.index, &warm.index] {
+            assert_eq!(
+                index
+                    .tests
+                    .iter()
+                    .filter(|test| test.name == "stacked_test_case")
+                    .count(),
+                1
+            );
+            assert_eq!(
+                index.files.get(&file).map(|facts| {
+                    facts
+                        .tests
+                        .iter()
+                        .filter(|test| test.name == "stacked_test_case")
+                        .count()
+                }),
+                Some(1)
+            );
+        }
+        assert_eq!(cold.file_fact_cache.hits, 0);
+        assert_eq!(warm.file_fact_cache.hits, 1);
+        Ok(())
+    }
 }
