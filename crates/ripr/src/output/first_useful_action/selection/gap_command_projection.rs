@@ -1,6 +1,4 @@
-use super::super::{
-    ActionCommandSpecs, FirstUsefulActionReport, ParsedSources, gap_records,
-};
+use super::super::{ActionCommandSpecs, FirstUsefulActionReport, ParsedSources, gap_records};
 use crate::domain::CommandSpec;
 use crate::output::gap_decision_ledger::GapRecord;
 use serde_json::Value;
@@ -101,9 +99,7 @@ fn producer_gap_verify_spec(
 mod tests {
     use super::*;
     use crate::agent::command_specs::{agent_receipt_command_spec, agent_verify_command_spec};
-    use crate::output::first_useful_action::{
-        FirstUsefulActionInput, build_first_useful_action_report,
-    };
+    use crate::output::first_useful_action::{FirstUsefulActionInput, build_first_useful_action_report};
     use serde_json::json;
 
     #[test]
