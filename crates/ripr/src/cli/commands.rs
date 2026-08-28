@@ -7313,7 +7313,7 @@ language = "rust"
         );
         assert!(publish_comments.contains("jq -e '.summary.safe_to_publish == true'"));
         assert!(publish_comments.contains("select(.safe_to_publish == true)"));
-        assert!(publish_comments.contains("<!-- ripr:dedupe=%s -->"));
+        assert!(publish_comments.contains("body_with_marker=\"$(printf"));
         assert!(publish_comments.contains("github.event.pull_request.head.sha"));
         assert!(publish_comments.contains("gh api --method POST"));
         assert!(publish_comments.contains("gh api --method PATCH"));
