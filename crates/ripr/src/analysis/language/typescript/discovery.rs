@@ -2,8 +2,6 @@
 
 use super::*;
 
-const TYPESCRIPT_JAVASCRIPT_EXTENSIONS: &[&str] =
-    &["ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs"];
 const TEST_FILE_STEM_SUFFIXES: &[&str] = &[".test", "-test", "_test", ".spec"];
 const TEST_DIRECTORY_NAMES: &[&str] = &["test", "tests", "__tests__"];
 const CYPRESS_SOURCE_EXTENSIONS: &[&str] = &["ts", "tsx", "js", "jsx"];
@@ -14,7 +12,7 @@ const JASMINE_SPEC_DIRECTORY_NAMES: &[&str] = &["spec"];
 /// The adapter recognizes four bounded convention families:
 ///
 /// 1. Jest/Vitest-style `*.test.*` and `*.spec.*` files across every
-///    TypeScript/JavaScript module extension the adapter accepts.
+///    TypeScript/JavaScript source extension routed to this adapter.
 /// 2. Node-style names: `test.*`, `test-*`, `*-test.*`, and `*_test.*`.
 /// 3. Cypress `*.cy.{js,jsx,ts,tsx}` files.
 /// 4. Source files under exact `test`, `tests`, or `__tests__` directory
@@ -22,21 +20,23 @@ const JASMINE_SPEC_DIRECTORY_NAMES: &[&str] = &["spec"];
 ///
 /// Directory matching is component-based, not substring-based, so
 /// `src/latest/foo.ts`, `test-utils/foo.ts`, and `src/contest.ts` remain
-/// production paths. The source extension is checked before any naming or
-/// directory convention. Test extraction remains fail-closed: a recognized
-/// path contributes test evidence only when parsing finds supported
+/// production paths. The language router is checked before any naming or
+/// directory convention, preventing discovery policy from drifting beyond the
+/// adapter's real source surface. Test extraction remains fail-closed: a
+/// recognized path contributes test evidence only when parsing finds supported
 /// `test()` / `it()` / `describe()` call shapes.
 ///
 /// The exact test-directory rule retains the controlled ky dogfood case:
 /// `test/body-size.ts` directly exercised a changed owner but was invisible
 /// before directory classification, producing a false `no_static_path`.
 pub(crate) fn is_test_file(path: &Path) -> bool {
-    has_typescript_or_javascript_extension(path)
+    is_typescript_or_javascript_source(path)
         && (has_test_file_stem(path) || has_test_directory_component(path))
 }
 
-fn has_typescript_or_javascript_extension(path: &Path) -> bool {
-    has_extension_in(path, TYPESCRIPT_JAVASCRIPT_EXTENSIONS)
+fn is_typescript_or_javascript_source(path: &Path) -> bool {
+    let adapter = TypeScriptAdapter;
+    adapter.accepts_path(path)
 }
 
 fn has_extension_in(path: &Path, extensions: &[&str]) -> bool {
@@ -129,10 +129,8 @@ mod tests {
         for path in [
             "src/cart.test.ts",
             "src/cart.spec.tsx",
-            "src/cart.test.mts",
-            "src/cart.spec.cts",
-            "src/cart-test.mjs",
-            "src/cart_test.cjs",
+            "src/cart-test.js",
+            "src/cart_test.jsx",
             "src/test-cart.ts",
             "src/test.tsx",
             "cypress/e2e/checkout.cy.ts",
@@ -148,21 +146,23 @@ mod tests {
             "test/body-size.ts",
             "tests/utils.ts",
             "src/__tests__/Header.tsx",
-            "packages/core/test/index.mjs",
+            "packages/core/test/index.js",
             "spec/requestContractSpec.js",
-            "spec/request_contractspec.mjs",
+            "spec/request_contractspec.js",
         ] {
             assert!(is_test_file(Path::new(path)), "expected test path: {path}");
         }
     }
 
     #[test]
-    fn test_layout_matching_stays_component_and_extension_bounded() {
+    fn test_layout_matching_stays_component_route_and_extension_bounded() {
         for path in [
             "src/latest/feature.ts",
             "test-utils/helper.ts",
             "src/contest.ts",
             "src/cart_test.txt",
+            "src/cart.test.mts",
+            "test/cart.mjs",
             "spec/request_contract.md",
             "spec/request_contract.js",
             "spec/helpers/setup.js",
@@ -182,7 +182,7 @@ mod tests {
     fn newly_recognized_layouts_reach_supported_test_call_shapes() {
         let cases = [
             (
-                "src/cart_test.mts",
+                "src/cart_test.ts",
                 r#"test("node layout", () => { expect(cart()).toBe(1); });"#,
             ),
             (
