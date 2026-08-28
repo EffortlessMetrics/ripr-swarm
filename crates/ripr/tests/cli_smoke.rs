@@ -10894,6 +10894,12 @@ fn producer_verify_packet(
     ]);
     assert_success(&snapshot);
     std::fs::write(root.join("before.json"), &snapshot.stdout)?;
+    std::fs::create_dir_all(root.join("target/ripr/pilot"))?;
+    std::fs::write(
+        root.join("target/ripr/pilot/repo-exposure.json"),
+        &snapshot.stdout,
+    )?;
+
     // Movement is required for a fully current pair (#2922): advance the
     // fixture so the executed verify route compares ordered revisions.
     advance_fixture_head(&root, "after movement")?;
@@ -10906,6 +10912,10 @@ fn producer_verify_packet(
     ]);
     assert_success(&snapshot);
     std::fs::write(root.join("after.json"), &snapshot.stdout)?;
+    std::fs::write(
+        root.join("target/ripr/pilot/after.repo-exposure.json"),
+        &snapshot.stdout,
+    )?;
 
     let ledger_path = root.join("gap-ledger.json");
     let source_path = root.join("after.repo-exposure.json");
@@ -11095,12 +11105,21 @@ fn agent_verify_execute_refusals_are_typed_dispositions() -> Result<(), Box<dyn 
     )?;
 
     // An input outside the root is refused even when the display text agrees.
-    let escaped = "ripr agent verify --root . --before ../escape.json --after after.json --json";
+    let escaped = "ripr agent verify --root . --before ../escape.json --after target/ripr/pilot/after.repo-exposure.json --json";
     let mut outside = packet.clone();
     outside["packets"][0]["verify_command"] = serde_json::Value::String(escaped.to_string());
     outside["packets"][0]["verification_commands"] = serde_json::json!([escaped]);
-    outside["packets"][0]["command_specs"]["verify"][0]["args"][5] =
-        serde_json::Value::String("../escape.json".to_string());
+    outside["packets"][0]["command_specs"]["verify"][0]["args"] = serde_json::json!([
+        "agent",
+        "verify",
+        "--root",
+        ".",
+        "--before",
+        "../escape.json",
+        "--after",
+        "target/ripr/pilot/after.repo-exposure.json",
+        "--json"
+    ]);
     outside["packets"][0]["command_specs"]["verify"][0]["human_display"] =
         serde_json::Value::String(escaped.to_string());
     std::fs::write(
