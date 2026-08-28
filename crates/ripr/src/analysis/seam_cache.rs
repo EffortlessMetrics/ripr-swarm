@@ -3413,12 +3413,16 @@ mod tests {
                 PathDependencyResolution::TargetMissing,
                 "a drive-prefixed path is relative on Unix"
             );
+            let unix_resolved = format!("crates/app/{windows_path}");
             assert_eq!(
                 edges[1].resolved_path.as_deref(),
-                Some("crates/app/C:/shared")
+                Some(unix_resolved.as_str())
             );
         }
-        assert_eq!(edges[1].declared_path.as_deref(), Some("C:/shared"));
+        assert_eq!(
+            edges[1].declared_path.as_deref(),
+            Some(windows_path.as_str())
+        );
 
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
