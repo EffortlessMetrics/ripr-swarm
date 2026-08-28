@@ -1,127 +1,109 @@
-# Repair attempts
+# Repair attempt identity
 
-A repair attempt is the durable identity for one bounded RIPR repair transaction.
-It is separate from an analysis-refresh attempt, LSP scheduler generation, gap
-identity, or receipt identity.
+`ripr agent repair` is a two-phase transaction. The before phase prepares bounded evidence; a human or external coding agent makes one focused test edit; the after phase verifies the exact prepared transaction and writes the review receipt.
 
-This document describes schema `0.1`, the first implementation slice under
-#2927.
+The durable object is a **repair attempt**, not a seam lookup and not the repository-global workflow directory.
 
-## Current sequence
+## Ordinary sequence
 
 ```text
-current producer-owned seam
--> ripr agent repair --phase before
--> existing workflow, brief, packet, and before snapshot complete
--> attempt-specific copies and digests are retained
--> attempt.json is published atomically in awaiting_edit state
--> human or external agent edits one focused test
--> existing seam-selected --phase after compatibility route
--> repository delta and edit-cage verdict are persisted in attempt.json
--> receipt admission revalidates the selected seam, packet, baseline, HEAD,
-   delta, and compliant verdict against the same attempt
+ripr agent repair --root . --seam-id <seam-id> --phase before
+# make the focused test edit outside RIPR
+ripr agent repair --root . --attempt <repair-attempt-id> --phase after
 ```
 
-The next implementation slice will make the after phase consume
-`--attempt <repair-attempt-id>` and bind after/verify/receipt evidence to this
-manifest. Schema `0.1` does not claim that finishing by attempt ID already
-exists.
+The before phase prints the attempt manifest path and the exact `--attempt` command to run next. Preserve that command across agent sessions, process restarts, and concurrent work.
 
-## Location
+`--seam-id <id> --phase after` remains a compatibility route. It succeeds only when exactly one awaiting attempt has that seam. Zero or multiple matches fail closed; RIPR does not guess which attempt is newest or intended.
 
-Each successful before phase creates:
+## Durable location
+
+Each before phase reserves an immutable directory:
 
 ```text
 target/ripr/repair-attempts/<repair-attempt-id>/
 ├── attempt.json
+├── before-commitment.sha256
 └── artifacts/
     ├── workflow.json
     ├── commands.md
     ├── agent-brief.json
     ├── before.repo-exposure.json
-    └── agent-packet.json
+    ├── agent-packet.json
+    └── attempt-baseline.json
 ```
 
-The pre-existing compatibility artifacts under `target/ripr/workflow/` remain
-available. The attempt directory receives copies so a later before phase cannot
-silently replace the evidence attached to an earlier attempt.
+The exact filenames follow the command-owned source artifacts. `attempt.json` identifies them by semantic role and binds each retained file by path, byte count, and SHA-256 digest.
 
-## Identity
+Repository-global files under `target/ripr/workflow/` remain compatibility projections for existing cockpit and review consumers. They are not repair-attempt identity.
 
-`repair_attempt_id` has the closed form:
+## Manifest contract
+
+The manifest schema is `schemas/ripr/repair-attempt.schema.json` (`schema_version: "0.1"`). A prepared manifest records:
+
+- the closed-form `repair_attempt_id`;
+- canonical repository root and concrete Git `HEAD`;
+- producer version and selected seam ID;
+- creation time;
+- retained before artifacts and content commitments;
+- the exact next command;
+- limitations and explicit non-claims.
+
+The before commitment is derived from the prepared manifest. Terminal updates may add after-phase evidence, but they cannot silently rewrite the retained before identity or artifacts.
+
+## After-phase authority
+
+`--attempt <id>` resolves one manifest directly. Before producing a receipt, RIPR verifies that:
+
+1. the manifest path is bound to the selected attempt ID and repository root;
+2. the manifest is still in `awaiting_edit`;
+3. the retained before snapshot, packet, and edit-cage baseline still match their recorded byte counts and digests;
+4. the after phase uses that attempt's retained packet rather than a repository-global or another attempt's packet;
+5. repository `HEAD` still matches the prepared head;
+6. the observed edit delta is compliant with the retained packet's allowed, forbidden, and expected operational-write surfaces;
+7. verify output, packet digest, delta digest, and receipt all bind to the same attempt.
+
+A different attempt for the same seam is a different transaction. Its packet, snapshot, baseline, and terminal state cannot be substituted.
+
+## Terminal state
+
+The after phase records one of these states in `attempt.json`:
+
+| State | Meaning |
+| --- | --- |
+| `ready_to_finish` | Current, comparable, and edit-cage compliant; receipt admission may proceed. |
+| `stale` | Repository `HEAD` changed after the attempt was prepared. |
+| `incomparable` | The retained and current evidence cannot support a valid comparison. |
+| `failed` | The edit-cage or another terminal invariant failed. |
+
+Only `ready_to_finish` with a current, compliant after verdict can authorize the attempt-bound receipt.
+
+## Compatibility outputs
+
+The composed after command still writes the established projections:
 
 ```text
-repair-attempt-<24 lowercase hexadecimal characters>
+target/ripr/workflow/after.repo-exposure.json
+target/ripr/workflow/agent-verify.json
+target/ripr/reports/agent-receipt.json
+target/ripr/workflow/            # status input
 ```
 
-It is an operational identity derived from repository root, concrete Git HEAD,
-seam ID, creation time, process ID, and a process-local nonce. It is not a
-portable semantic digest and is not used to identify the underlying gap.
+Those paths keep existing review and cockpit integrations working. Their evidence is admitted only after the exact attempt's retained before snapshot and packet have been resolved and validated.
 
-The manifest separately retains:
+## Failure behavior
 
-- canonical repository root;
-- concrete 40-character repository HEAD;
-- RIPR producer version;
-- selected seam ID;
-- creation time as telemetry;
-- role, repo-relative path, byte count, and SHA-256 digest for every retained
-  before-phase artifact;
-- the currently supported exact next command;
-- limitations and non-claims.
+Repair attempts fail closed:
 
-After a successful after phase, `after` records the durable `repair_attempt_id`,
-current repository HEAD,
-packet and delta SHA-256 commitments, currentness, and the edit-cage verdict.
-Terminal states are `ready_to_finish`, `failed`, `stale`, or `incomparable`;
-only `ready_to_finish` with a compliant verdict can authorize a receipt.
+- malformed or unknown attempt IDs are rejected;
+- missing, moved, modified, or digest-mismatched retained artifacts are rejected;
+- a cross-attempt packet is rejected;
+- ambiguous seam-selected after phases are rejected with an instruction to pass `--attempt`;
+- stale `HEAD`, incomparable evidence, and edit-cage violations do not produce a receipt-ready state;
+- unrelated repository changes outside the trusted edit surface block receipt admission.
 
-## Publication law
+RIPR does not select “the latest” attempt, reconstruct an attempt from mutable global files, or continue on partial evidence.
 
-Artifact copies are staged in a sibling temporary directory inside the attempt
-directory and renamed into `artifacts/` once complete. The manifest is written
-to a temporary file, synchronized, and linked into place. A manifest is not
-visible as complete until all attempt-specific artifact copies have been
-published, and a mid-staging failure leaves no partial `artifacts/` set.
+## Boundary
 
-The before phase holds a per-repository lock
-(`target/ripr/repair-attempts/.before.lock`) across workflow execution and
-attempt publication, so a concurrent before phase cannot publish another
-invocation's workflow artifacts under this attempt's identity. Acquisition is
-non-blocking: a concurrent before phase fails closed with a bounded error
-instead of waiting. The lock is an OS file-handle lock released on drop or
-process exit, so it cannot go stale.
-
-Source artifacts must canonicalize inside the selected repository root.
-Duplicate roles or destination file names fail closed. Attempt destinations
-are immutable: an existing attempt directory, artifact, or manifest is never
-reused or overwritten, and a failed begin removes the reserved attempt
-directory.
-
-## Current state
-
-Schema `0.1` emits `awaiting_edit` before the edit and a terminal after-phase
-state after the edit-cage comparison. A receipt revalidates every retained
-artifact's path, byte count, and digest, requires the manifest root and
-baseline root to equal the selected repository, and rejects stale, tampered,
-replayed, wrong-seam, and incomparable attempts. Receipt binding uses the
-durable attempt identity when the repair command creates the receipt, while
-the standalone compatibility route remains fail-closed when multiple terminal
-attempts exist for one seam. The compatibility route is still seam-selected
-when invoked directly; the repair after phase binds the receipt to the durable
-attempt that it just finished.
-
-## Non-claims
-
-A prepared attempt does not mean:
-
-- RIPR authored or applied a test edit;
-- the selected repair is correct;
-- verification ran;
-- the static gap improved or closed;
-- mutation testing ran;
-- the repository is safe to merge;
-- the attempt is yet resumable through `--attempt`;
-- a compliant edit-cage verdict proves test correctness or mutation behavior.
-
-The JSON contract is `schemas/ripr/repair-attempt.schema.json`.
+A repair attempt prepares and verifies evidence. RIPR does not author or apply the focused test edit, call an external model provider, run mutation testing, prove test adequacy or correctness, authorize merge, or turn static evidence into runtime proof.

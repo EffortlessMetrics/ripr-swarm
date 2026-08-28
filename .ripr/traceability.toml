@@ -4881,11 +4881,19 @@ tests = [
   "xtask/src/main.rs::tests::perl_lsp_facts_exporter_fixture_accepts_supported_producers",
   "xtask/src/main.rs::tests::perl_real_repo_eval_fixture_corpus_is_valid",
   "crates/ripr/tests/perl_two_binary_harness.rs::two_binary_proof_three_outcomes_against_real_perllsp",
+  "crates/ripr/src/analysis/language/perl/tests.rs::tests::perl_packet_contract_migration_corpus_pins_real_producer_dispositions",
+  "xtask/src/main.rs::tests::perl_packet_contract_migration_fixture_corpus_is_valid",
+  "xtask/src/main.rs::tests::perl_packet_contract_migration_fixture_guard_reports_packet_tamper",
+  "xtask/src/main.rs::tests::perl_packet_contract_migration_fixture_guard_reports_row_removal",
+  "xtask/src/main.rs::tests::perl_packet_contract_migration_fixture_guard_reports_disposition_authority_flip",
+  "xtask/src/main.rs::tests::perl_packet_contract_migration_fixture_guard_reports_input_inventory_drift",
+  "xtask/src/main.rs::tests::perl_packet_contract_migration_fixture_guard_reports_input_digest_drift",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
   "fixtures/perl_lsp_facts_exporter",
   "fixtures/perl-real-repo-evals",
+  "fixtures/perl_packet_contract_migration",
 ]
 code = [
   "crates/ripr/src/analysis/language/perl/mod.rs",
@@ -4895,6 +4903,8 @@ code = [
   "crates/ripr/src/output/sarif.rs",
   "crates/ripr/src/output/github.rs",
   "crates/ripr/src/output/gap_decision_ledger.rs",
+  "xtask/src/fixture_contracts/mod.rs",
+  "xtask/src/reports/perl_migration.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0064-perl-fact-packet-contract.md",
@@ -6850,6 +6860,7 @@ code = [
   "xtask/src/command.rs",
   "xtask/src/dispatch.rs",
   "xtask/src/fixture_contracts/mod.rs",
+  "xtask/src/reports/perl_migration.rs",
   "xtask/src/reports/fixtures.rs",
 ]
 outputs = [
@@ -8156,6 +8167,7 @@ code = [
   "xtask/src/command.rs",
   "xtask/src/dispatch.rs",
   "xtask/src/fixture_contracts/mod.rs",
+  "xtask/src/reports/perl_migration.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0144-release-control-lens.md",
