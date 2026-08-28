@@ -6722,6 +6722,34 @@ fn perl_packet_contract_migration_fixture_guard_reports_row_removal() -> Result<
 }
 
 #[test]
+fn perl_packet_contract_migration_fixture_guard_reports_input_inventory_drift() -> Result<(), String>
+{
+    with_temp_cwd("perl-packet-contract-migration-inventory-drift", |root| {
+        let fixture_root = copy_perl_packet_contract_migration_fixture(root)?;
+        let unlisted = fixture_root.join("producer-inputs/ordinary_discount/lib/App/Extra.pm");
+        write(
+            &unlisted,
+            "package App::Extra;
+1;
+",
+        );
+
+        let mut violations = Vec::new();
+        validate_perl_packet_contract_migration_corpus_at(
+            &fixture_root.join("corpus.json"),
+            &mut violations,
+        )?;
+        let report = violations.join(
+            "
+",
+        );
+        assert!(report.contains("input inventory drift"));
+        assert!(report.contains("no pinned digest"));
+        Ok(())
+    })
+}
+
+#[test]
 fn perl_packet_contract_migration_fixture_guard_reports_disposition_authority_flip()
 -> Result<(), String> {
     with_temp_cwd("perl-packet-contract-migration-authority-flip", |root| {

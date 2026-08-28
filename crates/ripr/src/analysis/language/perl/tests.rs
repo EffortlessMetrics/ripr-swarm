@@ -3806,22 +3806,62 @@ fn perl_packet_contract_migration_corpus_pins_real_producer_dispositions() -> Re
         "diff_id null despite supplied diff"
     );
 
-    // Pipeline disposition (expected/consumer-dispositions.v1.json): one
-    // sink-aligned finding, no canonical gap, advisory-only partial packet.
+    // Pipeline disposition, bound to the committed record
+    // (expected/consumer-dispositions.v1.json): every load-bearing field of
+    // that record is compared against what the consumer actually projected,
+    // so an edited record that no longer describes reality fails here.
+    let dispositions = serde_json::from_str::<serde_json::Value>(include_str!(
+        "../../../../../../fixtures/perl_packet_contract_migration/expected/consumer-dispositions.v1.json"
+    ))
+    .map_err(|error| format!("consumer-dispositions.v1.json is not valid JSON: {error}"))?;
+    let pipeline = dispositions
+        .get("pipeline")
+        .ok_or("consumer-dispositions.v1.json is missing pipeline")?;
     let findings = super::packet_to_findings(&packet);
     assert_eq!(
         findings.len(),
-        1,
-        "real packet projects exactly one finding"
+        pipeline
+            .get("findings_count")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or("dispositions findings_count missing")? as usize,
+        "dispositions findings_count must match the projected findings"
     );
     assert_eq!(
         findings[0].class,
         ExposureClass::Exposed,
         "sink-aligned strong exact oracle over a direct_owner_call relation projects exposed"
     );
+    let recorded_class = pipeline
+        .get("finding_exposure_class")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("dispositions finding_exposure_class missing")?;
+    assert_eq!(
+        recorded_class, "exposed",
+        "dispositions finding_exposure_class must match the projected exposure class"
+    );
     assert!(
         findings[0].canonical_gap.is_none(),
         "partial packet must not emit canonical gap debt"
+    );
+    for field in [
+        "canonical_gap_emitted",
+        "repair_packet_ready",
+        "agent_packet_ready",
+    ] {
+        assert_eq!(
+            pipeline.get(field).and_then(serde_json::Value::as_bool),
+            Some(false),
+            "dispositions {field} must stay false and match the fail-closed pipeline"
+        );
+    }
+    let observed_status = format!("{:?}", packet.packet_status).to_lowercase();
+    assert_eq!(
+        dispositions
+            .get("packet_status_observed")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("dispositions packet_status_observed missing")?,
+        observed_status,
+        "dispositions packet_status_observed must match the packet"
     );
     assert!(
         packet
@@ -3832,12 +3872,20 @@ fn perl_packet_contract_migration_corpus_pins_real_producer_dispositions() -> Re
 
     // The partial status keeps the diff projection advisory with a named
     // language limitation (same non-abort contract as hand-authored partial
-    // packets).
+    // packets). The temp packet file uses an RAII guard so assertion or
+    // analysis failures cannot leak it into the system temp dir.
     let packet_path = std::env::temp_dir().join(format!(
         "ripr-perl-migration-corpus-{}.json",
         std::process::id()
     ));
     std::fs::write(&packet_path, packet_text).map_err(|error| error.to_string())?;
+    struct TempPacketGuard(std::path::PathBuf);
+    impl Drop for TempPacketGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+    let _guard = TempPacketGuard(packet_path.clone());
     options.perl_facts_path = Some(packet_path.clone());
     let result = PerlAdapter.analyze_diff(&options, &OraclePolicy::default(), &[])?;
     assert_eq!(result.findings.len(), 1);

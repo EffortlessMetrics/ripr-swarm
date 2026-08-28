@@ -56,6 +56,14 @@ pub(crate) fn perl_migration_refresh(args: &[String]) -> Result<(), String> {
         println!("{HELP}");
         return Ok(());
     }
+    // The corpus paths and the producer command are repo-root relative, and
+    // the spawned producer resolves its `--root`/`--diff` against the process
+    // cwd — so pin the cwd to the workspace root for the whole command.
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "xtask manifest has no workspace parent".to_string())?;
+    std::env::set_current_dir(workspace_root)
+        .map_err(|err| format!("failed to enter the workspace root: {err}"))?;
     let options = parse_options(args)?;
     if !Path::new(&options.producer_bin).is_file() {
         return Err(format!(
@@ -256,6 +264,11 @@ fn refresh_case(case: &CorpusCase, producer_bin: &str) -> Result<CaseOutcome, St
         .first()
         .ok_or_else(|| format!("case {}: producer argv is empty", case.id))?;
     let args: Vec<String> = argv.iter().skip(1).cloned().collect();
+    // Remove any candidate left by a previous refresh BEFORE spawning: a
+    // producer that exits successfully without writing its `--out` file must
+    // not leave this command reading the previous run's bytes as if they were
+    // fresh output.
+    remove_stale_candidate(&candidate_path)?;
     let cwd = std::env::current_dir()
         .map_err(|err| format!("failed to resolve the current directory: {err}"))?;
     let output = capture_output_in_dir(
@@ -273,10 +286,17 @@ fn refresh_case(case: &CorpusCase, producer_bin: &str) -> Result<CaseOutcome, St
         ));
     }
     let candidate_bytes = std::fs::read(&candidate_path).map_err(|err| {
-        format!(
-            "case {}: failed to read candidate packet {candidate_path}: {err}",
-            case.id
-        )
+        if err.kind() == std::io::ErrorKind::NotFound {
+            format!(
+                "case {}: the producer exited successfully but never wrote its `--out` file {candidate_path}; refusing to report stale evidence",
+                case.id
+            )
+        } else {
+            format!(
+                "case {}: failed to read candidate packet {candidate_path}: {err}",
+                case.id
+            )
+        }
     })?;
     let pinned_bytes = std::fs::read(&case.packet).map_err(|err| {
         format!(
@@ -304,6 +324,19 @@ fn refresh_case(case: &CorpusCase, producer_bin: &str) -> Result<CaseOutcome, St
         byte_identical: report.byte_identical,
         drift_count: report.drift_count,
     })
+}
+
+/// Remove a candidate packet left by a previous refresh so this invocation
+/// can only ever report bytes the producer just wrote. Missing file is fine;
+/// any other removal failure is an error rather than a silent stale bind.
+fn remove_stale_candidate(candidate_path: &str) -> Result<(), String> {
+    match std::fs::remove_file(candidate_path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(format!(
+            "failed to remove the stale candidate packet {candidate_path}: {err}"
+        )),
+    }
 }
 
 struct CaseReport {
@@ -694,6 +727,27 @@ mod tests {
             packet: "fixtures/perl_packet_contract_migration/producer-packets/v1/ordinary_discount.json".to_string(),
             packet_sha256: "sha256:0cc8f4bb".to_string(),
         }
+    }
+
+    #[test]
+    fn remove_stale_candidate_deletes_previous_refresh_output() -> Result<(), String> {
+        let root =
+            std::env::temp_dir().join(format!("ripr-perl-migration-stale-{}", std::process::id()));
+        std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+        let candidate = root.join("ordinary_discount.json");
+        std::fs::write(&candidate, b"previous run bytes").map_err(|err| err.to_string())?;
+        let candidate_text = candidate
+            .to_str()
+            .ok_or_else(|| "candidate path is not UTF-8".to_string())?;
+        remove_stale_candidate(candidate_text)?;
+        if candidate.exists() {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err("stale candidate survived removal".to_string());
+        }
+        // A missing file is not an error; a failing removal is.
+        remove_stale_candidate(candidate_text)?;
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
     }
 
     #[test]

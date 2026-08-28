@@ -638,6 +638,37 @@ fn perl_migration_corpus_sha256(bytes: &[u8]) -> String {
     )
 }
 
+/// Collect every regular file under a producer-inputs directory as sorted,
+/// forward-slash relative paths (the corpus digest-key convention).
+fn perl_migration_corpus_input_inventory(inputs_dir: &Path) -> Result<Vec<String>, String> {
+    let mut inventory = Vec::new();
+    let mut stack = vec![inputs_dir.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(&dir).map_err(|err| {
+            format!(
+                "failed to read producer inputs {}: {err}",
+                normalize_path(&dir)
+            )
+        })? {
+            let entry = entry.map_err(|err| err.to_string())?;
+            let path = entry.path();
+            let metadata = entry.metadata().map_err(|err| err.to_string())?;
+            if metadata.is_dir() {
+                stack.push(path);
+            } else if metadata.is_file() {
+                let relative = path
+                    .strip_prefix(inputs_dir)
+                    .map_err(|err| err.to_string())?
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                inventory.push(relative);
+            }
+        }
+    }
+    inventory.sort();
+    Ok(inventory)
+}
+
 /// Validate that a corpus-referenced path stays inside the repository and is
 /// repo-relative (no absolute, drive, or traversal segments).
 fn validate_perl_migration_corpus_path(path: &str) -> Result<(), String> {
@@ -874,7 +905,9 @@ fn validate_perl_packet_contract_migration_case(
             "perl packet contract migration case {case_id} producer_input_digests must not be empty"
         ));
     }
+    let mut pinned_paths: BTreeSet<String> = BTreeSet::new();
     for (relative, expected) in digests {
+        pinned_paths.insert(relative.clone());
         let expected = expected.as_str().unwrap_or_default();
         if let Err(reason) = validate_perl_migration_corpus_path(relative) {
             violations.push(format!(
@@ -895,6 +928,18 @@ fn validate_perl_packet_contract_migration_case(
             Err(err) => violations.push(format!(
                 "perl packet contract migration case {case_id} input `{relative}` is unreadable: {err}"
             )),
+        }
+    }
+    // Every regular file under the input dir must carry a pinned digest: an
+    // unlisted producer-visible file would leave input bytes unpinned while
+    // the byte checks above still pass.
+    if Path::new(&inputs_dir).is_dir() {
+        for relative in perl_migration_corpus_input_inventory(Path::new(&inputs_dir))? {
+            if !pinned_paths.contains(&relative) {
+                violations.push(format!(
+                    "perl packet contract migration case {case_id} input inventory drift: `{relative}` exists under {inputs_dir} but has no pinned digest; add it to producer_input_digests with a producer run in a reviewed disposition change"
+                ));
+            }
         }
     }
 
