@@ -1,4 +1,4 @@
-pub(super) const INIT_HELP: &str = r#"Write an optional repo policy file (ripr.toml) and, with --ci github, a non-blocking advisory workflow.
+pub(super) const INIT_HELP: &str = r#"Write an optional repo policy file and, with --ci github, separate advisory and badge workflows.
 
 Usage: ripr init [--root PATH] [--ci github] [--dry-run] [--force]
 
@@ -9,12 +9,14 @@ not unlock basic CLI, editor, or pilot usefulness.
 
 Options:
   --root PATH      Workspace root where ripr.toml should be written. Defaults to current directory.
-  --ci github      Also write .github/workflows/ripr.yml with advisory reports and optional SARIF rendering/upload.
+  --ci github      Also write .github/workflows/ripr.yml for advisory PR evidence
+                   and .github/workflows/ripr-badge.yml for scheduled/manual
+                   badge refresh pull requests.
   --dry-run        Show the plan and the file bodies without writing anything.
                    Resolves the same preconditions as the real run, so it
                    fails the same way (existing file without --force, root
                    that is not a directory) instead of reporting success.
-  --force          Overwrite an existing ripr.toml or generated workflow.
+  --force          Overwrite an existing ripr.toml or either generated workflow.
 
 Generated config:
   - uses draft analysis mode and includes unchanged tests
@@ -23,13 +25,19 @@ Generated config:
   - records the built-in saved-workspace LSP seam diagnostic default
   - remains advisory and does not configure CI blocking or mutation execution
 
-Generated GitHub workflow:
-  - installs ripr and writes a pilot packet plus repo report artifacts
-  - uploads report artifacts and writes a reviewer-oriented advisory summary
-  - surfaces future PR test guidance reports as non-blocking check annotations
-  - renders and uploads diff/repo SARIF only while RIPR_UPLOAD_SARIF is true
-  - uses continue-on-error for advisory RIPR work and upload steps
-  - does not enable baseline failure policy by default
+Generated GitHub workflows:
+  .github/workflows/ripr.yml:
+    - installs ripr and writes a pilot packet plus repo report artifacts
+    - uploads report artifacts and writes a reviewer-oriented advisory summary
+    - surfaces future PR test guidance reports as non-blocking check annotations
+    - renders and uploads diff/repo SARIF only while RIPR_UPLOAD_SARIF is true
+    - uses continue-on-error for advisory RIPR work and upload steps
+    - does not enable baseline failure policy by default
+  .github/workflows/ripr-badge.yml:
+    - runs manually or weekly with the RIPR package version pinned
+    - validates native repo evidence and the exact four-field Shields payload
+    - retains the native audit artifact and opens a PR changing only badges/ripr.json
+    - never pushes directly to the default branch
 "#;
 pub(super) const CONFIG_HELP: &str = r#"Validate the repository's ripr.toml without running workspace probes.
 

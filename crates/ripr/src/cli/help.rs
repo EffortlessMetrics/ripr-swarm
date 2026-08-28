@@ -492,6 +492,9 @@ mod tests {
         assert!(INIT_HELP.starts_with("Write an optional repo policy file"));
         assert!(INIT_HELP.contains("Usage: ripr init"));
         assert!(INIT_HELP.contains("--ci github"));
+        assert!(INIT_HELP.contains(".github/workflows/ripr.yml"));
+        assert!(INIT_HELP.contains(".github/workflows/ripr-badge.yml"));
+        assert!(INIT_HELP.contains("never pushes directly to the default branch"));
         assert!(INIT_HELP.contains("--dry-run"));
         assert!(INIT_HELP.contains("--force"));
         assert!(CONFIG_HELP.starts_with("Validate the repository's ripr.toml"));

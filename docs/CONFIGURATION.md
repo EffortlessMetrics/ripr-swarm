@@ -52,7 +52,7 @@ need to run it.
 | Suppressions | Badge renderers look for `.ripr/suppressions.toml`; a missing file is normal. |
 | Badges | Repo badges count configured-visible unresolved seam gaps and stay advisory unless an explicit failure policy is selected. |
 | Cache | Full repo seam cache stores up to `20000` seams by default, compact repo seam cache stores up to `100000` seams by default, and large repos can opt into higher process-local limits. |
-| CI | Generated GitHub workflows upload advisory pilot/report/agent artifacts, keep SARIF rendering/upload optional, and use `continue-on-error` by default. |
+| CI | Generated GitHub workflows separate advisory PR evidence from scheduled/manual badge publication. PR evidence keeps SARIF optional and uses `continue-on-error`; badge publication validates contracts and opens a narrow PR. |
 | Calibration | Runtime data is imported only when explicitly supplied; `ripr` does not run mutation testing by default. |
 
 Operator mode vocabulary maps to concrete analysis modes:
@@ -90,9 +90,11 @@ and [`crates/ripr/src/app.rs`](../crates/ripr/src/app.rs).
 Optional. Writes a repo-local `ripr.toml` at the selected workspace root that
 materializes the built-in defaults as repo policy so a team can review, commit,
 and tune them. `ripr.toml` is not required — missing config uses the same
-defaults. With `--ci github`, `ripr init` also writes a non-blocking GitHub
-Actions workflow for pilot/report/agent artifacts, optional repo-local cockpit
-rendering, and optional SARIF rendering/upload. It does not run mutation
+defaults. With `--ci github`, `ripr init` also writes two GitHub Actions
+workflows: `.github/workflows/ripr.yml` for non-blocking pilot/report/agent
+artifacts, optional repo-local cockpit rendering, and optional SARIF; and
+`.github/workflows/ripr-badge.yml` for manual or scheduled badge refreshes that
+validate both contracts and open a narrow endpoint PR. It does not run mutation
 testing, enable CI blocking policy, or unlock basic CLI usefulness.
 
 ```text
@@ -102,9 +104,9 @@ ripr init [--root PATH] [--ci github] [--dry-run] [--force]
 | Flag | Default | Notes |
 | --- | --- | --- |
 | `--root PATH` | current directory | Workspace root where `ripr.toml` should be written. |
-| `--ci github` | _(off)_ | Also write `.github/workflows/ripr.yml`. The workflow installs `ripr`, runs `ripr pilot`, uploads pilot/report/agent artifacts, writes repo badge JSON, optionally renders and uploads SARIF when `RIPR_UPLOAD_SARIF` is true, and uses `continue-on-error` so the default path is advisory. |
+| `--ci github` | _(off)_ | Also write `.github/workflows/ripr.yml` and `.github/workflows/ripr-badge.yml`. The first runs advisory PR evidence and optional SARIF; the second runs manually or weekly, validates native/Shields badge contracts, retains the native audit artifact, and opens a PR changing only `badges/ripr.json`. |
 | `--dry-run` | _(off)_ | Preview the run without writing. Prints a plan naming each target path and what would happen to it (`create`, `overwrite`, `leave existing`), then the body of each file that would be written. |
-| `--force` | _(off)_ | Overwrite an existing `ripr.toml` or generated workflow. Without this flag, existing repo policy and workflow files are left unchanged. |
+| `--force` | _(off)_ | Overwrite an existing `ripr.toml` or either generated workflow. Without this flag, an existing workflow blocks the run; an existing `ripr.toml` is left unchanged when `--ci` still has targets to create. |
 
 `--dry-run` resolves the same preconditions as the real run, so the preview
 cannot disagree with the run it previews. Whenever the real run would fail, the
@@ -115,12 +117,12 @@ printing a config it could not have written. The blockers are:
 | --- | --- |
 | `--root` is not a directory | always |
 | `ripr.toml` already exists, no `--force` | only without `--ci` — see below |
-| the target workflow already exists, no `--force` | with `--ci` |
+| either target workflow already exists, no `--force` | with `--ci` |
 | a target's parent exists but is not a directory (for example `.github` is a file) | always |
 
 An existing `ripr.toml` is only a blocker when there is nothing else to do.
-With `--ci`, the run still has a workflow to write, so an existing config is
-reported as `leave existing` and the run proceeds — that is the case shown
+With `--ci`, the run still has two workflows to write, so an existing config
+is reported as `leave existing` and the run proceeds — that is the case shown
 below. Because every target is checked before anything is written, a run that
 cannot finish writes nothing at all rather than half-initializing the
 repository.
@@ -130,9 +132,14 @@ $ ripr init --ci github --dry-run
 ripr init plan (dry run — nothing was written)
   leave existing ./ripr.toml
   create         ./.github/workflows/ripr.yml
+  create         ./.github/workflows/ripr-badge.yml
 
 # ./.github/workflows/ripr.yml
 name: RIPR
+...
+
+# ./.github/workflows/ripr-badge.yml
+name: RIPR badge refresh
 ...
 
 Rerun without --dry-run to apply.
