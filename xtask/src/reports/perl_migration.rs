@@ -268,7 +268,11 @@ fn refresh_case(case: &CorpusCase, producer_bin: &str) -> Result<CaseOutcome, St
     // producer that exits successfully without writing its `--out` file must
     // not leave this command reading the previous run's bytes as if they were
     // fresh output.
+    // The drift report from a previous run must not outlive the run it
+    // describes: clear both artifacts before spawning so a failed or
+    // stale-case rerun cannot leave old evidence behind.
     remove_stale_candidate(&candidate_path)?;
+    remove_stale_candidate(&drift_path)?;
     let cwd = std::env::current_dir()
         .map_err(|err| format!("failed to resolve the current directory: {err}"))?;
     let output = capture_output_in_dir(
@@ -502,6 +506,11 @@ fn extract_observed(packet: &Value) -> Value {
                 .iter()
                 .map(|item| {
                     json!({
+                        "relation_id": item.get("relation_id").cloned().unwrap_or(Value::Null),
+                        "change_id": item.get("change_id").cloned().unwrap_or(Value::Null),
+                        "owner_id": item.get("owner_id").cloned().unwrap_or(Value::Null),
+                        "test_id": item.get("test_id").cloned().unwrap_or(Value::Null),
+                        "oracle_id": item.get("oracle_id").cloned().unwrap_or(Value::Null),
                         "relation_kind": item.get("relation_kind").cloned().unwrap_or(Value::Null),
                         "reachability_hint": item
                             .get("reachability_hint")
@@ -867,6 +876,11 @@ mod tests {
                 }
             ],
             "relations": [{
+                "relation_id": "relation:1",
+                "change_id": "change:1",
+                "owner_id": "owner:sub",
+                "test_id": "test:1",
+                "oracle_id": "oracle:1",
                 "relation_kind": "direct_owner_call",
                 "reachability_hint": "reachable",
                 "provenance_refs": ["prov:a"]
@@ -950,6 +964,11 @@ mod tests {
         }
         if get("relations[]")?
             != &json!([{
+                "relation_id": "relation:1",
+                "change_id": "change:1",
+                "owner_id": "owner:sub",
+                "test_id": "test:1",
+                "oracle_id": "oracle:1",
                 "relation_kind": "direct_owner_call",
                 "reachability_hint": "reachable",
                 "provenance_refs_len": 1
