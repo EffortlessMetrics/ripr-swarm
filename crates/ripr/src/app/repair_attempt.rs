@@ -660,7 +660,6 @@ fn select_awaiting_repair_attempt_by_seam(
             matches.push((path, manifest));
         }
     }
-    matches.sort_by(|left, right| left.1.repair_attempt_id.cmp(&right.1.repair_attempt_id));
     if matches.len() != 1 {
         return Err(format!(
             "expected exactly one awaiting repair attempt for seam `{seam_id}`, found {}; pass --attempt <id> to select the prepared work exactly",
