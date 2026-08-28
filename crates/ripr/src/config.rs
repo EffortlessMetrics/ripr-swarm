@@ -19,7 +19,7 @@ pub use model::{
     CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION, CheckInputExplicit, ConfigIdentityRole, ConfigSeverity,
     LspDiagnosticProfile, OraclePolicy, PerlConfig, RiprConfig, SeverityConfig, TypescriptConfig,
 };
-pub(crate) use python::detect_python_project;
+pub(crate) use python::{PYTHON_PROJECT_MARKERS, detect_python_project};
 
 pub(crate) const CONFIG_FILE_NAME: &str = "ripr.toml";
 pub(crate) const DEFAULT_CONTEXT_RELATED_TESTS: usize = 5;

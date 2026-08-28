@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-pub(super) const PYTHON_PROJECT_MARKERS: &[&str] = &[
+pub(crate) const PYTHON_PROJECT_MARKERS: &[&str] = &[
     "pyproject.toml",
     "setup.py",
     "setup.cfg",

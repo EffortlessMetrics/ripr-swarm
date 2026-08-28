@@ -42,7 +42,7 @@ use super::{
 use crate::agent::loop_commands;
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::cancellation::{AnalysisAbortKind, is_cancellation_error};
-use crate::config::LspDiagnosticProfile;
+use crate::config::{CONFIG_FILE_NAME, LspDiagnosticProfile, PYTHON_PROJECT_MARKERS};
 use crate::domain::context_packet::ContextPacket;
 use crate::domain::{StageEvidence, StageState};
 use crate::lsp::diagnostic_budget::DiagnosticDeliveryOutcome;
@@ -2206,23 +2206,27 @@ impl Backend {
             .is_some_and(|uri| file_uris_match(&uri, &event.uri))
     }
 
-    fn file_event_is_workspace_manifest_or_lockfile(&self, event: &FileEvent) -> bool {
-        let Some(root) = self.effective_root() else {
-            return false;
-        };
-        let Some(path) = path_from_file_uri(&event.uri) else {
-            return false;
-        };
-        workspace_input_path_is_relevant(&root, &path)
+    fn file_event_workspace_input_kind(&self, event: &FileEvent) -> Option<WorkspaceInputKind> {
+        let root = self.effective_root()?;
+        let path = path_from_file_uri(&event.uri)?;
+        if !workspace_input_path_is_relevant(&root, &path) {
+            return None;
+        }
+        workspace_input_kind(&root, &path)
     }
 
     pub(super) fn watched_file_change_kinds(&self, changes: &[FileEvent]) -> (bool, bool) {
-        let config_changed = changes
+        let mut config_changed = changes
             .iter()
             .any(|event| self.file_event_is_repository_config(event));
-        let workspace_graph_changed = changes
-            .iter()
-            .any(|event| self.file_event_is_workspace_manifest_or_lockfile(event));
+        let mut workspace_graph_changed = false;
+        for event in changes {
+            let Some(kind) = self.file_event_workspace_input_kind(event) else {
+                continue;
+            };
+            config_changed |= kind.reloads_repository_config();
+            workspace_graph_changed |= kind.invalidates_workspace_graph();
+        }
         (config_changed, workspace_graph_changed)
     }
 
@@ -2563,12 +2567,143 @@ impl Backend {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WorkspaceInputKind {
+    CargoGraph,
+    PythonProjectMarker,
+}
+
+impl WorkspaceInputKind {
+    fn reloads_repository_config(self) -> bool {
+        matches!(self, Self::PythonProjectMarker)
+    }
+
+    fn invalidates_workspace_graph(self) -> bool {
+        matches!(self, Self::CargoGraph)
+    }
+}
+
+fn path_matches_root_file(root: &Path, path: &Path, file_name: &str) -> bool {
+    let Ok(expected) = file_uri_for_path(&root.join(file_name)) else {
+        return false;
+    };
+    let Ok(actual) = file_uri_for_path(path) else {
+        return false;
+    };
+    file_uris_match(&expected, &actual)
+}
+
+fn workspace_input_kind(root: &Path, path: &Path) -> Option<WorkspaceInputKind> {
+    if !path_is_within_root(root, path) {
+        return None;
+    }
+    let name = path.file_name().and_then(|name| name.to_str())?;
+    if matches!(name, "Cargo.toml" | "Cargo.lock") {
+        return Some(WorkspaceInputKind::CargoGraph);
+    }
+    let marker = PYTHON_PROJECT_MARKERS.iter().copied().find(|marker| {
+        if cfg!(windows) {
+            marker.eq_ignore_ascii_case(name)
+        } else {
+            *marker == name
+        }
+    })?;
+    path_matches_root_file(root, path, marker).then_some(WorkspaceInputKind::PythonProjectMarker)
+}
+
+/// Return whether a watched path can change the effective analysis input.
+/// Cargo inputs remain recursive for workspace members; Python project
+/// markers are root-scoped because auto-detection reads only root markers.
 pub(super) fn workspace_input_path_is_relevant(root: &Path, path: &Path) -> bool {
-    path_is_within_root(root, path)
-        && path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| matches!(name, "Cargo.toml" | "Cargo.lock"))
+    workspace_input_kind(root, path).is_some()
+}
+
+fn workspace_input_watchers() -> Vec<LSPAny> {
+    std::iter::once(CONFIG_FILE_NAME)
+        .chain(["Cargo.toml", "Cargo.lock"])
+        .chain(PYTHON_PROJECT_MARKERS.iter().copied())
+        .map(|name| serde_json::json!({"globPattern": format!("**/{name}")}))
+        .collect()
+}
+
+#[cfg(test)]
+mod workspace_input_tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn python_project_markers_reload_configuration_and_stay_root_scoped() -> Result<(), String> {
+        let root = std::env::temp_dir().join("ripr-workspace-input-root");
+        let outside = std::env::temp_dir().join("ripr-workspace-input-outside");
+
+        for marker in PYTHON_PROJECT_MARKERS {
+            let root_marker = root.join(marker);
+            assert_eq!(
+                workspace_input_kind(&root, &root_marker),
+                Some(WorkspaceInputKind::PythonProjectMarker),
+                "root marker {marker}"
+            );
+            assert!(workspace_input_path_is_relevant(&root, &root_marker));
+            assert_eq!(
+                workspace_input_kind(&root, &root.join("nested").join(marker)),
+                None,
+                "nested marker {marker} is not consumed by root detection"
+            );
+            assert_eq!(
+                workspace_input_kind(&root, &outside.join(marker)),
+                None,
+                "outside marker {marker}"
+            );
+        }
+
+        assert!(WorkspaceInputKind::PythonProjectMarker.reloads_repository_config());
+        assert!(!WorkspaceInputKind::PythonProjectMarker.invalidates_workspace_graph());
+        Ok(())
+    }
+
+    #[test]
+    fn cargo_workspace_inputs_remain_recursive_and_graph_scoped() -> Result<(), String> {
+        let root = std::env::temp_dir().join("ripr-workspace-input-root");
+        let outside = std::env::temp_dir().join("ripr-workspace-input-outside");
+
+        for name in ["Cargo.toml", "Cargo.lock"] {
+            let member_input = root.join("member").join(name);
+            assert_eq!(
+                workspace_input_kind(&root, &member_input),
+                Some(WorkspaceInputKind::CargoGraph)
+            );
+            assert!(workspace_input_path_is_relevant(&root, &member_input));
+            assert_eq!(workspace_input_kind(&root, &outside.join(name)), None);
+        }
+
+        assert!(!WorkspaceInputKind::CargoGraph.reloads_repository_config());
+        assert!(WorkspaceInputKind::CargoGraph.invalidates_workspace_graph());
+        assert_eq!(
+            workspace_input_kind(&root, &root.join("package.json")),
+            None
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn dynamic_watchers_cover_the_canonical_python_marker_set() {
+        let actual = workspace_input_watchers()
+            .into_iter()
+            .filter_map(|watcher| {
+                watcher
+                    .get("globPattern")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string)
+            })
+            .collect::<BTreeSet<_>>();
+        let expected = std::iter::once(CONFIG_FILE_NAME)
+            .chain(["Cargo.toml", "Cargo.lock"])
+            .chain(PYTHON_PROJECT_MARKERS.iter().copied())
+            .map(|name| format!("**/{name}"))
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(actual, expected);
+    }
 }
 
 struct RefreshCancellationGuard<'a> {
@@ -3233,11 +3368,7 @@ impl LanguageServer for Backend {
                 id: "ripr-config-file-watch".to_string(),
                 method: "workspace/didChangeWatchedFiles".to_string(),
                 register_options: Some(serde_json::json!({
-                    "watchers": [
-                        {"globPattern": "**/ripr.toml"},
-                        {"globPattern": "**/Cargo.toml"},
-                        {"globPattern": "**/Cargo.lock"}
-                    ]
+                    "watchers": workspace_input_watchers()
                 })),
             };
             if let Err(error) = self.client.register_capability(vec![registration]).await {
