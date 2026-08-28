@@ -1,0 +1,43 @@
+name: Apply batched RIPR review-comment patch
+
+on:
+  push:
+    branches:
+      - fix/batch-ripr-review-comments-2621
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    name: Patch and prove generated review publisher
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Apply bounded source and regression-test patch
+        run: python .github/agent-tmp/apply_patch.py
+
+      - name: Format and run the permanent regression test
+        run: |
+          cargo fmt --all
+          cargo fmt --all -- --check
+          cargo test -p ripr --test generated_review_workflow
+
+      - name: Simulate create batching, overflow, updates, and reruns
+        run: bash .github/agent-tmp/simulate_generated_publisher.sh
+
+      - name: Commit the proven candidate and remove patch scaffolding
+        run: |
+          rm -rf .github/agent-tmp .github/workflows/agent-patch-review-comments.yml
+          git config user.name "EffortlessSteven"
+          git config user.email "git@effortlesssteven.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix(github): batch RIPR review comments"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
