@@ -6,6 +6,7 @@ use ra_ap_syntax::{
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use super::super::extract::PROBE_SHAPE_UNSAFE_BOUNDARY;
 use super::super::facts::FileFacts;
 use super::{RaRustSyntaxAdapter, RustSyntaxAdapter, SyntaxNodeFact, TextRange};
 use crate::analysis::rust_index::{
@@ -367,6 +368,8 @@ fn extract_parser_probe_shapes(
     line_index: &LineIndex,
 ) -> Vec<ProbeShapeFact> {
     let mut shapes = Vec::new();
+    push_unsafe_boundary_probe_shapes(&mut shapes, function, line_index);
+
     for if_expr in function
         .syntax()
         .descendants()
@@ -613,6 +616,45 @@ fn extract_parser_probe_shapes(
             && a.text == b.text
     });
     shapes
+}
+
+fn push_unsafe_boundary_probe_shapes(
+    shapes: &mut Vec<ProbeShapeFact>,
+    function: &ast::Fn,
+    line_index: &LineIndex,
+) {
+    if let Some(unsafe_token) = function.unsafe_token() {
+        let name = function
+            .name()
+            .map(|name| name.text().to_string())
+            .unwrap_or_else(|| "<anonymous>".to_string());
+        push_probe_shape_with_text(
+            shapes,
+            line_index,
+            PROBE_SHAPE_UNSAFE_BOUNDARY,
+            unsafe_token.text_range().start(),
+            function.syntax().text_range().end(),
+            format!("unsafe fn {name}"),
+        );
+    }
+
+    for block in function
+        .syntax()
+        .descendants()
+        .filter_map(ast::BlockExpr::cast)
+    {
+        let Some(unsafe_token) = block.unsafe_token() else {
+            continue;
+        };
+        push_probe_shape_with_text(
+            shapes,
+            line_index,
+            PROBE_SHAPE_UNSAFE_BOUNDARY,
+            unsafe_token.text_range().start(),
+            block.syntax().text_range().end(),
+            "unsafe block".to_string(),
+        );
+    }
 }
 
 fn push_probe_shape(
@@ -1186,6 +1228,48 @@ pub fn validate(value: i32) -> Result<i32, String> {
                 .iter()
                 .any(|p| p.kind == PROBE_SHAPE_ERROR_PATH),
             "Should extract error_path probe shapes"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ra_adapter_extracts_unsafe_execution_boundaries_without_lexical_false_positives()
+    -> Result<(), Box<dyn Error>> {
+        let root = temp_dir("ra_unsafe_boundaries")?;
+        fs::create_dir_all(root.join("src"))?;
+        write_manifest(&root)?;
+        fs::write(
+            root.join("src/lib.rs"),
+            r#"pub unsafe fn read_raw_unchecked(ptr: *const u8) -> u8 {
+    ptr.read()
+}
+
+pub fn read_raw(ptr: *const u8) -> u8 {
+    let marker = "unsafe { not syntax }";
+    // unsafe fn fake() {}
+    unsafe {
+        ptr.read()
+    }
+}
+"#,
+        )?;
+
+        let adapter = RaRustSyntaxAdapter;
+        let text = fs::read_to_string(root.join("src/lib.rs"))?;
+        let facts = adapter.summarize_file(&root.join("src/lib.rs"), &text)?;
+        let boundaries = facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.kind == PROBE_SHAPE_UNSAFE_BOUNDARY)
+            .map(|shape| (shape.text.clone(), shape.start_line, shape.end_line))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            boundaries,
+            vec![
+                ("unsafe fn read_raw_unchecked".to_string(), 1, 3),
+                ("unsafe block".to_string(), 8, 10),
+            ]
         );
         Ok(())
     }
