@@ -20,9 +20,11 @@ pub(super) fn with_gap_verify_command_spec(
         .and_then(|selected| selected.gap_id.as_deref())
         .map(str::to_string)
     else {
+        clear_verify_command_spec(&mut report);
         return report;
     };
     let Some(display) = report.commands.verify.clone() else {
+        clear_verify_command_spec(&mut report);
         return report;
     };
 
@@ -36,13 +38,28 @@ pub(super) fn with_gap_verify_command_spec(
                 });
             }
         },
-        Ok(None) => {}
-        Err(reason) => report.warnings.push(format!(
-            "typed gap verification route unavailable for {gap_id}: {reason}"
-        )),
+        Ok(None) => clear_verify_command_spec(&mut report),
+        Err(reason) => {
+            clear_verify_command_spec(&mut report);
+            report.warnings.push(format!(
+                "typed gap verification route unavailable for {gap_id}: {reason}"
+            ));
+        }
     }
 
     report
+}
+
+fn clear_verify_command_spec(report: &mut FirstUsefulActionReport) {
+    let receipt = report
+        .commands
+        .command_specs
+        .take()
+        .and_then(|specs| specs.receipt);
+    report.commands.command_specs = receipt.map(|receipt| ActionCommandSpecs {
+        verify: None,
+        receipt: Some(receipt),
+    });
 }
 
 /// Resolve the one producer-owned verify route corresponding to the selected
@@ -192,30 +209,37 @@ mod tests {
     }
 
     #[test]
-    fn gap_projection_leaves_reports_without_selected_authority_unchanged() {
+    fn gap_projection_clears_verify_authority_without_a_selected_display_route() {
         let spec = verify_spec();
         let ledger = json!({
-            "records": [actionable_gap_record(&spec.display, Some(vec![spec]))]
+            "records": [actionable_gap_record(
+                &spec.display,
+                Some(vec![spec.clone()]),
+            )]
         });
         let parsed = parsed_gap_ledger(&ledger);
         let report = build_gap_report(&ledger);
 
         let mut without_selection = report.clone();
         without_selection.selected = None;
-        without_selection.commands.command_specs = None;
-        let expected = without_selection.clone();
-        assert_eq!(
-            with_gap_verify_command_spec(without_selection, &parsed),
-            expected
-        );
+        let cleared = with_gap_verify_command_spec(without_selection, &parsed);
+        assert!(cleared.commands.command_specs.is_none());
 
+        let receipt =
+            agent_receipt_command_spec(".", "target/ripr/workflow/verify.json", "seam-1", None);
         let mut without_display = report;
         without_display.commands.verify = None;
-        without_display.commands.command_specs = None;
-        let expected = without_display.clone();
+        without_display.commands.command_specs = Some(ActionCommandSpecs {
+            verify: Some(spec),
+            receipt: Some(receipt.clone()),
+        });
+        let cleared = with_gap_verify_command_spec(without_display, &parsed);
         assert_eq!(
-            with_gap_verify_command_spec(without_display, &parsed),
-            expected
+            cleared.commands.command_specs,
+            Some(ActionCommandSpecs {
+                verify: None,
+                receipt: Some(receipt),
+            })
         );
     }
 
@@ -228,9 +252,15 @@ mod tests {
         let parsed = parsed_gap_ledger(&ledger);
         let receipt =
             agent_receipt_command_spec(".", "target/ripr/workflow/verify.json", "seam-1", None);
+        let stale = agent_verify_command_spec(
+            ".",
+            "target/ripr/workflow/stale-before.json",
+            "target/ripr/workflow/stale-after.json",
+            None,
+        );
         let mut report = build_gap_report(&ledger);
         report.commands.command_specs = Some(ActionCommandSpecs {
-            verify: None,
+            verify: Some(stale),
             receipt: Some(receipt.clone()),
         });
 
@@ -269,36 +299,75 @@ mod tests {
         });
         let report = build_gap_report(&ledger);
 
-        assert_eq!(report.commands.verify.as_deref(), Some(spec.display.as_str()));
+        assert_eq!(
+            report.commands.verify.as_deref(),
+            Some(spec.display.as_str())
+        );
         assert!(report.commands.command_specs.is_none());
         assert!(report.warnings.is_empty());
     }
 
     #[test]
-    fn gap_first_action_warns_and_withholds_a_drifted_typed_route() {
+    fn gap_projection_warns_and_clears_a_drifted_typed_route() {
         let displayed = verify_spec();
-        let typed = agent_verify_command_spec(
+        let authoritative_ledger = json!({
+            "records": [actionable_gap_record(
+                &displayed.display,
+                Some(vec![displayed.clone()]),
+            )]
+        });
+        let mut report = build_gap_report(&authoritative_ledger);
+        let receipt =
+            agent_receipt_command_spec(".", "target/ripr/workflow/verify.json", "seam-1", None);
+        report.commands.command_specs = Some(ActionCommandSpecs {
+            verify: Some(displayed.clone()),
+            receipt: Some(receipt.clone()),
+        });
+
+        let drifted = agent_verify_command_spec(
             ".",
             "target/ripr/workflow/other-before.json",
             "target/ripr/workflow/after.json",
             None,
         );
-        let ledger = json!({
+        let drifted_ledger = json!({
             "records": [actionable_gap_record(
                 &displayed.display,
-                Some(vec![typed]),
+                Some(vec![drifted]),
             )]
         });
-        let report = build_gap_report(&ledger);
+        let projected = with_gap_verify_command_spec(report, &parsed_gap_ledger(&drifted_ledger));
 
         assert_eq!(
-            report.commands.verify.as_deref(),
+            projected.commands.verify.as_deref(),
             Some(displayed.display.as_str())
         );
-        assert!(report.commands.command_specs.is_none());
-        assert!(report.warnings.iter().any(|warning| {
+        assert_eq!(
+            projected.commands.command_specs,
+            Some(ActionCommandSpecs {
+                verify: None,
+                receipt: Some(receipt),
+            })
+        );
+        assert!(projected.warnings.iter().any(|warning| {
             warning.contains("producer-owned verify specs do not match the selected display route")
         }));
+    }
+
+    #[test]
+    fn gap_verify_spec_rejects_missing_authority_inputs() {
+        let spec = verify_spec();
+
+        assert!(matches!(
+            producer_gap_verify_spec(None, "gap-1", &spec.display),
+            Err(reason) if reason.contains("no gap ledger input")
+        ));
+
+        let empty_ledger = json!({ "records": [] });
+        assert!(matches!(
+            producer_gap_verify_spec(Some(&empty_ledger), "gap-1", &spec.display),
+            Err(reason) if reason.contains("selected gap record gap-1 is missing")
+        ));
     }
 
     #[test]
