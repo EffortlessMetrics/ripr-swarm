@@ -167,29 +167,28 @@ mod tests {
                 "command_specs": { "verify": [spec.clone()] }
             }]
         });
-        let report =
-            super::super::build_first_useful_action_report(FirstUsefulActionInput {
-                root: ".".to_string(),
-                generated_at: "2026-08-28T00:00:00Z".to_string(),
-                pr_guidance_path: None,
-                assistant_proof_path: None,
-                gap_ledger_path: Some("gap-ledger.json".to_string()),
-                ledger_path: None,
-                baseline_delta_path: None,
-                receipt_path: None,
-                gate_decision_path: None,
-                coverage_frontier_path: None,
-                editor_context_path: None,
-                pr_guidance_json: None,
-                assistant_proof_json: None,
-                gap_ledger_json: Some(Ok(ledger.to_string())),
-                ledger_json: None,
-                baseline_delta_json: None,
-                receipt_json: None,
-                gate_decision_json: None,
-                coverage_frontier_json: None,
-                editor_context_json: None,
-            });
+        let report = super::super::build_first_useful_action_report(FirstUsefulActionInput {
+            root: ".".to_string(),
+            generated_at: "2026-08-28T00:00:00Z".to_string(),
+            pr_guidance_path: None,
+            assistant_proof_path: None,
+            gap_ledger_path: Some("gap-ledger.json".to_string()),
+            ledger_path: None,
+            baseline_delta_path: None,
+            receipt_path: None,
+            gate_decision_path: None,
+            coverage_frontier_path: None,
+            editor_context_path: None,
+            pr_guidance_json: None,
+            assistant_proof_json: None,
+            gap_ledger_json: Some(Ok(ledger.to_string())),
+            ledger_json: None,
+            baseline_delta_json: None,
+            receipt_json: None,
+            gate_decision_json: None,
+            coverage_frontier_json: None,
+            editor_context_json: None,
+        });
 
         assert_eq!(report.status, "actionable");
         assert_eq!(report.commands.verify.as_deref(), Some(display.as_str()));
