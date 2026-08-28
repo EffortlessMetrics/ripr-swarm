@@ -1,4 +1,6 @@
-use crate::agent::artifact::{ArtifactCurrentness, validate_repo_exposure_artifact};
+use crate::agent::artifact::{
+    ArtifactCurrentness, RepoExposureArtifactContext, validate_repo_exposure_artifact,
+};
 use crate::agent::loop_commands::{check_repo_exposure_command, shell_arg};
 use crate::output::gap_decision_ledger::{
     self, GapDecisionLedgerInput, GapDecisionLedgerSourceKind, GapRecord,
@@ -251,6 +253,46 @@ pub(crate) fn evaluate_gap_record_source_currentness(
             );
         }
     };
+
+    // Recompute the producer identity from the selected checkout. The
+    // validator's tracked-only dirty check intentionally does not see a newly
+    // added untracked ripr.toml, even though its consumed fields affect the
+    // repo-exposure seam inventory.
+    let current_config = match crate::config::load_for_root(&canonical_root) {
+        Ok(config) => config,
+        Err(error) => {
+            return GapRecordSourceCurrentness::not_evaluated(
+                format!("current ripr.toml configuration could not be loaded: {error}"),
+                refresh_commands,
+                source_kind_owned,
+                source_path_owned,
+            );
+        }
+    };
+    let current_identity = match RepoExposureArtifactContext::for_repo_exposure(
+        canonical_root.clone(),
+        validated.analysis_mode.clone(),
+        validated.base_revision.clone(),
+        &current_config,
+    ) {
+        Ok(context) => context.input_identity,
+        Err(error) => {
+            return GapRecordSourceCurrentness::not_evaluated(
+                format!("current repo-exposure input identity could not be recomputed: {error}"),
+                refresh_commands,
+                source_kind_owned,
+                source_path_owned,
+            );
+        }
+    };
+    if current_identity != validated.input_identity {
+        return GapRecordSourceCurrentness::stale(
+            "repo-exposure source input identity no longer matches the current producer configuration; regenerate the source and ledger before assignment",
+            refresh_commands,
+            source_kind_owned,
+            source_path_owned,
+        );
+    }
 
     let source_display = crate::output::outcome::display_path(&canonical_source_path);
     let derived_records = match derive_repo_exposure_records(&canonical_root, &source_display, raw)

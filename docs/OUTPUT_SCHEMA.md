@@ -12605,15 +12605,28 @@ The queue envelope is:
 }
 ```
 
-`staleness_status = "not_evaluated"` is intentional when no receipt freshness
-state is attached. Consumers must treat it as a stop-and-refresh signal, not
-freshness proof. If a GapRecord receipt says the packet is stale, mismatched, or
-already resolved, the queue keeps the item visible with
-`queue_state = "blocked_stale"`, `staleness_status = "stale"`, and a
-`staleness_reason`; schedulers must refresh instead of assigning that packet.
-`summary.stale_total` counts those visible stale packets. `conflict_group_size >
-1` means another queued packet targets the same edit surface, so schedulers
-should avoid assigning those packets in parallel.
+`source_currentness` is the live producer-backed authority for a packet source.
+It contains `status`, `queue_state`, `reason`, `refresh_commands`,
+`source_kind`, and `source_path`. A packet is assignable only when
+`source_currentness.status = "current"` and `queue_state = "queued"`; the
+rendered packet mirrors these values as `staleness_status`, `queue_state`, and
+`staleness_reason`. `current` requires a canonical repo-exposure artifact with
+matching repository root, exact clean HEAD, producer input identity, content
+commitment, and GapRecords. The input identity is recomputed from the current
+producer-consumed configuration, including an untracked `ripr.toml`; a changed
+or invalid relevant configuration therefore fails closed as stale or
+`not_evaluated`.
+
+`staleness_status = "not_evaluated"` is a stop-and-refresh state, not freshness
+proof. Stale, mismatched, or unresolved sources use `queue_state =
+"blocked_stale"` and retain a `staleness_reason`; schedulers must refresh
+instead of assigning them. Any non-assignable packet also carries its bounded
+`refresh_commands`; command arguments are shell-escaped and the packet’s
+`command_specs` are removed from the assignable projection when currentness is
+not current. `summary.stale_total` counts visible stale packets.
+
+`conflict_group_size > 1` means another queued packet targets the same edit
+surface, so schedulers should avoid assigning those packets in parallel.
 
 If the gap decision ledger omits top-level `root` provenance, or declares a
 `root` that clearly differs from the selected `--root`, `ripr swarm queue`

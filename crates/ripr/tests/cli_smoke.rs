@@ -388,6 +388,36 @@ fn init_git_fixture_repo(root: &Path) -> Result<(), Box<dyn std::error::Error>> 
     Ok(())
 }
 
+fn init_producer_fixture_repo(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::create_dir_all(root.join("tests"))?;
+    let fixture_root =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/boundary_gap/input");
+    for relative in ["Cargo.toml", "src/lib.rs", "tests/pricing.rs"] {
+        std::fs::copy(fixture_root.join(relative), root.join(relative))?;
+    }
+    run_git(root, &["init"])?;
+    run_git(root, &["add", "Cargo.toml", "src/lib.rs", "tests/pricing.rs"])?;
+    let commit = run_command(
+        "git",
+        Some(root),
+        &[
+            "-c",
+            "user.name=RIPR test",
+            "-c",
+            "user.email=ripr@example.invalid",
+            "commit",
+            "-m",
+            "fixture",
+        ],
+    )?;
+    assert!(
+        commit.status.success(),
+        "producer fixture commit failed: {commit:?}"
+    );
+    Ok(())
+}
+
 /// Move the fixture repository to a new empty commit so a later-bound
 /// repo-exposure artifact is lineage-ordered after an earlier one (#2922).
 fn advance_fixture_head(root: &Path, message: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -10852,7 +10882,7 @@ fn producer_verify_packet(
 ) -> Result<(PathBuf, serde_json::Value), Box<dyn std::error::Error>> {
     let root = unique_temp_workspace(label);
     std::fs::create_dir_all(&root)?;
-    init_git_fixture_repo(&root)?;
+    init_producer_fixture_repo(&root)?;
     let root_arg = root.to_string_lossy().into_owned();
 
     let snapshot = run_ripr(&[
@@ -10877,91 +10907,9 @@ fn producer_verify_packet(
     assert_success(&snapshot);
     std::fs::write(root.join("after.json"), &snapshot.stdout)?;
 
-    let verify = "ripr agent verify --root . --before before.json --after after.json --json";
-    let verify_spec = serde_json::json!({
-        "schema_version": "1",
-        "command_id": "ripr:agent:verify",
-        "role": "verify",
-        "execution_mode": "direct",
-        "program": "ripr",
-        "args": ["agent", "verify", "--root", ".", "--before", "before.json", "--after", "after.json", "--json"],
-        "cwd": ".",
-        "env_set": [],
-        "env_passthrough": [],
-        "environment": "clean",
-        "stdin": "null",
-        "timeout_ms": 120000,
-        "cancellation": "allowed",
-        "network": "forbidden",
-        "expected_result_parser": "declared_json",
-        "expected_exit_codes": [0],
-        "expected_writes": [],
-        "cost_class": "unknown",
-        "platforms": ["linux", "macos", "windows"],
-        "human_display": verify,
-        "authority_boundary": "verification_route_only"
-    });
-    let receipt =
-        "ripr agent receipt --root . --verify-json verify.json --seam-id gap-verify-execute --json";
-    let receipt_spec = serde_json::json!({
-        "schema_version": "1",
-        "command_id": "ripr:agent:receipt",
-        "role": "receipt",
-        "execution_mode": "direct",
-        "program": "ripr",
-        "args": ["agent", "receipt", "--root", ".", "--verify-json", "verify.json", "--seam-id", "gap-verify-execute", "--json"],
-        "cwd": ".",
-        "env_set": [],
-        "env_passthrough": [],
-        "environment": "clean",
-        "stdin": "null",
-        "timeout_ms": 120000,
-        "cancellation": "allowed",
-        "network": "forbidden",
-        "expected_result_parser": "declared_json",
-        "expected_exit_codes": [0],
-        "expected_writes": [],
-        "cost_class": "unknown",
-        "platforms": ["linux", "macos", "windows"],
-        "human_display": receipt,
-        "authority_boundary": "receipt_route_only"
-    });
     let ledger_path = root.join("gap-ledger.json");
-    // Build the source artifact with the same producer identity as the real
-    // check, then derive the ledger through the public report producer.  This
-    // keeps the fixture currentness-valid while retaining typed verify/receipt
-    // authority for the end-to-end route under test.
-    let mut source: serde_json::Value = serde_json::from_slice(&snapshot.stdout)?;
-    source["seams"] = serde_json::json!([{
-        "seam_id": "gap-verify-execute",
-        "kind": "predicate_boundary",
-        "file": "marker.txt",
-        "line": 1,
-        "grip_class": "candidate",
-        "evidence_record": {
-            "seam_id": "gap-verify-execute",
-            "seam_kind": "predicate_boundary",
-            "canonical_gap_id": "gap-verify-execute",
-            "location": {"file": "marker.txt", "line": 1},
-            "owner": "marker",
-            "evidence_ids": ["probe:marker"],
-            "canonical_item": {
-                "canonical_gap_id": "gap-verify-execute",
-                "gap_state": "actionable",
-                "actionability": "add_focused_test",
-                "evidence_class": "predicate_boundary",
-                "related_test": {"file": "tests/marker.rs", "name": "marker_boundary"},
-                "missing_discriminator": "x == y",
-                "recommended_repair": "assert_eq!(x, y)",
-                "verify_command": verify,
-                "receipt_command": receipt,
-                "command_specs": {"verify": [verify_spec], "receipt": [receipt_spec]}
-            }
-        }
-    }]);
     let source_path = root.join("after.repo-exposure.json");
-    let source_json = serde_json::to_string_pretty(&source)?;
-    std::fs::write(&source_path, recommit_repo_exposure_json(source_json))?;
+    std::fs::write(&source_path, &snapshot.stdout)?;
     let source_arg = source_path.to_string_lossy().into_owned();
     let ledger_arg = ledger_path.to_string_lossy().into_owned();
     let ledger = run_ripr(&[
@@ -10976,6 +10924,11 @@ fn producer_verify_packet(
     ]);
     assert_success(&ledger);
 
+    let ledger_value: serde_json::Value = serde_json::from_slice(&ledger.stdout)?;
+    let gap_id = ledger_value["records"][0]["gap_id"]
+        .as_str()
+        .ok_or("producer fixture must emit one gap record")?;
+
     let packet = run_ripr(&[
         "agent",
         "packet",
@@ -10984,7 +10937,7 @@ fn producer_verify_packet(
         "--gap-ledger",
         &ledger_arg,
         "--gap-id",
-        "gap-verify-execute",
+        gap_id,
         "--json",
     ]);
     assert_success(&packet);
@@ -11078,6 +11031,40 @@ fn agent_verify_execute_runs_a_producer_owned_route_and_commits_a_result()
         );
     }
     std::fs::remove_dir_all(&root)?;
+    Ok(())
+}
+
+#[test]
+fn agent_packet_blocks_untracked_consumed_config_change() -> Result<(), Box<dyn std::error::Error>> {
+    let (root, packet) = producer_verify_packet("untracked-config-currentness")?;
+    let gap_id = packet["packets"][0]["gap_id"]
+        .as_str()
+        .ok_or("producer packet must contain a gap id")?;
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[oracles]\nsnapshot_strength = \"strong\"\n",
+    )?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let ledger_arg = root.join("gap-ledger.json").to_string_lossy().into_owned();
+    let output = run_ripr(&[
+        "agent",
+        "packet",
+        "--root",
+        &root_arg,
+        "--gap-ledger",
+        &ledger_arg,
+        "--gap-id",
+        gap_id,
+        "--json",
+    ]);
+    assert_success(&output);
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(
+        parsed["packets"][0]["staleness_status"],
+        "stale",
+        "a newly added consumed config must invalidate assignment: {parsed}"
+    );
+    assert_eq!(parsed["packets"][0]["queue_state"], "blocked_stale");
     Ok(())
 }
 
