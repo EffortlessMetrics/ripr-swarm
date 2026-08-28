@@ -694,7 +694,7 @@ fn report_packet_index(args: &[String]) -> Result<(), String> {
 
 fn gap_decision_ledger(args: &[String]) -> Result<(), String> {
     let options = parse_gap_decision_ledger_options(args)?;
-    let records_path = output::baseline_delta::display_path(options.source.path());
+    let records_path = ledger_source_path(options.source.path())?;
     let input = output::gap_decision_ledger::GapDecisionLedgerInput {
         root: options.root,
         generated_at: gap_decision_ledger_generated_at()?,
@@ -710,6 +710,17 @@ fn gap_decision_ledger(args: &[String]) -> Result<(), String> {
     println!("Wrote {}", options.out.display());
     println!("Wrote {}", options.out_md.display());
     Ok(())
+}
+
+fn ledger_source_path(path: &Path) -> Result<String, String> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| format!("resolve gap-ledger source path failed: {error}"))?
+            .join(path)
+    };
+    Ok(output::baseline_delta::display_path(&absolute))
 }
 
 fn typescript_limitations(args: &[String]) -> Result<(), String> {
@@ -4258,6 +4269,18 @@ mod tests {
 
         std::fs::remove_dir_all(&dir)
             .map_err(|err| format!("remove gap ledger repo exposure dir: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn gap_ledger_source_path_is_bound_to_invocation_cwd() -> Result<(), String> {
+        let rendered =
+            ledger_source_path(Path::new("repo/target/ripr/reports/repo-exposure.json"))?;
+        let expected_suffix = Path::new("repo/target/ripr/reports/repo-exposure.json")
+            .to_string_lossy()
+            .replace('\\', "/");
+        assert!(rendered.ends_with(&expected_suffix), "{rendered}");
+        assert!(Path::new(&rendered).is_absolute(), "{rendered}");
         Ok(())
     }
 
