@@ -1343,9 +1343,11 @@ pub(in crate::analysis::test_grip_evidence) fn test_scoped_function_names_by_fil
     index: &RustIndex,
 ) -> BTreeMap<PathBuf, BTreeSet<String>> {
     let mut names_by_file: BTreeMap<PathBuf, BTreeSet<String>> = BTreeMap::new();
-    for function in index.functions.iter().filter(|function| {
-        function.is_test || rust_index::is_test_file(&function.file)
-    }) {
+    for function in index
+        .functions
+        .iter()
+        .filter(|function| function.is_test || rust_index::is_test_file(&function.file))
+    {
         names_by_file
             .entry(function.file.clone())
             .or_default()
