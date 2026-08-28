@@ -110,6 +110,14 @@ Generate the GitHub workflow:
 ripr init --ci github
 ```
 
+This writes `ripr.toml` plus two workflows with different authority:
+`.github/workflows/ripr.yml` keeps pull-request evidence advisory, while
+`.github/workflows/ripr-badge.yml` runs manually or weekly, validates the
+repo-scoped badge contracts, retains the native audit artifact, and opens a
+narrow PR that changes only `badges/ripr.json`. It never pushes directly to the
+default branch. See [Badge adoption](BADGE_ADOPTION.md) for the publication
+boundary.
+
 Or copy the workflow from [CI strategy](CI.md) when adopting from the GitHub UI.
 
 The generated workflow is advisory by default. On a PR, read the job summary

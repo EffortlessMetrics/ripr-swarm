@@ -6,6 +6,8 @@ use crate::cli::suggest::unknown_argument;
 use crate::config::{CONFIG_FILE_NAME, generated_init_config};
 use std::path::{Path, PathBuf};
 
+mod init_badge;
+
 pub(in crate::cli) fn init(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         help::print_init_help();
@@ -73,6 +75,10 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
         .ci
         .as_ref()
         .map(|ci| init_ci_workflow_path(&options.root, ci));
+    let badge_workflow_path = options
+        .ci
+        .as_ref()
+        .map(|ci| init_badge::workflow_path(&options.root, ci));
 
     // #2576 review: the plan must reject a parent the real run cannot create,
     // not just a target that already exists. If `<root>/.github` is a regular
@@ -80,7 +86,10 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
     // as `create` while `create_dir_all` will fail — and because the config is
     // written first, the run would half-initialize the repo before failing.
     // Checking every target up front also means a doomed run writes nothing.
-    for path in std::iter::once(&config_path).chain(workflow_path.as_ref()) {
+    for path in std::iter::once(&config_path)
+        .chain(workflow_path.as_ref())
+        .chain(badge_workflow_path.as_ref())
+    {
         ensure_creatable_parent(path)?;
     }
 
@@ -90,13 +99,15 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
             config_path.display()
         ));
     }
-    if let Some(path) = workflow_path.as_ref().filter(|_| !options.force)
-        && path_is_occupied(path)?
-    {
-        return Err(format!(
-            "{} already exists; rerun `ripr init --ci github --force` to overwrite it",
-            path.display()
-        ));
+    if !options.force {
+        for path in workflow_path.iter().chain(badge_workflow_path.iter()) {
+            if path_is_occupied(path)? {
+                return Err(format!(
+                    "{} already exists; rerun `ripr init --ci github --force` to overwrite it",
+                    path.display()
+                ));
+            }
+        }
     }
 
     let config_action = if path_is_occupied(&config_path)? {
@@ -123,6 +134,18 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
             path,
             action,
             body: generated_github_actions_workflow(),
+        });
+    }
+    if let Some(path) = badge_workflow_path {
+        let action = if path_is_occupied(&path)? {
+            InitAction::Overwrite
+        } else {
+            InitAction::Create
+        };
+        targets.push(InitTarget {
+            path,
+            action,
+            body: init_badge::generated_github_badge_workflow(),
         });
     }
     Ok(targets)
@@ -2490,10 +2513,13 @@ mod tests {
         opts.ci = Some(InitCi::Github);
         let plan = init_plan(&opts)?;
 
-        assert_eq!(plan.len(), 2);
+        assert_eq!(plan.len(), 3);
         assert_eq!(plan[1].action, InitAction::Create);
         assert_eq!(plan[1].path, root.join(".github/workflows/ripr.yml"));
         assert!(plan[1].body.contains("name: RIPR"));
+        assert_eq!(plan[2].action, InitAction::Create);
+        assert_eq!(plan[2].path, root.join(".github/workflows/ripr-badge.yml"));
+        assert!(plan[2].body.contains("name: RIPR badge refresh"));
 
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
@@ -2531,7 +2557,7 @@ mod tests {
     }
 
     /// An existing config only blocks when there is nothing else to do; with
-    /// `--ci` the run still has a workflow to write.
+    /// `--ci` the run still has workflows to write.
     #[test]
     fn plan_leaves_an_existing_config_alone_when_ci_still_has_work() -> Result<(), String> {
         let root = temp_root("leave")?;
@@ -2540,8 +2566,10 @@ mod tests {
         opts.ci = Some(InitCi::Github);
 
         let plan = init_plan(&opts)?;
+        assert_eq!(plan.len(), 3);
         assert_eq!(plan[0].action, InitAction::LeaveUnchanged);
         assert_eq!(plan[1].action, InitAction::Create);
+        assert_eq!(plan[2].action, InitAction::Create);
 
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
@@ -2562,6 +2590,36 @@ mod tests {
         match init_plan(&opts) {
             Ok(_) => return Err("an existing workflow without --force must block".to_string()),
             Err(message) => assert!(message.contains("already exists"), "{message}"),
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn plan_rejects_an_existing_badge_workflow_without_force() -> Result<(), String> {
+        let root = temp_root("badge-wf-exists")?;
+        let workflow = root.join(".github/workflows/ripr-badge.yml");
+        if let Some(parent) = workflow.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|err| format!("create {} failed: {err}", parent.display()))?;
+        }
+        write(
+            &workflow,
+            "name: existing
+",
+        )?;
+        let mut opts = options(&root);
+        opts.ci = Some(InitCi::Github);
+
+        match init_plan(&opts) {
+            Ok(_) => {
+                return Err("an existing badge workflow without --force must block".to_string());
+            }
+            Err(message) => {
+                assert!(message.contains("ripr-badge.yml"), "{message}");
+                assert!(message.contains("already exists"), "{message}");
+            }
         }
 
         let _ = std::fs::remove_dir_all(&root);

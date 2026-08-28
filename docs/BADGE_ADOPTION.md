@@ -3,6 +3,23 @@
 This guide describes external-adoption guidance for repo-scoped public `ripr`
 README badges and the narrower, preconditioned `ripr+` badge.
 
+
+## Generated GitHub workflows
+
+`ripr init --ci github` writes two workflows with deliberately different
+authority:
+
+- `.github/workflows/ripr.yml` runs on pull requests and keeps RIPR analysis,
+  summaries, and uploaded evidence advisory by default.
+- `.github/workflows/ripr-badge.yml` runs manually and weekly, generates and
+  validates both badge contracts, retains the native audit artifact, and opens
+  a narrow pull request changing only `badges/ripr.json`.
+
+The publication workflow pins the RIPR package version emitted by the running
+`ripr init` binary and commit-pins every action in its write-capable job. It does
+not push directly to the default branch or couple badge freshness to unrelated
+product pull requests.
+
 ## Hard rules
 
 1. README badges must be **repo-scoped**, not PR/diff-scoped.
@@ -249,5 +266,5 @@ Forbidden wording includes claims like:
 
 1. Productize portable test-efficiency report generation.
 2. Add badge endpoint verification UX (`ripr badge verify` or equivalent).
-3. Add generated CI template support for badge refresh.
+3. Keep the generated badge workflow aligned with released RIPR versions and reviewed action pins.
 4. Keep this guide synchronized with policy and output schema.
