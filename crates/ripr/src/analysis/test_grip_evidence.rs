@@ -85,6 +85,16 @@ pub(crate) struct TestTargetEvidence {
     test_kind: TestKind,
     relation: RelationReason,
     provenance: TestTargetProvenance,
+    workspace_identity: String,
+    currentness: TestTargetCurrentness,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum TestTargetCurrentness {
+    /// Only indexed, on-disk byte-current targets are emitted as evidence;
+    /// stale, missing, or invalid targets are rejected before serialization.
+    Current,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,6 +119,7 @@ impl TestTargetEvidence {
         line: usize,
         test_kind: TestKind,
         relation: RelationReason,
+        workspace_identity: String,
     ) -> Self {
         Self {
             symbol_id,
@@ -117,6 +128,8 @@ impl TestTargetEvidence {
             test_kind,
             relation,
             provenance: TestTargetProvenance::RustIndexFunction,
+            workspace_identity,
+            currentness: TestTargetCurrentness::Current,
         }
     }
 
@@ -157,6 +170,8 @@ impl TestTargetEvidence {
             },
             relation: RelationReason::DirectOwnerCall,
             provenance: TestTargetProvenance::FixtureOnly,
+            workspace_identity: "fixture".to_string(),
+            currentness: TestTargetCurrentness::Current,
         }
     }
 }
@@ -1972,9 +1987,21 @@ fn test_target_evidence(
     relation: RelationReason,
 ) -> Option<TestTargetEvidence> {
     let file = index.files.get(&test.file)?;
-    let function = file.functions.iter().find(|function| {
-        function.is_test && function.name == test.name && function.start_line == test.start_line
-    })?;
+    let matches: Vec<&FunctionSummary> = file
+        .functions
+        .iter()
+        .filter(|function| {
+            function.is_test && function.name == test.name && function.start_line == test.start_line
+        })
+        .collect();
+    if matches.len() != 1 {
+        return None;
+    }
+    let authority = index.workspace_authority.as_ref()?;
+    if !authority.validates_target(&test.file, seam.file(), &file.source) {
+        return None;
+    }
+    let function = matches[0];
     Some(TestTargetEvidence::from_index(
         function.id.clone(),
         function.file.clone(),
@@ -1985,6 +2012,7 @@ fn test_target_evidence(
             TestKind::Integration
         },
         relation,
+        authority.workspace_identity.clone(),
     ))
 }
 
