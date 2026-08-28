@@ -1,0 +1,57 @@
+name: Verify final issue 2017 cleanup
+
+on:
+  push:
+    branches:
+      - agent/2017-init-badge-workflow
+    paths:
+      - .github/agent/review-2017.py
+      - .github/workflows/agent-review-2017.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: agent-review-2017
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/agent/2017-init-badge-workflow'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Check out patch branch
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: agent/2017-init-badge-workflow
+          fetch-depth: 0
+
+      - name: Install Rust 1.95
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal --component rustfmt --component clippy --no-self-update
+          rustup default 1.95.0
+
+      - name: Apply final review cleanup
+        run: python3 .github/agent/review-2017.py
+
+      - name: Format and verify
+        run: |
+          cargo fmt --all
+          cargo fmt --all -- --check
+          cargo test -p ripr --all-targets init_
+          cargo clippy -p ripr --all-targets -- -D warnings
+          git diff --check
+
+      - name: Commit verified cleanup
+        run: |
+          rm .github/agent/review-2017.py
+          rm .github/workflows/agent-review-2017.yml
+          rmdir .github/agent 2>/dev/null || true
+          git config user.name "EffortlessSteven"
+          git config user.email "git@effortlesssteven.com"
+          git add -A
+          git diff --cached --check
+          test -n "$(git status --short)"
+          git commit -m "fix(init): clean generated badge workflow review surface"
+          git push origin HEAD:agent/2017-init-badge-workflow
