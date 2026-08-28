@@ -10926,40 +10926,55 @@ fn producer_verify_packet(
         "human_display": receipt,
         "authority_boundary": "receipt_route_only"
     });
-    let ledger = serde_json::json!({
-        "kind": "gap_decision_ledger",
-        "root": ".",
-        "records": [{
-            "gap_id": "gap-verify-execute",
-            "source_currentness": "candidate_current",
-            "canonical_gap_id": "gap-verify-execute",
-            "kind": "MissingBoundaryAssertion",
-            "language": "rust",
-            "language_status": "actionable",
-            "scope": "pr_local",
-            "evidence_class": "predicate_boundary",
-            "gap_state": "actionable",
-            "policy_state": "new",
-            "repairability": "repairable",
-            "projection_eligibility": {"agent_packet": {"eligible": true, "reason": ""}},
-            "anchor": {"file": "marker.txt", "line": 1, "owner": "marker"},
-            "repair_route": {
-                "route_kind": "StrengthenExistingTest",
-                "target_file": "tests/marker.rs",
-                "related_test": "marker_boundary",
-                "missing_discriminator": "x == y",
-                "assertion_shape": "assert_eq!(x, y)",
-                "changed_behavior": "if x >= y"
-            },
-            "verification_commands": [verify],
-            "receipt_command": receipt,
-            "command_specs": {"verify": [verify_spec], "receipt": [receipt_spec]},
-            "evidence_ids": ["probe:marker"]
-        }]
-    });
     let ledger_path = root.join("gap-ledger.json");
-    std::fs::write(&ledger_path, serde_json::to_vec_pretty(&ledger)?)?;
+    // Build the source artifact with the same producer identity as the real
+    // check, then derive the ledger through the public report producer.  This
+    // keeps the fixture currentness-valid while retaining typed verify/receipt
+    // authority for the end-to-end route under test.
+    let mut source: serde_json::Value = serde_json::from_str(&snapshot.stdout)?;
+    source["seams"] = serde_json::json!([{
+        "seam_id": "gap-verify-execute",
+        "kind": "predicate_boundary",
+        "file": "marker.txt",
+        "line": 1,
+        "grip_class": "candidate",
+        "evidence_record": {
+            "seam_id": "gap-verify-execute",
+            "seam_kind": "predicate_boundary",
+            "canonical_gap_id": "gap-verify-execute",
+            "location": {"file": "marker.txt", "line": 1},
+            "owner": "marker",
+            "evidence_ids": ["probe:marker"],
+            "canonical_item": {
+                "canonical_gap_id": "gap-verify-execute",
+                "gap_state": "actionable",
+                "actionability": "add_focused_test",
+                "evidence_class": "predicate_boundary",
+                "related_test": {"file": "tests/marker.rs", "name": "marker_boundary"},
+                "missing_discriminator": "x == y",
+                "recommended_repair": "assert_eq!(x, y)",
+                "verify_command": verify,
+                "receipt_command": receipt,
+                "command_specs": {"verify": [verify_spec], "receipt": [receipt_spec]}
+            }
+        }
+    }]);
+    let source_path = root.join("after.repo-exposure.json");
+    let source_json = serde_json::to_string_pretty(&source)?;
+    std::fs::write(&source_path, recommit_repo_exposure_json(source_json))?;
+    let source_arg = source_path.to_string_lossy().into_owned();
     let ledger_arg = ledger_path.to_string_lossy().into_owned();
+    let ledger = run_ripr(&[
+        "reports",
+        "gap-ledger",
+        "--repo-exposure",
+        &source_arg,
+        "--root",
+        &root_arg,
+        "--out",
+        &ledger_arg,
+    ]);
+    assert_success(&ledger);
 
     let packet = run_ripr(&[
         "agent",
