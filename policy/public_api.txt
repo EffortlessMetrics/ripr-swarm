@@ -20,6 +20,10 @@
 # Adding a line means accepting a public compatibility expectation. Removing
 # an item without removing its line fails the gate in the other direction.
 
+# PR #3298: owner ripr/provider-contract; reason: intentional versioned
+# read-only provider DTO and validator contract; covered_by:
+# cargo test -p ripr --lib provider_contract, cargo xtask check-public-api.
+
 pub const ripr::lsp::diagnostic_budget::DEFAULT_MAX_INLINE_DETAIL_BYTES
 pub const ripr::lsp::diagnostic_budget::DEFAULT_MAX_ITEMS_PER_DOCUMENT
 pub const ripr::lsp::diagnostic_budget::DEFAULT_MAX_ITEMS_PER_WORKSPACE_RESPONSE
@@ -50,6 +54,11 @@ pub const ripr::output::start_here_state::START_HERE_UNSAFE_COMMAND
 pub const ripr::output::start_here_state::START_HERE_UNSAFE_PATH
 pub const ripr::output::start_here_state::START_HERE_UNSUPPORTED_SCHEMA
 pub const ripr::output::start_here_state::START_HERE_WRONG_ROOT
+pub use ripr::RIPR_ANALYSIS_RECEIPT_SCHEMA_VERSION
+pub use ripr::RIPR_ANALYSIS_REQUEST_SCHEMA_VERSION
+pub use ripr::RIPR_PROVIDER_CAPABILITY_SCHEMA_VERSION
+pub use ripr::RIPR_PROVIDER_CLAIM_BOUNDARY
+pub use ripr::RIPR_REQUIRED_EXCLUDED_CLAIMS
 pub enum ripr::analysis::AnalysisMode
 pub enum ripr::analysis::LanguageRunStatus
 pub enum ripr::app::Mode
@@ -93,6 +102,7 @@ pub mod ripr::output::human
 pub mod ripr::output::json
 pub mod ripr::output::receipt_lifecycle
 pub mod ripr::output::start_here_state
+pub mod ripr::provider_contract
 pub struct ripr::analysis::AnalysisOptions
 pub struct ripr::analysis::AnalysisResult
 pub struct ripr::analysis::LanguageRun
@@ -108,6 +118,23 @@ pub struct ripr::lsp::diagnostic_budget::DiagnosticBudgetResult
 pub struct ripr::lsp::diagnostic_budget::DiagnosticSelectionKey
 pub struct ripr::lsp::diagnostic_budget::OmittedDiagnosticItem
 pub struct ripr::lsp::diagnostic_budget::SelectedDiagnosticItem
+pub use ripr::RiprAnalysisReceiptV1
+pub use ripr::RiprAnalysisRequestV1
+pub use ripr::RiprEvidenceSubjectV1
+pub use ripr::RiprProviderCapabilityDescriptorV1
+pub use ripr::RiprProviderCapabilitySetV1
+pub use ripr::RiprProviderEvidenceEntryV1
+pub use ripr::RiprProviderEvidenceSummaryV1
+pub use ripr::RiprProviderCapabilityV1
+pub use ripr::RiprProviderContractErrorCodeV1
+pub use ripr::RiprProviderContractErrorV1
+pub use ripr::RiprProviderDiagnosticV1
+pub use ripr::RiprProviderNativeStatusV1
+pub use ripr::RiprProviderResultClassV1
+pub use ripr::RiprRepositorySnapshotV1
+pub use ripr::RiprSourceViewV1
+pub use ripr::TestEvidenceEntry
+pub use ripr::TestEvidenceSummary
 pub use ripr::CheckInput
 pub use ripr::CheckOutput
 pub use ripr::CheckSuppressionOutcome
@@ -255,3 +282,4 @@ pub use ripr::output::json::render
 pub use ripr::output::json::render_context_packet
 pub use ripr::reject_pr_evidence_error_packet
 pub use ripr::render_check
+pub use ripr::provider_contract::*

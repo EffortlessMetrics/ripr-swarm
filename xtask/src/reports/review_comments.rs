@@ -749,6 +749,12 @@ fn static_gap_fallback(repo: &Path, options: &ReviewCommentsOptions) -> Option<V
     };
     let text = fs::read_to_string(&path).ok()?;
     let producer: Value = serde_json::from_str(&text).ok()?;
+    if producer.get("tool").and_then(Value::as_str) != Some("ripr")
+        || producer.get("base").and_then(Value::as_str) != Some(options.base.as_str())
+        || !producer_root_matches(repo, options, &producer)
+    {
+        return None;
+    }
     let findings = producer.get("findings")?.as_array()?;
     let seams = findings
         .iter()
@@ -772,6 +778,14 @@ fn static_gap_fallback(repo: &Path, options: &ReviewCommentsOptions) -> Option<V
         "seams": seams,
         "claim_boundary": "Static seam locations only; no review guidance, correctness, test-adequacy, runtime-execution, or merge-readiness claim."
     }))
+}
+
+fn producer_root_matches(repo: &Path, options: &ReviewCommentsOptions, producer: &Value) -> bool {
+    let Some(root) = producer.get("root").and_then(Value::as_str) else {
+        return false;
+    };
+    root == options.root
+        || normalize_path_text(root) == normalize_path_text(&command_root_arg(repo, &options.root))
 }
 
 fn producer_analysis_outcome(repo: &Path, options: &ReviewCommentsOptions) -> Option<Value> {
@@ -1036,12 +1050,12 @@ fn render_error_review_comments_markdown(packet: &Value) -> String {
                         md_escape(
                             seam.get("classification")
                                 .and_then(Value::as_str)
-                                .unwrap_or("unknown")
+                                .unwrap_or("unknown"),
                         ),
                         md_escape(
                             seam.get("file")
                                 .and_then(Value::as_str)
-                                .unwrap_or("unknown")
+                                .unwrap_or("unknown"),
                         ),
                         seam.get("line")
                             .and_then(Value::as_u64)
@@ -1050,8 +1064,8 @@ fn render_error_review_comments_markdown(packet: &Value) -> String {
                         md_escape(
                             seam.get("family")
                                 .and_then(Value::as_str)
-                                .unwrap_or("unknown")
-                        )
+                                .unwrap_or("unknown"),
+                        ),
                     ));
                 }
             }
@@ -1069,7 +1083,7 @@ fn render_error_review_comments_markdown(packet: &Value) -> String {
     }
     markdown.push_str(&format!(
         "\n## Warnings\n\n- tool_error: {}\n",
-        md_escape(warning)
+        md_escape(warning),
     ));
     markdown
 }
@@ -1492,7 +1506,7 @@ mod tests {
         assert_eq!(fallback["seams"][0]["line"], 42);
         assert_eq!(
             fallback["seams"][1]["classification"],
-            "reachable_unrevealed"
+            "reachable_unrevealed",
         );
         assert!(
             validate_packet_value(
@@ -1502,7 +1516,7 @@ mod tests {
                 false,
                 Path::new(REVIEW_COMMENTS_MD),
             )
-            .is_empty()
+            .is_empty(),
         );
 
         let markdown = render_error_review_comments_markdown(&packet);
