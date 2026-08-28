@@ -1,5 +1,5 @@
 use super::currentness::{
-    BLOCKED_NOT_EVALUATED, BLOCKED_STALE, CURRENT, GapRecordSourceCurrentness, NOT_EVALUATED,
+    BLOCKED_STALE, CURRENT, GapRecordSourceCurrentness, NOT_EVALUATED,
     QUEUED, STALE,
 };
 use crate::app::causal_projection::CausalDeltaArtifact;

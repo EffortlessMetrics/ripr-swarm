@@ -10931,7 +10931,7 @@ fn producer_verify_packet(
     // check, then derive the ledger through the public report producer.  This
     // keeps the fixture currentness-valid while retaining typed verify/receipt
     // authority for the end-to-end route under test.
-    let mut source: serde_json::Value = serde_json::from_str(&snapshot.stdout)?;
+    let mut source: serde_json::Value = serde_json::from_slice(&snapshot.stdout)?;
     source["seams"] = serde_json::json!([{
         "seam_id": "gap-verify-execute",
         "kind": "predicate_boundary",
