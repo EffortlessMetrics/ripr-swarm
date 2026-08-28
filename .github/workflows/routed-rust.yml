@@ -192,7 +192,7 @@ jobs:
           cargo xtask precommit
           cargo xtask check-agent-skills
       - name: Upload docs-gate reports
-        if: failure() || contains(github.event.pull_request.labels.*.name, 'full-ci')
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: ripr-docs-gate

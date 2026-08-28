@@ -9678,6 +9678,97 @@ jobs = ["Ripr Rust Small Result"]
 }
 
 #[test]
+fn routed_rust_live_contract_rejects_reviewed_semantic_regressions() {
+    let workflow = include_str!("../../.github/workflows/routed-rust.yml");
+    let reusable = include_str!("../../.github/workflows/rust-gates.yml");
+    let settings = include_str!("../../.github/settings.yml");
+    let lane = include_str!("../../policy/ci-lane-whitelist.toml");
+
+    let violations = routed_rust_workflow_contract_violations_with_reusable(
+        workflow,
+        Some(reusable),
+        Some(settings),
+        Some(lane),
+    );
+    assert!(
+        violations.is_empty(),
+        "live workflow contract drift: {violations:#?}"
+    );
+
+    let regressions: Vec<(&str, String, String, &str)> = vec![
+        (
+            "runner input type",
+            reusable.replace(
+                "runner-config:\n        description: JSON string or object accepted by jobs.<job_id>.runs-on.\n        required: true\n        type: string",
+                "runner-config:\n        description: JSON string or object accepted by jobs.<job_id>.runs-on.\n        required: true\n        type: boolean",
+            ),
+            reusable.to_string(),
+            "required string contract",
+        ),
+        (
+            "runner conversion",
+            reusable.replace(
+                "runs-on: ${{ fromJSON(inputs.runner-config) }}",
+                "runs-on: ${{ inputs.runner-config }}",
+            ),
+            reusable.to_string(),
+            "fromJSON",
+        ),
+        (
+            "CPX42 label",
+            workflow.replace(
+                "cpx42\",\"rust-medium\",\"rust-16gb",
+                "cpx42\",\"rust-16gb",
+            ),
+            reusable.to_string(),
+            "rust-medium capacity",
+        ),
+        (
+            "docs artifact retention",
+            workflow.replace(
+                "- name: Upload docs-gate reports\n        if: always()",
+                "- name: Upload docs-gate reports\n        if: failure()",
+            ),
+            reusable.to_string(),
+            "docs-gate artifacts",
+        ),
+        (
+            "advisory gating",
+            workflow.to_string(),
+            reusable.replace(
+                "if: success() && inputs.run-advisory-reports",
+                "if: inputs.run-advisory-reports",
+            ),
+            "advisory reports",
+        ),
+        (
+            "failure artifact retention",
+            workflow.to_string(),
+            reusable.replace(
+                "if: failure() || inputs.upload-success-artifacts",
+                "if: inputs.upload-success-artifacts",
+            ),
+            "failure artifacts",
+        ),
+    ];
+
+    for (label, mutated_workflow, mutated_reusable, expected) in regressions {
+        let violations = routed_rust_workflow_contract_violations_with_reusable(
+            &mutated_workflow,
+            Some(&mutated_reusable),
+            Some(settings),
+            Some(lane),
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains(expected)),
+            "reviewed workflow regression `{label}` was not rejected by its expected contract: {violations:#?}"
+        );
+    }
+}
+
+#[test]
 fn routed_rust_workflow_contract_rejects_unsafe_drift() {
     let workflow = r#"
 jobs:
