@@ -2604,11 +2604,7 @@ mod tests {
             std::fs::create_dir_all(parent)
                 .map_err(|err| format!("create {} failed: {err}", parent.display()))?;
         }
-        write(
-            &workflow,
-            "name: existing
-",
-        )?;
+        write(&workflow, "name: existing\n")?;
         let mut opts = options(&root);
         opts.ci = Some(InitCi::Github);
 
