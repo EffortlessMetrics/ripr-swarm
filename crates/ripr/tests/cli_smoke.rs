@@ -10924,7 +10924,8 @@ fn producer_verify_packet(
     ]);
     assert_success(&ledger);
 
-    let ledger_value: serde_json::Value = serde_json::from_slice(&ledger.stdout)?;
+    let ledger_json = std::fs::read_to_string(&ledger_path)?;
+    let ledger_value: serde_json::Value = serde_json::from_str(&ledger_json)?;
     let gap_id = ledger_value["records"][0]["gap_id"]
         .as_str()
         .ok_or("producer fixture must emit one gap record")?;
