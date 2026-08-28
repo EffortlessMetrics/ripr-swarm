@@ -114,7 +114,37 @@ test.only.sequential.each([
 }
 
 #[test]
-fn keeps_disabled_invalid_and_unknown_declarations_uncredited() {
+fn keeps_repeated_and_mixed_active_modifier_chains_discoverable() {
+    let tests = extract_tests(
+        Path::new("tests/pricing.test.ts"),
+        r#"
+test.only.only("repeated focus", () => {
+    expect(applyDiscount(100, 100)).toBe(90);
+});
+test.concurrent.concurrent("repeated concurrent", () => {
+    expect(add(1, 2)).toBe(3);
+});
+test.concurrent.sequential("mixed execution flags", () => {
+    expect(add(2, 3)).toBe(5);
+});
+describe.sequential.concurrent("mixed suite flags", () => {
+    test("nested active", () => {
+        expect(normalize("x")).toBe("x");
+    });
+});
+"#,
+    );
+
+    assert_eq!(tests.len(), 4);
+    assert_eq!(tests[0].local_name, "repeated focus");
+    assert_eq!(tests[1].local_name, "repeated concurrent");
+    assert_eq!(tests[2].local_name, "mixed execution flags");
+    assert_eq!(tests[3].name, "mixed suite flags nested active");
+    assert!(tests.iter().all(|test| test.assertions.len() == 1));
+}
+
+#[test]
+fn keeps_disabled_conditional_expected_failure_and_unknown_declarations_uncredited() {
     let tests = extract_tests(
         Path::new("tests/pricing.test.ts"),
         r#"
@@ -141,20 +171,6 @@ runner.only("unknown root", () => {
 });
 test.retry("unknown modifier", () => {
     expect(applyDiscount(100, 100)).toBe(90);
-});
-test.only.only("duplicate focus", () => {
-    expect(applyDiscount(100, 100)).toBe(90);
-});
-test.concurrent.concurrent("duplicate mode", () => {
-    expect(add(1, 2)).toBe(3);
-});
-test.concurrent.sequential("conflicting modes", () => {
-    expect(add(1, 2)).toBe(3);
-});
-describe.sequential.concurrent("conflicting suite modes", () => {
-    test("nested invalid", () => {
-        expect(normalize("x")).toBe("x");
-    });
 });
 "#,
     );
