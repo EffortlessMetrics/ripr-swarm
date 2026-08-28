@@ -58,6 +58,55 @@ fn render_from_gap_ledger_contents_with_live_currentness(
 #[cfg(test)]
 mod live_currentness_tests {
     use super::*;
+    use std::path::{Path, PathBuf};
+
+    fn unique_command_test_dir(name: &str) -> PathBuf {
+        let nanos = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            Ok(duration) => duration.as_nanos(),
+            Err(_) => 0,
+        };
+        std::env::temp_dir().join(format!("ripr-{name}-{nanos}"))
+    }
+
+    fn python_swarm_queue_gap_ledger(root: &Path) -> String {
+        serde_json::json!({
+            "root": output::outcome::display_path(root),
+            "generated_at": "unix_ms:1778240100000",
+            "records": [{
+                "gap_id": "gap:python:pricing-boundary",
+                "source_currentness": "candidate_current",
+                "canonical_gap_id": "gap:python:src/pricing.py:calculate_discount:predicate_boundary",
+                "kind": "MissingBoundaryAssertion",
+                "language": "python",
+                "language_status": "preview",
+                "scope": "repo",
+                "evidence_class": "predicate_boundary",
+                "gap_state": "actionable",
+                "policy_state": "new",
+                "repairability": "repairable",
+                "anchor": {
+                    "file": "src/pricing.py",
+                    "line": 7,
+                    "owner": "calculate_discount"
+                },
+                "repair_route": {
+                    "route_kind": "AddBoundaryAssertion",
+                    "target_file": "tests/test_pricing.py",
+                    "assertion_shape": "assert calculate_discount(100, 100) == 90",
+                    "changed_behavior": "amount >= threshold"
+                },
+                "verification_commands": ["pytest tests/test_pricing.py"],
+                "receipt_command": "ripr agent receipt --verify-json target/ripr/workflow/verify.json --seam-id gap:python:pricing-boundary --test-changed tests/test_pricing.py",
+                "projection_eligibility": {
+                    "agent_packet": {
+                        "eligible": true,
+                        "reason": "bounded repair route"
+                    }
+                }
+            }]
+        })
+        .to_string()
+    }
 
     #[test]
     fn matching_legacy_ledger_is_visible_but_not_assignable() -> Result<(), String> {
