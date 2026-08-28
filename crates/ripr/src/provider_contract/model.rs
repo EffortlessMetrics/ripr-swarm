@@ -56,12 +56,22 @@ pub enum RiprSourceViewV1 {
     CapturedSourceSet,
 }
 
+/// Exact repository source snapshot selected by an external orchestrator.
+///
+/// This DTO binds identities supplied to RIPR. Resolving a Git object against a
+/// repository remains the provider operation's responsibility rather than a
+/// deserialization or receipt-validation side effect.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RiprRepositorySnapshotV1 {
     pub repository_id: String,
+    /// Canonical source-view identity. Git trees use
+    /// `git-tree:<40-or-64-hex-object-id>`; derived views embed their SHA-256
+    /// source digest after the view prefix.
     pub snapshot_id: String,
     pub source_view: RiprSourceViewV1,
+    /// Portable SHA-256 identity binding. For a Git tree, hash the exact UTF-8
+    /// bytes of the canonical `snapshot_id`, including the `git-tree:` prefix.
     pub source_digest: String,
 }
 
