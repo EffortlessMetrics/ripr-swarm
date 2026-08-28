@@ -69,7 +69,7 @@ fn exact_classifier_rejects_prefix_lookalikes_and_ambiguous_attributes() {
         "#[test = \"custom\"]",
         "#[test] trailing_tokens",
         "#[proptest]",
-        "#[allow(dead_code)]",
+        "#[doc(hidden)]",
     ];
 
     for attribute in unsupported {
