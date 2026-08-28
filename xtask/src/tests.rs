@@ -9027,6 +9027,76 @@ fn server_archive_qualification_workflow_is_sha_bound_and_credential_free() -> R
 }
 
 #[test]
+fn w7_source_promotion_preflight_workflow_pins_exact_unfinalized_contract() -> Result<(), String> {
+    let workflow_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(".github/workflows/w7-source-promotion-preflight-ad291d.yml");
+    let workflow = fs::read_to_string(&workflow_path)
+        .map_err(|error| format!("read {}: {error}", workflow_path.display()))?;
+
+    let validate = |candidate: &str| -> Result<(), String> {
+        for marker in [
+            "permissions:\n  contents: read",
+            "SOURCE_PARENT: ad291d1bc936d00847d9712d2adf9ea56ca19533",
+            "SWARM_PARENT: 83217e97ec6847db41d757f57279a8b1ca433fe6",
+            "SWARM_REF: refs/tags/ripr-release-0.11.0-83217e97ec6847db41d757f57279a8b1ca433fe6",
+            "RULESET_ID: '20661783'",
+            "VERSION: 0.11.0",
+            "execution_source_main=$(git -c credential.helper= -c http.extraheader= \\\n            ls-remote --heads https://github.com/EffortlessMetrics/ripr.git refs/heads/main)",
+            "execution_swarm_ref=$(git -c credential.helper= -c http.extraheader= \\\n            ls-remote --refs https://github.com/EffortlessMetrics/ripr-swarm.git \"$SWARM_REF\")",
+            "execution_source_main=%s",
+            "execution_swarm_ref_sha=%s",
+            "dry_merge.reviewed_resolved_tree == null",
+            ".dry_merge.reviewed_resolved_tree_verified == false",
+            "if: always()",
+            "name: ripr-source-promotion-preflight-v1-source-ad291d1bc936d00847d9712d2adf9ea56ca19533-w7-ref-ripr-release-0.11.0-83217e97ec6847db41d757f57279a8b1ca433fe6-ruleset-20661783",
+        ] {
+            if !candidate.contains(marker) {
+                return Err(format!(
+                    "exact preflight contract marker missing `{marker}`"
+                ));
+            }
+        }
+        if candidate
+            .matches("execution_source_main=$(git -c credential.helper= -c http.extraheader=")
+            .count()
+            != 1
+            || candidate
+                .matches("execution_swarm_ref=$(git -c credential.helper= -c http.extraheader=")
+                .count()
+                != 1
+            || candidate.contains("contents: write")
+            || candidate.contains("git push")
+            || candidate.contains("gh release")
+            || candidate.contains("release-upload-assets")
+            || candidate.contains("secrets.")
+            || candidate.contains("github.token")
+        {
+            return Err("workflow must keep one credentialless execution reread per authority and no publication surface".to_string());
+        }
+        Ok(())
+    };
+
+    validate(&workflow)?;
+    for (name, broken) in [
+        ("source identity", workflow.replacen("ad291d1bc936d00847d9712d2adf9ea56ca19533", "bd291d1bc936d00847d9712d2adf9ea56ca19533", 1)),
+        ("W7 identity", workflow.replacen("83217e97ec6847db41d757f57279a8b1ca433fe6", "93217e97ec6847db41d757f57279a8b1ca433fe6", 1)),
+        ("ruleset identity", workflow.replacen("RULESET_ID: '20661783'", "RULESET_ID: '20661784'", 1)),
+        ("source live reread", workflow.replacen("execution_source_main=$(git -c credential.helper= -c http.extraheader= \\\n            ls-remote --heads https://github.com/EffortlessMetrics/ripr.git refs/heads/main)", "execution_source_main=$(git -C source rev-parse origin/main)", 1)),
+        ("W7 live reread", workflow.replacen("execution_swarm_ref=$(git -c credential.helper= -c http.extraheader= \\\n            ls-remote --refs https://github.com/EffortlessMetrics/ripr-swarm.git \"$SWARM_REF\")", "execution_swarm_ref=$(git -C swarm rev-parse \"$SWARM_REF\")", 1)),
+        ("unfinalized tree", workflow.replacen(".dry_merge.reviewed_resolved_tree_verified == false", ".dry_merge.reviewed_resolved_tree_verified == true", 1)),
+        ("always upload", workflow.replacen("if: always()", "if: success()", 1)),
+        ("artifact authority", workflow.replacen("ruleset-20661783", "ruleset-current", 1)),
+        ("publication", workflow.replacen("sha256sum preflight/*", "git push origin HEAD", 1)),
+    ] {
+        if validate(&broken).is_ok() {
+            return Err(format!("negative fixture `{name}` was not rejected"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn server_archive_ruleset_shape_fixtures_are_strict_and_discriminating() -> Result<(), String> {
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()

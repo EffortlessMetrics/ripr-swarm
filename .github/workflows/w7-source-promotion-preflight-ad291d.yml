@@ -177,6 +177,19 @@ jobs:
           CARGO_TARGET_DIR: ${{ runner.temp }}/ripr-w7-preflight-target
         run: |
           set -euo pipefail
+          execution_source_main=$(git -c credential.helper= -c http.extraheader= \
+            ls-remote --heads https://github.com/EffortlessMetrics/ripr.git refs/heads/main)
+          test "$(printf '%s\n' "$execution_source_main" | awk 'NF {count++} END {print count + 0}')" -eq 1
+          test "$(printf '%s\n' "$execution_source_main" | awk '{print $1}')" = "$SOURCE_PARENT"
+          execution_swarm_ref=$(git -c credential.helper= -c http.extraheader= \
+            ls-remote --refs https://github.com/EffortlessMetrics/ripr-swarm.git "$SWARM_REF")
+          test "$(printf '%s\n' "$execution_swarm_ref" | awk 'NF {count++} END {print count + 0}')" -eq 1
+          test "$(printf '%s\n' "$execution_swarm_ref" | awk '{print $1}')" = "$SWARM_PARENT"
+          {
+            printf 'execution_source_main=%s\n' "$(printf '%s\n' "$execution_source_main" | awk '{print $1}')"
+            printf 'execution_swarm_ref=%s\n' "$SWARM_REF"
+            printf 'execution_swarm_ref_sha=%s\n' "$(printf '%s\n' "$execution_swarm_ref" | awk '{print $1}')"
+          } >> preflight/environment.txt
           # W7 forces TEMP/TMP/TMPDIR to checkout-relative `target`. Build output
           # is isolated outside the checkout, so create only the ignored temp
           # parent required by the read-only disposable merge probe.
@@ -235,7 +248,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: ripr-0.11.0-w7-source-promotion-preflight-ad291d
+          name: ripr-source-promotion-preflight-v1-source-ad291d1bc936d00847d9712d2adf9ea56ca19533-w7-ref-ripr-release-0.11.0-83217e97ec6847db41d757f57279a8b1ca433fe6-ruleset-20661783
           path: preflight/
           if-no-files-found: error
           retention-days: 90
