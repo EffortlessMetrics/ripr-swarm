@@ -20,7 +20,7 @@ Advanced and compatibility workflows:
 Ordinary repair path:
   ripr agent repair --seam-id ID --phase before
   # edit one focused test outside RIPR
-  ripr agent repair --seam-id ID --phase after
+  ripr agent repair --attempt ID --phase after
 
 Run `ripr agent repair --help` for the primary repair workflow. Run
 `ripr agent status --help` to inspect an interrupted or incomplete local loop.
