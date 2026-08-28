@@ -396,7 +396,7 @@ mod tests {
             .ok_or_else(|| format!("missing review-only packet: {json}"))?;
         assert_eq!(
             packet.get("queue_state").and_then(Value::as_str),
-            Some(BLOCKED_NOT_EVALUATED)
+            Some(super::currentness::BLOCKED_NOT_EVALUATED)
         );
         assert_eq!(
             packet.get("staleness_status").and_then(Value::as_str),
