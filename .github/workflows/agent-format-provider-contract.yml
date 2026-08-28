@@ -1,0 +1,42 @@
+name: Branch-scoped provider rustfmt
+
+on:
+  push:
+    branches:
+      - agent/3309-bind-git-tree-digest
+    paths:
+      - .github/workflows/agent-format-provider-contract.yml
+
+permissions:
+  contents: write
+
+jobs:
+  format-provider-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: agent/3309-bind-git-tree-digest
+          fetch-depth: 0
+
+      - name: Apply repository rustfmt
+        run: |
+          rustfmt --edition 2024 \
+            crates/ripr/src/provider_contract/tests.rs \
+            crates/ripr/tests/provider_contract_git_tree_identity.rs
+
+      - name: Commit exact formatter output
+        run: |
+          git config user.name EffortlessSteven
+          git config user.email git@effortlesssteven.com
+          git add \
+            crates/ripr/src/provider_contract/tests.rs \
+            crates/ripr/tests/provider_contract_git_tree_identity.rs
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo "No formatter delta"
+            exit 0
+          fi
+          git commit -m "style(provider): apply rustfmt to snapshot contract tests"
+          git push origin HEAD:agent/3309-bind-git-tree-digest
