@@ -757,8 +757,8 @@ mod check_fast_selector_tests {
 
     fn run_fixture_git(root: &std::path::Path, args: &[&str]) -> Result<(), String> {
         // Route through the centralized runner: process policy allows one
-        // literal `Command::new` in this file (the gate-runner site), so the
-        // fixture must not add its own spawn site.
+        // raw spawn literal in this file (the gate-runner git-diff site),
+        // so the fixture must not add its own spawn site.
         let args: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
         let output = crate::run::capture_output_in_dir("git", &args, root, "selector fixture git")?;
         if output.status.success() {
