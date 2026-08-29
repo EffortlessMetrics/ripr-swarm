@@ -744,6 +744,13 @@ fn changed_files_vs_base(root: &Path) -> Result<Vec<String>, String> {
     Ok(text.lines().map(String::from).collect())
 }
 
+/// Origin-main rooted selector for callers that run from the repository
+/// root — including the strict check-fast module, which binds this
+/// function as its discovery authority.
+fn changed_files_vs_origin_main() -> Result<Vec<String>, String> {
+    changed_files_vs_base(Path::new("."))
+}
+
 fn check_fast_selector_failure(error: &str) -> String {
     format!("check-fast selector unavailable (instrument_failure): {error}")
 }
