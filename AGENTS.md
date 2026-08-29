@@ -128,6 +128,7 @@ cargo xtask check-no-panic-family
 cargo xtask check-allow-attributes
 cargo xtask check-local-context
 cargo xtask check-file-policy
+cargo xtask check-covered-by
 cargo xtask check-executable-files
 cargo xtask check-workflows
 cargo xtask check-droid-review-config
