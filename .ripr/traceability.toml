@@ -8597,3 +8597,25 @@ metrics = [
   "unit_test_pass_rate",
   "golden_fixture_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0168"
+name = "Unsafe execution boundary probes"
+spec = "docs/specs/RIPR-SPEC-0168-unsafe-boundary-probes.md"
+tests = [
+  "crates/ripr/src/analysis/syntax/ra.rs::tests",
+  "crates/ripr/src/analysis/probes/classify.rs::tests",
+]
+fixtures = [
+  "fixtures/unsafe_boundary_probe",
+]
+code = [
+  "crates/ripr/src/analysis/syntax/ra.rs",
+  "crates/ripr/src/analysis/probes/classify.rs",
+  "crates/ripr/src/analysis/probes/family.rs",
+  "crates/ripr/src/analysis/extract/probe_shapes.rs",
+]
+outputs = []
+metrics = [
+  "golden_fixture_pass_rate",
+]
