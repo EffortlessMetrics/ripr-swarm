@@ -181,7 +181,7 @@ mod tests {
         // successfully.
         let commands = [(
             12,
-            "cargo test -p xtask test_covered_by_classification_is_token_aware --exact".to_string(),
+            "cargo test -p xtask test_covered_by_classification_is_token_aware".to_string(),
         )];
         validate_test_covered_by("policy.toml", &commands)
     }
