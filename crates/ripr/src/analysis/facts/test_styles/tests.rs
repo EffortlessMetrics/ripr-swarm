@@ -149,6 +149,9 @@ fn unannotated_helper() {}
 #[cfg(test)]
 mod tests {
     fn cfg_test_helper() {}
+
+    #[tokio::test_helper]
+    fn cfg_test_lookalike() {}
 }
 "#,
     )?;
@@ -198,6 +201,21 @@ mod tests {
             .iter()
             .all(|test| test.name != "cfg_test_helper"),
         "cfg(test) helper must not become an executable TestFact"
+    );
+    assert!(
+        facts
+            .functions
+            .iter()
+            .find(|function| function.name == "cfg_test_lookalike")
+            .is_some_and(|function| function.is_test),
+        "cfg(test) lookalike must retain its evidence-role function"
+    );
+    assert!(
+        facts
+            .tests
+            .iter()
+            .all(|test| test.name != "cfg_test_lookalike"),
+        "cfg(test) lookalike must not remain an executable TestFact"
     );
     Ok(())
 }

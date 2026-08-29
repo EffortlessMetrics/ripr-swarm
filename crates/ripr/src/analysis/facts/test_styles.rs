@@ -7,7 +7,9 @@ use std::path::PathBuf;
 struct FunctionKey {
     file: PathBuf,
     start_line: usize,
+    end_line: usize,
     name: String,
+    body: String,
 }
 
 impl FunctionKey {
@@ -15,7 +17,9 @@ impl FunctionKey {
         Self {
             file: function.file.clone(),
             start_line: function.start_line,
+            end_line: function.end_line,
             name: function.name.clone(),
+            body: function.body.clone(),
         }
     }
 
@@ -23,7 +27,9 @@ impl FunctionKey {
         Self {
             file: test.file.clone(),
             start_line: test.start_line,
+            end_line: test.end_line,
             name: test.name.clone(),
+            body: test.body.clone(),
         }
     }
 }
@@ -89,8 +95,10 @@ fn normalize_file_test_styles(facts: &mut FileFacts) {
         // Parser-backed cfg(test) helpers are evidence-role functions without
         // executable TestFacts. Preserve that producer-owned distinction while
         // correcting prefix lookalikes that arrived with a TestFact.
-        let is_test_helper = function.is_test && existing_test.is_none();
-        function.is_test = has_test_attribute || is_test_helper;
+        let preserve_cfg_test_role = !has_test_attribute
+            && function.is_test
+            && is_inside_cfg_test_module(&facts.source, function.start_line);
+        function.is_test = has_test_attribute || preserve_cfg_test_role;
 
         if has_test_attribute {
             normalized_tests.push(match existing_test {
@@ -148,6 +156,39 @@ fn lexical_attributes_before<'source>(
 
     attributes.reverse();
     attributes
+}
+
+fn is_inside_cfg_test_module(source: &str, function_start_line: usize) -> bool {
+    let mut scopes = Vec::new();
+    let mut pending_cfg_test = false;
+
+    for line in source.lines().take(function_start_line.saturating_sub(1)) {
+        let trimmed = line.trim();
+        if trimmed.starts_with("#[cfg(test)]") {
+            pending_cfg_test = true;
+        }
+
+        let declares_cfg_test_module =
+            pending_cfg_test && trimmed.contains("mod ") && trimmed.contains('{');
+        let mut module_opened = false;
+        for character in line.chars() {
+            match character {
+                '{' => {
+                    scopes.push(declares_cfg_test_module && !module_opened);
+                    module_opened = true;
+                }
+                '}' => {
+                    scopes.pop();
+                }
+                _ => {}
+            }
+        }
+        if declares_cfg_test_module || (!trimmed.starts_with("#[") && !trimmed.is_empty()) {
+            pending_cfg_test = false;
+        }
+    }
+
+    scopes.iter().any(|is_cfg_test_module| *is_cfg_test_module)
 }
 
 fn normalized_test_attribute_path(attribute: &str) -> Option<String> {
