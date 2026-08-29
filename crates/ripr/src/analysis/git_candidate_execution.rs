@@ -628,7 +628,7 @@ mod tests {
     // against the `git show <tree>:<path>` oracle bytes.
     #[test]
     fn materialization_ignores_attribute_driven_conversion() -> Result<(), String> {
-        let (guard, _base, candidate) = fixture_repo("attributes")?;
+        let (guard, _base, _pre_attribute_head) = fixture_repo("attributes")?;
         let run = |args: &[&str]| -> Result<String, String> {
             let out = crate::git::run_git_output_with_deadline(&guard.0, args, GIT_DEADLINE)
                 .map_err(|e| e.to_string())?;
