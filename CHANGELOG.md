@@ -11,6 +11,14 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Rust source-role analysis now recognizes a direct top-level `test` conjunct
+  in `#[cfg(all(...))]` regardless of conjunct order. Helpers under
+  `#[cfg(all(feature = "slow", test))]` are evidence role and no longer seed
+  production findings. `any(test, ...)`, `not(test)`, nested alternatives, and
+  `test` text inside literals stay production/fail-closed. Cache generations
+  advance so warm analysis cannot reuse the previous role classification
+  ([#3213](https://github.com/EffortlessMetrics/ripr-swarm/issues/3213)).
+
 - Rust repository analysis now recognizes parser-backed, file-level,
   repository-local literal `include!` fragments as part of their parent
   compilation unit.

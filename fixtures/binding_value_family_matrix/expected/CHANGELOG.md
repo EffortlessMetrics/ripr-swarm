@@ -71,3 +71,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending
+
+Reason:
+RIPR-SPEC-0158 (#3215 acceptance): add chars().next()/chars().next_back() parser-helper families to the binding_value_family_matrix matrix — two new boundary predicates observed from exact test inputs through the bounded value-transfer chain (provenance retained); existing four families unchanged
+
+Command:
+`cargo xtask goldens bless binding_value_family_matrix --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending
+
+Reason:
+RIPR-SPEC-0158 (#3215 acceptance, review): owner-led test names fix the token-coincidence wrong-owner reach on bump's checked_add probe, and head gains a Some-arm boundary row (head("xray")) so the chars().next() Some arm is observed exactly — a constant-'f' Some-arm mutation now fails the fixture
+
+Command:
+`cargo xtask goldens bless binding_value_family_matrix --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

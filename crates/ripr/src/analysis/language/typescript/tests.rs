@@ -1415,7 +1415,7 @@ fn is_test_file_matches_test_directory_convention() {
     assert!(is_test_file(Path::new("test/body-size.ts")));
     assert!(is_test_file(Path::new("tests/utils.ts")));
     assert!(is_test_file(Path::new("src/__tests__/Header.tsx")));
-    assert!(is_test_file(Path::new("packages/core/test/index.mjs")));
+    assert!(is_test_file(Path::new("packages/core/test/index.jsx")));
     // Component match, not substring — these are NOT tests.
     assert!(!is_test_file(Path::new("src/latest/feature.ts")));
     assert!(!is_test_file(Path::new("test-utils/helper.ts")));
