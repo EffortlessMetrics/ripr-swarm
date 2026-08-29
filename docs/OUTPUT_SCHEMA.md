@@ -12668,8 +12668,10 @@ proof. Stale or mismatched sources use `queue_state = "blocked_stale"`, while
 unresolved identities and invalid source artifacts use
 `queue_state = "blocked_not_evaluated"`; each retains a
 `staleness_reason`, and schedulers must refresh instead of assigning them. Any
-non-assignable candidate is projected into `blocked_review[]` with its bounded
-shell-escaped `refresh_commands`; the review projection never carries
+non-assignable candidate that reaches live-currentness rendering is projected
+into `blocked_review[]` with its bounded shell-escaped `refresh_commands`;
+malformed ledgers and missing or mismatched roots follow the error and
+blocker-envelope paths instead, without the projection; the review projection never carries
 `packet_command_args`, verify or receipt commands, `command_specs`, suggested
 tests, or edit-surface authority. `summary.stale_total` counts stale blocked
 candidates and `summary.not_evaluated_total` counts unevaluated blocked

@@ -36,10 +36,13 @@ validated candidates, assignable candidates, returned candidates, unreturned
 assignable candidates, stale candidates, and unevaluated candidates. That
 validation binds the ledger to its declared
 repo-exposure source, selected canonical root, exact clean HEAD, snapshot and
-content identities, and freshly reproduced GapRecords. Legacy, malformed,
-unsupported, dirty, historical, mismatched, or receipt-stale evidence remains
-visible in a bounded, command-free `blocked_review` projection with its typed
-state, reason, conflict group, and exact refresh route. The
+content identities, and freshly reproduced GapRecords. Candidates that reach
+this live-currentness validation but are not assignable — legacy, unsupported,
+dirty, historical, mismatched, or receipt-stale evidence — remain visible in a
+bounded, command-free `blocked_review` projection with their typed state,
+reason, conflict group, and exact refresh route. A malformed ledger, a missing
+root provenance, or a root mismatch follows the error and blocker-envelope
+paths instead and does not carry the projection. The
 `source_currentness = candidate_current` record label alone is not freshness
 proof. If the gap ledger omits root provenance or declares a root that differs
 from `--root`, the command emits the existing blocked root-provenance envelope.
