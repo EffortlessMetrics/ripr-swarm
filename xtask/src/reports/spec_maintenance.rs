@@ -641,8 +641,11 @@ mod tests {
     #[test]
     fn malformed_required_source_fails_visibly() -> Result<(), String> {
         let root = fixture_root()?;
-        fs::write(root.join("docs/specs/RIPR-SPEC-9999-example.md"), [0xff, 0xfe])
-            .map_err(|error| error.to_string())?;
+        fs::write(
+            root.join("docs/specs/RIPR-SPEC-9999-example.md"),
+            [0xff, 0xfe],
+        )
+        .map_err(|error| error.to_string())?;
         if build_report(&root, "2026-08-27", &HistoryInput::default()).is_ok() {
             return Err("invalid UTF-8 unexpectedly succeeded".to_string());
         }
