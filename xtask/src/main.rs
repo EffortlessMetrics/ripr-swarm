@@ -5819,10 +5819,11 @@ fn specs(args: &[String]) -> Result<(), String> {
             println!("{}", next_spec_id(Path::new("."))?);
             Ok(())
         }
+        Some("maintenance") => reports::spec_maintenance(&args[1..]),
         Some(other) => Err(format!(
-            "unknown specs command `{other}`\nusage: cargo xtask specs next"
+            "unknown specs command `{other}`\nusage: cargo xtask specs next | maintenance --as-of YYYY-MM-DD [--json]"
         )),
-        None => Err("missing specs command\nusage: cargo xtask specs next".to_string()),
+        None => Err("missing specs command\nusage: cargo xtask specs next | maintenance --as-of YYYY-MM-DD [--json]".to_string()),
     }
 }
 
