@@ -268,3 +268,17 @@ fn deeply_nested_predicates_fail_closed_instead_of_overflowing() {
         "exotic nesting depth must fail closed, not abort"
     );
 }
+
+#[test]
+fn probe_whitespace_split_debug() {
+    let text = "   #[ cfg(test) ] mod m {";
+    let leading = text.trim_start();
+    let len = super::leading_attribute_byte_len(leading);
+    assert_eq!(
+        format!("{len:?}"),
+        "Some(14)",
+        "probe: {leading:?} -> {len:?}"
+    );
+    let split = super::split_leading_attribute(text);
+    assert_eq!(format!("{split:?}"), "MATCH", "probe split: {split:?}");
+}

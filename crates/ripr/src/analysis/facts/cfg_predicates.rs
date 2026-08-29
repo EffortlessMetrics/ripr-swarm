@@ -171,9 +171,11 @@ pub(crate) fn split_leading_attribute(text: &str) -> Option<(&str, &str)> {
             Token::Punct(']') => {
                 depth = depth.checked_sub(1)?;
                 if depth == 0 {
+                    // Token offsets are attribute-relative: the attribute
+                    // slice is bounded by them, while the remainder stays
+                    // anchored to the full line.
                     let end = positioned.offset + ']'.len_utf8();
-                    let attribute = text.get(attribute_start..end)?;
-                    return Some((attribute, text.get(end..)?));
+                    return Some((attribute.get(..end)?, text.get(attribute_start + end..)?));
                 }
             }
             _ => {}
@@ -194,7 +196,7 @@ fn leading_attribute_byte_len(text: &str) -> Option<usize> {
         let byte = bytes[index];
         if let Some(quote) = in_string {
             match byte {
-                b'\' => index += 2,
+                b'\\' => index += 2,
                 _ if byte == quote => {
                     in_string = None;
                     index += 1;
@@ -204,7 +206,7 @@ fn leading_attribute_byte_len(text: &str) -> Option<usize> {
             continue;
         }
         match byte {
-            b'"' | b''' => {
+            b'"' | b'\'' => {
                 in_string = Some(byte);
                 index += 1;
             }
