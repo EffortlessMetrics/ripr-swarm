@@ -762,11 +762,15 @@ pub(crate) fn release_temp_root() -> Result<PathBuf, String> {
 /// plain form is otherwise equivalent.
 fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
     let text = path.as_os_str().to_string_lossy();
-    if let Some(stripped) = text.strip_prefix(r"\\?\") {
-        PathBuf::from(stripped.to_owned())
-    } else {
-        path
+    // A verbatim UNC path (\\?\UNC\server\share) must stay a UNC path
+    // (\\server\share), not collapse into a drive-relative fragment.
+    if let Some(unc) = text.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{unc}"));
     }
+    if let Some(stripped) = text.strip_prefix(r"\\?\") {
+        return PathBuf::from(stripped.to_owned());
+    }
+    path
 }
 
 fn create_external_doctor_fixture(root: &Path) -> Result<PathBuf, String> {
@@ -3518,11 +3522,16 @@ mod tests {
     #[test]
     fn release_fixture_root_is_canonical_and_external() -> Result<(), String> {
         let root = super::release_temp_root()?;
-        let current = fs::canonicalize(
-            std::env::current_dir()
-                .map_err(|err| format!("read current directory failed: {err}"))?,
-        )
-        .map_err(|err| format!("canonicalize current directory failed: {err}"))?;
+        // Mirror the production containment comparison: both sides must be
+        // verbatim-normalized or a `\?\`-rooted temp can false-negative.
+        let root = super::strip_verbatim_prefix(root);
+        let current = super::strip_verbatim_prefix(
+            fs::canonicalize(
+                std::env::current_dir()
+                    .map_err(|err| format!("read current directory failed: {err}"))?,
+            )
+            .map_err(|err| format!("canonicalize current directory failed: {err}"))?,
+        );
         if root == current || root.starts_with(&current) {
             return Err(format!(
                 "release fixture root {} is not external to {}",
