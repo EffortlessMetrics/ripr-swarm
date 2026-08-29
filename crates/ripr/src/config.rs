@@ -19,7 +19,13 @@ pub use model::{
     CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION, CheckInputExplicit, ConfigIdentityRole, ConfigSeverity,
     LspDiagnosticProfile, OraclePolicy, PerlConfig, RiprConfig, SeverityConfig, TypescriptConfig,
 };
-pub(crate) use python::{PYTHON_PROJECT_MARKERS, detect_python_project};
+#[cfg(test)]
+pub(crate) use python::PYTHON_PROJECT_EXCLUDED_DIRS;
+pub(crate) use python::{
+    PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, detect_python_project,
+    is_detectable_python_source_name, is_python_project_excluded_dir, python_project_marker_name,
+    python_source_dir_marker_name, source_dir_contains_detectable_python,
+};
 
 pub(crate) const CONFIG_FILE_NAME: &str = "ripr.toml";
 pub(crate) const DEFAULT_CONTEXT_RELATED_TESTS: usize = 5;
