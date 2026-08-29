@@ -49,6 +49,7 @@ use super::seam_classification::ClassifiedSeam;
 #[cfg(test)]
 use super::seam_classification::SeamGripClassCounts;
 use super::seam_inventory::{SeamLimitSource, repo_exposure_seam_limit};
+use crate::config::PYTHON_PROJECT_MARKERS;
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -495,8 +496,7 @@ impl WorkspaceKeyContext<'_> {
             Some((n, _)) => format!("limit_{n}"),
         };
 
-        let workspace_manifests_hash =
-            hash_named_workspace_files(self.workspace_root, "Cargo.toml");
+        let workspace_manifests_hash = hash_workspace_manifests(self.workspace_root);
         let lockfile_hash = hash_named_workspace_files(self.workspace_root, "Cargo.lock");
         let toolchain_hash = hash_str(
             std::env::var("RUSTUP_TOOLCHAIN")
@@ -2256,6 +2256,34 @@ fn hash_named_workspace_files(root: &Path, file_name: &str) -> String {
         .unwrap_or_else(|| hash_str("<no matching workspace files>"))
 }
 
+/// Hash the adapter-owned workspace identities that can change analysis.
+/// Cargo consumes manifest contents recursively. The marker inputs tracked
+/// here are the root Python markers, whose presence — not content — gates
+/// the effective configuration, so content-only edits intentionally
+/// preserve this identity while creation and deletion invalidate it.
+/// Detection can additionally consume Python source directories (`src/`,
+/// `tests/`); that input is neither watched nor identity-bound here and is
+/// tracked with the remaining #1736 invalidation scope.
+fn hash_workspace_manifests(root: &Path) -> String {
+    let cargo_identity = hash_named_workspace_files(root, "Cargo.toml");
+    let mut present_python_markers = PYTHON_PROJECT_MARKERS
+        .iter()
+        .copied()
+        .filter(|marker| root.join(marker).is_file())
+        .peekable();
+    if present_python_markers.peek().is_none() {
+        return cargo_identity;
+    }
+
+    let mut identity = format!("cargo={cargo_identity}\n");
+    for marker in present_python_markers {
+        identity.push_str("python_marker=");
+        identity.push_str(marker);
+        identity.push('\n');
+    }
+    hash_str(&identity)
+}
+
 /// Return the deterministic identity of all matching workspace files.
 ///
 /// LSP input identity uses the same path-and-content boundary as the seam
@@ -2895,6 +2923,55 @@ mod tests {
         };
         let _ = std::fs::remove_dir_all(&dir);
         result
+    }
+
+    #[test]
+    fn python_project_marker_presence_changes_cache_identity() -> Result<(), String> {
+        let root = isolated_dir("python-project-marker-inputs");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).map_err(|err| format!("create workspace: {err}"))?;
+        let cache_key = || {
+            WorkspaceState {
+                workspace_root: &root,
+                files: &[],
+                cfg_features: None,
+                config_text: None,
+                test_intent_text: None,
+                suppressions_text: None,
+            }
+            .cache_key()
+        };
+        let baseline = cache_key();
+
+        for marker in PYTHON_PROJECT_MARKERS {
+            let marker_path = root.join(marker);
+            std::fs::write(&marker_path, "first")
+                .map_err(|err| format!("write {marker}: {err}"))?;
+            let present = cache_key();
+            assert_ne!(
+                baseline.workspace_manifests_hash, present.workspace_manifests_hash,
+                "creating {marker} must invalidate the cache identity"
+            );
+            assert_ne!(baseline.filename(), present.filename());
+
+            std::fs::write(&marker_path, "second")
+                .map_err(|err| format!("rewrite {marker}: {err}"))?;
+            let edited = cache_key();
+            assert_eq!(
+                present.workspace_manifests_hash, edited.workspace_manifests_hash,
+                "Python detection consumes {marker} presence, not contents"
+            );
+
+            std::fs::remove_file(&marker_path).map_err(|err| format!("remove {marker}: {err}"))?;
+            let removed = cache_key();
+            assert_eq!(
+                baseline.workspace_manifests_hash, removed.workspace_manifests_hash,
+                "removing {marker} must restore the baseline identity"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
     }
 
     #[test]
