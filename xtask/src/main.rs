@@ -736,9 +736,15 @@ fn changed_files_vs_base(root: &Path) -> Result<Vec<String>, String> {
         .output()
         .map_err(|err| format!("git diff --name-only failed: {err}"))?;
     if !output.status.success() {
-        return Err(
-            "git diff --name-only origin/main...HEAD failed; if origin/main is not available, run `git fetch origin main` first".to_string(),
-        );
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let detail = if stderr.is_empty() {
+            format!("exit status {}", output.status)
+        } else {
+            stderr
+        };
+        return Err(format!(
+            "git diff --name-only origin/main...HEAD failed: {detail};              if origin/main is not available, run `git fetch origin main` first"
+        ));
     }
     let text = String::from_utf8_lossy(&output.stdout);
     Ok(text.lines().map(String::from).collect())
