@@ -42,10 +42,11 @@ fn enforce_review_comments_deadline(
     receipt: &mut crate::output::review_comments_receipt::ReviewCommentsRunReceipt,
     receipt_path: &Path,
     started: Instant,
+    now: Instant,
     timeout_ms: u64,
     phase: &str,
 ) -> Result<(), String> {
-    if started.elapsed() < Duration::from_millis(timeout_ms) {
+    if now.saturating_duration_since(started) < Duration::from_millis(timeout_ms) {
         return Ok(());
     }
     receipt.limited_timeout(phase);
@@ -1289,6 +1290,14 @@ fn review_comments_with_diff_loader(
     args: &[String],
     load_diff: impl Fn(&Path, &str, &str) -> Result<String, String>,
 ) -> Result<(), String> {
+    review_comments_with_diff_loader_at(args, load_diff, Instant::now)
+}
+
+fn review_comments_with_diff_loader_at(
+    args: &[String],
+    load_diff: impl Fn(&Path, &str, &str) -> Result<String, String>,
+    now: impl Fn() -> Instant,
+) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         help::print_review_comments_help();
         return Ok(());
@@ -1315,7 +1324,7 @@ fn review_comments_with_diff_loader(
         output::outcome::display_path(&options.out),
         output::outcome::display_path(&markdown_path),
     ];
-    let started = Instant::now();
+    let started = now();
     let mut receipt = output::review_comments_receipt::ReviewCommentsRunReceipt::new(
         &input.root,
         &options.base,
@@ -1360,6 +1369,7 @@ fn review_comments_with_diff_loader(
             &mut receipt,
             &receipt_path,
             started,
+            now(),
             options.timeout_ms,
             "configuration",
         )?;
@@ -1389,6 +1399,7 @@ fn review_comments_with_diff_loader(
             &mut receipt,
             &receipt_path,
             started,
+            now(),
             options.timeout_ms,
             "static_rendering",
         )?;
@@ -1406,6 +1417,7 @@ fn review_comments_with_diff_loader(
             &mut receipt,
             &receipt_path,
             started,
+            now(),
             options.timeout_ms,
             "artifact_io",
         )?;
@@ -1435,6 +1447,7 @@ fn review_comments_with_diff_loader(
         &mut receipt,
         &receipt_path,
         started,
+        now(),
         options.timeout_ms,
         "diff_discovery",
     )?;
@@ -1446,6 +1459,7 @@ fn review_comments_with_diff_loader(
         &mut receipt,
         &receipt_path,
         started,
+        now(),
         options.timeout_ms,
         "language_facts",
     )?;
@@ -1471,6 +1485,7 @@ fn review_comments_with_diff_loader(
         &mut receipt,
         &receipt_path,
         started,
+        now(),
         options.timeout_ms,
         "canonical_analysis",
     )?;
@@ -1486,6 +1501,7 @@ fn review_comments_with_diff_loader(
         &mut receipt,
         &receipt_path,
         started,
+        now(),
         options.timeout_ms,
         "route_construction",
     )?;
@@ -1532,6 +1548,7 @@ fn review_comments_with_diff_loader(
         &mut receipt,
         &receipt_path,
         started,
+        now(),
         options.timeout_ms,
         "static_rendering",
     )?;
@@ -1544,6 +1561,7 @@ fn review_comments_with_diff_loader(
         &mut receipt,
         &receipt_path,
         started,
+        now(),
         options.timeout_ms,
         "artifact_io",
     )?;
@@ -8526,6 +8544,117 @@ language = "rust"
     #[test]
     fn lsp_version_returns_ok_with_short_flag() {
         assert_eq!(lsp(&args(&["-V"])), Ok(()));
+    }
+
+    #[test]
+    fn review_comments_diff_route_records_timeout_at_injected_deadline() -> Result<(), String> {
+        let root = unique_command_test_dir("review-comments-clock-diff");
+        std::fs::create_dir_all(root.join("src"))
+            .map_err(|err| format!("create fixture source: {err}"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"review_comments_clock_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|err| format!("write fixture manifest: {err}"))?;
+        std::fs::write(root.join("src/lib.rs"), "pub fn value() -> i32 { 1 }\n")
+            .map_err(|err| format!("write fixture source: {err}"))?;
+
+        let out = root.join("target/ripr/review/comments.json");
+        let start = Instant::now();
+        let calls = std::cell::Cell::new(0);
+        let result = review_comments_with_diff_loader_at(
+            &args(&[
+                "--root",
+                &root.display().to_string(),
+                "--base",
+                "BASE",
+                "--head",
+                "HEAD",
+                "--out",
+                &out.display().to_string(),
+            ]),
+            |_root, _base, _head| Ok(String::new()),
+            || {
+                let call = calls.get();
+                calls.set(call + 1);
+                if call == 0 {
+                    start
+                } else {
+                    start + Duration::from_secs(1)
+                }
+            },
+        );
+        if result != Err("review-comments timed out during diff_discovery".to_string()) {
+            return Err(format!(
+                "diff route must expose the injected timeout: {result:?}"
+            ));
+        }
+
+        let receipt_path = out.with_file_name("run-receipt.json");
+        let receipt: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&receipt_path)
+                .map_err(|err| format!("read timeout receipt: {err}"))?,
+        )
+        .map_err(|err| format!("parse timeout receipt: {err}"))?;
+        if receipt["status"] != "limited_timeout" || receipt["active_phase"] != "diff_discovery" {
+            return Err(format!("unexpected diff timeout receipt: {receipt}"));
+        }
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove fixture: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn review_comments_gap_ledger_records_timeout_at_injected_deadline() -> Result<(), String> {
+        let root = unique_command_test_dir("review-comments-clock-gap-ledger");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create fixture: {err}"))?;
+        let gap_ledger = root.join("gap-ledger.json");
+        let out = root.join("target/ripr/review/comments.json");
+        std::fs::write(&gap_ledger, r#"{"records":[]}"#)
+            .map_err(|err| format!("write gap ledger: {err}"))?;
+
+        let start = Instant::now();
+        let calls = std::cell::Cell::new(0);
+        let result = review_comments_with_diff_loader_at(
+            &args(&[
+                "--root",
+                &root.display().to_string(),
+                "--base",
+                "BASE",
+                "--head",
+                "HEAD",
+                "--gap-ledger",
+                &gap_ledger.display().to_string(),
+                "--out",
+                &out.display().to_string(),
+            ]),
+            |_root, _base, _head| Err("diff loader must not run".to_string()),
+            || {
+                let call = calls.get();
+                calls.set(call + 1);
+                if call == 0 {
+                    start
+                } else {
+                    start + Duration::from_secs(1)
+                }
+            },
+        );
+        if result != Err("review-comments timed out during configuration".to_string()) {
+            return Err(format!(
+                "gap-ledger route must expose the injected timeout: {result:?}"
+            ));
+        }
+
+        let receipt_path = out.with_file_name("run-receipt.json");
+        let receipt: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&receipt_path)
+                .map_err(|err| format!("read timeout receipt: {err}"))?,
+        )
+        .map_err(|err| format!("parse timeout receipt: {err}"))?;
+        if receipt["status"] != "limited_timeout" || receipt["active_phase"] != "configuration" {
+            return Err(format!("unexpected gap-ledger timeout receipt: {receipt}"));
+        }
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove fixture: {err}"))?;
+        Ok(())
     }
 
     pub(super) fn outcome_before_json() -> &'static str {
