@@ -11,3 +11,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending
+
+Reason:
+RIPR-SPEC-0168: multi-hunk redesign — ordinary probes beside the boundary probe and controls that enter the diff
+
+Command:
+`cargo xtask goldens bless unsafe_boundary_probe --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
