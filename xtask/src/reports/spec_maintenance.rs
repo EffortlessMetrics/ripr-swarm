@@ -376,11 +376,10 @@ fn civil_days((year, month, day): (i64, i64, i64)) -> i64 {
 }
 
 fn parse_spec_id(name: &str) -> Option<String> {
-    let stem = name.strip_prefix("RIPR-SPEC-")?.strip_suffix(".md")?;
-    if stem.len() != 4 || !stem.bytes().all(|byte| byte.is_ascii_digit()) {
-        return None;
-    }
-    Some(format!("RIPR-SPEC-{stem}"))
+    // The repository's canonical naming is `RIPR-SPEC-NNNN-slug.md`; reuse the
+    // shared identifier parser so this report and the spec gates agree on what
+    // a spec file is.
+    crate::spec_id_from_file_name(name)
 }
 
 fn build_row(
@@ -549,7 +548,7 @@ mod tests {
     #[test]
     fn report_is_stable_and_history_limitation_is_visible() -> Result<(), String> {
         let root = fixture_root()?;
-        let path = root.join("docs/specs/RIPR-SPEC-9999.md");
+        let path = root.join("docs/specs/RIPR-SPEC-9999-example.md");
         fs::write(&path, "# Example\n\nStatus: proposed\n").map_err(|error| error.to_string())?;
         fs::write(root.join("docs/specs/README.md"), "index").map_err(|error| error.to_string())?;
         let left = build_report(&root, "2026-08-27", &HistoryInput::default())?;
@@ -570,7 +569,7 @@ mod tests {
     fn age_is_an_observation_and_periodic_reason_has_a_basis() -> Result<(), String> {
         let root = fixture_root()?;
         fs::write(
-            root.join("docs/specs/RIPR-SPEC-9999.md"),
+            root.join("docs/specs/RIPR-SPEC-9999-example.md"),
             "# Example\n\nStatus: proposed\n",
         )
         .map_err(|error| error.to_string())?;
@@ -580,7 +579,7 @@ mod tests {
             ..HistoryInput::default()
         };
         history.last_changed.insert(
-            "docs/specs/RIPR-SPEC-9999.md".to_string(),
+            "docs/specs/RIPR-SPEC-9999-example.md".to_string(),
             "2025-01-01".to_string(),
         );
         let report = build_report(&root, "2026-08-27", &history)?;
@@ -616,7 +615,7 @@ mod tests {
         let root = fixture_root()?;
         for id in ["0001", "0002"] {
             fs::write(
-                root.join(format!("docs/specs/RIPR-SPEC-{id}.md")),
+                root.join(format!("docs/specs/RIPR-SPEC-{id}-example.md")),
                 "# Example\n\nStatus: planned\n",
             )
             .map_err(|error| error.to_string())?;
@@ -642,7 +641,7 @@ mod tests {
     #[test]
     fn malformed_required_source_fails_visibly() -> Result<(), String> {
         let root = fixture_root()?;
-        fs::write(root.join("docs/specs/RIPR-SPEC-9999.md"), [0xff, 0xfe])
+        fs::write(root.join("docs/specs/RIPR-SPEC-9999-example.md"), [0xff, 0xfe])
             .map_err(|error| error.to_string())?;
         if build_report(&root, "2026-08-27", &HistoryInput::default()).is_ok() {
             return Err("invalid UTF-8 unexpectedly succeeded".to_string());
