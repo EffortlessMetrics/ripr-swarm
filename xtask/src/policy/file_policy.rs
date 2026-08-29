@@ -82,10 +82,7 @@ fn validate_test_covered_by(path: &str, commands: &[(usize, String)]) -> Result<
         } else {
             String::new()
         };
-        let stderr = format!(
-            "{timeout}status: {status}; stdout: {}; stderr: {}",
-            output.stdout, output.stderr
-        );
+        let stderr = format!("{timeout}status: {status}");
         Ok((
             output.status.is_some_and(|status| status.success()) && !output.timed_out,
             output.stdout,
