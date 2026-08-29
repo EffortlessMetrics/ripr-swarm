@@ -738,12 +738,12 @@ pub(crate) fn release_temp_root() -> Result<PathBuf, String> {
     let configured = std::env::temp_dir();
     let current = std::env::current_dir()
         .map_err(|err| format!("read current directory for release fixture failed: {err}"))?;
-    let current = fs::canonicalize(&current).map_err(|err| {
+    let current = strip_verbatim_prefix(fs::canonicalize(&current).map_err(|err| {
         format!("canonicalize current directory for release fixture failed: {err}")
-    })?;
-    let mut candidate = fs::canonicalize(&configured).map_err(|err| {
+    })?);
+    let mut candidate = strip_verbatim_prefix(fs::canonicalize(&configured).map_err(|err| {
         format!("canonicalize temporary directory for release fixture failed: {err}")
-    })?;
+    })?);
     for _ in 0..64 {
         if candidate != current && !candidate.starts_with(&current) {
             return Ok(candidate);
@@ -754,6 +754,19 @@ pub(crate) fn release_temp_root() -> Result<PathBuf, String> {
             .ok_or_else(|| "configured temporary directory has no external parent".to_string())?;
     }
     Err("could not find an external release fixture directory within 64 parent steps".to_string())
+}
+
+/// Strip the Windows verbatim (`\?\`) prefix `fs::canonicalize` adds.
+/// Downstream `cargo install --path` rejects verbatim paths
+/// ("invalid path url" / manifest resolved at the drive root), and the
+/// plain form is otherwise equivalent.
+fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+    let text = path.as_os_str().to_string_lossy();
+    if let Some(stripped) = text.strip_prefix(r"\?\") {
+        PathBuf::from(stripped.to_owned())
+    } else {
+        path
+    }
 }
 
 fn create_external_doctor_fixture(root: &Path) -> Result<PathBuf, String> {
