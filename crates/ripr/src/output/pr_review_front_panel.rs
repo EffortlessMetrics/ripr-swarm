@@ -2535,14 +2535,11 @@ mod tests {
             report.movement.before_class.as_deref(),
             Some("weakly_exposed")
         );
-        assert_eq!(
-            report
-                .top_issue
-                .as_ref()
-                .and_then(|issue| issue.classification.as_deref()),
-            Some("exposed"),
-            "top_issue must retain its existing exposure vocabulary"
-        );
+        // This input feeds only assistant_health, so top_issue (which derives
+        // from first_action) is None here. The exposure-vocabulary contrast
+        // for the same fixture family — top_issue stays `exposed` while the
+        // movement pair keeps grip vocabulary — is pinned by the
+        // coverage_flat_grip_improved case in the table-driven test above.
         Ok(())
     }
 
