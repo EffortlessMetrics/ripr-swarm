@@ -691,7 +691,7 @@ fn check_fast_in(repository_root: &Path) -> Result<(), String> {
     );
 
     let body = format!(
-        "# check-fast report\n\nStatus: pass\n\nRan:\n{}\n\nSkipped:\n{}\n",
+        "# check-fast report\n\nStatus: pass\n\nSelector: passed\nBase: origin/main\n\nRan:\n{}\n\nSkipped:\n{}\n",
         ran.iter()
             .map(|g| format!("- {g}"))
             .collect::<Vec<_>>()
