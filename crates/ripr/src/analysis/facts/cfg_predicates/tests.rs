@@ -254,3 +254,17 @@ fn split_leading_attribute_extracts_balanced_prefix_with_literals() {
     assert_eq!(split_leading_attribute("fn plain() {}"), None);
     assert_eq!(split_leading_attribute(""), None);
 }
+
+#[test]
+fn deeply_nested_predicates_fail_closed_instead_of_overflowing() {
+    let deep = format!(
+        "#[cfg(all({}test{}))]",
+        "all(".repeat(4_000),
+        ")".repeat(4_000)
+    );
+    assert_eq!(
+        super::classify_attribute(&deep),
+        CfgTestRequirement::Unknown,
+        "exotic nesting depth must fail closed, not abort"
+    );
+}

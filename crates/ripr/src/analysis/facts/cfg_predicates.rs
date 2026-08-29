@@ -175,8 +175,21 @@ pub(crate) fn split_leading_attribute(text: &str) -> Option<(&str, &str)> {
     None
 }
 
+/// Nesting depth bound for predicate recursion. Real cfg expressions nest a
+/// handful of levels; anything past this bound is exotic input that fails
+/// closed rather than risking unbounded recursion on the stack.
+const MAX_PREDICATE_NESTING: usize = 64;
+
 /// Classifies the token sequence inside `cfg(...)`.
 fn classify_predicate(tokens: &[Token]) -> CfgTestRequirement {
+    classify_predicate_at_depth(tokens, 0)
+}
+
+fn classify_predicate_at_depth(tokens: &[Token], depth: usize) -> CfgTestRequirement {
+    if depth > MAX_PREDICATE_NESTING {
+        return Unknown;
+    }
+    let depth = depth + 1;
     match tokens {
         [Token::Word(option)] if option == "test" => RequiresTest,
         // A bare custom option (`cfg(unix)`) is provably not a test gate.
@@ -193,7 +206,7 @@ fn classify_predicate(tokens: &[Token]) -> CfgTestRequirement {
             let branches: Vec<CfgTestRequirement> = split_top_level_commas(inner)
                 .into_iter()
                 .filter(|branch| !branch.is_empty())
-                .map(classify_predicate)
+                .map(|branch| classify_predicate_at_depth(branch, depth))
                 .collect();
             if branches.is_empty() {
                 // `cfg(all())` / `cfg(any())` are not well-formed Rust.
