@@ -172,6 +172,17 @@ runner.only("unknown root", () => {
 test.retry("unknown modifier", () => {
     expect(applyDiscount(100, 100)).toBe(90);
 });
+test.only.skip("active then disabled", () => {
+    expect(applyDiscount(100, 100)).toBe(90);
+});
+test.skip.only("disabled then active", () => {
+    expect(applyDiscount(100, 100)).toBe(90);
+});
+describe.only.skip("active then disabled suite", () => {
+    test("nested", () => {
+        expect(applyDiscount(100, 100)).toBe(90);
+    });
+});
 "#,
     );
 
