@@ -5,7 +5,7 @@ Spec: RIPR-SPEC-0168
 ## Given
 
 The #3536 unsafe-boundary shape, with every control inside the analyzed diff:
-the binding `total` changes outside the boundary while an assertion-bearing
+the binding `total` changes outside the boundary while a conditional
 predicate observes it, the `sum_bytes` loop body changes strictly inside an
 explicit `unsafe {}` block, and `read_first`'s single-line unsafe statement
 (a shared edge line) changes as a negative control.

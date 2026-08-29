@@ -68,8 +68,9 @@ construction, so the classifier cannot promote reach plus an oracle into
 
 ## Outputs
 
-- One `static_unknown` probe per boundary, projected at the changed line, with
-  the `unsafe_boundary` probe shape.
+- One `static_unknown` probe for the innermost boundary containing each
+  changed line, projected at that line with the `unsafe_boundary` probe
+  shape.
 
 ## Acceptance Examples
 
