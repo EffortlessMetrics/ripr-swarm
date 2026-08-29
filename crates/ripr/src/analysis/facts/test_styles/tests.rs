@@ -221,6 +221,66 @@ mod tests {
 }
 
 #[test]
+fn normalizer_preserves_cfg_all_test_module_roles_in_both_conjunct_orders() -> Result<(), String> {
+    let adapter = RaRustSyntaxAdapter;
+    let mut facts = adapter.summarize_file(
+        Path::new("src/lib.rs"),
+        r#"
+#[cfg(all(feature = "slow", test))]
+mod slow_tests {
+    fn test_second_helper() {}
+
+    #[test]
+    fn test_second_case() { assert!(true); }
+}
+
+#[cfg(all(test, feature = "slow"))]
+mod test_first_tests {
+    fn test_first_helper() {}
+}
+
+#[cfg(any(test, feature = "slow"))]
+mod any_tests {
+    fn any_helper() {}
+}
+"#,
+    )?;
+
+    normalize_file_test_styles(&mut facts);
+
+    for helper in ["test_second_helper", "test_first_helper"] {
+        assert!(
+            facts
+                .functions
+                .iter()
+                .find(|function| function.name == helper)
+                .is_some_and(|function| function.is_test),
+            "{helper} must keep its producer-owned cfg-test evidence role"
+        );
+        assert!(
+            facts.tests.iter().all(|test| test.name != helper),
+            "{helper} must not become an executable TestFact"
+        );
+    }
+    assert!(
+        facts
+            .tests
+            .iter()
+            .any(|test| test.name == "test_second_case"),
+        "the executable test inside the test-second cfg(all(...)) module is unaffected"
+    );
+    assert!(
+        facts
+            .functions
+            .iter()
+            .find(|function| function.name == "any_helper")
+            .is_some_and(|function| !function.is_test),
+        "cfg(any(test, ..)) modules do not grant test roles"
+    );
+    Ok(())
+}
+
+#[test]
 fn lexical_facts_share_exact_test_style_recognition() -> Result<(), String> {
     let adapter = LexicalRustSyntaxAdapter;
     let mut facts = adapter.summarize_file(

@@ -164,7 +164,7 @@ fn is_inside_cfg_test_module(source: &str, function_start_line: usize) -> bool {
 
     for line in source.lines().take(function_start_line.saturating_sub(1)) {
         let trimmed = line.trim();
-        if trimmed.starts_with("#[cfg(test)]") {
+        if cfg_attribute_gates_on_test(trimmed) {
             pending_cfg_test = true;
         }
 
@@ -189,6 +189,49 @@ fn is_inside_cfg_test_module(source: &str, function_start_line: usize) -> bool {
     }
 
     scopes.iter().any(|is_cfg_test_module| *is_cfg_test_module)
+}
+
+/// Line-level mirror of the producer's cfg-term semantics (ra
+/// `cfg_attribute_requires_test`): plain `#[cfg(test)]` and
+/// `#[cfg(all(..., test, ...))]` with a top-level bare `test` conjunct gate
+/// the module on test; `any(test, ..)` and `not(test)` stay excluded. The
+/// parser producer classifies on the attribute token tree, so exotic
+/// spellings (multi-line attributes, commas inside strings) remain its
+/// jurisdiction; this walk covers the same-line forms the brace heuristic
+/// can see, so producer-owned cfg-test roles are never demoted for them.
+fn cfg_attribute_gates_on_test(trimmed: &str) -> bool {
+    let Some(rest) = trimmed.strip_prefix("#[cfg(") else {
+        return false;
+    };
+    let mut depth = 1usize;
+    let mut gate_end = None;
+    for (index, character) in rest.char_indices() {
+        match character {
+            '(' => depth = depth.saturating_add(1),
+            ')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    gate_end = Some(index);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(gate_end) = gate_end else {
+        return false;
+    };
+    let gate = &rest[..gate_end];
+    if gate == "test" {
+        return true;
+    }
+    let Some(arguments) = gate
+        .strip_prefix("all(")
+        .and_then(|rest| rest.strip_suffix(')'))
+    else {
+        return false;
+    };
+    arguments.split(',').any(|term| term.trim() == "test")
 }
 
 fn normalized_test_attribute_path(attribute: &str) -> Option<String> {
