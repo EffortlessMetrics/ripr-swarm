@@ -704,11 +704,9 @@ fn target_affinity_production_owner_call_sets_by_package(
     let owner_names_by_package_and_module_path =
         production_owner_names_by_package_and_module_path(index);
     let mut by_package: BTreeMap<String, BTreeMap<String, Vec<BTreeSet<String>>>> = BTreeMap::new();
-    for function in index
-        .functions
-        .iter()
-        .filter(|function| !function.is_test && !rust_index::is_test_file(&function.file))
-    {
+    for function in index.functions.iter().filter(|function| {
+        !function.source_role.is_evidence_role() && !rust_index::is_test_file(&function.file)
+    }) {
         let Some(package) = package_scope(&function.file) else {
             continue;
         };
@@ -749,11 +747,9 @@ pub(in crate::analysis::test_grip_evidence) fn target_affinity_production_owner_
     let owner_names_by_package_and_module_path =
         production_owner_names_by_package_and_module_path(index);
     let mut by_module_path: HelperOwnerCallsByModulePath = BTreeMap::new();
-    for function in index
-        .functions
-        .iter()
-        .filter(|function| !function.is_test && !rust_index::is_test_file(&function.file))
-    {
+    for function in index.functions.iter().filter(|function| {
+        !function.source_role.is_evidence_role() && !rust_index::is_test_file(&function.file)
+    }) {
         let Some(module_path) = module_path_for_index(index, &function.file) else {
             continue;
         };
@@ -951,11 +947,9 @@ pub(in crate::analysis::test_grip_evidence) fn production_owner_names_by_module_
     index: &RustIndex,
 ) -> OwnerNamesByModulePath {
     let mut by_module_path: OwnerNamesByModulePath = BTreeMap::new();
-    for function in index
-        .functions
-        .iter()
-        .filter(|function| !function.is_test && !rust_index::is_test_file(&function.file))
-    {
+    for function in index.functions.iter().filter(|function| {
+        !function.source_role.is_evidence_role() && !rust_index::is_test_file(&function.file)
+    }) {
         let Some(module_path) = module_path_for_index(index, &function.file) else {
             continue;
         };
@@ -971,11 +965,9 @@ pub(in crate::analysis::test_grip_evidence) fn production_owner_names_by_package
     index: &RustIndex,
 ) -> OwnerNamesByPackageAndModulePath {
     let mut by_package: OwnerNamesByPackageAndModulePath = BTreeMap::new();
-    for function in index
-        .functions
-        .iter()
-        .filter(|function| !function.is_test && !rust_index::is_test_file(&function.file))
-    {
+    for function in index.functions.iter().filter(|function| {
+        !function.source_role.is_evidence_role() && !rust_index::is_test_file(&function.file)
+    }) {
         let Some(package) = package_scope(&function.file) else {
             continue;
         };
@@ -1542,11 +1534,9 @@ pub(in crate::analysis::test_grip_evidence) fn unambiguous_production_owner_name
     index: &RustIndex,
 ) -> ProductionOwnerNamesByPackage {
     let mut counts_by_package: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
-    for function in index
-        .functions
-        .iter()
-        .filter(|function| !function.is_test && !rust_index::is_test_file(&function.file))
-    {
+    for function in index.functions.iter().filter(|function| {
+        !function.source_role.is_evidence_role() && !rust_index::is_test_file(&function.file)
+    }) {
         let Some(package) = package_scope(&function.file) else {
             continue;
         };
@@ -1593,9 +1583,10 @@ pub(in crate::analysis::test_grip_evidence) fn local_function_names_by_file(
 
 /// Borrowed (file, name, start_line) identity of a function that is an
 /// actual executable test (`TestFact` member), so graph-admission lookups
-/// need no per-function key clones. #3273 widened
-/// `FunctionFact::is_test` to cover plain helpers inside inline
-/// `#[cfg(test)]` modules; those helpers are evidence-role, not tests, so
+/// need no per-function key clones. #3273 widened the function
+/// source role to cover plain helpers inside inline `#[cfg(test)]`
+/// modules (now the typed `FunctionFact::source_role`, #3531); those
+/// helpers are evidence-role, not tests, so
 /// helper-graph admission must exclude only real tests (#3286) while
 /// seam/production-owner filters keep using the wider role. The
 /// start_line component makes the key exact identity rather than a
@@ -1621,18 +1612,16 @@ fn actual_test_keys(index: &RustIndex) -> BTreeSet<ActualTestKey<'_>> {
 
 /// Names that can shadow same-file production helpers while resolving test evidence.
 ///
-/// `FunctionFact::is_test` is the parser-owned source-role authority. Reusing it here
+/// `FunctionFact::source_role` is the parser-owned source-role authority. Reusing it here
 /// keeps `cfg(all(..., test))` and future supported test-role forms aligned with seam
 /// exclusion instead of maintaining a second lexical cfg scanner.
 pub(in crate::analysis::test_grip_evidence) fn test_scoped_function_names_by_file(
     index: &RustIndex,
 ) -> BTreeMap<PathBuf, BTreeSet<String>> {
     let mut names_by_file: BTreeMap<PathBuf, BTreeSet<String>> = BTreeMap::new();
-    for function in index
-        .functions
-        .iter()
-        .filter(|function| function.is_test || rust_index::is_test_file(&function.file))
-    {
+    for function in index.functions.iter().filter(|function| {
+        function.source_role.is_evidence_role() || rust_index::is_test_file(&function.file)
+    }) {
         if let Some(names) = names_by_file.get_mut(&function.file) {
             names.insert(function.name.clone());
         } else {
@@ -1651,7 +1640,9 @@ pub(in crate::analysis::test_grip_evidence) fn production_owner_names(
     index
         .functions
         .iter()
-        .filter(|function| !function.is_test && !rust_index::is_test_file(&function.file))
+        .filter(|function| {
+            !function.source_role.is_evidence_role() && !rust_index::is_test_file(&function.file)
+        })
         .map(|function| function.name.clone())
         .collect()
 }
@@ -2472,14 +2463,14 @@ pub(in crate::analysis::test_grip_evidence) fn code_contains_parent_qualified_he
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::facts::{FileFacts, FunctionFact, RustIndex};
+    use crate::analysis::facts::{FileFacts, FunctionFact, FunctionSourceRole, RustIndex};
     use crate::domain::SymbolId;
 
     #[test]
     fn cfg_all_test_role_blocks_same_file_shadow_credit() {
         let file = PathBuf::from("crate/src/lib.rs");
-        let production = function_fact(&file, "wrapper", 1, false);
-        let evidence_shadow = function_fact(&file, "wrapper", 6, true);
+        let production = function_fact(&file, "wrapper", 1, FunctionSourceRole::Production);
+        let evidence_shadow = function_fact(&file, "wrapper", 6, FunctionSourceRole::CfgTestModule);
         let source = r#"fn wrapper() {}
 
 #[cfg(all(feature = "slow", test))]
@@ -2518,7 +2509,12 @@ mod tests {
         ));
     }
 
-    fn function_fact(file: &Path, name: &str, start_line: usize, is_test: bool) -> FunctionFact {
+    fn function_fact(
+        file: &Path,
+        name: &str,
+        start_line: usize,
+        source_role: FunctionSourceRole,
+    ) -> FunctionFact {
         FunctionFact {
             id: SymbolId(format!("symbol:{name}:{start_line}")),
             name: name.to_string(),
@@ -2529,7 +2525,7 @@ mod tests {
             calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
-            is_test,
+            source_role,
             attrs: Vec::new(),
         }
     }

@@ -158,7 +158,11 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// conjunctions in `cfg(all(...))` through the shared cfg-predicate
 /// authority (#3530); old file facts may retain nested-conjunct helpers as
 /// production.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "0.6";
+/// `0.6` -> `0.7`: `FunctionFact.is_test` is replaced by the typed
+/// `FunctionFact.source_role` (#3531). The evidence-bit semantics are
+/// unchanged, but the on-disk `FunctionFact` shape changed, so old
+/// per-file entries cannot deserialize into the new model and must miss.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "0.7";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -5122,7 +5126,10 @@ mod generation_transition_tests {
             .iter()
             .find(|function| function.name == "exercise_device_labels")
             .ok_or("helper missing from warm facts")?;
-        assert!(helper.is_test, "warm hit keeps the #3273 evidence role");
+        assert!(
+            helper.source_role.is_evidence_role(),
+            "warm hit keeps the #3273 evidence role"
+        );
         assert!(
             !warm
                 .tests

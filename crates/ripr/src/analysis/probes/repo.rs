@@ -23,7 +23,7 @@ pub fn probes_for_repo_file(root: &Path, path: &Path, index: &RustIndex) -> Vec<
         // facts; an owner carrying the test/evidence role is skipped,
         // mirroring the diff path and the seam inventory.
         let owner_function = find_owner_function(index, path, shape.start_line);
-        if owner_function.is_some_and(|function| function.is_test) {
+        if owner_function.is_some_and(|function| function.source_role.is_evidence_role()) {
             continue;
         }
         // Include facts keep their fragment path for source locations, while
@@ -76,6 +76,7 @@ mod tests {
         FileFacts, FunctionFact, PROBE_SHAPE_ERROR_PATH, ProbeShapeFact, RustIndex,
     };
     use super::*;
+    use crate::analysis::facts::FunctionSourceRole;
     use crate::domain::{DeltaKind, ProbeFamily, SymbolId};
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
@@ -100,7 +101,7 @@ mod tests {
                         calls: vec![],
                         returns: vec![],
                         literals: vec![],
-                        is_test: false,
+                        source_role: FunctionSourceRole::Production,
                         attrs: vec![],
                     }],
                     probe_shapes: vec![
@@ -174,7 +175,7 @@ mod tests {
                         calls: vec![],
                         returns: vec![],
                         literals: vec![],
-                        is_test: false,
+                        source_role: FunctionSourceRole::Production,
                         attrs: vec![],
                     }],
                     probe_shapes: vec![ProbeShapeFact {

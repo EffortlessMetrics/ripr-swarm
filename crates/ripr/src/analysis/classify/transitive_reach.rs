@@ -118,7 +118,11 @@ pub(in crate::analysis) fn find_transitive_witness(
     let prod_fns: Vec<&FunctionSummary> = index
         .files
         .values()
-        .flat_map(|file| file.functions.iter().filter(|f| !f.is_test))
+        .flat_map(|file| {
+            file.functions
+                .iter()
+                .filter(|f| !f.source_role.is_evidence_role())
+        })
         .collect();
 
     // One witness per test: the lexicographically-smallest entry symbol from
@@ -191,7 +195,11 @@ pub(in crate::analysis) fn find_macro_reach_witness(
     let prod_fns: Vec<&FunctionSummary> = index
         .files
         .values()
-        .flat_map(|file| file.functions.iter().filter(|f| !f.is_test))
+        .flat_map(|file| {
+            file.functions
+                .iter()
+                .filter(|f| !f.source_role.is_evidence_role())
+        })
         .collect();
 
     let mut sweep = ReachSweep::new(&prod_fns, owner_name);
@@ -842,6 +850,7 @@ pub(in crate::analysis) const RUST_MACRO_REACH_MESSAGE: &str = "ripr saw a test 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::facts::FunctionSourceRole;
     use crate::analysis::facts::{CallFact, FileFacts, FunctionSummary, RustIndex, TestFact};
     use crate::domain::SymbolId;
     use std::collections::BTreeMap;
@@ -869,7 +878,7 @@ mod tests {
                 .collect(),
             returns: Vec::new(),
             literals: Vec::new(),
-            is_test: false,
+            source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
         }
     }

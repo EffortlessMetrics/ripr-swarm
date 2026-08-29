@@ -340,7 +340,10 @@ pub(crate) fn resolve_chain(
     // #3296 review M2: tests are ordinary functions in the index, so
     // the chain must never climb into a test body — the entry a test
     // can call directly is the topmost production caller.
-    while hops.last().is_some_and(|top| top.caller.is_test) {
+    while hops
+        .last()
+        .is_some_and(|top| top.caller.source_role.is_evidence_role())
+    {
         hops.pop();
     }
     let mut resolved = vec![hop];
@@ -497,6 +500,7 @@ pub(crate) fn strict_literal(argument: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::facts::FunctionSourceRole;
     use crate::analysis::facts::{CallFact, FunctionSummary};
     use crate::domain::SymbolId;
     use std::path::PathBuf;
@@ -519,7 +523,7 @@ mod tests {
                 .collect(),
             returns: Vec::new(),
             literals: Vec::new(),
-            is_test: false,
+            source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
         }
     }

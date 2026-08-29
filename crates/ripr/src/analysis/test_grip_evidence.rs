@@ -1991,7 +1991,9 @@ fn test_target_evidence(
         .functions
         .iter()
         .filter(|function| {
-            function.is_test && function.name == test.name && function.start_line == test.start_line
+            function.source_role.is_evidence_role()
+                && function.name == test.name
+                && function.start_line == test.start_line
         })
         .collect();
     if matches.len() != 1 {

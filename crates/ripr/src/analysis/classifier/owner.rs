@@ -23,6 +23,7 @@ fn normalize_symbol_id(id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::facts::FunctionSourceRole;
     use crate::analysis::rust_index::FunctionFact;
     use crate::domain::{DeltaKind, ProbeFamily, ProbeId, SourceLocation, SymbolId};
     use std::path::PathBuf;
@@ -39,7 +40,7 @@ mod tests {
             calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
-            is_test: false,
+            source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
         };
         let index = RustIndex {

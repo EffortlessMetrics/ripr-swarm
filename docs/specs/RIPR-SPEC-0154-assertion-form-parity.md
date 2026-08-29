@@ -32,7 +32,8 @@ owner's source role.
   calls, `matches!` shapes) produce no oracle: exactness is never
   inferred from messages or names.
 - Repo-mode probe seeding filters shapes whose owning function carries
-  the test/evidence role (`FunctionFact::is_test`), mirroring the diff
+  the test/evidence role (`FunctionFact::source_role`, the typed
+  function source role), mirroring the diff
   path and the seam inventory: harness plumbing inside production files
   never enters the production subject inventory.
 - `#[cfg(all(test, ...))]` module members carry the evidence role like

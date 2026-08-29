@@ -277,6 +277,73 @@ pub struct FileFacts {
     pub source: String,
 }
 
+/// Producer-owned source role for one indexed Rust function (#3531).
+///
+/// This replaces the historical `FunctionFact::is_test` boolean, which
+/// compressed several different questions into a single bit. The variants
+/// keep exactly the meanings the producers can distinguish apart, so
+/// consumers compare roles instead of re-deriving them from paths,
+/// attributes, or `cfg` strings:
+///
+/// - `TestAttribute` and `ParameterizedExpansion` are executable tests:
+///   they carry (or were promoted from) an exact supported test-defining
+///   attribute and register `TestFact`s — the test selector denominator.
+/// - `CfgTestModule` is evidence-only helper role: a function inside a
+///   test-required module (`#[cfg(test)]`, or a `test` conjunct in
+///   `cfg(all(...))` through the shared `cfg_predicates` authority). It
+///   stays evidence-capable without entering the executable-test
+///   denominator.
+/// - `Production` is ordinary non-evidence source and remains a
+///   production-subject candidate. Production-subject *eligibility* is
+///   still the consumer-side composition of this role with the file-level
+///   `SourceRole` (`analysis/workspace/source_role.rs`): a `Production`-role
+///   function under `tests/**` stays ineligible through that file role,
+///   exactly as before this type existed.
+///
+/// Dimensions with no function-level producer today are deliberately absent
+/// rather than fabricated: the explicit production-like opt-in
+/// (`analysis.production_like_targets`) acts at the file `SourceRole`
+/// layer, and a typed unknown awaits a real producer (#3499 / #3532 own the
+/// next attribute and registered-harness families). Extending this enum is
+/// a producer change; a renderer or consumer may display the role but may
+/// not recalculate it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FunctionSourceRole {
+    /// Ordinary production function: no test-defining attribute and not a
+    /// member of a test-required module. The historical `is_test == false`.
+    Production,
+    /// Carries an exact supported test-defining attribute (`#[test]`,
+    /// `#[tokio::test]`, `#[async_std::test]`, `#[rstest]`, ...). Registers
+    /// an executable `TestFact`. When the facts came from the lexical
+    /// fallback, the parser-fallback provenance stays on
+    /// `FileFacts::used_lexical_fallback`.
+    TestAttribute,
+    /// Member of a test-required module — classified by the parser through
+    /// the `cfg_predicates` authority (#3530) or preserved by the facts
+    /// normalizer's cfg-test walk. Evidence-role helper: no executable
+    /// `TestFact` is registered for this variant alone.
+    CfgTestModule,
+    /// Promoted by the explicit test-case authority
+    /// (`facts::parameterized_tests`) from an exact `#[test_case(...)]`
+    /// family attribute. Registers an executable, promoted `TestFact`.
+    ParameterizedExpansion,
+}
+
+impl FunctionSourceRole {
+    /// The exact projection of the historical `FunctionFact::is_test`
+    /// boolean: does this function carry test/evidence role at all
+    /// (executable test or evidence-only helper)?
+    ///
+    /// This is a named projection with one documented meaning. A consumer
+    /// asking a different question (executable-test membership,
+    /// production-subject eligibility, ...) must compare variants or compose
+    /// the file-level `SourceRole` instead of widening this predicate.
+    pub fn is_evidence_role(self) -> bool {
+        !matches!(self, Self::Production)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FunctionFact {
     pub id: SymbolId,
@@ -288,7 +355,7 @@ pub struct FunctionFact {
     pub calls: Vec<CallFact>,
     pub returns: Vec<ReturnFact>,
     pub literals: Vec<LiteralFact>,
-    pub is_test: bool,
+    pub source_role: FunctionSourceRole,
     /// Attribute syntax lines (e.g., `#[rstest]`, `#[case(100, 100)]`,
     /// `#[test]`) captured from the AST `attrs()` iterator. Used by
     /// `analysis/value-extraction-v2` to read rstest case parameters

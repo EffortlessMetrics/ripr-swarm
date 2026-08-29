@@ -1884,6 +1884,7 @@ mod tests {
     };
     use crate::analysis::cancellation;
     use crate::analysis::diff::{ChangedFile, ChangedLine};
+    use crate::analysis::facts::FunctionSourceRole;
     use crate::analysis::facts::{
         CallFact, FunctionSummary, LiteralFact, RustIndex, TestFact, TestSummary,
     };
@@ -3683,7 +3684,7 @@ let _ = (result, note, raw);"##,
             calls: vec![],
             returns: vec![],
             literals: vec![],
-            is_test: false,
+            source_role: FunctionSourceRole::Production,
             attrs: attrs.into_iter().map(|s| s.to_string()).collect(),
         }
     }

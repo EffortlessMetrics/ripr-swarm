@@ -138,6 +138,7 @@ mod tests {
     use super::evidence_summaries;
     use super::{ClassifiedProbeEvidence, ProbeContext, PropagationWitnessDiagnostic};
     use crate::analysis::classifier::finding::build_finding;
+    use crate::analysis::facts::FunctionSourceRole;
     use crate::analysis::facts::{FunctionSummary, ReturnFact, RustIndex};
     use crate::domain::{
         Confidence, DeltaKind, Probe, ProbeFamily, ProbeId, SourceLocation, StageEvidence,
@@ -188,7 +189,7 @@ mod tests {
                 text: "Ok(amount)".to_string(),
             }],
             literals: Vec::new(),
-            is_test: false,
+            source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
         };
         let index = RustIndex::default();
@@ -230,7 +231,7 @@ mod tests {
                 text: "Ok(amount)".to_string(),
             }],
             literals: Vec::new(),
-            is_test: false,
+            source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
         };
         let index = RustIndex::default();

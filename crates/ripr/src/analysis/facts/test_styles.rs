@@ -1,5 +1,5 @@
 use super::cfg_predicates;
-use super::{FileFacts, FunctionFact, RustIndex, TestFact};
+use super::{FileFacts, FunctionFact, FunctionSourceRole, RustIndex, TestFact};
 use crate::analysis::extract::extract_assertions;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -48,7 +48,7 @@ pub(super) fn normalize_index_test_styles(index: &mut RustIndex) {
     let mut test_by_function = BTreeMap::new();
     for facts in index.files.values() {
         for function in &facts.functions {
-            role_by_function.insert(FunctionKey::from_function(function), function.is_test);
+            role_by_function.insert(FunctionKey::from_function(function), function.source_role);
         }
         for test in &facts.tests {
             test_by_function.insert(FunctionKey::from_test(test), test.clone());
@@ -56,14 +56,14 @@ pub(super) fn normalize_index_test_styles(index: &mut RustIndex) {
     }
 
     for function in &mut index.functions {
-        if let Some(is_test) = role_by_function.get(&FunctionKey::from_function(function)) {
-            function.is_test = *is_test;
+        if let Some(role) = role_by_function.get(&FunctionKey::from_function(function)) {
+            function.source_role = *role;
         }
     }
 
     let mut normalized_tests = Vec::new();
     for function in &index.functions {
-        if !function.is_test {
+        if !function.source_role.is_evidence_role() {
             continue;
         }
         if let Some(test) = test_by_function.remove(&FunctionKey::from_function(function)) {
@@ -97,9 +97,28 @@ fn normalize_file_test_styles(facts: &mut FileFacts) {
         // executable TestFacts. Preserve that producer-owned distinction while
         // correcting prefix lookalikes that arrived with a TestFact.
         let preserve_cfg_test_role = !has_test_attribute
-            && function.is_test
+            && function.source_role.is_evidence_role()
             && is_inside_cfg_test_module(&facts.source, function.start_line);
-        function.is_test = has_test_attribute || preserve_cfg_test_role;
+        // The normalizer's role law (#3531): the exact attribute vocabulary
+        // makes the function an executable test, the preserved cfg-test walk
+        // keeps evidence-only helper role, and everything else demotes to
+        // production — the same bit the boolean recomputed before the typed
+        // role existed. A promotion-claimed expansion keeps its explicit
+        // test-case provenance; the normalizer credits the same exact
+        // attribute family, so this only preserves which producer said so.
+        let promotion_claimed_expansion =
+            function.source_role == FunctionSourceRole::ParameterizedExpansion;
+        function.source_role = if has_test_attribute {
+            if promotion_claimed_expansion {
+                FunctionSourceRole::ParameterizedExpansion
+            } else {
+                FunctionSourceRole::TestAttribute
+            }
+        } else if preserve_cfg_test_role {
+            FunctionSourceRole::CfgTestModule
+        } else {
+            FunctionSourceRole::Production
+        };
 
         if has_test_attribute {
             normalized_tests.push(match existing_test {
