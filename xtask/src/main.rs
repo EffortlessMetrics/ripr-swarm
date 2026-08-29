@@ -755,40 +755,51 @@ fn check_fast_selector_failure_report(error: &str) -> String {
 mod check_fast_selector_tests {
     use super::*;
 
+    fn run_fixture_git(root: &std::path::Path, args: &[&str]) -> Result<(), String> {
+        let status = std::process::Command::new("git")
+            .current_dir(root)
+            .args(args)
+            .status()
+            .map_err(|err| format!("run selector fixture command {args:?}: {err}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("git fixture command failed: {args:?}"))
+        }
+    }
+
     #[test]
-    fn empty_selection_is_distinct_from_selector_failure() {
+    fn empty_selection_is_distinct_from_selector_failure() -> Result<(), String> {
         let root = std::env::temp_dir().join(format!("ripr-check-fast-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).expect("create selector fixture");
-        let run = |args: &[&str]| {
-            let status = std::process::Command::new("git")
-                .current_dir(&root)
-                .args(args)
-                .status()
-                .expect("run selector fixture command");
-            assert!(status.success(), "git fixture command failed: {args:?}");
-        };
-        run(&["init", "--initial-branch=main"]);
-        run(&["config", "user.email", "ripr@example.invalid"]);
-        run(&["config", "user.name", "ripr test"]);
-        std::fs::write(root.join("README.md"), "fixture\n").expect("write selector fixture");
-        run(&["add", "."]);
-        run(&["commit", "-m", "fixture"]);
-        run(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        std::fs::create_dir_all(&root).map_err(|err| format!("create selector fixture: {err}"))?;
+        let run = |args: &[&str]| run_fixture_git(&root, args);
+        run(&["init", "--initial-branch=main"])?;
+        run(&["config", "user.email", "ripr@example.invalid"])?;
+        run(&["config", "user.name", "ripr test"])?;
+        std::fs::write(root.join("README.md"), "fixture\n")
+            .map_err(|err| format!("write selector fixture: {err}"))?;
+        run(&["add", "."])?;
+        run(&["commit", "-m", "fixture"])?;
+        run(&["update-ref", "refs/remotes/origin/main", "HEAD"])?;
 
         assert_eq!(
-            changed_files_vs_base(&root).expect("valid base selection"),
-            Vec::<String>::new()
+            changed_files_vs_base(&root)?,
+            Vec::<String>::new(),
+            "a clean fixture selects no changed files"
         );
         let failure_root = root.join("missing-base");
-        std::fs::create_dir_all(&failure_root).expect("create missing-base fixture");
-        let status = std::process::Command::new("git")
-            .current_dir(&failure_root)
-            .args(["init"])
-            .status()
-            .expect("run missing-base git init");
-        assert!(status.success());
-        let failure = changed_files_vs_base(&failure_root).expect_err("missing base must fail");
+        std::fs::create_dir_all(&failure_root)
+            .map_err(|err| format!("create missing-base fixture: {err}"))?;
+        run_fixture_git(&failure_root, &["init"])?;
+        let failure = match changed_files_vs_base(&failure_root) {
+            Ok(files) => {
+                return Err(format!(
+                    "missing base must fail; selected files instead: {files:?}"
+                ));
+            }
+            Err(failure) => failure,
+        };
         assert!(failure.contains("origin/main"));
         assert!(check_fast_selector_failure(&failure).contains("instrument_failure"));
         assert!(
@@ -796,6 +807,7 @@ mod check_fast_selector_tests {
         );
         assert!(check_fast_selector_failure_report(&failure).contains("git fetch origin main"));
         let _ = std::fs::remove_dir_all(&root);
+        Ok(())
     }
 }
 
