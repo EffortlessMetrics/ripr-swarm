@@ -258,16 +258,19 @@ fn unavailable_root_with_source(source: RootSource, error_code: RootErrorCode) -
 }
 
 fn has_non_git_repository_marker(root: &Path) -> bool {
+    // Project markers are files; an empty directory named `Cargo.toml` is
+    // not a usable project (#3525 review). `.git` keeps its file-or-dir
+    // handling elsewhere.
     REPOSITORY_MARKERS
         .iter()
         .filter(|marker| **marker != ".git")
-        .any(|marker| root.join(marker).exists())
+        .any(|marker| root.join(marker).is_file())
 }
 
 fn repository_markers(root: &Path) -> Vec<String> {
     REPOSITORY_MARKERS
         .iter()
-        .filter(|marker| root.join(marker).exists())
+        .filter(|marker| root.join(marker).is_file())
         .map(|marker| (*marker).to_string())
         .collect()
 }

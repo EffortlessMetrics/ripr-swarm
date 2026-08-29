@@ -87,13 +87,14 @@ pub(super) fn error_response(
     if let Some(data) = data {
         error.insert("data".to_string(), data);
     }
+    // JSON-RPC 2.0: an error response MUST carry "id" even when the
+    // request id could not be determined (parse errors, oversized frames)
+    // — omitting it lets validating clients reject the response outright.
     let mut response = Map::from_iter([
         ("jsonrpc".to_string(), Value::String("2.0".to_string())),
         ("error".to_string(), Value::Object(error)),
+        ("id".to_string(), id.unwrap_or(Value::Null)),
     ]);
-    if let Some(id) = id {
-        response.insert("id".to_string(), id);
-    }
     Value::Object(response)
 }
 

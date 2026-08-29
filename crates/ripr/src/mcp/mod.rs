@@ -41,8 +41,17 @@ pub fn run(args: &[String]) -> Result<(), String> {
             }
             "--stdio" => {}
             "--root" => {
-                let Some(value) = args.get(index + 1) else {
-                    return Err("missing value for --root".to_string());
+                // A following option token is a missing value, not a path
+                // (`--root --help` must print help, not start a server
+                // rooted at a directory named `--help`; #3525 review).
+                let value = match args.get(index + 1) {
+                    Some(value) if !value.starts_with("--") => value.clone(),
+                    Some(unexpected) => {
+                        return Err(format!(
+                            "missing value for --root; found option {unexpected:?}"
+                        ));
+                    }
+                    None => return Err("missing value for --root".to_string()),
                 };
                 if explicit_root.is_some() {
                     return Err("--root may be passed only once".to_string());
@@ -83,6 +92,18 @@ mod tests {
         assert_eq!(
             run(&args(&["--root"])),
             Err("missing value for --root".to_string())
+        );
+        // A following option token is a missing value, not a path:
+        // `--root --help` must surface help, not a directory named `--help`.
+        assert!(
+            run(&args(&["--root", "--help"]))
+                .err()
+                .is_some_and(|err| err.contains("missing value for --root"))
+        );
+        assert!(
+            run(&args(&["--root", "--stdio"]))
+                .err()
+                .is_some_and(|err| err.contains("missing value for --root"))
         );
         assert_eq!(
             run(&args(&["--root", ".", "--root", "."])),

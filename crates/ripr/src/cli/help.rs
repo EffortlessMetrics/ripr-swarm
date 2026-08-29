@@ -113,6 +113,7 @@ pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
         "gate" => GATE_HELP,
         "init" => INIT_HELP,
         "lsp" => LSP_HELP,
+        "mcp" => crate::mcp::MCP_HELP,
         "outcome" => OUTCOME_HELP,
         "pilot" => PILOT_HELP,
         "policy history"

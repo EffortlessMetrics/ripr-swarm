@@ -92,6 +92,7 @@ Analysis:
 
 Editor & Agent:
   ripr lsp [--stdio]
+  ripr mcp --stdio [--root PATH]
   ripr agent repair --root . --seam-id ID --phase before|after
   ripr agent start --root . --seam-id ID [--out target/ripr/workflow]
   ripr agent brief --root . (--diff PATH|--base REV|--files PATHS|--seam-id ID) --json

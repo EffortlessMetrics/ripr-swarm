@@ -19,8 +19,10 @@ fn invalid_json_is_a_parse_error_without_an_id() -> Result<(), String> {
     let response = server
         .handle_frame(b"{not-json")
         .ok_or_else(|| "expected parse error response".to_string())?;
-    if response.get("id").is_some() {
-        return Err("parse error must omit unreadable id".to_string());
+    // JSON-RPC 2.0: the id is unreadable, so the error response must carry
+    // an explicit null id rather than omitting the member entirely.
+    if response.get("id") != Some(&Value::Null) {
+        return Err("parse error must carry a null id for an unreadable id".to_string());
     }
     if response.pointer("/error/code").and_then(Value::as_i64) != Some(protocol::ERROR_PARSE) {
         return Err("parse error code drifted".to_string());
