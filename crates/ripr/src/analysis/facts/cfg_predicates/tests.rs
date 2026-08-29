@@ -84,7 +84,7 @@ fn alternatives_negation_literals_and_lookalikes_stay_production() {
             CfgTestRequirement::IndependentOfTest,
         ),
         // Non-cfg attributes are not this authority's test gates.
-        ("#[allow(dead_code)]", CfgTestRequirement::IndependentOfTest),
+        ("#[inline]", CfgTestRequirement::IndependentOfTest),
         ("#[tokio::test]", CfgTestRequirement::IndependentOfTest),
     ];
 
