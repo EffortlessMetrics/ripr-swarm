@@ -597,7 +597,13 @@ fn check_rust_judged_panel() -> Result<(), String> {
 /// doc-only changes, ~2min for Rust source changes.
 pub(crate) fn check_fast() -> Result<(), String> {
     ensure_reports_dir()?;
-    let changed = changed_files_vs_origin_main().unwrap_or_default();
+    let changed = match changed_files_vs_origin_main() {
+        Ok(changed) => changed,
+        Err(error) => {
+            write_report("check-fast.md", &check_fast_selector_failure_report(&error))?;
+            return Err(check_fast_selector_failure(&error));
+        }
+    };
     let categories = categorize_changed_files(&changed);
     let mut ran = Vec::new();
     let mut skipped = Vec::new();
@@ -717,7 +723,12 @@ fn categorize_changed_files(files: &[String]) -> ChangedFileCategories {
 }
 
 fn changed_files_vs_origin_main() -> Result<Vec<String>, String> {
+    changed_files_vs_base(Path::new("."))
+}
+
+fn changed_files_vs_base(root: &Path) -> Result<Vec<String>, String> {
     let output = std::process::Command::new("git")
+        .current_dir(root)
         .args(["diff", "--name-only", "origin/main...HEAD"])
         .output()
         .map_err(|err| format!("git diff --name-only failed: {err}"))?;
@@ -728,6 +739,64 @@ fn changed_files_vs_origin_main() -> Result<Vec<String>, String> {
     }
     let text = String::from_utf8_lossy(&output.stdout);
     Ok(text.lines().map(String::from).collect())
+}
+
+fn check_fast_selector_failure(error: &str) -> String {
+    format!("check-fast selector unavailable (instrument_failure): {error}")
+}
+
+fn check_fast_selector_failure_report(error: &str) -> String {
+    format!(
+        "# check-fast report\n\nStatus: instrument_failure\n\nSelector: failed\n\nError: {error}\n\nRemediation: run `git fetch origin main` and retry `cargo xtask check-fast`.\n"
+    )
+}
+
+#[cfg(test)]
+mod check_fast_selector_tests {
+    use super::*;
+
+    #[test]
+    fn empty_selection_is_distinct_from_selector_failure() {
+        let root = std::env::temp_dir().join(format!("ripr-check-fast-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("create selector fixture");
+        let run = |args: &[&str]| {
+            let status = std::process::Command::new("git")
+                .current_dir(&root)
+                .args(args)
+                .status()
+                .expect("run selector fixture command");
+            assert!(status.success(), "git fixture command failed: {args:?}");
+        };
+        run(&["init", "--initial-branch=main"]);
+        run(&["config", "user.email", "ripr@example.invalid"]);
+        run(&["config", "user.name", "ripr test"]);
+        std::fs::write(root.join("README.md"), "fixture\n").expect("write selector fixture");
+        run(&["add", "."]);
+        run(&["commit", "-m", "fixture"]);
+        run(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
+
+        assert_eq!(
+            changed_files_vs_base(&root).expect("valid base selection"),
+            Vec::<String>::new()
+        );
+        let failure_root = root.join("missing-base");
+        std::fs::create_dir_all(&failure_root).expect("create missing-base fixture");
+        let status = std::process::Command::new("git")
+            .current_dir(&failure_root)
+            .args(["init"])
+            .status()
+            .expect("run missing-base git init");
+        assert!(status.success());
+        let failure = changed_files_vs_base(&failure_root).expect_err("missing base must fail");
+        assert!(failure.contains("origin/main"));
+        assert!(check_fast_selector_failure(&failure).contains("instrument_failure"));
+        assert!(
+            check_fast_selector_failure_report(&failure).contains("Status: instrument_failure")
+        );
+        assert!(check_fast_selector_failure_report(&failure).contains("git fetch origin main"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
 
 fn check_pr() -> Result<(), String> {
