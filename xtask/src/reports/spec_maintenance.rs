@@ -638,16 +638,14 @@ mod tests {
             let root = fixture_root()?;
             let relative = "docs/specs/RIPR-SPEC-9999-example.md";
             fs::write(
-                root.join(&relative),
-                format!(
-                    "# Example
+                root.join(relative),
+                "# Example
 
 ## Review
 2026-01-02 reviewer note
 
 Status: proposed
-"
-                ),
+",
             )
             .map_err(|error| error.to_string())?;
             let mut history = HistoryInput {
