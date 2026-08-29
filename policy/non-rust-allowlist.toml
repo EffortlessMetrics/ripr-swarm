@@ -322,6 +322,15 @@ reason = "PR-local ImplementationSliceV1 scope/claim records (current-v2; no liv
 covered_by = ["cargo test -p xtask implementation_slices_validate_and_coexist"]
 
 [[allow]]
+glob = ".allow/spec-system/reviews/*.toml"
+kind = "policy_metadata"
+owner = "product-swarm"
+surface = "repo"
+classification = "metadata"
+reason = "Per-spec SpecReviewReceiptV1 content-bound maintenance review records (advisory; no live execution state)."
+covered_by = ["cargo test -p xtask committed_spec_review_receipts_validate"]
+
+[[allow]]
 glob = ".ripr/*.toml"
 kind = "policy_metadata"
 owner = "repo-policy"

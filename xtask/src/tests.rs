@@ -23241,6 +23241,66 @@ state = "unchanged"
 }
 
 #[test]
+fn committed_spec_review_receipts_validate() -> Result<(), String> {
+    // Every committed receipt must parse under SpecReviewReceiptV1 and carry
+    // no keys outside the enumerated contract (#3466). An empty or absent
+    // reviews directory is valid: this slice commits no receipts, and the
+    // first real batch belongs to the backlog adjudication follow-up.
+    let reviews_dir = slice_test_repo_root().join(".allow/spec-system/reviews");
+    if !reviews_dir.exists() {
+        return Ok(());
+    }
+    let mut validated = 0;
+    let entries =
+        std::fs::read_dir(&reviews_dir).map_err(|err| format!("read reviews directory: {err}"))?;
+    for entry in entries {
+        let path = entry.map_err(|err| format!("receipt entry: {err}"))?.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("toml") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path)
+            .map_err(|err| format!("read receipt {}: {err}", path.display()))?;
+        crate::reports::validate_receipt(&text)
+            .map_err(|reason| format!("{}: rejected ({reason})", path.display()))?;
+        for line in text.lines() {
+            let Some(key) = line.split('=').next() else {
+                continue;
+            };
+            let key = key.trim();
+            const RECEIPT_KEYS: [&str; 18] = [
+                "schema_version",
+                "producer",
+                "spec_id",
+                "spec_path",
+                "content_digest",
+                "status_observed",
+                "observed_at",
+                "reviewed_by",
+                "disposition",
+                "waived_until",
+                "disposition_detail",
+                "reasons_inspected",
+                "evidence_refs",
+                "limitations",
+                "receipt_id",
+                "predecessor_receipt_id",
+                "claim_boundary",
+                "non_claims",
+            ];
+            if !key.is_empty() && !RECEIPT_KEYS.contains(&key) {
+                return Err(format!(
+                    "{}: receipt carries key `{key}` outside the contract enumeration",
+                    path.display()
+                ));
+            }
+        }
+        validated += 1;
+    }
+    let _ = validated;
+    Ok(())
+}
+
+#[test]
 fn local_context_findings_are_sorted_deterministically() {
     let mut findings = [
         LocalContextFinding {
