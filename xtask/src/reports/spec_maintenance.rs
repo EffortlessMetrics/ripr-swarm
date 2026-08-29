@@ -282,6 +282,15 @@ fn collect_markdown_files(root: &Path) -> Result<Vec<PathBuf>, String> {
     for entry in entries {
         let entry = entry.map_err(|error| format!("read spec directory entry: {error}"))?;
         let path = entry.path();
+        // A directory symlink can point at an ancestor: recursing through it
+        // makes the scan unbounded, so symbolic links are never followed.
+        let is_symlink = entry
+            .file_type()
+            .map(|kind| kind.is_symlink())
+            .unwrap_or(false);
+        if is_symlink {
+            continue;
+        }
         if path.is_dir() {
             files.extend(collect_markdown_files(&path)?);
         } else if path.extension().and_then(|value| value.to_str()) == Some("md") {
@@ -425,10 +434,25 @@ fn build_row(
     if !has_review_heading {
         reasons.push("never_reviewed".to_string());
     }
-    let has_test_mapping_heading = headings
-        .iter()
-        .any(|heading| heading.trim().eq_ignore_ascii_case("## test mapping"));
-    if status.eq_ignore_ascii_case("accepted") && !has_test_mapping_heading {
+    // The heading alone is not a mapping: an accepted spec whose
+    // `## Test Mapping` section is empty or missing still owes the reader a
+    // current-or-planned test mapping, so the section content decides.
+    let has_test_mapping_content = text
+        .split("## Test Mapping")
+        .nth(1)
+        .and_then(|rest| {
+            rest.split(
+                "
+## ",
+            )
+            .next()
+        })
+        .is_some_and(|section| {
+            section
+                .lines()
+                .any(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#'))
+        });
+    if status.eq_ignore_ascii_case("accepted") && !has_test_mapping_content {
         reasons.push("accepted_without_current_or_planned_test_mapping".to_string());
     }
     for link in markdown_links(text) {
@@ -628,6 +652,42 @@ mod tests {
             .contains(&"history_unavailable".to_string())
         {
             return Err("available history was reported as unavailable".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn accepted_without_test_mapping_content_stays_flagged() -> Result<(), String> {
+        let build = |mapping_section: &str| -> Result<bool, String> {
+            let root = fixture_root()?;
+            fs::write(
+                root.join("docs/specs/RIPR-SPEC-9999-example.md"),
+                format!(
+                    "# Example
+
+Status: accepted
+
+## Test Mapping
+{mapping_section}
+"
+                ),
+            )
+            .map_err(|error| error.to_string())?;
+            let report = build_report(&root, "2026-08-27", &HistoryInput::default())?;
+            let row = report
+                .specs
+                .first()
+                .ok_or_else(|| "missing fixture row".to_string())?;
+            Ok(row
+                .reason_codes
+                .contains(&"accepted_without_current_or_planned_test_mapping".to_string()))
+        };
+
+        if !build("")? {
+            return Err("empty Test Mapping section was accepted as a mapping".to_string());
+        }
+        if build("None yet; mapping is planned for the next slice.")? {
+            return Err("planned mapping text was flagged as absent".to_string());
         }
         Ok(())
     }

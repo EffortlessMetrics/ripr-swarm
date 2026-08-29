@@ -5,7 +5,7 @@ to `target/ripr/reports/spec-maintenance.json` and
 `target/ripr/reports/spec-maintenance.md`. Add `--json` to also print the same
 versioned JSON DTO to standard output.
 
-The report covers every discoverable spec file — `RIPR-SPEC-NNNN.md` or the repository's canonical `RIPR-SPEC-NNNN-slug.md` shape, parsed by the same identifier rule the spec gates use. Other
+The report covers every discoverable spec file in the repository's canonical `RIPR-SPEC-NNNN-slug.md` shape, parsed by the same identifier rule the spec gates use. Other
 Markdown files below `docs/specs/` are listed as omitted, with the reason they
 are not part of the discoverable denominator. A missing `docs/specs/README.md`
 index is likewise recorded as an omitted input with reason

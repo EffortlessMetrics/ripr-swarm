@@ -1292,7 +1292,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Prints the next available RIPR-SPEC ID.",
         ),
         command_entry(
-            "specs maintenance",
+            "specs maintenance --as-of YYYY-MM-DD [--json]",
             "report_only",
             "target/ripr/reports/spec-maintenance.{json,md}",
             false,
