@@ -133,6 +133,7 @@ fn validate_test_covered_by_with(
 
 #[cfg(test)]
 mod tests {
+    use super::validate_test_covered_by;
     use super::validate_test_covered_by_with;
     use crate::is_cargo_test_command;
 
@@ -170,6 +171,19 @@ mod tests {
         } else {
             Err("test-valued covered_by did not fail closed on its denominator".to_string())
         }
+    }
+
+    #[test]
+    fn test_covered_by_production_wrapper_enumerates_through_cargo() -> Result<(), String> {
+        // End-to-end pin on the production wrapper (not the injected
+        // closure): the args construction, bounded capture, and status
+        // mapping all run for real, and an existing test filter enumerates
+        // successfully.
+        let commands = [(
+            12,
+            "cargo test -p xtask test_covered_by_classification_is_token_aware --exact".to_string(),
+        )];
+        validate_test_covered_by("policy.toml", &commands)
     }
 
     #[test]
