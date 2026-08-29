@@ -13,7 +13,7 @@ Open VSX extension:
   EffortlessMetrics.ripr
 ```
 
-The `0.7.x` extension is a universal VSIX preview client. It resolves the
+The extension is a universal VSIX preview client. It resolves the
 server in this order:
 
 ```text
@@ -53,7 +53,7 @@ Use one of these surfaces:
 - VS Code Marketplace: install `EffortlessMetrics.ripr`.
 - Open VSX: install `EffortlessMetrics.ripr`.
 - Local VSIX smoke: run `npm run package`, then install
-  `editors/vscode/dist/ripr-0.7.0.vsix`.
+  `editors/vscode/dist/ripr-<version>.vsix`.
 
 On activation, the extension resolves a configured, bundled, cached,
 downloaded, or PATH server and writes the selected source to the `ripr` output
@@ -440,7 +440,7 @@ npm ci
 npm run compile
 npm run package
 npm run test:e2e
-code --install-extension dist/ripr-0.7.0.vsix --force
+code --install-extension dist/ripr-<version>.vsix --force
 ```
 
 Manual smoke:
@@ -500,9 +500,9 @@ LSP diagnostics include a stable JSON `data` payload for editor commands:
 }
 ```
 
-Diagnostics remain advisory. `exposed`, `propagation_unknown`, and
-`static_unknown` findings are informational; weak or missing exposure findings
-are warnings.
+Diagnostics remain advisory. `exposed` and weak or missing exposure
+findings render as warnings; `propagation_unknown` and `static_unknown`
+are informational.
 
 ## Hover Content
 

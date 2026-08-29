@@ -176,7 +176,7 @@ On Windows, use `target\ripr\install-smoke-path\bin\ripr.exe`.
 Also confirm the generated CI and editor first-run front doors before release:
 
 ```bash
-cargo xtask release-readiness --version 0.7.0
+cargo xtask release-readiness --version <version>
 ```
 
 The readiness report must show that generated GitHub CI includes `#### First-run
