@@ -596,8 +596,15 @@ fn check_rust_judged_panel() -> Result<(), String> {
 /// changed files, plus a cheap always-run floor. Target: sub-30s for
 /// doc-only changes, ~2min for Rust source changes.
 pub(crate) fn check_fast() -> Result<(), String> {
+    check_fast_in(Path::new("."))
+}
+
+/// `check_fast` with an injectable repository root, so the fail-closed
+/// selector branch is exercisable without mutating the process cwd
+/// (#3549 review).
+fn check_fast_in(repository_root: &Path) -> Result<(), String> {
     ensure_reports_dir()?;
-    let changed = match changed_files_vs_origin_main() {
+    let changed = match changed_files_vs_base(repository_root) {
         Ok(changed) => changed,
         Err(error) => {
             write_report("check-fast.md", &check_fast_selector_failure_report(&error))?;
@@ -722,10 +729,6 @@ fn categorize_changed_files(files: &[String]) -> ChangedFileCategories {
     }
 }
 
-fn changed_files_vs_origin_main() -> Result<Vec<String>, String> {
-    changed_files_vs_base(Path::new("."))
-}
-
 fn changed_files_vs_base(root: &Path) -> Result<Vec<String>, String> {
     let output = std::process::Command::new("git")
         .current_dir(root)
@@ -769,6 +772,46 @@ mod check_fast_selector_tests {
                 output.stderr.trim()
             ))
         }
+    }
+
+    #[test]
+    fn check_fast_fails_closed_when_the_selector_cannot_run() -> Result<(), String> {
+        // #3549 review: the unit tests above pin the helpers, but only
+        // check_fast itself proves the selector failure fails closed. Run
+        // it in a fixture repo without an origin/main ref and assert the
+        // instrument_failure error and report — with the old
+        // unwrap_or_default fallback restored, check_fast instead proceeds
+        // into the gates and every other assertion here would pass.
+        let root =
+            std::env::temp_dir().join(format!("ripr-check-fast-fail-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+        run_fixture_git(&root, &["init", "--initial-branch=main"])?;
+
+        let attempt = std::panic::catch_unwind(|| check_fast_in(&root));
+        // write_report targets the process-cwd reports dir (a generated,
+        // gitignored artifact the next real check-fast run rewrites).
+        let report = std::fs::read_to_string("target/ripr/reports/check-fast.md").ok();
+        let _ = std::fs::remove_dir_all(&root);
+
+        let error = match attempt {
+            Ok(Ok(())) => {
+                return Err("check_fast must fail closed when the selector cannot run".to_string());
+            }
+            Ok(Err(error)) => error,
+            Err(panic) => return Err(format!("check_fast panicked: {panic:?}")),
+        };
+        assert!(
+            error.contains("instrument_failure"),
+            "fail-closed error must name the instrument failure: {error}"
+        );
+        let report = report
+            .ok_or_else(|| "check-fast.md report must be written before failing".to_string())?;
+        assert!(
+            report.contains("Status: instrument_failure"),
+            "report must record the instrument failure: {report}"
+        );
+        Ok(())
     }
 
     #[test]
