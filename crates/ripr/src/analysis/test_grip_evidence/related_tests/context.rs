@@ -341,6 +341,8 @@ pub(in crate::analysis::test_grip_evidence) struct ScopedImportedFunctionBinding
     pub(in crate::analysis::test_grip_evidence) name: String,
     start_line: usize,
     end_line: usize,
+    /// Lines inside nested module bodies are not covered by this import.
+    nested_module_lines: Vec<(usize, usize)>,
     /// The owning scope closes part-way through `end_line`, with code after
     /// the closing brace. See `LexicalUseScan::line_closes_scope_midline`.
     end_is_partial: bool,
@@ -363,7 +365,14 @@ impl ScopedImportedFunctionAlias {
         let candidates = self
             .bindings
             .iter()
-            .filter(|binding| binding.start_line <= line && line <= binding.end_line)
+            .filter(|binding| {
+                binding.start_line <= line
+                    && line <= binding.end_line
+                    && !binding
+                        .nested_module_lines
+                        .iter()
+                        .any(|(first, last)| *first <= line && line <= *last)
+            })
             .collect::<Vec<_>>();
         let max_start = candidates.iter().map(|binding| binding.start_line).max()?;
         let mut best = candidates
@@ -1111,6 +1120,7 @@ struct LexicalUseStatement {
     start_line: usize,
     /// Brace depth of the owning block (0 at file scope).
     scope_depth: usize,
+    module_depth: usize,
     /// Line on which the statement terminated.
     use_line: usize,
 }
@@ -1122,6 +1132,7 @@ struct LexicalUseScan {
     /// (`} run();`). A call on such a line may precede or follow the brace,
     /// and line coordinates alone cannot say which.
     line_closes_scope_midline: Vec<bool>,
+    line_module_depths: Vec<usize>,
 }
 
 impl LexicalUseScan {
@@ -1156,12 +1167,16 @@ fn scan_lexical_use_statements(source: &str) -> LexicalUseScan {
     let mut line_depths_after = Vec::new();
     let mut line_closes_scope_midline = Vec::new();
     let mut scope_starts = vec![1usize];
-    let mut pending_use: Option<(usize, usize, String)> = None;
+    let mut module_scopes = vec![false];
+    let mut line_module_depths = Vec::new();
+    let mut pending_use: Option<(usize, usize, usize, String)> = None;
     let mut brace_depth = 0usize;
     for (line_index, line) in source.lines().enumerate() {
         let line = strip_comments_and_strings(line);
         let line_number = line_index + 1;
         let scope_start = scope_starts[brace_depth];
+        let module_depth = module_scopes.iter().filter(|scope| **scope).count();
+        line_module_depths.push(module_depth);
         let trimmed = line.trim();
         let mut is_use_fragment = false;
         if pending_use.is_some()
@@ -1174,7 +1189,7 @@ fn scan_lexical_use_statements(source: &str) -> LexicalUseScan {
         {
             pending_use = None;
         }
-        if let Some((start_line, scope_depth, import)) = pending_use.as_mut() {
+        if let Some((start_line, scope_depth, use_module_depth, import)) = pending_use.as_mut() {
             is_use_fragment = true;
             import.push(' ');
             import.push_str(trimmed);
@@ -1187,6 +1202,7 @@ fn scan_lexical_use_statements(source: &str) -> LexicalUseScan {
                     text,
                     start_line: *start_line,
                     scope_depth: *scope_depth,
+                    module_depth: *use_module_depth,
                     use_line: line_number,
                 });
                 pending_use = None;
@@ -1202,10 +1218,11 @@ fn scan_lexical_use_statements(source: &str) -> LexicalUseScan {
                     text,
                     start_line: scope_start,
                     scope_depth: brace_depth,
+                    module_depth,
                     use_line: line_number,
                 });
             } else {
-                pending_use = Some((scope_start, brace_depth, import.to_string()));
+                pending_use = Some((scope_start, brace_depth, module_depth, import.to_string()));
             }
         }
         let lexical_suffix = if is_use_fragment {
@@ -1214,18 +1231,23 @@ fn scan_lexical_use_statements(source: &str) -> LexicalUseScan {
             &line
         };
         let mut last_scope_close = None;
+        let mut segment = String::new();
         for (index, ch) in lexical_suffix.chars().enumerate() {
             match ch {
                 '{' => {
                     brace_depth = brace_depth.saturating_add(1);
                     scope_starts.push(line_number);
+                    module_scopes.push(segment_declares_module(&segment));
+                    segment.clear();
                 }
                 '}' if brace_depth > 0 => {
                     brace_depth -= 1;
                     scope_starts.pop();
+                    module_scopes.pop();
                     last_scope_close = Some(index);
                 }
-                _ => {}
+                ';' => segment.clear(),
+                _ => segment.push(ch),
             }
         }
         // A bare statement terminator after the brace carries no call, so it
@@ -1242,6 +1264,7 @@ fn scan_lexical_use_statements(source: &str) -> LexicalUseScan {
         statements,
         line_depths_after,
         line_closes_scope_midline,
+        line_module_depths,
     }
 }
 
@@ -1260,6 +1283,12 @@ pub(in crate::analysis::test_grip_evidence) fn direct_function_import_aliases(
             continue;
         }
         let end_line = scan.end_line(statement);
+        let nested_module_lines = nested_module_line_ranges(
+            &scan.line_module_depths,
+            statement.start_line,
+            end_line,
+            statement.module_depth,
+        );
         for (alias, imported) in parsed {
             aliases
                 .entry(alias)
@@ -1272,11 +1301,45 @@ pub(in crate::analysis::test_grip_evidence) fn direct_function_import_aliases(
                     name: imported.name,
                     start_line: statement.start_line,
                     end_line,
+                    nested_module_lines: nested_module_lines.clone(),
                     end_is_partial: scan.end_is_partial(end_line),
                 });
         }
     }
     aliases
+}
+
+fn segment_declares_module(segment: &str) -> bool {
+    segment
+        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .any(|token| token == "mod")
+}
+
+fn nested_module_line_ranges(
+    line_module_depths: &[usize],
+    start_line: usize,
+    end_line: usize,
+    module_depth: usize,
+) -> Vec<(usize, usize)> {
+    let last_line = end_line.min(line_module_depths.len());
+    let mut ranges = Vec::new();
+    let mut open: Option<(usize, usize)> = None;
+    for line in start_line..=last_line {
+        if line_module_depths[line - 1] == module_depth {
+            if let Some(range) = open.take() {
+                ranges.push(range);
+            }
+        } else {
+            match open.as_mut() {
+                Some((_, last)) => *last = line,
+                None => open = Some((line, line)),
+            }
+        }
+    }
+    if let Some(range) = open {
+        ranges.push(range);
+    }
+    ranges
 }
 
 fn collect_direct_function_import_aliases_from_use_unambiguous(

@@ -13100,3 +13100,443 @@ mod other {
     );
     Ok(())
 }
+
+/// #3413: Rust does not carry a `use` across a module boundary, so a bare
+/// call in a nested `mod` that never imported the alias must stay
+/// uncredited rather than borrowing the enclosing module's binding.
+/// Ordinary blocks are not module boundaries and still resolve.
+#[test]
+fn nested_module_without_its_own_import_stays_uncredited() -> Result<(), String> {
+    let bare = direct_function_import_aliases(concat!(
+        "use crate::alpha::compute as run;\n",
+        "fn outer() { run(); }\n",
+        "mod child {\n",
+        "    fn inner() { run(); }\n",
+        "}\n",
+        "fn tail() { run(); }\n",
+    ));
+    let bare_run = bare
+        .get("run")
+        .ok_or_else(|| "run alias should be indexed".to_string())?;
+    assert_eq!(
+        bare_run
+            .binding_at(2)
+            .map(|binding| binding.module_path.as_str()),
+        Some("alpha"),
+        "the enclosing module's own call must still resolve"
+    );
+    assert!(
+        bare_run.binding_at(4).is_none(),
+        "a nested module that never imported the alias must stay uncredited"
+    );
+    assert_eq!(
+        bare_run
+            .binding_at(6)
+            .map(|binding| binding.module_path.as_str()),
+        Some("alpha"),
+        "the outer binding must resume after the nested module closes"
+    );
+
+    // A `super::` re-export is legal Rust but is not chained to its target.
+    let reexport = direct_function_import_aliases(concat!(
+        "use crate::alpha::compute as run;\n",
+        "mod child {\n",
+        "    use super::run;\n",
+        "    fn inner() { run(); }\n",
+        "}\n",
+    ));
+    assert!(
+        reexport
+            .get("run")
+            .and_then(|alias| alias.binding_at(4))
+            .is_none(),
+        "a super re-export must stay uncredited rather than invent a target"
+    );
+
+    // Blocks, `impl` bodies, and `fn` bodies are not module boundaries: a
+    // function-local `use` shadows the file-level one inside its own block
+    // and stops applying once that block closes.
+    let blocks = direct_function_import_aliases(concat!(
+        "use crate::alpha::compute as run;\n",
+        "fn holder() {\n",
+        "    use crate::beta::compute as run;\n",
+        "    if true { run(); }\n",
+        "}\n",
+        "fn after() { run(); }\n",
+    ));
+    let block_run = blocks
+        .get("run")
+        .ok_or_else(|| "run alias should be indexed".to_string())?;
+    assert_eq!(
+        block_run
+            .binding_at(4)
+            .map(|binding| binding.module_path.as_str()),
+        Some("beta"),
+        "the nearest enclosing block binding must win inside its own block"
+    );
+    assert_eq!(
+        block_run
+            .binding_at(6)
+            .map(|binding| binding.module_path.as_str()),
+        Some("alpha"),
+        "a block-local binding must not leak past its closing brace"
+    );
+    Ok(())
+}
+
+/// #3413: lexical alias ancestry must survive nested test modules. Each
+/// module that rebinds the alias owns only its own body; a nested module
+/// that never imported it stays uncredited rather than inheriting, a
+/// sibling module never borrows another's target, and the outer binding
+/// resumes after the nested blocks close.
+#[test]
+fn nested_test_module_alias_ancestry_resolves_through_production_path() -> Result<(), String> {
+    let alpha = PathBuf::from("src/alpha.rs");
+    let alpha_src = r#"
+pub fn compute_alpha(input: &str) -> String {
+    normalize_alpha(input)
+}
+
+fn normalize_alpha(input: &str) -> String {
+    input.to_string()
+}
+"#;
+    let beta = PathBuf::from("src/beta.rs");
+    let beta_src = r#"
+pub fn compute_beta(input: &str) -> String {
+    normalize_beta(input)
+}
+
+fn normalize_beta(input: &str) -> String {
+    input.to_string()
+}
+"#;
+    let gamma = PathBuf::from("src/gamma.rs");
+    let gamma_src = r#"
+pub fn compute_gamma(input: &str) -> String {
+    normalize_gamma(input)
+}
+
+fn normalize_gamma(input: &str) -> String {
+    input.to_string()
+}
+"#;
+    let delta = PathBuf::from("src/delta.rs");
+    let delta_src = r#"
+pub fn compute_delta(input: &str) -> String {
+    normalize_delta(input)
+}
+
+fn normalize_delta(input: &str) -> String {
+    input.to_string()
+}
+"#;
+    let support = PathBuf::from("tests/support_nested.rs");
+    let support_src = r#"
+use crate::alpha::compute_alpha as run;
+
+pub fn exercise_outer() -> String {
+    run("outer")
+}
+
+#[cfg(test)]
+mod middle {
+    use crate::beta::compute_beta as run;
+
+    pub fn exercise_middle() -> String {
+        run("middle")
+    }
+
+    #[cfg(test)]
+    mod inner_inherits {
+        pub fn exercise_inner_inherits() -> String {
+            run("inner")
+        }
+    }
+
+    #[cfg(test)]
+    mod inner_rebinds {
+        use crate::gamma::compute_gamma as run;
+
+        pub fn exercise_inner_rebinds() -> String {
+            run("rebound")
+        }
+    }
+}
+
+#[cfg(test)]
+mod sibling {
+    use crate::delta::compute_delta as run;
+
+    pub fn exercise_sibling() -> String {
+        run("sibling")
+    }
+}
+
+pub fn exercise_tail() -> String {
+    run("tail")
+}
+"#;
+    let tests = PathBuf::from("tests/nested_alias_tests.rs");
+    let tests_src = r#"
+use support_nested::exercise_outer;
+
+#[test]
+fn nested_alias_ancestry_reaches_every_indexed_owner() {
+    assert_eq!(exercise_outer(), "outer");
+    assert_eq!(support_nested::exercise_tail(), "tail");
+    assert_eq!(support_nested::middle::exercise_middle(), "middle");
+    assert_eq!(
+        support_nested::middle::inner_inherits::exercise_inner_inherits(),
+        "inner"
+    );
+    assert_eq!(
+        support_nested::middle::inner_rebinds::exercise_inner_rebinds(),
+        "rebound"
+    );
+    assert_eq!(support_nested::sibling::exercise_sibling(), "sibling");
+}
+"#;
+    let index = index_from_files(&[
+        (alpha, alpha_src),
+        (beta, beta_src),
+        (gamma, gamma_src),
+        (delta, delta_src),
+        (support.clone(), support_src),
+        (tests.clone(), tests_src),
+    ])?;
+
+    let aliases_by_file = direct_function_import_aliases_by_file(&index);
+    let owner_names_by_module_path = production_owner_names_by_module_path(&index);
+    let owner_names = owner_names_by_module_path
+        .values()
+        .flat_map(|names| names.iter().cloned())
+        .collect::<BTreeSet<_>>();
+    for (module_path, owner) in [
+        ("alpha", "compute_alpha"),
+        ("beta", "compute_beta"),
+        ("gamma", "compute_gamma"),
+        ("delta", "compute_delta"),
+    ] {
+        assert!(
+            owner_names_by_module_path
+                .get(module_path)
+                .is_some_and(|names| names.contains(owner)),
+            "fixture must index {module_path}::{owner} as a distinct production owner"
+        );
+    }
+
+    // Each helper sits at a different lexical depth but reuses the alias
+    // `run`. The nearest enclosing `use` decides its target.
+    for (helper, expected_owner, expected_module) in [
+        ("exercise_outer", "compute_alpha", "alpha"),
+        ("exercise_middle", "compute_beta", "beta"),
+        ("exercise_inner_inherits", "", ""),
+        ("exercise_inner_rebinds", "compute_gamma", "gamma"),
+        ("exercise_sibling", "compute_delta", "delta"),
+        ("exercise_tail", "compute_alpha", "alpha"),
+    ] {
+        let function = index
+            .functions
+            .iter()
+            .find(|function| function.name == helper && function.file == support)
+            .ok_or_else(|| format!("missing helper identity {helper}"))?;
+        let owners = direct_imported_owner_calls_for_function(
+            function,
+            aliases_by_file.get(&support),
+            Some(&owner_names),
+            &owner_names_by_module_path,
+        );
+        let expected_owners = if expected_owner.is_empty() {
+            BTreeSet::new()
+        } else {
+            BTreeSet::from([expected_owner.to_string()])
+        };
+        assert_eq!(
+            owners, expected_owners,
+            "helper {helper} must resolve exactly to {expected_owner}"
+        );
+        let call = function
+            .calls
+            .iter()
+            .find(|call| call.name == "run")
+            .ok_or_else(|| format!("missing aliased call for {helper}"))?;
+        if expected_owner.is_empty() {
+            assert!(
+                aliases_by_file
+                    .get(&support)
+                    .and_then(|aliases| aliases.get("run"))
+                    .and_then(|alias| alias.binding_at(call.line))
+                    .is_none(),
+                "helper {helper} must have no cross-module binding"
+            );
+            continue;
+        }
+        let binding = aliases_by_file
+            .get(&support)
+            .and_then(|aliases| aliases.get("run"))
+            .and_then(|alias| alias.binding_at(call.line))
+            .ok_or_else(|| format!("missing binding for {helper}"))?;
+        assert_eq!(
+            binding.module_path, expected_module,
+            "helper {helper} must resolve through the {expected_module} owner module"
+        );
+    }
+
+    // End-to-end: the seam in the deepest rebinding module's target must
+    // carry the exact helper-owner-call relation and indexed test target.
+    let gamma_seams = inventory_seams_from_index(&[PathBuf::from("src/gamma.rs")], &index);
+    let gamma_seam = gamma_seams
+        .iter()
+        .find(|seam| {
+            seam.kind() == SeamKind::CallPresence
+                && seam.owner().ends_with("::compute_gamma")
+                && seam.expression().contains("normalize_gamma")
+        })
+        .ok_or_else(|| "expected compute_gamma call_presence seam".to_string())?;
+    let evidence = evidence_for_seam(gamma_seam, &index);
+    let related = evidence
+        .related_tests
+        .iter()
+        .find(|test| test.relation_reason == RelationReason::HelperOwnerCall)
+        .ok_or_else(|| {
+            format!(
+                "expected doubly-nested helper owner-call relation, got {:?}",
+                evidence
+                    .related_tests
+                    .iter()
+                    .map(|test| (test.test_name.as_str(), test.relation_reason))
+                    .collect::<Vec<_>>()
+            )
+        })?;
+    assert_eq!(
+        related.test_name,
+        "nested_alias_ancestry_reaches_every_indexed_owner"
+    );
+    assert_eq!(related.file, tests);
+    let target = related
+        .test_target
+        .as_ref()
+        .ok_or_else(|| "nested helper relation lost its indexed test target".to_string())?;
+    let test_function = index
+        .functions
+        .iter()
+        .find(|function| {
+            function.is_test && function.name == related.test_name && function.file == related.file
+        })
+        .ok_or_else(|| "missing indexed nested-alias test target".to_string())?;
+    assert_eq!(
+        target.symbol_id().0,
+        test_function.id.0,
+        "nested-alias evidence must retain the exact indexed test symbol"
+    );
+    assert_eq!(target.file(), test_function.file.as_path());
+    assert_eq!(target.line(), test_function.start_line);
+    assert!(
+        evidence.observed_values.is_empty(),
+        "nested-alias helper activation must not invent values: {:?}",
+        evidence.observed_values
+    );
+    Ok(())
+}
+
+/// #3413: a same-scope alias collision inside a nested test module must
+/// fail closed for that module alone. The valid outer binding is not
+/// discarded, and the conflicted nested helper is credited to nothing.
+#[test]
+fn nested_test_module_alias_conflict_fails_closed_without_discarding_outer_binding()
+-> Result<(), String> {
+    let alpha = PathBuf::from("src/alpha.rs");
+    let alpha_src = r#"
+pub fn compute_alpha(input: &str) -> String {
+    normalize_alpha(input)
+}
+
+fn normalize_alpha(input: &str) -> String {
+    input.to_string()
+}
+"#;
+    let beta = PathBuf::from("src/beta.rs");
+    let beta_src = r#"
+pub fn compute_beta(input: &str) -> String {
+    normalize_beta(input)
+}
+
+fn normalize_beta(input: &str) -> String {
+    input.to_string()
+}
+"#;
+    let gamma = PathBuf::from("src/gamma.rs");
+    let gamma_src = r#"
+pub fn compute_gamma(input: &str) -> String {
+    normalize_gamma(input)
+}
+
+fn normalize_gamma(input: &str) -> String {
+    input.to_string()
+}
+"#;
+    let support = PathBuf::from("tests/support_conflict.rs");
+    let support_src = r#"
+use crate::alpha::compute_alpha as run;
+
+pub fn exercise_outer() -> String {
+    run("outer")
+}
+
+#[cfg(test)]
+mod conflicted {
+    use crate::beta::compute_beta as run;
+    use crate::gamma::compute_gamma as run;
+
+    pub fn exercise_conflicted() -> String {
+        run("conflicted")
+    }
+}
+
+pub fn exercise_tail() -> String {
+    run("tail")
+}
+"#;
+    let index = index_from_files(&[
+        (alpha, alpha_src),
+        (beta, beta_src),
+        (gamma, gamma_src),
+        (support.clone(), support_src),
+    ])?;
+    let aliases_by_file = direct_function_import_aliases_by_file(&index);
+    let owner_names_by_module_path = production_owner_names_by_module_path(&index);
+    let owner_names = owner_names_by_module_path
+        .values()
+        .flat_map(|names| names.iter().cloned())
+        .collect::<BTreeSet<_>>();
+    let owners_for = |helper: &str| -> Result<BTreeSet<String>, String> {
+        let function = index
+            .functions
+            .iter()
+            .find(|function| function.name == helper && function.file == support)
+            .ok_or_else(|| format!("missing helper identity {helper}"))?;
+        Ok(direct_imported_owner_calls_for_function(
+            function,
+            aliases_by_file.get(&support),
+            Some(&owner_names),
+            &owner_names_by_module_path,
+        ))
+    };
+    assert_eq!(
+        owners_for("exercise_conflicted")?,
+        BTreeSet::new(),
+        "a same-scope alias collision inside a nested module must stay uncredited"
+    );
+    assert_eq!(
+        owners_for("exercise_outer")?,
+        BTreeSet::from(["compute_alpha".to_string()]),
+        "the nested collision must not discard the valid outer binding"
+    );
+    assert_eq!(
+        owners_for("exercise_tail")?,
+        BTreeSet::from(["compute_alpha".to_string()]),
+        "the outer binding must still apply after the conflicted nested module"
+    );
+    Ok(())
+}
