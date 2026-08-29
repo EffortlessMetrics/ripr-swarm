@@ -4,11 +4,14 @@ Spec: RIPR-SPEC-0158
 
 ## Given
 
-Four changed `let` initializers, one per evaluated std family feeding a
+Six changed `let` initializers, one per evaluated std family feeding a
 same-function comparison: `strip_prefix` through `map_or`,
-`starts_with`, `len`, and `checked_add` through `map_or`. Each function
-has an exact-value test whose literal inputs sit exactly on the
-predicate boundary.
+`starts_with`, `len`, `checked_add` through `map_or`, `chars().next()`
+through `map_or`, and `chars().next_back()` through `map_or`. Each
+function has an exact-value test whose literal inputs sit exactly on the
+predicate boundary (the `chars` fallback tests exercise the `None` arm
+through the empty-string input, so the changed default constant is the
+observed boundary value).
 
 ## When
 
