@@ -39,11 +39,6 @@ pub(super) enum CliCommand {
     RiprPlus(Vec<String>),
     Cache(Vec<String>),
     Rerun(Vec<String>),
-    /// Catalog-visible spelling for the MCP stdio server. Startup routes
-    /// `ripr mcp ...` to the MCP runtime before general CLI parsing so the
-    /// server never runs CLI initialization; the variant exists so the
-    /// command catalog stays exhaustive (#3525 review).
-    Mcp(Vec<String>),
 }
 
 impl CliCommand {
@@ -112,9 +107,6 @@ impl CliCommand {
             Some("plus") => Ok(Self::RiprPlus(command_args)),
             Some("cache") => Ok(Self::Cache(command_args)),
             Some("rerun") => Ok(Self::Rerun(command_args)),
-            // Catalog visibility only: startup routes `mcp` to the MCP runtime
-            // before this parser runs, but the spelling must stay known.
-            Some("mcp") => Ok(Self::Mcp(command_args)),
             Some(command) => Err(unknown_command_error(command)),
         }
     }
@@ -177,7 +169,6 @@ pub(super) const KNOWN_COMMANDS: &[&str] = &[
     "impacted-evidence",
     "plus",
     "rerun",
-    "mcp",
 ];
 
 fn unknown_command_error(command: &str) -> String {
