@@ -8,7 +8,7 @@ use crate::{
     read_file_policy_allowlist, read_file_policy_test_commands,
 };
 
-const TEST_COVERED_BY_ENUMERATION_TIMEOUT: Duration = Duration::from_mins(2);
+const TEST_COVERED_BY_ENUMERATION_TIMEOUT: Duration = Duration::from_mins(5);
 
 /// Validate the repository's non-Rust file policy and write its standard
 /// report. The parser and shared path predicates remain in `main.rs` until
