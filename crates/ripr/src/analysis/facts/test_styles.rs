@@ -1,3 +1,4 @@
+use super::cfg_predicates;
 use super::{FileFacts, FunctionFact, RustIndex, TestFact};
 use crate::analysis::extract::extract_assertions;
 use std::collections::BTreeMap;
@@ -158,16 +159,56 @@ fn lexical_attributes_before<'source>(
     attributes
 }
 
+/// Line walk that preserves producer-owned cfg-test evidence roles. The
+/// cfg-term semantics come from the one shared authority
+/// (`cfg_predicates`, #3530) — the same source the parser producer
+/// consumes — so this walk can never disagree with the producer about
+/// whether an attribute gates its module on test. Attributes spanning
+/// multiple lines are joined before classification; only exact bounded
+/// forms the walk can prove grant credit, and everything else fails closed.
 fn is_inside_cfg_test_module(source: &str, function_start_line: usize) -> bool {
+    let lines: Vec<&str> = source
+        .lines()
+        .take(function_start_line.saturating_sub(1))
+        .collect();
     let mut scopes = Vec::new();
     let mut pending_cfg_test = false;
+    let mut index = 0usize;
 
-    for line in source.lines().take(function_start_line.saturating_sub(1)) {
+    while index < lines.len() {
+        let remainder_storage;
+        let line: &str = if lines[index].trim_start().starts_with("#[") {
+            match join_leading_attribute(&lines[index..]) {
+                Some((attribute, mut remainder, consumed_lines)) => {
+                    if cfg_predicates::attribute_requires_test(&attribute) {
+                        pending_cfg_test = true;
+                    }
+                    // The closing line's remainder is processed below; the
+                    // loop's own `index += 1` then moves past it.
+                    index += consumed_lines.saturating_sub(1);
+                    // One line can carry several attributes; the shared
+                    // splitter classifies each leading attribute in turn.
+                    while remainder.trim_start().starts_with("#[") {
+                        let Some((next_attribute, rest)) =
+                            cfg_predicates::split_leading_attribute(&remainder)
+                        else {
+                            break;
+                        };
+                        if cfg_predicates::attribute_requires_test(next_attribute) {
+                            pending_cfg_test = true;
+                        }
+                        remainder = rest.to_string();
+                    }
+                    remainder_storage = remainder;
+                    remainder_storage.as_str()
+                }
+                None => lines[index],
+            }
+        } else {
+            lines[index]
+        };
+
         let trimmed = line.trim();
-        if cfg_attribute_gates_on_test(trimmed) {
-            pending_cfg_test = true;
-        }
-
         let declares_cfg_test_module =
             pending_cfg_test && trimmed.contains("mod ") && trimmed.contains('{');
         let mut module_opened = false;
@@ -186,52 +227,34 @@ fn is_inside_cfg_test_module(source: &str, function_start_line: usize) -> bool {
         if declares_cfg_test_module || (!trimmed.starts_with("#[") && !trimmed.is_empty()) {
             pending_cfg_test = false;
         }
+        index += 1;
     }
 
     scopes.iter().any(|is_cfg_test_module| *is_cfg_test_module)
 }
 
-/// Line-level mirror of the producer's cfg-term semantics (ra
-/// `cfg_attribute_requires_test`): plain `#[cfg(test)]` and
-/// `#[cfg(all(..., test, ...))]` with a top-level bare `test` conjunct gate
-/// the module on test; `any(test, ..)` and `not(test)` stay excluded. The
-/// parser producer classifies on the attribute token tree, so exotic
-/// spellings (multi-line attributes, commas inside strings) remain its
-/// jurisdiction; this walk covers the same-line forms the brace heuristic
-/// can see, so producer-owned cfg-test roles are never demoted for them.
-fn cfg_attribute_gates_on_test(trimmed: &str) -> bool {
-    let Some(rest) = trimmed.strip_prefix("#[cfg(") else {
-        return false;
-    };
-    let mut depth = 1usize;
-    let mut gate_end = None;
-    for (index, character) in rest.char_indices() {
-        match character {
-            '(' => depth = depth.saturating_add(1),
-            ')' => {
-                depth = depth.saturating_sub(1);
-                if depth == 0 {
-                    gate_end = Some(index);
-                    break;
-                }
-            }
-            _ => {}
+/// Joins continuation lines until the leading attribute's closing bracket so
+/// multi-line attribute spellings the parser accepts stay visible to this
+/// walk. Returns the attribute text, the unconsumed remainder of the closing
+/// line, and how many lines the attribute spans. `None` (no complete
+/// attribute) fails closed with no gate credit.
+fn join_leading_attribute(lines: &[&str]) -> Option<(String, String, usize)> {
+    // An unclosed `#[` must not swallow the rest of the file: real
+    // attributes span a handful of lines, so past this bound the walk fails
+    // closed for the candidate instead of joining unrelated lines.
+    const MAX_JOINED_LINES: usize = 32;
+    let mut joined = String::new();
+    for (offset, line) in lines.iter().enumerate() {
+        if offset >= MAX_JOINED_LINES {
+            return None;
+        }
+        joined.push_str(line);
+        joined.push('\n');
+        if let Some((attribute, remainder)) = cfg_predicates::split_leading_attribute(&joined) {
+            return Some((attribute.to_string(), remainder.to_string(), offset + 1));
         }
     }
-    let Some(gate_end) = gate_end else {
-        return false;
-    };
-    let gate = &rest[..gate_end];
-    if gate == "test" {
-        return true;
-    }
-    let Some(arguments) = gate
-        .strip_prefix("all(")
-        .and_then(|rest| rest.strip_suffix(')'))
-    else {
-        return false;
-    };
-    arguments.split(',').any(|term| term.trim() == "test")
+    None
 }
 
 fn normalized_test_attribute_path(attribute: &str) -> Option<String> {

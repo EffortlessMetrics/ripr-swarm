@@ -281,6 +281,84 @@ mod any_tests {
 }
 
 #[test]
+fn normalizer_preserves_producer_roles_for_shared_authority_spellings() {
+    // #3530: the preservation walk consumes the shared cfg-predicate
+    // authority, so whitespace variants and multi-line attribute spellings
+    // the producer accepts keep their evidence role, while a non-test cfg
+    // gate still fails closed. Reverting the walk to a drifted line matcher
+    // demotes the first two helpers and fails this test.
+    let source = "\
+#[ cfg(test) ]
+mod whitespace_gate {
+    fn whitespace_helper() {}
+}
+
+#[cfg(
+    all(unix, test)
+)]
+mod multiline_gate {
+    fn multiline_helper() {}
+}
+
+#[cfg(unix)]
+mod production_gate {
+    fn production_helper() {}
+}
+";
+    let mut facts = FileFacts {
+        path: PathBuf::from("src/lib.rs"),
+        functions: vec![
+            cfg_function_fact("whitespace_helper", 3),
+            cfg_function_fact("multiline_helper", 10),
+            cfg_function_fact("production_helper", 15),
+        ],
+        source: source.to_string(),
+        ..FileFacts::default()
+    };
+
+    normalize_file_test_styles(&mut facts);
+
+    for name in ["whitespace_helper", "multiline_helper"] {
+        assert!(
+            facts
+                .functions
+                .iter()
+                .find(|function| function.name == name)
+                .is_some_and(|function| function.is_test),
+            "{name} must keep its producer-owned cfg-test evidence role through the shared authority"
+        );
+        assert!(
+            facts.tests.iter().all(|test| test.name != name),
+            "{name} must stay evidence-only without an executable TestFact"
+        );
+    }
+    assert!(
+        facts
+            .functions
+            .iter()
+            .find(|function| function.name == "production_helper")
+            .is_some_and(|function| !function.is_test),
+        "a cfg gate without a test requirement must fail closed"
+    );
+}
+
+fn cfg_function_fact(name: &str, start_line: usize) -> FunctionFact {
+    FunctionFact {
+        id: crate::domain::SymbolId(format!("src/lib.rs::{name}:{start_line}")),
+        name: name.to_string(),
+        file: PathBuf::from("src/lib.rs"),
+        start_line,
+        end_line: start_line,
+        body: String::new(),
+        calls: Vec::new(),
+        returns: Vec::new(),
+        literals: Vec::new(),
+        is_test: true,
+        attrs: Vec::new(),
+    }
+}
+
+#[test]
 fn lexical_facts_share_exact_test_style_recognition() -> Result<(), String> {
     let adapter = LexicalRustSyntaxAdapter;
     let mut facts = adapter.summarize_file(

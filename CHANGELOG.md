@@ -11,6 +11,18 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Rust source-role analysis now classifies source-visible `cfg` and
+  `cfg_attr` predicates through one closed authority shared by the parser
+  producer and the facts normalizer. Nested `test` conjunctions in
+  `#[cfg(all(...))]` earn the evidence role at nesting depths within the supported bound (deeper predicates fail closed) and any
+  conjunct order, whitespace and multi-line attribute spellings no longer
+  lose a producer-granted role in the normalizer, and `cfg_attr`
+  introductions never promote production code to test-only. Alternatives,
+  negation, comments, literals, lookalike identifiers, and malformed input
+  stay fail-closed. Cache generations advance so warm analysis cannot reuse
+  the previous role classification
+  ([#3530](https://github.com/EffortlessMetrics/ripr-swarm/issues/3530)).
+
 - Rust source-role analysis now recognizes a direct top-level `test` conjunct
   in `#[cfg(all(...))]` regardless of conjunct order. Helpers under
   `#[cfg(all(feature = "slow", test))]` are evidence role and no longer seed

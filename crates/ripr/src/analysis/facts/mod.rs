@@ -1,4 +1,5 @@
 mod build;
+pub(crate) mod cfg_predicates;
 mod includes;
 mod model;
 mod parameterized_tests;

@@ -95,7 +95,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.0` -> `1.1`: a direct top-level `test` conjunct in
 /// `cfg(all(...))` now carries evidence role regardless of conjunct order;
 /// old classified seams may retain test-second helpers as production.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.1";
+/// `1.1` -> `1.2`: nested `test` conjunctions in `cfg(all(...))` now carry
+/// evidence role through the shared cfg-predicate authority (#3530); old
+/// classified seams may retain nested-conjunct helpers as production.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.2";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -105,7 +108,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.1";
 /// classified-seam cache.
 /// `0.6` -> `0.7`: test-second `cfg(all(...))` helpers now carry evidence
 /// role, changing the facts sharded entries derive from.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.7";
+/// `0.7` -> `0.8`: nested `test` conjunctions in `cfg(all(...))` now carry
+/// evidence role (#3530), changing the facts sharded entries derive from.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.8";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -119,7 +124,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.7";
 /// `0.6` -> `0.7`: manifest-less package identity semantics changed (#3410).
 /// `0.7` -> `0.8`: test-second `cfg(all(...))` helpers now carry evidence
 /// role, changing compact classified-seam content.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.8";
+/// `0.8` -> `0.9`: nested `test` conjunctions in `cfg(all(...))` now carry
+/// evidence role (#3530), changing compact classified-seam content.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.9";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -147,7 +154,11 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `0.4` -> `0.5`: `FunctionFact.is_test` now recognizes a direct
 /// top-level `test` conjunct in `cfg(all(...))` regardless of order; old
 /// file facts may retain test-second helpers as production.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "0.5";
+/// `0.5` -> `0.6`: `FunctionFact.is_test` now recognizes nested `test`
+/// conjunctions in `cfg(all(...))` through the shared cfg-predicate
+/// authority (#3530); old file facts may retain nested-conjunct helpers as
+/// production.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "0.6";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
