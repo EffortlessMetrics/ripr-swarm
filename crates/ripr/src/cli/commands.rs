@@ -1334,18 +1334,37 @@ fn review_comments_with_diff_loader(
             );
         }
         let gap_ledger_text = std::fs::read_to_string(gap_ledger).map_err(|err| {
-            format!(
-                "review-comments --gap-ledger {} is invalid: read failed: {err}",
-                output::pr_inline_comment_publish_plan::display_path(gap_ledger)
+            record_review_comments_error(
+                &mut receipt,
+                &receipt_path,
+                "configuration",
+                format!(
+                    "review-comments --gap-ledger {} is invalid: read failed: {err}",
+                    output::pr_inline_comment_publish_plan::display_path(gap_ledger)
+                ),
             )
         })?;
         let records = output::gap_decision_ledger::parse_gap_records_json(&gap_ledger_text)
             .map_err(|err| {
-                format!(
-                    "review-comments --gap-ledger {} is invalid: {err}",
-                    output::pr_inline_comment_publish_plan::display_path(gap_ledger)
+                record_review_comments_error(
+                    &mut receipt,
+                    &receipt_path,
+                    "configuration",
+                    format!(
+                        "review-comments --gap-ledger {} is invalid: {err}",
+                        output::pr_inline_comment_publish_plan::display_path(gap_ledger)
+                    ),
                 )
             })?;
+        enforce_review_comments_deadline(
+            &mut receipt,
+            &receipt_path,
+            started,
+            options.timeout_ms,
+            "configuration",
+        )?;
+        receipt.phase("configuration", "static_rendering");
+        receipt.write_atomic(&receipt_path)?;
         let gap_ledger_path = output::pr_inline_comment_publish_plan::display_path(gap_ledger);
         let rendered_json = output::review_comments::render_gap_record_review_comments_json(
             &input.root,
@@ -1354,7 +1373,10 @@ fn review_comments_with_diff_loader(
             &input.mode,
             &gap_ledger_path,
             &records,
-        )?;
+        )
+        .map_err(|error| {
+            record_review_comments_error(&mut receipt, &receipt_path, "static_rendering", error)
+        })?;
         let rendered_md = output::review_comments::render_gap_record_review_comments_markdown(
             &input.root,
             &options.base,
@@ -1363,14 +1385,26 @@ fn review_comments_with_diff_loader(
             &gap_ledger_path,
             &records,
         );
-        receipt.phase("configuration", "static_rendering");
-        receipt.write_atomic(&receipt_path)?;
+        enforce_review_comments_deadline(
+            &mut receipt,
+            &receipt_path,
+            started,
+            options.timeout_ms,
+            "static_rendering",
+        )?;
         receipt.phase("static_rendering", "artifact_io");
         receipt.write_atomic(&receipt_path)?;
         let rendered_json =
             output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
         write_text_file(&options.out, &rendered_json)?;
         write_text_file(&markdown_path, &rendered_md)?;
+        enforce_review_comments_deadline(
+            &mut receipt,
+            &receipt_path,
+            started,
+            options.timeout_ms,
+            "artifact_io",
+        )?;
         receipt.complete(&artifacts);
         let rendered_json =
             output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
@@ -6604,6 +6638,23 @@ language = "rust"
         };
         assert!(parse_err.contains("review-comments --gap-ledger"));
         assert!(parse_err.contains("invalid"));
+
+        // Both failure routes must publish a terminal failed receipt so a
+        // reader of the run receipt never mistakes the run for in-progress.
+        let receipt_path = out.with_file_name("run-receipt.json");
+        let receipt_json = std::fs::read_to_string(&receipt_path)
+            .map_err(|err| format!("read failed receipt: {err}"))?;
+        let receipt: serde_json::Value = serde_json::from_str(&receipt_json)
+            .map_err(|err| format!("parse failed receipt: {err}"))?;
+        assert_eq!(receipt["status"], "failed");
+        assert_eq!(receipt["active_phase"], "configuration");
+        assert_eq!(receipt["limitations"][0]["category"], "analysis_failed");
+        assert!(
+            receipt["limitations"][0]["repair_route"]
+                .as_str()
+                .is_some_and(|route| route.contains("--gap-ledger")),
+            "receipt must carry the gap-ledger failure route: {receipt_json}"
+        );
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
         Ok(())
