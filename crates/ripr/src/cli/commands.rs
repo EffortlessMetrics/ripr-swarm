@@ -1396,8 +1396,12 @@ fn review_comments_with_diff_loader(
         receipt.write_atomic(&receipt_path)?;
         let rendered_json =
             output::review_comments_receipt::attach_to_json(&rendered_json, &receipt)?;
-        write_text_file(&options.out, &rendered_json)?;
-        write_text_file(&markdown_path, &rendered_md)?;
+        write_text_file(&options.out, &rendered_json).map_err(|error| {
+            record_review_comments_error(&mut receipt, &receipt_path, "artifact_io", error)
+        })?;
+        write_text_file(&markdown_path, &rendered_md).map_err(|error| {
+            record_review_comments_error(&mut receipt, &receipt_path, "artifact_io", error)
+        })?;
         enforce_review_comments_deadline(
             &mut receipt,
             &receipt_path,
@@ -6612,6 +6616,16 @@ language = "rust"
         };
         assert!(read_err.contains("review-comments --gap-ledger"));
         assert!(read_err.contains("read failed"));
+
+        // Pin the read-failure receipt before the next run overwrites it.
+        let receipt_path = out.with_file_name("run-receipt.json");
+        let read_receipt: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&receipt_path)
+                .map_err(|err| format!("read read-failure receipt: {err}"))?,
+        )
+        .map_err(|err| format!("parse read-failure receipt: {err}"))?;
+        assert_eq!(read_receipt["status"], "failed");
+        assert_eq!(read_receipt["active_phase"], "configuration");
 
         let malformed_ledger = root.join("malformed-gap-ledger.json");
         std::fs::write(&malformed_ledger, "{not json")
