@@ -162,17 +162,17 @@ fn validate_date(value: &str) -> Result<(), String> {
     }
     let year = value[0..4]
         .parse::<i32>()
-        .map_err(|_| "invalid --as-of year".to_string())?;
+        .map_err(|error| format!("invalid --as-of year: {error}"))?;
     let month = value[5..7]
         .parse::<u32>()
-        .map_err(|_| "invalid --as-of month".to_string())?;
+        .map_err(|error| format!("invalid --as-of month: {error}"))?;
     let day = value[8..10]
         .parse::<u32>()
-        .map_err(|_| "invalid --as-of day".to_string())?;
+        .map_err(|error| format!("invalid --as-of day: {error}"))?;
     if year < 1
         || !(1..=12).contains(&month)
         || day == 0
-        || day > days_in_month(i64::from(year), i64::from(month)) as u32
+        || i64::from(day) > days_in_month(i64::from(year), i64::from(month))
     {
         return Err(format!("--as-of is not a valid calendar date: `{value}`"));
     }
