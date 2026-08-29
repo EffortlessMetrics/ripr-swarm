@@ -1,6 +1,9 @@
 pub(crate) mod agent_brief;
 pub(crate) mod agent_receipt;
+#[path = "agent_seam_packets_live.rs"]
 pub(crate) mod agent_seam_packets;
+#[path = "agent_seam_packets.rs"]
+mod agent_seam_packets_legacy;
 pub(crate) mod agent_workflow;
 pub(crate) mod assistant_loop_health;
 pub(crate) mod badge;
@@ -16,6 +19,7 @@ pub(crate) mod first_pr;
 pub(crate) mod first_useful_action;
 pub(crate) mod format;
 pub(crate) mod gap_decision_ledger;
+pub(crate) mod gap_decision_ledger_live;
 pub(crate) mod gate;
 pub mod github;
 pub mod human;

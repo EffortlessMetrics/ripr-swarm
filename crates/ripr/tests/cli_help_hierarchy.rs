@@ -146,7 +146,7 @@ fn agent_repair_help_names_the_primary_transaction_and_its_limits() -> Result<()
         "Run the primary two-phase repair transaction for one named gap.",
         "ripr agent repair --seam-id ID --phase before",
         "# edit one focused test outside RIPR",
-        "ripr agent repair --seam-id ID --phase after",
+        "ripr agent repair --attempt ID --phase after",
         "The repair command does not generate or apply tests, execute mutation testing, or declare the repository safe to merge.",
     ] {
         assert_contains(

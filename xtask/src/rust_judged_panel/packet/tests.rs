@@ -140,6 +140,54 @@ fn rust_judged_panel_packet_retained_validator_reaches_committed_generation() ->
     super::validate_at(root, &manifest)
 }
 
+/// Resolve `<repository>/.git` to the real git directory it names.
+///
+/// A linked worktree's `.git` is a gitfile (`gitdir: <path>`), not a git
+/// directory, so the disposable fixture cannot bind to it directly. Git
+/// interprets a relative gitdir against the directory containing the gitfile,
+/// so resolve it there before returning; a normal checkout (`.git` is a
+/// directory) resolves to itself.
+fn resolve_repository_gitdir(repository: &Path) -> Result<String, String> {
+    let repository_git = repository.join(".git");
+    if repository_git.is_dir() {
+        return Ok(repository_git.display().to_string());
+    }
+    if !repository_git.is_file() {
+        return Err(format!(
+            "`{}` is neither a git directory nor a gitfile",
+            repository_git.display()
+        ));
+    }
+    let link = fs::read_to_string(&repository_git)
+        .map_err(|error| format!("read worktree gitfile: {error}"))?;
+    let target = link
+        .trim()
+        .strip_prefix("gitdir: ")
+        .ok_or_else(|| "worktree `.git` gitfile has no `gitdir:` prefix".to_string())?;
+    // `join` replaces the base when the gitdir is absolute, so both spellings
+    // resolve against the gitfile's directory, exactly as Git does. Normalize
+    // the joined path lexically (`wt/../meta` -> `meta`) so the fixture binds
+    // to a clean absolute gitdir.
+    let resolved = repository.join(target);
+    let mut normalized = PathBuf::new();
+    for component in resolved.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            component => normalized.push(component.as_os_str()),
+        }
+    }
+    if !normalized.is_dir() {
+        return Err(format!(
+            "worktree gitfile points at `{}`, which is not a git directory",
+            normalized.display()
+        ));
+    }
+    Ok(normalized.display().to_string())
+}
+
 #[test]
 fn rust_judged_panel_packet_public_publish_validates_disposable_host_run() -> Result<(), String> {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -150,11 +198,12 @@ fn rust_judged_panel_packet_public_publish_validates_disposable_host_run() -> Re
         &repository.join("metrics/rust-judged-behavior-panel"),
         &root.0.join("metrics/rust-judged-behavior-panel"),
     )?;
-    fs::write(
-        root.0.join(".git"),
-        format!("gitdir: {}\n", repository.join(".git").display()),
-    )
-    .map_err(|error| format!("bind disposable fixture to repository git data: {error}"))?;
+    // A linked worktree's `.git` is a gitfile (`gitdir: <real git dir>`), not
+    // a git directory. The fixture's gitfile must bind to the real git data,
+    // so follow the gitfile chain once; a normal checkout resolves to itself.
+    let gitdir = resolve_repository_gitdir(repository)?;
+    fs::write(root.0.join(".git"), format!("gitdir: {gitdir}\n"))
+        .map_err(|error| format!("bind disposable fixture to repository git data: {error}"))?;
     let state = crate::rust_judged_panel::subject::repository_state(repository)?;
     let subjects_path = root.0.join(SUBJECTS_PATH);
     let mut authority: serde_json::Value = read_strict_json(&subjects_path, "subject authority")?;
@@ -997,5 +1046,532 @@ fn rust_judged_panel_packet_reuse_validates_every_member_before_current() -> Res
     {
         return Err("tampered reuse advanced or changed the prior current".to_string());
     }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// #3407: disposable on-disk validated host-run fixture plus the public
+// `packet::publish` -> `packet::validate_at` integration route.
+// ---------------------------------------------------------------------------
+
+struct HostDiskFixture {
+    _root: TestRoot,
+    manifest: RustJudgedPanelManifest,
+    host_current: String,
+    run_id: String,
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    format!("sha256:{:x}", sha2::Sha256::digest(bytes))
+}
+
+fn repository_root() -> Result<PathBuf, String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "xtask manifest lacks repository parent".to_string())?;
+    if root.as_os_str().is_empty() {
+        return Err("repository root resolved to an empty path".to_string());
+    }
+    Ok(root.to_path_buf())
+}
+
+type TreeSnapshotEntries = Vec<(String, bool, Vec<u8>)>;
+type TreeSnapshot = Option<TreeSnapshotEntries>;
+
+fn snapshot_tree(root: &Path) -> Result<TreeSnapshot, String> {
+    if !root.exists() {
+        return Ok(None);
+    }
+
+    fn visit(root: &Path, path: &Path, entries: &mut TreeSnapshotEntries) -> Result<(), String> {
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|error| format!("snapshot path outside root: {error}"))?
+            .to_string_lossy()
+            .replace('\\', "/");
+        let metadata = fs::symlink_metadata(path).map_err(|error| error.to_string())?;
+        if metadata.is_dir() {
+            entries.push((relative, true, Vec::new()));
+            for entry in fs::read_dir(path).map_err(|error| error.to_string())? {
+                visit(
+                    root,
+                    &entry.map_err(|error| error.to_string())?.path(),
+                    entries,
+                )?;
+            }
+        } else {
+            entries.push((
+                relative,
+                false,
+                fs::read(path).map_err(|error| error.to_string())?,
+            ));
+        }
+        Ok(())
+    }
+
+    let mut entries = Vec::new();
+    visit(root, root, &mut entries)?;
+    entries.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok(Some(entries))
+}
+
+fn assert_tree_unchanged(root: &Path, before: &TreeSnapshot, label: &str) -> Result<(), String> {
+    let after = snapshot_tree(root)?;
+    if &after != before {
+        return Err(format!("{label} changed the portable tree"));
+    }
+    Ok(())
+}
+
+fn write_json_bytes(path: &Path, value: &serde_json::Value) -> Result<Vec<u8>, String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let bytes = serde_json::to_vec_pretty(value).map_err(|error| error.to_string())?;
+    fs::write(path, &bytes).map_err(|error| error.to_string())?;
+    Ok(bytes)
+}
+
+fn copy_panel_authority(repository: &Path, root: &Path) -> Result<(), String> {
+    let source = repository.join("metrics/rust-judged-behavior-panel");
+    let destination = root.join("metrics/rust-judged-behavior-panel");
+    fs::create_dir_all(&destination).map_err(|error| error.to_string())?;
+    for name in ["manifest.json", "subjects.json"] {
+        fs::copy(source.join(name), destination.join(name)).map_err(|error| error.to_string())?;
+    }
+    copy_tree(&source.join("diffs"), &destination.join("diffs"))?;
+    copy_tree(&source.join("subjects"), &destination.join("subjects"))
+}
+
+/// Materialize a complete validated host-run generation on disk for the three
+/// governed directions. Subject repositories are produced by the real
+/// deterministic materializer (identity checked against the committed
+/// expected base/head/tree); receipts, raw evidence, and the build identity
+/// carry real digests so `load_validated_current` accepts the artifact set.
+fn on_disk_host_fixture(name: &str) -> Result<HostDiskFixture, String> {
+    use crate::rust_judged_panel::subject::{self, ReplaySubjectFile};
+
+    let repository = repository_root()?;
+    let root = TestRoot(scratch(name)?);
+    copy_panel_authority(&repository, &root.0)?;
+    let manifest = crate::rust_judged_panel::load_and_validate_at(
+        &root.0,
+        Path::new("metrics/rust-judged-behavior-panel/manifest.json"),
+    )?;
+
+    const OUTPUT_RELATIVE: &str = "target/ripr/judged-panel-fixture";
+    let output_root = root.0.join(OUTPUT_RELATIVE);
+    let sequence = TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let run_id = format!("run-fixture-{sequence}");
+    let staging = output_root.join(format!(".staging-{run_id}"));
+    let replays = subject::materialize_for_replay(&root.0, &staging.join("subjects"), &manifest)?;
+    let subjects_by_id = subject::load_for_packet(&root.0, &manifest)?
+        .into_iter()
+        .map(|subject| (subject.case_id.clone(), subject))
+        .collect::<std::collections::BTreeMap<_, _>>();
+
+    // Build identity: exactly the owned locked/offline dev build shape.
+    let binary_bytes = b"ripr judged-panel fixture retained binary\n";
+    let binary_sha256 = sha256_hex(binary_bytes);
+    fs::create_dir_all(staging.join("build")).map_err(|error| error.to_string())?;
+    fs::write(staging.join("build/retained-ripr.bin"), binary_bytes)
+        .map_err(|error| error.to_string())?;
+    let build_stdout = b"fixture cargo build stdout\n";
+    let build_stderr = b"";
+    fs::write(staging.join("build/stdout.bin"), build_stdout).map_err(|error| error.to_string())?;
+    fs::write(staging.join("build/stderr.bin"), build_stderr).map_err(|error| error.to_string())?;
+    let build = serde_json::json!({
+        "command": ["cargo", "build", "-p", "ripr", "--locked", "--offline",
+                    "--target-dir", "fixture-target"],
+        "package": "ripr",
+        "profile": "dev",
+        "features": ["default"],
+        "locked": true,
+        "offline": true,
+        "cargo_version": "cargo fixture-version",
+        "rustc_verbose_version": "rustc fixture-version",
+        "host_target": "fixture-host-target",
+        "cargo_home": null,
+        "executed_binary_path": "fixture-target/debug/retained-ripr.bin",
+        "retained_binary_path": "build/retained-ripr.bin",
+        "binary_sha256": binary_sha256,
+        "binary_bytes": binary_bytes.len() as u64,
+        "binary_version": "ripr 0.0.0-judged-panel-fixture",
+        "build_stdout_sha256": sha256_hex(build_stdout),
+        "build_stderr_sha256": sha256_hex(build_stderr),
+    });
+
+    let source_head = "fixture-source-head";
+    let source_tree = "fixture-source-tree";
+    let mut index_cases = Vec::new();
+    for replay in &replays {
+        let subject = subjects_by_id
+            .get(&replay.case_id)
+            .ok_or_else(|| format!("authority lacks `{}`", replay.case_id))?;
+        let executed = subject::executed_diff_identity(&replay.root, &replay.base)?;
+        let staging_subject_root = format!(
+            "{OUTPUT_RELATIVE}/.staging-{run_id}/subjects/{}",
+            replay.case_id
+        );
+        let probe_file = format!("{staging_subject_root}/{}", subject.anchor_file);
+        let family = match subject.behavior_family.as_str() {
+            "predicate_boundary" => "predicate",
+            "return_value" => "return_value",
+            other => return Err(format!("unsupported behavior family `{other}`")),
+        };
+        let input_value = |role: &str, file: &ReplaySubjectFile| {
+            serde_json::json!({
+                "role": role,
+                "source_path": file.source_path,
+                "repository_path": file.repository_path,
+                "sha256": file.sha256,
+            })
+        };
+        let mut subject_inputs = vec![
+            input_value("cargo_toml", &replay.cargo_toml),
+            input_value("cargo_lock", &replay.cargo_lock),
+            input_value("config", &replay.config),
+            input_value("source_before", &replay.source_before),
+            input_value("source_after", &replay.source_after),
+            input_value("diff", &replay.diff),
+        ];
+        for test in &replay.tests {
+            subject_inputs.push(input_value("test", test));
+        }
+
+        let mut finding = serde_json::json!({
+            "id": format!("finding-{}", replay.case_id),
+            "classification": subject.expected_classification,
+            "probe": {
+                "family": family,
+                "file": probe_file,
+                "line": subject.anchor_line,
+                "expression": subject.changed_behavior,
+            },
+            "missing": subject.expected_missing,
+            "recommended_next_step": subject.expected_recommendation,
+        });
+        if let Some(kind) = &subject.expected_static_limit_kind {
+            finding["static_limit_kind"] = serde_json::Value::String(kind.clone());
+        }
+        let report = serde_json::json!({
+            "root": staging_subject_root,
+            "analysis_outcome": {
+                "analysis_complete": true,
+                "outcome": {
+                    "kind": "complete_with_findings",
+                    "limitations": [],
+                    "identity": {"input_identity": executed},
+                },
+            },
+            "findings": [finding],
+        });
+        let stdout_bytes = serde_json::to_vec_pretty(&report).map_err(|error| error.to_string())?;
+        let stderr_bytes: &[u8] = b"";
+        let stdout_relative = format!("cases/{}/stdout.bin", replay.case_id);
+        let stderr_relative = format!("cases/{}/stderr.bin", replay.case_id);
+        fs::create_dir_all(staging.join("cases").join(&replay.case_id))
+            .map_err(|error| error.to_string())?;
+        fs::write(staging.join(&stdout_relative), &stdout_bytes)
+            .map_err(|error| error.to_string())?;
+        fs::write(staging.join(&stderr_relative), stderr_bytes)
+            .map_err(|error| error.to_string())?;
+
+        let receipt_relative = format!("cases/{}/receipt.json", replay.case_id);
+        let receipt = serde_json::json!({
+            "schema_version": "0.1",
+            "kind": "rust_judged_panel_host_run_receipt",
+            "case_id": replay.case_id,
+            "subject_id": replay.subject_id,
+            "expected_direction": replay.expected_direction,
+            "source_head": source_head,
+            "source_tree": source_tree,
+            "binary_sha256": binary_sha256,
+            "repository_base": replay.base,
+            "repository_head": replay.head,
+            "repository_tree": replay.tree,
+            "plan": {
+                "argv": ["check", "--root", "<materialized-subject>", "--base",
+                         replay.base, "--mode", "draft", "--json"],
+                "root": staging_subject_root,
+                "base": replay.base,
+                "head": replay.head,
+                "tree": replay.tree,
+                "mode": "draft",
+                "format": "json",
+                "config_path": replay.config.repository_path,
+                "config_sha256": replay.config.sha256,
+                "diff_path": replay.diff.source_path,
+                "diff_sha256": replay.diff.sha256,
+                "executed_diff_identity": executed,
+                "subject_inputs": subject_inputs,
+            },
+            "disposition": "complete",
+            "exit_code": 0,
+            "timed_out": false,
+            "duration_ms": 1,
+            "analyzer_input_identity": executed,
+            "raw": {
+                "stdout_path": stdout_relative,
+                "stdout_sha256": sha256_hex(&stdout_bytes),
+                "stdout_bytes": stdout_bytes.len() as u64,
+                "stderr_path": stderr_relative,
+                "stderr_sha256": sha256_hex(stderr_bytes),
+                "stderr_bytes": stderr_bytes.len() as u64,
+            },
+            "error": null,
+        });
+        let receipt_bytes = write_json_bytes(&staging.join(&receipt_relative), &receipt)?;
+        index_cases.push(serde_json::json!({
+            "case_id": replay.case_id,
+            "expected_direction": replay.expected_direction,
+            "receipt_path": receipt_relative,
+            "receipt_sha256": sha256_hex(&receipt_bytes),
+            "stdout_sha256": sha256_hex(&stdout_bytes),
+            "stderr_sha256": sha256_hex(stderr_bytes),
+        }));
+    }
+    index_cases.sort_by(|left, right| {
+        left["case_id"]
+            .as_str()
+            .unwrap_or_default()
+            .cmp(right["case_id"].as_str().unwrap_or_default())
+    });
+
+    let index = serde_json::json!({
+        "schema_version": "0.1",
+        "kind": "rust_judged_panel_host_run_index",
+        "publication_state": "complete",
+        "run_id": run_id,
+        "source": {
+            "head": source_head,
+            "tree": source_tree,
+            "cargo_lock_sha256": "sha256:fixture-producer-lock",
+            "cargo_toml_sha256": "sha256:fixture-producer-manifest",
+            "dirty": false,
+        },
+        "build": build,
+        "cases": index_cases,
+        "non_claims": [
+            "host-bound raw execution evidence only",
+            "no portable semantic packet or judgment",
+            "no rate, gate, badge, or support claim",
+        ],
+    });
+    let index_bytes = write_json_bytes(&staging.join("run-index.json"), &index)?;
+
+    // Publish the staged attempt as the immutable final generation, exactly
+    // like a real host-run transaction: the retained reports keep their
+    // staging-path spellings while the artifacts move to `runs/{run_id}`.
+    let runs_root = output_root.join("runs");
+    fs::create_dir_all(&runs_root).map_err(|error| error.to_string())?;
+    let final_run = runs_root.join(&run_id);
+    fs::rename(&staging, &final_run).map_err(|error| error.to_string())?;
+    let current = serde_json::json!({
+        "schema_version": "0.1",
+        "kind": "rust_judged_panel_current_host_run",
+        "run_id": run_id,
+        "index_path": format!("runs/{run_id}/run-index.json"),
+        "index_sha256": sha256_hex(&index_bytes),
+    });
+    write_json_bytes(&output_root.join("current.json"), &current)?;
+
+    Ok(HostDiskFixture {
+        _root: root,
+        manifest,
+        host_current: format!("{OUTPUT_RELATIVE}/current.json"),
+        run_id,
+    })
+}
+
+#[test]
+fn judgment_sidecar_public_publish_end_to_end() -> Result<(), String> {
+    let fixture = on_disk_host_fixture("public-publish")?;
+    super::publish(&fixture._root.0, &fixture.manifest, &fixture.host_current)?;
+    super::validate_at(&fixture._root.0, &fixture.manifest)?;
+
+    // Packet, packet index, and current pointer share one generation
+    // identity with the exact selected case set and the fixture's host run.
+    let current: PortableCurrent =
+        read_strict_json(&fixture._root.0.join(CURRENT_PATH), "portable current")?;
+    let index: PortableIndex =
+        read_strict_json(&fixture._root.0.join(&current.index_path), "portable index")?;
+    if index.generation_id != current.generation_id {
+        return Err(format!(
+            "portable index generation `{}` does not match current `{}`",
+            index.generation_id, current.generation_id
+        ));
+    }
+    if index.packets.len() != 3 {
+        return Err(format!(
+            "portable index must carry the three canonical cases, got {}",
+            index.packets.len()
+        ));
+    }
+    for entry in &index.packets {
+        for path in [&entry.packet_path, &entry.attestation_path] {
+            if !path.contains(&current.generation_id) {
+                return Err(format!(
+                    "index member `{path}` is outside the current generation"
+                ));
+            }
+        }
+        let packet: PortablePacket =
+            read_strict_json(&fixture._root.0.join(&entry.packet_path), "packet")?;
+        if packet.case_id != entry.case_id {
+            return Err(format!(
+                "packet `{}` does not match its index entry",
+                packet.case_id
+            ));
+        }
+        if packet.judgment.disposition != "unjudged" {
+            return Err(format!("packet `{}` must stay unjudged", packet.case_id));
+        }
+        if packet.host_evidence.run_id != fixture.run_id {
+            return Err(format!(
+                "packet `{}` binds run `{}` instead of `{}`",
+                packet.case_id, packet.host_evidence.run_id, fixture.run_id
+            ));
+        }
+        if packet.semantic.manifest_sha256 != index.manifest_sha256
+            || packet.semantic.subjects_sha256 != index.subjects_sha256
+        {
+            return Err(format!(
+                "packet `{}` does not bind the published authority digests",
+                packet.case_id
+            ));
+        }
+    }
+
+    // Republishing the same evidence is content-addressed: the accepted
+    // generation equals the final published generation.
+    super::publish(&fixture._root.0, &fixture.manifest, &fixture.host_current)?;
+    let republished: PortableCurrent =
+        read_strict_json(&fixture._root.0.join(CURRENT_PATH), "republished current")?;
+    if republished.generation_id != current.generation_id {
+        return Err(format!(
+            "content-addressed generation drifted: `{}` -> `{}`",
+            current.generation_id, republished.generation_id
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn judgment_sidecar_public_publish_fails_closed_without_a_valid_host_run() -> Result<(), String> {
+    // Absent sidecar: publish must fail closed without writing any portable
+    // artifact when the referenced host current does not exist.
+    let absent = on_disk_host_fixture("absent-sidecar")?;
+    let absent_portable = absent
+        ._root
+        .0
+        .join("metrics/rust-judged-behavior-panel/portable");
+    let absent_before = snapshot_tree(&absent_portable)?;
+    match super::publish(
+        &absent._root.0,
+        &absent.manifest,
+        "target/ripr/judged-panel-fixture/current-missing.json",
+    ) {
+        Ok(()) => return Err("publish accepted an absent host current".to_string()),
+        Err(error) if !error.contains("resolve host current") => {
+            return Err(format!(
+                "absent host current failed for the wrong reason: {error}"
+            ));
+        }
+        Err(_) => {}
+    }
+    assert_tree_unchanged(&absent_portable, &absent_before, "absent publication")?;
+
+    // Stale/tampered sidecar: flipping retained raw bytes after the digests
+    // were bound must fail closed and leave the portable tree untouched.
+    let tampered = on_disk_host_fixture("tampered-sidecar")?;
+    let cases_root = tampered
+        ._root
+        .0
+        .join("target/ripr/judged-panel-fixture/runs")
+        .join(&tampered.run_id)
+        .join("cases");
+    let case_dirs = fs::read_dir(&cases_root)
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    let first_case = case_dirs
+        .first()
+        .ok_or_else(|| "fixture produced no case directories".to_string())?;
+    fs::write(
+        first_case.path().join("stdout.bin"),
+        b"{\"tampered\": true}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let tampered_portable = tampered
+        ._root
+        .0
+        .join("metrics/rust-judged-behavior-panel/portable");
+    let tampered_before = snapshot_tree(&tampered_portable)?;
+    match super::publish(
+        &tampered._root.0,
+        &tampered.manifest,
+        &tampered.host_current,
+    ) {
+        Ok(()) => return Err("publish accepted tampered retained raw evidence".to_string()),
+        Err(error) if !error.contains("host receipt raw stdout identity mismatch") => {
+            return Err(format!(
+                "tampered evidence failed for the wrong reason: {error}"
+            ));
+        }
+        Err(_) => {}
+    }
+    assert_tree_unchanged(&tampered_portable, &tampered_before, "tampered publication")?;
+    Ok(())
+}
+
+#[test]
+fn resolve_repository_gitdir_follows_relative_and_absolute_gitfiles() -> Result<(), String> {
+    let root = scratch("resolve-gitdir")?;
+    // A normal checkout: `.git` is a directory and resolves to itself.
+    let checkout = root.join("checkout");
+    fs::create_dir_all(checkout.join(".git")).map_err(|error| error.to_string())?;
+    let resolved = resolve_repository_gitdir(&checkout)?;
+    if resolved != checkout.join(".git").display().to_string() {
+        return Err("directory `.git` did not resolve to itself".to_string());
+    }
+    // A linked worktree with a RELATIVE gitdir (interpreted against the
+    // gitfile's directory, per git): the resolved gitdir must be absolute
+    // and point at the real git data so a fixture can rebind to it.
+    let real_git = root.join("meta").join("real-git");
+    fs::create_dir_all(&real_git).map_err(|error| error.to_string())?;
+    let worktree = root.join("wt");
+    fs::create_dir_all(&worktree).map_err(|error| error.to_string())?;
+    fs::write(worktree.join(".git"), "gitdir: ../meta/real-git\n")
+        .map_err(|error| error.to_string())?;
+    let resolved = resolve_repository_gitdir(&worktree)?;
+    if resolved != real_git.display().to_string() {
+        return Err(format!(
+            "relative gitdir resolved to `{resolved}` instead of `{}`",
+            real_git.display()
+        ));
+    }
+    // An ABSOLUTE gitdir must also resolve through `join`'s absolute-path
+    // replacement.
+    fs::write(
+        worktree.join(".git"),
+        format!("gitdir: {}\n", real_git.display()),
+    )
+    .map_err(|error| error.to_string())?;
+    let resolved = resolve_repository_gitdir(&worktree)?;
+    if resolved != real_git.display().to_string() {
+        return Err("absolute gitdir did not resolve to the real git dir".to_string());
+    }
+    // A dangling gitdir is a named error, never a silent bind.
+    fs::write(worktree.join(".git"), "gitdir: ../meta/missing\n")
+        .map_err(|error| error.to_string())?;
+    let error = resolve_repository_gitdir(&worktree)
+        .err()
+        .ok_or_else(|| "dangling gitdir was accepted".to_string())?;
+    if !error.contains("is not a git directory") {
+        return Err(format!("unexpected dangling-gitdir error: {error}"));
+    }
+    fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
     Ok(())
 }

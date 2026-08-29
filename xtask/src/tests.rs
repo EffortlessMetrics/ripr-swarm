@@ -6614,6 +6614,202 @@ fn perl_real_repo_eval_fixture_guard_reports_contract_drift() -> Result<(), Stri
     Ok(())
 }
 
+use super::fixture_contracts::{
+    validate_perl_packet_contract_migration_corpus,
+    validate_perl_packet_contract_migration_corpus_at,
+};
+
+fn perl_packet_contract_migration_corpus_path() -> Result<PathBuf, String> {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "xtask manifest must have workspace parent".to_string())?;
+    Ok(repo_root.join("fixtures/perl_packet_contract_migration/corpus.json"))
+}
+
+fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<(), String> {
+    fs::create_dir_all(destination).map_err(|err| err.to_string())?;
+    for entry in fs::read_dir(source).map_err(|err| err.to_string())? {
+        let entry = entry.map_err(|err| err.to_string())?;
+        let target = destination.join(entry.file_name());
+        if entry.file_type().map_err(|err| err.to_string())?.is_dir() {
+            copy_dir_recursive(&entry.path(), &target)?;
+        } else {
+            fs::copy(entry.path(), &target).map_err(|err| err.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// Copies the committed perl packet contract migration fixture into the temp
+/// cwd under `fixtures/...` so the corpus's repo-root-relative paths resolve
+/// against the copy, then returns the copied fixture root.
+fn copy_perl_packet_contract_migration_fixture(root: &Path) -> Result<PathBuf, String> {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+    let fixture_root = root.join("fixtures/perl_packet_contract_migration");
+    copy_dir_recursive(
+        &repo_root.join("fixtures/perl_packet_contract_migration"),
+        &fixture_root,
+    )?;
+    Ok(fixture_root)
+}
+
+#[test]
+fn perl_packet_contract_migration_fixture_corpus_is_valid() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let corpus = perl_packet_contract_migration_corpus_path()?;
+        let mut violations = Vec::new();
+        validate_perl_packet_contract_migration_corpus_at(&corpus, &mut violations)?;
+        assert_eq!(violations, Vec::<String>::new());
+
+        let mut root_violations = Vec::new();
+        validate_perl_packet_contract_migration_corpus(&mut root_violations)?;
+        assert_eq!(root_violations, Vec::<String>::new());
+        Ok(())
+    })
+}
+
+#[test]
+fn perl_packet_contract_migration_fixture_guard_reports_packet_tamper() -> Result<(), String> {
+    with_temp_cwd("perl-packet-contract-migration-packet-tamper", |root| {
+        let fixture_root = copy_perl_packet_contract_migration_fixture(root)?;
+        let packet = fixture_root.join("producer-packets/v1/ordinary_discount.json");
+        let mut bytes = fs::read(&packet).map_err(|err| err.to_string())?;
+        bytes.push(b' ');
+        fs::write(&packet, &bytes).map_err(|err| err.to_string())?;
+
+        let mut violations = Vec::new();
+        validate_perl_packet_contract_migration_corpus_at(
+            &fixture_root.join("corpus.json"),
+            &mut violations,
+        )?;
+        let report = violations.join("\n");
+        assert!(report.contains("packet digest drift"));
+        Ok(())
+    })
+}
+
+#[test]
+fn perl_packet_contract_migration_fixture_guard_reports_row_removal() -> Result<(), String> {
+    with_temp_cwd("perl-packet-contract-migration-row-removal", |root| {
+        let fixture_root = copy_perl_packet_contract_migration_fixture(root)?;
+        let contradictions_path = fixture_root.join("expected/contradictions.v1.json");
+        let mut contradictions: Value = serde_json::from_str(
+            &fs::read_to_string(&contradictions_path).map_err(|err| err.to_string())?,
+        )
+        .map_err(|err| err.to_string())?;
+        // Remove a row whose id the corpus REQUIRES, not the first
+        // serialized row: row order is not part of the corpus contract.
+        let corpus: Value = serde_json::from_str(
+            &fs::read_to_string(fixture_root.join("corpus.json")).map_err(|err| err.to_string())?,
+        )
+        .map_err(|err| err.to_string())?;
+        let required = corpus
+            .get("required_contradiction_ids")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "required_contradiction_ids is missing".to_string())?;
+        let required_first = required[0]
+            .as_str()
+            .ok_or_else(|| "required id is not a string".to_string())?;
+        let rows = contradictions
+            .get_mut("contradictions")
+            .and_then(Value::as_array_mut)
+            .ok_or_else(|| "contradictions array is missing".to_string())?;
+        let position = rows
+            .iter()
+            .position(|row| row.get("id").and_then(Value::as_str) == Some(required_first))
+            .ok_or_else(|| format!("required row `{required_first}` not found"))?;
+        rows.remove(position);
+        write(
+            &contradictions_path,
+            &serde_json::to_string_pretty(&contradictions).map_err(|err| err.to_string())?,
+        );
+
+        let mut violations = Vec::new();
+        validate_perl_packet_contract_migration_corpus_at(
+            &fixture_root.join("corpus.json"),
+            &mut violations,
+        )?;
+        let report = violations.join("\n");
+        assert!(report.contains("missing required contradiction row"));
+        Ok(())
+    })
+}
+
+#[test]
+fn perl_packet_contract_migration_fixture_guard_reports_input_inventory_drift() -> Result<(), String>
+{
+    with_temp_cwd("perl-packet-contract-migration-inventory-drift", |root| {
+        let fixture_root = copy_perl_packet_contract_migration_fixture(root)?;
+        let unlisted = fixture_root.join("producer-inputs/ordinary_discount/lib/App/Extra.pm");
+        write(
+            &unlisted,
+            "package App::Extra;
+1;
+",
+        );
+
+        let mut violations = Vec::new();
+        validate_perl_packet_contract_migration_corpus_at(
+            &fixture_root.join("corpus.json"),
+            &mut violations,
+        )?;
+        let report = violations.join(
+            "
+",
+        );
+        assert!(report.contains("input inventory drift"));
+        assert!(report.contains("no pinned digest"));
+        Ok(())
+    })
+}
+
+#[test]
+fn perl_packet_contract_migration_fixture_guard_reports_disposition_authority_flip()
+-> Result<(), String> {
+    with_temp_cwd("perl-packet-contract-migration-authority-flip", |root| {
+        let fixture_root = copy_perl_packet_contract_migration_fixture(root)?;
+        let dispositions_path = fixture_root.join("expected/consumer-dispositions.v1.json");
+        let mut dispositions: Value = serde_json::from_str(
+            &fs::read_to_string(&dispositions_path).map_err(|err| err.to_string())?,
+        )
+        .map_err(|err| err.to_string())?;
+        dispositions["pipeline"]["canonical_gap_emitted"] = Value::Bool(true);
+        write(
+            &dispositions_path,
+            &serde_json::to_string_pretty(&dispositions).map_err(|err| err.to_string())?,
+        );
+
+        let mut violations = Vec::new();
+        validate_perl_packet_contract_migration_corpus_at(
+            &fixture_root.join("corpus.json"),
+            &mut violations,
+        )?;
+        let report = violations.join("\n");
+        assert!(report.contains("must stay false"));
+        Ok(())
+    })
+}
+
+#[test]
+fn perl_packet_contract_migration_fixture_guard_reports_input_digest_drift() -> Result<(), String> {
+    with_temp_cwd("perl-packet-contract-migration-input-drift", |root| {
+        let fixture_root = copy_perl_packet_contract_migration_fixture(root)?;
+        let input = fixture_root.join("producer-inputs/ordinary_discount/lib/App/Discount.pm");
+        let mut bytes = fs::read(&input).map_err(|err| err.to_string())?;
+        bytes.push(b' ');
+        fs::write(&input, &bytes).map_err(|err| err.to_string())?;
+
+        let mut violations = Vec::new();
+        validate_perl_packet_contract_migration_corpus_at(
+            &fixture_root.join("corpus.json"),
+            &mut violations,
+        )?;
+        let report = violations.join("\n");
+        assert!(report.contains("digest drift"));
+        Ok(())
+    })
+}
+
 fn gap_decision_ledger_corpus_path() -> Result<PathBuf, String> {
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -9362,6 +9558,8 @@ jobs:
     timeout-minutes: 10
   rust-cx43:
     if: needs.route.outputs.router_target == 'cx43'
+    with:
+      runner-config: '{"labels":["rust-medium"]}'
     timeout-minutes: 60
     outputs:
       scratch_status: ${{ steps.scratch.outputs.status }}
@@ -9378,6 +9576,8 @@ jobs:
         run: rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
   rust-cpx42:
     if: needs.route.outputs.router_target == 'cpx42'
+    with:
+      runner-config: '{"labels":["rust-medium","rust-16gb"]}'
     timeout-minutes: 60
     outputs:
       scratch_status: ${{ steps.scratch.outputs.status }}
@@ -9394,6 +9594,8 @@ jobs:
         run: rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
   rust-cx53:
     if: needs.route.outputs.router_target == 'cx53'
+    with:
+      runner-config: '{"labels":["rust-large"]}'
     timeout-minutes: 60
     outputs:
       scratch_status: ${{ steps.scratch.outputs.status }}
@@ -9416,12 +9618,21 @@ jobs:
       needs.rust-cpx42.outputs.scratch_status == 'tempfail' ||
       needs.rust-cx53.outputs.scratch_status == 'tempfail'
     timeout-minutes: 90
+    with:
+      runner-config: '"ubuntu-latest"'
     steps:
       - name: Proof route dry-run (advisory)
         run: cargo xtask proof route --base "$BASE_SHA" --head "$HEAD_SHA" || true
   docs-gate:
     name: Ripr Docs Gate
     timeout-minutes: 20
+    steps:
+      - name: Upload docs-gate reports
+        if: always()
+      - name: Advisory reports
+        if: success() && inputs.run-advisory-reports
+      - name: Upload RIPR reports
+        if: failure() || inputs.upload-success-artifacts
   result:
     name: Ripr Rust Small Result
     timeout-minutes: 10
@@ -9485,16 +9696,19 @@ jobs:
     if: needs.route.outputs.router_target == 'cx43'
     uses: ./.github/workflows/rust-gates.yml
     with:
+      runner-config: '{"labels":["rust-medium"]}'
       disk-guard-threshold: 35
   rust-cpx42:
     if: needs.route.outputs.router_target == 'cpx42'
     uses: ./.github/workflows/rust-gates.yml
     with:
+      runner-config: '{"labels":["rust-medium","rust-16gb"]}'
       disk-guard-threshold: 35
   rust-cx53:
     if: needs.route.outputs.router_target == 'cx53'
     uses: ./.github/workflows/rust-gates.yml
     with:
+      runner-config: '{"labels":["rust-large"]}'
       disk-guard-threshold: 50
   rust-github:
     if: >-
@@ -9504,9 +9718,14 @@ jobs:
       needs.rust-cpx42.outputs.scratch_status == 'tempfail' ||
       needs.rust-cx53.outputs.scratch_status == 'tempfail'
     uses: ./.github/workflows/rust-gates.yml
+    with:
+      runner-config: '"ubuntu-latest"'
   docs-gate:
     name: Ripr Docs Gate
     timeout-minutes: 20
+    steps:
+      - name: Upload docs-gate reports
+        if: always()
   result:
     name: Ripr Rust Small Result
     timeout-minutes: 10
@@ -9520,6 +9739,10 @@ jobs:
 on:
   workflow_call:
     inputs:
+      runner-config:
+        description: JSON string or object accepted by jobs.<job_id>.runs-on.
+        required: true
+        type: string
       disk-guard-threshold:
         type: number
         required: false
@@ -9528,6 +9751,7 @@ on:
         value: ${{ jobs.rust-gates.outputs.scratch_status }}
 jobs:
   rust-gates:
+    runs-on: ${{ fromJSON(inputs.runner-config) }}
     timeout-minutes: 90
     outputs:
       scratch_status: ${{ steps.scratch.outputs.status }}
@@ -9542,6 +9766,10 @@ jobs:
         run: cargo xtask proof route --base "$BASE_SHA" --head "$HEAD_SHA" || true
       - name: Clean scratch
         run: rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
+      - name: Advisory reports
+        if: success() && inputs.run-advisory-reports
+      - name: Upload RIPR reports
+        if: failure() || inputs.upload-success-artifacts
 defaults:
   run:
     shell: bash
@@ -9675,6 +9903,115 @@ jobs = ["Ripr Rust Small Result"]
             .iter()
             .any(|violation| violation.contains("job `rust-cx53` must pass"))
     );
+}
+
+#[test]
+fn routed_rust_live_contract_rejects_reviewed_semantic_regressions() {
+    let workflow = include_str!("../../.github/workflows/routed-rust.yml");
+    let reusable = include_str!("../../.github/workflows/rust-gates.yml");
+    let settings = include_str!("../../.github/settings.yml");
+    let lane = include_str!("../../policy/ci-lane-whitelist.toml");
+
+    let violations = routed_rust_workflow_contract_violations_with_reusable(
+        workflow,
+        Some(reusable),
+        Some(settings),
+        Some(lane),
+    );
+    assert!(
+        violations.is_empty(),
+        "live workflow contract drift: {violations:#?}"
+    );
+
+    let regressions: Vec<(&str, String, String, &str)> = vec![
+        (
+            "delegated runner-config input",
+            workflow.replace(
+                "      runner-config: '{\"group\":\"em-ci-small\",\"labels\":[\"self-hosted\",\"linux\",\"x64\",\"em-ci\",\"cx43\",\"rust-medium\",\"trusted-pr\"]}'",
+                "      runner-config-missing: '{\"group\":\"em-ci-small\",\"labels\":[\"self-hosted\",\"linux\",\"x64\",\"em-ci\",\"cx43\",\"rust-medium\",\"trusted-pr\"]}'",
+            ),
+            reusable.to_string(),
+            "delegated job `rust-cx43`",
+        ),
+        (
+            "delegated JSON-string runner-config count",
+            workflow.replace(
+                "      runner-config: '\"ubuntu-latest\"'",
+                "      runner-config: ubuntu-latest",
+            ),
+            reusable.to_string(),
+            "JSON-string runner-config values",
+        ),
+        (
+            "runner input type",
+            workflow.to_string(),
+            reusable.replace(
+                "runner-config:\n        description: JSON string or object accepted by jobs.<job_id>.runs-on.\n        required: true\n        type: string",
+                "runner-config:\n        description: JSON string or object accepted by jobs.<job_id>.runs-on.\n        required: true\n        type: boolean",
+            ),
+            "required string contract",
+        ),
+        (
+            "runner conversion",
+            workflow.to_string(),
+            reusable.replace(
+                "runs-on: ${{ fromJSON(inputs.runner-config) }}",
+                "runs-on: ${{ inputs.runner-config }}",
+            ),
+            "fromJSON",
+        ),
+        (
+            "CPX42 label",
+            workflow.replace(
+                "cpx42\",\"rust-medium\",\"rust-16gb",
+                "cpx42\",\"rust-16gb",
+            ),
+            reusable.to_string(),
+            "rust-medium capacity",
+        ),
+        (
+            "docs artifact retention",
+            workflow.replace(
+                "- name: Upload docs-gate reports\n        if: always()",
+                "- name: Upload docs-gate reports\n        if: failure()",
+            ),
+            reusable.to_string(),
+            "docs-gate artifacts",
+        ),
+        (
+            "advisory gating",
+            workflow.to_string(),
+            reusable.replace(
+                "if: success() && inputs.run-advisory-reports",
+                "if: inputs.run-advisory-reports",
+            ),
+            "advisory reports",
+        ),
+        (
+            "failure artifact retention",
+            workflow.to_string(),
+            reusable.replace(
+                "if: failure() || inputs.upload-success-artifacts",
+                "if: inputs.upload-success-artifacts",
+            ),
+            "failure artifacts",
+        ),
+    ];
+
+    for (label, mutated_workflow, mutated_reusable, expected) in regressions {
+        let violations = routed_rust_workflow_contract_violations_with_reusable(
+            &mutated_workflow,
+            Some(&mutated_reusable),
+            Some(settings),
+            Some(lane),
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains(expected)),
+            "reviewed workflow regression `{label}` was not rejected by its expected contract: {violations:#?}"
+        );
+    }
 }
 
 #[test]
@@ -46880,6 +47217,11 @@ fn routed_rust_workflow_text() -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))
 }
 
+fn reusable_rust_workflow_text() -> Result<String, String> {
+    let path = repo_root()?.join(".github/workflows/rust-gates.yml");
+    std::fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))
+}
+
 /// Extracts the run-block lines of each `- name: <step>` whose name matches
 /// `step_name`, stopping at the next step (`- ` at the same indent).
 fn routed_rust_step_run_blocks(workflow: &str, step_name: &str) -> Vec<Vec<String>> {
@@ -46928,10 +47270,18 @@ fn require_single_bare_precommit_line(lines: &[String], context: &str) -> Result
 #[test]
 fn routed_rust_required_lanes_run_full_precommit_table() -> Result<(), String> {
     let workflow = routed_rust_workflow_text()?;
-    let blocks = routed_rust_step_run_blocks(&workflow, "Required Rust gates");
-    if blocks.len() != 4 {
+    let routed_blocks = routed_rust_step_run_blocks(&workflow, "Required Rust gates");
+    if !routed_blocks.is_empty() {
         return Err(format!(
-            "routed-rust.yml must have exactly 4 `Required Rust gates` steps, found {}",
+            "routed-rust.yml must delegate `Required Rust gates` to rust-gates.yml, found {} inline step(s)",
+            routed_blocks.len()
+        ));
+    }
+    let reusable = reusable_rust_workflow_text()?;
+    let blocks = routed_rust_step_run_blocks(&reusable, "Required Rust gates");
+    if blocks.len() != 1 {
+        return Err(format!(
+            "rust-gates.yml must have exactly 1 `Required Rust gates` step, found {}",
             blocks.len()
         ));
     }
@@ -46985,12 +47335,14 @@ fn routed_rust_docs_gate_runs_full_precommit_table() -> Result<(), String> {
 }
 
 #[test]
-fn routed_rust_precommit_invocation_count_is_five() -> Result<(), String> {
+fn routed_rust_precommit_invocation_count_matches_delegated_owner() -> Result<(), String> {
     let workflow = routed_rust_workflow_text()?;
-    let count = workflow.matches("cargo xtask precommit").count();
-    if count != 5 {
+    let reusable = reusable_rust_workflow_text()?;
+    let routed_count = workflow.matches("cargo xtask precommit").count();
+    let reusable_count = reusable.matches("cargo xtask precommit").count();
+    if routed_count != 1 || reusable_count != 1 {
         return Err(format!(
-            "routed-rust.yml must invoke `cargo xtask precommit` exactly 5 times (4 required lanes + docs-gate), found {count}"
+            "delegated Rust proof must invoke `cargo xtask precommit` once in routed-rust.yml (docs-gate) and once in rust-gates.yml, found routed={routed_count}, reusable={reusable_count}"
         ));
     }
     Ok(())
