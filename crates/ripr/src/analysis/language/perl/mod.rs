@@ -366,7 +366,11 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
         // label earned by the packet. Operational v1 boundaries still fail
         // closed, but they no longer masquerade as dynamic dispatch.
         let static_limit_projection = static_limit::for_change(packet, change, &related_evidence);
-        let has_boundary = static_limit_projection.blocks;
+        // The class cap tracks semantic dynamic-dispatch evidence only
+        // (pre-#3520 behavior): operational producer limitations such as
+        // `partial_emitter` keep findings advisory but never mask an earned
+        // class. Full blocking (incl. operational) gates actionability.
+        let has_boundary = static_limit_projection.blocks_class;
 
         // Build the projected RelatedTests from the packet evidence. The test
         // FILE comes from `ev.test_path` (resolved from test.file_id), never
