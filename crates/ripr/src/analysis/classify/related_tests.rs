@@ -214,12 +214,14 @@ pub(in crate::analysis) fn find_related_tests<'a>(
 /// count as file identity.  Paths are compared by stem, so host-specific
 /// separators do not affect the result.
 fn same_test_file(probe_file: &Path, test_file: &Path) -> bool {
-    let Some(probe_stem) = probe_file.file_stem().and_then(|stem| stem.to_str()) else {
+    let probe_stem = normalized_file_stem(probe_file);
+    if probe_stem.is_empty() {
         return false;
-    };
-    let Some(test_stem) = test_file.file_stem().and_then(|stem| stem.to_str()) else {
+    }
+    let test_stem = normalized_file_stem(test_file);
+    if test_stem.is_empty() {
         return false;
-    };
+    }
     test_stem == probe_stem
         || test_stem == format!("{probe_stem}_test")
         || test_stem == format!("{probe_stem}_tests")
