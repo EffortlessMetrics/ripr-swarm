@@ -38,7 +38,7 @@ What are you trying to do?
                         ripr context --at <finding-id>
   Repair one named gap  ripr agent repair --seam-id ID --phase before
                         # edit one focused test
-                        ripr agent repair --seam-id ID --phase after
+                        ripr agent repair --attempt ID --phase after
   Compose PR evidence   ripr first-pr --root . --base origin/main --head HEAD
   Work in an editor     ripr lsp --stdio
   Adopt advisory CI     ripr init --ci github

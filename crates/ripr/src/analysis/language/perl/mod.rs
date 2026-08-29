@@ -24,6 +24,8 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::path::Path;
 
+mod static_limit;
+
 /// The `ripr-perl-facts-v1` packet schema. Re-uses the canonical declaration
 /// from `app` (Campaign 31 item 5) so the schema version has one source of
 /// truth. References here use `crate::app::PERL_FACT_PACKET_SCHEMA`.
@@ -282,9 +284,9 @@ impl LanguageAdapter for PerlAdapter {
 ///   `test.file_id`) and the test-specific verify command — never the
 ///   production source path. (Cardinal-sin guard: the edit surface must
 ///   never point at `lib/*.pm`.)
-/// - `has_blocking_dynamic_boundary` keeps the conservative owner-OR-file
-///   -OR-test-file boundary scope (an ownerless file-level boundary still
-///   blocks).
+/// - `static_limit::for_change` keeps the conservative owner-OR-file
+///   -OR-test-file boundary scope, separates blocking disposition from typed
+///   taxonomy, and never derives a category from source text or messages.
 /// - A canonical repair gap is attached **only** when a concrete
 ///   discriminator is present (`changed_text_digest` prefixed
 ///   `discriminator:`). Generic enum labels yield an informational Finding
@@ -360,21 +362,11 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
         // `test.file_id`), the per-test verify command, and the relation kind.
         let related_evidence = packet.related_test_evidence_for_change(&change.change_id);
 
-        // Conservative dynamic-boundary scope: owner OR file OR any related
-        // test file (has_blocking_dynamic_boundary). Check EVERY related
-        // evidence — not just the first — so a dynamic boundary tied to a
-        // second/subsequent test's file still blocks (no ordering dependency).
-        // An ownerless file-level boundary still blocks; do NOT narrow to
-        // owner-only.
-        let has_boundary = if related_evidence.is_empty() {
-            packet.has_blocking_dynamic_boundary(change, None)
-                || packet.has_blocking_dynamic_dispatch_limitation_for_change(change)
-        } else {
-            related_evidence.iter().any(|ev| {
-                packet.has_blocking_dynamic_boundary(change, Some(ev))
-                    || packet.has_blocking_dynamic_dispatch_limitation(change, ev)
-            })
-        };
+        // Keep blocking disposition separate from the strongest shared taxonomy
+        // label earned by the packet. Operational v1 boundaries still fail
+        // closed, but they no longer masquerade as dynamic dispatch.
+        let static_limit_projection = static_limit::for_change(packet, change, &related_evidence);
+        let has_boundary = static_limit_projection.blocks;
 
         // Build the projected RelatedTests from the packet evidence. The test
         // FILE comes from `ev.test_path` (resolved from test.file_id), never
@@ -663,11 +655,7 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
             language: Some(DomainLanguageId::Perl),
             language_status: Some(LanguageStatus::Preview),
             owner_kind: None,
-            static_limit_kind: if has_boundary {
-                Some(crate::domain::StaticLimitKind::DynamicDispatch)
-            } else {
-                None
-            },
+            static_limit_kind: static_limit_projection.kind,
             // changed_sink uses the concrete discriminator when present;
             // otherwise the behavior-hint label (advisory only, since no
             // canonical gap is attached).
@@ -1477,10 +1465,6 @@ impl PerlFactPacket {
         let change = self
             .change(change_id)
             .ok_or(PerlActionabilityBlocker::MissingChange)?;
-        if self.has_blocking_dynamic_boundary(change, None) {
-            return Err(PerlActionabilityBlocker::DynamicBoundary);
-        }
-
         let owner = self
             .owner(&change.owner_id)
             .ok_or(PerlActionabilityBlocker::MissingCanonicalGapId)?;
@@ -1518,17 +1502,15 @@ impl PerlFactPacket {
         if evidence.oracle_shape.as_deref() != Some(expected_oracle_shape) {
             return Err(PerlActionabilityBlocker::OracleShapeMismatch);
         }
+        if static_limit::for_change(self, change, &related).blocks {
+            return Err(PerlActionabilityBlocker::DynamicBoundary);
+        }
         let gap = self
             .canonical_gap_identity_for_change_with_assertion_shape(
                 change_id,
                 expected_oracle_shape,
             )
             .ok_or(PerlActionabilityBlocker::MissingCanonicalGapId)?;
-        if self.has_blocking_dynamic_boundary(change, Some(evidence))
-            || self.has_blocking_limitation(change, evidence)
-        {
-            return Err(PerlActionabilityBlocker::DynamicBoundary);
-        }
 
         let verify_command = evidence
             .verify_command

@@ -2,10 +2,10 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/binding_value_family_matrix/input
 
-Summary: 4 probe(s), 1 exposed, 0 weak, 0 unrevealed, 0 no path, 3 unknown
+Summary: 6 probe(s), 1 exposed, 0 weak, 0 unrevealed, 0 no path, 5 unknown
 
 Analysis outcome: complete_with_findings (analysis complete).
-  Counts: 1 changed file(s), 8 changed line(s), 4 candidate line(s), 4 probe(s), 4 finding(s).
+  Counts: 1 changed file(s), 12 changed line(s), 6 candidate line(s), 6 probe(s), 6 finding(s).
 
 Start here:
   State: static_limited
@@ -27,6 +27,6 @@ Next: drill into the top finding:
   ripr context --root fixtures/binding_value_family_matrix/input --diff fixtures/binding_value_family_matrix/diff.patch --mode fast --at probe:src_lib.rs:predicate:a54b7c0f
 
 Hidden:
-  3 lower-priority finding(s) omitted from default human output.
+  5 lower-priority finding(s) omitted from default human output.
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
