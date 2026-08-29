@@ -270,15 +270,15 @@ fn deeply_nested_predicates_fail_closed_instead_of_overflowing() {
 }
 
 #[test]
-fn probe_whitespace_split_debug() {
+fn split_handles_leading_whitespace_and_trailing_non_ascii() {
     let text = "   #[ cfg(test) ] mod m {";
-    let leading = text.trim_start();
-    let len = super::leading_attribute_byte_len(leading);
     assert_eq!(
-        format!("{len:?}"),
-        "Some(14)",
-        "probe: {leading:?} -> {len:?}"
+        super::split_leading_attribute(text),
+        Some(("#[ cfg(test) ]", " mod m {"))
     );
-    let split = super::split_leading_attribute(text);
-    assert_eq!(format!("{split:?}"), "MATCH", "probe split: {split:?}");
+    let non_ascii = "#[cfg(test)] mod módulos {";
+    assert_eq!(
+        super::split_leading_attribute(non_ascii),
+        Some(("#[cfg(test)]", " mod módulos {"))
+    );
 }
