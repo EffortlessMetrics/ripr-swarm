@@ -2612,8 +2612,10 @@ fn workspace_input_kind(root: &Path, path: &Path) -> Option<WorkspaceInputKind> 
 }
 
 /// Return whether a watched path can change the effective analysis input.
-/// Cargo inputs remain recursive for workspace members; Python project
-/// markers are root-scoped because auto-detection reads only root markers.
+/// Cargo inputs remain recursive for workspace members; the watched Python
+/// project markers are root-scoped — root presence is what this reload path
+/// tracks. Detection also reads `src`/`tests` source-directory presence,
+/// which is not watched here (remaining #1736 scope).
 pub(super) fn workspace_input_path_is_relevant(root: &Path, path: &Path) -> bool {
     workspace_input_kind(root, path).is_some()
 }

@@ -2257,9 +2257,13 @@ fn hash_named_workspace_files(root: &Path, file_name: &str) -> String {
 }
 
 /// Hash the adapter-owned workspace identities that can change analysis.
-/// Cargo consumes manifest contents recursively. Python auto-detection
-/// consumes only root marker presence, so content-only edits intentionally
+/// Cargo consumes manifest contents recursively. The marker inputs tracked
+/// here are the root Python markers, whose presence — not content — gates
+/// the effective configuration, so content-only edits intentionally
 /// preserve this identity while creation and deletion invalidate it.
+/// Detection can additionally consume Python source directories (`src/`,
+/// `tests/`); that input is neither watched nor identity-bound here and is
+/// tracked with the remaining #1736 invalidation scope.
 fn hash_workspace_manifests(root: &Path) -> String {
     let cargo_identity = hash_named_workspace_files(root, "Cargo.toml");
     let mut present_python_markers = PYTHON_PROJECT_MARKERS
