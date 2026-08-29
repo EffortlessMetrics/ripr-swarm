@@ -187,8 +187,8 @@
       "stop_reasons": [],
       "oracle_kind": "relational_check",
       "oracle_strength": "weak",
-      "recommended_next_step": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
-      "suggested_next_action": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
+      "recommended_next_step": "Add a test input that reaches the changed error path and assert the exact error variant it returns.",
+      "suggested_next_action": "Add a test input that reaches the changed error path and assert the exact error variant it returns.",
       "language": "rust",
       "source_currentness": "candidate_current"
     }

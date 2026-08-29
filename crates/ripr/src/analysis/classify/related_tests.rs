@@ -332,7 +332,7 @@ fn package_prefix(path: &Path) -> Option<String> {
 /// functions. A same-named method on another type is therefore itself in the
 /// index, the name is not unique, and the bypass never fires. The uniqueness
 /// gate subsumes the receiver concern.
-fn body_contains_owner_call(body: &str, owner_name: &str) -> bool {
+pub(in crate::analysis) fn body_contains_owner_call(body: &str, owner_name: &str) -> bool {
     if owner_name.is_empty() {
         return false;
     }

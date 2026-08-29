@@ -211,9 +211,21 @@ pub(in crate::analysis) fn recommended_next_step(
     }
     match class {
         ExposureClass::Exposed => None,
-        ExposureClass::WeaklyExposed => {
-            Some(weakly_exposed_guidance_for_family(&probe.family).to_string())
-        }
+        ExposureClass::WeaklyExposed => Some(
+            if matches!(probe.family, ProbeFamily::ReturnValue)
+                && super::exact_error_variant(&probe.expression).is_some()
+            {
+                // A changed `Err(...)` construction is not a "broad assertion"
+                // gap: the related test may already assert an exact (sibling)
+                // variant. The missing discriminator is an input that reaches
+                // the changed error path plus an assertion pinning this exact
+                // variant (RIPR-SPEC-0106).
+                "Add a test input that reaches the changed error path and assert the exact error variant it returns."
+            } else {
+                weakly_exposed_guidance_for_family(&probe.family)
+            }
+            .to_string(),
+        ),
         ExposureClass::ReachableUnrevealed => Some("Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect.".to_string()),
         ExposureClass::NoStaticPath => Some(crate::domain::NO_STATIC_PATH_NEXT_STEP.to_string()),
         ExposureClass::InfectionUnknown => Some("Add a targeted boundary or negative-path test, or teach ripr about the fixture/builder in ripr.toml.".to_string()),
@@ -376,6 +388,39 @@ mod tests {
         );
         assert_eq!(
             return_value.as_deref(),
+            Some(
+                "Replace broad assertions with exact equality or a property that constrains the changed returned value."
+            )
+        );
+    }
+
+    // XQFi: a return-value probe on an `Err(...)` construction is weakly
+    // exposed because the changed error path is not discriminated — not
+    // because the oracle is "broad". The sibling-variant fixture asserts an
+    // exact `CalcError::Negative` while the change constructs `TooLarge`, so
+    // the guidance must ask for a reaching input and the exact constructed
+    // variant instead of repeating the broad-assertion advice.
+    #[test]
+    fn return_value_error_construction_guidance_names_the_missing_discriminator() {
+        let error_construction = recommended_next_step(
+            &probe(ProbeFamily::ReturnValue, "return Err(CalcError::TooLarge);"),
+            &ExposureClass::WeaklyExposed,
+            false,
+        );
+        assert_eq!(
+            error_construction.as_deref(),
+            Some(
+                "Add a test input that reaches the changed error path and assert the exact error variant it returns."
+            )
+        );
+        // A plain (non-Err) return value keeps the exact-equality guidance.
+        let plain_value = recommended_next_step(
+            &probe(ProbeFamily::ReturnValue, "Ok(amount)"),
+            &ExposureClass::WeaklyExposed,
+            false,
+        );
+        assert_eq!(
+            plain_value.as_deref(),
             Some(
                 "Replace broad assertions with exact equality or a property that constrains the changed returned value."
             )

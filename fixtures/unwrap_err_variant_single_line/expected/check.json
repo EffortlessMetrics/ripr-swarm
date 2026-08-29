@@ -150,7 +150,7 @@
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(ParseError::TooLong)","line":12}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "No complete owner-bound propagation witness found for error variant: Result::Err(ParseError::TooLong)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach validate: too_long_name_rejected_with_exact_variant", "Strong oracle found: exact error variant assertion"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "No complete owner-bound propagation witness found for error variant: Result::Err(ParseError::TooLong)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach validate: too_long_name_rejected_with_exact_variant", "Strong oracle found: exact error variant assertion", "static limitation: exact oracle established; no assertion repair is indicated"],
       "missing": [],
       "assertion_texts": {
         "4": "assert_eq!(err, ParseError::TooLong(12));"
@@ -237,8 +237,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_error_variant",
       "oracle_strength": "strong",
-      "recommended_next_step": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
-      "suggested_next_action": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
       "language": "rust",
       "source_currentness": "candidate_current"
     }

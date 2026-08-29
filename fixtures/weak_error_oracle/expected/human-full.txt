@@ -67,4 +67,4 @@ Weakness
   - missing discriminator AuthError::RevokedToken: No exact error variant assertion for AuthError::RevokedToken
 
 Next step
-  Replace broad assertions with exact equality or a property that constrains the changed returned value.
+  Add a test input that reaches the changed error path and assert the exact error variant it returns.

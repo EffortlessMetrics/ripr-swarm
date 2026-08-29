@@ -288,17 +288,18 @@ fn goldens_bless(name: &str, reason: &str) -> Result<(), String> {
         })?;
     }
     let changelog = expected.join("CHANGELOG.md");
-    let mut entry = format!(
-        "\n## Pending\n\nReason:\n{reason}\n\nCommand:\n`cargo xtask goldens bless {name} --reason \"...\"`\n\nUpdated:\n- `expected/check.json`\n- `expected/human.txt`\n"
-    );
-    if updated_human_full {
-        entry.push_str("- `expected/human-full.txt`\n");
-    }
     let mut text = if changelog.exists() {
         read_text_lossy(&changelog)?
     } else {
         "# Golden Output Changes\n".to_string()
     };
+    let mut entry = format!(
+        "\n{}\n\nReason:\n{reason}\n\nCommand:\n`cargo xtask goldens bless {name} --reason \"...\"`\n\nUpdated:\n- `expected/check.json`\n- `expected/human.txt`\n",
+        next_pending_heading(&text, name)
+    );
+    if updated_human_full {
+        entry.push_str("- `expected/human-full.txt`\n");
+    }
     text.push_str(&entry);
     fs::write(&changelog, text)
         .map_err(|err| format!("failed to write {}: {err}", normalize_path(&changelog)))?;
@@ -322,6 +323,23 @@ fn goldens_bless(name: &str, reason: &str) -> Result<(), String> {
         normalize_path(&fixture)
     );
     write_report("goldens-bless.md", &body)
+}
+
+/// Unique heading for the next appended pending changelog entry.
+///
+/// MD024 (no-duplicate-heading) rejects repeated heading text, so each entry
+/// heading embeds the fixture name plus a sequence number computed from every
+/// pending heading already in the log — including legacy plain `## Pending`
+/// headings — so repeated blesses of the same fixture never collide.
+pub(crate) fn next_pending_heading(existing_log: &str, fixture_name: &str) -> String {
+    format!(
+        "## Pending — {fixture_name} ({})",
+        existing_log
+            .lines()
+            .filter(|line| line.starts_with("## Pending"))
+            .count()
+            + 1
+    )
 }
 
 pub(crate) fn fixture_dirs() -> Result<Vec<PathBuf>, String> {

@@ -19,6 +19,7 @@ use super::XtaskCommand;
 use super::dispatch;
 use super::is_network_policy_candidate;
 use super::lane1_runtime_status_full;
+use super::next_pending_heading;
 use super::policy::droid_review::{
     active_yaml_lines, check_droid_action_refs, check_droid_common,
     check_droid_security_scan_config, forbids_active_line, has_active_line, strip_yaml_comment,
@@ -11552,6 +11553,27 @@ fn parse_reason_rejects_missing_or_malformed_spec_ids() {
             "reason without a well-formed spec id should fail: {reason}"
         );
     }
+}
+
+// XQFg: pending changelog headings must be unique so the accumulated blessing
+// log does not trip MD024 (no-duplicate-heading), including against legacy
+// plain `## Pending` headings left by earlier blesses.
+#[test]
+fn pending_changelog_headings_stay_unique_across_blesses() {
+    assert_eq!(
+        next_pending_heading("# Golden Output Changes\n", "my_fixture"),
+        "## Pending — my_fixture (1)"
+    );
+    let after_first = "# Golden Output Changes\n\n## Pending — my_fixture (1)\n\nReason:\nx\n";
+    assert_eq!(
+        next_pending_heading(after_first, "my_fixture"),
+        "## Pending — my_fixture (2)"
+    );
+    let legacy = "# Golden Output Changes\n\n## Pending\n\nReason:\ny\n";
+    assert_eq!(
+        next_pending_heading(legacy, "my_fixture"),
+        "## Pending — my_fixture (2)"
+    );
 }
 
 #[test]

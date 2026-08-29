@@ -190,10 +190,30 @@ fn edge_status_for_kind(kind: &PropagationEdgeKind, source: &str, sink: &str) ->
     if *kind == PropagationEdgeKind::ErrorVariant
         && canonical_error_identity(source) == canonical_error_identity(sink)
     {
-        EdgeStatus::Established
-    } else {
-        edge_status(source, sink)
+        return EdgeStatus::Established;
     }
+    if *kind == PropagationEdgeKind::DirectReturn
+        && direct_return_identity(source)
+            .is_some_and(|identity| identity == normalize_semantic_text(sink))
+    {
+        return EdgeStatus::Established;
+    }
+    edge_status(source, sink)
+}
+
+/// Identity of an **unwrapped** direct return (`return amount` → `amount`).
+///
+/// The `return` keyword is a syntactic wrapper, not a value transformation, so
+/// stripping it before the identity comparison lets the supported
+/// direct-return path complete instead of staying a candidate. Constructor-
+/// wrapped forms (`return Ok(amount)`, `return Err(error)`) and call results
+/// keep their parentheses and are deliberately not normalized: the wrapper
+/// payload relationship is not established by this adapter, so they fail
+/// closed as candidate edges.
+fn direct_return_identity(text: &str) -> Option<String> {
+    let normalized = normalize_semantic_text(text);
+    let payload = normalized.strip_prefix("return ")?.trim();
+    (!payload.is_empty() && !payload.contains('(')).then(|| payload.to_string())
 }
 
 fn canonical_error_identity(text: &str) -> String {
@@ -703,6 +723,38 @@ mod tests {
             assert_eq!(witness.completeness, expected_completeness);
             assert_eq!(witness.semantic_digest, witness.compute_semantic_digest());
         }
+        Ok(())
+    }
+
+    #[test]
+    fn unwrapped_direct_return_completes_and_wrapped_stays_candidate() -> Result<(), String> {
+        // `return amount;` is the same value as the `amount` sink: the keyword
+        // is normalized before the identity comparison so the supported
+        // direct-return path completes (XQFa).
+        let direct_probe = probe(ProbeFamily::ReturnValue, "return amount;");
+        let witness = current_path_witness(
+            &direct_probe,
+            &[sink(FlowSinkKind::ReturnValue, "amount", 14)],
+        )
+        .ok_or_else(|| "direct return witness was absent".to_string())?;
+        assert_eq!(witness.edges[0].kind, PropagationEdgeKind::DirectReturn);
+        assert_eq!(witness.edges[0].status, EdgeStatus::Established);
+        assert_eq!(witness.completeness, PathCompleteness::Complete);
+        assert!(complete_direct_witness(&direct_probe, Some(&witness)));
+
+        // A constructor-wrapped return keeps the adapter fail-closed: the
+        // wrapper payload relationship is not established here.
+        let wrapped = current_path_witness(
+            &probe(ProbeFamily::ReturnValue, "return Ok(amount);"),
+            &[sink(FlowSinkKind::ReturnValue, "Ok(amount)", 14)],
+        )
+        .ok_or_else(|| "wrapped return witness was absent".to_string())?;
+        assert_eq!(wrapped.edges[0].status, EdgeStatus::Candidate);
+        assert_eq!(wrapped.completeness, PathCompleteness::Partial);
+        assert!(!complete_direct_witness(
+            &probe(ProbeFamily::ReturnValue, "return Ok(amount);"),
+            Some(&wrapped),
+        ));
         Ok(())
     }
 

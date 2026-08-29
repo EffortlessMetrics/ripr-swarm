@@ -15,15 +15,14 @@ Start here:
   Why weakly_exposed: the evidence path is partially complete — see full form for details
   Changed behavior: return Err(ParseError::TooLong(name.len()))
   Related test: tests/errors.rs:4 too_long_name_rejected_with_exact_variant
-  Next step: Replace broad assertions with exact equality or a property that constrains the changed returned value.
   Evidence:
     - reach yes: Related tests appear to reach validate: too_long_name_rejected_with_exact_variant
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 10 more evidence line(s) hidden
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/unwrap_err_variant_single_line/input --diff fixtures/unwrap_err_variant_single_line/diff.patch --mode fast probe:src_lib.rs:return_value:11e230b4
-  ripr context --root fixtures/unwrap_err_variant_single_line/input --diff fixtures/unwrap_err_variant_single_line/diff.patch --mode fast --at probe:src_lib.rs:return_value:11e230b4
+  ripr explain --root fixtures/unwrap_err_variant_single_line/input --diff fixtures/unwrap_err_variant_single_line/diff.patch --mode fast probe:src_lib.rs:error_path:e4b7f445
+  ripr context --root fixtures/unwrap_err_variant_single_line/input --diff fixtures/unwrap_err_variant_single_line/diff.patch --mode fast --at probe:src_lib.rs:error_path:e4b7f445
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

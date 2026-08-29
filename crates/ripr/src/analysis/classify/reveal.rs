@@ -200,10 +200,12 @@ fn analyze_related_assertions(
     // RIPR-SPEC-0106 (Part B). The guard keys on the changed expression, not
     // the family label: a `return_value` probe on an `Err(...)` construction
     // would otherwise credit a sibling-variant oracle through the shared enum
-    // qualifier token.
+    // qualifier token — and a `field_construction` probe whose field is an
+    // `Err(...)` construction (`outcome: Err(CalcError::TooLarge)`) has the
+    // same shared-qualifier exposure.
     let error_construction_variant = if matches!(
         probe.family,
-        ProbeFamily::ErrorPath | ProbeFamily::ReturnValue
+        ProbeFamily::ErrorPath | ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction
     ) {
         error_path_variant_token(&probe.expression)
             .or_else(|| error_path_variant_token(analysis_expression))
@@ -348,11 +350,11 @@ fn error_path_variant_token(expression: &str) -> Option<String> {
 ///   A sibling-variant assertion (`CalcError::Negative`) does not associate
 ///   with a `CalcError::TooLarge` probe — both share the `CalcError`
 ///   qualifier token, but only the variant token (`TooLarge`) is specific.
-/// - Other direct families (e.g. a `return_value` probe on an `Err(...)`
-///   construction): the assertion stays associated through the standard match
-///   rules, but only a variant-pinned text sets `has_token_match`, so a
-///   sibling-variant oracle leaves observation unverified instead of
-///   crediting discrimination for an unrelated seam.
+/// - Other direct families (e.g. a `return_value` or `field_construction`
+///   probe on an `Err(...)` construction): the assertion stays associated
+///   through the standard match rules, but only a variant-pinned text sets
+///   `has_token_match`, so a sibling-variant oracle leaves observation
+///   unverified instead of crediting discrimination for an unrelated seam.
 ///
 /// Without `error_construction_variant` (probe has no parseable variant),
 /// falls back to the standard `token_match` behavior.
@@ -1062,6 +1064,67 @@ mod tests {
         assert!(
             has_token,
             "an oracle pinning the constructed variant confirms observation"
+        );
+    }
+
+    // XQFf: the error-construction variant guard must also cover
+    // `FieldConstruction` probes — a probe whose field is an `Err(...)`
+    // construction (`outcome: Err(CalcError::TooLarge)`) has no separate
+    // `error_construction_variant` source, so without the guard a
+    // sibling-variant oracle (`CalcError::Negative`) confirmed observation
+    // through the shared `CalcError` qualifier token.
+    #[test]
+    fn sibling_variant_assertion_does_not_confirm_field_construction_error_construction() {
+        let probe = probe(
+            ProbeFamily::FieldConstruction,
+            "outcome: Err(CalcError::TooLarge)",
+        );
+        let test = test_with_assertions(
+            "negative_outcome_asserted",
+            vec![oracle(
+                "assert_eq!(err, CalcError::Negative);",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+        let (observe, discriminate, related) =
+            reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+
+        assert_eq!(observe.state, StageState::Yes);
+        assert_eq!(
+            discriminate.state,
+            StageState::Weak,
+            "the sibling Negative pin must not confirm the TooLarge field construction"
+        );
+        assert!(
+            discriminate.summary.contains("observation_unverified"),
+            "sibling-variant oracle must leave field construction observation unverified: got `{}`",
+            discriminate.summary
+        );
+        assert_eq!(related.len(), 1);
+    }
+
+    #[test]
+    fn aligned_variant_assertion_confirms_field_construction_error_construction() {
+        let probe = probe(
+            ProbeFamily::FieldConstruction,
+            "outcome: Err(CalcError::TooLarge)",
+        );
+        let test = test_with_assertions(
+            "too_large_outcome_asserted",
+            vec![oracle(
+                "assert_eq!(err, CalcError::TooLarge);",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+        let (_observe, discriminate, _related) =
+            reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "an oracle pinning the constructed variant must keep the field seam exposed"
         );
     }
 
