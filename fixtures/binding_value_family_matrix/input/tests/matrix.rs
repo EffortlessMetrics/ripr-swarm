@@ -26,21 +26,26 @@ fn checked_add_boundary_is_observed() {
 }
 
 #[test]
-fn chars_next_boundary_is_observed() {
+fn head_some_arm_boundary_is_observed() {
+    assert!(head("xray"));
+}
+
+#[test]
+fn head_input_arm_stays_false() {
     assert!(!head("fix"));
 }
 
 #[test]
-fn chars_next_fallback_is_observed() {
+fn head_fallback_is_observed() {
     assert!(head(""));
 }
 
 #[test]
-fn chars_next_back_boundary_is_observed() {
+fn tail_some_arm_boundary_is_observed() {
     assert!(tail("box"));
 }
 
 #[test]
-fn chars_next_back_fallback_is_observed() {
+fn tail_fallback_is_observed() {
     assert!(tail(""));
 }
