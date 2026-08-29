@@ -434,6 +434,34 @@ mod tests {
         );
     }
 
+    /// Negative control required by issue #3504: the receipt-less legacy
+    /// freshness shape (`queue_state = queued`, `staleness_status =
+    /// not_evaluated`) must fail the assignment authority. If the typed stop
+    /// ever weakened from `status == current` to `status != stale`, this
+    /// receipt-less `not_evaluated` record would be incorrectly assignable
+    /// and this assertion would fail.
+    #[test]
+    fn receipt_less_not_evaluated_freshness_is_never_assignable() {
+        let receipt_less_freshness = GapRecordSourceCurrentness {
+            status: NOT_EVALUATED.to_string(),
+            queue_state: QUEUED.to_string(),
+            reason:
+                "GapRecord queue rendering does not compare the ledger with current git state yet."
+                    .to_string(),
+            refresh_commands: Vec::new(),
+            source_kind: None,
+            source_path: None,
+        };
+        assert!(
+            !receipt_less_freshness.is_assignable(),
+            "not_evaluated is stop-and-refresh, never assignable"
+        );
+        assert_eq!(
+            receipt_less_freshness.status, NOT_EVALUATED,
+            "not_evaluated must be preserved exactly, never relabeled as current"
+        );
+    }
+
     #[test]
     fn unsupported_source_kind_is_not_evaluated() -> Result<(), String> {
         let root = unique_test_dir("unsupported-source");
