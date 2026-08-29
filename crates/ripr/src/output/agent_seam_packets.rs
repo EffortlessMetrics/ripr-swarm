@@ -530,15 +530,23 @@ fn gap_record_command_specs_json(record: &GapRecord) -> Option<serde_json::Value
     }))
 }
 
-/// Render a deterministic queue over explicit GapRecords that are already
-/// eligible for bounded agent-packet projection.
-pub(crate) fn render_agent_gap_record_queue_json(
-    root: &str,
-    gap_ledger_path: &str,
+/// Typed queue model built before any serialization. Validation, language
+/// filtering, upstream ledger ordering, receipt freshness, conflict identity,
+/// and exclusion totals are decided here — callers partition and select from
+/// this model without re-parsing rendered JSON.
+pub(crate) struct GapRecordQueueModel {
+    pub(crate) candidates: Vec<GapRecordQueueCandidate>,
+    pub(crate) records_total: usize,
+    pub(crate) language_records_total: usize,
+    pub(crate) excluded_by_reason: BTreeMap<String, usize>,
+}
+
+/// Build the typed GapRecord-backed queue model over explicit GapRecords that
+/// are already eligible for bounded agent-packet projection.
+pub(crate) fn build_gap_record_queue_model(
     records: &[GapRecord],
     language: &str,
-    top: usize,
-) -> Result<String, String> {
+) -> Result<GapRecordQueueModel, String> {
     let mut candidates = Vec::new();
     let mut excluded_by_reason = BTreeMap::<String, usize>::new();
     let mut language_records_total = 0usize;
@@ -617,80 +625,141 @@ pub(crate) fn render_agent_gap_record_queue_json(
         });
     }
 
-    let conflict_counts = gap_record_queue_conflict_counts(&candidates);
-    let selected: Vec<_> = candidates.iter().take(top).collect();
-    let conflict_groups = gap_record_queue_conflict_groups(&candidates);
-    let stale_total = candidates
+    Ok(GapRecordQueueModel {
+        candidates,
+        records_total: records.len(),
+        language_records_total,
+        excluded_by_reason,
+    })
+}
+
+/// Render the deterministic queue envelope by taking the first `top`
+/// candidates in upstream ledger order.
+pub(crate) fn render_agent_gap_record_queue_json(
+    root: &str,
+    gap_ledger_path: &str,
+    records: &[GapRecord],
+    language: &str,
+    top: usize,
+) -> Result<String, String> {
+    let model = build_gap_record_queue_model(records, language)?;
+    let conflict_counts = gap_record_queue_conflict_counts(&model.candidates);
+    let packets: Vec<Value> = model
+        .candidates
+        .iter()
+        .take(top)
+        .enumerate()
+        .map(|(selected_index, candidate)| {
+            gap_record_queue_packet_value(
+                candidate,
+                &conflict_counts,
+                root,
+                gap_ledger_path,
+                selected_index + 1,
+            )
+        })
+        .collect();
+    render_gap_record_queue_envelope_value(gap_record_queue_envelope_value(
+        root,
+        gap_ledger_path,
+        &model,
+        language,
+        top,
+        packets,
+    ))
+}
+
+/// Render one typed queue candidate as a bounded agent-packet payload with
+/// its 1-based scheduler priority.
+pub(crate) fn gap_record_queue_packet_value(
+    candidate: &GapRecordQueueCandidate,
+    conflict_counts: &BTreeMap<String, usize>,
+    root: &str,
+    gap_ledger_path: &str,
+    priority: usize,
+) -> Value {
+    let conflict_group_size = conflict_counts
+        .get(&candidate.conflict_group)
+        .copied()
+        .unwrap_or(1);
+    let mut packet = json!({
+        "priority": priority,
+        "source_index": candidate.source_index,
+        "queue_state": candidate.queue_state.as_str(),
+        "staleness_status": candidate.staleness_status.as_str(),
+        "staleness_reason": candidate.staleness_reason.as_str(),
+        "gap_id": candidate.gap_id.as_str(),
+        "canonical_gap_id": candidate.canonical_gap_id.as_ref(),
+        "gap_kind": candidate.gap_kind.as_str(),
+        "language": candidate.language.as_str(),
+        "language_status": candidate.language_status.as_str(),
+        "policy_state": candidate.policy_state.as_str(),
+        "evidence_class": candidate.evidence_class.as_str(),
+        "repair_kind": candidate.repair_kind.as_str(),
+        "task": candidate.task.as_str(),
+        "discriminator_guidance": &candidate.discriminator_guidance,
+        "changed_owner": candidate.changed_owner.as_ref(),
+        "changed_file": candidate.changed_file.as_ref(),
+        "changed_line": candidate.changed_line,
+        "changed_behavior": candidate.changed_behavior.as_ref(),
+        "missing_discriminator": candidate.missing_discriminator.as_ref(),
+        "suggested_test_file": candidate.suggested_test_file.as_ref(),
+        "suggested_test_name": candidate.suggested_test_name.as_ref(),
+        "verify_command": candidate.verify_command.as_str(),
+        "receipt_command": candidate.receipt_command.as_ref(),
+        "conflict_group": candidate.conflict_group.as_str(),
+        "conflict_group_size": conflict_group_size,
+        "allowed_edit_surface": &candidate.allowed_edit_surface,
+        "allowed_files": &candidate.allowed_edit_surface,
+        "forbidden_files": &candidate.forbidden_files,
+        "packet_command_args": [
+            "ripr",
+            "agent",
+            "packet",
+            "--root",
+            root,
+            "--gap-ledger",
+            gap_ledger_path,
+            "--gap-id",
+            candidate.gap_id.as_str(),
+            "--json"
+        ],
+    });
+    if let Some(command_specs) = candidate.command_specs.as_ref()
+        && let Some(object) = packet.as_object_mut()
+    {
+        object.insert("command_specs".to_string(), command_specs.clone());
+    }
+    packet
+}
+
+/// Assemble the queue envelope Value from the typed model and pre-rendered
+/// packet payloads. Full-candidate totals — conflict groups, exclusions,
+/// stale counts — always describe every validated candidate, never just the
+/// rendered selection.
+pub(crate) fn gap_record_queue_envelope_value(
+    root: &str,
+    gap_ledger_path: &str,
+    model: &GapRecordQueueModel,
+    language: &str,
+    top: usize,
+    packets: Vec<Value>,
+) -> Value {
+    let conflict_groups = gap_record_queue_conflict_groups(&model.candidates);
+    let stale_total = model
+        .candidates
         .iter()
         .filter(|candidate| candidate.staleness_status == "stale")
         .count();
-    let excluded_records_total: usize = excluded_by_reason.values().sum();
-    let exclusion_reasons: Vec<_> = excluded_by_reason
+    let excluded_records_total: usize = model.excluded_by_reason.values().sum();
+    let exclusion_reasons: Vec<_> = model
+        .excluded_by_reason
         .iter()
         .map(|(reason, count)| {
             json!({
                 "reason": reason,
                 "count": count,
             })
-        })
-        .collect();
-    let packets: Vec<_> = selected
-        .iter()
-        .enumerate()
-        .map(|(selected_index, candidate)| {
-            let conflict_group_size = conflict_counts
-                .get(&candidate.conflict_group)
-                .copied()
-                .unwrap_or(1);
-            let mut packet = json!({
-                "priority": selected_index + 1,
-                "source_index": candidate.source_index,
-                "queue_state": candidate.queue_state.as_str(),
-                "staleness_status": candidate.staleness_status.as_str(),
-                "staleness_reason": candidate.staleness_reason.as_str(),
-                "gap_id": candidate.gap_id.as_str(),
-                "canonical_gap_id": candidate.canonical_gap_id.as_ref(),
-                "gap_kind": candidate.gap_kind.as_str(),
-                "language": candidate.language.as_str(),
-                "language_status": candidate.language_status.as_str(),
-                "policy_state": candidate.policy_state.as_str(),
-                "evidence_class": candidate.evidence_class.as_str(),
-                "repair_kind": candidate.repair_kind.as_str(),
-                "task": candidate.task.as_str(),
-                "discriminator_guidance": &candidate.discriminator_guidance,
-                "changed_owner": candidate.changed_owner.as_ref(),
-                "changed_file": candidate.changed_file.as_ref(),
-                "changed_line": candidate.changed_line,
-                "changed_behavior": candidate.changed_behavior.as_ref(),
-                "missing_discriminator": candidate.missing_discriminator.as_ref(),
-                "suggested_test_file": candidate.suggested_test_file.as_ref(),
-                "suggested_test_name": candidate.suggested_test_name.as_ref(),
-                "verify_command": candidate.verify_command.as_str(),
-                "receipt_command": candidate.receipt_command.as_ref(),
-                "conflict_group": candidate.conflict_group.as_str(),
-                "conflict_group_size": conflict_group_size,
-                "allowed_edit_surface": &candidate.allowed_edit_surface,
-                "allowed_files": &candidate.allowed_edit_surface,
-                "forbidden_files": &candidate.forbidden_files,
-                "packet_command_args": [
-                    "ripr",
-                    "agent",
-                    "packet",
-                    "--root",
-                    root,
-                    "--gap-ledger",
-                    gap_ledger_path,
-                    "--gap-id",
-                    candidate.gap_id.as_str(),
-                    "--json"
-                ],
-            });
-            if let Some(command_specs) = candidate.command_specs.as_ref()
-                && let Some(object) = packet.as_object_mut()
-            {
-                object.insert("command_specs".to_string(), command_specs.clone());
-            }
-            packet
         })
         .collect();
     let mut envelope = json!({
@@ -707,9 +776,9 @@ pub(crate) fn render_agent_gap_record_queue_json(
             "top": top,
         },
         "summary": {
-            "records_total": records.len(),
-            "language_records_total": language_records_total,
-            "queue_total": candidates.len(),
+            "records_total": model.records_total,
+            "language_records_total": model.language_records_total,
+            "queue_total": model.candidates.len(),
             "returned": packets.len(),
             "stale_total": stale_total,
             "excluded_records_total": excluded_records_total,
@@ -730,6 +799,12 @@ pub(crate) fn render_agent_gap_record_queue_json(
     if let Some(object) = envelope.as_object_mut() {
         insert_analysis_outcome_projection(object, None, false);
     }
+    envelope
+}
+
+/// Serialize one assembled queue envelope Value with the shared trailing
+/// newline contract.
+pub(crate) fn render_gap_record_queue_envelope_value(envelope: Value) -> Result<String, String> {
     let mut rendered = serde_json::to_string_pretty(&envelope)
         .map_err(|err| format!("render agent gap queue JSON failed: {err}"))?;
     rendered.push('\n');
@@ -881,34 +956,34 @@ pub(crate) fn render_agent_gap_record_queue_missing_root_json(
 }
 
 #[derive(Clone, Debug)]
-struct GapRecordQueueCandidate {
-    source_index: usize,
-    gap_id: String,
-    canonical_gap_id: Option<String>,
-    gap_kind: String,
-    language: String,
-    language_status: String,
-    policy_state: String,
-    evidence_class: String,
-    repair_kind: String,
-    task: String,
-    discriminator_guidance: serde_json::Value,
-    suggested_test_file: Option<String>,
-    suggested_test_name: Option<String>,
-    verify_command: String,
-    receipt_command: Option<String>,
-    command_specs: Option<serde_json::Value>,
-    conflict_group: String,
-    queue_state: String,
-    staleness_status: String,
-    staleness_reason: String,
-    allowed_edit_surface: Vec<String>,
-    forbidden_files: Vec<String>,
-    changed_owner: Option<String>,
-    changed_file: Option<String>,
-    changed_line: Option<u64>,
-    changed_behavior: Option<String>,
-    missing_discriminator: Option<String>,
+pub(crate) struct GapRecordQueueCandidate {
+    pub(crate) source_index: usize,
+    pub(crate) gap_id: String,
+    pub(crate) canonical_gap_id: Option<String>,
+    pub(crate) gap_kind: String,
+    pub(crate) language: String,
+    pub(crate) language_status: String,
+    pub(crate) policy_state: String,
+    pub(crate) evidence_class: String,
+    pub(crate) repair_kind: String,
+    pub(crate) task: String,
+    pub(crate) discriminator_guidance: serde_json::Value,
+    pub(crate) suggested_test_file: Option<String>,
+    pub(crate) suggested_test_name: Option<String>,
+    pub(crate) verify_command: String,
+    pub(crate) receipt_command: Option<String>,
+    pub(crate) command_specs: Option<serde_json::Value>,
+    pub(crate) conflict_group: String,
+    pub(crate) queue_state: String,
+    pub(crate) staleness_status: String,
+    pub(crate) staleness_reason: String,
+    pub(crate) allowed_edit_surface: Vec<String>,
+    pub(crate) forbidden_files: Vec<String>,
+    pub(crate) changed_owner: Option<String>,
+    pub(crate) changed_file: Option<String>,
+    pub(crate) changed_line: Option<u64>,
+    pub(crate) changed_behavior: Option<String>,
+    pub(crate) missing_discriminator: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -918,7 +993,7 @@ struct GapRecordQueueFreshness {
     staleness_reason: String,
 }
 
-fn gap_record_queue_conflict_counts(
+pub(crate) fn gap_record_queue_conflict_counts(
     candidates: &[GapRecordQueueCandidate],
 ) -> BTreeMap<String, usize> {
     let mut counts = BTreeMap::new();
@@ -928,7 +1003,7 @@ fn gap_record_queue_conflict_counts(
     counts
 }
 
-fn gap_record_queue_conflict_groups(
+pub(crate) fn gap_record_queue_conflict_groups(
     candidates: &[GapRecordQueueCandidate],
 ) -> Vec<serde_json::Value> {
     let mut grouped = BTreeMap::<String, Vec<String>>::new();

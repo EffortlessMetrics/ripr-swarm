@@ -12518,7 +12518,20 @@ analysis and only includes records that can already render through
 `ripr agent packet --gap-ledger ... --gap-id ... --json`. Static limitations,
 already-observed/no-action records, records without verify commands, and
 records without `allowed_edit_surface` are counted in `exclusion_reasons`
-instead of entering `packets[]`.
+instead of entering `packets[]`. `--top` is applied after the live-current
+filtering: `packets[]` contains only assignable candidates —
+`queue_state = "queued"` with `staleness_status = "current"` — selected in
+upstream ledger order, so a stale or `not_evaluated` record never consumes a
+bounded packet slot. Non-assignable candidates stay visible in a bounded,
+command-free `blocked_review[]` projection that carries identity, typed
+queue/currentness state, reason, conflict group, and `refresh_commands` only.
+The summary keeps the honest denominators for every truncation:
+`queue_total` counts validated candidates, `assignable_total` counts the
+live-current assignable frontier, `returned` counts rendered packets,
+`unreturned_assignable_total` counts assignable candidates `--top` left
+unrendered, and `stale_total` / `not_evaluated_total` count blocked
+candidates, with `blocked_review_total` and `blocked_review_returned`
+reporting the full and rendered review projections.
 
 The queue envelope is:
 
@@ -12543,7 +12556,15 @@ The queue envelope is:
     "returned": 2,
     "stale_total": 0,
     "excluded_records_total": 1,
-    "conflict_groups_total": 1
+    "conflict_groups_total": 1,
+    "current_total": 2,
+    "not_evaluated_total": 0,
+    "assignable_total": 2,
+    "returned_assignable_total": 2,
+    "unreturned_assignable_total": 0,
+    "blocked_total": 0,
+    "blocked_review_total": 0,
+    "blocked_review_returned": 0
   },
   "conflict_groups": [
     {
@@ -12562,8 +12583,8 @@ The queue envelope is:
     {
       "priority": 1,
       "queue_state": "queued",
-      "staleness_status": "not_evaluated",
-      "staleness_reason": "GapRecord queue rendering does not compare the ledger with current git state yet.",
+      "staleness_status": "current",
+      "staleness_reason": "producer-validated live-current packet",
       "gap_id": "gap:python:pricing-boundary",
       "canonical_gap_id": "gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold",
       "language": "python",
@@ -12588,6 +12609,10 @@ The queue envelope is:
       "allowed_edit_surface": ["tests/test_pricing.py"],
       "allowed_files": ["tests/test_pricing.py"],
       "forbidden_files": ["src/pricing.py"],
+      "assignment": {
+        "eligible": true,
+        "reason": "producer-validated live-current packet"
+      },
       "packet_command_args": [
         "ripr",
         "agent",
@@ -12599,6 +12624,26 @@ The queue envelope is:
         "--gap-id",
         "gap:python:pricing-boundary",
         "--json"
+      ]
+    }
+  ],
+  "blocked_review": [
+    {
+      "source_index": 2,
+      "gap_id": "gap:python:pricing-stale",
+      "canonical_gap_id": "gap:python:src/pricing.py:calculate_discount:predicate_boundary:stale",
+      "language": "python",
+      "queue_state": "blocked_stale",
+      "staleness_status": "stale",
+      "staleness_reason": "repo-exposure source input identity no longer matches the current producer configuration; regenerate the source and ledger before assignment",
+      "conflict_group": "file:tests/test_pricing.py",
+      "assignment": {
+        "eligible": false,
+        "reason": "repo-exposure source input identity no longer matches the current producer configuration; regenerate the source and ledger before assignment"
+      },
+      "refresh_commands": [
+        "ripr agent check-repo-exposure --root . --repo-exposure target/ripr/reports/repo-exposure.json --mode draft",
+        "ripr reports gap-ledger --repo-exposure target/ripr/reports/repo-exposure.json --root . --out target/ripr/reports/gap-decision-ledger.json"
       ]
     }
   ]
@@ -12621,10 +12666,14 @@ or invalid relevant configuration therefore fails closed as stale or
 proof. Stale or mismatched sources use `queue_state = "blocked_stale"`, while
 unresolved identities and invalid source artifacts use
 `queue_state = "blocked_not_evaluated"`; each retains a
-`staleness_reason`, and schedulers must refresh instead of assigning them. Any non-assignable packet also carries its bounded
-`refresh_commands`; command arguments are shell-escaped and the packet’s
-`command_specs` are removed from the assignable projection when currentness is
-not current. `summary.stale_total` counts visible stale packets.
+`staleness_reason`, and schedulers must refresh instead of assigning them. Any
+non-assignable candidate is projected into `blocked_review[]` with its bounded
+shell-escaped `refresh_commands`; the review projection never carries
+`packet_command_args`, verify or receipt commands, `command_specs`, suggested
+tests, or edit-surface authority. `summary.stale_total` counts stale blocked
+candidates and `summary.not_evaluated_total` counts unevaluated blocked
+candidates; `blocked_review_total` always reports the full blocked
+denominator even when the projection is bounded by `--top`.
 
 `conflict_group_size > 1` means another queued packet targets the same edit
 surface, so schedulers should avoid assigning those packets in parallel.

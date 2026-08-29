@@ -131,8 +131,15 @@ mod live_currentness_tests {
             value.get("status").and_then(serde_json::Value::as_str),
             Some("blocked")
         );
+        assert!(
+            value
+                .get("packets")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(Vec::is_empty),
+            "a not_evaluated source must never expose assignable packets: {rendered}"
+        );
         let packet = value
-            .get("packets")
+            .get("blocked_review")
             .and_then(serde_json::Value::as_array)
             .and_then(|packets| packets.first())
             .ok_or_else(|| format!("missing review-only candidate: {rendered}"))?;
@@ -149,6 +156,14 @@ mod live_currentness_tests {
             Some("not_evaluated")
         );
         assert!(packet.get("packet_command_args").is_none());
+        assert!(packet.get("verify_command").is_none());
+        assert!(
+            packet
+                .get("refresh_commands")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|commands| !commands.is_empty()),
+            "review-only candidates must carry their refresh route: {rendered}"
+        );
         assert_eq!(
             value
                 .get("summary")
