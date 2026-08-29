@@ -39,6 +39,7 @@ mod rust_repair_trust;
 mod sarif;
 mod source_promotion;
 mod spec_maintenance;
+mod spec_receipts;
 mod targeted_rerun;
 mod targeted_test;
 mod test_oracles;
@@ -134,6 +135,9 @@ pub(crate) use sarif::{
 };
 pub(crate) use source_promotion::source_promotion;
 pub(crate) use spec_maintenance::spec_maintenance;
+pub(crate) use spec_receipts::spec_close;
+#[cfg(test)]
+pub(crate) use spec_receipts::validate_receipt;
 pub(crate) use targeted_rerun::targeted_rerun_benchmark;
 pub(crate) use targeted_test::targeted_test_outcome;
 pub(crate) use test_oracles::{test_efficiency_report, test_oracle_report};

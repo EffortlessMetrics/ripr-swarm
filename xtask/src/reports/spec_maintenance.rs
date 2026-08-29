@@ -10,10 +10,25 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use super::spec_receipts::{
+    ReceiptInput, ReceiptObservation, ReceiptsObservation, RejectedReceipt, scan_receipt_directory,
+};
+
 const JSON_FILE: &str = "spec-maintenance.json";
 const MARKDOWN_FILE: &str = "spec-maintenance.md";
-const SCHEMA_VERSION: &str = "1";
-const USAGE: &str = "usage: cargo xtask specs maintenance --as-of YYYY-MM-DD [--json]";
+const SCHEMA_VERSION: &str = "2";
+const USAGE: &str =
+    "usage: cargo xtask specs maintenance --as-of YYYY-MM-DD [--json] [--receipts <dir>]";
+
+/// New reason codes introduced with content-bound review receipts (#3466):
+/// a valid receipt whose bound content no longer matches the current spec
+/// bytes reopens the finding; a time-bound waiver past its date reopens it.
+pub(crate) const REASON_CONTENT_CHANGED_SINCE_REVIEW: &str = "content_changed_since_review";
+pub(crate) const REASON_REVIEW_WAIVER_EXPIRED: &str = "review_waiver_expired";
+
+const RECEIPT_STATUS_CLOSED: &str = "closed";
+const RECEIPT_STATUS_STALE: &str = "stale";
+const RECEIPT_STATUS_WAIVER_EXPIRED: &str = "waiver_expired";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct SpecMaintenanceReportV1 {
@@ -24,7 +39,10 @@ pub(crate) struct SpecMaintenanceReportV1 {
     pub(crate) denominator: Denominator,
     pub(crate) status_counts: BTreeMap<String, usize>,
     pub(crate) specs: Vec<SpecMaintenanceRow>,
+    pub(crate) closed_specs: Vec<SpecMaintenanceRow>,
+    pub(crate) closure_counts: BTreeMap<String, usize>,
     pub(crate) reason_counts: BTreeMap<String, usize>,
+    pub(crate) receipts: ReceiptsObservation,
     pub(crate) limitations: Vec<String>,
     pub(crate) claim_boundary: ClaimBoundary,
 }
@@ -40,6 +58,7 @@ pub(crate) struct HistoryObservation {
 pub(crate) struct Denominator {
     pub(crate) discoverable: usize,
     pub(crate) included: usize,
+    pub(crate) closed: usize,
     pub(crate) omitted: Vec<OmittedInput>,
 }
 
@@ -60,6 +79,7 @@ pub(crate) struct SpecMaintenanceRow {
     pub(crate) next_route: String,
     pub(crate) limitations: Vec<String>,
     pub(crate) age_observation: Option<AgeObservation>,
+    pub(crate) receipt: Option<ReceiptObservation>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -79,6 +99,7 @@ pub(crate) struct ClaimBoundary {
 struct Options {
     as_of: String,
     json: bool,
+    receipts: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -111,7 +132,29 @@ pub(crate) fn spec_maintenance(args: &[String]) -> Result<(), String> {
     let options = parse_options(args)?;
     let root = Path::new(".");
     let history = capture_history(root)?;
-    let report = build_report(root, &options.as_of, &history)?;
+    // `--receipts <dir>` overrides the receipts directory; the default is the
+    // committed `.allow/spec-system/reviews` directory when it exists, and
+    // absence of any receipts directory is the zero-receipt baseline.
+    let receipts = match &options.receipts {
+        Some(dir) => {
+            let path = PathBuf::from(dir);
+            if !path.exists() {
+                return Err(format!(
+                    "--receipts directory does not exist: `{dir}`\n{USAGE}"
+                ));
+            }
+            ReceiptInput {
+                directory: Some(path),
+            }
+        }
+        None => {
+            let default_dir = Path::new(crate::reports::spec_receipts::RECEIPTS_DEFAULT_DIR);
+            ReceiptInput {
+                directory: default_dir.exists().then(|| default_dir.to_path_buf()),
+            }
+        }
+    };
+    let report = build_report(root, &options.as_of, &history, &receipts)?;
     let json = serde_json::to_string_pretty(&report)
         .map_err(|error| format!("serialize spec maintenance report: {error}"))?;
     crate::write_report(JSON_FILE, &format!("{json}\n"))?;
@@ -128,6 +171,7 @@ pub(crate) fn spec_maintenance(args: &[String]) -> Result<(), String> {
 fn parse_options(args: &[String]) -> Result<Options, String> {
     let mut as_of = None;
     let mut json = false;
+    let mut receipts = None;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
@@ -141,6 +185,13 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
                 validate_date(value)?;
                 as_of = Some(value.clone());
             }
+            "--receipts" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "missing value for --receipts\n".to_string() + USAGE)?;
+                receipts = Some(value.clone());
+            }
             other => {
                 return Err(format!(
                     "unknown specs maintenance argument `{other}`\n{USAGE}"
@@ -150,31 +201,33 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         index += 1;
     }
     let as_of = as_of.ok_or_else(|| format!("missing required --as-of\n{USAGE}"))?;
-    Ok(Options { as_of, json })
+    Ok(Options {
+        as_of,
+        json,
+        receipts,
+    })
 }
 
-fn validate_date(value: &str) -> Result<(), String> {
+pub(crate) fn validate_date(value: &str) -> Result<(), String> {
     let bytes = value.as_bytes();
     if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-' {
-        return Err(format!(
-            "--as-of must be YYYY-MM-DD, got `{value}`\n{USAGE}"
-        ));
+        return Err(format!("expected YYYY-MM-DD date, got `{value}`"));
     }
     let year = value[0..4]
         .parse::<i32>()
-        .map_err(|error| format!("invalid --as-of year: {error}"))?;
+        .map_err(|error| format!("invalid year in date `{value}`: {error}"))?;
     let month = value[5..7]
         .parse::<u32>()
-        .map_err(|error| format!("invalid --as-of month: {error}"))?;
+        .map_err(|error| format!("invalid month in date `{value}`: {error}"))?;
     let day = value[8..10]
         .parse::<u32>()
-        .map_err(|error| format!("invalid --as-of day: {error}"))?;
+        .map_err(|error| format!("invalid day in date `{value}`: {error}"))?;
     if year < 1
         || !(1..=12).contains(&month)
         || day == 0
         || i64::from(day) > days_in_month(i64::from(year), i64::from(month))
     {
-        return Err(format!("--as-of is not a valid calendar date: `{value}`"));
+        return Err(format!("not a valid calendar date: `{value}`"));
     }
     Ok(())
 }
@@ -183,6 +236,7 @@ pub(crate) fn build_report(
     root: &Path,
     as_of: &str,
     history: &HistoryInput,
+    receipts: &ReceiptInput,
 ) -> Result<SpecMaintenanceReportV1, String> {
     validate_date(as_of)?;
     let spec_root = root.join("docs/specs");
@@ -222,18 +276,114 @@ pub(crate) fn build_report(
     }
     included.sort_by(|left, right| left.id.cmp(&right.id).then(left.path.cmp(&right.path)));
     omitted.sort_by(|left, right| left.path.cmp(&right.path));
+
+    // Receipt matching (#3466): a valid, content-bound receipt closes a
+    // finding until the spec bytes change or the waiver date passes; a
+    // rejected receipt closes nothing and is recorded with a named reason.
+    let scan = match &receipts.directory {
+        Some(directory) => Some(scan_receipt_directory(directory)?),
+        None => None,
+    };
+    let mut rejected = scan
+        .as_ref()
+        .map(|scan| scan.rejected.clone())
+        .unwrap_or_default();
+    let mut open_specs = Vec::new();
+    let mut closed_specs = Vec::new();
+    for row in included {
+        let Some(matched) = scan.as_ref().and_then(|scan| scan.matched.get(&row.id)) else {
+            open_specs.push(row);
+            continue;
+        };
+        // A receipt bound to another path is not evidence about this file.
+        if matched.receipt.spec_path != row.path {
+            rejected.push(RejectedReceipt {
+                path: matched.file_path.clone(),
+                reason: crate::reports::spec_receipts::REJECTED_PATH_MISMATCH.to_string(),
+            });
+            open_specs.push(row);
+            continue;
+        }
+        let mut row = row;
+        // A reviewed spec is by definition not "never reviewed": a matched
+        // observation of any status suppresses that heuristic reason.
+        row.reason_codes.retain(|reason| reason != "never_reviewed");
+        let digest_matches = matched.receipt.content_digest == row.content_digest;
+        // Waived-until dates are zero-padded ISO dates, so ordering is a
+        // stable string comparison: `waived_until == as_of` stays closed.
+        let waiver_expired = matched
+            .receipt
+            .waived_until
+            .as_deref()
+            .is_some_and(|until| until < as_of);
+        let status = if digest_matches && !waiver_expired {
+            RECEIPT_STATUS_CLOSED
+        } else if waiver_expired {
+            row.reason_codes
+                .push(REASON_REVIEW_WAIVER_EXPIRED.to_string());
+            RECEIPT_STATUS_WAIVER_EXPIRED
+        } else {
+            row.reason_codes
+                .push(REASON_CONTENT_CHANGED_SINCE_REVIEW.to_string());
+            RECEIPT_STATUS_STALE
+        };
+        row.reason_codes.sort();
+        row.reason_codes.dedup();
+        if row.reason_codes.is_empty() {
+            row.reason_codes
+                .push("no_objective_maintenance_finding".to_string());
+        }
+        let receipt = &matched.receipt;
+        row.receipt = Some(ReceiptObservation {
+            status: status.to_string(),
+            receipt_id: receipt.receipt_id.clone(),
+            disposition: receipt.disposition.clone(),
+            observed_at: receipt.observed_at.clone(),
+            waived_until: receipt.waived_until.clone(),
+            reviewed_by: receipt.reviewed_by.clone(),
+        });
+        if status == RECEIPT_STATUS_CLOSED {
+            closed_specs.push(row);
+        } else {
+            open_specs.push(row);
+        }
+    }
+
     let mut reason_counts = BTreeMap::new();
     let mut status_counts = BTreeMap::new();
-    for row in &included {
+    // Queue counts cover open findings only, so a closed spec can neither
+    // inflate nor deflate the maintenance queue.
+    for row in &open_specs {
         *status_counts.entry(row.status.clone()).or_insert(0) += 1;
         for reason in &row.reason_codes {
             *reason_counts.entry(reason.clone()).or_insert(0) += 1;
+        }
+    }
+    let mut closure_counts = BTreeMap::new();
+    for row in &closed_specs {
+        if let Some(receipt) = &row.receipt {
+            *closure_counts
+                .entry(receipt.disposition.clone())
+                .or_insert(0) += 1;
         }
     }
     let history = HistoryObservation {
         available: history.repository_available,
         source: history.source.clone(),
         limitation: history.limitation.clone(),
+    };
+    let receipts_observation = match &scan {
+        Some(scan) => ReceiptsObservation {
+            source: scan.source.clone(),
+            parsed: scan.parsed,
+            applied: closed_specs.len(),
+            rejected: {
+                let mut rejected = rejected;
+                rejected.sort_by(|left, right| left.path.cmp(&right.path));
+                rejected
+            },
+        },
+        None => ReceiptsObservation::none(),
     };
     let mut limitations = vec![
         "age is an observation and ordering hint, not a validity or lifecycle decision".to_string(),
@@ -248,19 +398,25 @@ pub(crate) fn build_report(
         history,
         // A present file counts toward the discoverable denominator; the
         // synthetic missing-index record documents an absent input and must
-        // not inflate the count of documents the scan saw.
+        // not inflate the count of documents the scan saw. Closed
+        // observations remain discoverable and are reported separately.
         denominator: Denominator {
-            discoverable: included.len()
+            discoverable: open_specs.len()
+                + closed_specs.len()
                 + omitted
                     .iter()
                     .filter(|input| input.reason != "spec-index-missing")
                     .count(),
-            included: included.len(),
+            included: open_specs.len(),
+            closed: closed_specs.len(),
             omitted,
         },
         status_counts,
-        specs: included,
+        specs: open_specs,
+        closed_specs,
+        closure_counts,
         reason_counts,
+        receipts: receipts_observation,
         limitations,
         claim_boundary: ClaimBoundary {
             establishes: "An explainable advisory queue of specification documents deserving maintainer attention".to_string(),
@@ -505,6 +661,7 @@ fn build_row(
         next_route: "maintainer-review/spec-maintenance".to_string(),
         limitations,
         age_observation,
+        receipt: None,
     }
 }
 
@@ -530,11 +687,12 @@ fn relative_path(root: &Path, path: &Path) -> String {
 fn render_markdown(report: &SpecMaintenanceReportV1) -> String {
     let mut out = String::from("# Specification maintenance inventory\n\nStatus: advisory\n\n");
     out.push_str(&format!(
-        "- Schema: `{}`\n- As of: `{}`\n- Discoverable: `{}`\n- Included: `{}`\n",
+        "- Schema: `{}`\n- As of: `{}`\n- Discoverable: `{}`\n- Included: `{}`\n- Closed: `{}`\n",
         report.schema_version,
         report.as_of,
         report.denominator.discoverable,
-        report.denominator.included
+        report.denominator.included,
+        report.denominator.closed
     ));
     out.push_str(&format!(
         "- History: `{}`\n\n",
@@ -558,6 +716,32 @@ fn render_markdown(report: &SpecMaintenanceReportV1) -> String {
     if report.specs.is_empty() {
         out.push_str("| — | — | — | none | — |\n");
     }
+    // Closed observations stay visible with their disposition rather than
+    // silently vanishing from the report.
+    out.push_str("\n## Closed observations\n\n| ID | Path | Disposition | Waived until | Observed | Reviewer |\n| --- | --- | --- | --- | --- | --- |\n");
+    for row in &report.closed_specs {
+        let receipt = row.receipt.as_ref();
+        out.push_str(&format!(
+            "| `{}` | `{}` | `{}` | `{}` | `{}` | `{}` |\n",
+            row.id,
+            row.path,
+            receipt
+                .map(|value| value.disposition.as_str())
+                .unwrap_or("-"),
+            receipt
+                .and_then(|value| value.waived_until.as_deref())
+                .unwrap_or("-"),
+            receipt
+                .map(|value| value.observed_at.as_str())
+                .unwrap_or("-"),
+            receipt
+                .map(|value| value.reviewed_by.as_str())
+                .unwrap_or("-")
+        ));
+    }
+    if report.closed_specs.is_empty() {
+        out.push_str("| — | — | none | — | — | — |\n");
+    }
     out.push_str("\n## Omitted inputs\n\n");
     if report.denominator.omitted.is_empty() {
         out.push_str("None.\n\n");
@@ -567,7 +751,22 @@ fn render_markdown(report: &SpecMaintenanceReportV1) -> String {
         }
         out.push('\n');
     }
-    out.push_str("## Limitations and claim boundary\n\n");
+    out.push_str("## Receipt observations\n\n");
+    out.push_str(&format!(
+        "- Source: `{}`\n- Parsed: `{}`\n- Applied: `{}`\n\n| Receipt | Rejection reason |\n| --- | --- |\n",
+        report.receipts.source, report.receipts.parsed, report.receipts.applied
+    ));
+    if report.receipts.rejected.is_empty() {
+        out.push_str("| — | none |\n");
+    } else {
+        for rejected in &report.receipts.rejected {
+            out.push_str(&format!(
+                "| `{}` | `{}` |\n",
+                rejected.path, rejected.reason
+            ));
+        }
+    }
+    out.push_str("\n## Limitations and claim boundary\n\n");
     for limitation in &report.limitations {
         out.push_str(&format!("- {}\n", limitation));
     }
@@ -602,8 +801,18 @@ mod tests {
         let path = root.join("docs/specs/RIPR-SPEC-9999-example.md");
         fs::write(&path, "# Example\n\nStatus: proposed\n").map_err(|error| error.to_string())?;
         fs::write(root.join("docs/specs/README.md"), "index").map_err(|error| error.to_string())?;
-        let left = build_report(&root, "2026-08-27", &HistoryInput::default())?;
-        let right = build_report(&root, "2026-08-27", &HistoryInput::default())?;
+        let left = build_report(
+            &root,
+            "2026-08-27",
+            &HistoryInput::default(),
+            &ReceiptInput::default(),
+        )?;
+        let right = build_report(
+            &root,
+            "2026-08-27",
+            &HistoryInput::default(),
+            &ReceiptInput::default(),
+        )?;
         if left != right {
             return Err("fixed inputs did not produce stable report".to_string());
         }
@@ -633,7 +842,7 @@ mod tests {
             "docs/specs/RIPR-SPEC-9999-example.md".to_string(),
             "2025-01-01".to_string(),
         );
-        let report = build_report(&root, "2026-08-27", &history)?;
+        let report = build_report(&root, "2026-08-27", &history, &ReceiptInput::default())?;
         let row = report
             .specs
             .first()
@@ -673,7 +882,12 @@ Status: accepted
                 ),
             )
             .map_err(|error| error.to_string())?;
-            let report = build_report(&root, "2026-08-27", &HistoryInput::default())?;
+            let report = build_report(
+                &root,
+                "2026-08-27",
+                &HistoryInput::default(),
+                &ReceiptInput::default(),
+            )?;
             let row = report
                 .specs
                 .first()
@@ -716,7 +930,7 @@ Status: proposed
             history
                 .last_changed
                 .insert(relative.to_string(), last_changed.to_string());
-            let report = build_report(&root, "2026-08-27", &history)?;
+            let report = build_report(&root, "2026-08-27", &history, &ReceiptInput::default())?;
             let row = report
                 .specs
                 .first()
@@ -740,7 +954,12 @@ Status: proposed
     #[test]
     fn zero_and_many_denominators_succeed_and_render_from_one_dto() -> Result<(), String> {
         let empty = fixture_root()?;
-        let empty_report = build_report(&empty, "2026-08-27", &HistoryInput::default())?;
+        let empty_report = build_report(
+            &empty,
+            "2026-08-27",
+            &HistoryInput::default(),
+            &ReceiptInput::default(),
+        )?;
         if empty_report.denominator.included != 0 || empty_report.denominator.omitted.len() != 1 {
             return Err("zero-candidate denominator was not reported".to_string());
         }
@@ -752,7 +971,12 @@ Status: proposed
             )
             .map_err(|error| error.to_string())?;
         }
-        let report = build_report(&root, "2026-08-27", &HistoryInput::default())?;
+        let report = build_report(
+            &root,
+            "2026-08-27",
+            &HistoryInput::default(),
+            &ReceiptInput::default(),
+        )?;
         let json = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
         let decoded: SpecMaintenanceReportV1 =
             serde_json::from_str(&json).map_err(|error| error.to_string())?;
@@ -778,8 +1002,513 @@ Status: proposed
             [0xff, 0xfe],
         )
         .map_err(|error| error.to_string())?;
-        if build_report(&root, "2026-08-27", &HistoryInput::default()).is_ok() {
+        if build_report(
+            &root,
+            "2026-08-27",
+            &HistoryInput::default(),
+            &ReceiptInput::default(),
+        )
+        .is_ok()
+        {
             return Err("invalid UTF-8 unexpectedly succeeded".to_string());
+        }
+        Ok(())
+    }
+
+    // --- Receipt integration (#3466) ---------------------------------------
+
+    use crate::reports::spec_receipts::{
+        RECEIPT_CLAIM_BOUNDARY, RECEIPT_NON_CLAIMS, RECEIPT_SCHEMA_VERSION,
+        REJECTED_DUPLICATE_SPEC, REJECTED_MALFORMED, REJECTED_NAME_NOT_A_SPEC_ID,
+        REJECTED_PATH_MISMATCH, REJECTED_SPEC_MISMATCH, REJECTED_UNKNOWN_SCHEMA,
+        REJECTED_UNSUPPORTED_FILE, SpecReviewReceiptV1, compute_receipt_id,
+    };
+
+    fn reviews_dir(root: &Path) -> PathBuf {
+        root.join(".allow/spec-system/reviews")
+    }
+
+    fn fixture_receipt(
+        spec_id: &str,
+        spec_path: &str,
+        digest: &str,
+        disposition: &str,
+        waived_until: Option<&str>,
+    ) -> SpecReviewReceiptV1 {
+        let mut receipt = SpecReviewReceiptV1 {
+            schema_version: RECEIPT_SCHEMA_VERSION.to_string(),
+            producer: "hand-authored".to_string(),
+            spec_id: spec_id.to_string(),
+            spec_path: spec_path.to_string(),
+            content_digest: digest.to_string(),
+            status_observed: "proposed".to_string(),
+            observed_at: "2026-08-01".to_string(),
+            reviewed_by: "maintainer".to_string(),
+            disposition: disposition.to_string(),
+            waived_until: waived_until.map(str::to_string),
+            disposition_detail: String::new(),
+            reasons_inspected: Vec::new(),
+            evidence_refs: Vec::new(),
+            limitations: Vec::new(),
+            receipt_id: String::new(),
+            predecessor_receipt_id: None,
+            claim_boundary: RECEIPT_CLAIM_BOUNDARY.to_string(),
+            non_claims: RECEIPT_NON_CLAIMS
+                .iter()
+                .map(|claim| claim.to_string())
+                .collect(),
+        };
+        receipt.receipt_id = compute_receipt_id(&receipt);
+        receipt
+    }
+
+    fn write_receipt(
+        root: &Path,
+        file_name: &str,
+        receipt: &SpecReviewReceiptV1,
+    ) -> Result<(), String> {
+        let dir = reviews_dir(root);
+        fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+        let mut body =
+            toml::to_string(receipt).map_err(|error| format!("serialize receipt: {error}"))?;
+        if !body.ends_with('\n') {
+            body.push('\n');
+        }
+        fs::write(dir.join(file_name), body).map_err(|error| error.to_string())
+    }
+
+    fn digest_of(root: &Path, relative: &str) -> Result<String, String> {
+        let bytes = fs::read(root.join(relative)).map_err(|error| error.to_string())?;
+        let mut hasher = Sha256::new();
+        hasher.update(&bytes);
+        Ok(format!("sha256:{:x}", hasher.finalize()))
+    }
+
+    fn build_with_receipts(root: &Path, as_of: &str) -> Result<SpecMaintenanceReportV1, String> {
+        build_report(
+            root,
+            as_of,
+            &HistoryInput::default(),
+            &ReceiptInput {
+                directory: Some(reviews_dir(root)),
+            },
+        )
+    }
+
+    #[test]
+    fn matching_receipt_closes_finding_and_pins_denominator_arithmetic() -> Result<(), String> {
+        let root = fixture_root()?;
+        let closed_relative = "docs/specs/RIPR-SPEC-9001-closed.md";
+        fs::write(root.join(closed_relative), "# A\n\nStatus: proposed\n")
+            .map_err(|error| error.to_string())?;
+        fs::write(
+            root.join("docs/specs/RIPR-SPEC-9002-open.md"),
+            "# B\n\nStatus: planned\n",
+        )
+        .map_err(|error| error.to_string())?;
+        fs::write(root.join("docs/specs/README.md"), "index").map_err(|error| error.to_string())?;
+        fs::write(root.join("docs/specs/notes.md"), "not a spec")
+            .map_err(|error| error.to_string())?;
+        let digest = digest_of(&root, closed_relative)?;
+        write_receipt(
+            &root,
+            "RIPR-SPEC-9001.toml",
+            &fixture_receipt(
+                "RIPR-SPEC-9001",
+                closed_relative,
+                &digest,
+                "current_no_source_change",
+                None,
+            ),
+        )?;
+        let report = build_with_receipts(&root, "2026-08-27")?;
+        // Discoverable = 1 open + 1 closed + 2 omitted non-index inputs
+        // (`README.md` and `notes.md` are present, non-discoverable files).
+        if report.denominator.included != 1
+            || report.denominator.closed != 1
+            || report.denominator.discoverable != 4
+        {
+            return Err(format!(
+                "denominator arithmetic drifted: {:?}",
+                report.denominator
+            ));
+        }
+        let omitted_non_index = report
+            .denominator
+            .omitted
+            .iter()
+            .filter(|input| input.reason != "spec-index-missing")
+            .count();
+        if report.denominator.discoverable
+            != report.denominator.included + report.denominator.closed + omitted_non_index
+        {
+            return Err(
+                "discoverable != included + closed + omitted(non-index-missing)".to_string(),
+            );
+        }
+        if report.specs.len() != 1 || report.specs[0].id != "RIPR-SPEC-9002" {
+            return Err("the open finding left the queue".to_string());
+        }
+        let closed = report
+            .closed_specs
+            .first()
+            .ok_or_else(|| "closed observation missing".to_string())?;
+        if closed.id != "RIPR-SPEC-9001"
+            || closed.receipt.as_ref().map(|value| value.status.as_str()) != Some("closed")
+        {
+            return Err("matching receipt did not close the finding".to_string());
+        }
+        if report
+            .closure_counts
+            .get("current_no_source_change")
+            .copied()
+            != Some(1)
+        {
+            return Err("closure_counts did not cover the closed disposition".to_string());
+        }
+        // Queue counts stay open-only: the closed spec must not inflate or
+        // deflate them.
+        if report.status_counts.contains_key("proposed") {
+            return Err("closed spec leaked into status_counts".to_string());
+        }
+        let open_reason_total: usize = report.specs.iter().map(|row| row.reason_codes.len()).sum();
+        if report.reason_counts.values().sum::<usize>() != open_reason_total {
+            return Err("reason_counts does not count only open findings".to_string());
+        }
+        if report.receipts.applied != 1 || report.receipts.parsed != 1 {
+            return Err("receipts observation did not report parsed/applied".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn spec_byte_change_reopens_finding_as_stale() -> Result<(), String> {
+        let root = fixture_root()?;
+        let relative = "docs/specs/RIPR-SPEC-9003-stale.md";
+        fs::write(root.join(relative), "# A\n\nStatus: proposed\n")
+            .map_err(|error| error.to_string())?;
+        let digest = digest_of(&root, relative)?;
+        write_receipt(
+            &root,
+            "RIPR-SPEC-9003.toml",
+            &fixture_receipt(
+                "RIPR-SPEC-9003",
+                relative,
+                &digest,
+                "current_no_source_change",
+                None,
+            ),
+        )?;
+        // One content byte changes; the receipt is stale even though the
+        // document status is unchanged.
+        fs::write(root.join(relative), "# A!\n\nStatus: proposed\n")
+            .map_err(|error| error.to_string())?;
+        let report = build_with_receipts(&root, "2026-08-27")?;
+        if !report.closed_specs.is_empty() {
+            return Err("stale receipt still closed the finding".to_string());
+        }
+        let row = report
+            .specs
+            .first()
+            .ok_or_else(|| "reopened finding missing".to_string())?;
+        if !row
+            .reason_codes
+            .contains(&REASON_CONTENT_CHANGED_SINCE_REVIEW.to_string())
+        {
+            return Err("stale receipt did not add content_changed_since_review".to_string());
+        }
+        if row.receipt.as_ref().map(|value| value.status.as_str()) != Some("stale") {
+            return Err("stale status was not observed on the row".to_string());
+        }
+        if row.reason_codes.contains(&"never_reviewed".to_string()) {
+            return Err("a reviewed spec was reported as never_reviewed".to_string());
+        }
+        if report.denominator.closed != 0 || report.denominator.included != 1 {
+            return Err("stale receipt changed the denominator buckets".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn waiver_expiry_boundary_pins_both_sides() -> Result<(), String> {
+        let build =
+            |as_of: &str, waived_until: &str| -> Result<(bool, String, Vec<String>), String> {
+                let root = fixture_root()?;
+                let relative = "docs/specs/RIPR-SPEC-9004-waiver.md";
+                fs::write(root.join(relative), "# A\n\nStatus: proposed\n")
+                    .map_err(|error| error.to_string())?;
+                let digest = digest_of(&root, relative)?;
+                write_receipt(
+                    &root,
+                    "RIPR-SPEC-9004.toml",
+                    &fixture_receipt(
+                        "RIPR-SPEC-9004",
+                        relative,
+                        &digest,
+                        "current_no_source_change",
+                        Some(waived_until),
+                    ),
+                )?;
+                let report = build_with_receipts(&root, as_of)?;
+                if let Some(row) = report.closed_specs.first() {
+                    return Ok((
+                        true,
+                        row.receipt
+                            .as_ref()
+                            .map(|value| value.status.clone())
+                            .unwrap_or_default(),
+                        Vec::new(),
+                    ));
+                }
+                let row = report
+                    .specs
+                    .first()
+                    .ok_or_else(|| "finding missing".to_string())?;
+                Ok((
+                    false,
+                    row.receipt
+                        .as_ref()
+                        .map(|value| value.status.clone())
+                        .unwrap_or_default(),
+                    row.reason_codes.clone(),
+                ))
+            };
+        let (closed_on_date, closed_status, _) = build("2026-08-27", "2026-08-27")?;
+        if !closed_on_date || closed_status != "closed" {
+            return Err("waived_until == as_of did not stay closed".to_string());
+        }
+        let (expired_closed, expired_status, expired_reasons) = build("2026-08-28", "2026-08-27")?;
+        if expired_closed
+            || expired_status != "waiver_expired"
+            || !expired_reasons
+                .iter()
+                .any(|reason| reason == REASON_REVIEW_WAIVER_EXPIRED)
+        {
+            return Err(
+                "waived_until < as_of did not reopen with review_waiver_expired".to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rejected_receipts_close_nothing_and_carry_named_reasons() -> Result<(), String> {
+        let root = fixture_root()?;
+        let relative = "docs/specs/RIPR-SPEC-9005-rejected.md";
+        fs::write(root.join(relative), "# A\n\nStatus: proposed\n")
+            .map_err(|error| error.to_string())?;
+        let digest = digest_of(&root, relative)?;
+        let dir = reviews_dir(&root);
+        fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+        // spec_id field disagrees with the filename.
+        write_receipt(
+            &root,
+            "RIPR-SPEC-9006.toml",
+            &fixture_receipt("RIPR-SPEC-9005", relative, &digest, "not_applicable", None),
+        )?;
+        // Right ID, wrong bound path.
+        write_receipt(
+            &root,
+            "RIPR-SPEC-9005.toml",
+            &fixture_receipt(
+                "RIPR-SPEC-9005",
+                "docs/specs/RIPR-SPEC-9005-elsewhere.md",
+                &digest,
+                "not_applicable",
+                None,
+            ),
+        )?;
+        // Unparsable filename and a non-TOML entry.
+        fs::write(dir.join("notes.toml"), "x = 1\n").map_err(|error| error.to_string())?;
+        fs::write(dir.join("RIPR-SPEC-9007.md"), "nope\n").map_err(|error| error.to_string())?;
+        // Malformed TOML and an unknown schema version.
+        fs::write(dir.join("RIPR-SPEC-9008.toml"), "not = toml")
+            .map_err(|error| error.to_string())?;
+        let mut unknown_schema =
+            fixture_receipt("RIPR-SPEC-9009", relative, &digest, "not_applicable", None);
+        unknown_schema.schema_version = "2".to_string();
+        unknown_schema.receipt_id = compute_receipt_id(&unknown_schema);
+        write_receipt(&root, "RIPR-SPEC-9009.toml", &unknown_schema)?;
+        // Advisory contract: malformed receipts never fail the command.
+        let report = build_with_receipts(&root, "2026-08-27")?;
+        if report.specs.len() != 1 || !report.closed_specs.is_empty() {
+            return Err("a rejected receipt closed a finding".to_string());
+        }
+        if !report.specs[0]
+            .reason_codes
+            .contains(&"never_reviewed".to_string())
+        {
+            return Err("rejected receipts must not suppress never_reviewed".to_string());
+        }
+        let reasons: Vec<&str> = report
+            .receipts
+            .rejected
+            .iter()
+            .map(|rejected| rejected.reason.as_str())
+            .collect();
+        for expected in [
+            REJECTED_SPEC_MISMATCH,
+            REJECTED_PATH_MISMATCH,
+            REJECTED_NAME_NOT_A_SPEC_ID,
+            REJECTED_UNSUPPORTED_FILE,
+            REJECTED_MALFORMED,
+            REJECTED_UNKNOWN_SCHEMA,
+        ] {
+            if !reasons.contains(&expected) {
+                return Err(format!("missing rejected reason `{expected}`: {reasons:?}"));
+            }
+        }
+        if report.receipts.applied != 0 {
+            return Err("rejected receipts were counted as applied".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn duplicate_receipt_rejects_the_later_entry_and_keeps_the_first() -> Result<(), String> {
+        let root = fixture_root()?;
+        let relative = "docs/specs/RIPR-SPEC-9010-dup.md";
+        fs::write(root.join(relative), "# A\n\nStatus: proposed\n")
+            .map_err(|error| error.to_string())?;
+        let digest = digest_of(&root, relative)?;
+        write_receipt(
+            &root,
+            "RIPR-SPEC-9010.toml",
+            &fixture_receipt("RIPR-SPEC-9010", relative, &digest, "not_applicable", None),
+        )?;
+        write_receipt(
+            &root,
+            "RIPR-SPEC-9010-second.toml",
+            &fixture_receipt(
+                "RIPR-SPEC-9010",
+                relative,
+                &digest,
+                "followup_issue_required",
+                None,
+            ),
+        )?;
+        let report = build_with_receipts(&root, "2026-08-27")?;
+        // The first receipt in sorted path order wins (`-` sorts before `.`,
+        // so `RIPR-SPEC-9010-second.toml` is applied).
+        if report.closed_specs.len() != 1
+            || report.closed_specs[0]
+                .receipt
+                .as_ref()
+                .map(|value| value.disposition.as_str())
+                != Some("followup_issue_required")
+        {
+            return Err("duplicate handling did not keep the first sorted receipt".to_string());
+        }
+        if !report
+            .receipts
+            .rejected
+            .iter()
+            .any(|rejected| rejected.reason == REJECTED_DUPLICATE_SPEC)
+        {
+            return Err("duplicate receipt was not rejected by name".to_string());
+        }
+        if report.receipts.parsed != 2 || report.receipts.applied != 1 {
+            return Err("parsed/applied did not disclose the duplicate".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn zero_receipts_keeps_the_pinned_baseline_and_reports_schema_two() -> Result<(), String> {
+        let root = fixture_root()?;
+        fs::write(
+            root.join("docs/specs/RIPR-SPEC-9011-example.md"),
+            "# Example\n\nStatus: planned\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let report = build_report(
+            &root,
+            "2026-08-27",
+            &HistoryInput::default(),
+            &ReceiptInput::default(),
+        )?;
+        if report.schema_version != "2" {
+            return Err("schema_version was not honestly bumped to 2".to_string());
+        }
+        if report.receipts.source != "none"
+            || report.receipts.parsed != 0
+            || report.receipts.applied != 0
+            || !report.receipts.rejected.is_empty()
+        {
+            return Err("zero-receipt baseline was not reported as none".to_string());
+        }
+        if !report.closed_specs.is_empty()
+            || !report.closure_counts.is_empty()
+            || report.denominator.closed != 0
+        {
+            return Err("zero receipts produced closed observations".to_string());
+        }
+        // The markdown renders the new sections from the same DTO.
+        let markdown = render_markdown(&report);
+        for section in [
+            "## Closed observations",
+            "## Receipt observations",
+            "- Closed: `0`",
+        ] {
+            if !markdown.contains(section) {
+                return Err(format!("markdown is missing `{section}`"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn receipts_render_from_one_dto_and_stay_byte_stable() -> Result<(), String> {
+        let root = fixture_root()?;
+        let closed_relative = "docs/specs/RIPR-SPEC-9012-closed.md";
+        fs::write(root.join(closed_relative), "# A\n\nStatus: proposed\n")
+            .map_err(|error| error.to_string())?;
+        let digest = digest_of(&root, closed_relative)?;
+        write_receipt(
+            &root,
+            "RIPR-SPEC-9012.toml",
+            &fixture_receipt(
+                "RIPR-SPEC-9012",
+                closed_relative,
+                &digest,
+                "retain_proposed_named_evidence_gap",
+                Some("2027-02-28"),
+            ),
+        )?;
+        let left = build_with_receipts(&root, "2026-08-27")?;
+        let right = build_with_receipts(&root, "2026-08-27")?;
+        if left != right {
+            return Err("fixed inputs did not produce a stable report".to_string());
+        }
+        let json = serde_json::to_string_pretty(&left).map_err(|error| error.to_string())?;
+        let decoded: SpecMaintenanceReportV1 =
+            serde_json::from_str(&json).map_err(|error| error.to_string())?;
+        if decoded != left {
+            return Err("JSON round trip did not preserve the report".to_string());
+        }
+        let markdown = render_markdown(&left);
+        for expected in [
+            "| `RIPR-SPEC-9012` |",
+            "| `retain_proposed_named_evidence_gap` |",
+            "| `2027-02-28` |",
+            "| `maintainer` |",
+            "- Closed: `1`",
+        ] {
+            if !markdown.contains(expected) {
+                return Err(format!("closed section is missing `{expected}`"));
+            }
+        }
+        // Receipt rejections stay sorted by path.
+        let rejected_paths: Vec<&str> = left
+            .receipts
+            .rejected
+            .iter()
+            .map(|rejected| rejected.path.as_str())
+            .collect();
+        let mut sorted_paths = rejected_paths.clone();
+        sorted_paths.sort();
+        if rejected_paths != sorted_paths {
+            return Err("rejected receipts are not sorted by path".to_string());
         }
         Ok(())
     }
