@@ -309,7 +309,7 @@ fn write_bound_repo_exposure_fixture(
     "kind": "repo_exposure",
     "schema_version": "1",
     "canonicalization": "raw_json_placeholder_v1",
-    "producer": {{"tool": "ripr", "version": "0.10.0"}},
+    "producer": {{"tool": "ripr", "version": "0.11.0"}},
     "repository": {{"root": "{root_identity}", "head": "{head}"}},
     "analysis": {{"format": "repo-exposure-json", "mode": "draft", "base_revision": null, "input_identity": "input:v3:fnv1a64:00000000000000f1", "command": "ripr check --format repo-exposure-json", "profile": "draft", "worktree": "clean"}},
     "snapshot_identity": "snapshot:input:v3:fnv1a64:00000000000000f1;revision:{head}",
@@ -522,7 +522,7 @@ fn bind_repo_exposure_fixture_with_worktree(
         "kind": "repo_exposure",
         "schema_version": "1",
         "canonicalization": "raw_json_placeholder_v1",
-        "producer": {"tool": "ripr", "version": "0.10.0"},
+        "producer": {"tool": "ripr", "version": "0.11.0"},
         "repository": {"root": root_identity, "head": head},
         "analysis": {"format": "repo-exposure-json", "mode": "draft", "base_revision": null, "input_identity": "input:v3:fnv1a64:00000000000000f1", "command": "ripr check --format repo-exposure-json", "profile": "draft", "worktree": worktree},
         "snapshot_identity": format!("snapshot:input:v3:fnv1a64:00000000000000f1;revision:{head}"),
@@ -4117,8 +4117,8 @@ fn agent_verify_rejects_comparison_metadata_drift() -> Result<(), Box<dyn std::e
     let cases = [
         (
             "producer version",
-            "\"version\": \"0.10.0\"",
             "\"version\": \"0.11.0\"",
+            "\"version\": \"0.10.0\"",
             "producer versions differ",
         ),
         (
@@ -4931,8 +4931,8 @@ fn agent_receipt_rejects_comparison_metadata_drift() -> Result<(), Box<dyn std::
     let cases = [
         (
             "producer version",
-            "\"version\": \"0.10.0\"",
             "\"version\": \"0.11.0\"",
+            "\"version\": \"0.10.0\"",
         ),
         (
             "analysis mode",
