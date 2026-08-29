@@ -745,7 +745,9 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
         .index
         .functions
         .iter()
-        .filter(|function| !function.is_test && direct_call_names.contains(&function.name))
+        .filter(|function| {
+            !function.source_role.is_evidence_role() && direct_call_names.contains(&function.name)
+        })
         .collect::<Vec<_>>();
     let matched_call_names = candidate_functions
         .iter()
@@ -910,7 +912,7 @@ fn immediate_caller_file_set(
     index
         .functions
         .iter()
-        .filter(|function| !function.is_test)
+        .filter(|function| !function.source_role.is_evidence_role())
         .filter_map(|function| {
             let file = normalized_inventory_path(&function.file);
             (production_file_set.contains(&file)
@@ -1316,7 +1318,7 @@ fn build_seam_from_shape(
     // `#[test] fn ...` inside an in-file `#[cfg(test)] mod tests`).
     // the source-role model already excludes physical test files;
     // this catches inline test modules.
-    if owner_fact.is_test {
+    if owner_fact.source_role.is_evidence_role() {
         return None;
     }
     // `FunctionFact.id` is built from `path.display()`, which uses native
@@ -1399,6 +1401,7 @@ fn expected_sink_for(kind: SeamKind) -> ExpectedSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::facts::FunctionSourceRole;
     use crate::analysis::rust_index::{
         FileFacts, FunctionFact, RaRustSyntaxAdapter, RustSyntaxAdapter,
     };
@@ -1951,7 +1954,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
-            is_test: false,
+            source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
         };
         let mut index = RustIndex::default();
@@ -1998,7 +2001,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
-            is_test: true,
+            source_role: FunctionSourceRole::TestAttribute,
             attrs: vec!["#[test]".to_string()],
         };
         let mut index = RustIndex::default();
@@ -2026,7 +2029,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             .collect::<Vec<_>>();
         assert!(
             seams.is_empty(),
-            "expected no seams when the only owner is `is_test = true`, got owners {owners:?}"
+            "expected no seams when the only owner carries an evidence role, got owners {owners:?}"
         );
     }
 

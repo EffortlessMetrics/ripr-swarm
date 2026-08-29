@@ -56,7 +56,7 @@ pub(in crate::analysis) fn is_assertion_shaped_owner(
 /// the fail-closed direction.
 fn has_non_test_caller(owner: &FunctionSummary, index: &RustIndex) -> bool {
     index.functions.iter().any(|function| {
-        !function.is_test
+        !function.source_role.is_evidence_role()
             && !is_test_file(&function.file)
             && function.id != owner.id
             && function.calls.iter().any(|call| call.name == owner.name)
@@ -351,6 +351,7 @@ fn strip_comments_and_strings(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::facts::FunctionSourceRole;
     use crate::analysis::rust_index::CallFact;
     use crate::domain::SymbolId;
     use std::path::PathBuf;
@@ -379,7 +380,14 @@ mod tests {
                 .collect(),
             returns: Vec::new(),
             literals: Vec::new(),
-            is_test,
+            // Fixture shorthand: `is_test` models a function carrying an
+            // exact test-defining attribute versus an ordinary production
+            // function.
+            source_role: if is_test {
+                FunctionSourceRole::TestAttribute
+            } else {
+                FunctionSourceRole::Production
+            },
             attrs: Vec::new(),
         }
     }

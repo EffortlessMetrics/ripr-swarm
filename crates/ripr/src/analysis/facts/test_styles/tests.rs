@@ -20,7 +20,7 @@ fn assert_non_test_functions(facts: &FileFacts, names: &[&str]) {
                 .functions
                 .iter()
                 .find(|function| function.name == *name)
-                .is_some_and(|function| !function.is_test),
+                .is_some_and(|function| !function.source_role.is_evidence_role()),
             "ordinary function was incorrectly classified as a test: {name}"
         );
     }
@@ -192,8 +192,8 @@ mod tests {
             .functions
             .iter()
             .find(|function| function.name == "cfg_test_helper")
-            .is_some_and(|function| function.is_test),
-        "cfg(test) helper role must remain evidence-only"
+            .is_some_and(|function| function.source_role == FunctionSourceRole::CfgTestModule),
+        "cfg(test) helper role must remain the evidence-only cfg-test-module role"
     );
     assert!(
         facts
@@ -207,7 +207,7 @@ mod tests {
             .functions
             .iter()
             .find(|function| function.name == "cfg_test_lookalike")
-            .is_some_and(|function| function.is_test),
+            .is_some_and(|function| function.source_role == FunctionSourceRole::CfgTestModule),
         "cfg(test) lookalike must retain its evidence-role function"
     );
     assert!(
@@ -254,7 +254,7 @@ mod any_tests {
                 .functions
                 .iter()
                 .find(|function| function.name == helper)
-                .is_some_and(|function| function.is_test),
+                .is_some_and(|function| function.source_role == FunctionSourceRole::CfgTestModule),
             "{helper} must keep its producer-owned cfg-test evidence role"
         );
         assert!(
@@ -274,7 +274,7 @@ mod any_tests {
             .functions
             .iter()
             .find(|function| function.name == "any_helper")
-            .is_some_and(|function| !function.is_test),
+            .is_some_and(|function| !function.source_role.is_evidence_role()),
         "cfg(any(test, ..)) modules do not grant test roles"
     );
     Ok(())
@@ -324,7 +324,7 @@ mod production_gate {
                 .functions
                 .iter()
                 .find(|function| function.name == name)
-                .is_some_and(|function| function.is_test),
+                .is_some_and(|function| function.source_role == FunctionSourceRole::CfgTestModule),
             "{name} must keep its producer-owned cfg-test evidence role through the shared authority"
         );
         assert!(
@@ -337,7 +337,7 @@ mod production_gate {
             .functions
             .iter()
             .find(|function| function.name == "production_helper")
-            .is_some_and(|function| !function.is_test),
+            .is_some_and(|function| !function.source_role.is_evidence_role()),
         "a cfg gate without a test requirement must fail closed"
     );
 }
@@ -353,7 +353,8 @@ fn cfg_function_fact(name: &str, start_line: usize) -> FunctionFact {
         calls: Vec::new(),
         returns: Vec::new(),
         literals: Vec::new(),
-        is_test: true,
+        // Models the parser producer's evidence-only cfg-test-module output.
+        source_role: FunctionSourceRole::CfgTestModule,
         attrs: Vec::new(),
     }
 }
@@ -489,14 +490,261 @@ fn fallback_lookalike() {}
             .functions
             .iter()
             .find(|function| function.name == "parser_lookalike")
-            .is_some_and(|function| !function.is_test)
+            .is_some_and(|function| !function.source_role.is_evidence_role())
     );
     assert!(
         index
             .functions
             .iter()
             .find(|function| function.name == "fallback_lookalike")
-            .is_some_and(|function| !function.is_test)
+            .is_some_and(|function| !function.source_role.is_evidence_role())
+    );
+    Ok(())
+}
+
+/// Role-mapping table (#3531): each producer path lands in exactly one typed
+/// `FunctionSourceRole`, pinned through the full `build_index` pipeline so a
+/// drifted producer, normalizer, or promotion path cannot silently re-collapse
+/// the roles into one bit.
+#[test]
+fn function_role_table_maps_every_producer_path_to_one_typed_role()
+-> Result<(), Box<dyn std::error::Error>> {
+    struct Cleanup(PathBuf);
+
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let root = std::env::temp_dir().join(format!("ripr-role-table-{stamp}"));
+    let _cleanup = Cleanup(root.clone());
+    fs::create_dir_all(root.join("src"))?;
+    fs::create_dir_all(root.join("tests"))?;
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname='role-table'\nversion='0.1.0'\nedition='2024'\n",
+    )?;
+    fs::write(
+        root.join("src/lib.rs"),
+        r#"
+pub fn ordinary_production() -> i32 { 1 }
+
+#[test]
+fn plain_attribute_test() { assert_eq!(ordinary_production(), 1); }
+
+#[cfg(test)]
+mod tests {
+    fn cfg_test_helper() -> i32 { super::ordinary_production() }
+
+    #[test]
+    fn attribute_test_inside_cfg_test_module() {
+        assert_eq!(super::ordinary_production(), 1);
+    }
+}
+
+#[cfg(all(feature = "slow", test))]
+mod test_second_gate {
+    fn cfg_all_helper_test_second() -> i32 { super::ordinary_production() }
+}
+
+#[cfg(all(test, feature = "slow"))]
+mod test_first_gate {
+    fn cfg_all_helper_test_first() -> i32 { super::ordinary_production() }
+}
+
+#[cfg(any(test, feature = "slow"))]
+mod any_gate {
+    fn any_gate_helper() -> i32 { 2 }
+}
+
+#[cfg_attr(test, test)]
+fn cfg_attr_lookalike() {}
+
+#[quickcheck]
+fn normalizer_credits_explicit_attribute(value: u8) -> bool { value == value }
+
+#[test_case(1)]
+fn promoted_parameterized_expansion(value: i32) {
+    assert_eq!(value, 1);
+}
+"#,
+    )?;
+    // Invalid syntax forces the lexical fallback producer for this file.
+    fs::write(
+        root.join("tests/integration_fallback.rs"),
+        r#"
+this is intentionally invalid rust
+
+#[test]
+fn fallback_attribute_test() { assert!(true); }
+
+fn fallback_unannotated_helper() -> i32 { 3 }
+"#,
+    )?;
+    // Valid `tests/**` file: parsed by the parser producer.
+    fs::write(
+        root.join("tests/suite.rs"),
+        r#"
+fn helper_beside_test() -> i32 { 4 }
+
+#[test]
+fn integration_test() {
+    assert_eq!(helper_beside_test(), 4);
+}
+"#,
+    )?;
+
+    let files = vec![
+        PathBuf::from("src/lib.rs"),
+        PathBuf::from("tests/integration_fallback.rs"),
+        PathBuf::from("tests/suite.rs"),
+    ];
+    let index = super::super::build_index(&root, &files).map_err(std::io::Error::other)?;
+
+    let role_of = |file: &str, name: &str| -> Result<FunctionSourceRole, String> {
+        index
+            .functions
+            .iter()
+            .find(|function| function.file == Path::new(file) && function.name == name)
+            .map(|function| function.source_role)
+            .ok_or_else(|| format!("missing function fact for {file}::{name}"))
+    };
+
+    // (file, function, expected role, producer that owns the classification)
+    let table: &[(&str, &str, FunctionSourceRole, &str)] = &[
+        (
+            "src/lib.rs",
+            "ordinary_production",
+            FunctionSourceRole::Production,
+            "parser: no attribute, no test-required module",
+        ),
+        (
+            "src/lib.rs",
+            "plain_attribute_test",
+            FunctionSourceRole::TestAttribute,
+            "parser: exact test-defining attribute",
+        ),
+        (
+            "src/lib.rs",
+            "cfg_test_helper",
+            FunctionSourceRole::CfgTestModule,
+            "parser: cfg-test module membership, no TestFact",
+        ),
+        (
+            "src/lib.rs",
+            "attribute_test_inside_cfg_test_module",
+            FunctionSourceRole::TestAttribute,
+            "parser: exact attribute wins over module membership",
+        ),
+        (
+            "src/lib.rs",
+            "cfg_all_helper_test_second",
+            FunctionSourceRole::CfgTestModule,
+            "parser: cfg(all(feature, test)) test-second conjunct",
+        ),
+        (
+            "src/lib.rs",
+            "cfg_all_helper_test_first",
+            FunctionSourceRole::CfgTestModule,
+            "parser: cfg(all(test, feature)) test-first conjunct",
+        ),
+        (
+            "src/lib.rs",
+            "any_gate_helper",
+            FunctionSourceRole::Production,
+            "parser: cfg(any(...)) never requires test; fail closed",
+        ),
+        (
+            "src/lib.rs",
+            "cfg_attr_lookalike",
+            FunctionSourceRole::Production,
+            "parser: cfg_attr introductions never promote",
+        ),
+        (
+            "src/lib.rs",
+            "normalizer_credits_explicit_attribute",
+            FunctionSourceRole::TestAttribute,
+            "normalizer: exact attribute vocabulary the parser table misses",
+        ),
+        (
+            "src/lib.rs",
+            "promoted_parameterized_expansion",
+            FunctionSourceRole::ParameterizedExpansion,
+            "promotion: explicit test_case attribute keeps its provenance",
+        ),
+        (
+            "tests/integration_fallback.rs",
+            "fallback_attribute_test",
+            FunctionSourceRole::TestAttribute,
+            "lexical fallback: exact attribute prefix (provenance on the file fact)",
+        ),
+        (
+            "tests/integration_fallback.rs",
+            "fallback_unannotated_helper",
+            FunctionSourceRole::Production,
+            "lexical fallback: no attribute seen",
+        ),
+        (
+            "tests/suite.rs",
+            "helper_beside_test",
+            FunctionSourceRole::Production,
+            "parser: tests/** helper role is Production; the file-level SourceRole \
+             keeps it out of production subjects at consumers",
+        ),
+        (
+            "tests/suite.rs",
+            "integration_test",
+            FunctionSourceRole::TestAttribute,
+            "parser: integration test attribute",
+        ),
+    ];
+
+    for (file, name, expected, producer) in table {
+        let actual = role_of(file, name).map_err(std::io::Error::other)?;
+        assert_eq!(
+            actual, *expected,
+            "role mismatch for {file}::{name} ({producer})"
+        );
+    }
+
+    // Executable-test membership stays TestFact-driven: evidence-only roles
+    // never register a TestFact.
+    let test_names: Vec<&str> = index.tests.iter().map(|test| test.name.as_str()).collect();
+    for evidence_only in [
+        "cfg_test_helper",
+        "cfg_all_helper_test_second",
+        "cfg_all_helper_test_first",
+    ] {
+        assert!(
+            !test_names.contains(&evidence_only),
+            "{evidence_only} must stay evidence-only without an executable TestFact"
+        );
+    }
+    for executable in [
+        "plain_attribute_test",
+        "attribute_test_inside_cfg_test_module",
+        "promoted_parameterized_expansion",
+        "fallback_attribute_test",
+        "integration_test",
+    ] {
+        assert!(
+            test_names.contains(&executable),
+            "{executable} must register an executable TestFact"
+        );
+    }
+
+    // The serialized spelling is part of the on-disk file-fact cache identity;
+    // pin the snake_case names so silent renames cannot drift cached entries.
+    assert_eq!(
+        serde_json::to_value(FunctionSourceRole::CfgTestModule).map_err(std::io::Error::other)?,
+        serde_json::json!("cfg_test_module")
+    );
+    assert_eq!(
+        serde_json::to_value(FunctionSourceRole::ParameterizedExpansion)
+            .map_err(std::io::Error::other)?,
+        serde_json::json!("parameterized_expansion")
     );
     Ok(())
 }

@@ -30,6 +30,7 @@ pub(in crate::analysis) fn reach_evidence(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::facts::FunctionSourceRole;
     use crate::domain::SymbolId;
     use std::path::PathBuf;
 
@@ -75,7 +76,7 @@ mod tests {
             calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
-            is_test: false,
+            source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
         }
     }

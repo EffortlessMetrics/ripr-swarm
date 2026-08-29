@@ -57,6 +57,7 @@ pub fn classify_probe(probe: &Probe, index: &RustIndex, workspace_complete: bool
 mod tests {
     use super::*;
     use crate::analysis::classify::{recommended_next_step, stop_reasons};
+    use crate::analysis::facts::FunctionSourceRole;
     use crate::analysis::rust_index::{
         CallFact, FileFacts, FunctionSummary, LiteralFact, OracleFact, PROBE_SHAPE_CALL_DELETION,
         ProbeShapeFact, ReturnFact, TestSummary, extract_identifier_tokens,
@@ -1694,7 +1695,7 @@ mod tests {
             calls: vec![],
             returns: vec![],
             literals: vec![],
-            is_test: false,
+            source_role: FunctionSourceRole::Production,
             attrs: vec![],
         }
     }

@@ -721,6 +721,7 @@ fn is_obvious_return_expression(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::facts::FunctionSourceRole;
     use crate::analysis::rust_index::ReturnFact;
     use std::path::PathBuf;
 
@@ -963,7 +964,7 @@ mod tests {
             calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
-            is_test: false,
+            source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
         };
         let probe = probe(ProbeFamily::Predicate, "amount > 10", 2);
@@ -994,7 +995,7 @@ mod tests {
             calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
-            is_test: false,
+            source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
         };
         let probe = probe(ProbeFamily::Predicate, "amount >= threshold", 2);
@@ -1020,7 +1021,7 @@ mod tests {
             calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
-            is_test: false,
+            source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
         };
         let probe = probe(ProbeFamily::Predicate, "amount >= threshold", 2);
@@ -1046,7 +1047,7 @@ mod tests {
                 text: "amount - 1".to_string(),
             }],
             literals: Vec::new(),
-            is_test: false,
+            source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
         }
     }
@@ -1195,7 +1196,7 @@ mod tests {
             calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
-            is_test: false,
+            source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
         };
         let probe = probe(ProbeFamily::SideEffect, "items.push(x * 9);", 3);

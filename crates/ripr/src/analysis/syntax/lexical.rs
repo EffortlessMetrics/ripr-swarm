@@ -1,4 +1,4 @@
-use crate::analysis::facts::{FileFacts, FunctionFact, TestFact};
+use crate::analysis::facts::{FileFacts, FunctionFact, FunctionSourceRole, TestFact};
 use crate::analysis::rust_index::{
     extract_assertions, extract_call_facts, extract_literal_facts, extract_return_facts,
 };
@@ -70,7 +70,15 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
                 calls: calls.clone(),
                 returns: returns.clone(),
                 literals: literals.clone(),
-                is_test: pending_test,
+                // Lexical fallback: the scanner only sees exact test-defining
+                // attribute prefixes, so it grants the executable-test role
+                // and never a cfg-test-module membership. The parser-fallback
+                // provenance stays on `FileFacts::used_lexical_fallback`.
+                source_role: if pending_test {
+                    FunctionSourceRole::TestAttribute
+                } else {
+                    FunctionSourceRole::Production
+                },
                 // Lexical fallback path: no parser, no AST attrs
                 // iterator, so attrs stay empty. Value-extraction-v2's
                 // rstest support is parser-only.
@@ -151,7 +159,7 @@ fn owner_changed_nodes(facts: &FileFacts, ranges: &[TextRange]) -> Vec<SyntaxNod
         if let Some(function) = owners.first() {
             nodes.push(SyntaxNodeFact {
                 file: function.file.clone(),
-                kind: if function.is_test {
+                kind: if function.source_role.is_evidence_role() {
                     "test_function".to_string()
                 } else {
                     "function".to_string()

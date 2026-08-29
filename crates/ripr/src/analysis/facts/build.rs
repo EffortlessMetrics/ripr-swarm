@@ -483,7 +483,7 @@ pub fn check(x: i32) -> bool {
         index
             .functions
             .iter()
-            .filter(|function| !function.is_test)
+            .filter(|function| !function.source_role.is_evidence_role())
             .map(|function| function.name.as_str())
             .collect()
     }

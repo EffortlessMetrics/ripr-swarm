@@ -486,6 +486,7 @@ fn append_canonical_section_header(canonical: &mut Vec<u8>, tag: &str, count: us
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::facts::FunctionSourceRole;
     use crate::analysis::facts::{FunctionSummary, ReturnFact};
     use crate::domain::{DeltaKind, ProbeId, SourceLocation};
     use std::path::PathBuf;
@@ -535,7 +536,7 @@ mod tests {
                 })
                 .unwrap_or_default(),
             literals: Vec::new(),
-            is_test: false,
+            source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
         };
         let flow_sinks = super::super::local_flow_sinks(probe, Some(&owner));

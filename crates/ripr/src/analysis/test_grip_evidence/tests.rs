@@ -1,7 +1,7 @@
 use super::related_tests::context::*;
 use super::related_tests::*;
 use super::*;
-use crate::analysis::facts::{WorkspaceRootAuthority, build_index};
+use crate::analysis::facts::{FunctionSourceRole, WorkspaceRootAuthority, build_index};
 use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
 use crate::analysis::seam_inventory::inventory_seams_from_index;
 use crate::analysis::seams::{ExpectedSink, RequiredDiscriminator, SeamGripClass};
@@ -317,7 +317,7 @@ fn production_target_evidence_rejects_authority_failures() -> Result<(), String>
             facts
                 .functions
                 .iter()
-                .find(|function| function.is_test)
+                .find(|function| function.source_role.is_evidence_role())
                 .cloned()
         })
         .ok_or_else(|| "missing test function".to_string())?;
@@ -2727,7 +2727,7 @@ fn producer_rejects_same_file_production_helper_as_test_target() -> Result<(), S
         calls: Vec::new(),
         returns: Vec::new(),
         literals: Vec::new(),
-        is_test: false,
+        source_role: FunctionSourceRole::Production,
         attrs: Vec::new(),
     };
     let test = TestSummary {
@@ -6231,7 +6231,7 @@ fn aliased_direct_imported_support_helper_reaches_pipeline() {
         .functions
         .iter()
         .find(|function| {
-            function.is_test
+            function.source_role.is_evidence_role()
                 && function.name == pipeline_related.test_name
                 && function.file == pipeline_related.file
         })
@@ -6283,7 +6283,7 @@ fn aliased_direct_imported_support_helper_reaches_pipeline() {
         .functions
         .iter()
         .find(|function| {
-            function.is_test
+            function.source_role.is_evidence_role()
                 && function.name == report_related.test_name
                 && function.file == report_related.file
         })
@@ -11320,7 +11320,7 @@ fn closure_boundary_operand_route_ignores_comment_only_closure_pattern() {
             calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
-            is_test: false,
+            source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
         };
 
@@ -12370,7 +12370,7 @@ fn same_file_test_helper_call_counts_as_owner_call_evidence() {
                 calls: Vec::new(),
                 returns: Vec::new(),
                 literals: Vec::new(),
-                is_test: false,
+                source_role: FunctionSourceRole::Production,
                 attrs: Vec::new(),
             }, FunctionSummary {
                 id: crate::domain::SymbolId("src/pricing.rs::case_at_threshold".to_string()),
@@ -12386,7 +12386,7 @@ fn same_file_test_helper_call_counts_as_owner_call_evidence() {
                 }],
                 returns: Vec::new(),
                 literals: Vec::new(),
-                is_test: false,
+                source_role: FunctionSourceRole::Production,
                 attrs: Vec::new(),
             }],
             tests: vec![TestSummary {
@@ -12977,8 +12977,9 @@ fn lower_ast_has_unrelated_storage_local() {
 fn given_full_evidence_when_cfg_test_module_helper_calls_owner_then_relation_is_retained()
 -> Result<(), String> {
     // #3286 regression shape: #3273 marks plain helpers inside inline
-    // `#[cfg(test)]` modules as `is_test`, and the helper-relation graph
-    // excluded every `is_test` function — silently dropping the
+    // `#[cfg(test)]` modules as evidence-role (now the typed
+    // `source_role`, #3531), and the helper-relation graph excluded every
+    // evidence-role function — silently dropping the
     // #[test] -> cfg(test) helper -> owner evidence path. The helper must
     // stay out of production subjects while still mediating evidence.
     let source = PathBuf::from("src/labels.rs");
@@ -13037,10 +13038,10 @@ mod tests {
         "a plain helper must not become an executable TestFact selector"
     );
     assert!(
-        index
-            .functions
-            .iter()
-            .any(|function| function.name == "exercise_device_labels" && function.is_test),
+        index.functions.iter().any(|function| {
+            function.name == "exercise_device_labels"
+                && function.source_role == FunctionSourceRole::CfgTestModule
+        }),
         "the helper keeps its #3273 evidence-role classification"
     );
     Ok(())
@@ -13443,7 +13444,9 @@ fn nested_alias_ancestry_reaches_every_indexed_owner() {
         .functions
         .iter()
         .find(|function| {
-            function.is_test && function.name == related.test_name && function.file == related.file
+            function.source_role.is_evidence_role()
+                && function.name == related.test_name
+                && function.file == related.file
         })
         .ok_or_else(|| "missing indexed nested-alias test target".to_string())?;
     assert_eq!(

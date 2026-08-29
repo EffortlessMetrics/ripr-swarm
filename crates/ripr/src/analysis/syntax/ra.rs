@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use super::super::extract::PROBE_SHAPE_UNSAFE_BOUNDARY;
 use super::super::facts::FileFacts;
+use super::super::facts::FunctionSourceRole;
 use super::super::facts::cfg_predicates;
 use super::{RaRustSyntaxAdapter, RustSyntaxAdapter, SyntaxNodeFact, TextRange};
 use crate::analysis::rust_index::{
@@ -197,9 +198,17 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
         // infrastructure even when it has no `#[test]` attribute. Classify
         // that role at the producer boundary so diff probes, seam inventory,
         // evidence relation, and every downstream renderer consume the same
-        // fact instead of re-inferring it independently.
+        // fact instead of re-inferring it independently. The typed role
+        // (#3531) keeps the executable-test and evidence-only helper
+        // meanings apart instead of collapsing both into one bit.
         let has_test_attribute = has_test_attribute(&function);
-        let is_test = has_test_attribute || is_cfg_test_module_member(&function);
+        let source_role = if has_test_attribute {
+            FunctionSourceRole::TestAttribute
+        } else if is_cfg_test_module_member(&function) {
+            FunctionSourceRole::CfgTestModule
+        } else {
+            FunctionSourceRole::Production
+        };
         let attrs = collect_attr_syntax(&function);
 
         file_calls.extend(calls.clone());
@@ -217,7 +226,7 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
             calls: calls.clone(),
             returns: returns.clone(),
             literals: literals.clone(),
-            is_test,
+            source_role,
             attrs: attrs.clone(),
         };
 
@@ -1008,7 +1017,7 @@ fn owner_changed_nodes(
         if let Some(function) = owners.first() {
             nodes.push(SyntaxNodeFact {
                 file: function.file.clone(),
-                kind: if function.is_test {
+                kind: if function.source_role.is_evidence_role() {
                     "test_function".to_string()
                 } else {
                     "function".to_string()
@@ -1185,8 +1194,8 @@ mod tests {
             .ok_or("missing cfg(test) helper fact")?;
 
         assert!(
-            helper.is_test,
-            "cfg(test) helper must be producer-owned test role"
+            helper.source_role == FunctionSourceRole::CfgTestModule,
+            "cfg(test) helper must carry the producer-owned evidence-only role"
         );
         assert!(
             facts
@@ -1207,7 +1216,7 @@ mod tests {
                 .functions
                 .iter()
                 .find(|function| function.name == "production_control")
-                .is_some_and(|function| !function.is_test),
+                .is_some_and(|function| function.source_role == FunctionSourceRole::Production),
             "production control must remain production role"
         );
         Ok(())
@@ -1372,6 +1381,7 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
 #[cfg(test)]
 mod cfg_all_test_tests {
     use super::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+    use crate::analysis::facts::FunctionSourceRole;
     use crate::analysis::facts::cfg_predicates::{
         CfgTestRequirement, attribute_requires_test, classify_attribute,
     };
@@ -1480,7 +1490,10 @@ edition='2024'
                 .iter()
                 .find(|function| function.name == name)
                 .ok_or_else(|| format!("{name} missing from facts"))?;
-            assert!(function.is_test, "{name} must carry evidence role");
+            assert!(
+                function.source_role == FunctionSourceRole::CfgTestModule,
+                "{name} must carry the evidence-only cfg-test-module role"
+            );
         }
 
         for name in [
@@ -1496,7 +1509,10 @@ edition='2024'
                 .iter()
                 .find(|function| function.name == name)
                 .ok_or_else(|| format!("{name} missing from facts"))?;
-            assert!(!function.is_test, "{name} must stay production role");
+            assert!(
+                !function.source_role.is_evidence_role(),
+                "{name} must stay production role"
+            );
         }
         Ok(())
     }
@@ -1540,7 +1556,7 @@ fn production_with_conditional_lint() -> i32 { 2 }
             .find(|function| function.name == "nested_all_helper")
             .ok_or("nested_all_helper missing from facts")?;
         assert!(
-            nested_all_helper.is_test,
+            nested_all_helper.source_role == FunctionSourceRole::CfgTestModule,
             "a nested all(test, ...) conjunction must carry evidence role through the shared authority"
         );
 
@@ -1554,7 +1570,7 @@ fn production_with_conditional_lint() -> i32 { 2 }
                 .find(|function| function.name == name)
                 .ok_or_else(|| format!("{name} missing from facts"))?;
             assert!(
-                !function.is_test,
+                !function.source_role.is_evidence_role(),
                 "cfg_attr introductions must never promote {name} to test-only"
             );
         }

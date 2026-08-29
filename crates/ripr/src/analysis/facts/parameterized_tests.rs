@@ -1,4 +1,4 @@
-use super::{FunctionFact, RustIndex, TestFact};
+use super::{FunctionFact, FunctionSourceRole, RustIndex, TestFact};
 use crate::analysis::extract::{extract_assertions, extract_literal_facts};
 use crate::analysis::syntax::parser_oracles_for_function;
 use std::collections::{BTreeMap, BTreeSet};
@@ -18,7 +18,9 @@ pub(super) fn promote_explicit_test_case_functions(index: &mut RustIndex) {
         if !known_tests.insert(key) {
             continue;
         }
-        function.is_test = true;
+        // Explicit promotion: the function becomes an executable test whose
+        // provenance is the exact test-case attribute (#3531 typed role).
+        function.source_role = FunctionSourceRole::ParameterizedExpansion;
         promoted.push(test_fact(function));
     }
 
@@ -36,7 +38,7 @@ pub(super) fn promote_explicit_test_case_functions(index: &mut RustIndex) {
             .iter_mut()
             .find(|function| function_key(function) == key)
         {
-            function.is_test = true;
+            function.source_role = FunctionSourceRole::ParameterizedExpansion;
         }
         if file.tests.iter().all(|existing| test_key(existing) != key) {
             file.tests.push(test.clone());
@@ -129,6 +131,7 @@ fn test_key(test: &TestFact) -> FunctionKey {
 
 #[cfg(test)]
 mod tests {
+    use super::FunctionSourceRole;
     use std::error::Error;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -225,7 +228,7 @@ fn ordinary_test() {
                 .functions
                 .iter()
                 .find(|function| function.name == "helper")
-                .is_some_and(|function| !function.is_test),
+                .is_some_and(|function| function.source_role == FunctionSourceRole::Production),
             "unannotated helper must remain production role"
         );
         assert!(
@@ -233,7 +236,7 @@ fn ordinary_test() {
                 .functions
                 .iter()
                 .find(|function| function.name == "orphan_case")
-                .is_some_and(|function| !function.is_test),
+                .is_some_and(|function| function.source_role == FunctionSourceRole::Production),
             "a case row without an explicit test harness must not be promoted"
         );
 

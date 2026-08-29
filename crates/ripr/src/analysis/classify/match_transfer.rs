@@ -209,6 +209,7 @@ fn literal_string(text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::facts::FunctionSourceRole;
     use crate::analysis::facts::{FunctionSummary, RustIndex};
     use crate::domain::SymbolId;
     use std::path::PathBuf;
@@ -224,7 +225,7 @@ mod tests {
             calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
-            is_test: false,
+            source_role: FunctionSourceRole::Production,
             attrs: Vec::new(),
         }
     }

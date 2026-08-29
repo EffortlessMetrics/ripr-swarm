@@ -276,7 +276,8 @@ fn dedup_probe_ids(probes: &mut [ProbeWithRelation]) {
 /// inside a `#[test]` function (e.g. the error path of a `?` in the test body)
 /// is unactionable, because the test failing *is* the discrimination (#1055).
 fn changed_line_owned_by_test(index: &RustIndex, path: &Path, line: usize) -> bool {
-    find_owner_function(index, path, line).is_some_and(|function| function.is_test)
+    find_owner_function(index, path, line)
+        .is_some_and(|function| function.source_role.is_evidence_role())
 }
 
 struct ProbeBuildContext<'a> {
@@ -473,6 +474,7 @@ mod tests {
         RustIndex,
     };
     use super::*;
+    use crate::analysis::facts::FunctionSourceRole;
     use crate::domain::SymbolId;
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
@@ -507,7 +509,7 @@ mod tests {
                         calls: vec![],
                         returns: vec![],
                         literals: vec![],
-                        is_test: false,
+                        source_role: FunctionSourceRole::Production,
                         attrs: vec![],
                     }],
                     probe_shapes: vec![ProbeShapeFact {
@@ -589,7 +591,7 @@ mod tests {
                         calls: vec![],
                         returns: vec![],
                         literals: vec![],
-                        is_test: false,
+                        source_role: FunctionSourceRole::Production,
                         attrs: vec![],
                     }],
                     probe_shapes: vec![ProbeShapeFact {
@@ -715,7 +717,7 @@ mod tests {
             }],
             removed_lines: vec![],
         };
-        let index_with = |is_test: bool| RustIndex {
+        let index_with = |source_role: FunctionSourceRole| RustIndex {
             files: BTreeMap::from([(
                 path.clone(),
                 FileFacts {
@@ -730,7 +732,7 @@ mod tests {
                         calls: vec![],
                         returns: vec![],
                         literals: vec![],
-                        is_test,
+                        source_role,
                         attrs: vec![],
                     }],
                     ..FileFacts::default()
@@ -740,7 +742,11 @@ mod tests {
         };
 
         // Control: a production owner still probes the error path.
-        let production = probes_for_file(Path::new("workspace"), &changed, &index_with(false));
+        let production = probes_for_file(
+            Path::new("workspace"),
+            &changed,
+            &index_with(FunctionSourceRole::Production),
+        );
         assert!(
             !production.is_empty(),
             "a non-test error path should still generate a probe"
@@ -748,7 +754,11 @@ mod tests {
 
         // #1055: the same line owned by a `#[test]` function generates nothing —
         // the test is the instrument, not the surface under test.
-        let in_test = probes_for_file(Path::new("workspace"), &changed, &index_with(true));
+        let in_test = probes_for_file(
+            Path::new("workspace"),
+            &changed,
+            &index_with(FunctionSourceRole::TestAttribute),
+        );
         assert!(
             in_test.is_empty(),
             "a line owned by a test function must not generate probes, got {in_test:?}"
@@ -802,7 +812,7 @@ mod tests {
                         calls: vec![],
                         returns: vec![],
                         literals: vec![],
-                        is_test: false,
+                        source_role: FunctionSourceRole::Production,
                         attrs: vec![],
                     }],
                     ..FileFacts::default()
@@ -1073,7 +1083,7 @@ mod tests {
                         calls: vec![],
                         returns: vec![],
                         literals: vec![],
-                        is_test: false,
+                        source_role: FunctionSourceRole::Production,
                         attrs: vec![],
                     }],
                     ..FileFacts::default()
@@ -1142,7 +1152,7 @@ mod tests {
                         calls: vec![],
                         returns: vec![],
                         literals: vec![],
-                        is_test: false,
+                        source_role: FunctionSourceRole::Production,
                         attrs: vec![],
                     }],
                     ..FileFacts::default()
@@ -1201,7 +1211,7 @@ mod tests {
                         calls: vec![],
                         returns: vec![],
                         literals: vec![],
-                        is_test: false,
+                        source_role: FunctionSourceRole::Production,
                         attrs: vec![],
                     }],
                     ..FileFacts::default()

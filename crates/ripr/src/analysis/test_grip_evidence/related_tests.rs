@@ -518,7 +518,10 @@ pub(super) fn fixture_names_for_owner_file(facts: &rust_index::FileFacts) -> BTr
     facts
         .functions
         .iter()
-        .filter(|f| !f.is_test && (is_fixture_named(&f.name) || f.body.contains("#[fixture]")))
+        .filter(|f| {
+            !f.source_role.is_evidence_role()
+                && (is_fixture_named(&f.name) || f.body.contains("#[fixture]"))
+        })
         .map(|f| f.name.clone())
         .collect()
 }
