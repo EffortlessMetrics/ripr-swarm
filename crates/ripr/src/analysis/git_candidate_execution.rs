@@ -274,7 +274,13 @@ fn materialize(
     let tar_path = base_dir.join(format!("{candidate_tree}.tar"));
     let archive = crate::git::run_git_output_with_deadline_and_limit(
         root,
-        &["archive", "--format=tar", candidate_tree],
+        &[
+            "-c",
+            "core.autocrlf=false",
+            "archive",
+            "--format=tar",
+            candidate_tree,
+        ],
         deadline.unwrap_or(Duration::from_mins(1)),
         MAX_ARCHIVE_BYTES,
     )
@@ -498,6 +504,22 @@ mod tests {
         })
     }
 
+    fn candidate_blob(root: &Path, treeish: &str, path: &str) -> Result<Vec<u8>, String> {
+        let output = crate::git::run_git_output_with_deadline(
+            root,
+            &["show", &format!("{treeish}:{path}")],
+            GIT_DEADLINE,
+        )
+        .map_err(|error| error.to_string())?;
+        if !output.status.success() {
+            return Err(format!(
+                "git show {treeish}:{path} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        Ok(output.stdout)
+    }
+
     struct RepoGuard(PathBuf);
     impl Drop for RepoGuard {
         fn drop(&mut self) {
@@ -560,8 +582,8 @@ mod tests {
         assert!(resolved.diff.contains("src/renamed.rs") || resolved.diff.contains("src/old.rs"));
         // Candidate bytes, not worktree bytes:
         assert_eq!(
-            std::fs::read_to_string(resolved.root.join("src/lib.rs")).map_err(|e| e.to_string())?,
-            "pub fn candidate() -> u8 { 2 }\n"
+            std::fs::read(resolved.root.join("src/lib.rs")).map_err(|e| e.to_string())?,
+            candidate_blob(&guard.0, &candidate, "src/lib.rs")?
         );
         assert!(resolved.root.join("ripr.toml").exists());
         Ok(())
@@ -591,8 +613,8 @@ mod tests {
             "diff must follow objects, not the worktree"
         );
         assert_eq!(
-            std::fs::read_to_string(second.root.join("src/lib.rs")).map_err(|e| e.to_string())?,
-            "pub fn candidate() -> u8 { 2 }\n",
+            std::fs::read(second.root.join("src/lib.rs")).map_err(|e| e.to_string())?,
+            candidate_blob(&guard.0, &candidate, "src/lib.rs")?,
             "materialized bytes must follow the candidate tree"
         );
         assert!(
@@ -666,10 +688,8 @@ mod tests {
             "long path must materialize from the pax header"
         );
         assert_eq!(
-            std::fs::read_to_string(resolved.root.join(&deep).join(&long_name))
-                .map_err(|e| e.to_string())?,
-            "long path content
-"
+            std::fs::read(resolved.root.join(&deep).join(&long_name)).map_err(|e| e.to_string())?,
+            candidate_blob(&guard.0, &candidate, &format!("{deep}/{long_name}"))?
         );
         Ok(())
     }
