@@ -210,6 +210,16 @@ pub(crate) fn build_report(
             });
         }
     }
+    // The spec index is a discoverable denominator input even when absent:
+    // an empty or index-less specs directory still owes the reader an account
+    // of what was not scannable, per the denominator-honesty contract.
+    let index_path = spec_root.join("README.md");
+    if !index_path.exists() {
+        omitted.push(OmittedInput {
+            path: relative_path(root, &index_path),
+            reason: "spec-index-missing".to_string(),
+        });
+    }
     included.sort_by(|left, right| left.id.cmp(&right.id).then(left.path.cmp(&right.path)));
     omitted.sort_by(|left, right| left.path.cmp(&right.path));
     let mut reason_counts = BTreeMap::new();
@@ -425,7 +435,7 @@ fn build_row(
     let age_observation = last_changed.and_then(|last_changed| {
         let days = days_between(last_changed.as_str(), as_of)?;
         let bucket = age_bucket(days);
-        if days >= 365 && reasons.is_empty() {
+        if days >= 365 {
             reasons.push("periodic_attention_due".to_string());
         }
         Some(AgeObservation {
