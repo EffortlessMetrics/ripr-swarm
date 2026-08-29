@@ -1,9 +1,9 @@
 use crate::command::{XtaskCommand, print_help, unknown_command_message};
 
-#[path = "command/front_door.rs"]
-mod front_door;
 #[path = "check_fast_strict.rs"]
 mod check_fast_strict;
+#[path = "command/front_door.rs"]
+mod front_door;
 #[path = "precommit_v2.rs"]
 mod precommit_v2;
 
