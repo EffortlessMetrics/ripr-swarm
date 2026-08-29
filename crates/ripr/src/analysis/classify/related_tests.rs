@@ -219,15 +219,32 @@ pub(in crate::analysis) fn find_related_tests<'a>(
 /// count as file identity.  Paths are compared by stem, so host-specific
 /// separators do not affect the result.
 fn same_test_file(probe_file: &Path, test_file: &Path) -> bool {
-    let Some(probe_stem) = probe_file.file_stem().and_then(|stem| stem.to_str()) else {
+    let Some(probe_stem) = cross_host_stem(probe_file) else {
         return false;
     };
-    let Some(test_stem) = test_file.file_stem().and_then(|stem| stem.to_str()) else {
+    let Some(test_stem) = cross_host_stem(test_file) else {
         return false;
     };
     test_stem == probe_stem
         || test_stem == format!("{probe_stem}_test")
         || test_stem == format!("{probe_stem}_tests")
+}
+
+/// Extract the file stem on any host: split on both separator flavors
+/// (a probe path recorded with `\` must resolve on Unix and vice versa),
+/// then strip the extension the way [`std::path::Path::file_stem`] does.
+/// Non-UTF-8 paths fail closed — lossy conversion could collapse distinct
+/// names into one stem and fake a canonical-companion relation (#3545
+/// review).
+fn cross_host_stem(path: &Path) -> Option<String> {
+    let text = path.to_str()?;
+    let unified = text.replace('\\', "/");
+    let name = unified.rsplit('/').next()?;
+    let stem = match name.rfind('.') {
+        Some(0) | None => name,
+        Some(extension) => &name[..extension],
+    };
+    Some(stem.to_string())
 }
 
 fn normalize_path(path: &Path) -> String {
@@ -562,6 +579,45 @@ mod tests {
                 .iter()
                 .all(|(_, reason)| *reason == RelationReason::SameTestFile)
         );
+    }
+
+    #[test]
+    fn foreign_separator_probe_still_resolves_the_canonical_companion() {
+        // The probe path was recorded with Windows separators; the stem
+        // extraction must split on both flavors so `config_tests` stays a
+        // canonical companion (SameTestFile, medium confidence) instead of
+        // degrading to WeakTokenSubstring on a Unix host.
+        let owner = function("crates/core/src/config.rs", "load_config");
+        let index = RustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test(
+                "crates/core/tests/config_tests.rs",
+                "config_tests_file",
+                "assert!(true);",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = probe("crates\\core\\src\\config.rs", "marker");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::SameTestFile);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_stems_fail_closed_instead_of_lossily_collapsing() {
+        use std::os::unix::ffi::OsStringExt;
+        // Two DISTINCT names whose lossy renderings would both collapse to
+        // the same `foo<FFFD>` stem: the companion check must not fire.
+        let probe_file = std::path::PathBuf::from(std::ffi::OsString::from_vec(
+            b"crates/core/src/foo\x80.rs".to_vec(),
+        ));
+        let test_file = std::path::PathBuf::from(std::ffi::OsString::from_vec(
+            b"crates/core/tests/foo\x81_tests.rs".to_vec(),
+        ));
+        assert!(!super::same_test_file(&probe_file, &test_file));
     }
 
     #[test]
