@@ -763,7 +763,7 @@ pub(crate) fn gap_record_queue_envelope_value(
         })
         .collect();
     let mut envelope = json!({
-        "schema_version": "0.1",
+        "schema_version": "0.2",
         "tool": "ripr",
         "report": "swarm-queue",
         "scope": "repo",
@@ -828,7 +828,7 @@ pub(crate) fn render_agent_gap_record_queue_wrong_root_json(
         "gap ledger root {ledger_root} does not match requested --root {root}; regenerate the gap decision ledger for the selected root before assigning swarm work"
     );
     let mut envelope = json!({
-        "schema_version": "0.1",
+        "schema_version": "0.2",
         "tool": "ripr",
         "report": "swarm-queue",
         "scope": "repo",
@@ -900,7 +900,7 @@ pub(crate) fn render_agent_gap_record_queue_missing_root_json(
         gap_ledger_path
     );
     let mut envelope = json!({
-        "schema_version": "0.1",
+        "schema_version": "0.2",
         "tool": "ripr",
         "report": "swarm-queue",
         "scope": "repo",

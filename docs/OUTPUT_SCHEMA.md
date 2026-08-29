@@ -50,6 +50,7 @@ map is:
 | `ripr receipt write/check` | `schema_version` | `0.1` |
 | badge JSON | `schema_version` | `0.8` |
 | `ripr cache status --json` | `schema_version` | `0.1` |
+| `ripr swarm queue --json` | `schema_version` | `0.2` |
 
 Bump rules below apply per contract: a breaking change to one family bumps
 that family's version only.
@@ -12584,7 +12585,7 @@ The queue envelope is:
       "priority": 1,
       "queue_state": "queued",
       "staleness_status": "current",
-      "staleness_reason": "producer-validated live-current packet",
+      "staleness_reason": "producer-validated repo-exposure source matches the selected canonical root, exact clean HEAD, snapshot identity, content commitment, and persisted GapRecords",
       "gap_id": "gap:python:pricing-boundary",
       "canonical_gap_id": "gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount>=threshold",
       "language": "python",
