@@ -49,7 +49,9 @@ use super::seam_classification::ClassifiedSeam;
 #[cfg(test)]
 use super::seam_classification::SeamGripClassCounts;
 use super::seam_inventory::{SeamLimitSource, repo_exposure_seam_limit};
-use crate::config::PYTHON_PROJECT_MARKERS;
+use crate::config::{
+    PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, source_dir_contains_detectable_python,
+};
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -2257,21 +2259,27 @@ fn hash_named_workspace_files(root: &Path, file_name: &str) -> String {
 }
 
 /// Hash the adapter-owned workspace identities that can change analysis.
-/// Cargo consumes manifest contents recursively. The marker inputs tracked
-/// here are the root Python markers, whose presence — not content — gates
-/// the effective configuration, so content-only edits intentionally
-/// preserve this identity while creation and deletion invalidate it.
-/// Detection can additionally consume Python source directories (`src/`,
-/// `tests/`); that input is neither watched nor identity-bound here and is
-/// tracked with the remaining #1736 invalidation scope.
+/// Cargo consumes manifest contents recursively. The Python inputs tracked
+/// here are presence-only, exactly as no-config detection consumes them:
+/// root marker files and detectable Python source below root `src`/`tests`
+/// (bounded to two presence booleans — never a per-file enumeration).
+/// Content-only edits intentionally preserve this identity while creation
+/// and deletion invalidate it. Generated files and excluded directories do
+/// not participate: detection ignores them, so binding them would orphan
+/// cache entries without any input change.
 fn hash_workspace_manifests(root: &Path) -> String {
     let cargo_identity = hash_named_workspace_files(root, "Cargo.toml");
-    let mut present_python_markers = PYTHON_PROJECT_MARKERS
+    let present_python_markers: Vec<&str> = PYTHON_PROJECT_MARKERS
         .iter()
         .copied()
         .filter(|marker| root.join(marker).is_file())
-        .peekable();
-    if present_python_markers.peek().is_none() {
+        .collect();
+    let detectable_source_dirs: Vec<&str> = PYTHON_SOURCE_DIR_MARKERS
+        .iter()
+        .copied()
+        .filter(|dir| source_dir_contains_detectable_python(root, dir))
+        .collect();
+    if present_python_markers.is_empty() && detectable_source_dirs.is_empty() {
         return cargo_identity;
     }
 
@@ -2279,6 +2287,11 @@ fn hash_workspace_manifests(root: &Path) -> String {
     for marker in present_python_markers {
         identity.push_str("python_marker=");
         identity.push_str(marker);
+        identity.push('\n');
+    }
+    for dir in detectable_source_dirs {
+        identity.push_str("python_source_dir=");
+        identity.push_str(dir);
         identity.push('\n');
     }
     hash_str(&identity)
@@ -2969,6 +2982,82 @@ mod tests {
                 "removing {marker} must restore the baseline identity"
             );
         }
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn python_source_dir_presence_changes_cache_identity() -> Result<(), String> {
+        let root = isolated_dir("python-source-dir-inputs");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).map_err(|err| format!("create workspace: {err}"))?;
+        let cache_key = || {
+            WorkspaceState {
+                workspace_root: &root,
+                files: &[],
+                cfg_features: None,
+                config_text: None,
+                test_intent_text: None,
+                suppressions_text: None,
+            }
+            .cache_key()
+        };
+        let baseline = cache_key();
+
+        for dir in PYTHON_SOURCE_DIR_MARKERS {
+            std::fs::create_dir_all(root.join(dir))
+                .map_err(|err| format!("create {dir}: {err}"))?;
+            let source_file = root.join(dir).join("pricing.py");
+            std::fs::write(&source_file, "first").map_err(|err| format!("write {dir}: {err}"))?;
+            let present = cache_key();
+            assert_ne!(
+                baseline.workspace_manifests_hash, present.workspace_manifests_hash,
+                "creating the first {dir} source must invalidate the cache identity"
+            );
+            assert_ne!(baseline.filename(), present.filename());
+
+            std::fs::write(&source_file, "second")
+                .map_err(|err| format!("rewrite {dir}: {err}"))?;
+            let edited = cache_key();
+            assert_eq!(
+                present.workspace_manifests_hash, edited.workspace_manifests_hash,
+                "Python detection consumes {dir} source presence, not contents"
+            );
+
+            std::fs::remove_file(&source_file).map_err(|err| format!("remove {dir}: {err}"))?;
+            let removed = cache_key();
+            assert_eq!(
+                baseline.workspace_manifests_hash, removed.workspace_manifests_hash,
+                "removing the last {dir} source must restore the baseline identity"
+            );
+
+            // Nested sources are covered by recursive detection.
+            std::fs::create_dir_all(root.join(dir).join("pkg"))
+                .map_err(|err| format!("create {dir}/pkg: {err}"))?;
+            let nested_file = root.join(dir).join("pkg").join("mod.py");
+            std::fs::write(&nested_file, "x").map_err(|err| format!("write {dir}/pkg: {err}"))?;
+            let nested = cache_key();
+            assert_ne!(
+                baseline.workspace_manifests_hash, nested.workspace_manifests_hash,
+                "nested {dir} sources participate in detection identity"
+            );
+            std::fs::remove_file(&nested_file).map_err(|err| format!("remove {dir}/pkg: {err}"))?;
+        }
+
+        // Generated and excluded-directory files are not detection inputs,
+        // so they must not invalidate the identity either.
+        std::fs::create_dir_all(root.join("src").join(".venv"))
+            .map_err(|err| format!("create src/.venv: {err}"))?;
+        std::fs::write(root.join("src").join("client_pb2.py"), "x")
+            .map_err(|err| format!("write generated: {err}"))?;
+        std::fs::write(root.join("src").join(".venv").join("lib.py"), "x")
+            .map_err(|err| format!("write excluded: {err}"))?;
+        let irrelevant = cache_key();
+        assert_eq!(
+            baseline.workspace_manifests_hash, irrelevant.workspace_manifests_hash,
+            "generated and excluded-directory sources never change detection"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
