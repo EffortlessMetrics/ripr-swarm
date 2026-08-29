@@ -11,7 +11,8 @@
 //!   (read-only plumbing; no ref, index, or worktree mutation);
 //! - the diff is `git diff-tree` between the two **trees**, preserving
 //!   add/delete/rename/type-change information;
-//! - the candidate root is materialized with `git archive` from the
+//! - the candidate root is materialized blob-by-blob (`ls-tree` +
+//!   `cat-file`) from the
 //!   candidate tree alone into a fresh temp directory, so every byte
 //!   comes from the bound tree;
 //! - any failure (missing base/candidate, unsupported object mode,
@@ -226,7 +227,7 @@ fn derive_diff(
 }
 
 /// Materialize the candidate tree into a fresh temp directory. Every
-/// byte comes from `git archive` of the tree; the worktree and index
+/// byte comes from `git cat-file` of the bound blob; the worktree and index
 /// are never consulted.
 fn materialize(
     root: &Path,
@@ -249,7 +250,7 @@ fn materialize(
     // Arm cleanup BEFORE any fallible work. Every `?` below returns early,
     // and until this guard exists those paths leave `base_dir` — which by
     // then holds an extracted copy of the candidate tree — on disk forever.
-    // A fail-closed subject (an unsupported entry mode, a git archive
+    // A fail-closed subject (an unsupported entry mode, a git failure
     // failure, a bounded-read overrun) must not cost a permanent temp
     // directory; only the success path hands the guard to the caller, who
     // holds it for as long as the materialization is in use.
@@ -265,140 +266,81 @@ fn materialize(
     }
     std::fs::create_dir_all(&target)
         .map_err(|error| failed(format!("materialization dir failed: {error}")))?;
-    // The tar lives OUTSIDE the extraction target so a candidate file
-    // named `__candidate.tar` cannot collide with or be deleted by the
-    // extraction (#3296 review note). The archive output is size-bounded
-    // through the shared limited-output authority so a bound tree
-    // cannot OOM the process (unbounded read-to-end was the previous
-    // behavior).
-    let tar_path = base_dir.join(format!("{candidate_tree}.tar"));
-    let archive = crate::git::run_git_output_with_deadline_and_limit(
+    // Materialize straight from blob identities. `git archive` honors
+    // `.gitattributes` (e.g. `*.rs text eol=crlf`) even with
+    // `core.autocrlf=false`, so extracted bytes could silently differ from
+    // the bound blob identity (#3548 review); `ls-tree` + `cat-file` emit
+    // raw blob bytes only.
+    let listing = crate::git::run_git_output_with_deadline_and_limit(
         root,
-        &[
-            "-c",
-            "core.autocrlf=false",
-            "archive",
-            "--format=tar",
-            candidate_tree,
-        ],
+        &["ls-tree", "-r", "-z", candidate_tree],
         deadline.unwrap_or(Duration::from_mins(1)),
         MAX_ARCHIVE_BYTES,
     )
-    .map_err(|error| failed(format!("git archive failed: {error}")))?;
-    if !archive.status.success() {
+    .map_err(|error| failed(format!("git ls-tree failed: {error}")))?;
+    if !listing.status.success() {
         return Err(failed(
-            "git archive of the candidate tree failed".to_string(),
+            "git ls-tree of the candidate tree failed".to_string(),
         ));
     }
-    std::fs::write(&tar_path, &archive.stdout)
-        .map_err(|error| failed(format!("archive write failed: {error}")))?;
-    let extracted = untar(&tar_path, &target)?;
-    let _ = std::fs::remove_file(&tar_path);
-    let _ = extracted;
+    for entry in listing.stdout.split(|byte| *byte == 0) {
+        if entry.is_empty() {
+            continue;
+        }
+        // Tree paths are repo-relative and must survive identity intact:
+        // a non-UTF-8 path fails closed instead of lossily collapsing
+        // distinct names (#3545 family).
+        let text = std::str::from_utf8(entry).map_err(|_utf8_error| {
+            failed(
+                "candidate tree entry is not valid UTF-8; refusing lossy materialization"
+                    .to_string(),
+            )
+        })?;
+        let Some((meta, path)) = text.split_once('\t') else {
+            return Err(failed(format!(
+                "malformed ls-tree entry without a TAB separator: {text}"
+            )));
+        };
+        let mut meta_parts = meta.split_whitespace();
+        let mode = meta_parts.next().unwrap_or_default();
+        let kind = meta_parts.next().unwrap_or_default();
+        let object = meta_parts.next().unwrap_or_default();
+        if kind != "blob" || !(mode == "100644" || mode == "100755") {
+            return Err(failed(format!(
+                "unsupported tree entry mode `{mode}` (`{kind}`) for `{path}`: the candidate tree contains a non-file object ripr cannot faithfully materialize"
+            )));
+        }
+        let destination = safe_join(&target, path)?;
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| failed(format!("materialization mkdir failed: {error}")))?;
+        }
+        let blob = crate::git::run_git_output_with_deadline_and_limit(
+            root,
+            &["cat-file", "blob", object],
+            deadline.unwrap_or(Duration::from_mins(1)),
+            MAX_ARCHIVE_BYTES,
+        )
+        .map_err(|error| failed(format!("git cat-file blob failed: {error}")))?;
+        if !blob.status.success() {
+            return Err(failed(format!("git cat-file blob {object} failed")));
+        }
+        std::fs::write(&destination, &blob.stdout)
+            .map_err(|error| failed(format!("materialization write failed: {error}")))?;
+    }
     Ok((target.clone(), cleanup))
 }
 
-/// Minimal in-crate tar extraction for `git archive` output: only the
-/// entry shapes Git emits (regular files, directories), no symlinks or
-/// gitlinks (those are rejected upstream as unsupported modes).
-fn untar(tar_path: &Path, target: &Path) -> Result<usize, SubjectError> {
-    let bytes =
-        std::fs::read(tar_path).map_err(|error| failed(format!("archive read failed: {error}")))?;
-    let mut entries = 0usize;
-    let mut offset = 0usize;
-    let mut pending_path: Option<String> = None;
-    while offset + 512 <= bytes.len() {
-        let header = &bytes[offset..offset + 512];
-        // Two consecutive zero blocks are the end-of-archive marker;
-        // check before the empty-name skip so the marker terminates.
-        if header.iter().all(|byte| *byte == 0) {
-            break;
-        }
-        // ustar long paths split across the prefix field (345..500) and
-        // the name field: the real path is prefix + '/' + name. git
-        // archive prefers this split and only emits a pax 'x' header
-        // when even the split does not fit (#3296 review).
-        let prefix = tar_string(&header[345..500]);
-        let raw_name = tar_string(&header[0..100]);
-        let name = if prefix.is_empty() {
-            raw_name
-        } else {
-            format!("{prefix}/{raw_name}")
-        };
-        let size = tar_octal(&header[124..136]);
-        let typeflag = header[156];
-        let data_start = offset + 512;
-        let data_end = data_start + size;
-        if data_end > bytes.len() {
-            return Err(failed("truncated candidate archive".to_string()));
-        }
-        offset = data_start + size.div_ceil(512) * 512;
-        if name.is_empty() {
-            continue;
-        }
-        match typeflag {
-            // pax extended header: its records apply to the NEXT entry.
-            // `git archive` emits these for paths longer than the
-            // 100-character tar name field; the `path=` record carries
-            // the real name (#3296 review: rejecting them failed the
-            // whole run on any long path).
-            b'g' => continue,
-            b'x' => {
-                let data = &bytes[data_start..data_end];
-                pending_path = pax_path_record(data);
-                continue;
-            }
-            b'0' | 0 => {
-                let effective_name = pending_path.take().unwrap_or(name);
-                let path = safe_join(target, &effective_name)?;
-                if let Some(parent) = path.parent() {
-                    std::fs::create_dir_all(parent).map_err(|error| {
-                        failed(format!("materialization mkdir failed: {error}"))
-                    })?;
-                }
-                std::fs::write(&path, &bytes[data_start..data_end])
-                    .map_err(|error| failed(format!("materialization write failed: {error}")))?;
-                entries += 1;
-            }
-            b'5' => {
-                let path = safe_join(target, &name)?;
-                std::fs::create_dir_all(&path)
-                    .map_err(|error| failed(format!("materialization mkdir failed: {error}")))?;
-            }
-            other => {
-                return Err(failed(format!(
-                    "unsupported archive entry type `{}` for `{name}`: the candidate tree                      contains a non-file object ripr cannot faithfully materialize",
-                    other as char
-                )));
-            }
-        }
-    }
-    Ok(entries)
-}
-
-/// Join an archive entry name under the target, rejecting traversal.
+/// Join a tree entry path under the target, rejecting traversal.
 fn safe_join(target: &Path, name: &str) -> Result<PathBuf, SubjectError> {
     let relative = Path::new(name);
     if relative.is_absolute() || name.contains("..") || name.contains('\\') || name.starts_with('/')
     {
         return Err(failed(format!(
-            "candidate archive entry `{name}` escapes the materialization root"
+            "candidate tree entry `{name}` escapes the materialization root"
         )));
     }
     Ok(target.join(relative))
-}
-
-fn tar_string(field: &[u8]) -> String {
-    let end = field
-        .iter()
-        .position(|byte| *byte == 0)
-        .unwrap_or(field.len());
-    String::from_utf8_lossy(&field[..end]).to_string()
-}
-
-fn tar_octal(field: &[u8]) -> usize {
-    let text = tar_string(field);
-    usize::from_str_radix(text.trim().trim_end_matches('\0').trim(), 8).unwrap_or(0)
 }
 
 /// Resolve and execute one subject: validate identities, derive the
@@ -447,20 +389,6 @@ pub(crate) fn resolve(
         root,
         _cleanup: cleanup,
     })
-}
-
-/// The `path=` record of a pax extended header, if present.
-fn pax_path_record(data: &[u8]) -> Option<String> {
-    let text = String::from_utf8_lossy(data);
-    for line in text.lines() {
-        let rest = line.trim_start_matches(|ch: char| ch.is_ascii_digit());
-        if let Some(value) = rest.strip_prefix(" path=")
-            && !value.trim().is_empty()
-        {
-            return Some(value.trim().to_string());
-        }
-    }
-    None
 }
 
 /// The candidate tree's `ripr.toml` bytes, when the tree carries one
@@ -690,6 +618,65 @@ mod tests {
         assert_eq!(
             std::fs::read(resolved.root.join(&deep).join(&long_name)).map_err(|e| e.to_string())?,
             candidate_blob(&guard.0, &candidate, &format!("{deep}/{long_name}"))?
+        );
+        Ok(())
+    }
+
+    // #3548 review: a `.gitattributes` `text eol=crlf` attribute must not
+    // convert materialized bytes. `git archive` honors the attribute even
+    // with core.autocrlf=false, so the blob-wise materialization is pinned
+    // against the `git show <tree>:<path>` oracle bytes.
+    #[test]
+    fn materialization_ignores_attribute_driven_conversion() -> Result<(), String> {
+        let (guard, _base, candidate) = fixture_repo("attributes")?;
+        let run = |args: &[&str]| -> Result<String, String> {
+            let out = crate::git::run_git_output_with_deadline(&guard.0, args, GIT_DEADLINE)
+                .map_err(|e| e.to_string())?;
+            if !out.status.success() {
+                return Err(format!(
+                    "git {} failed: {}",
+                    args[0],
+                    String::from_utf8_lossy(&out.stderr)
+                ));
+            }
+            Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+        };
+        std::fs::write(
+            guard.0.join(".gitattributes"),
+            "*.rs text eol=crlf
+",
+        )
+        .map_err(|e| e.to_string())?;
+        run(&["add", ".gitattributes"])?;
+        run(&["commit", "-m", "attributes"])?;
+        // A fresh commit AFTER the attribute exists: the candidate tree's
+        // blob is pure LF, but archive would deliver CRLF.
+        std::fs::write(
+            guard.0.join("src/lib.rs"),
+            "pub fn attr() -> u8 { 3 }
+",
+        )
+        .map_err(|e| e.to_string())?;
+        run(&["add", "."])?;
+        run(&["commit", "-m", "candidate under attribute"])?;
+        let candidate = run(&["rev-parse", "HEAD"])?;
+        let base = run(&["rev-parse", "HEAD~1"])?;
+        let s = subject(
+            &guard.0,
+            GitCandidateBase::Treeish(GitTreeish::new(&base).map_err(|e| e.to_string())?),
+            &candidate,
+        )?;
+        let resolved = resolve(&s, None).map_err(|e| e.to_string())?;
+        let materialized =
+            std::fs::read(resolved.root.join("src/lib.rs")).map_err(|e| e.to_string())?;
+        let oracle = candidate_blob(&guard.0, &candidate, "src/lib.rs")?;
+        assert_eq!(
+            materialized, oracle,
+            "materialized bytes must equal the bound blob bytes under eol=crlf"
+        );
+        assert!(
+            !materialized.contains(&b'\r'),
+            "an LF blob must stay LF under an eol=crlf attribute"
         );
         Ok(())
     }
