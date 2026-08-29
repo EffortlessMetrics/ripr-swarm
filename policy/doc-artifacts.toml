@@ -819,3 +819,11 @@ path = "docs/specs/RIPR-SPEC-0167-convergence-architecture.md"
 status = "accepted"
 owner = "product-swarm"
 standalone_reason = "Issue #3323 establishes the internal convergence hexagon, bounded ports, canonical ownership, and mechanical dependency controls without implementing convergence decisions or repository-administration and publication authority."
+
+[[artifact]]
+id = "RIPR-SPEC-0168"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0168-unsafe-boundary-probes.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #3536 records the unsafe-boundary probe contract: parser-backed extraction, changed-line projection, edge-line fail-closed rule, and static_unknown conservatism, with the golden fixture as required evidence."
