@@ -54,6 +54,8 @@ mod static_limit;
 #[cfg(test)]
 mod tests;
 mod tests_extract;
+#[cfg(test)]
+mod tests_extract_tests;
 pub(crate) mod tsconfig;
 mod types;
 
