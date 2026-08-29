@@ -762,7 +762,7 @@ pub(crate) fn release_temp_root() -> Result<PathBuf, String> {
 /// plain form is otherwise equivalent.
 fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
     let text = path.as_os_str().to_string_lossy();
-    if let Some(stripped) = text.strip_prefix(r"\?\") {
+    if let Some(stripped) = text.strip_prefix(r"\\?\") {
         PathBuf::from(stripped.to_owned())
     } else {
         path
