@@ -763,7 +763,7 @@ fn check_fast_selector_failure(error: &str) -> String {
 
 fn check_fast_selector_failure_report(error: &str) -> String {
     format!(
-        "# check-fast report\n\nStatus: instrument_failure\n\nSelector: failed\n\nError: {error}\n\nRemediation: run `git fetch origin main` and retry `cargo xtask check-fast`.\n"
+        "# check-fast report\n\nStatus: instrument_failure\n\nSelector: failed\nBase: origin/main\n\nError: {error}\n\nRemediation: run `git fetch origin main` and retry `cargo xtask check-fast`.\n"
     )
 }
 
@@ -823,6 +823,10 @@ mod check_fast_selector_tests {
         assert!(
             report.contains("Status: instrument_failure"),
             "report must record the instrument failure: {report}"
+        );
+        assert!(
+            report.contains("Selector: failed") && report.contains("Base: origin/main"),
+            "report must disclose selector status and base: {report}"
         );
         Ok(())
     }
