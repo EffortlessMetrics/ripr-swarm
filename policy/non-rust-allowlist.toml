@@ -529,7 +529,7 @@ owner = "analysis/causal-attribution"
 surface = "fixtures"
 classification = "fixture"
 reason = "Fixture-backed base/head attribution rules for canonical evidence comparison."
-covered_by = ["cargo test -p ripr causal_delta", "cargo xtask check-file-policy"]
+covered_by = ["cargo test -p ripr --test causal_delta_fixture", "cargo xtask check-file-policy"]
 
 # ---------------------------------------------------------------------------
 # Brand / assets
