@@ -38,7 +38,7 @@ What are you trying to do?
                         ripr context --at <finding-id>
   Repair one named gap  ripr agent repair --seam-id ID --phase before
                         # edit one focused test
-                        ripr agent repair --seam-id ID --phase after
+                        ripr agent repair --attempt ID --phase after
   Compose PR evidence   ripr first-pr --root . --base origin/main --head HEAD
   Work in an editor     ripr lsp --stdio
   Adopt advisory CI     ripr init --ci github
@@ -123,7 +123,8 @@ PR & Review:
   ripr assistant-loop health --proof target/ripr/reports/test-oracle-assistant-proof.json [--out target/ripr/reports/assistant-loop-health.json]
 
 Policy & Gate:
-  ripr gate evaluate --pr-guidance PATH [--mode visible-only] [--out target/ripr/reports/gate-decision.json]
+  ripr gate evaluate --pr-guidance PATH [--mode visible-only|acknowledgeable] [--labels-json PATH] [--out target/ripr/reports/gate-decision.json]
+  # acknowledgeable mode blocks eligible gaps unless the PR carries the configured waiver label (default: ripr-waive)
   ripr baseline create --from target/ripr/reports/gate-decision.json [--out .ripr/gate-baseline.json] [--dry-run] [--force]
   ripr baseline diff --baseline .ripr/gate-baseline.json --current target/ripr/reports/gate-decision.json [--out target/ripr/reports/baseline-debt-delta.json] [--out-md target/ripr/reports/baseline-debt-delta.md]
   ripr baseline update --baseline .ripr/gate-baseline.json --current target/ripr/reports/gate-decision.json --remove-resolved [--out .ripr/gate-baseline.json]

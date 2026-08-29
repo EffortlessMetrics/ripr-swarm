@@ -16,6 +16,7 @@ mod metrics;
 mod module_health;
 mod mutation;
 mod operator;
+mod perl_migration;
 mod pr;
 mod pr_causal_delta;
 mod pr_evidence;
@@ -151,3 +152,4 @@ fn write_parented_file(
     ensure_parent_dir(path, label)?;
     std::fs::write(path, contents).map_err(|err| format!("failed to write {label}: {err}"))
 }
+pub(crate) use perl_migration::perl_migration_refresh;

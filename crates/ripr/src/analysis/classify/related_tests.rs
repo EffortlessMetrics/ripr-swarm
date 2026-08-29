@@ -141,13 +141,19 @@ pub(in crate::analysis) fn find_related_tests<'a>(
 
         let test_name = test.name.to_ascii_lowercase();
         let owner_name_lc = owner_name.to_ascii_lowercase();
-        let file_path_matches =
+        let same_test_file = same_test_file(&probe.location.file, &test.file);
+        // Keep the broad path-token association available to callers, but do
+        // not publish it as file identity.  A short source stem such as
+        // `config` can occur in unrelated test paths (for example
+        // `reconfigure.rs`).
+        let file_path_token_matches =
             !file_name.is_empty() && normalize_path(&test.file).contains(&file_name);
         let owner_name_in_test = !owner_name_lc.is_empty() && test_name.contains(&owner_name_lc);
         let token_in_test_name = probe_tokens
             .iter()
             .any(|token| token.len() > 2 && test_name.contains(&token.to_ascii_lowercase()));
-        let same_file_or_named = file_path_matches || owner_name_in_test || token_in_test_name;
+        let same_file_or_named =
+            same_test_file || file_path_token_matches || owner_name_in_test || token_in_test_name;
 
         // #3296 helper transfer: a test that calls a resolved hop's
         // caller directly reaches the owner through the bounded chain
@@ -183,13 +189,14 @@ pub(in crate::analysis) fn find_related_tests<'a>(
         } else if owner_name_in_test {
             // Test name contains the owner function name.
             RelationReason::OwnerNamedTest
-        } else if file_path_matches {
-            // Test file path contains the probe's source file stem.
+        } else if same_test_file {
+            // Test file uses the probe's source stem or one of the canonical
+            // `_test`/`_tests` companion conventions.
             RelationReason::SameTestFile
         } else {
-            // Probe token substring appears in the test name — the broadest,
-            // least precise match branch (`same_file_or_named` token path).
-            // `token_in_test_name` must be true here (guarded above).
+            // A path or test-name token substring is the broadest, least
+            // precise match branch. `same_file_or_named` guarantees that one
+            // of those weak signals is present here.
             RelationReason::WeakTokenSubstring
         };
 
@@ -199,6 +206,23 @@ pub(in crate::analysis) fn find_related_tests<'a>(
     related.sort_by(|(a, _), (b, _)| a.name.cmp(&b.name).then_with(|| a.file.cmp(&b.file)));
     related.dedup_by(|(a, _), (b, _)| a.name == b.name && a.file == b.file);
     related
+}
+
+/// Return whether `test_file` is the canonical companion test file for
+/// `probe_file`.  This intentionally mirrors the stronger test-grip
+/// authority: only the source stem itself and its `_test`/`_tests` variants
+/// count as file identity.  Paths are compared by stem, so host-specific
+/// separators do not affect the result.
+fn same_test_file(probe_file: &Path, test_file: &Path) -> bool {
+    let Some(probe_stem) = probe_file.file_stem().and_then(|stem| stem.to_str()) else {
+        return false;
+    };
+    let Some(test_stem) = test_file.file_stem().and_then(|stem| stem.to_str()) else {
+        return false;
+    };
+    test_stem == probe_stem
+        || test_stem == format!("{probe_stem}_test")
+        || test_stem == format!("{probe_stem}_tests")
 }
 
 fn normalize_path(path: &Path) -> String {
@@ -490,6 +514,62 @@ mod tests {
         assert_eq!(related.len(), 2);
         assert_eq!(related[0].0.file, PathBuf::from("tests/a_case.rs"));
         assert_eq!(related[1].0.file, PathBuf::from("tests/z_case.rs"));
+    }
+
+    #[test]
+    fn path_substring_match_is_weak_not_same_test_file() {
+        let owner = function("crates/core/src/config.rs", "load_config");
+        let index = RustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test(
+                "crates/core/tests/reconfigure.rs",
+                "checks_value",
+                "assert_eq!(value, 3);",
+            )],
+            ..RustIndex::default()
+        };
+        let probe = probe("crates/core/src/config.rs", "marker");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
+    }
+
+    #[test]
+    fn canonical_companion_stems_remain_same_test_file() {
+        let owner = function("crates/core/src/config.rs", "load_config");
+        let index = RustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![
+                test(
+                    "crates/core/tests/config.rs",
+                    "config_file",
+                    "assert!(true);",
+                ),
+                test(
+                    "crates/core/tests/config_test.rs",
+                    "config_test_file",
+                    "assert!(true);",
+                ),
+                test(
+                    "crates/core/tests/config_tests.rs",
+                    "config_tests_file",
+                    "assert!(true);",
+                ),
+            ],
+            ..RustIndex::default()
+        };
+        let probe = probe("crates/core/src/config.rs", "marker");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
+
+        assert_eq!(related.len(), 3);
+        assert!(
+            related
+                .iter()
+                .all(|(_, reason)| *reason == RelationReason::SameTestFile)
+        );
     }
 
     #[test]
