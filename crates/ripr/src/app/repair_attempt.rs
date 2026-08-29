@@ -1,9 +1,9 @@
-//! Durable repair-attempt identity and before-phase manifest authority.
+//! Durable repair-attempt identity, retained inputs, and finish authority.
 //!
-//! The current `agent repair` driver still exposes compatibility artifacts under
-//! `target/ripr/workflow`. This module adds one attempt-specific, atomically
-//! published record without changing the after-phase command contract. A later
-//! #2927 slice will make `--attempt <id>` the finishing authority.
+//! Repository-global artifacts under `target/ripr/workflow` remain compatibility
+//! projections. The durable transaction is selected by `RepairAttemptId`, and
+//! the after phase consumes the retained before snapshot and packet attached to
+//! that exact attempt.
 
 use crate::agent::loop_commands::{display_path, shell_arg};
 use crate::edit_cage::{
@@ -109,7 +109,7 @@ pub(crate) struct RepairAttemptAfter {
     pub(crate) verdict: EditCageVerdict,
 }
 
-/// The only attempt state that may authorize a receipt.  This is deliberately
+/// The only attempt state that may authorize a receipt. This is deliberately
 /// derived from the durable manifest and its immutable before artifacts rather
 /// than from the workflow filenames, which are compatibility outputs.
 pub(crate) fn receipt_binding(
@@ -134,34 +134,42 @@ pub(crate) fn receipt_binding(
         seam_id,
     )?;
     validate_trusted_head_surface(&root, &policy)?;
-    let manifests_root = root.join(REPAIR_ATTEMPT_DIRECTORY);
-    let mut matches = Vec::new();
-    for entry in std::fs::read_dir(&manifests_root)
-        .map_err(|error| format!("read {} failed: {error}", manifests_root.display()))?
-    {
-        let entry = entry.map_err(|error| format!("read repair attempt entry failed: {error}"))?;
-        let path = entry.path().join(REPAIR_ATTEMPT_MANIFEST);
-        if !path.is_file() {
-            continue;
+    let (manifest_path, manifest) = if let Some(attempt_id) = attempt_id {
+        let attempt_id = RepairAttemptId::parse(attempt_id.to_string())?;
+        let loaded = load_repair_attempt_by_id(&root, &attempt_id)?;
+        if loaded.1.seam_id != seam_id {
+            return Err(format!(
+                "repair attempt {} belongs to seam `{}`, not `{seam_id}`",
+                attempt_id.as_str(),
+                loaded.1.seam_id
+            ));
         }
-        let raw = std::fs::read_to_string(&path)
-            .map_err(|error| format!("read {} failed: {error}", path.display()))?;
-        let manifest: RepairAttemptManifest = serde_json::from_str(&raw)
-            .map_err(|error| format!("decode {} failed: {error}", path.display()))?;
-        validate_manifest_at(&root, &path, &manifest)?;
-        if manifest.seam_id == seam_id
-            && attempt_id.is_none_or(|id| manifest.repair_attempt_id.as_str() == id)
+        loaded
+    } else {
+        let manifests_root = root.join(REPAIR_ATTEMPT_DIRECTORY);
+        let mut matches = Vec::new();
+        for entry in std::fs::read_dir(&manifests_root)
+            .map_err(|error| format!("read {} failed: {error}", manifests_root.display()))?
         {
-            matches.push((path, manifest));
+            let entry =
+                entry.map_err(|error| format!("read repair attempt entry failed: {error}"))?;
+            let path = entry.path().join(REPAIR_ATTEMPT_MANIFEST);
+            if !path.is_file() {
+                continue;
+            }
+            let manifest = read_repair_attempt_manifest_at(&root, &path)?;
+            if manifest.seam_id == seam_id {
+                matches.push((path, manifest));
+            }
         }
-    }
-    if matches.len() != 1 {
-        return Err(format!(
-            "receipt requires exactly one repair attempt for seam `{seam_id}`, found {}",
-            matches.len()
-        ));
-    }
-    let (manifest_path, manifest) = matches.pop().ok_or_else(|| "missing attempt".to_string())?;
+        if matches.len() != 1 {
+            return Err(format!(
+                "receipt requires exactly one repair attempt for seam `{seam_id}`, found {}",
+                matches.len()
+            ));
+        }
+        matches.pop().ok_or_else(|| "missing attempt".to_string())?
+    };
     let after = manifest
         .after
         .as_ref()
@@ -182,14 +190,7 @@ pub(crate) fn receipt_binding(
     if current_head != manifest.repository_head || current_head != after.repository_head {
         return Err("repair attempt receipt is stale relative to repository HEAD".to_string());
     }
-    let artifact = |role: &str| {
-        manifest
-            .artifacts
-            .iter()
-            .find(|artifact| artifact.role == role)
-            .ok_or_else(|| format!("repair attempt is missing {role} artifact"))
-    };
-    let packet_artifact = artifact("agent_packet")?;
+    let packet_artifact = find_manifest_artifact(&manifest, "agent_packet")?;
     let packet_artifact_bytes = std::fs::read(root.join(&packet_artifact.path))
         .map_err(|error| format!("read staged agent packet failed: {error}"))?;
     if sha256_bytes(&packet_artifact_bytes) != packet_artifact.sha256
@@ -198,7 +199,7 @@ pub(crate) fn receipt_binding(
     {
         return Err("repair attempt packet binding is tampered or replayed".to_string());
     }
-    let baseline_artifact = artifact("edit_cage_baseline")?;
+    let baseline_artifact = find_manifest_artifact(&manifest, "edit_cage_baseline")?;
     let baseline_bytes = std::fs::read(root.join(&baseline_artifact.path))
         .map_err(|error| format!("read staged edit-cage baseline failed: {error}"))?;
     if sha256_bytes(&baseline_bytes) != baseline_artifact.sha256 {
@@ -226,6 +227,55 @@ pub(crate) fn receipt_binding(
     }))
 }
 
+/// Ensure a verify document consumed for an exact attempt names that attempt's
+/// retained before snapshot and its committed content digest.
+pub(crate) fn validate_verify_binding(
+    root: &Path,
+    attempt_id: &str,
+    verify_before_path: &str,
+    verify_before_sha256: &str,
+) -> Result<(), String> {
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
+    let attempt_id = RepairAttemptId::parse(attempt_id.to_string())?;
+    let (_, manifest) = load_repair_attempt_by_id(&root, &attempt_id)?;
+    let expected = find_manifest_artifact(&manifest, "before_snapshot")?;
+    let expected_path = root
+        .join(&expected.path)
+        .canonicalize()
+        .map_err(|error| format!("canonicalize retained before snapshot failed: {error}"))?;
+    let actual_path = root
+        .join(verify_before_path)
+        .canonicalize()
+        .map_err(|error| format!("canonicalize verify before snapshot failed: {error}"))?;
+    if actual_path != expected_path {
+        return Err(format!(
+            "verify before snapshot {} is not the retained snapshot for attempt {}",
+            actual_path.display(),
+            attempt_id.as_str()
+        ));
+    }
+    let before_snapshot = std::fs::read_to_string(&expected_path).map_err(|error| {
+        format!(
+            "read retained before snapshot {} failed: {error}",
+            expected_path.display()
+        )
+    })?;
+    let validated = crate::agent::artifact::validate_repo_exposure_artifact(
+        &root,
+        &before_snapshot,
+        "repair attempt before",
+    )?;
+    if verify_before_sha256 != validated.content_sha256 {
+        return Err(format!(
+            "verify before snapshot digest does not match attempt {}",
+            attempt_id.as_str()
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct BeforeArtifactSource<'a> {
     pub(crate) role: &'a str,
@@ -236,6 +286,15 @@ pub(crate) struct BeforeArtifactSource<'a> {
 pub(crate) struct BeginRepairAttemptResult {
     pub(crate) manifest: RepairAttemptManifest,
     pub(crate) manifest_path: PathBuf,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ResolvedRepairAttempt {
+    pub(crate) attempt_id: RepairAttemptId,
+    pub(crate) seam_id: String,
+    pub(crate) manifest_path: PathBuf,
+    pub(crate) before_snapshot_path: PathBuf,
+    pub(crate) packet_path: PathBuf,
 }
 
 pub(crate) fn begin_repair_attempt(
@@ -301,9 +360,9 @@ fn complete_repair_attempt(
     let result = stage_before_artifacts(canonical_root, attempt_directory, publication.sources)
         .and_then(|artifacts| {
             let next_command = format!(
-                "ripr agent repair --root {} --seam-id {} --phase after",
+                "ripr agent repair --root {} --attempt {} --phase after",
                 shell_arg(&display_path(publication.root_argument)),
-                shell_arg(publication.seam_id)
+                shell_arg(publication.repair_attempt_id.as_str())
             );
             let manifest = RepairAttemptManifest {
                 schema_version: REPAIR_ATTEMPT_SCHEMA_VERSION.to_string(),
@@ -318,7 +377,7 @@ fn complete_repair_attempt(
                 artifacts,
                 next_command,
                 limitations: vec![
-                    "after phase remains seam-selected until #2927 PR B adds --attempt consumption"
+                    "after-phase verify and receipt outputs remain mirrored through target/ripr/workflow compatibility paths"
                         .to_string(),
                 ],
                 non_claims: vec![
@@ -415,7 +474,7 @@ pub(crate) fn edit_cage_policy_from_packet(
         ));
     }
     // `agent packet` emits a repo packet containing a `packets` list, while
-    // language adapters may emit a single packet.  Select the only actionable
+    // language adapters may emit a single packet. Select the only actionable
     // packet without treating the report envelope as edit-cage authority.
     let value = value
         .get("packets")
@@ -503,53 +562,94 @@ pub(crate) fn write_edit_cage_baseline(
     write_bytes_atomic(path, &bytes)
 }
 
+/// Resolve the durable before inputs for one after-phase invocation. Attempt ID
+/// is the ordinary authority; seam selection remains a compatibility route and
+/// fails closed when more than one awaiting attempt shares that seam.
+pub(crate) fn resolve_awaiting_repair_attempt(
+    root: &Path,
+    attempt_id: Option<&str>,
+    seam_id: Option<&str>,
+) -> Result<ResolvedRepairAttempt, String> {
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
+    let (manifest_path, manifest) = match (attempt_id, seam_id) {
+        (Some(attempt_id), None) => {
+            let attempt_id = RepairAttemptId::parse(attempt_id.to_string())?;
+            load_repair_attempt_by_id(&root, &attempt_id)?
+        }
+        (None, Some(seam_id)) => select_awaiting_repair_attempt_by_seam(&root, seam_id)?,
+        (Some(_), Some(_)) => {
+            return Err(
+                "repair after selection accepts either attempt ID or seam ID, not both".to_string(),
+            );
+        }
+        (None, None) => {
+            return Err("repair after selection requires an attempt ID or seam ID".to_string());
+        }
+    };
+    if manifest.state != RepairAttemptState::AwaitingEdit {
+        return Err(format!(
+            "repair attempt {} is {:?}; after phase requires awaiting_edit",
+            manifest.repair_attempt_id.as_str(),
+            manifest.state
+        ));
+    }
+    let before_snapshot_path =
+        root.join(&find_manifest_artifact(&manifest, "before_snapshot")?.path);
+    let packet_path = root.join(&find_manifest_artifact(&manifest, "agent_packet")?.path);
+    Ok(ResolvedRepairAttempt {
+        attempt_id: manifest.repair_attempt_id,
+        seam_id: manifest.seam_id,
+        manifest_path,
+        before_snapshot_path,
+        packet_path,
+    })
+}
+
 pub(crate) fn finish_repair_attempt(
     root: &Path,
-    seam_id: &str,
+    attempt_id: &RepairAttemptId,
     packet_path: &Path,
 ) -> Result<RepairAttemptAfter, String> {
     let root = root
         .canonicalize()
         .map_err(|error| format!("canonicalize repair attempt root failed: {error}"))?;
-    let packet = std::fs::read(packet_path).map_err(|error| {
+    let (manifest_path, mut manifest) = load_repair_attempt_by_id(&root, attempt_id)?;
+    if manifest.state != RepairAttemptState::AwaitingEdit {
+        return Err(format!(
+            "repair attempt {} is {:?}; after phase requires awaiting_edit",
+            attempt_id.as_str(),
+            manifest.state
+        ));
+    }
+    let packet_artifact = find_manifest_artifact(&manifest, "agent_packet")?;
+    let retained_packet_path = root.join(&packet_artifact.path);
+    let supplied_packet_path = packet_path
+        .canonicalize()
+        .map_err(|error| format!("canonicalize repair packet failed: {error}"))?;
+    let retained_packet_path = retained_packet_path
+        .canonicalize()
+        .map_err(|error| format!("canonicalize retained repair packet failed: {error}"))?;
+    if supplied_packet_path != retained_packet_path {
+        return Err(format!(
+            "repair attempt {} must finish with its retained agent_packet artifact",
+            attempt_id.as_str()
+        ));
+    }
+    let packet = std::fs::read(&retained_packet_path).map_err(|error| {
         format!(
             "read repair packet {} failed: {error}",
-            packet_path.display()
+            retained_packet_path.display()
         )
     })?;
     let packet_sha256 = sha256_bytes(&packet);
-    let manifests_root = root.join(REPAIR_ATTEMPT_DIRECTORY);
-    let mut matches = Vec::new();
-    for entry in std::fs::read_dir(&manifests_root)
-        .map_err(|error| format!("read {} failed: {error}", manifests_root.display()))?
+    if u64::try_from(packet.len()).map_err(|error| error.to_string())? != packet_artifact.bytes
+        || packet_sha256 != packet_artifact.sha256
     {
-        let entry = entry.map_err(|error| format!("read repair attempt entry failed: {error}"))?;
-        let path = entry.path().join(REPAIR_ATTEMPT_MANIFEST);
-        if !path.is_file() {
-            continue;
-        }
-        let raw = std::fs::read_to_string(&path)
-            .map_err(|error| format!("read {} failed: {error}", path.display()))?;
-        let manifest: RepairAttemptManifest = serde_json::from_str(&raw)
-            .map_err(|error| format!("decode {} failed: {error}", path.display()))?;
-        validate_manifest_at(&root, &path, &manifest)?;
-        if manifest.seam_id == seam_id && manifest.state == RepairAttemptState::AwaitingEdit {
-            matches.push((path, manifest));
-        }
+        return Err("repair attempt packet binding failed".to_string());
     }
-    if matches.len() != 1 {
-        return Err(format!(
-            "expected exactly one awaiting repair attempt for seam `{seam_id}`, found {}",
-            matches.len()
-        ));
-    }
-    let (manifest_path, mut manifest) =
-        matches.pop().ok_or_else(|| "missing attempt".to_string())?;
-    let baseline_artifact = manifest
-        .artifacts
-        .iter()
-        .find(|artifact| artifact.role == "edit_cage_baseline")
-        .ok_or_else(|| "repair attempt has no edit-cage baseline artifact".to_string())?;
+    let baseline_artifact = find_manifest_artifact(&manifest, "edit_cage_baseline")?;
     let baseline_path = root.join(&baseline_artifact.path);
     let baseline_bytes = std::fs::read(&baseline_path)
         .map_err(|error| format!("read {} failed: {error}", baseline_path.display()))?;
@@ -597,6 +697,79 @@ pub(crate) fn finish_repair_attempt(
     bytes.push(b'\n');
     replace_manifest_bytes(&manifest_path, &bytes)?;
     Ok(after)
+}
+
+fn select_awaiting_repair_attempt_by_seam(
+    root: &Path,
+    seam_id: &str,
+) -> Result<(PathBuf, RepairAttemptManifest), String> {
+    if seam_id.trim().is_empty() {
+        return Err("repair after selection requires a non-empty seam ID".to_string());
+    }
+    let manifests_root = root.join(REPAIR_ATTEMPT_DIRECTORY);
+    let mut matches = Vec::new();
+    for entry in std::fs::read_dir(&manifests_root)
+        .map_err(|error| format!("read {} failed: {error}", manifests_root.display()))?
+    {
+        let entry = entry.map_err(|error| format!("read repair attempt entry failed: {error}"))?;
+        let path = entry.path().join(REPAIR_ATTEMPT_MANIFEST);
+        if !path.is_file() {
+            continue;
+        }
+        let manifest = read_repair_attempt_manifest_at(root, &path)?;
+        if manifest.seam_id == seam_id && manifest.state == RepairAttemptState::AwaitingEdit {
+            matches.push((path, manifest));
+        }
+    }
+    if matches.len() != 1 {
+        return Err(format!(
+            "expected exactly one awaiting repair attempt for seam `{seam_id}`, found {}; pass --attempt <id> to select the prepared work exactly",
+            matches.len()
+        ));
+    }
+    matches.pop().ok_or_else(|| "missing attempt".to_string())
+}
+
+fn load_repair_attempt_by_id(
+    root: &Path,
+    attempt_id: &RepairAttemptId,
+) -> Result<(PathBuf, RepairAttemptManifest), String> {
+    let path = repair_attempt_directory(root, attempt_id).join(REPAIR_ATTEMPT_MANIFEST);
+    if !path.is_file() {
+        return Err(format!(
+            "repair attempt manifest not found for {} at {}",
+            attempt_id.as_str(),
+            path.display()
+        ));
+    }
+    let manifest = read_repair_attempt_manifest_at(root, &path)?;
+    if manifest.repair_attempt_id != *attempt_id {
+        return Err("repair attempt manifest identity does not match its selector".to_string());
+    }
+    Ok((path, manifest))
+}
+
+fn read_repair_attempt_manifest_at(
+    root: &Path,
+    path: &Path,
+) -> Result<RepairAttemptManifest, String> {
+    let raw = std::fs::read_to_string(path)
+        .map_err(|error| format!("read {} failed: {error}", path.display()))?;
+    let manifest: RepairAttemptManifest = serde_json::from_str(&raw)
+        .map_err(|error| format!("decode {} failed: {error}", path.display()))?;
+    validate_manifest_at(root, path, &manifest)?;
+    Ok(manifest)
+}
+
+fn find_manifest_artifact<'a>(
+    manifest: &'a RepairAttemptManifest,
+    role: &str,
+) -> Result<&'a RepairAttemptArtifact, String> {
+    manifest
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.role == role)
+        .ok_or_else(|| format!("repair attempt is missing {role} artifact"))
 }
 
 fn replace_manifest_bytes(path: &Path, bytes: &[u8]) -> Result<(), String> {
@@ -981,6 +1154,10 @@ mod tests {
             2,
             3,
         )?;
+        let next_command = format!(
+            "ripr agent repair --root . --attempt {} --phase after",
+            attempt_id.as_str()
+        );
         Ok(RepairAttemptManifest {
             schema_version: REPAIR_ATTEMPT_SCHEMA_VERSION.to_string(),
             kind: "repair_attempt".to_string(),
@@ -998,8 +1175,7 @@ mod tests {
                     .to_string(),
                 bytes: 2,
             }],
-            next_command: "ripr agent repair --root . --seam-id seam:sample --phase after"
-                .to_string(),
+            next_command,
             limitations: Vec::new(),
             non_claims: vec!["not merge authority".to_string()],
             after: None,
@@ -1389,6 +1565,144 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    #[test]
+    fn exact_attempt_selection_survives_same_seam_concurrency() -> Result<(), String> {
+        let root = test_repo_root("exact-selection")?;
+        let first = prepare_sample_attempt(&root, "seam:sample", "first")?;
+        let second = prepare_sample_attempt(&root, "seam:sample", "second")?;
+
+        let exact = resolve_awaiting_repair_attempt(
+            &root,
+            Some(first.manifest.repair_attempt_id.as_str()),
+            None,
+        )?;
+        if exact.attempt_id != first.manifest.repair_attempt_id
+            || exact.seam_id != "seam:sample"
+            || !exact
+                .before_snapshot_path
+                .starts_with(repair_attempt_directory(
+                    &root,
+                    &first.manifest.repair_attempt_id,
+                ))
+            || !exact.packet_path.starts_with(repair_attempt_directory(
+                &root,
+                &first.manifest.repair_attempt_id,
+            ))
+        {
+            return Err(format!(
+                "exact attempt resolved the wrong inputs: {exact:?}"
+            ));
+        }
+
+        let ambiguous = resolve_awaiting_repair_attempt(&root, None, Some("seam:sample"));
+        match ambiguous {
+            Err(error) if error.contains("found 2") && error.contains("--attempt") => {}
+            other => {
+                return Err(format!(
+                    "same-seam compatibility selection was not rejected: {other:?}"
+                ));
+            }
+        }
+
+        let second_exact = resolve_awaiting_repair_attempt(
+            &root,
+            Some(second.manifest.repair_attempt_id.as_str()),
+            None,
+        )?;
+        let wrong_packet = finish_repair_attempt(
+            &root,
+            &first.manifest.repair_attempt_id,
+            &second_exact.packet_path,
+        );
+        match wrong_packet {
+            Err(error) if error.contains("retained agent_packet") => {}
+            other => {
+                return Err(format!(
+                    "finish accepted another attempt's retained packet: {other:?}"
+                ));
+            }
+        }
+
+        let test_path = root.join("tests/target.rs");
+        let test_parent = test_path
+            .parent()
+            .ok_or_else(|| "test path has no parent".to_string())?;
+        std::fs::create_dir_all(test_parent)
+            .map_err(|error| format!("create {} failed: {error}", test_parent.display()))?;
+        std::fs::write(&test_path, "#[test]\nfn focused() {}\n")
+            .map_err(|error| format!("write {} failed: {error}", test_path.display()))?;
+
+        let after =
+            finish_repair_attempt(&root, &first.manifest.repair_attempt_id, &exact.packet_path)?;
+        if after.attempt_id != first.manifest.repair_attempt_id
+            || !after.current
+            || after.verdict.status != crate::edit_cage::EditCageVerdictStatus::Compliant
+        {
+            return Err(format!("unexpected exact finish result: {after:?}"));
+        }
+        let (_, first_manifest) =
+            load_repair_attempt_by_id(&root, &first.manifest.repair_attempt_id)?;
+        let (_, second_manifest) =
+            load_repair_attempt_by_id(&root, &second.manifest.repair_attempt_id)?;
+        if first_manifest.state != RepairAttemptState::ReadyToFinish
+            || second_manifest.state != RepairAttemptState::AwaitingEdit
+        {
+            return Err(format!(
+                "exact finish changed the wrong attempt states: first={:?}, second={:?}",
+                first_manifest.state, second_manifest.state
+            ));
+        }
+
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
+    fn prepare_sample_attempt(
+        root: &Path,
+        seam_id: &str,
+        label: &str,
+    ) -> Result<BeginRepairAttemptResult, String> {
+        let workflow = root.join("target/ripr/workflow");
+        std::fs::create_dir_all(&workflow)
+            .map_err(|error| format!("create {} failed: {error}", workflow.display()))?;
+        let before = workflow.join(format!("before-{label}.json"));
+        let packet = workflow.join(format!("packet-{label}.json"));
+        let baseline = workflow.join(format!("baseline-{label}.json"));
+        std::fs::write(&before, b"{}")
+            .map_err(|error| format!("write {} failed: {error}", before.display()))?;
+        let packet_value = serde_json::json!({
+            "seam_id": seam_id,
+            "allowed_edit_surface": ["tests/target.rs"],
+            "forbidden_files": []
+        });
+        let packet_text = serde_json::to_string_pretty(&packet_value)
+            .map_err(|error| format!("serialize test packet failed: {error}"))?;
+        std::fs::write(&packet, packet_text.as_bytes())
+            .map_err(|error| format!("write {} failed: {error}", packet.display()))?;
+        let policy = edit_cage_policy_from_packet(&packet_text, seam_id)?;
+        write_edit_cage_baseline(root, &baseline, &policy)?;
+        begin_repair_attempt(
+            root,
+            root,
+            seam_id,
+            &[
+                BeforeArtifactSource {
+                    role: "before_snapshot",
+                    path: &before,
+                },
+                BeforeArtifactSource {
+                    role: "agent_packet",
+                    path: &packet,
+                },
+                BeforeArtifactSource {
+                    role: "edit_cage_baseline",
+                    path: &baseline,
+                },
+            ],
+        )
     }
 
     fn test_repo_root(label: &str) -> Result<PathBuf, String> {
