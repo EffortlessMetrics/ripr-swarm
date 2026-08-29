@@ -366,11 +366,13 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
         // label earned by the packet. Operational v1 boundaries still fail
         // closed, but they no longer masquerade as dynamic dispatch.
         let static_limit_projection = static_limit::for_change(packet, change, &related_evidence);
-        // The class cap tracks semantic dynamic-dispatch evidence only
-        // (pre-#3520 behavior): operational producer limitations such as
-        // `partial_emitter` keep findings advisory but never mask an earned
-        // class. Full blocking (incl. operational) gates actionability.
-        let has_boundary = static_limit_projection.blocks_class;
+        // Two distinct gates: `blocks_class` caps the exposure CLASS
+        // (semantic dynamic-dispatch evidence only), while `blocks` gates
+        // repair-shaped output (canonical gap + suggestions) — operational
+        // limitations such as `partial_emitter` must suppress repair
+        // guidance even when they do not mask an earned class (#3583 review).
+        let class_blocked = static_limit_projection.blocks_class;
+        let actionability_blocked = static_limit_projection.blocks;
 
         // Build the projected RelatedTests from the packet evidence. The test
         // FILE comes from `ev.test_path` (resolved from test.file_id), never
@@ -423,7 +425,7 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
         // established-sink-alignment Exposed promotion; we downgrade advisory
         // relations and override to StaticUnknown on a blocking boundary.
         let sink_aligned_evidence = sink_aligned_observation(&related_evidence, change, packet);
-        let class = if has_boundary {
+        let class = if class_blocked {
             ExposureClass::StaticUnknown
         } else if related.is_empty() {
             ExposureClass::NoStaticPath
@@ -473,7 +475,7 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
         // limits stay fail-closed: they may explain why classification is
         // unknown, but they must not produce repair-shaped gap identities.
         let canonical_gap: Option<FindingCanonicalGap> =
-            if has_concrete_discriminator && !is_already_observed && !has_boundary {
+            if has_concrete_discriminator && !is_already_observed && !actionability_blocked {
                 packet
                     .canonical_gap_identity_for_change_with_assertion_shape(
                         &change.change_id,
@@ -518,7 +520,7 @@ fn packet_to_findings(packet: &PerlFactPacket) -> Vec<crate::domain::Finding> {
                 aligned.test_name, aligned.observed_sink, aligned.oracle_shape
             ));
         } else if !is_already_observed
-            && !has_boundary
+            && !actionability_blocked
             && has_concrete_discriminator
             && let Some(first) = related.first()
         {
