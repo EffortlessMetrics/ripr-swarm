@@ -600,6 +600,27 @@ fn outer_after() {
         "same-scope conflicting module aliases must fail closed"
     );
 
+    // An inline one-liner `mod nested { ... }` records the parent module
+    // depth before its opening brace, so the alias must fail closed on that
+    // line rather than credit the parent binding (#3544 review).
+    let inline_nested = module_import_aliases(
+        "use crate::only_here as unique;
+mod nested { fn call() { unique::compute(); } }
+fn outer_call() { unique::compute(); }",
+    );
+    let inline_unique = inline_nested
+        .get("unique")
+        .ok_or_else(|| "inline nested alias should be indexed".to_string())?;
+    assert!(
+        inline_unique.module_path_at(2).is_none(),
+        "an inline nested-module opening line must not resolve the parent alias"
+    );
+    assert_eq!(
+        inline_unique.module_path_at(3),
+        Some("only_here"),
+        "calls after the inline module still resolve the parent alias"
+    );
+
     // The shared lexical scanner narrows a block-local module alias to its
     // own block instead of publishing it file-wide.
     let block_local = module_import_aliases(
