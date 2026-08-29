@@ -246,7 +246,18 @@ pub(crate) fn build_report(
         producer: "xtask specs maintenance".to_string(),
         as_of: as_of.to_string(),
         history,
-        denominator: Denominator { discoverable: included.len() + omitted.len(), included: included.len(), omitted },
+        // A present file counts toward the discoverable denominator; the
+        // synthetic missing-index record documents an absent input and must
+        // not inflate the count of documents the scan saw.
+        denominator: Denominator {
+            discoverable: included.len()
+                + omitted
+                    .iter()
+                    .filter(|input| input.reason != "spec-index-missing")
+                    .count(),
+            included: included.len(),
+            omitted,
+        },
         status_counts,
         specs: included,
         reason_counts,
@@ -404,10 +415,20 @@ fn build_row(
     let mut reasons = Vec::new();
     let mut evidence = vec![path.to_string()];
     let mut limitations = Vec::new();
-    if !text.to_ascii_lowercase().contains("review") {
+    // Reasons are derived from document structure — headings — rather than
+    // bare token presence anywhere in the text (token coincidence clears a
+    // spec for an unrelated mention and flags one for a link target).
+    let headings: Vec<&str> = text.lines().filter(|line| line.starts_with('#')).collect();
+    let has_review_heading = headings
+        .iter()
+        .any(|heading| heading.to_ascii_lowercase().contains("review"));
+    if !has_review_heading {
         reasons.push("never_reviewed".to_string());
     }
-    if status.eq_ignore_ascii_case("accepted") && !text.to_ascii_lowercase().contains("test") {
+    let has_test_mapping_heading = headings
+        .iter()
+        .any(|heading| heading.trim().eq_ignore_ascii_case("## test mapping"));
+    if status.eq_ignore_ascii_case("accepted") && !has_test_mapping_heading {
         reasons.push("accepted_without_current_or_planned_test_mapping".to_string());
     }
     for link in markdown_links(text) {
@@ -468,7 +489,13 @@ fn markdown_links(text: &str) -> Vec<String> {
         .skip(1)
         .filter_map(|part| part.split(')').next())
         .filter(|link| !link.starts_with('#') && !link.contains("://"))
-        .map(str::to_string)
+        // A link target may carry a title (`path "Title"`) and a fragment
+        // (`path#section`); existence is judged on the bare path only.
+        .map(|link| {
+            let bare = link.split_whitespace().next().unwrap_or_default();
+            bare.split('#').next().unwrap_or_default().to_string()
+        })
+        .filter(|link| !link.is_empty())
         .collect()
 }
 
@@ -601,6 +628,53 @@ mod tests {
             .contains(&"history_unavailable".to_string())
         {
             return Err("available history was reported as unavailable".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn periodic_attention_threshold_is_pinned_at_365_days() -> Result<(), String> {
+        let build = |last_changed: &str| -> Result<(bool,), String> {
+            let root = fixture_root()?;
+            let relative = "docs/specs/RIPR-SPEC-9999-example.md";
+            fs::write(
+                root.join(&relative),
+                format!(
+                    "# Example
+
+## Review
+2026-01-02 reviewer note
+
+Status: proposed
+"
+                ),
+            )
+            .map_err(|error| error.to_string())?;
+            let mut history = HistoryInput {
+                repository_available: true,
+                source: "fixture".to_string(),
+                ..HistoryInput::default()
+            };
+            history
+                .last_changed
+                .insert(relative.to_string(), last_changed.to_string());
+            let report = build_report(&root, "2026-08-27", &history)?;
+            let row = report
+                .specs
+                .first()
+                .ok_or_else(|| "missing fixture row".to_string())?;
+            Ok((row
+                .reason_codes
+                .contains(&"periodic_attention_due".to_string()),))
+        };
+
+        let at_threshold = build("2025-08-27")?.0;
+        let below_threshold = build("2025-08-28")?.0;
+        if !at_threshold {
+            return Err("365 days did not trigger periodic_attention_due".to_string());
+        }
+        if below_threshold {
+            return Err("364 days unexpectedly triggered periodic_attention_due".to_string());
         }
         Ok(())
     }

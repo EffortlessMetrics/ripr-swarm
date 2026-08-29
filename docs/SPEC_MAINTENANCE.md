@@ -7,7 +7,14 @@ versioned JSON DTO to standard output.
 
 The report covers every discoverable spec file — `RIPR-SPEC-NNNN.md` or the repository's canonical `RIPR-SPEC-NNNN-slug.md` shape, parsed by the same identifier rule the spec gates use. Other
 Markdown files below `docs/specs/` are listed as omitted, with the reason they
-are not part of the discoverable denominator. Required-spec read or UTF-8
+are not part of the discoverable denominator. A missing `docs/specs/README.md`
+index is likewise recorded as an omitted input with reason
+`spec-index-missing`; unlike present files it does not inflate the
+discoverable count, because no document was actually scanned. Reason codes
+come from document structure (headings) rather than token presence: a spec
+with no review-bearing heading is `never_reviewed`, and an accepted spec
+without a `## Test Mapping` heading is
+`accepted_without_current_or_planned_test_mapping`. Required-spec read or UTF-8
 errors are instrument failures and return a nonzero status.
 
 Each row includes the spec ID and path, a SHA-256 content digest, observed
