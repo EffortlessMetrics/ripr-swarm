@@ -4,10 +4,10 @@
   "mode": "fast",
   "root": "fixtures/binding_value_family_matrix/input",
   "base": "origin/main",
-  "summary": {"changed_rust_files":1,"probes":4,"findings":4,"exposed":1,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":3,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "summary": {"changed_rust_files":1,"probes":6,"findings":6,"exposed":1,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":5,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,
-    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":"origin/main","input_identity":"sha256:9c8944593a22d765e1c518c0e292e2f5e3b9cc7596819a56ff2574498b6419fb","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":8,"candidate_line_count":4,"probe_count":4,"finding_count":4},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":"origin/main","input_identity":"sha256:bd4cae4818dc6e361da554b5c65b5e9ee27d2079824f745352ae53ecf249bfa4","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":12,"candidate_line_count":6,"probe_count":6,"finding_count":6},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
   },
   "findings": [
     {
@@ -329,19 +329,23 @@
         "expression": "next == 4"
        },
       "ripr": {
-        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach bump: checked_add_boundary_is_observed"},
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach bump: chars_next_back_boundary_is_observed, chars_next_back_fallback_is_observed, chars_next_boundary_is_observed"},
         "infect": {"state":"yes","confidence":"medium","summary":"Detected related test input at the changed boundary"},
         "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"high","summary":"Only relational oracle found; it may not discriminate the changed value exactly"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach bump: checked_add_boundary_is_observed", "infection yes: Detected related test input at the changed boundary", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly", "related test tests/matrix.rs:24 checked_add_boundary_is_observed uses weak relational check oracle: assert!(bump(3));", "observed function argument value base = 3 at line 25", "observed function argument value next == 4 at line 25"],
+      "evidence_path": ["reach yes: Related tests appear to reach bump: chars_next_back_boundary_is_observed, chars_next_back_fallback_is_observed, chars_next_boundary_is_observed", "infection yes: Detected related test input at the changed boundary", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly", "related test tests/matrix.rs:39 chars_next_back_boundary_is_observed uses weak relational check oracle: assert!(tail(\"box\"));", "related test tests/matrix.rs:44 chars_next_back_fallback_is_observed uses weak relational check oracle: assert!(tail(\"\"));", "related test tests/matrix.rs:29 chars_next_boundary_is_observed uses weak relational check oracle: assert!(!head(\"fix\"));", "related test tests/matrix.rs:34 chars_next_fallback_is_observed uses weak relational check oracle: assert!(head(\"\"));", "related test tests/matrix.rs:24 checked_add_boundary_is_observed uses weak relational check oracle: assert!(bump(3));", "observed function argument value base = 3 at line 25", "observed function argument value next == 4 at line 25", "observed assertion argument value \"fix\" at line 30", "observed assertion argument value \"\" at line 35", "observed assertion argument value \"box\" at line 40", "observed assertion argument value \"\" at line 45"],
       "flow_sinks": [
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Detected related test input at the changed boundary", "Only relational oracle found; it may not discriminate the changed value exactly", "Propagation is not statically obvious from syntax-first analysis", "Related tests appear to reach bump: checked_add_boundary_is_observed", "binding_predicate_relation: changed binding `next` initializer `base.checked_add(1).map_or(0, |v| v)` -> `base.checked_add(1).map_or(4, |v| v)` flows into predicate operand at line 22", "binding_predicate_value_unresolved: operand value of `next` unresolved at earliest initializer operation `base.checked_add(`", "binding_predicate_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Detected related test input at the changed boundary", "Only relational oracle found; it may not discriminate the changed value exactly", "Propagation is not statically obvious from syntax-first analysis", "Related tests appear to reach bump: chars_next_back_boundary_is_observed, chars_next_back_fallback_is_observed, chars_next_boundary_is_observed", "binding_predicate_relation: changed binding `next` initializer `base.checked_add(1).map_or(0, |v| v)` -> `base.checked_add(1).map_or(4, |v| v)` flows into predicate operand at line 22", "binding_predicate_value_unresolved: operand value of `next` unresolved at earliest initializer operation `base.checked_add(`", "binding_predicate_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"],
       "missing": ["No clear propagation path from changed behavior to an observable sink", "No strong discriminator was detected"],
       "assertion_texts": {
-        "25": "assert!(bump(3));"
+        "25": "assert!(bump(3));",
+        "30": "assert!(!head(\"fix\"));",
+        "35": "assert!(head(\"\"));",
+        "40": "assert!(tail(\"box\"));",
+        "45": "assert!(tail(\"\"));"
       },
       "activation": {
         "observed_values": [
@@ -355,6 +359,26 @@
             "value": "next == 4",
             "context": "function_argument",
             "provenance": "assert!(bump(3)); | next = 4 via checked_add -> map_or over base = 3 (chain depth 2); literal operand 4 = 4"
+          },
+          {
+            "line": 30,
+            "value": "\"fix\"",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 35,
+            "value": "\"\"",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 40,
+            "value": "\"box\"",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 45,
+            "value": "\"\"",
+            "context": "assertion_argument"
           }
         ],
         "missing_discriminators": [
@@ -371,12 +395,72 @@
           "value": "next == 4",
           "context": "function_argument",
           "provenance": "assert!(bump(3)); | next = 4 via checked_add -> map_or over base = 3 (chain depth 2); literal operand 4 = 4"
+        },
+        {
+          "line": 30,
+          "value": "\"fix\"",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 35,
+          "value": "\"\"",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 40,
+          "value": "\"box\"",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 45,
+          "value": "\"\"",
+          "context": "assertion_argument"
         }
       ],
       "missing_discriminators": [
       ],
-      "related_tests_total": 1,
+      "related_tests_total": 5,
       "related_tests": [
+        {
+          "name": "chars_next_back_boundary_is_observed",
+          "file": "tests/matrix.rs",
+          "line": 39,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(tail(\"box\"));",
+          "relation_reason": "weak_token_substring",
+          "relation_confidence": "low"
+        },
+        {
+          "name": "chars_next_back_fallback_is_observed",
+          "file": "tests/matrix.rs",
+          "line": 44,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(tail(\"\"));",
+          "relation_reason": "weak_token_substring",
+          "relation_confidence": "low"
+        },
+        {
+          "name": "chars_next_boundary_is_observed",
+          "file": "tests/matrix.rs",
+          "line": 29,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(!head(\"fix\"));",
+          "relation_reason": "weak_token_substring",
+          "relation_confidence": "low"
+        },
+        {
+          "name": "chars_next_fallback_is_observed",
+          "file": "tests/matrix.rs",
+          "line": 34,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(head(\"\"));",
+          "relation_reason": "weak_token_substring",
+          "relation_confidence": "low"
+        },
         {
           "name": "checked_add_boundary_is_observed",
           "file": "tests/matrix.rs",
@@ -384,6 +468,222 @@
           "oracle_strength": "weak",
           "oracle_kind": "relational_check",
           "oracle": "assert!(bump(3));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["propagation_evidence_unknown"],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "weak",
+      "recommended_next_step": "Escalate to real mutation testing or deep static analysis for this probe.",
+      "suggested_next_action": "Escalate to real mutation testing or deep static analysis for this probe.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:predicate:3d37b6f6",
+      "classification": "propagation_unknown",
+      "severity": "note",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:3d37b6f6",
+        "family": "predicate",
+        "delta": "control",
+        "file": "fixtures/binding_value_family_matrix/input/src/lib.rs",
+        "line": 27,
+        "expression": "first == 'x'"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach head: chars_next_boundary_is_observed, chars_next_fallback_is_observed"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Detected related test input at the changed boundary"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"high","summary":"Only relational oracle found; it may not discriminate the changed value exactly"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach head: chars_next_boundary_is_observed, chars_next_fallback_is_observed", "infection yes: Detected related test input at the changed boundary", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly", "related test tests/matrix.rs:29 chars_next_boundary_is_observed uses weak relational check oracle: assert!(!head(\"fix\"));", "related test tests/matrix.rs:34 chars_next_fallback_is_observed uses weak relational check oracle: assert!(head(\"\"));", "observed function argument value label = \"fix\" at line 30", "observed function argument value first == 'x' at line 35", "observed function argument value label = \"\" at line 35"],
+      "flow_sinks": [
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Detected related test input at the changed boundary", "Only relational oracle found; it may not discriminate the changed value exactly", "Propagation is not statically obvious from syntax-first analysis", "Related tests appear to reach head: chars_next_boundary_is_observed, chars_next_fallback_is_observed", "binding_predicate_relation: changed binding `first` initializer `label.chars().next().map_or('?', |c| c)` -> `label.chars().next().map_or('x', |c| c)` flows into predicate operand at line 27", "binding_predicate_value_unresolved: operand value of `first` unresolved at earliest initializer operation `.chars(`", "binding_predicate_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"],
+      "missing": ["No clear propagation path from changed behavior to an observable sink", "No strong discriminator was detected"],
+      "assertion_texts": {
+        "30": "assert!(!head(\"fix\"));",
+        "35": "assert!(head(\"\")); | first = 'x' via chars -> next -> map_or over label = \"\" (chain depth 3); literal operand 'x' = 'x'"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 30,
+            "value": "label = \"fix\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 35,
+            "value": "first == 'x'",
+            "context": "function_argument"
+          },
+          {
+            "line": 35,
+            "value": "label = \"\"",
+            "context": "function_argument",
+            "provenance": "assert!(head(\"\"));"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 30,
+          "value": "label = \"fix\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 35,
+          "value": "first == 'x'",
+          "context": "function_argument"
+        },
+        {
+          "line": 35,
+          "value": "label = \"\"",
+          "context": "function_argument",
+          "provenance": "assert!(head(\"\"));"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "chars_next_boundary_is_observed",
+          "file": "tests/matrix.rs",
+          "line": 29,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(!head(\"fix\"));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "chars_next_fallback_is_observed",
+          "file": "tests/matrix.rs",
+          "line": 34,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(head(\"\"));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["propagation_evidence_unknown"],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "weak",
+      "recommended_next_step": "Escalate to real mutation testing or deep static analysis for this probe.",
+      "suggested_next_action": "Escalate to real mutation testing or deep static analysis for this probe.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:predicate:33f2d6c2",
+      "classification": "propagation_unknown",
+      "severity": "note",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:33f2d6c2",
+        "family": "predicate",
+        "delta": "control",
+        "file": "fixtures/binding_value_family_matrix/input/src/lib.rs",
+        "line": 32,
+        "expression": "last == 'x'"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach tail: chars_next_back_boundary_is_observed, chars_next_back_fallback_is_observed"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Detected related test input at the changed boundary"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"high","summary":"Only relational oracle found; it may not discriminate the changed value exactly"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach tail: chars_next_back_boundary_is_observed, chars_next_back_fallback_is_observed", "infection yes: Detected related test input at the changed boundary", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly", "related test tests/matrix.rs:39 chars_next_back_boundary_is_observed uses weak relational check oracle: assert!(tail(\"box\"));", "related test tests/matrix.rs:44 chars_next_back_fallback_is_observed uses weak relational check oracle: assert!(tail(\"\"));", "observed function argument value label = \"box\" at line 40", "observed function argument value last == 'x' at line 40", "observed function argument value label = \"\" at line 45", "observed function argument value last == 'x' at line 45"],
+      "flow_sinks": [
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Detected related test input at the changed boundary", "Only relational oracle found; it may not discriminate the changed value exactly", "Propagation is not statically obvious from syntax-first analysis", "Related tests appear to reach tail: chars_next_back_boundary_is_observed, chars_next_back_fallback_is_observed", "binding_predicate_relation: changed binding `last` initializer `label.chars().next_back().map_or('?', |c| c)` -> `label.chars().next_back().map_or('x', |c| c)` flows into predicate operand at line 32", "binding_predicate_value_unresolved: operand value of `last` unresolved at earliest initializer operation `.chars(`", "binding_predicate_non_claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test"],
+      "missing": ["No clear propagation path from changed behavior to an observable sink", "No strong discriminator was detected"],
+      "assertion_texts": {
+        "40": "assert!(tail(\"box\"));",
+        "45": "assert!(tail(\"\"));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 40,
+            "value": "label = \"box\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 40,
+            "value": "last == 'x'",
+            "context": "function_argument",
+            "provenance": "assert!(tail(\"box\")); | last = 'x' via chars -> next_back -> map_or over label = \"box\" (chain depth 3); literal operand 'x' = 'x'"
+          },
+          {
+            "line": 45,
+            "value": "label = \"\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 45,
+            "value": "last == 'x'",
+            "context": "function_argument",
+            "provenance": "assert!(tail(\"\")); | last = 'x' via chars -> next_back -> map_or over label = \"\" (chain depth 3); literal operand 'x' = 'x'"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 40,
+          "value": "label = \"box\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 40,
+          "value": "last == 'x'",
+          "context": "function_argument",
+          "provenance": "assert!(tail(\"box\")); | last = 'x' via chars -> next_back -> map_or over label = \"box\" (chain depth 3); literal operand 'x' = 'x'"
+        },
+        {
+          "line": 45,
+          "value": "label = \"\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 45,
+          "value": "last == 'x'",
+          "context": "function_argument",
+          "provenance": "assert!(tail(\"\")); | last = 'x' via chars -> next_back -> map_or over label = \"\" (chain depth 3); literal operand 'x' = 'x'"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "chars_next_back_boundary_is_observed",
+          "file": "tests/matrix.rs",
+          "line": 39,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(tail(\"box\"));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "chars_next_back_fallback_is_observed",
+          "file": "tests/matrix.rs",
+          "line": 44,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(tail(\"\"));",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high"
         }

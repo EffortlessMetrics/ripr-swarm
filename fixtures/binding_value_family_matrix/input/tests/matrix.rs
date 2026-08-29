@@ -1,4 +1,4 @@
-use bv::{body_of, bump, gate, within};
+use bv::{body_of, bump, gate, head, tail, within};
 
 #[test]
 fn strip_prefix_boundary_is_observed() {
@@ -23,4 +23,24 @@ fn len_boundary_is_observed() {
 #[test]
 fn checked_add_boundary_is_observed() {
     assert!(bump(3));
+}
+
+#[test]
+fn chars_next_boundary_is_observed() {
+    assert!(!head("fix"));
+}
+
+#[test]
+fn chars_next_fallback_is_observed() {
+    assert!(head(""));
+}
+
+#[test]
+fn chars_next_back_boundary_is_observed() {
+    assert!(tail("box"));
+}
+
+#[test]
+fn chars_next_back_fallback_is_observed() {
+    assert!(tail(""));
 }

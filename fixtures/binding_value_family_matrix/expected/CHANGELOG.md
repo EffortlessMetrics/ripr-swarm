@@ -71,3 +71,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending
+
+Reason:
+RIPR-SPEC-0158 (#3215 acceptance): add chars().next()/chars().next_back() parser-helper families to the binding_value_family_matrix matrix — two new boundary predicates observed from exact test inputs through the bounded value-transfer chain (provenance retained); existing four families unchanged
+
+Command:
+`cargo xtask goldens bless binding_value_family_matrix --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
