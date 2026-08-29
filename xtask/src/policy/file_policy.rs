@@ -178,14 +178,16 @@ mod tests {
     #[test]
     fn test_covered_by_preserves_enumeration_diagnostics() -> Result<(), String> {
         let commands = [(19, "cargo test -p xtask missing-filter".to_string())];
-        let error = validate_test_covered_by_with("policy.toml", &commands, |_| {
+        let error = match validate_test_covered_by_with("policy.toml", &commands, |_| {
             Ok((
                 false,
                 "compiler stdout".to_string(),
                 "runner stderr".to_string(),
             ))
-        })
-        .expect_err("failed enumeration should remain fail-closed");
+        }) {
+            Ok(()) => return Err("failed enumeration did not remain fail-closed".to_string()),
+            Err(error) => error,
+        };
 
         if error.contains("cargo test -p xtask missing-filter")
             && error.contains("compiler stdout")
