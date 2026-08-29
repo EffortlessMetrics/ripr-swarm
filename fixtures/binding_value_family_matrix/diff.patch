@@ -13,3 +13,9 @@ diff --git a/src/lib.rs b/src/lib.rs
 @@ -21,1 +21,1 @@
 -    let next = base.checked_add(1).map_or(0, |v| v);
 +    let next = base.checked_add(1).map_or(4, |v| v);
+@@ -26,1 +26,1 @@
+-    let first = label.chars().next().map_or('?', |c| c);
++    let first = label.chars().next().map_or('x', |c| c);
+@@ -31,1 +31,1 @@
+-    let last = label.chars().next_back().map_or('?', |c| c);
++    let last = label.chars().next_back().map_or('x', |c| c);
