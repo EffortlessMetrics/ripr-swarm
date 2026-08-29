@@ -14,7 +14,7 @@ are scoped or reviewed.
 - Rust source-role analysis now classifies source-visible `cfg` and
   `cfg_attr` predicates through one closed authority shared by the parser
   producer and the facts normalizer. Nested `test` conjunctions in
-  `#[cfg(all(...))]` earn the evidence role at any nesting depth and any
+  `#[cfg(all(...))]` earn the evidence role at nesting depths within the supported bound (deeper predicates fail closed) and any
   conjunct order, whitespace and multi-line attribute spellings no longer
   lose a producer-granted role in the normalizer, and `cfg_attr`
   introductions never promote production code to test-only. Alternatives,

@@ -239,8 +239,15 @@ fn is_inside_cfg_test_module(source: &str, function_start_line: usize) -> bool {
 /// line, and how many lines the attribute spans. `None` (no complete
 /// attribute) fails closed with no gate credit.
 fn join_leading_attribute(lines: &[&str]) -> Option<(String, String, usize)> {
+    // An unclosed `#[` must not swallow the rest of the file: real
+    // attributes span a handful of lines, so past this bound the walk fails
+    // closed for the candidate instead of joining unrelated lines.
+    const MAX_JOINED_LINES: usize = 32;
     let mut joined = String::new();
     for (offset, line) in lines.iter().enumerate() {
+        if offset >= MAX_JOINED_LINES {
+            return None;
+        }
         joined.push_str(line);
         joined.push('\n');
         if let Some((attribute, remainder)) = cfg_predicates::split_leading_attribute(&joined) {

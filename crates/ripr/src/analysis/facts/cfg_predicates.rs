@@ -217,8 +217,10 @@ fn classify_predicate_at_depth(tokens: &[Token], depth: usize) -> CfgTestRequire
                 "any" => branches.into_iter().fold(Independent, disjunctive),
                 "not" => {
                     // Negation can never structurally require test; an
-                    // unreadable operand stays unknown.
-                    match classify_predicate(inner) {
+                    // unreadable operand stays unknown. The operand shares
+                    // this frame's depth budget so chained `not`s cannot
+                    // restart the recursion counter.
+                    match classify_predicate_at_depth(inner, depth) {
                         Unknown => Unknown,
                         _ => Independent,
                     }
