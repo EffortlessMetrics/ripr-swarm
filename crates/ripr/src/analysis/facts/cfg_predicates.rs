@@ -156,7 +156,14 @@ pub(crate) fn split_leading_attribute(text: &str) -> Option<(&str, &str)> {
         return None;
     }
     let attribute_start = text.len() - leading.len();
-    let tokens = positioned_tokens(text)?;
+    // The line often continues after the attribute (`#[cfg(test)] mod
+    // módulos {`), and the remainder may hold non-ASCII Rust syntax the
+    // fail-closed lexer cannot traverse. Bound the lexing to the attribute
+    // itself: find its closing bracket with a string-aware byte scan, then
+    // lex only those bytes.
+    let end = attribute_start + leading_attribute_byte_len(leading)?;
+    let attribute = text.get(attribute_start..end)?;
+    let tokens = positioned_tokens(attribute)?;
     let mut depth = 0usize;
     for positioned in &tokens {
         match positioned.token {
@@ -170,6 +177,49 @@ pub(crate) fn split_leading_attribute(text: &str) -> Option<(&str, &str)> {
                 }
             }
             _ => {}
+        }
+    }
+    None
+}
+
+/// Byte length of the leading `#[...]` attribute, tracking bracket depth
+/// with string-literal awareness (raw-string hashes are inert to depth).
+/// Returns `None` when the brackets never balance.
+fn leading_attribute_byte_len(text: &str) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let mut index = 0usize;
+    let mut depth = 0usize;
+    let mut in_string: Option<u8> = None;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if let Some(quote) = in_string {
+            match byte {
+                b'\' => index += 2,
+                _ if byte == quote => {
+                    in_string = None;
+                    index += 1;
+                }
+                _ => index += 1,
+            }
+            continue;
+        }
+        match byte {
+            b'"' | b''' => {
+                in_string = Some(byte);
+                index += 1;
+            }
+            b'[' | b'(' => {
+                depth += 1;
+                index += 1;
+            }
+            b']' | b')' => {
+                depth = depth.checked_sub(1)?;
+                index += 1;
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => index += 1,
         }
     }
     None
