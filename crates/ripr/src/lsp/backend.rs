@@ -42,7 +42,11 @@ use super::{
 use crate::agent::loop_commands;
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::cancellation::{AnalysisAbortKind, is_cancellation_error};
-use crate::config::LspDiagnosticProfile;
+use crate::config::{
+    CONFIG_FILE_NAME, LspDiagnosticProfile, PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS,
+    is_detectable_python_source_name, is_python_project_excluded_dir, python_project_marker_name,
+    python_source_dir_marker_name,
+};
 use crate::domain::context_packet::ContextPacket;
 use crate::domain::{StageEvidence, StageState};
 use crate::lsp::diagnostic_budget::DiagnosticDeliveryOutcome;
@@ -2206,23 +2210,27 @@ impl Backend {
             .is_some_and(|uri| file_uris_match(&uri, &event.uri))
     }
 
-    fn file_event_is_workspace_manifest_or_lockfile(&self, event: &FileEvent) -> bool {
-        let Some(root) = self.effective_root() else {
-            return false;
-        };
-        let Some(path) = path_from_file_uri(&event.uri) else {
-            return false;
-        };
-        workspace_input_path_is_relevant(&root, &path)
+    fn file_event_workspace_input_kind(&self, event: &FileEvent) -> Option<WorkspaceInputKind> {
+        let root = self.effective_root()?;
+        let path = path_from_file_uri(&event.uri)?;
+        if !workspace_input_path_is_relevant(&root, &path) {
+            return None;
+        }
+        workspace_input_kind(&root, &path)
     }
 
     pub(super) fn watched_file_change_kinds(&self, changes: &[FileEvent]) -> (bool, bool) {
-        let config_changed = changes
+        let mut config_changed = changes
             .iter()
             .any(|event| self.file_event_is_repository_config(event));
-        let workspace_graph_changed = changes
-            .iter()
-            .any(|event| self.file_event_is_workspace_manifest_or_lockfile(event));
+        let mut workspace_graph_changed = false;
+        for event in changes {
+            let Some(kind) = self.file_event_workspace_input_kind(event) else {
+                continue;
+            };
+            config_changed |= kind.reloads_repository_config();
+            workspace_graph_changed |= kind.invalidates_workspace_graph();
+        }
         (config_changed, workspace_graph_changed)
     }
 
@@ -2563,12 +2571,323 @@ impl Backend {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WorkspaceInputKind {
+    CargoGraph,
+    /// Canonical root Python project-marker file: the first no-config
+    /// detection input class (#3503).
+    PythonProjectMarker,
+    /// Detectable Python source below a root `src`/`tests` directory: the
+    /// second no-config detection input class (#3553). Watched through
+    /// detectable-file events because watched-file globs cannot express
+    /// directory presence.
+    PythonSourcePresence,
+}
+
+impl WorkspaceInputKind {
+    fn reloads_repository_config(self) -> bool {
+        matches!(self, Self::PythonProjectMarker | Self::PythonSourcePresence)
+    }
+
+    fn invalidates_workspace_graph(self) -> bool {
+        matches!(self, Self::CargoGraph)
+    }
+}
+
+fn path_matches_root_file(root: &Path, path: &Path, file_name: &str) -> bool {
+    let Ok(expected) = file_uri_for_path(&root.join(file_name)) else {
+        return false;
+    };
+    let Ok(actual) = file_uri_for_path(path) else {
+        return false;
+    };
+    file_uris_match(&expected, &actual)
+}
+
+fn workspace_input_kind(root: &Path, path: &Path) -> Option<WorkspaceInputKind> {
+    if !path_is_within_root(root, path) {
+        return None;
+    }
+    let name = path.file_name().and_then(|name| name.to_str())?;
+    if matches!(name, "Cargo.toml" | "Cargo.lock") {
+        return Some(WorkspaceInputKind::CargoGraph);
+    }
+    if let Some(marker) = python_project_marker_name(name)
+        && path_matches_root_file(root, path, marker)
+    {
+        return Some(WorkspaceInputKind::PythonProjectMarker);
+    }
+    path_is_detectable_source_dir_python(root, path)
+        .then_some(WorkspaceInputKind::PythonSourcePresence)
+}
+
+/// Whether `path` resolves below the workspace root to a detectable Python
+/// source file directly under a root source-directory marker (`src` or
+/// `tests`), classified with the canonical detector vocabulary —
+/// source-directory marker, excluded directories, generated file names,
+/// `.py` extension. Presence-only: the file is never read, so deleted files
+/// classify the same as created ones.
+fn path_is_detectable_source_dir_python(root: &Path, path: &Path) -> bool {
+    let Some(relative) = root_relative_components(root, path) else {
+        return false;
+    };
+    let Some((marker, below)) = relative.split_first() else {
+        return false;
+    };
+    if python_source_dir_marker_name(marker).is_none() {
+        return false;
+    }
+    let Some((file_name, directories)) = below.split_last() else {
+        return false;
+    };
+    directories
+        .iter()
+        .all(|dir| !is_python_project_excluded_dir(dir))
+        && is_detectable_python_source_name(file_name)
+}
+
+/// Root-relative components of `path` when `path` sits below `root`. Root
+/// components compare with the platform path rule (case-insensitive on
+/// Windows), mirroring the LSP URI authority's containment rule; `.` and
+/// `..` segments resolve before classification; non-UTF-8 components fail
+/// closed.
+fn root_relative_components(root: &Path, path: &Path) -> Option<Vec<String>> {
+    fn component_names(path: &Path) -> Vec<Option<String>> {
+        path.components()
+            .filter(|component| {
+                !matches!(
+                    component,
+                    std::path::Component::Prefix(_) | std::path::Component::RootDir
+                )
+            })
+            .map(|component| component.as_os_str().to_str().map(str::to_string))
+            .collect()
+    }
+
+    let root_names = component_names(root);
+    let path_names = component_names(path);
+    if path_names.len() < root_names.len() {
+        return None;
+    }
+    for (expected, actual) in root_names.iter().zip(path_names.iter()) {
+        let (Some(expected), Some(actual)) = (expected, actual) else {
+            return None;
+        };
+        let matched = if cfg!(windows) {
+            expected.eq_ignore_ascii_case(actual)
+        } else {
+            expected == actual
+        };
+        if !matched {
+            return None;
+        }
+    }
+    let mut relative = Vec::new();
+    for name in &path_names[root_names.len()..] {
+        let Some(name) = name else {
+            return None;
+        };
+        if name == "." {
+            continue;
+        }
+        if name == ".." {
+            relative.pop();
+            continue;
+        }
+        relative.push(name.clone());
+    }
+    Some(relative)
+}
+
+/// Return whether a watched path can change the effective analysis input.
+/// Cargo inputs remain recursive for workspace members. The Python inputs
+/// are root-scoped — root marker presence and detectable `.py` source below
+/// root `src`/`tests` are what this reload path tracks; Python outside those
+/// roots is not a detection input and stays unwatched.
 pub(super) fn workspace_input_path_is_relevant(root: &Path, path: &Path) -> bool {
-    path_is_within_root(root, path)
-        && path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| matches!(name, "Cargo.toml" | "Cargo.lock"))
+    workspace_input_kind(root, path).is_some()
+}
+
+fn workspace_input_watchers() -> Vec<LSPAny> {
+    std::iter::once(CONFIG_FILE_NAME)
+        .chain(["Cargo.toml", "Cargo.lock"])
+        .chain(PYTHON_PROJECT_MARKERS.iter().copied())
+        .map(|name| serde_json::json!({"globPattern": format!("**/{name}")}))
+        .chain(PYTHON_SOURCE_DIR_MARKERS.iter().map(|dir| {
+            // Root-scoped relative glob: relative patterns resolve against
+            // the workspace root and `**` matches zero or more segments, so
+            // this covers `<root>/dir/**/*.py` only — never a workspace-wide
+            // `**/*.py` watcher. Directory presence itself is not watchable;
+            // detectable-file events are the transport hint, and the reload
+            // path's config comparison stays the semantic authority.
+            serde_json::json!({"globPattern": format!("{dir}/**/*.py")})
+        }))
+        .collect()
+}
+
+#[cfg(test)]
+mod workspace_input_tests {
+    use super::*;
+    use crate::config::PYTHON_PROJECT_EXCLUDED_DIRS;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn python_project_markers_reload_configuration_and_stay_root_scoped() -> Result<(), String> {
+        let root = std::env::temp_dir().join("ripr-workspace-input-root");
+        let outside = std::env::temp_dir().join("ripr-workspace-input-outside");
+
+        for marker in PYTHON_PROJECT_MARKERS {
+            let root_marker = root.join(marker);
+            assert_eq!(
+                workspace_input_kind(&root, &root_marker),
+                Some(WorkspaceInputKind::PythonProjectMarker),
+                "root marker {marker}"
+            );
+            assert!(workspace_input_path_is_relevant(&root, &root_marker));
+            assert_eq!(
+                workspace_input_kind(&root, &root.join("nested").join(marker)),
+                None,
+                "nested marker {marker} is not consumed by root detection"
+            );
+            assert_eq!(
+                workspace_input_kind(&root, &outside.join(marker)),
+                None,
+                "outside marker {marker}"
+            );
+        }
+
+        assert!(WorkspaceInputKind::PythonProjectMarker.reloads_repository_config());
+        assert!(!WorkspaceInputKind::PythonProjectMarker.invalidates_workspace_graph());
+        Ok(())
+    }
+
+    #[test]
+    fn cargo_workspace_inputs_remain_recursive_and_graph_scoped() -> Result<(), String> {
+        let root = std::env::temp_dir().join("ripr-workspace-input-root");
+        let outside = std::env::temp_dir().join("ripr-workspace-input-outside");
+
+        for name in ["Cargo.toml", "Cargo.lock"] {
+            let member_input = root.join("member").join(name);
+            assert_eq!(
+                workspace_input_kind(&root, &member_input),
+                Some(WorkspaceInputKind::CargoGraph)
+            );
+            assert!(workspace_input_path_is_relevant(&root, &member_input));
+            assert_eq!(workspace_input_kind(&root, &outside.join(name)), None);
+        }
+
+        assert!(!WorkspaceInputKind::CargoGraph.reloads_repository_config());
+        assert!(WorkspaceInputKind::CargoGraph.invalidates_workspace_graph());
+        assert_eq!(
+            workspace_input_kind(&root, &root.join("package.json")),
+            None
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn python_source_under_src_or_tests_is_a_configuration_input() -> Result<(), String> {
+        let root = std::env::temp_dir().join("ripr-workspace-input-root");
+        let outside = std::env::temp_dir().join("ripr-workspace-input-outside");
+
+        for dir in PYTHON_SOURCE_DIR_MARKERS {
+            let source_file = root.join(dir).join("app.py");
+            assert_eq!(
+                workspace_input_kind(&root, &source_file),
+                Some(WorkspaceInputKind::PythonSourcePresence),
+                "{dir}/app.py drives no-config Python detection"
+            );
+            assert!(workspace_input_path_is_relevant(&root, &source_file));
+
+            let nested = root.join(dir).join("pkg").join("mod.py");
+            assert_eq!(
+                workspace_input_kind(&root, &nested),
+                Some(WorkspaceInputKind::PythonSourcePresence),
+                "nested {dir} sources are covered by recursive detection"
+            );
+
+            for generated in [
+                "client_pb2.py",
+                "client_pb2_grpc.py",
+                "client.generated.py",
+                "client_generated.py",
+                "generated_client.py",
+            ] {
+                assert_eq!(
+                    workspace_input_kind(&root, &root.join(dir).join(generated)),
+                    None,
+                    "generated {dir}/{generated} never changes detection state"
+                );
+            }
+
+            for excluded in PYTHON_PROJECT_EXCLUDED_DIRS {
+                let path = root.join(dir).join(excluded).join("ignored.py");
+                assert_eq!(
+                    workspace_input_kind(&root, &path),
+                    None,
+                    "{dir}/{excluded}/ignored.py is excluded from detection traversal"
+                );
+            }
+
+            assert_eq!(
+                workspace_input_kind(&root, &root.join(dir).join("lib.rs")),
+                None,
+                "non-Python files under {dir} are not detection inputs"
+            );
+            assert_eq!(
+                workspace_input_kind(&root, &outside.join(dir).join("app.py")),
+                None,
+                "outside-root {dir}/ sources fail closed"
+            );
+        }
+
+        // Python that detection never reads: root level and non-source
+        // directories are irrelevant to no-config detection.
+        assert_eq!(workspace_input_kind(&root, &root.join("app.py")), None);
+        assert_eq!(
+            workspace_input_kind(&root, &root.join("scripts").join("app.py")),
+            None
+        );
+
+        assert!(WorkspaceInputKind::PythonSourcePresence.reloads_repository_config());
+        assert!(!WorkspaceInputKind::PythonSourcePresence.invalidates_workspace_graph());
+
+        if cfg!(windows) {
+            // Source-directory markers resolve through the Windows
+            // filesystem, so differently-cased components classify the same.
+            let upper = root.join("SRC").join("app.py");
+            assert_eq!(
+                workspace_input_kind(&root, &upper),
+                Some(WorkspaceInputKind::PythonSourcePresence)
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn dynamic_watchers_cover_the_canonical_python_input_set() {
+        let actual = workspace_input_watchers()
+            .into_iter()
+            .filter_map(|watcher| {
+                watcher
+                    .get("globPattern")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string)
+            })
+            .collect::<BTreeSet<_>>();
+        let expected = std::iter::once(CONFIG_FILE_NAME)
+            .chain(["Cargo.toml", "Cargo.lock"])
+            .chain(PYTHON_PROJECT_MARKERS.iter().copied())
+            .map(|name| format!("**/{name}"))
+            .chain(
+                PYTHON_SOURCE_DIR_MARKERS
+                    .iter()
+                    .map(|dir| format!("{dir}/**/*.py")),
+            )
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(actual, expected);
+    }
 }
 
 struct RefreshCancellationGuard<'a> {
@@ -3233,11 +3552,7 @@ impl LanguageServer for Backend {
                 id: "ripr-config-file-watch".to_string(),
                 method: "workspace/didChangeWatchedFiles".to_string(),
                 register_options: Some(serde_json::json!({
-                    "watchers": [
-                        {"globPattern": "**/ripr.toml"},
-                        {"globPattern": "**/Cargo.toml"},
-                        {"globPattern": "**/Cargo.lock"}
-                    ]
+                    "watchers": workspace_input_watchers()
                 })),
             };
             if let Err(error) = self.client.register_capability(vec![registration]).await {

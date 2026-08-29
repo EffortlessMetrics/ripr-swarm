@@ -59,7 +59,7 @@
   },
   "movement": {
     "state": "unchanged",
-    "before_class": "weakly_exposed",
+    "before_class": "weakly_gripped",
     "after_class": "weakly_gripped",
     "source_artifact": "fixtures/boundary_gap/expected/assistant-loop-health/multi-proof/assistant-loop-health.json"
   },

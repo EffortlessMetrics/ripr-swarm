@@ -49,6 +49,9 @@ use super::seam_classification::ClassifiedSeam;
 #[cfg(test)]
 use super::seam_classification::SeamGripClassCounts;
 use super::seam_inventory::{SeamLimitSource, repo_exposure_seam_limit};
+use crate::config::{
+    PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, source_dir_contains_detectable_python,
+};
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -92,7 +95,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.0` -> `1.1`: a direct top-level `test` conjunct in
 /// `cfg(all(...))` now carries evidence role regardless of conjunct order;
 /// old classified seams may retain test-second helpers as production.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.1";
+/// `1.1` -> `1.2`: nested `test` conjunctions in `cfg(all(...))` now carry
+/// evidence role through the shared cfg-predicate authority (#3530); old
+/// classified seams may retain nested-conjunct helpers as production.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.2";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -102,7 +108,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.1";
 /// classified-seam cache.
 /// `0.6` -> `0.7`: test-second `cfg(all(...))` helpers now carry evidence
 /// role, changing the facts sharded entries derive from.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.7";
+/// `0.7` -> `0.8`: nested `test` conjunctions in `cfg(all(...))` now carry
+/// evidence role (#3530), changing the facts sharded entries derive from.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.8";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -116,7 +124,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.7";
 /// `0.6` -> `0.7`: manifest-less package identity semantics changed (#3410).
 /// `0.7` -> `0.8`: test-second `cfg(all(...))` helpers now carry evidence
 /// role, changing compact classified-seam content.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.8";
+/// `0.8` -> `0.9`: nested `test` conjunctions in `cfg(all(...))` now carry
+/// evidence role (#3530), changing compact classified-seam content.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.9";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -144,7 +154,11 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `0.4` -> `0.5`: `FunctionFact.is_test` now recognizes a direct
 /// top-level `test` conjunct in `cfg(all(...))` regardless of order; old
 /// file facts may retain test-second helpers as production.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "0.5";
+/// `0.5` -> `0.6`: `FunctionFact.is_test` now recognizes nested `test`
+/// conjunctions in `cfg(all(...))` through the shared cfg-predicate
+/// authority (#3530); old file facts may retain nested-conjunct helpers as
+/// production.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "0.6";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -495,8 +509,7 @@ impl WorkspaceKeyContext<'_> {
             Some((n, _)) => format!("limit_{n}"),
         };
 
-        let workspace_manifests_hash =
-            hash_named_workspace_files(self.workspace_root, "Cargo.toml");
+        let workspace_manifests_hash = hash_workspace_manifests(self.workspace_root);
         let lockfile_hash = hash_named_workspace_files(self.workspace_root, "Cargo.lock");
         let toolchain_hash = hash_str(
             std::env::var("RUSTUP_TOOLCHAIN")
@@ -2256,6 +2269,45 @@ fn hash_named_workspace_files(root: &Path, file_name: &str) -> String {
         .unwrap_or_else(|| hash_str("<no matching workspace files>"))
 }
 
+/// Hash the adapter-owned workspace identities that can change analysis.
+/// Cargo consumes manifest contents recursively. The Python inputs tracked
+/// here are presence-only, exactly as no-config detection consumes them:
+/// root marker files and detectable Python source below root `src`/`tests`
+/// (bounded to two presence booleans — never a per-file enumeration).
+/// Content-only edits intentionally preserve this identity while creation
+/// and deletion invalidate it. Generated files and excluded directories do
+/// not participate: detection ignores them, so binding them would orphan
+/// cache entries without any input change.
+fn hash_workspace_manifests(root: &Path) -> String {
+    let cargo_identity = hash_named_workspace_files(root, "Cargo.toml");
+    let present_python_markers: Vec<&str> = PYTHON_PROJECT_MARKERS
+        .iter()
+        .copied()
+        .filter(|marker| root.join(marker).is_file())
+        .collect();
+    let detectable_source_dirs: Vec<&str> = PYTHON_SOURCE_DIR_MARKERS
+        .iter()
+        .copied()
+        .filter(|dir| source_dir_contains_detectable_python(root, dir))
+        .collect();
+    if present_python_markers.is_empty() && detectable_source_dirs.is_empty() {
+        return cargo_identity;
+    }
+
+    let mut identity = format!("cargo={cargo_identity}\n");
+    for marker in present_python_markers {
+        identity.push_str("python_marker=");
+        identity.push_str(marker);
+        identity.push('\n');
+    }
+    for dir in detectable_source_dirs {
+        identity.push_str("python_source_dir=");
+        identity.push_str(dir);
+        identity.push('\n');
+    }
+    hash_str(&identity)
+}
+
 /// Return the deterministic identity of all matching workspace files.
 ///
 /// LSP input identity uses the same path-and-content boundary as the seam
@@ -2895,6 +2947,131 @@ mod tests {
         };
         let _ = std::fs::remove_dir_all(&dir);
         result
+    }
+
+    #[test]
+    fn python_project_marker_presence_changes_cache_identity() -> Result<(), String> {
+        let root = isolated_dir("python-project-marker-inputs");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).map_err(|err| format!("create workspace: {err}"))?;
+        let cache_key = || {
+            WorkspaceState {
+                workspace_root: &root,
+                files: &[],
+                cfg_features: None,
+                config_text: None,
+                test_intent_text: None,
+                suppressions_text: None,
+            }
+            .cache_key()
+        };
+        let baseline = cache_key();
+
+        for marker in PYTHON_PROJECT_MARKERS {
+            let marker_path = root.join(marker);
+            std::fs::write(&marker_path, "first")
+                .map_err(|err| format!("write {marker}: {err}"))?;
+            let present = cache_key();
+            assert_ne!(
+                baseline.workspace_manifests_hash, present.workspace_manifests_hash,
+                "creating {marker} must invalidate the cache identity"
+            );
+            assert_ne!(baseline.filename(), present.filename());
+
+            std::fs::write(&marker_path, "second")
+                .map_err(|err| format!("rewrite {marker}: {err}"))?;
+            let edited = cache_key();
+            assert_eq!(
+                present.workspace_manifests_hash, edited.workspace_manifests_hash,
+                "Python detection consumes {marker} presence, not contents"
+            );
+
+            std::fs::remove_file(&marker_path).map_err(|err| format!("remove {marker}: {err}"))?;
+            let removed = cache_key();
+            assert_eq!(
+                baseline.workspace_manifests_hash, removed.workspace_manifests_hash,
+                "removing {marker} must restore the baseline identity"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn python_source_dir_presence_changes_cache_identity() -> Result<(), String> {
+        let root = isolated_dir("python-source-dir-inputs");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).map_err(|err| format!("create workspace: {err}"))?;
+        let cache_key = || {
+            WorkspaceState {
+                workspace_root: &root,
+                files: &[],
+                cfg_features: None,
+                config_text: None,
+                test_intent_text: None,
+                suppressions_text: None,
+            }
+            .cache_key()
+        };
+        let baseline = cache_key();
+
+        for dir in PYTHON_SOURCE_DIR_MARKERS {
+            std::fs::create_dir_all(root.join(dir))
+                .map_err(|err| format!("create {dir}: {err}"))?;
+            let source_file = root.join(dir).join("pricing.py");
+            std::fs::write(&source_file, "first").map_err(|err| format!("write {dir}: {err}"))?;
+            let present = cache_key();
+            assert_ne!(
+                baseline.workspace_manifests_hash, present.workspace_manifests_hash,
+                "creating the first {dir} source must invalidate the cache identity"
+            );
+            assert_ne!(baseline.filename(), present.filename());
+
+            std::fs::write(&source_file, "second")
+                .map_err(|err| format!("rewrite {dir}: {err}"))?;
+            let edited = cache_key();
+            assert_eq!(
+                present.workspace_manifests_hash, edited.workspace_manifests_hash,
+                "Python detection consumes {dir} source presence, not contents"
+            );
+
+            std::fs::remove_file(&source_file).map_err(|err| format!("remove {dir}: {err}"))?;
+            let removed = cache_key();
+            assert_eq!(
+                baseline.workspace_manifests_hash, removed.workspace_manifests_hash,
+                "removing the last {dir} source must restore the baseline identity"
+            );
+
+            // Nested sources are covered by recursive detection.
+            std::fs::create_dir_all(root.join(dir).join("pkg"))
+                .map_err(|err| format!("create {dir}/pkg: {err}"))?;
+            let nested_file = root.join(dir).join("pkg").join("mod.py");
+            std::fs::write(&nested_file, "x").map_err(|err| format!("write {dir}/pkg: {err}"))?;
+            let nested = cache_key();
+            assert_ne!(
+                baseline.workspace_manifests_hash, nested.workspace_manifests_hash,
+                "nested {dir} sources participate in detection identity"
+            );
+            std::fs::remove_file(&nested_file).map_err(|err| format!("remove {dir}/pkg: {err}"))?;
+        }
+
+        // Generated and excluded-directory files are not detection inputs,
+        // so they must not invalidate the identity either.
+        std::fs::create_dir_all(root.join("src").join(".venv"))
+            .map_err(|err| format!("create src/.venv: {err}"))?;
+        std::fs::write(root.join("src").join("client_pb2.py"), "x")
+            .map_err(|err| format!("write generated: {err}"))?;
+        std::fs::write(root.join("src").join(".venv").join("lib.py"), "x")
+            .map_err(|err| format!("write excluded: {err}"))?;
+        let irrelevant = cache_key();
+        assert_eq!(
+            baseline.workspace_manifests_hash, irrelevant.workspace_manifests_hash,
+            "generated and excluded-directory sources never change detection"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
     }
 
     #[test]

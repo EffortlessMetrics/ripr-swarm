@@ -18,12 +18,7 @@ pub(in crate::analysis) fn find_related_tests<'a>(
     let mut related: Vec<(&TestSummary, RelationReason)> = Vec::new();
     let owner_name = owner_fn.map(|f| f.name.as_str()).unwrap_or("");
     let probe_tokens = extract_identifier_tokens(&probe.expression);
-    let file_name = probe
-        .location
-        .file
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
+    let file_name = normalized_file_stem(&probe.location.file);
     let owner_package_prefix = owner_fn.and_then(|owner| package_prefix(&owner.file));
 
     // #2971 ambiguity rule: a call to `owner_name` can bypass the
@@ -152,7 +147,7 @@ pub(in crate::analysis) fn find_related_tests<'a>(
         // `config` can occur in unrelated test paths (for example
         // `reconfigure.rs`).
         let file_path_token_matches =
-            !file_name.is_empty() && normalize_path(&test.file).contains(file_name);
+            !file_name.is_empty() && normalize_path(&test.file).contains(&file_name);
         let owner_name_in_test = !owner_name_lc.is_empty() && test_name.contains(&owner_name_lc);
         let token_in_test_name = probe_tokens
             .iter()
@@ -219,12 +214,23 @@ pub(in crate::analysis) fn find_related_tests<'a>(
 /// count as file identity.  Paths are compared by stem, so host-specific
 /// separators do not affect the result.
 fn same_test_file(probe_file: &Path, test_file: &Path) -> bool {
+    // Merge resolution (#3545 x PR-3547): keep the PR's `cross_host_stem`
+    // authority — it normalizes both separator flavors (main's #3545 intent)
+    // AND fails closed on non-UTF-8 paths, where lossy conversion could
+    // collapse distinct names into one stem (#3545 review).  Keep main's
+    // empty-stem guard so degenerate stems never count as file identity.
     let Some(probe_stem) = cross_host_stem(probe_file) else {
         return false;
     };
+    if probe_stem.is_empty() {
+        return false;
+    }
     let Some(test_stem) = cross_host_stem(test_file) else {
         return false;
     };
+    if test_stem.is_empty() {
+        return false;
+    }
     test_stem == probe_stem
         || test_stem == format!("{probe_stem}_test")
         || test_stem == format!("{probe_stem}_tests")
@@ -251,6 +257,19 @@ fn normalize_path(path: &Path) -> String {
     path.to_string_lossy()
         .replace('\\', "/")
         .trim_start_matches("./")
+        .to_string()
+}
+
+/// Extract a source-file stem after normalizing separators from either host.
+/// Analysis inputs can contain paths produced on a different platform than the
+/// host running the association pass.
+fn normalized_file_stem(path: &Path) -> String {
+    normalize_path(path)
+        .rsplit('/')
+        .next()
+        .and_then(|file| Path::new(file).file_stem())
+        .and_then(|stem| stem.to_str())
+        .unwrap_or_default()
         .to_string()
 }
 
@@ -873,6 +892,74 @@ mod tests {
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].0.name, "repo_lane_deserializes_fields_correctly");
+    }
+
+    #[test]
+    fn given_foreign_separator_file_stem_when_associated_then_assertion_text_is_preserved() {
+        let assertion_text = "assert_eq!(value, 3);";
+        let oracle_test = test_with_assertions(
+            "crates/ripr/tests/config.rs",
+            "checks_value",
+            assertion_text,
+            vec![oracle_fact(
+                assertion_text,
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        let index = RustIndex {
+            tests: vec![oracle_test],
+            ..RustIndex::default()
+        };
+        let forward_probe = struct_field_probe("crates/ripr/src/config.rs", "marker");
+        let windows_probe = struct_field_probe("crates\\ripr\\src\\config.rs", "marker");
+
+        let forward_related = find_related_tests(&forward_probe, None, &index, true, None);
+        let windows_related = find_related_tests(&windows_probe, None, &index, true, None);
+
+        assert_eq!(forward_related.len(), 1);
+        assert_eq!(windows_related.len(), 1);
+        assert_eq!(forward_related[0].0.name, windows_related[0].0.name);
+        assert_eq!(forward_related[0].1, RelationReason::SameTestFile);
+        assert_eq!(windows_related[0].1, RelationReason::SameTestFile);
+        assert_eq!(
+            forward_related[0].0.assertions[0].text, assertion_text,
+            "path normalization must not rewrite assertion text"
+        );
+        assert_eq!(
+            windows_related[0].0.assertions[0].text, assertion_text,
+            "path normalization must not rewrite assertion text"
+        );
+    }
+
+    #[test]
+    fn given_dotfile_probe_when_associated_then_only_matching_companion_is_related() {
+        let matching_test = test_with_assertions(
+            "crates/ripr/tests/.config.rs",
+            "checks_config_value",
+            "assert_eq!(value, 3);",
+            Vec::new(),
+        );
+        let unrelated_test = test_with_assertions(
+            "crates/ripr/tests/config.rs",
+            "checks_value",
+            "assert_eq!(value, 3);",
+            Vec::new(),
+        );
+        let index = RustIndex {
+            tests: vec![matching_test, unrelated_test],
+            ..RustIndex::default()
+        };
+        let forward_probe = struct_field_probe("crates/ripr/src/.config", "marker");
+        let windows_probe = struct_field_probe("crates\\ripr\\src\\.config", "marker");
+
+        for probe in [forward_probe, windows_probe] {
+            let related = find_related_tests(&probe, None, &index, true, None);
+
+            assert_eq!(related.len(), 1);
+            assert_eq!(related[0].0.file, Path::new("crates/ripr/tests/.config.rs"));
+            assert_eq!(related[0].1, RelationReason::SameTestFile);
+        }
     }
 
     // --- #1054 repro ---

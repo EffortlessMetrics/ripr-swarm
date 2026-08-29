@@ -1,0 +1,30 @@
+# Specification maintenance inventory
+
+`cargo xtask specs maintenance --as-of YYYY-MM-DD` writes an advisory inventory
+to `target/ripr/reports/spec-maintenance.json` and
+`target/ripr/reports/spec-maintenance.md`. Add `--json` to also print the same
+versioned JSON DTO to standard output.
+
+The report covers every discoverable spec file in the repository's canonical `RIPR-SPEC-NNNN-slug.md` shape, parsed by the same identifier rule the spec gates use. Other
+Markdown files below `docs/specs/` are listed as omitted, with the reason they
+are not part of the discoverable denominator. A missing `docs/specs/README.md`
+index is likewise recorded as an omitted input with reason
+`spec-index-missing`; unlike present files it does not inflate the
+discoverable count, because no document was actually scanned. Reason codes
+come from document structure (headings) rather than token presence: a spec
+with no review-bearing heading is `never_reviewed`, and an accepted spec
+without a `## Test Mapping` heading is
+`accepted_without_current_or_planned_test_mapping`. Required-spec read or UTF-8
+errors are instrument failures and return a nonzero status.
+
+Each row includes the spec ID and path, a SHA-256 content digest, observed
+document status, objective reason codes, evidence references, a bounded next
+route, and limitations. JSON and Markdown are rendered from the same
+`SpecMaintenanceReportV1` value, and stable sorting makes fixed repository
+bytes plus a fixed `--as-of` value reproducible.
+
+Git history is optional. When it is unavailable, the report says so and keeps
+repository-only findings. Age is an observation or ordering hint only; it
+never changes spec validity, lifecycle, support posture, branch protection, or
+merge eligibility. The report does not create review receipts, publish
+digests, alter workflows, or infer that implementation or evidence exists.

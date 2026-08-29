@@ -285,6 +285,8 @@ struct ScopedModuleImportBinding {
     module_path: String,
     start_line: usize,
     end_line: usize,
+    /// Lines inside nested module bodies are not covered by this import.
+    nested_module_lines: Vec<(usize, usize)>,
     /// The owning scope closes part-way through `end_line`, with code after
     /// the closing brace. See `LexicalUseScan::line_closes_scope_midline`.
     end_is_partial: bool,
@@ -318,6 +320,13 @@ impl ScopedModuleImportAlias {
                 // sit either side of the closing brace. Line coordinates cannot
                 // tell which, and guessing would credit the wrong owner.
                 return None;
+            }
+            if binding
+                .nested_module_lines
+                .iter()
+                .any(|(first, last)| *first <= line && line <= *last)
+            {
+                continue;
             }
             match nearest {
                 Some(current) if current.start_line > binding.start_line => {}
@@ -1036,6 +1045,20 @@ pub(in crate::analysis::test_grip_evidence) fn module_import_aliases(
             continue;
         }
         let end_line = scan.end_line(statement);
+        let mut nested_module_lines = nested_module_line_ranges(
+            &scan.line_module_depths,
+            statement.start_line,
+            end_line,
+            statement.module_depth,
+        );
+        // An inline `mod nested { call(); }` opening line records the
+        // parent depth before its brace, so the depth ranges alone miss it;
+        // mark it nested explicitly (fail closed, #3544 review).
+        for line in &scan.module_open_lines {
+            if statement.start_line <= *line && *line <= end_line {
+                nested_module_lines.push((*line, *line));
+            }
+        }
         for (alias, module_path) in parsed {
             aliases
                 .entry(alias)
@@ -1047,6 +1070,7 @@ pub(in crate::analysis::test_grip_evidence) fn module_import_aliases(
                     module_path,
                     start_line: statement.start_line,
                     end_line,
+                    nested_module_lines: nested_module_lines.clone(),
                     end_is_partial: scan.end_is_partial(end_line),
                 });
         }
@@ -1133,6 +1157,11 @@ struct LexicalUseScan {
     /// and line coordinates alone cannot say which.
     line_closes_scope_midline: Vec<bool>,
     line_module_depths: Vec<usize>,
+    /// Lines where a `mod` scope opened. The depth vector records the
+    /// pre-line depth, so an inline `mod nested { call(); }` body keeps the
+    /// parent depth on its opening line; those lines are ambiguous for
+    /// line-based alias resolution (#3544 review).
+    module_open_lines: Vec<usize>,
 }
 
 impl LexicalUseScan {
@@ -1168,6 +1197,7 @@ fn scan_lexical_use_statements(source: &str) -> LexicalUseScan {
     let mut line_closes_scope_midline = Vec::new();
     let mut scope_starts = vec![1usize];
     let mut module_scopes = vec![false];
+    let mut module_open_lines: Vec<usize> = Vec::new();
     let mut line_module_depths = Vec::new();
     let mut pending_use: Option<(usize, usize, usize, String)> = None;
     let mut brace_depth = 0usize;
@@ -1237,7 +1267,11 @@ fn scan_lexical_use_statements(source: &str) -> LexicalUseScan {
                 '{' => {
                     brace_depth = brace_depth.saturating_add(1);
                     scope_starts.push(line_number);
-                    module_scopes.push(segment_declares_module(&segment));
+                    let declares_module = segment_declares_module(&segment);
+                    module_scopes.push(declares_module);
+                    if declares_module && module_open_lines.last() != Some(&line_number) {
+                        module_open_lines.push(line_number);
+                    }
                     segment.clear();
                 }
                 '}' if brace_depth > 0 => {
@@ -1265,6 +1299,7 @@ fn scan_lexical_use_statements(source: &str) -> LexicalUseScan {
         line_depths_after,
         line_closes_scope_midline,
         line_module_depths,
+        module_open_lines,
     }
 }
 
@@ -1283,12 +1318,20 @@ pub(in crate::analysis::test_grip_evidence) fn direct_function_import_aliases(
             continue;
         }
         let end_line = scan.end_line(statement);
-        let nested_module_lines = nested_module_line_ranges(
+        let mut nested_module_lines = nested_module_line_ranges(
             &scan.line_module_depths,
             statement.start_line,
             end_line,
             statement.module_depth,
         );
+        // An inline `mod nested { call(); }` opening line records the
+        // parent depth before its brace, so the depth ranges alone miss it;
+        // mark it nested explicitly (fail closed, #3544 review).
+        for line in &scan.module_open_lines {
+            if statement.start_line <= *line && *line <= end_line {
+                nested_module_lines.push((*line, *line));
+            }
+        }
         for (alias, imported) in parsed {
             aliases
                 .entry(alias)

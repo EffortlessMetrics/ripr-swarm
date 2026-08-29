@@ -660,7 +660,7 @@ fn type_change_fails_closed_naming_the_entry() -> Result<(), String> {
         "failure must stay inside the subject boundary: {error}"
     );
     assert!(
-        error.contains("unsupported archive entry type") && error.contains("src/linked.rs"),
+        error.contains("unsupported tree entry mode `120000`") && error.contains("src/linked.rs"),
         "failure must name the exact rejected entry, not a generic error: {error}"
     );
     Ok(())
@@ -719,14 +719,15 @@ fn fail_closed_subject_leaves_no_materialized_state() -> Result<(), String> {
         .err()
         .ok_or_else(|| "a type-changed entry must fail closed".to_string())?;
 
-    // The rejection must come from `untar` naming the entry it could not
-    // materialize. That is what proves extraction was already under way —
-    // and therefore that there was a materialization root to leak — rather
-    // than the run failing earlier, at identity resolution or `git archive`,
-    // where cleanup would be trivially satisfied.
+    // The rejection must name the entry it could not materialize. With the
+    // blob-wise materialization (#3548 review) the symlink is rejected at
+    // tree enumeration, before any byte is written — so the fail-closed
+    // property is structural (there is no partially extracted state to
+    // leak) and the cleanup assertion below guards the temp-root guard
+    // itself.
     assert!(
-        error.contains("unsupported archive entry type") && error.contains("src/linked.rs"),
-        "fail-closed run must reject the extracted entry by name: {error}"
+        error.contains("unsupported tree entry mode `120000`") && error.contains("src/linked.rs"),
+        "fail-closed run must reject the symlink entry by name: {error}"
     );
     assert_materialization_root_cleaned(&parent, "fail-closed run")
 }

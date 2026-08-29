@@ -1,5 +1,7 @@
 use crate::command::{XtaskCommand, print_help, unknown_command_message};
 
+#[path = "check_fast_strict.rs"]
+mod check_fast_strict;
 #[path = "command/front_door.rs"]
 mod front_door;
 #[path = "precommit_v2.rs"]
@@ -43,7 +45,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::EvalSweep(args) => super::reports::eval_sweep(&args),
         XtaskCommand::SuggestedFixes => super::suggested_fixes(),
         XtaskCommand::Precommit => precommit_v2::run(),
-        XtaskCommand::CheckFast => super::check_fast(),
+        XtaskCommand::CheckFast => check_fast_strict::run(),
         XtaskCommand::CheckPr => super::check_pr(),
         XtaskCommand::Fixtures(args) => super::reports::fixtures_with_args(&args),
         XtaskCommand::Goldens(args) => super::reports::goldens(&args),
@@ -137,6 +139,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckAllowAttributes => super::check_allow_attributes(),
         XtaskCommand::CheckLocalContext => super::check_local_context(),
         XtaskCommand::CheckFilePolicy => super::check_file_policy(),
+        XtaskCommand::CheckCoveredBy => super::check_covered_by(),
         XtaskCommand::RustConversionCandidates => super::rust_conversion_candidates(),
         XtaskCommand::CheckExecutableFiles => super::check_executable_files(),
         XtaskCommand::CheckWorkflows => super::check_workflows(),

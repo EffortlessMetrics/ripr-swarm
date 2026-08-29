@@ -104,11 +104,16 @@ pub mod domain;
 // Kept public for compatibility with experimental editor integrations.
 #[doc(hidden)]
 pub mod lsp;
+// Protocol process entry point selected by the packaged binary before the
+// human-oriented CLI dispatcher. The product status producer remains private.
+#[doc(hidden)]
+pub mod mcp;
 // Kept public for compatibility with existing render integrations.
 #[doc(hidden)]
 pub mod output;
 /// Exact-snapshot, read-only provider DTOs for external proof orchestrators.
 pub mod provider_contract;
+mod workspace_status;
 
 pub use analysis::LanguageRun;
 pub use analysis::LanguageRunStatus;

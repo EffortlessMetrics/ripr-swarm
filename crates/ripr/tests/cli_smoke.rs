@@ -309,7 +309,7 @@ fn write_bound_repo_exposure_fixture(
     "kind": "repo_exposure",
     "schema_version": "1",
     "canonicalization": "raw_json_placeholder_v1",
-    "producer": {{"tool": "ripr", "version": "0.10.0"}},
+    "producer": {{"tool": "ripr", "version": "0.11.0"}},
     "repository": {{"root": "{root_identity}", "head": "{head}"}},
     "analysis": {{"format": "repo-exposure-json", "mode": "draft", "base_revision": null, "input_identity": "input:v3:fnv1a64:00000000000000f1", "command": "ripr check --format repo-exposure-json", "profile": "draft", "worktree": "clean"}},
     "snapshot_identity": "snapshot:input:v3:fnv1a64:00000000000000f1;revision:{head}",
@@ -522,7 +522,7 @@ fn bind_repo_exposure_fixture_with_worktree(
         "kind": "repo_exposure",
         "schema_version": "1",
         "canonicalization": "raw_json_placeholder_v1",
-        "producer": {"tool": "ripr", "version": "0.10.0"},
+        "producer": {"tool": "ripr", "version": "0.11.0"},
         "repository": {"root": root_identity, "head": head},
         "analysis": {"format": "repo-exposure-json", "mode": "draft", "base_revision": null, "input_identity": "input:v3:fnv1a64:00000000000000f1", "command": "ripr check --format repo-exposure-json", "profile": "draft", "worktree": worktree},
         "snapshot_identity": format!("snapshot:input:v3:fnv1a64:00000000000000f1;revision:{head}"),
@@ -4117,8 +4117,8 @@ fn agent_verify_rejects_comparison_metadata_drift() -> Result<(), Box<dyn std::e
     let cases = [
         (
             "producer version",
-            "\"version\": \"0.10.0\"",
             "\"version\": \"0.11.0\"",
+            "\"version\": \"0.10.0\"",
             "producer versions differ",
         ),
         (
@@ -4931,8 +4931,8 @@ fn agent_receipt_rejects_comparison_metadata_drift() -> Result<(), Box<dyn std::
     let cases = [
         (
             "producer version",
-            "\"version\": \"0.10.0\"",
             "\"version\": \"0.11.0\"",
+            "\"version\": \"0.10.0\"",
         ),
         (
             "analysis mode",
@@ -11127,6 +11127,7 @@ fn swarm_queue_assigns_current_source_and_blocks_changed_head()
     assert_eq!(current["source_currentness"]["status"], "current");
     assert_eq!(current["source_currentness"]["queue_state"], "queued");
     assert_eq!(current["summary"]["assignable_total"], 1);
+    assert_eq!(current["summary"]["unreturned_assignable_total"], 0);
     assert_eq!(current["packets"].as_array().map(Vec::len), Some(1));
     assert_eq!(current["packets"][0]["queue_state"], "queued");
     assert_eq!(current["packets"][0]["staleness_status"], "current");
@@ -11140,12 +11141,33 @@ fn swarm_queue_assigns_current_source_and_blocks_changed_head()
     assert_eq!(stale["status"], "blocked");
     assert_eq!(stale["source_currentness"]["status"], "stale");
     assert_eq!(stale["source_currentness"]["queue_state"], "blocked_stale");
+    assert_eq!(
+        stale["packets"].as_array().map(Vec::len),
+        Some(0),
+        "a stale source must not expose assignable packets: {stale}"
+    );
+    let review = stale["blocked_review"]
+        .as_array()
+        .and_then(|entries| entries.first())
+        .ok_or("stale queue must keep the candidate visible as review-only")?;
+    assert_eq!(review["queue_state"], "blocked_stale");
+    assert_eq!(review["staleness_status"], "stale");
+    assert_eq!(review["assignment"]["eligible"], false);
+    assert!(review.get("command_specs").is_none());
+    assert!(review.get("packet_command_args").is_none());
+    assert!(review.get("verify_command").is_none());
+    assert!(review.get("allowed_files").is_none());
+    assert!(
+        review["refresh_commands"]
+            .as_array()
+            .is_some_and(|commands| !commands.is_empty()),
+        "review-only projections must carry their recovery route: {stale}"
+    );
     assert_eq!(stale["summary"]["assignable_total"], 0);
-    assert_eq!(stale["packets"].as_array().map(Vec::len), Some(1));
-    assert_eq!(stale["packets"][0]["queue_state"], "blocked_stale");
-    assert_eq!(stale["packets"][0]["staleness_status"], "stale");
-    assert_eq!(stale["packets"][0]["assignment"]["eligible"], false);
-    assert!(stale["packets"][0].get("command_specs").is_none());
+    assert_eq!(
+        stale["summary"]["blocked_review_total"], 1,
+        "the blocked denominator must stay visible"
+    );
 
     std::fs::remove_dir_all(&root)?;
     Ok(())

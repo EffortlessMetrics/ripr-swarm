@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use super::super::extract::PROBE_SHAPE_UNSAFE_BOUNDARY;
 use super::super::facts::FileFacts;
+use super::super::facts::cfg_predicates;
 use super::{RaRustSyntaxAdapter, RustSyntaxAdapter, SyntaxNodeFact, TextRange};
 use crate::analysis::rust_index::{
     FunctionFact, OracleFact, PROBE_SHAPE_CALL_DELETION, PROBE_SHAPE_ERROR_PATH,
@@ -356,76 +357,22 @@ fn has_test_attribute(function: &ast::Fn) -> bool {
 }
 
 /// Returns whether a function is nested in a module gated by a test-only cfg.
+///
+/// The cfg-term semantics live in one shared authority
+/// (`facts::cfg_predicates`, #3530) so the parser producer and the facts
+/// normalizer cannot drift: nested `all(test, ...)` conjunctions, whitespace
+/// and multi-line spellings, and bounded `cfg_attr` forms classify
+/// identically on both sides.
 fn is_cfg_test_module_member(function: &ast::Fn) -> bool {
     function
         .syntax()
         .ancestors()
         .filter_map(ast::Module::cast)
         .any(|module| {
-            module
-                .attrs()
-                .any(|attr| cfg_attribute_requires_test(&attr))
+            cfg_predicates::attributes_require_test(
+                module.attrs().map(|attr| attr.syntax().text().to_string()),
+            )
         })
-}
-
-/// Recognizes plain `cfg(test)` and direct top-level `test` conjuncts in `cfg(all(...))`.
-fn cfg_attribute_requires_test(attr: &ast::Attr) -> bool {
-    let tokens = attr
-        .syntax()
-        .descendants_with_tokens()
-        .filter_map(|element| element.into_token())
-        .filter(|token| !token.kind().is_trivia())
-        .collect::<Vec<_>>();
-    let token_text = tokens.iter().map(|token| token.text()).collect::<Vec<_>>();
-
-    match token_text.as_slice() {
-        ["#", "[", "cfg", "(", "test", ")", "]"] => true,
-        [
-            "#",
-            "[",
-            "cfg",
-            "(",
-            "all",
-            "(",
-            arguments @ ..,
-            ")",
-            ")",
-            "]",
-        ] => cfg_all_has_top_level_test(arguments),
-        _ => false,
-    }
-}
-
-/// Checks cfg predicate tokens for a direct, top-level `test` term.
-fn cfg_all_has_top_level_test(arguments: &[&str]) -> bool {
-    let mut depth = 0usize;
-    let mut term_start = 0usize;
-
-    for (index, token) in arguments.iter().enumerate() {
-        match *token {
-            "(" | "[" | "{" => depth += 1,
-            ")" | "]" | "}" => {
-                let Some(next_depth) = depth.checked_sub(1) else {
-                    return false;
-                };
-                depth = next_depth;
-            }
-            "," if depth == 0 => {
-                if cfg_term_is_test(arguments.get(term_start..index)) {
-                    return true;
-                }
-                term_start = index + 1;
-            }
-            _ => {}
-        }
-    }
-
-    depth == 0 && cfg_term_is_test(arguments.get(term_start..))
-}
-
-/// Returns true only for the exact single-token cfg predicate `test`.
-fn cfg_term_is_test(term: Option<&[&str]>) -> bool {
-    term.is_some_and(|tokens| tokens == ["test"])
 }
 
 fn collect_attr_syntax(function: &ast::Fn) -> Vec<String> {
@@ -1424,7 +1371,10 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
 
 #[cfg(test)]
 mod cfg_all_test_tests {
-    use super::{RaRustSyntaxAdapter, RustSyntaxAdapter, cfg_all_has_top_level_test};
+    use super::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+    use crate::analysis::facts::cfg_predicates::{
+        CfgTestRequirement, attribute_requires_test, classify_attribute,
+    };
     use std::fs;
     use std::path::PathBuf;
 
@@ -1451,33 +1401,51 @@ edition='2024'
     }
 
     #[test]
-    fn cfg_all_test_conjunct_is_order_insensitive_and_token_safe() {
-        let positive: &[&[&str]] = &[
-            &["test"],
-            &["test", ",", "feature", "=", "\"slow\""],
-            &["feature", "=", "\"slow\"", ",", "test"],
-            &["unix", ",", "test", ",", "feature", "=", "r#\"slow,test\"#"],
+    fn cfg_test_predicate_is_order_insensitive_and_token_safe() {
+        // The producer no longer carries its own token matching; this table
+        // pins the shared cfg-predicate authority (#3530) at the spellings
+        // this producer's modules present. Reverting the producer to a
+        // drifted local matcher fails the nested-conjunct integration test
+        // below.
+        let requires_test = [
+            "#[cfg(test)]",
+            "#[ cfg ( test ) ]",
+            "#[cfg(all(test, feature = \"slow\"))]",
+            "#[cfg(all(feature = \"slow\", test))]",
+            "#[cfg(all(unix, test, feature = r#\"slow,test\"#))]",
+            "#[cfg(all(unix, all(test, feature = \"slow\")))]",
         ];
-        for arguments in positive {
+        for spelling in requires_test {
             assert!(
-                cfg_all_has_top_level_test(arguments),
-                "top-level test conjunct must require test cfg: {arguments:?}"
+                attribute_requires_test(spelling),
+                "top-level or nested test conjunct must require test cfg: {spelling}"
             );
         }
 
-        let negative: &[&[&str]] = &[
-            &["any", "(", "test", ",", "feature", "=", "\"slow\"", ")"],
-            &["not", "(", "test", ")"],
-            &[
-                "any", "(", "test", ",", "feature", "=", "\"slow\"", ")", ",", "unix",
-            ],
-            &["feature", "=", "\"slow,test\"", ",", "unix"],
-            &["target_os", "=", "\"test\""],
+        let not_requires_test = [
+            (
+                "#[cfg(any(test, feature = \"slow\"))]",
+                CfgTestRequirement::MayIncludeTest,
+            ),
+            ("#[cfg(not(test))]", CfgTestRequirement::IndependentOfTest),
+            (
+                "#[cfg(all(any(test, feature = \"slow\"), unix))]",
+                CfgTestRequirement::MayIncludeTest,
+            ),
+            (
+                "#[cfg(all(feature = \"slow,test\", unix))]",
+                CfgTestRequirement::IndependentOfTest,
+            ),
+            (
+                "#[cfg(target_os = \"test\")]",
+                CfgTestRequirement::IndependentOfTest,
+            ),
         ];
-        for arguments in negative {
-            assert!(
-                !cfg_all_has_top_level_test(arguments),
-                "alternative, negated, nested, or literal test token must stay production: {arguments:?}"
+        for (spelling, expected) in not_requires_test {
+            assert_eq!(
+                classify_attribute(spelling),
+                expected,
+                "alternative, negated, nested, or literal test token must stay production: {spelling}"
             );
         }
     }
@@ -1530,6 +1498,70 @@ edition='2024'
                 .ok_or_else(|| format!("{name} missing from facts"))?;
             assert!(!function.is_test, "{name} must stay production role");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn cfg_nested_all_and_cfg_attr_predicates_follow_the_shared_authority() -> Result<(), String> {
+        // #3530: the producer consumes `facts::cfg_predicates`, so a nested
+        // `all(test, ...)` conjunction earns the evidence role (a drifted
+        // local matcher without structural nesting would fail this), while
+        // `cfg_attr` introductions never promote an item to test-only.
+        let root = temp_dir("ra_cfg_predicates_authority")?;
+        fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        write_manifest(&root)?;
+        let source = "\
+pub fn production_control() -> i32 { 1 }
+
+#[cfg(all(unix, all(test, feature = \"slow\")))]
+mod nested_gate {
+    fn nested_all_helper() -> i32 { production_control() }
+}
+
+#[cfg_attr(feature = \"internal-tests\", cfg(test))]
+mod conditional_gate {
+    fn cfg_attr_conditional_helper() -> i32 { production_control() }
+}
+
+#[cfg_attr(test, allow(dead_code))]
+fn production_with_conditional_lint() -> i32 { 2 }
+";
+        fs::write(root.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
+        let facts = RaRustSyntaxAdapter
+            .summarize_file(
+                &root.join("src/lib.rs"),
+                &fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?;
+
+        let nested_all_helper = facts
+            .functions
+            .iter()
+            .find(|function| function.name == "nested_all_helper")
+            .ok_or("nested_all_helper missing from facts")?;
+        assert!(
+            nested_all_helper.is_test,
+            "a nested all(test, ...) conjunction must carry evidence role through the shared authority"
+        );
+
+        for name in [
+            "cfg_attr_conditional_helper",
+            "production_with_conditional_lint",
+        ] {
+            let function = facts
+                .functions
+                .iter()
+                .find(|function| function.name == name)
+                .ok_or_else(|| format!("{name} missing from facts"))?;
+            assert!(
+                !function.is_test,
+                "cfg_attr introductions must never promote {name} to test-only"
+            );
+        }
+        assert!(
+            facts.tests.is_empty(),
+            "cfg-gated helpers stay evidence-role functions without executable TestFacts"
+        );
         Ok(())
     }
 }

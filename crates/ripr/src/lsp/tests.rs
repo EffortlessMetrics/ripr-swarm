@@ -198,6 +198,58 @@ fn watched_file_batch_preserves_config_and_workspace_graph_signals() -> Result<(
 }
 
 #[test]
+fn watched_python_source_batch_routes_to_config_reload_only() -> Result<(), String> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let backend_root = root.clone();
+    let (service, _socket) =
+        LspService::new(move |client| Backend::new(client, backend_root.clone()));
+    let backend = service.inner();
+    backend.initialize_test_workspace_root();
+
+    // A detectable source file under a root src/tests directory is a
+    // repository-configuration input: it drives the no-config Python
+    // reload path, not the Cargo workspace-graph path.
+    let src_py = file_uri_for_path(&root.join("src").join("app.py"))
+        .map_err(|err| format!("src URI failed: {err}"))?;
+    let changes = vec![FileEvent {
+        uri: src_py,
+        typ: FileChangeType::CREATED,
+    }];
+    assert_eq!(
+        backend.watched_file_change_kinds(&changes),
+        (true, false),
+        "src/app.py events must classify as configuration reload inputs"
+    );
+
+    // Python outside root src/tests is not a detection input.
+    let scripts_py = file_uri_for_path(&root.join("scripts").join("app.py"))
+        .map_err(|err| format!("scripts URI failed: {err}"))?;
+    let changes = vec![FileEvent {
+        uri: scripts_py,
+        typ: FileChangeType::CREATED,
+    }];
+    assert_eq!(
+        backend.watched_file_change_kinds(&changes),
+        (false, false),
+        "Python outside root src/tests must not trigger any invalidation"
+    );
+
+    // Generated source names never change detection state.
+    let generated_py = file_uri_for_path(&root.join("src").join("client_pb2.py"))
+        .map_err(|err| format!("generated URI failed: {err}"))?;
+    let changes = vec![FileEvent {
+        uri: generated_py,
+        typ: FileChangeType::CREATED,
+    }];
+    assert_eq!(
+        backend.watched_file_change_kinds(&changes),
+        (false, false),
+        "generated Python sources are excluded from detection inputs"
+    );
+    Ok(())
+}
+
+#[test]
 fn capabilities_advertise_code_lens_provider() -> Result<(), String> {
     let result = initialize_result();
     let provider = result

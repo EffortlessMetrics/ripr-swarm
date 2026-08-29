@@ -234,10 +234,11 @@ use no_panic::{
     strip_toml_value_comment,
 };
 use policy::{
-    check_allow_attributes, check_ci_lane_whitelist, check_doc_roles, check_droid_review_config,
-    check_executable_files, check_file_policy, check_local_context, check_network_policy,
-    check_no_panic_family, check_positioning_language, check_process_policy, check_product_copy,
-    check_proof_packs, check_release_targets, check_static_language, check_workflows,
+    check_allow_attributes, check_ci_lane_whitelist, check_covered_by, check_doc_roles,
+    check_droid_review_config, check_executable_files, check_file_policy, check_local_context,
+    check_network_policy, check_no_panic_family, check_positioning_language, check_process_policy,
+    check_product_copy, check_proof_packs, check_release_targets, check_static_language,
+    check_workflows,
 };
 use public_api_surface::public_api_surface;
 #[cfg(test)]
@@ -518,6 +519,7 @@ const PRECOMMIT_GATE_COMMANDS: &[&str] = &[
     "check-allow-attributes",
     "check-local-context",
     "check-file-policy",
+    "check-covered-by",
     "check-executable-files",
     "check-workflows",
     "check-droid-review-config",
@@ -556,6 +558,7 @@ fn precommit() -> Result<(), String> {
     check_allow_attributes()?;
     check_local_context()?;
     check_file_policy()?;
+    check_covered_by()?;
     check_executable_files()?;
     check_workflows()?;
     check_droid_review_config()?;
@@ -596,8 +599,21 @@ fn check_rust_judged_panel() -> Result<(), String> {
 /// changed files, plus a cheap always-run floor. Target: sub-30s for
 /// doc-only changes, ~2min for Rust source changes.
 pub(crate) fn check_fast() -> Result<(), String> {
+    check_fast_in(Path::new("."))
+}
+
+/// `check_fast` with an injectable repository root, so the fail-closed
+/// selector branch is exercisable without mutating the process cwd
+/// (#3549 review).
+fn check_fast_in(repository_root: &Path) -> Result<(), String> {
     ensure_reports_dir()?;
-    let changed = changed_files_vs_origin_main().unwrap_or_default();
+    let changed = match changed_files_vs_base(repository_root) {
+        Ok(changed) => changed,
+        Err(error) => {
+            write_report("check-fast.md", &check_fast_selector_failure_report(&error))?;
+            return Err(check_fast_selector_failure(&error));
+        }
+    };
     let categories = categorize_changed_files(&changed);
     let mut ran = Vec::new();
     let mut skipped = Vec::new();
@@ -645,6 +661,8 @@ pub(crate) fn check_fast() -> Result<(), String> {
     }
 
     if categories.policy {
+        check_covered_by()?;
+        ran.push("check-covered-by");
         check_process_policy()?;
         ran.push("check-process-policy");
         check_network_policy()?;
@@ -678,7 +696,7 @@ pub(crate) fn check_fast() -> Result<(), String> {
     );
 
     let body = format!(
-        "# check-fast report\n\nStatus: pass\n\nRan:\n{}\n\nSkipped:\n{}\n",
+        "# check-fast report\n\nStatus: pass\n\nSelector: passed\nBase: origin/main\n\nRan:\n{}\n\nSkipped:\n{}\n",
         ran.iter()
             .map(|g| format!("- {g}"))
             .collect::<Vec<_>>()
@@ -716,18 +734,149 @@ fn categorize_changed_files(files: &[String]) -> ChangedFileCategories {
     }
 }
 
-fn changed_files_vs_origin_main() -> Result<Vec<String>, String> {
+fn changed_files_vs_base(root: &Path) -> Result<Vec<String>, String> {
     let output = std::process::Command::new("git")
+        .current_dir(root)
         .args(["diff", "--name-only", "origin/main...HEAD"])
         .output()
         .map_err(|err| format!("git diff --name-only failed: {err}"))?;
     if !output.status.success() {
-        return Err(
-            "git diff --name-only origin/main...HEAD failed; if origin/main is not available, run `git fetch origin main` first".to_string(),
-        );
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let detail = if stderr.is_empty() {
+            format!("exit status {}", output.status)
+        } else {
+            stderr
+        };
+        return Err(format!(
+            "git diff --name-only origin/main...HEAD failed: {detail};              if origin/main is not available, run `git fetch origin main` first"
+        ));
     }
     let text = String::from_utf8_lossy(&output.stdout);
     Ok(text.lines().map(String::from).collect())
+}
+
+/// Origin-main rooted selector for callers that run from the repository
+/// root — including the strict check-fast module, which binds this
+/// function as its discovery authority.
+fn changed_files_vs_origin_main() -> Result<Vec<String>, String> {
+    changed_files_vs_base(Path::new("."))
+}
+
+fn check_fast_selector_failure(error: &str) -> String {
+    format!("check-fast selector unavailable (instrument_failure): {error}")
+}
+
+fn check_fast_selector_failure_report(error: &str) -> String {
+    format!(
+        "# check-fast report\n\nStatus: instrument_failure\n\nSelector: failed\nBase: origin/main\n\nError: {error}\n\nRemediation: run `git fetch origin main` and retry `cargo xtask check-fast`.\n"
+    )
+}
+
+#[cfg(test)]
+mod check_fast_selector_tests {
+    use super::*;
+
+    fn run_fixture_git(root: &std::path::Path, args: &[&str]) -> Result<(), String> {
+        // Route through the centralized runner: process policy allows one
+        // raw spawn literal in this file (the gate-runner git-diff site),
+        // so the fixture must not add its own spawn site.
+        let args: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
+        let output = crate::run::capture_output_in_dir("git", &args, root, "selector fixture git")?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "git fixture command failed: {args:?}; stderr: {}",
+                output.stderr.trim()
+            ))
+        }
+    }
+
+    #[test]
+    fn check_fast_fails_closed_when_the_selector_cannot_run() -> Result<(), String> {
+        // #3549 review: the unit tests above pin the helpers, but only
+        // check_fast itself proves the selector failure fails closed. Run
+        // it in a fixture repo without an origin/main ref and assert the
+        // instrument_failure error and report — with the old
+        // unwrap_or_default fallback restored, check_fast instead proceeds
+        // into the gates and every other assertion here would pass.
+        let root =
+            std::env::temp_dir().join(format!("ripr-check-fast-fail-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+        run_fixture_git(&root, &["init", "--initial-branch=main"])?;
+
+        let attempt = std::panic::catch_unwind(|| check_fast_in(&root));
+        // write_report targets the process-cwd reports dir (a generated,
+        // gitignored artifact the next real check-fast run rewrites).
+        let report = std::fs::read_to_string("target/ripr/reports/check-fast.md").ok();
+        let _ = std::fs::remove_dir_all(&root);
+
+        let error = match attempt {
+            Ok(Ok(())) => {
+                return Err("check_fast must fail closed when the selector cannot run".to_string());
+            }
+            Ok(Err(error)) => error,
+            Err(panic) => return Err(format!("check_fast panicked: {panic:?}")),
+        };
+        assert!(
+            error.contains("instrument_failure"),
+            "fail-closed error must name the instrument failure: {error}"
+        );
+        let report = report
+            .ok_or_else(|| "check-fast.md report must be written before failing".to_string())?;
+        assert!(
+            report.contains("Status: instrument_failure"),
+            "report must record the instrument failure: {report}"
+        );
+        assert!(
+            report.contains("Selector: failed") && report.contains("Base: origin/main"),
+            "report must disclose selector status and base: {report}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn empty_selection_is_distinct_from_selector_failure() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!("ripr-check-fast-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).map_err(|err| format!("create selector fixture: {err}"))?;
+        let run = |args: &[&str]| run_fixture_git(&root, args);
+        run(&["init", "--initial-branch=main"])?;
+        run(&["config", "user.email", "ripr@example.invalid"])?;
+        run(&["config", "user.name", "ripr test"])?;
+        std::fs::write(root.join("README.md"), "fixture\n")
+            .map_err(|err| format!("write selector fixture: {err}"))?;
+        run(&["add", "."])?;
+        run(&["commit", "-m", "fixture"])?;
+        run(&["update-ref", "refs/remotes/origin/main", "HEAD"])?;
+
+        assert_eq!(
+            changed_files_vs_base(&root)?,
+            Vec::<String>::new(),
+            "a clean fixture selects no changed files"
+        );
+        let failure_root = root.join("missing-base");
+        std::fs::create_dir_all(&failure_root)
+            .map_err(|err| format!("create missing-base fixture: {err}"))?;
+        run_fixture_git(&failure_root, &["init"])?;
+        let failure = match changed_files_vs_base(&failure_root) {
+            Ok(files) => {
+                return Err(format!(
+                    "missing base must fail; selected files instead: {files:?}"
+                ));
+            }
+            Err(failure) => failure,
+        };
+        assert!(failure.contains("origin/main"));
+        assert!(check_fast_selector_failure(&failure).contains("instrument_failure"));
+        assert!(
+            check_fast_selector_failure_report(&failure).contains("Status: instrument_failure")
+        );
+        assert!(check_fast_selector_failure_report(&failure).contains("git fetch origin main"));
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
 }
 
 fn check_pr() -> Result<(), String> {
@@ -1039,6 +1188,7 @@ fn run_policy_checks() -> Result<(), String> {
     check_allow_attributes()?;
     check_local_context()?;
     check_file_policy()?;
+    check_covered_by()?;
     check_executable_files()?;
     check_workflows()?;
     check_droid_review_config()?;
@@ -4253,7 +4403,7 @@ fn receipts_report_markdown(
 }
 
 fn precommit_report_body() -> String {
-    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
+    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
 }
 
 /// Compose the check-pr report for either terminal state (#3036). One
@@ -5819,10 +5969,11 @@ fn specs(args: &[String]) -> Result<(), String> {
             println!("{}", next_spec_id(Path::new("."))?);
             Ok(())
         }
+        Some("maintenance") => reports::spec_maintenance(&args[1..]),
         Some(other) => Err(format!(
-            "unknown specs command `{other}`\nusage: cargo xtask specs next"
+            "unknown specs command `{other}`\nusage: cargo xtask specs next | maintenance --as-of YYYY-MM-DD [--json]"
         )),
-        None => Err("missing specs command\nusage: cargo xtask specs next".to_string()),
+        None => Err("missing specs command\nusage: cargo xtask specs next | maintenance --as-of YYYY-MM-DD [--json]".to_string()),
     }
 }
 
