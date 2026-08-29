@@ -279,4 +279,48 @@ mod tests {
         }
         Ok(())
     }
+
+    #[test]
+    fn selector_change_during_gate_run_fails_closed() -> Result<(), String> {
+        let receipt = RefCell::new(String::new());
+        let mut calls = 0usize;
+        let mut discover = || {
+            calls += 1;
+            if calls == 1 {
+                Ok(vec!["crates/ripr/src/lib.rs".to_string()])
+            } else {
+                Ok(vec![
+                    "crates/ripr/src/lib.rs".to_string(),
+                    "xtask/src/main.rs".to_string(),
+                ])
+            }
+        };
+        let mut write = |status: &str, reason: &str, count: usize, detail: &str| {
+            *receipt.borrow_mut() = selector_report(status, reason, count, detail);
+            Ok(())
+        };
+
+        let result = run_transaction(
+            &mut discover,
+            || Ok(()),
+            || Ok(EMPTY_FAST_REPORT.to_string()),
+            &mut write,
+        );
+        if result.is_ok() {
+            return Err("selector drift during the gate run unexpectedly passed".to_string());
+        }
+        if !receipt
+            .borrow()
+            .contains("Selector: selector_changed_during_run")
+        {
+            return Err(format!("unexpected drift receipt: {}", receipt.borrow()));
+        }
+        if !receipt.borrow().contains("Changed files: 1") {
+            return Err(format!(
+                "drift receipt must keep the before-run denominator: {}",
+                receipt.borrow()
+            ));
+        }
+        Ok(())
+    }
 }
