@@ -106,11 +106,23 @@ fn dir_contains_python_source(dir: &Path) -> bool {
             if dir_contains_python_source(&path) {
                 return true;
             }
-        } else if file_type.is_file() && is_detectable_python_source_name(name) {
+        } else if file_type.is_file() && is_detectable_python_source_path(&path, name) {
             return true;
         }
     }
     false
+}
+
+/// The `.py` check runs on the entry path's extension — `Path::extension` is
+/// byte-based, so a non-UTF-8 stem still detects exactly as the pre-refactor
+/// detector did — while the generated-name exclusion applies only to the
+/// UTF-8 name (a non-UTF-8 name can never match a generated suffix).
+fn is_detectable_python_source_path(path: &Path, utf8_name: &str) -> bool {
+    let is_python_source = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension == "py");
+    is_python_source && !is_detectable_generated_python_name(utf8_name)
 }
 
 fn is_python_source_name(name: &str) -> bool {
