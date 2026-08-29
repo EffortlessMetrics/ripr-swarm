@@ -585,8 +585,8 @@ fn outer_after() {
         aliases
             .get("unique")
             .and_then(|alias| alias.module_path_at(13)),
-        Some("only_here"),
-        "a unique outer alias stays credited inside a nested module"
+        None,
+        "an outer module alias must not leak into a nested module"
     );
 
     let conflicts = module_import_aliases(

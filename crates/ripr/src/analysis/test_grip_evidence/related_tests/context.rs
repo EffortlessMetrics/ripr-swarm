@@ -285,6 +285,8 @@ struct ScopedModuleImportBinding {
     module_path: String,
     start_line: usize,
     end_line: usize,
+    /// Lines inside nested module bodies are not covered by this import.
+    nested_module_lines: Vec<(usize, usize)>,
     /// The owning scope closes part-way through `end_line`, with code after
     /// the closing brace. See `LexicalUseScan::line_closes_scope_midline`.
     end_is_partial: bool,
@@ -318,6 +320,13 @@ impl ScopedModuleImportAlias {
                 // sit either side of the closing brace. Line coordinates cannot
                 // tell which, and guessing would credit the wrong owner.
                 return None;
+            }
+            if binding
+                .nested_module_lines
+                .iter()
+                .any(|(first, last)| *first <= line && line <= *last)
+            {
+                continue;
             }
             match nearest {
                 Some(current) if current.start_line > binding.start_line => {}
@@ -1036,6 +1045,12 @@ pub(in crate::analysis::test_grip_evidence) fn module_import_aliases(
             continue;
         }
         let end_line = scan.end_line(statement);
+        let nested_module_lines = nested_module_line_ranges(
+            &scan.line_module_depths,
+            statement.start_line,
+            end_line,
+            statement.module_depth,
+        );
         for (alias, module_path) in parsed {
             aliases
                 .entry(alias)
@@ -1047,6 +1062,7 @@ pub(in crate::analysis::test_grip_evidence) fn module_import_aliases(
                     module_path,
                     start_line: statement.start_line,
                     end_line,
+                    nested_module_lines: nested_module_lines.clone(),
                     end_is_partial: scan.end_is_partial(end_line),
                 });
         }
