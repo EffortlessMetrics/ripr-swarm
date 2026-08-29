@@ -1,12 +1,14 @@
 use std::path::Path;
-use std::process::Command;
+use std::time::Duration;
 
 use crate::{
-    FixKind, PolicyReportSpec, collect_files, finish_policy_report, is_cargo_test_command,
-    is_file_policy_candidate, is_non_rust_programming_candidate, matches_any_glob,
-    non_rust_programming_retention_reason, normalize_path, read_file_policy_allowlist,
-    read_file_policy_test_commands,
+    FixKind, PolicyReportSpec, capture_output_with_timeout, collect_files, finish_policy_report,
+    is_cargo_test_command, is_file_policy_candidate, is_non_rust_programming_candidate,
+    matches_any_glob, non_rust_programming_retention_reason, normalize_path,
+    read_file_policy_allowlist, read_file_policy_test_commands,
 };
+
+const TEST_COVERED_BY_ENUMERATION_TIMEOUT: Duration = Duration::from_mins(2);
 
 /// Validate the repository's non-Rust file policy and write its standard
 /// report. The parser and shared path predicates remain in `main.rs` until
@@ -61,14 +63,33 @@ pub(crate) fn check_file_policy() -> Result<(), String> {
 
 fn validate_test_covered_by(path: &str, commands: &[(usize, String)]) -> Result<(), String> {
     validate_test_covered_by_with(path, commands, |args| {
-        let output = Command::new("cargo")
-            .args(args)
-            .output()
-            .map_err(|error| format!("run cargo test selector: {error}"))?;
+        let output = capture_output_with_timeout(
+            "cargo",
+            args,
+            &[],
+            TEST_COVERED_BY_ENUMERATION_TIMEOUT,
+            "test-valued covered_by enumeration",
+        )?;
+        let status = output
+            .status
+            .map(|status| status.to_string())
+            .unwrap_or_else(|| "not available".to_string());
+        let timeout = if output.timed_out {
+            format!(
+                "timed out after {:?}; ",
+                TEST_COVERED_BY_ENUMERATION_TIMEOUT
+            )
+        } else {
+            String::new()
+        };
+        let stderr = format!(
+            "{timeout}status: {status}; stdout: {}; stderr: {}",
+            output.stdout, output.stderr
+        );
         Ok((
-            output.status.success(),
-            String::from_utf8_lossy(&output.stdout).into_owned(),
-            String::from_utf8_lossy(&output.stderr).into_owned(),
+            output.status.is_some_and(|status| status.success()) && !output.timed_out,
+            output.stdout,
+            stderr,
         ))
     })
 }
@@ -97,8 +118,7 @@ fn validate_test_covered_by_with(
             .map_err(|error| format!("{path}:{line} enumerate `{command}`: {error}"))?;
         if !success {
             return Err(format!(
-                "{path}:{line} test-valued `covered_by` could not be enumerated: `{command}`\n{}",
-                stderr
+                "{path}:{line} test-valued `covered_by` could not be enumerated: `{command}`\nstdout: {stdout}\nstderr: {stderr}"
             ));
         }
         let selected = stdout
@@ -152,6 +172,28 @@ mod tests {
             Ok(())
         } else {
             Err("test-valued covered_by did not fail closed on its denominator".to_string())
+        }
+    }
+
+    #[test]
+    fn test_covered_by_preserves_enumeration_diagnostics() -> Result<(), String> {
+        let commands = [(19, "cargo test -p xtask missing-filter".to_string())];
+        let error = validate_test_covered_by_with("policy.toml", &commands, |_| {
+            Ok((
+                false,
+                "compiler stdout".to_string(),
+                "runner stderr".to_string(),
+            ))
+        })
+        .expect_err("failed enumeration should remain fail-closed");
+
+        if error.contains("cargo test -p xtask missing-filter")
+            && error.contains("compiler stdout")
+            && error.contains("runner stderr")
+        {
+            Ok(())
+        } else {
+            Err(format!("enumeration diagnostics were lost: {error}"))
         }
     }
 }
