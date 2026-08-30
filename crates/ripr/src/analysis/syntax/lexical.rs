@@ -131,6 +131,11 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
         // This function IS the lexical fallback; the flag is honest regardless
         // of whether the caller is the adapter dispatcher or a direct test.
         used_lexical_fallback: true,
+        // The lexical fallback cannot see module declarations without a
+        // parse; out-of-line test modules under fallback files keep the
+        // fail-closed standalone roles (#3533).
+        module_declarations: Vec::new(),
+        role_provenance: super::super::facts::SourceRoleProvenance::default(),
         source,
     }
 }

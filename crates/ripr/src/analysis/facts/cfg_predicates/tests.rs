@@ -206,6 +206,114 @@ fn cfg_attr_forms_never_require_test() {
     }
 }
 
+/// Conditional `path` introductions make a module's file target
+/// configuration-dependent (#3533): every spelling that introduces `path`
+/// from a `cfg_attr` must be detected so the module-path producer fails
+/// closed to a typed unknown instead of resolving the default layout.
+#[test]
+fn cfg_attr_introduced_path_attributes_are_detected() {
+    // The review's exact spelling: a conditional test target next to the
+    // test gate that activates it.
+    assert!(super::attributes_conditionally_introduce_path([
+        "#[cfg(test)]",
+        "#[cfg_attr(test, path = \"test_impl.rs\")]",
+    ]));
+    // Platform selection shape.
+    assert!(super::attributes_conditionally_introduce_path([
+        "#[cfg_attr(windows, path = \"windows.rs\")]",
+    ]));
+    // A non-literal introduction value, and the bare attribute head.
+    assert!(super::attributes_conditionally_introduce_path([
+        "#[cfg_attr(feature = \"x\", path = concat!(env!(\"OUT_DIR\"), \"gen.rs\"))]",
+    ]));
+    assert!(super::attributes_conditionally_introduce_path([
+        "#[cfg_attr(feature = \"x\", path)]",
+    ]));
+    // Nested cfg_attr introductions are followed: a missed conditional
+    // `path` would resolve the wrong module file (over-emission direction).
+    assert!(super::attributes_conditionally_introduce_path([
+        "#[cfg_attr(unix, cfg_attr(test, path = \"unix_test.rs\"))]",
+    ]));
+    // Whitespace inside the introduced attribute still matches.
+    assert!(super::attributes_conditionally_introduce_path([
+        "#[ cfg_attr( test , path = \"late.rs\" ) ]",
+    ]));
+}
+
+/// Controls: cfg_attr without a `path` introduction, direct `#[path]`,
+/// cfg key-value predicates whose strings mention path, and other
+/// attributes must not be read as conditional module paths.
+#[test]
+fn non_path_cfg_attr_shapes_are_not_path_introductions() {
+    assert!(!super::attributes_conditionally_introduce_path([
+        "#[cfg_attr(test, allow(dead_code))]",
+    ]));
+    assert!(!super::attributes_conditionally_introduce_path([
+        "#[cfg_attr(test, cfg(test))]",
+    ]));
+    // A direct `#[path]` is unconditional, not a conditional introduction.
+    assert!(!super::attributes_conditionally_introduce_path([
+        "#[path = \"direct.rs\"]",
+    ]));
+    // The word `path` inside an opaque literal or a predicate value cannot
+    // manufacture an introduction.
+    assert!(!super::attributes_conditionally_introduce_path([
+        "#[cfg(feature = \"path\")]",
+    ]));
+    assert!(!super::attributes_conditionally_introduce_path([
+        "#[cfg_attr(test, doc = \"path = x\")]",
+    ]));
+    // A cfg(...) introduction is skipped entirely: its key-value custom
+    // options are predicates, not attributes.
+    assert!(!super::attributes_conditionally_introduce_path([
+        "#[cfg_attr(unix, cfg(path = \"x\"))]",
+    ]));
+    // Non-attribute text and malformed envelopes detect nothing.
+    assert!(!super::attributes_conditionally_introduce_path([
+        "fn plain() {}",
+        "#[cfg_attr(test, path = \"unbalanced\"",
+    ]));
+}
+
+/// An unlexable `cfg_attr` fails closed (#3533 review): Rust accepts Unicode
+/// identifiers in predicate position (XID_Start/XID_Continue), so
+/// `#[cfg_attr(é, path = "alternate.rs")]` is valid Rust the bounded ASCII
+/// lexer cannot tokenize. Converting that lexer failure to `false` would let
+/// the default-layout file resolve as the module child — the wrong identity.
+/// Only a `cfg_attr` head fails closed; unrelated unlexable attributes must
+/// not be read as conditional paths.
+#[test]
+fn unlexable_cfg_attr_conditions_fail_closed_to_conditional() {
+    // Unicode identifier condition that introduces a path: conditional.
+    assert!(super::attributes_conditionally_introduce_path([
+        "#[cfg_attr(é, path = \"alternate.rs\")]",
+    ]));
+    // Inner-head spelling with surrounding whitespace.
+    assert!(super::attributes_conditionally_introduce_path([
+        "#![ cfg_attr( φόβος , path = \"inner.rs\") ]",
+    ]));
+    // The condition is unreadable but no path is introduced: still
+    // conditional (unreadable arguments could hide a nested introduction).
+    assert!(super::attributes_conditionally_introduce_path([
+        "#[cfg_attr(测试, allow(dead_code))]",
+    ]));
+    // Non-cfg_attr controls: Unicode in an unrelated attribute cannot
+    // manufacture a conditional path.
+    assert!(!super::attributes_conditionally_introduce_path([
+        "#[allow(é)]",
+    ]));
+    assert!(!super::attributes_conditionally_introduce_path([
+        "#[doc = \"café\"]",
+    ]));
+    // cfg_attr-prefixed lookalike heads are different attributes.
+    assert!(!super::attributes_conditionally_introduce_path([
+        "#[cfg_attrs(é, path = \"x.rs\")]",
+    ]));
+    assert!(!super::attributes_conditionally_introduce_path([
+        "#[my_cfg_attr(é, path = \"x.rs\")]",
+    ]));
+}
+
 #[test]
 fn multiple_attributes_compose_conjunctively_without_optimism() {
     // A definitely test-required gate dominates independent gates.

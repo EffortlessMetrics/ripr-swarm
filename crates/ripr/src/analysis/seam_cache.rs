@@ -98,7 +98,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.1` -> `1.2`: nested `test` conjunctions in `cfg(all(...))` now carry
 /// evidence role through the shared cfg-predicate authority (#3530); old
 /// classified seams may retain nested-conjunct helpers as production.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.2";
+/// `1.2` -> `1.3`: source roles now compose across include and module edges
+/// (#3533); out-of-line `#[cfg(test)]` module helpers flip out of the
+/// production inventory, changing classified-seam content.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.3";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -110,7 +113,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.2";
 /// role, changing the facts sharded entries derive from.
 /// `0.7` -> `0.8`: nested `test` conjunctions in `cfg(all(...))` now carry
 /// evidence role (#3530), changing the facts sharded entries derive from.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.8";
+/// `0.8` -> `0.9`: source roles now compose across include and module edges
+/// (#3533), changing the facts sharded entries derive from.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.9";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -126,7 +131,10 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.8";
 /// role, changing compact classified-seam content.
 /// `0.8` -> `0.9`: nested `test` conjunctions in `cfg(all(...))` now carry
 /// evidence role (#3530), changing compact classified-seam content.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.9";
+/// `0.9` -> `0.10`: source roles now compose across include and module edges
+/// (#3533); out-of-line `#[cfg(test)]` module helpers flip out of the
+/// production inventory, changing compact classified-seam content.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.10";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -162,7 +170,16 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `FunctionFact.source_role` (#3531). The evidence-bit semantics are
 /// unchanged, but the on-disk `FunctionFact` shape changed, so old
 /// per-file entries cannot deserialize into the new model and must miss.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "0.7";
+/// `0.7` -> `0.8`: `FileFacts` gained the module-declaration producer and
+/// composed role provenance (#3533). Old entries predate the
+/// `module_declarations` producer entirely: without the bump a warm hit
+/// would serve composition-blind facts and silently disable composed
+/// roles for that file.
+/// `0.8` -> `0.9`: `cfg_attr`-introduced `#[path]` targets now classify as
+/// a typed unknown (#3533 review). Entries from the `0.8` generation store
+/// such declarations as `Default`, which would resolve the default file
+/// Rust does not compile under the conditional configuration.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "0.9";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -2498,6 +2515,18 @@ mod tests {
     use crate::analysis::test_grip_evidence::TestGripEvidence;
     use crate::domain::{Confidence, StageEvidence, StageState};
     use std::path::PathBuf;
+
+    /// #3533 cache-bump pin: composed source roles change every cached
+    /// derivation that embeds them. Each version here was bumped on purpose;
+    /// a future change must move these pins in the same PR as its semantic
+    /// change so no warm cache serves stale roles.
+    #[test]
+    fn schema_versions_pin_the_role_composition_generation() {
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "0.9");
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.3");
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.9");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.10");
+    }
 
     fn sample_classified() -> ClassifiedSeam {
         let seam = RepoSeam::new(

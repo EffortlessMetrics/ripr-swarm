@@ -827,3 +827,11 @@ path = "docs/specs/RIPR-SPEC-0168-unsafe-boundary-probes.md"
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Issue #3536 records the unsafe-boundary probe contract: parser-backed extraction, changed-line projection, edge-line fail-closed rule, and static_unknown conservatism, with the golden fixture as required evidence."
+
+[[artifact]]
+id = "RIPR-SPEC-0169"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0169-contextual-source-role-composition.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #3533 records the contextual source-role composition contract: evidence-only CfgTestModule grants across module and include edges, fail-closed unresolved chains with provenance reasons and disclosure, and crate-root-anchored default module resolution."
