@@ -9,6 +9,9 @@ use std::path::{Path, PathBuf};
 use super::super::extract::PROBE_SHAPE_UNSAFE_BOUNDARY;
 use super::super::facts::FileFacts;
 use super::super::facts::FunctionSourceRole;
+use super::super::facts::ModuleDeclarationFact;
+use super::super::facts::ModulePathTarget;
+use super::super::facts::SourceRoleProvenance;
 use super::super::facts::cfg_predicates;
 use super::{RaRustSyntaxAdapter, RustSyntaxAdapter, SyntaxNodeFact, TextRange};
 use crate::analysis::rust_index::{
@@ -170,6 +173,7 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
 
     let source = parse.tree();
     let line_index = LineIndex::new(text);
+    let module_declarations = module_declaration_facts(&source, &line_index);
     let mut functions = Vec::new();
     let mut tests = Vec::new();
     let mut file_calls = Vec::new();
@@ -278,8 +282,109 @@ pub fn summarize_file_with_parser(path: &Path, text: &str) -> Result<FileFacts, 
         literals: file_literals,
         probe_shapes: file_probe_shapes,
         used_lexical_fallback: false,
+        module_declarations,
+        role_provenance: SourceRoleProvenance::default(),
         source: text.to_string(),
     })
+}
+
+/// Extracts the file's top-level out-of-line `mod name;` declarations (#3533).
+///
+/// This is the producer side of the module composition edge: each fact carries
+/// the declared name, the `#[path]` target shape, and the cfg-test requirement
+/// classified once through the shared `cfg_predicates` authority (#3530).
+///
+/// Deliberately not captured here (typed fail-closed status quo, no composed
+/// role is granted from them):
+/// - inline `mod name { ... }` bodies — their members are classified by the
+///   same-file cfg-test membership walk;
+/// - out-of-line declarations nested inside an inline module — cross-file
+///   resolution through inline nesting has no producer yet;
+/// - block modules (`fn f() { mod inner; }`) — not top-level items.
+///
+/// The lexical fallback producer emits no module declarations at all: without
+/// a parse, the facts layer cannot see declarations, and guessing from line
+/// text would re-create the drifted-matcher family #3530 removed.
+fn module_declaration_facts(
+    source: &SourceFile,
+    line_index: &LineIndex,
+) -> Vec<ModuleDeclarationFact> {
+    let mut declarations = Vec::new();
+    for module in source.syntax().children().filter_map(ast::Module::cast) {
+        // Out-of-line only: `mod name;` carries no item list.
+        if module.item_list().is_some() {
+            continue;
+        }
+        let Some(name) = module.name() else {
+            continue;
+        };
+        let line = module
+            .mod_token()
+            .map(|token| line_index.line(token.text_range().start()))
+            .unwrap_or_else(|| line_index.line(module.syntax().text_range().start()));
+        let attributes = module
+            .attrs()
+            .map(|attr| attr.syntax().text().to_string())
+            .collect::<Vec<_>>();
+        declarations.push(ModuleDeclarationFact {
+            name: name.text().to_string(),
+            line,
+            path_target: path_target_from_attributes(&attributes),
+            requires_test: cfg_predicates::attributes_require_test(
+                attributes.iter().map(String::as_str),
+            ),
+        });
+    }
+    declarations.sort_by(|left, right| left.line.cmp(&right.line).then(left.name.cmp(&right.name)));
+    declarations.dedup();
+    declarations
+}
+
+/// Classifies the `#[path]` attributes of one declaration into the bounded
+/// target shape. Exactly one plain string-literal attribute resolves; absence
+/// falls back to default name resolution; anything else (multiple `path`
+/// attributes, macro-call arguments, concatenated targets) is a typed unknown
+/// that fails closed downstream instead of resolving the wrong file.
+fn path_target_from_attributes(attributes: &[String]) -> ModulePathTarget {
+    let path_attributes = attributes
+        .iter()
+        .filter(|attribute| attribute_path_name(attribute).as_deref() == Some("path"))
+        .collect::<Vec<_>>();
+    match path_attributes.as_slice() {
+        [] => ModulePathTarget::Default,
+        [attribute] => match attribute_string_literal(attribute) {
+            Some(literal) => ModulePathTarget::Literal(literal),
+            None => ModulePathTarget::Unknown,
+        },
+        // Duplicate `#[path]` attributes are ambiguous input.
+        [..] => ModulePathTarget::Unknown,
+    }
+}
+
+/// Returns the attribute's path name (`path` for `#[path = "..."]`), using the
+/// same whitespace-insensitive normalization as the test-attribute classifier.
+fn attribute_path_name(attribute: &str) -> Option<String> {
+    let body = attribute.trim().strip_prefix("#[")?;
+    let body = body.strip_prefix("![").unwrap_or(body);
+    let closing = body.rfind(']')?;
+    let head = body.get(..closing)?.trim();
+    let head = head.split('=').next()?.trim();
+    let path = head
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    let path = path.trim_start_matches("::");
+    (!path.is_empty()).then_some(path.to_string())
+}
+
+/// Returns the string-literal argument of `#[path = "<literal>"]`, decoding
+/// plain and raw string spellings. `None` for any other shape.
+fn attribute_string_literal(attribute: &str) -> Option<String> {
+    let body = attribute.trim().strip_prefix("#[")?;
+    let closing = body.rfind(']')?;
+    let head = body.get(..closing)?;
+    let (_, value) = head.split_once('=')?;
+    parse_rust_string_literal(value.trim())
 }
 
 fn parser_symbol_id(path: &Path, function: &ast::Fn, name: &str) -> SymbolId {
@@ -1369,6 +1474,8 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
                 literals: vec![],
                 probe_shapes: vec![],
                 used_lexical_fallback: false,
+                module_declarations: Vec::new(),
+                role_provenance: Default::default(),
                 source: String::new(),
             },
             &ranges,

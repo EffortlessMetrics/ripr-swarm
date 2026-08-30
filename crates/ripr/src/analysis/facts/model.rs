@@ -258,6 +258,92 @@ pub struct RustIncludeLimitation {
     pub reason_code: String,
 }
 
+/// One out-of-line `mod name;` declaration captured by the parser producer
+/// (#3533). The cfg-test requirement is classified once, at the producer
+/// boundary, through the shared `cfg_predicates` authority (#3530) — the same
+/// closed classification the inline-module membership walk consumes.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ModuleDeclarationFact {
+    /// Declared module name (`mod <name>;`).
+    pub name: String,
+    /// Line of the `mod` token (1-based), excluding the attribute lines.
+    pub line: usize,
+    /// `#[path]` target shape. Only an exact string-literal target resolves;
+    /// everything else fails closed (see [`ModulePathTarget::Unknown`]).
+    pub path_target: ModulePathTarget,
+    /// True when the declaration's attributes structurally require a test
+    /// build (`cfg(test)` or a `test` conjunct through `cfg_predicates`).
+    /// A `cfg(any(test, ...))` alternative never requires test and never
+    /// grants a composed role.
+    pub requires_test: bool,
+}
+
+/// The `#[path]` target shape of one out-of-line module declaration (#3533).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ModulePathTarget {
+    /// No `#[path]` attribute: default resolution relative to the declaring
+    /// file's module directory (`<stem>/<name>.rs`, `<stem>/<name>/mod.rs`).
+    Default,
+    /// An exact `#[path = "..."]` string literal, resolved relative to the
+    /// declaring file's containing directory (the Rust reference rule for
+    /// non-inline `#[path]` targets).
+    Literal(String),
+    /// A `#[path]` attribute that is not a plain string literal (macro call,
+    /// concatenation, `concat!(env!("OUT_DIR"), ...)`). Typed unknown —
+    /// composition fails closed for this declaration instead of falling back
+    /// to default name resolution, which would resolve the wrong file.
+    Unknown,
+}
+
+/// Provenance of a composed source role (#3533).
+///
+/// Records the edge chain — module declarations, `#[path]` redirections,
+/// literal repository-local include edges — from the compilation unit down to
+/// this file occurrence, in order. The chain explains which context granted a
+/// composed evidence role; it does not change any output contract (roles are
+/// not surfaced in JSON output on this issue).
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SourceRoleProvenance {
+    /// Ordered chain from the compilation unit to this file (outermost edge
+    /// first). Empty for files whose roles are fully standalone-parse derived.
+    pub edges: Vec<SourceRoleProvenanceEdge>,
+    /// Reason code of the earliest edge in the chain that could not be
+    /// resolved (`rust_module_ambiguous_parent`,
+    /// `rust_module_cycle_or_depth_limit`, `rust_module_context_conflict`).
+    /// `None` means every recorded edge resolved exactly. An unresolved edge
+    /// fails closed: no composed role is granted from it.
+    pub earliest_unresolved_reason: Option<String>,
+}
+
+/// One edge in a composed source-role provenance chain (#3533).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SourceRoleProvenanceEdge {
+    /// How this edge composes the child file into the parent context.
+    pub kind: SourceRoleProvenanceEdgeKind,
+    /// Including/declaring file (physical path).
+    pub parent: PathBuf,
+    /// Included/declared file (physical path).
+    pub child: PathBuf,
+    /// Source text naming the edge: `mod <name>;` for module edges, the
+    /// include! expression for include edges.
+    pub declaration: String,
+    /// Line of the declaration in the parent file (1-based).
+    pub line: usize,
+    /// Whether this edge structurally requires a test build.
+    pub requires_test: bool,
+}
+
+/// The composition edge kind of one provenance entry (#3533).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceRoleProvenanceEdgeKind {
+    /// Out-of-line `mod name;` declaration (exact `#[path]` included).
+    Module,
+    /// Literal repository-local file-level `include!` edge.
+    Include,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FileFacts {
     pub path: PathBuf,
@@ -270,6 +356,21 @@ pub struct FileFacts {
     /// True when parser-backed syntax failed and lexical fallback produced these facts.
     /// Lexical fallback intentionally emits no probe shapes and may under-credit repo seams.
     pub used_lexical_fallback: bool,
+    /// Out-of-line `mod name;` declarations observed by the parser producer
+    /// (#3533). Top-level declarations only: an out-of-line module nested in
+    /// an inline module keeps the typed fail-closed status quo (no composed
+    /// role) because cross-file resolution through inline nesting is not a
+    /// producer here yet. The lexical fallback emits no module declarations.
+    #[serde(default)]
+    pub module_declarations: Vec<ModuleDeclarationFact>,
+    /// Source-role provenance for this file occurrence (#3533): the ordered
+    /// edge chain from the compilation unit whose declarations and include
+    /// edges composed this file's roles, plus the earliest edge in the chain
+    /// that could not be resolved. Composer-owned and recomputed on every
+    /// index build — `serde(skip)` keeps composed state out of the on-disk
+    /// file-fact cache, which stores pre-composition parse facts only.
+    #[serde(skip)]
+    pub role_provenance: SourceRoleProvenance,
     /// Original file source text. Held so `analysis/value-extraction-v2`
     /// can scan for top-level `const`/`static` declarations without
     /// re-reading the file at evidence-build time. Not part of any
@@ -448,6 +549,11 @@ mod tests {
         assert!(facts.literals.is_empty());
         assert!(facts.probe_shapes.is_empty());
         assert!(!facts.used_lexical_fallback);
+        // #3533: parser-produced module declarations start empty and the
+        // composer-owned provenance starts unresolved-free standalone.
+        assert!(facts.module_declarations.is_empty());
+        assert!(facts.role_provenance.edges.is_empty());
+        assert_eq!(facts.role_provenance.earliest_unresolved_reason, None);
     }
 
     #[test]

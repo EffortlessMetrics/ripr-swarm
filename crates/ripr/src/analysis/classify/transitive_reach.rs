@@ -930,6 +930,8 @@ mod tests {
                 literals: Vec::new(),
                 probe_shapes: Vec::new(),
                 used_lexical_fallback: false,
+                module_declarations: Vec::new(),
+                role_provenance: Default::default(),
                 source,
             },
         );
