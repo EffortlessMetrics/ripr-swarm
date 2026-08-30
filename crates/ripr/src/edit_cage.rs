@@ -1453,9 +1453,9 @@ mod tests {
         if args.first() == Some(&"commit") {
             let head_after = current_head(root);
             let landed = head_after.is_some()
-                && head_before
+                && !head_before
                     .as_deref()
-                    .map_or(true, |before| head_after.as_deref() != Some(before));
+                    .is_some_and(|before| head_after.as_deref() == Some(before));
             if landed {
                 return Ok(());
             }
