@@ -21,7 +21,7 @@
 ## Reference
 
 - [Specs](specs/) — 130+ behavioral specifications
-- [ADRs](adr/) — 19 architecture decision records
+- [ADRs](adr/) — 21 architecture decision records
 - [Agent context](agent-context/) — repo map, review invariants, validation
 - [Source-of-truth doctrine](source-of-truth/README.md) — control-plane for proposals, specs, ADRs, plans, goals, policy ledgers, proof, and closeouts
 - [Spec/proposal system](SPEC_PROPOSAL_SYSTEM.md) — companion guide to the repo tracking model

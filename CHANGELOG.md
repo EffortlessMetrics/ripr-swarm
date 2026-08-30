@@ -9,6 +9,17 @@ are scoped or reviewed.
 
 ## Unreleased
 
+### Added
+
+- New `ripr mcp --stdio [--root PATH]` command: a bounded, read-only
+  Model Context Protocol server that exposes exact workspace status
+  (`ripr_workspace_status` tool and `ripr://workspace/status` resource)
+  over newline-delimited JSON-RPC. Protocol errors always carry a
+  response `id` (`null` when the request id is unreadable), discovery
+  requires current-protocol `_meta`, and invalid roots fail closed
+  without leaking paths
+  ([#3088](https://github.com/EffortlessMetrics/ripr-swarm/issues/3088)).
+
 ### Fixed
 
 - Rust source-role analysis now classifies source-visible `cfg` and
@@ -293,7 +304,7 @@ are scoped or reviewed.
   Candidate flags are read out of each command's help text, so a suggestion can
   never name a flag that `--help` does not document, and adding a flag to help
   makes it suggestible with no second edit. Applied across 48 argument-parsing
-  sites covering 46 command paths (#2578).
+  sites covering 46 command paths (#2583).
 
 - `ripr init --dry-run` now previews the run it is actually a preview of.
   It previously returned before every precondition check and printed file
@@ -305,7 +316,7 @@ are scoped or reviewed.
   target path and its action (`create`, `overwrite`, `leave existing`) before
   the file bodies, and closes with `Rerun without --dry-run to apply.`.
   Body headers now carry the full target path for both files; the config
-  header previously showed only the bare file name (#2572).
+  header previously showed only the bare file name (#2576).
 
 - Default `ripr check --format human` output no longer prints a `Hidden:`
   heading over a literal `0 lower-priority finding(s) omitted from default
@@ -315,7 +326,7 @@ are scoped or reviewed.
   now `More:` and the count line is dropped; when findings really were omitted
   the `Hidden:` heading and the non-zero count line are unchanged. The two
   `Full evidence:` / `Machine data:` pointer lines render identically in both
-  states, so consumers scraping them are unaffected (#2567).
+  states, so consumers scraping them are unaffected (#2571).
 
 - Default `ripr check` human output now suggests `ripr explain <finding-id>`
   and `ripr context --at <finding-id>` for the selected finding. `ripr explain`
