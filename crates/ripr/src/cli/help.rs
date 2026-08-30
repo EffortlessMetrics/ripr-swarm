@@ -56,6 +56,7 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "gate",
     "init",
     "lsp",
+    "mcp",
     "outcome",
     "pilot",
     "policy history",
