@@ -1062,7 +1062,7 @@ fn extract_parser_oracles(
     assertions
 }
 
-fn is_assertion_macro(macro_name: &str) -> bool {
+pub(crate) fn is_assertion_macro(macro_name: &str) -> bool {
     matches!(
         macro_name,
         "assert" | "assert_eq" | "assert_ne" | "assert_matches" | "matches"
@@ -1070,12 +1070,12 @@ fn is_assertion_macro(macro_name: &str) -> bool {
         || macro_name.contains("snapshot")
 }
 
-struct LineIndex {
+pub(crate) struct LineIndex {
     starts: Vec<usize>,
 }
 
 impl LineIndex {
-    fn new(text: &str) -> Self {
+    pub(crate) fn new(text: &str) -> Self {
         let mut starts = vec![0];
         for (index, byte) in text.bytes().enumerate() {
             if byte == b'\n' {
@@ -1085,11 +1085,11 @@ impl LineIndex {
         Self { starts }
     }
 
-    fn line(&self, offset: TextSize) -> usize {
+    pub(crate) fn line(&self, offset: TextSize) -> usize {
         self.line_from_offset(text_size_to_usize(offset))
     }
 
-    fn line_for_range_end(&self, offset: TextSize) -> usize {
+    pub(crate) fn line_for_range_end(&self, offset: TextSize) -> usize {
         self.line_from_offset(text_size_to_usize(offset).saturating_sub(1))
     }
 
@@ -1106,7 +1106,7 @@ fn text_size_to_usize(offset: TextSize) -> usize {
     value as usize
 }
 
-fn slice_text(text: &str, start: TextSize, end: TextSize) -> String {
+pub(crate) fn slice_text(text: &str, start: TextSize, end: TextSize) -> String {
     let start = text_size_to_usize(start);
     let end = text_size_to_usize(end);
     text.get(start..end).unwrap_or("").to_string()

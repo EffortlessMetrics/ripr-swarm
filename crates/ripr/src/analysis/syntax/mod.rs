@@ -1,6 +1,6 @@
 mod adapter;
 pub(crate) mod lexical;
-mod ra;
+pub(crate) mod ra;
 
 pub use adapter::{
     LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RustSyntaxAdapter, SyntaxNodeFact, TextRange,

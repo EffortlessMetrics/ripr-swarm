@@ -314,9 +314,17 @@ fn stacked_test_case(value: i32) {
         let files = [(file.clone(), source)];
 
         let cold =
-            crate::analysis::facts::build_index_from_loaded_files_with_cache(&root.0, &files)?;
+            crate::analysis::facts::build_index_from_loaded_files_with_cache_and_test_harnesses(
+                &root.0,
+                &files,
+                &[],
+            )?;
         let warm =
-            crate::analysis::facts::build_index_from_loaded_files_with_cache(&root.0, &files)?;
+            crate::analysis::facts::build_index_from_loaded_files_with_cache_and_test_harnesses(
+                &root.0,
+                &files,
+                &[],
+            )?;
 
         for index in [&cold.index, &warm.index] {
             assert_eq!(

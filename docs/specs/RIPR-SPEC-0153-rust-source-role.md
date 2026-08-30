@@ -136,8 +136,12 @@ classification, and absolute-path rejection.
 - No cache-generation bump: the workspace cache key hashes the
   `ripr.toml` text, and the fact/classification schemas are unchanged by
   this slice (`FunctionFact.is_test` semantics untouched).
-- No generated-file or custom-harness classification (`UnknownRole`
-  reserved, test-only until a real producer exists).
+- Custom-harness classification now exists only through the explicit
+  repository-governed registry (`[analysis.test_harnesses]`, #3532):
+  exact registrations authorize evidence role, adapter-established
+  subjects, and typed limitations; nothing is inferred from filenames,
+  imports, macro suffixes, or function names. Generated-file
+  classification without a real producer remains deferred.
 
 ## Implementation Mapping
 

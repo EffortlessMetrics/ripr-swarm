@@ -288,6 +288,7 @@ mod tests {
     #[test]
     fn render_reports_empty_findings_as_notice() {
         let output = CheckOutput {
+            harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
             mode: Mode::Draft,
@@ -353,6 +354,7 @@ mod tests {
     #[test]
     fn render_uses_warning_for_exposed_and_default_message_without_stop_reason() {
         let output = CheckOutput {
+            harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
             mode: Mode::Draft,
@@ -421,6 +423,7 @@ mod tests {
     #[test]
     fn render_uses_warning_annotation_for_warning_severity_findings() {
         let output = CheckOutput {
+            harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
             mode: Mode::Draft,
@@ -690,6 +693,7 @@ mod tests {
 
     fn output_with_unknown_finding() -> CheckOutput {
         CheckOutput {
+            harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
             mode: Mode::Draft,
@@ -973,6 +977,7 @@ mod tests {
     #[test]
     fn render_normalizes_backslash_location_path_to_forward_slash() {
         let output = CheckOutput {
+            harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
             mode: Mode::Draft,

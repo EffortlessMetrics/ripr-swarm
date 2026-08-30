@@ -460,6 +460,7 @@ mod tests {
     fn diff_report_preserves_diff_complete_full_repo_limited_status() -> Result<(), String> {
         let report = build_diff_report(
             &CheckOutput {
+                harness_projections: Vec::new(),
                 schema_version: "0.1".to_string(),
                 tool: "ripr".to_string(),
                 mode: Mode::Draft,
@@ -532,6 +533,7 @@ mod tests {
         )?;
         let report = build_diff_report(
             &CheckOutput {
+                harness_projections: Vec::new(),
                 schema_version: "0.1".to_string(),
                 tool: "ripr".to_string(),
                 mode: Mode::Draft,
@@ -661,6 +663,7 @@ mod tests {
         use crate::analysis::PreviewLanguageAdvisory;
         let report = build_diff_report(
             &CheckOutput {
+                harness_projections: Vec::new(),
                 schema_version: "0.1".to_string(),
                 tool: "ripr".to_string(),
                 mode: Mode::Draft,
@@ -715,6 +718,7 @@ mod tests {
     fn diff_report_omits_preview_languages_for_pure_rust_scope() -> Result<(), String> {
         let report = build_diff_report(
             &CheckOutput {
+                harness_projections: Vec::new(),
                 schema_version: "0.1".to_string(),
                 tool: "ripr".to_string(),
                 mode: Mode::Draft,

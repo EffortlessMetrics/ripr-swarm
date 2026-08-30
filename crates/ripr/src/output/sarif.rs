@@ -1681,6 +1681,7 @@ weakly_gripped = "note"
 
     fn sample_output() -> CheckOutput {
         CheckOutput {
+            harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
             mode: Mode::Draft,

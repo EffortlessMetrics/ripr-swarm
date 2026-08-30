@@ -318,6 +318,94 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
     } else {
         out.push('\n');
     }
+    // Additive advisory field — emitted only when the repository registered
+    // test harnesses (#3532, `[analysis.test_harnesses]`) and the run
+    // carried harness facts. Absent otherwise, so repositories without
+    // registrations keep byte-identical output. Every entry exposes the
+    // harness kind, adapter generation, provenance, subject identity, and
+    // selector capability (always unexecuted — passive analysis never runs
+    // a harness), plus typed limitations, without reconstruction.
+    if !output.harness_projections.is_empty() {
+        out.push_str(",\n  \"test_harnesses\": [\n");
+        for (idx, projection) in output.harness_projections.iter().enumerate() {
+            out.push_str("    {\n");
+            field(
+                &mut out,
+                3,
+                "registration_id",
+                &projection.registration_id,
+                true,
+            );
+            field(&mut out, 3, "harness_kind", &projection.harness_kind, true);
+            field(&mut out, 3, "adapter", &projection.adapter, true);
+            field(&mut out, 3, "marker", &projection.marker, true);
+            field(
+                &mut out,
+                3,
+                "target",
+                &projection.target.to_string_lossy().replace('\\', "/"),
+                true,
+            );
+            field(&mut out, 3, "provenance", &projection.provenance, true);
+            if projection.subjects.is_empty() {
+                out.push_str("      \"subjects\": []");
+            } else {
+                out.push_str("      \"subjects\": [\n");
+                for (sidx, subject) in projection.subjects.iter().enumerate() {
+                    out.push_str("        {\n");
+                    field(&mut out, 5, "name", &subject.name, true);
+                    field(
+                        &mut out,
+                        5,
+                        "file",
+                        &subject.file.to_string_lossy().replace('\\', "/"),
+                        true,
+                    );
+                    number_field(&mut out, 5, "start_line", subject.start_line, true);
+                    number_field(&mut out, 5, "end_line", subject.end_line, true);
+                    field(&mut out, 5, "selector", subject.selector.as_str(), true);
+                    field(&mut out, 5, "claim", subject.claim.as_str(), false);
+                    out.push_str("        }");
+                    if sidx + 1 != projection.subjects.len() {
+                        out.push(',');
+                    }
+                    out.push('\n');
+                }
+                out.push_str("      ]");
+            }
+            out.push_str(",\n");
+            if projection.limitations.is_empty() {
+                out.push_str("      \"limitations\": []\n");
+            } else {
+                out.push_str("      \"limitations\": [\n");
+                for (lidx, limitation) in projection.limitations.iter().enumerate() {
+                    out.push_str("        {\n");
+                    field(&mut out, 5, "code", &limitation.code, true);
+                    field(
+                        &mut out,
+                        5,
+                        "file",
+                        &limitation.file.to_string_lossy().replace('\\', "/"),
+                        true,
+                    );
+                    number_field(&mut out, 5, "line", limitation.line, true);
+                    field(&mut out, 5, "detail", &limitation.detail, false);
+                    out.push_str("        }");
+                    if lidx + 1 != projection.limitations.len() {
+                        out.push(',');
+                    }
+                    out.push('\n');
+                }
+                out.push_str("      ]\n");
+            }
+            out.push_str("    }");
+            if idx + 1 != output.harness_projections.len() {
+                out.push(',');
+            }
+            out.push('\n');
+        }
+        out.push_str("  ]");
+    }
     out.push_str("}\n");
     out
 }
@@ -1406,6 +1494,118 @@ mod provenance_tests {
             parsed[0].get("provenance").is_none(),
             "deduped fact must not carry provenance: {parsed:?}"
         );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod harness_projection_tests {
+    use super::*;
+    use crate::analysis::harness_projection::{
+        HarnessLimitationFact, HarnessSelectorCapability, HarnessSubjectClaim, HarnessSubjectFact,
+        TestHarnessProjection,
+    };
+    use crate::app::Mode;
+    use crate::domain::Summary;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    fn output_with(projections: Vec<TestHarnessProjection>) -> CheckOutput {
+        CheckOutput {
+            harness_projections: projections,
+            schema_version: "0.2".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: std::path::PathBuf::from("repo"),
+            base: Some("origin/main".to_string()),
+            analysis_outcome: None,
+            summary: Summary::default(),
+            findings: Vec::new(),
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            suppression: None,
+            partial_scope: None,
+        }
+    }
+
+    fn subject(name: &str) -> HarnessSubjectFact {
+        HarnessSubjectFact {
+            registration_id: "mimic-suite".to_string(),
+            harness_kind: "custom_harness".to_string(),
+            adapter: "libtest_mimic_v1".to_string(),
+            marker: "libtest_mimic".to_string(),
+            name: name.to_string(),
+            file: std::path::PathBuf::from("tests/price_mimic.rs"),
+            start_line: 9,
+            end_line: 9,
+            body: "Trial::test(...)".to_string(),
+            calls: Vec::new(),
+            assertions: Vec::new(),
+            literals: Vec::new(),
+            selector: HarnessSelectorCapability::NamedUnexecuted,
+            claim: HarnessSubjectClaim::NamedInvocation,
+            provenance: "ripr.toml [analysis.test_harnesses]".to_string(),
+        }
+    }
+
+    fn parse(rendered: &str) -> Result<serde_json::Value, serde_json::Error> {
+        serde_json::from_str(rendered)
+    }
+
+    #[test]
+    fn absent_without_registrations() -> TestResult {
+        let rendered = render_with_config(&output_with(Vec::new()), &RiprConfig::default());
+        let value = parse(&rendered)?;
+        assert!(value.get("test_harnesses").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn present_with_kind_provenance_subject_and_selector() -> TestResult {
+        let projection = TestHarnessProjection {
+            registration_id: "mimic-suite".to_string(),
+            harness_kind: "custom_harness".to_string(),
+            adapter: "libtest_mimic_v1".to_string(),
+            marker: "libtest_mimic".to_string(),
+            target: std::path::PathBuf::from("tests/price_mimic.rs"),
+            provenance: "ripr.toml [analysis.test_harnesses]".to_string(),
+            subjects: vec![subject("alpha_parses")],
+            limitations: vec![HarnessLimitationFact {
+                registration_id: "mimic-suite".to_string(),
+                code: "dynamic_trial_name".to_string(),
+                file: std::path::PathBuf::from("tests/price_mimic.rs"),
+                line: 17,
+                detail: "trial name is not a simple string literal".to_string(),
+            }],
+        };
+        let rendered = render_with_config(&output_with(vec![projection]), &RiprConfig::default());
+        let value = parse(&rendered)?;
+        let harness = value
+            .get("test_harnesses")
+            .and_then(|entry| entry.as_array())
+            .ok_or("test_harnesses array missing")?;
+        assert_eq!(harness.len(), 1);
+        let entry = &harness[0];
+        assert_eq!(entry["registration_id"], "mimic-suite");
+        assert_eq!(entry["harness_kind"], "custom_harness");
+        assert_eq!(entry["adapter"], "libtest_mimic_v1");
+        assert_eq!(entry["marker"], "libtest_mimic");
+        assert_eq!(entry["target"], "tests/price_mimic.rs");
+        assert_eq!(entry["provenance"], "ripr.toml [analysis.test_harnesses]");
+        let subjects = entry["subjects"]
+            .as_array()
+            .ok_or("subjects array missing")?;
+        assert_eq!(subjects.len(), 1);
+        assert_eq!(subjects[0]["name"], "alpha_parses");
+        assert_eq!(subjects[0]["selector"], "named_unexecuted");
+        assert_eq!(subjects[0]["claim"], "named_invocation");
+        let limitations = entry["limitations"]
+            .as_array()
+            .ok_or("limitations array missing")?;
+        assert_eq!(limitations[0]["code"], "dynamic_trial_name");
+        assert_eq!(limitations[0]["line"], 17);
         Ok(())
     }
 }

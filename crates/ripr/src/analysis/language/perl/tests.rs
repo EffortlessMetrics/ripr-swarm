@@ -63,6 +63,7 @@ fn packet_test_options() -> crate::analysis::AnalysisOptions {
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
     }
 }
 

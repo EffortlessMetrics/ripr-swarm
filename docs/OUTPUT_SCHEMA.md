@@ -1325,6 +1325,69 @@ analyzed under advisory preview support that may be incomplete
 (`enabled == true`). In neither case is an empty result a Rust-grade clean
 result.
 
+### `test_harnesses` (top-level additive advisory, #3532)
+
+Added in schema `0.2` as an additive optional top-level array. Emitted only when
+the repository registered test harnesses (`[analysis.test_harnesses]` in
+`ripr.toml`) and the run's analysis carried harness facts. Absent for
+repositories without registrations, so their output is byte-identical to the
+pre-#3532 shape. Does not bump `schema_version`.
+
+Example — one registered `harness = false` custom target with one exact trial
+subject and one dynamic-name limitation:
+
+```json
+"test_harnesses": [
+  {
+    "registration_id": "mimic-suite",
+    "harness_kind": "custom_harness",
+    "adapter": "libtest_mimic_v1",
+    "marker": "libtest_mimic",
+    "target": "tests/price_mimic.rs",
+    "provenance": "ripr.toml [analysis.test_harnesses]",
+    "subjects": [
+      {
+        "name": "alpha_parses",
+        "file": "tests/price_mimic.rs",
+        "start_line": 9,
+        "end_line": 9,
+        "selector": "named_unexecuted",
+        "claim": "named_invocation"
+      }
+    ],
+    "limitations": [
+      {
+        "code": "dynamic_trial_name",
+        "file": "tests/price_mimic.rs",
+        "line": 17,
+        "detail": "trial name is not a simple string literal; generated names remain unresolved"
+      }
+    ]
+  }
+]
+```
+
+- `registration_id` — the stable identifier from the registration
+- `harness_kind` — `custom_harness` or `registered_attribute`
+- `adapter` — adapter generation, e.g. `libtest_mimic_v1`, `exact_attribute_v1`
+- `marker` — the exact source marker the adapter matched (crate or attribute path)
+- `target` — the exact registered target file (workspace-relative, forward-slashed)
+- `provenance` — where the authority came from (registration channel)
+- `subjects[].name` — stable subject identity (trial name or test fn name)
+- `subjects[].selector` — `named_unexecuted` when a selector route is known;
+  a known route is never a selector that ran — passive analysis never starts
+  Cargo or a harness
+- `subjects[].claim` — `named_invocation` (the invocation is one source-level
+  subject; generated cases are not enumerated) or `named_function` (the
+  function is one executable test)
+- `limitations[]` — typed shapes the registration saw but could not classify
+  (`dynamic_trial_name`, `dynamic_trial_registration`, `ambiguous_import`,
+  `unanchored_trial_path`, `unresolved_marker_import`, `duplicate_subject`,
+  `parse_unavailable`)
+
+An absent `test_harnesses` array means the repository has no harness
+registrations; it is never a claim that custom harnesses do not exist.
+
 ### `scope_disclosures` (top-level additive advisory, RIPR-SPEC-0083)
 
 Added as an additive optional top-level array. Emitted only when `ripr check`

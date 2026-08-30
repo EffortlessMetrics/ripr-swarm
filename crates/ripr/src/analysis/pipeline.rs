@@ -255,6 +255,8 @@ fn run_pipeline_for_diff_text(
     let parsed_diff = diff::parse_unified_diff_bounded_with_metadata(diff_text)?;
     let changed_files = parsed_diff.changed_files;
     let mut limitations = parsed_diff.limitations;
+    let mut harness_projections: Vec<crate::analysis::harness_projection::TestHarnessProjection> =
+        Vec::new();
     let deleted_file_count = parsed_diff.deleted_file_count;
     let submodule_file_count = parsed_diff.submodule_file_count;
     let renamed_file_count = parsed_diff.renamed_file_count;
@@ -311,6 +313,7 @@ fn run_pipeline_for_diff_text(
         }
         limitations.extend(result.limitations);
         partial_scope = result.partial_scope.clone();
+        harness_projections.extend(result.harness_projections);
         findings.extend(result.findings);
         rust_changed_files += result.changed_files;
         candidate_line_count += result.candidate_line_count;
@@ -571,6 +574,7 @@ fn run_pipeline_for_diff_text(
     )?);
 
     Ok(AnalysisResult {
+        harness_projections,
         analysis_outcome,
         summary: summary_result,
         findings,
@@ -675,6 +679,9 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_generated_file_patterns(
     let mut rust_production_files: usize = 0;
     let mut files_by_language: Vec<(LanguageId, usize)> = Vec::new();
     let mut language_runs: Vec<LanguageRun> = Vec::new();
+    let mut rust_harness_projections: Vec<
+        crate::analysis::harness_projection::TestHarnessProjection,
+    > = Vec::new();
     for language in languages {
         cancellation::checkpoint()?;
         // Non-abort contract (see the diff loop above): preview-language
@@ -697,6 +704,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_generated_file_patterns(
                     )),
                 });
             }
+            rust_harness_projections = result.harness_projections;
             findings.extend(result.findings);
             rust_production_files += result.production_files;
             files_by_language.push((LanguageId::Rust, result.production_files));
@@ -740,6 +748,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_generated_file_patterns(
     }
 
     Ok(AnalysisResult {
+        harness_projections: rust_harness_projections,
         analysis_outcome: None,
         summary: summary_result,
         findings,
@@ -1142,6 +1151,7 @@ mod tests {
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
             },
             &OraclePolicy::default(),
             &[LanguageId::Rust],
@@ -1194,6 +1204,7 @@ mod tests {
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
             },
             &OraclePolicy::default(),
             &[LanguageId::Rust],
@@ -1325,6 +1336,7 @@ mod tests {
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
             },
             &OraclePolicy::default(),
             &[LanguageId::Rust],
@@ -1413,6 +1425,7 @@ mod tests {
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
             },
             &OraclePolicy::default(),
             &[LanguageId::Rust],
@@ -1443,6 +1456,7 @@ mod tests {
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
             },
             &OraclePolicy::default(),
             &[LanguageId::Rust],
@@ -1468,6 +1482,7 @@ mod tests {
             git_timeout: None,
             git_candidate: None,
             production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
         };
         let combined = "diff --cc src/lib.rs\n\
              index 1111111,2222222..3333333\n\
@@ -1536,6 +1551,7 @@ mod tests {
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
             },
             &OraclePolicy::default(),
             &[LanguageId::Rust],
@@ -1577,6 +1593,7 @@ mod tests {
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
             },
             &OraclePolicy::default(),
             &[LanguageId::Rust, LanguageId::Perl],
@@ -1681,6 +1698,7 @@ mod tests {
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
             },
             &OraclePolicy::default(),
             &[LanguageId::Rust, LanguageId::Perl],
@@ -1763,6 +1781,7 @@ index 0000000..1111111 100644
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
             },
             &OraclePolicy::default(),
             &[LanguageId::TypeScript, LanguageId::Python],
@@ -1819,6 +1838,7 @@ index 0000000..1111111 100644
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
             },
             &OraclePolicy::default(),
             &[LanguageId::Rust, LanguageId::Python],
@@ -1876,6 +1896,7 @@ index 0000000..1111111 100644
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
             },
             &OraclePolicy::default(),
             &[LanguageId::TypeScript],
@@ -1936,6 +1957,7 @@ index 0000000..1111111 100644
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
             },
             &OraclePolicy::default(),
             &[LanguageId::TypeScript],
@@ -1993,6 +2015,7 @@ index 0000000..1111111 100644
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
             },
             &OraclePolicy::default(),
             &[LanguageId::Rust],
@@ -2064,6 +2087,7 @@ index 0000000..1111111 100644
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
             },
             &OraclePolicy::default(),
             &[LanguageId::Rust],
@@ -2108,6 +2132,7 @@ index 0000000..1111111 100644
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
             },
             &OraclePolicy::default(),
             &[LanguageId::Rust, LanguageId::Perl],
@@ -2154,6 +2179,7 @@ index 0000000..1111111 100644
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
             },
             &OraclePolicy::default(),
             &[LanguageId::Rust],
@@ -2198,6 +2224,7 @@ index 0000000..1111111 100644
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
             },
             &OraclePolicy::default(),
             &[LanguageId::TypeScript, LanguageId::Python],

@@ -76,6 +76,7 @@ pub(crate) fn inventory_seams_at_with_config(
     let mut context =
         workspace::context_for_files(root, rust_files.iter().map(|path| path.as_path()));
     context.production_like_targets = config.analysis().production_like_targets().clone();
+    context.harness_targets = harness_targets_from_config(config);
     let production_files: Vec<PathBuf> = rust_files
         .iter()
         .filter(|p| workspace::classify_with(p, &context).seeds_production_findings())
@@ -85,7 +86,11 @@ pub(crate) fn inventory_seams_at_with_config(
     // Index the full set so `find_owner_function` can resolve owners
     // even when the seam appears in a file the production filter
     // includes but tests reference.
-    let index = rust_index::build_index(root, &rust_files)?;
+    let index = rust_index::build_index_with_test_harnesses(
+        root,
+        &rust_files,
+        harness_registrations(config),
+    )?;
     Ok(inventory_seams_from_index(&production_files, &index))
 }
 
@@ -387,6 +392,7 @@ pub(crate) fn inventory_classified_seams_uncached_with_config(
     let mut uncached_context =
         workspace::context_for_files(root, rust_files.iter().map(|path| path.as_path()));
     uncached_context.production_like_targets = config.analysis().production_like_targets().clone();
+    uncached_context.harness_targets = harness_targets_from_config(config);
     let production_files: Vec<PathBuf> = rust_files
         .iter()
         .filter(|p| workspace::classify_with(p, &uncached_context).seeds_production_findings())
@@ -395,7 +401,11 @@ pub(crate) fn inventory_classified_seams_uncached_with_config(
     trace_latency_phase("filter_production_files", "ok", filter_started.elapsed());
 
     let index_started = Instant::now();
-    let mut index = match rust_index::build_index(root, &rust_files) {
+    let mut index = match rust_index::build_index_with_test_harnesses(
+        root,
+        &rust_files,
+        harness_registrations(config),
+    ) {
         Ok(index) => {
             trace_latency_phase("build_index", "ok", index_started.elapsed());
             index
@@ -559,13 +569,18 @@ fn inventory_seam_grip_class_counts_uncached_with_config(
     let mut context =
         workspace::context_for_files(root, rust_files.iter().map(|path| path.as_path()));
     context.production_like_targets = config.analysis().production_like_targets().clone();
+    context.harness_targets = harness_targets_from_config(config);
     let production_files: Vec<PathBuf> = rust_files
         .iter()
         .filter(|p| workspace::classify_with(p, &context).seeds_production_findings())
         .cloned()
         .collect();
 
-    let mut index = rust_index::build_index(root, &rust_files)?;
+    let mut index = rust_index::build_index_with_test_harnesses(
+        root,
+        &rust_files,
+        harness_registrations(config),
+    )?;
     rust_index::apply_oracle_policy(&mut index, config.oracles());
     let seams = inventory_seams_from_index(&production_files, &index);
     let mut counts = SeamGripClassCounts::new(seams.len());
@@ -593,8 +608,11 @@ fn inventory_compact_classified_seams_from_state_with_config(
         ),
         Duration::ZERO,
     );
-    let mut cached =
-        rust_index::build_index_from_loaded_files_with_cache(&state.workspace_root, &state.files)?;
+    let mut cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
+        &state.workspace_root,
+        &state.files,
+        harness_registrations(config),
+    )?;
     cancellation::checkpoint()?;
     trace_latency_phase(
         "file_fact_cache",
@@ -636,8 +654,11 @@ fn inventory_classified_seams_from_state_with_config(
         ),
         Duration::ZERO,
     );
-    let mut cached =
-        rust_index::build_index_from_loaded_files_with_cache(&state.workspace_root, &state.files)?;
+    let mut cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
+        &state.workspace_root,
+        &state.files,
+        harness_registrations(config),
+    )?;
     trace_latency_phase(
         "file_fact_cache",
         &cached.file_fact_cache.status_label(),
@@ -705,8 +726,11 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
     let state = collect_workspace_state(root, config)?;
     let workspace_cache_key = state.cache_key();
     let changed_test = normalized_inventory_path(changed_test);
-    let mut cached =
-        rust_index::build_index_from_loaded_files_with_cache(&state.workspace_root, &state.files)?;
+    let mut cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
+        &state.workspace_root,
+        &state.files,
+        harness_registrations(config),
+    )?;
     rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
 
     let selected_tests = cached
@@ -825,8 +849,11 @@ pub(crate) fn inventory_diff_scoped_classified_seams_at_with_config(
         ),
         Duration::ZERO,
     );
-    let mut cached =
-        rust_index::build_index_from_loaded_files_with_cache(&state.workspace_root, &state.files)?;
+    let mut cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
+        &state.workspace_root,
+        &state.files,
+        harness_registrations(config),
+    )?;
     trace_latency_phase(
         "file_fact_cache",
         &cached.file_fact_cache.status_label(),
@@ -1057,8 +1084,11 @@ fn inventory_seam_grip_class_counts_from_state_with_config(
         ),
         Duration::ZERO,
     );
-    let mut cached =
-        rust_index::build_index_from_loaded_files_with_cache(&state.workspace_root, &state.files)?;
+    let mut cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
+        &state.workspace_root,
+        &state.files,
+        harness_registrations(config),
+    )?;
     trace_latency_phase(
         "file_fact_cache",
         &cached.file_fact_cache.status_label(),
@@ -1076,6 +1106,24 @@ fn inventory_seam_grip_class_counts_from_state_with_config(
     Ok(counts)
 }
 
+/// Exact registered test-harness target identities (#3532), normalized to
+/// the forward-slashed workspace-relative form the role context compares.
+fn harness_targets_from_config(config: &RiprConfig) -> std::collections::BTreeSet<PathBuf> {
+    config
+        .analysis()
+        .test_harnesses()
+        .iter()
+        .map(|registration| registration.target.clone())
+        .collect()
+}
+
+/// Registration list for the harness-aware index builds (#3532). Empty
+/// without registrations; the index build is then a no-op for the
+/// registry and every output stays byte-identical.
+fn harness_registrations(config: &RiprConfig) -> &[crate::config::TestHarnessRegistration] {
+    config.analysis().test_harnesses()
+}
+
 fn production_files_from_state_with_role(
     state: &OwnedWorkspaceState,
     config: &RiprConfig,
@@ -1087,6 +1135,7 @@ fn production_files_from_state_with_role(
         state.files.iter().map(|(path, _)| path.as_path()),
     );
     context.production_like_targets = config.analysis().production_like_targets().clone();
+    context.harness_targets = harness_targets_from_config(config);
     state
         .files
         .iter()

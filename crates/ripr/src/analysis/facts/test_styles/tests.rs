@@ -472,10 +472,18 @@ fn fallback_lookalike() {}
         .iter()
         .map(|file| fs::read(root.join(file)).map(|bytes| (file.clone(), bytes)))
         .collect::<Result<Vec<_>, _>>()?;
-    let cold_cached = super::super::build_index_from_loaded_files_with_cache(&root, &loaded_files)
-        .map_err(std::io::Error::other)?;
-    let warm_cached = super::super::build_index_from_loaded_files_with_cache(&root, &loaded_files)
-        .map_err(std::io::Error::other)?;
+    let cold_cached = super::super::build_index_from_loaded_files_with_cache_and_test_harnesses(
+        &root,
+        &loaded_files,
+        &[],
+    )
+    .map_err(std::io::Error::other)?;
+    let warm_cached = super::super::build_index_from_loaded_files_with_cache_and_test_harnesses(
+        &root,
+        &loaded_files,
+        &[],
+    )
+    .map_err(std::io::Error::other)?;
     assert_eq!(index_test_names(&cold_cached.index), expected_tests);
     assert_eq!(index_test_names(&warm_cached.index), expected_tests);
     assert!(

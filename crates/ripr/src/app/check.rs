@@ -84,6 +84,7 @@ pub fn repo_seam_inventory_input(input: CheckInput) -> CheckOutput {
     output_builder::check_output_from_analysis(
         input,
         AnalysisResult {
+            harness_projections: Vec::new(),
             analysis_outcome: None,
             summary: Summary::default(),
             findings: Vec::new(),

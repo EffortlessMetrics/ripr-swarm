@@ -19,11 +19,12 @@ pub(crate) use super::extract::{
 };
 use super::facts::ModulePathTarget;
 pub(crate) use super::facts::build_index_from_loaded_files_with_cache;
+pub(crate) use super::facts::build_index_from_loaded_files_with_cache_and_test_harnesses;
 #[cfg(test)]
 pub use super::facts::{CallFact, LiteralFact, ReturnFact};
 pub use super::facts::{
     FileFacts, FunctionFact, FunctionSummary, OracleFact, ProbeShapeFact, RustIndex, TestFact,
-    TestSummary, build_index,
+    TestSummary, build_index, build_index_with_test_harnesses,
 };
 #[cfg(test)]
 use super::syntax::LexicalRustSyntaxAdapter;

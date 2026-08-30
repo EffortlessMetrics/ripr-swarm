@@ -1608,8 +1608,11 @@ impl RustAdapter {
                 Ok((file.clone(), bytes))
             })
             .collect::<Result<Vec<_>, String>>()?;
-        let cached =
-            rust_index::build_index_from_loaded_files_with_cache(&options.root, &loaded_files)?;
+        let cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
+            &options.root,
+            &loaded_files,
+            &options.test_harnesses,
+        )?;
         let mut index = cached.index;
         if let Some(disclosure) = rust_index::include_resolution_disclosure(&index) {
             eprintln!("{disclosure}");
@@ -1632,6 +1635,11 @@ impl RustAdapter {
             analyzable_rust_files.iter().map(|path| path.as_path()),
         );
         source_role_context.production_like_targets = options.production_like_targets.clone();
+        source_role_context.harness_targets = options
+            .test_harnesses
+            .iter()
+            .map(|registration| registration.target.clone())
+            .collect();
 
         // #2971: The cross-crate calls_owner bypass in find_related_tests
         // requires a workspace-complete function index. In Instant/Draft/Fast
@@ -1720,6 +1728,10 @@ impl RustAdapter {
 
         Ok(LanguageDiffResult {
             findings,
+            harness_projections: super::super::harness_projection::projections_from_index(
+                &index,
+                &options.test_harnesses,
+            ),
             changed_files: changed_rust_files,
             candidate_line_count: candidate_lines.len(),
             changed_files_by_language: Vec::new(),
@@ -1805,6 +1817,11 @@ impl RustAdapter {
                 analyzable_rust_files.iter().map(|path| path.as_path()),
             );
             context.production_like_targets = options.production_like_targets.clone();
+            context.harness_targets = options
+                .test_harnesses
+                .iter()
+                .map(|registration| registration.target.clone())
+                .collect();
             context
         };
         let production_files = analyzable_rust_files
@@ -1832,9 +1849,10 @@ impl RustAdapter {
                 Ok((file.clone(), bytes))
             })
             .collect::<Result<Vec<_>, String>>()?;
-        let cached = rust_index::build_index_from_loaded_files_with_cache(
+        let cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
             &options.root,
             &loaded_rust_files,
+            &options.test_harnesses,
         )?;
         let mut index = cached.index;
         if let Some(disclosure) = rust_index::lexical_fallback_disclosure(&index) {
@@ -1875,6 +1893,10 @@ impl RustAdapter {
 
         Ok(LanguageRepoResult {
             findings,
+            harness_projections: super::super::harness_projection::projections_from_index(
+                &index,
+                &options.test_harnesses,
+            ),
             production_files: production_files.len(),
             skipped_files,
         })
@@ -1987,6 +2009,7 @@ mod tests {
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
             },
             &OraclePolicy::default(),
             &changed_files,
@@ -2057,6 +2080,7 @@ mod tests {
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
             },
             &OraclePolicy::default(),
             &changed_files,
@@ -2155,6 +2179,7 @@ mod tests {
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
             },
             &OraclePolicy::default(),
             &changed_files,
@@ -2329,6 +2354,7 @@ fn absent_delimiter_boundary_returns_head() {
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
             },
             &OraclePolicy::default(),
             &changed_files,
@@ -3279,6 +3305,7 @@ fn absent_delimiter_boundary_returns_head() {
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
             },
             &OraclePolicy::default(),
             &changed_files,
@@ -3921,6 +3948,7 @@ let _ = (result, note, raw);"##,
             git_timeout: None,
             git_candidate: None,
             production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
         };
         let policy = OraclePolicy::default();
         let result = cancellation::with_token(&token, || {
@@ -4029,6 +4057,7 @@ let _ = (result, note, raw);"##,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
             },
             &OraclePolicy::default(),
             &changed_files,
@@ -4119,6 +4148,7 @@ let _ = (result, note, raw);"##,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
             },
             &OraclePolicy::default(),
             &changed_files,
@@ -4160,6 +4190,140 @@ let _ = (result, note, raw);"##,
                         .any(|test| test.name == "price_at_boundary")),
             "the declared target's test must remain usable evidence: {:?}",
             result.findings
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn diff_analysis_registered_harness_target_never_seeds_production_probes() -> Result<(), String>
+    {
+        // #3532: an exact `[analysis.test_harnesses]` registration makes a
+        // `harness = false` custom target evidence role outside tests/ —
+        // its inert `#[test]` attributes and helper plumbing seed no
+        // production probes, while an unregistered sibling does.
+        let root = temp_root("registered-harness-diff")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='registered-harness'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        write(
+            &root.join("src/lib.rs"),
+            "pub fn price(amount: i32) -> i32 {\n    if amount > 100 { amount - 10 } else { amount }\n}\n",
+        )?;
+        write(
+            &root.join("src/price_mimic.rs"),
+            "use libtest_mimic::Trial;\n\nfn setup_price(amount: i32) -> i32 {\n    if amount < 0 { 0 } else { price(amount) }\n}\n\n#[test]\nfn inert_without_the_harness() {\n    assert_eq!(setup_price(100), 90);\n}\n\nfn trials() -> Vec<Trial> {\n    vec![Trial::test(\"price_at_boundary\", || {\n        assert_eq!(setup_price(100), 90);\n    })]\n}\n",
+        )?;
+        write(
+            &root.join("src/unregistered_helper.rs"),
+            "pub fn helper_path(amount: i32) -> i32 {\n    if amount < 0 { 0 } else { amount }\n}\n",
+        )?;
+        let mut diff_text = String::new();
+        let mut add_file = |path: &str, lines: &[&str]| {
+            diff_text.push_str(&format!("diff --git a{path} b{path}\n"));
+            diff_text.push_str("new file mode 100644\n");
+            diff_text.push_str("--- /dev/null\n");
+            diff_text.push_str(&format!("+++ b{path}\n"));
+            diff_text.push_str(&format!("@@ -0,0 +1,{} @@\n", lines.len()));
+            for line in lines {
+                diff_text.push_str(&format!("+{line}\n"));
+            }
+        };
+        add_file(
+            "/src/lib.rs",
+            &[
+                "pub fn price(amount: i32) -> i32 {",
+                "    if amount > 100 { amount - 10 } else { amount }",
+                "}",
+            ],
+        );
+        add_file(
+            "/src/price_mimic.rs",
+            &[
+                "use libtest_mimic::Trial;",
+                "",
+                "fn setup_price(amount: i32) -> i32 {",
+                "    if amount < 0 { 0 } else { price(amount) }",
+                "}",
+                "",
+                "#[test]",
+                "fn inert_without_the_harness() {",
+                "    assert_eq!(setup_price(100), 90);",
+                "}",
+                "",
+                "fn trials() -> Vec<Trial> {",
+                "    vec![Trial::test(\"price_at_boundary\", || {",
+                "        assert_eq!(setup_price(100), 90);",
+                "    })]",
+                "}",
+            ],
+        );
+        add_file(
+            "/src/unregistered_helper.rs",
+            &[
+                "pub fn helper_path(amount: i32) -> i32 {",
+                "    if amount < 0 { 0 } else { amount }",
+                "}",
+            ],
+        );
+        let changed_files = diff::parse_unified_diff(&diff_text);
+        let result = RustAdapter.analyze_diff(
+            &AnalysisOptions {
+                root,
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: vec![crate::config::TestHarnessRegistration {
+                    registration_id: "mimic-suite".to_string(),
+                    target: std::path::PathBuf::from("src/price_mimic.rs"),
+                    kind: crate::config::TestHarnessKind::CustomHarnessTarget,
+                    adapter: crate::config::TestHarnessAdapter::LibtestMimicV1,
+                    marker: "libtest_mimic".to_string(),
+                }],
+            },
+            &OraclePolicy::default(),
+            &changed_files,
+        )?;
+        let finding_files = result
+            .findings
+            .iter()
+            .map(|finding| {
+                finding
+                    .probe
+                    .location
+                    .file
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            finding_files
+                .iter()
+                .all(|file| !file.ends_with("src/price_mimic.rs")),
+            "a registered harness target must not seed production probes: {finding_files:?}"
+        );
+        assert!(
+            finding_files
+                .iter()
+                .any(|file| file.ends_with("src/unregistered_helper.rs")),
+            "an unregistered sibling stays a production subject: {finding_files:?}"
+        );
+        // The harness registry's subject facts ride on the diff result.
+        assert_eq!(result.harness_projections.len(), 1);
+        assert_eq!(result.harness_projections[0].registration_id, "mimic-suite");
+        assert!(
+            result.harness_projections[0]
+                .subjects
+                .iter()
+                .any(|subject| subject.name == "price_at_boundary"),
+            "the exact trial registration is a projected subject"
         );
         Ok(())
     }
@@ -4226,6 +4390,7 @@ let _ = (result, note, raw);"##,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: production_like,
+                test_harnesses: Vec::new(),
             },
             &OraclePolicy::default(),
             &changed_files,
