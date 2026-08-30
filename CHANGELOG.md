@@ -76,15 +76,6 @@ are scoped or reviewed.
   [#2322](https://github.com/EffortlessMetrics/ripr-swarm/pull/2322),
   [#2250](https://github.com/EffortlessMetrics/ripr-swarm/pull/2250)).
 
-- New `ripr mcp --stdio [--root PATH]` command: a bounded, read-only
-  Model Context Protocol server that exposes exact workspace status
-  (`ripr_workspace_status` tool and `ripr://workspace/status` resource)
-  over newline-delimited JSON-RPC. Protocol errors always carry a
-  response `id` (`null` when the request id is unreadable), discovery
-  requires current-protocol `_meta`, and invalid roots fail closed
-  without leaking paths
-  ([#3088](https://github.com/EffortlessMetrics/ripr-swarm/issues/3088)).
-
 - The `ripr agent start` workflow packet now states that its generated commands
   assume bash. `commands.md` carries a prose note above the first command block,
   and `workflow.json` gains an additive `command_shell: "bash"` field. The
