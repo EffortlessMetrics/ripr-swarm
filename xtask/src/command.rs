@@ -1307,7 +1307,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
         command_entry(
             "specs digest --as-of YYYY-MM-DD [--json] [--receipts <dir>]",
             "report_only",
-            "target/ripr/reports/spec-maintenance.{json,md,digest.md}",
+            "target/ripr/reports/spec-maintenance.{json,md} + spec-maintenance-digest.md",
             false,
             false,
             "Writes the full advisory maintenance inventory plus one short bounded digest from the same DTO for the Source of Truth workflow step summary; maintenance_status is clean or attention_required and never gates merges.",

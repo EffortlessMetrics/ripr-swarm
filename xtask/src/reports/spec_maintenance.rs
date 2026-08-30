@@ -180,7 +180,10 @@ pub(crate) fn spec_digest(args: &[String]) -> Result<(), String> {
 /// run's digest, JSON, or Markdown on disk looking current (#3586 review).
 fn spec_digest_report(root: &Path, reports_dir: &Path, options: &Options) -> Result<(), String> {
     for file in [JSON_FILE, MARKDOWN_FILE, DIGEST_FILE] {
-        crate::remove_report_in(reports_dir, file);
+        // A stale report that cannot be removed (locked file, non-writable
+        // directory) must fail the instrument before the scan: letting the
+        // run proceed would leave the old digest on disk looking current.
+        crate::remove_report_in(reports_dir, file)?;
     }
     let (report, json) = run_inventory(root, options)?;
     let status = maintenance_status(&report);
@@ -2167,9 +2170,15 @@ Status: proposed
             return false;
         };
         let payload = &rest[..end];
-        payload
-            .match_indices('`')
-            .any(|(index, _)| index == 0 || !payload[..index].ends_with('\\'))
+        payload.match_indices('`').any(|(index, _)| {
+            let backslashes = payload[..index]
+                .chars()
+                .rev()
+                .take_while(|&character| character == '\\')
+                .count();
+            // An even run of backslashes does not escape the backtick.
+            backslashes % 2 == 0
+        })
     }
 
     /// Collects the `paths:` entries of one `on:` event block. Deliberate

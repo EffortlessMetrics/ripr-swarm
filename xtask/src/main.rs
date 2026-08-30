@@ -16328,8 +16328,16 @@ pub(crate) fn write_report_in(directory: &Path, file_name: &str, body: &str) -> 
 /// Removes one report file, absorbing every error: a missing or locked
 /// stale artifact must never fail the run that is about to rewrite it
 /// (same style as `remove_evidence_health_report_artifacts`).
-pub(crate) fn remove_report_in(directory: &Path, file_name: &str) {
-    let _ = fs::remove_file(directory.join(file_name));
+pub(crate) fn remove_report_in(directory: &Path, file_name: &str) -> Result<(), String> {
+    let path = directory.join(file_name);
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "failed to remove stale report {}: {error}",
+            path.display()
+        )),
+    }
 }
 
 fn write_receipt(file_name: &str, body: &str) -> Result<(), String> {
