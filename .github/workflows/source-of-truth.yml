@@ -86,7 +86,7 @@ jobs:
           {
             echo "## Specification maintenance digest (advisory)"
             echo ""
-            echo "Head: `${{ github.sha }}`"
+            echo 'Head: `${{ github.sha }}`'
             echo ""
             cat target/ripr/reports/spec-maintenance-digest.md
           } >> "$GITHUB_STEP_SUMMARY" || true
