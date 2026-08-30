@@ -196,15 +196,15 @@ Environment variables:
                                     partition with exact selected paths,
                                     lower-bound uninspected counts, and a named
                                     stop reason; gate/baseline/badge/Zero
-                                    ineligible. Overrides above the hard guard
-                                    are clamped with disclosure. Invalid values
-                                    fail closed as partial_budget_invalid.
+                                    ineligible. Overrides above the effective
+                                    limit are clamped with disclosure. Invalid
+                                    values fail closed as partial_budget_invalid.
                                     Default: 200.
   RIPR_PARTIAL_DIFF_LINE_BUDGET     Changed lines analyzed before check returns
                                     limited_partial_scope. The first selected
                                     file is always analyzed, even when it alone
                                     exceeds the budget. Overrides above the
-                                    hard guard are clamped with disclosure.
+                                    effective limit are clamped with disclosure.
                                     Invalid values fail closed as
                                     partial_budget_invalid. Default: 1000.
   RIPR_GIT_TIMEOUT                  Cooperative deadline in seconds for each git
