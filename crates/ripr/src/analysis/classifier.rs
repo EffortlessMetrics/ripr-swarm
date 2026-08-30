@@ -652,10 +652,14 @@ mod tests {
             ..RustIndex::default()
         };
         let unrelated_finding = classify_probe(&probe, &unrelated, true);
+        // The near-miss oracle (`TooLarger`) does not observe this probe, so
+        // the finding stays unobserved — but for a changed `Err(...)`
+        // construction the actionable guidance names the exact variant
+        // (Xm- review: generic assertion advice is not the discriminator).
         assert_eq!(
             unrelated_finding.recommended_next_step.as_deref(),
             Some(
-                "Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect."
+                "Add a test input that reaches the changed error path and assert the exact error variant it returns."
             )
         );
         assert!(

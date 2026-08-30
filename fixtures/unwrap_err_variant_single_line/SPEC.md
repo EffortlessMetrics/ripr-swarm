@@ -38,7 +38,7 @@ this tuple-payload variant (the changed payload `name.len()` does not resolve to
 the `Result::Err(ParseError::TooLong)` sink identity), the seam stays
 `weakly_exposed` rather than `exposed`: reach plus a strong oracle never credits
 `exposed` without an established propagation path (RIPR-SPEC-0096 fail-closed;
-#3161 PR-B witness contract). The exact-variant oracle still suppresses the
+`#3161` PR-B witness contract). The exact-variant oracle still suppresses the
 assertion-repair guidance on both seams.
 
 Binding detection is statement-oriented, not line-oriented, so a discriminated

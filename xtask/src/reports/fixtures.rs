@@ -332,14 +332,29 @@ fn goldens_bless(name: &str, reason: &str) -> Result<(), String> {
 /// pending heading already in the log — including legacy plain `## Pending`
 /// headings — so repeated blesses of the same fixture never collide.
 pub(crate) fn next_pending_heading(existing_log: &str, fixture_name: &str) -> String {
-    format!(
-        "## Pending — {fixture_name} ({})",
-        existing_log
-            .lines()
-            .filter(|line| line.starts_with("## Pending"))
-            .count()
-            + 1
-    )
+    // Pick the first UNUSED number rather than count+1: a deleted or
+    // hand-edited entry must never cause a duplicate heading. A bare legacy
+    // `## Pending` heading implicitly reserved number 1.
+    let mut used: Vec<usize> = existing_log
+        .lines()
+        .filter(|line| line.starts_with("## Pending"))
+        .filter_map(|line| {
+            let open = line.rfind('(')?;
+            let close = line.rfind(')')?;
+            line[open + 1..close].trim().parse().ok()
+        })
+        .collect();
+    if existing_log
+        .lines()
+        .any(|line| line.trim_end() == "## Pending")
+    {
+        used.push(1);
+    }
+    let mut candidate = 1usize;
+    while used.contains(&candidate) {
+        candidate += 1;
+    }
+    format!("## Pending — {fixture_name} ({candidate})")
 }
 
 pub(crate) fn fixture_dirs() -> Result<Vec<PathBuf>, String> {

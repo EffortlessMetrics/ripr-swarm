@@ -86,8 +86,8 @@
       "stop_reasons": [],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect.",
-      "suggested_next_action": "Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect.",
+      "recommended_next_step": "Add a test input that reaches the changed error path and assert the exact error variant it returns.",
+      "suggested_next_action": "Add a test input that reaches the changed error path and assert the exact error variant it returns.",
       "language": "rust",
       "source_currentness": "candidate_current"
     },

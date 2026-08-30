@@ -11576,6 +11576,23 @@ fn pending_changelog_headings_stay_unique_across_blesses() {
     );
 }
 
+// XnB: a deleted or hand-edited entry must not cause a duplicate heading —
+// the first UNUSED number wins, not count+1.
+#[test]
+fn pending_changelog_headings_skip_used_numbers() {
+    let gapped = "# Golden Output Changes\n\n## Pending — a (1)\n\nx\n\n## Pending — b (3)\n\ny\n";
+    assert_eq!(
+        next_pending_heading(gapped, "my_fixture"),
+        "## Pending — my_fixture (2)"
+    );
+    let used_all =
+        "# Golden Output Changes\n\n## Pending — a (1)\n\nx\n\n## Pending — b (2)\n\ny\n";
+    assert_eq!(
+        next_pending_heading(used_all, "my_fixture"),
+        "## Pending — my_fixture (3)"
+    );
+}
+
 #[test]
 fn validate_bless_reason_rejects_unknown_spec_ids() -> Result<(), String> {
     with_repo_cwd(|| {

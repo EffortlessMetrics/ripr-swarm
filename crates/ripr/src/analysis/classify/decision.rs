@@ -226,7 +226,19 @@ pub(in crate::analysis) fn recommended_next_step(
             }
             .to_string(),
         ),
-        ExposureClass::ReachableUnrevealed => Some("Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect.".to_string()),
+        ExposureClass::ReachableUnrevealed => {
+            if matches!(probe.family, ProbeFamily::ErrorPath | ProbeFamily::ReturnValue)
+                && super::exact_error_variant(&probe.expression).is_some()
+            {
+                // A changed `Err(...)` construction with no observing
+                // assertion: the actionable missing discriminator is the
+                // exact variant (RIPR-SPEC-0106), not generic assertion
+                // advice.
+                Some("Add a test input that reaches the changed error path and assert the exact error variant it returns.".to_string())
+            } else {
+                Some("Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect.".to_string())
+            }
+        }
         ExposureClass::NoStaticPath => Some(crate::domain::NO_STATIC_PATH_NEXT_STEP.to_string()),
         ExposureClass::InfectionUnknown => Some("Add a targeted boundary or negative-path test, or teach ripr about the fixture/builder in ripr.toml.".to_string()),
         ExposureClass::PropagationUnknown | ExposureClass::StaticUnknown => Some("Escalate to real mutation testing or deep static analysis for this probe.".to_string()),

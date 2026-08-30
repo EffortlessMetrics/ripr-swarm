@@ -178,9 +178,14 @@ fn oracle_text_aligns_with_sink(
         // for an unrelated `other`. Require the asserted value to be bound to
         // the changed owner before crediting alignment.
         FlowSinkKind::ReturnValue | FlowSinkKind::StructField => {
-            semantic_tokens(sink_text)
-                .iter()
-                .all(|token| contains_identifier(oracle, token))
+            let sink_tokens = semantic_tokens(sink_text);
+            // A sink with no identifier tokens (a bare literal such as "0")
+            // asserts nothing about the changed value; the vacuous `.all`
+            // must not credit alignment on an owner-bound literal.
+            !sink_tokens.is_empty()
+                && sink_tokens
+                    .iter()
+                    .all(|token| contains_identifier(oracle, token))
                 && oracle_binds_sink_identity(oracle, test_body, owner_name)
         }
         _ => false,

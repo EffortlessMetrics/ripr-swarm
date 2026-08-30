@@ -226,3 +226,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — unwrap_err_sibling_variant (20)
+
+Reason:
+RIPR-SPEC-0106: ReachableUnrevealed Err-construction probes now name the exact-variant discriminator in guidance
+
+Command:
+`cargo xtask goldens bless unwrap_err_sibling_variant --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
