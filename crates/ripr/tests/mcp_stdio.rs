@@ -352,6 +352,12 @@ fn current_discovery_requires_metadata_and_rejects_legacy_ping() -> Result<(), S
             responses[1]
         ));
     }
+    if responses[1].pointer("/id").and_then(Value::as_str) != Some("discover-no-meta") {
+        return Err(format!(
+            "discovery without _meta must retain its request id: {}",
+            responses[1]
+        ));
+    }
     if responses[2]
         .pointer("/result/resultType")
         .and_then(Value::as_str)
