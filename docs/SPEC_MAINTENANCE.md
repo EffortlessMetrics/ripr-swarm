@@ -89,9 +89,18 @@ instrument failure            = nonzero exit; no digest is written
 ```
 
 Candidate counts never change the exit status: both `clean` and
-`attention_required` are successful observations. An unreadable or non-UTF-8
-required spec fails the pipeline before any digest is written, so a broken
-instrument is never rendered as a clean inventory.
+`attention_required` are successful observations. A structurally blind scan
+is never `clean`: when the `docs/specs/README.md` index is absent and no
+document was scanned (zero included specs), the digest reports
+`attention_required` because the actionable item is restoring the index; a
+genuine zero-candidate scan (index present, no findings) stays `clean`. The
+digest's omitted total excludes the synthetic `spec-index-missing` record —
+disclosed in a one-line note when it is present — so the rendered arithmetic
+matches `discoverable == included + closed + omitted`. An unreadable or
+non-UTF-8 required spec fails the pipeline before any digest is written, so
+a broken instrument is never rendered as a clean inventory, and the digest
+command removes the previous run's three report files before the scan so a
+failed rerun leaves no stale artifacts behind.
 
 The Source of Truth workflow publishes the digest on a weekly schedule, on
 explicit `workflow_dispatch`, and on pull requests that touch spec

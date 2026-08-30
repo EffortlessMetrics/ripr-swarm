@@ -43,6 +43,12 @@ const RECEIPT_STATUS_CLOSED: &str = "closed";
 const RECEIPT_STATUS_STALE: &str = "stale";
 const RECEIPT_STATUS_WAIVER_EXPIRED: &str = "waiver_expired";
 
+/// The synthetic omission recorded when `docs/specs/README.md` is absent: it
+/// documents an unscannable input rather than an omitted document, so it is
+/// excluded from the discoverable denominator, from the digest's omitted
+/// total, and from the `clean` maintenance state.
+const REASON_SPEC_INDEX_MISSING: &str = "spec-index-missing";
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct SpecMaintenanceReportV1 {
     pub(crate) schema_version: String,
@@ -165,11 +171,25 @@ pub(crate) fn spec_digest(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let options = parse_options(args)?;
-    let (report, json) = run_inventory(Path::new("."), &options)?;
+    spec_digest_report(Path::new("."), &crate::reports_dir(), &options)
+}
+
+/// The digest write pipeline, parameterized over the inventory root and the
+/// report directory so tests can run it hermetically. The three report files
+/// are removed before the scan: a failed rerun must not leave the previous
+/// run's digest, JSON, or Markdown on disk looking current (#3586 review).
+fn spec_digest_report(root: &Path, reports_dir: &Path, options: &Options) -> Result<(), String> {
+    for file in [JSON_FILE, MARKDOWN_FILE, DIGEST_FILE] {
+        // A stale report that cannot be removed (locked file, non-writable
+        // directory) must fail the instrument before the scan: letting the
+        // run proceed would leave the old digest on disk looking current.
+        crate::remove_report_in(reports_dir, file)?;
+    }
+    let (report, json) = run_inventory(root, options)?;
     let status = maintenance_status(&report);
-    crate::write_report(JSON_FILE, &format!("{json}\n"))?;
-    crate::write_report(MARKDOWN_FILE, &render_markdown(&report))?;
-    crate::write_report(DIGEST_FILE, &render_digest(&report))?;
+    crate::write_report_in(reports_dir, JSON_FILE, &format!("{json}\n"))?;
+    crate::write_report_in(reports_dir, MARKDOWN_FILE, &render_markdown(&report))?;
+    crate::write_report_in(reports_dir, DIGEST_FILE, &render_digest(&report))?;
     if options.json {
         println!("{json}");
     } else {
@@ -225,9 +245,19 @@ fn run_inventory(
 /// The advisory maintenance state of a successful observation (#3467):
 /// `clean` when the open queue is empty, `attention_required` otherwise.
 /// Candidate counts never make this a failure; only the pipeline's `Err`
-/// path is an instrument failure.
+/// path is an instrument failure. A structurally blind scan is never
+/// `clean`: when the spec index itself is missing (the synthetic
+/// `spec-index-missing` omission) and nothing was scanned (zero included
+/// specs), the actionable item is restoring the index, so the honest state
+/// is `attention_required`. A genuine zero-candidate scan (index present,
+/// no findings) stays `clean`.
 pub(crate) fn maintenance_status(report: &SpecMaintenanceReportV1) -> &'static str {
-    if report.specs.is_empty() {
+    let index_missing = report
+        .denominator
+        .omitted
+        .iter()
+        .any(|input| input.reason == REASON_SPEC_INDEX_MISSING);
+    if report.specs.is_empty() && !index_missing {
         MAINTENANCE_STATUS_CLEAN
     } else {
         MAINTENANCE_STATUS_ATTENTION_REQUIRED
@@ -339,7 +369,7 @@ pub(crate) fn build_report(
     if !index_path.exists() {
         omitted.push(OmittedInput {
             path: relative_path(root, &index_path),
-            reason: "spec-index-missing".to_string(),
+            reason: REASON_SPEC_INDEX_MISSING.to_string(),
         });
     }
     included.sort_by(|left, right| left.id.cmp(&right.id).then(left.path.cmp(&right.path)));
@@ -473,7 +503,7 @@ pub(crate) fn build_report(
                 + closed_specs.len()
                 + omitted
                     .iter()
-                    .filter(|input| input.reason != "spec-index-missing")
+                    .filter(|input| input.reason != REASON_SPEC_INDEX_MISSING)
                     .count(),
             included: open_specs.len(),
             closed: closed_specs.len(),
@@ -757,6 +787,16 @@ fn relative_path(root: &Path, path: &Path) -> String {
 /// capped so the summary stays small while the full report keeps the whole
 /// denominator.
 fn render_digest(report: &SpecMaintenanceReportV1) -> String {
+    let index_missing = report
+        .denominator
+        .omitted
+        .iter()
+        .any(|input| input.reason == REASON_SPEC_INDEX_MISSING);
+    // The synthetic `spec-index-missing` record documents an absent input,
+    // not an omitted document: the digest's omitted total excludes it (with
+    // a one-line disclosure) so the rendered arithmetic matches
+    // `discoverable == open + closed + omitted` (#3586 review).
+    let omitted = report.denominator.omitted.len() - usize::from(index_missing);
     let mut out = String::from("# Specification maintenance digest\n\nStatus: advisory\n\n");
     out.push_str(&format!(
         "maintenance_status: {}\n\n",
@@ -769,8 +809,13 @@ fn render_digest(report: &SpecMaintenanceReportV1) -> String {
         report.denominator.discoverable,
         report.denominator.included,
         report.denominator.closed,
-        report.denominator.omitted.len(),
+        omitted,
     ));
+    if index_missing {
+        out.push_str(
+            "- Note: the `docs/specs/README.md` index is absent; it is recorded as\n  `spec-index-missing` in the full report and is not counted in the omitted total.\n",
+        );
+    }
     out.push_str(&format!(
         "- History: `{}`\n",
         if report.history.available {
@@ -1308,7 +1353,7 @@ Status: proposed
             .denominator
             .omitted
             .iter()
-            .filter(|input| input.reason != "spec-index-missing")
+            .filter(|input| input.reason != REASON_SPEC_INDEX_MISSING)
             .count();
         if report.denominator.discoverable
             != report.denominator.included + report.denominator.closed + omitted_non_index
@@ -1790,8 +1835,12 @@ Status: proposed
         {
             return Err("found-state digest is missing the status or reason counts".to_string());
         }
-        // State 2: no candidates is also a useful successful observation.
+        // State 2: no candidates is also a useful successful observation —
+        // but only when the scan actually saw the denominator: the index is
+        // present and the queue is empty.
         let empty = fixture_root()?;
+        fs::write(empty.join("docs/specs/README.md"), "index")
+            .map_err(|error| error.to_string())?;
         let empty_report = build_report(
             &empty,
             "2026-08-27",
@@ -1799,13 +1848,141 @@ Status: proposed
             &ReceiptInput::default(),
         )?;
         if maintenance_status(&empty_report) != MAINTENANCE_STATUS_CLEAN {
-            return Err("an empty queue did not report clean".to_string());
+            return Err("an empty queue with a present index did not report clean".to_string());
         }
         let clean_digest = render_digest(&empty_report);
         if !clean_digest.contains("maintenance_status: clean")
             || !clean_digest.contains("no open candidates")
         {
             return Err("clean-state digest is missing the empty-queue rendering".to_string());
+        }
+        // The present index is not an omission, so no suppression note.
+        if clean_digest.contains("not counted in the omitted total") {
+            return Err(
+                "clean-state digest disclosed a suppressed omission it does not have".to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn digest_blind_scan_without_index_is_attention_required_not_clean() -> Result<(), String> {
+        // docs/specs exists but is empty and the index is absent: nothing was
+        // scanned, so the honest state is attention_required — the actionable
+        // item is restoring the index — never clean.
+        let root = fixture_root()?;
+        let report = build_report(
+            &root,
+            "2026-08-27",
+            &HistoryInput::default(),
+            &ReceiptInput::default(),
+        )?;
+        if !report.specs.is_empty() || report.denominator.included != 0 {
+            return Err("blind-scan fixture unexpectedly scanned documents".to_string());
+        }
+        if !report
+            .denominator
+            .omitted
+            .iter()
+            .any(|input| input.reason == REASON_SPEC_INDEX_MISSING)
+        {
+            return Err("blind-scan fixture lacks the synthetic index omission".to_string());
+        }
+        if maintenance_status(&report) != MAINTENANCE_STATUS_ATTENTION_REQUIRED {
+            return Err("a structurally blind scan was reported clean".to_string());
+        }
+        if !render_digest(&report).contains("maintenance_status: attention_required") {
+            return Err(
+                "digest did not render the blind-scan state as attention_required".to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn digest_failed_rerun_removes_stale_report_artifacts() -> Result<(), String> {
+        // A previous successful run left its three artifacts on disk; the
+        // rerun's inventory is untrustworthy (non-UTF-8 required spec), so
+        // the failed instrument must leave no stale files behind.
+        let root = fixture_root()?;
+        fs::write(
+            root.join("docs/specs/RIPR-SPEC-9503-broken.md"),
+            [0xff, 0xfe],
+        )
+        .map_err(|error| error.to_string())?;
+        let reports = root.join("target/ripr/reports");
+        fs::create_dir_all(&reports).map_err(|error| error.to_string())?;
+        for file in [JSON_FILE, MARKDOWN_FILE, DIGEST_FILE] {
+            fs::write(reports.join(file), "stale").map_err(|error| error.to_string())?;
+        }
+        let options = Options {
+            as_of: "2026-08-27".to_string(),
+            json: false,
+            receipts: None,
+        };
+        let outcome = spec_digest_report(&root, &reports, &options);
+        if outcome.is_ok() {
+            return Err("a broken inventory did not fail the digest rerun".to_string());
+        }
+        for file in [JSON_FILE, MARKDOWN_FILE, DIGEST_FILE] {
+            if reports.join(file).exists() {
+                return Err(format!(
+                    "stale `{file}` remained after a failed digest rerun"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn digest_omitted_count_excludes_the_synthetic_index_record() -> Result<(), String> {
+        // Without the index: the synthetic omission is disclosed in a note,
+        // not counted, so the rendered arithmetic
+        // `Discoverable == open + closed + omitted` still holds.
+        let blind = fixture_root()?;
+        let blind_report = build_report(
+            &blind,
+            "2026-08-27",
+            &HistoryInput::default(),
+            &ReceiptInput::default(),
+        )?;
+        if blind_report.denominator.discoverable != 0 {
+            return Err("blind-scan discoverable was not zero".to_string());
+        }
+        let blind_digest = render_digest(&blind_report);
+        if !blind_digest.contains("omitted `0`")
+            || !blind_digest.contains("not counted in the omitted total")
+            || !blind_digest.contains("spec-index-missing")
+        {
+            return Err(
+                "digest did not suppress and disclose the synthetic index omission".to_string(),
+            );
+        }
+        // With the index present and one non-spec Markdown file: the real
+        // omissions are counted (`README.md` and `notes.md` are present,
+        // non-discoverable inputs) and no suppression note appears.
+        let indexed = fixture_root()?;
+        fs::write(indexed.join("docs/specs/README.md"), "index")
+            .map_err(|error| error.to_string())?;
+        fs::write(indexed.join("docs/specs/notes.md"), "not a spec")
+            .map_err(|error| error.to_string())?;
+        let indexed_report = build_report(
+            &indexed,
+            "2026-08-27",
+            &HistoryInput::default(),
+            &ReceiptInput::default(),
+        )?;
+        if indexed_report.denominator.discoverable != 2 {
+            return Err("indexed-scan discoverable did not count the omitted files".to_string());
+        }
+        let indexed_digest = render_digest(&indexed_report);
+        if !indexed_digest.contains("Discoverable: `2`")
+            || !indexed_digest.contains("omitted `2`")
+            || indexed_digest.contains("not counted in the omitted total")
+        {
+            return Err(
+                "digest miscounted a real omission or invented a suppression note".to_string(),
+            );
         }
         Ok(())
     }
@@ -1843,7 +2020,9 @@ Status: proposed
         let text = fs::read_to_string(&workflow_path)
             .map_err(|error| format!("read {}: {error}", workflow_path.display()))?;
 
-        // Trigger 1: bounded schedule, no more frequent than weekly.
+        // Trigger 1: bounded schedule, no more frequent than weekly. The
+        // predicate rejects comma lists and ranges: `37 6 * * 1-5` fires
+        // five times a week and `37 6 1-31 * *` fires daily.
         let cron_line = text
             .lines()
             .map(str::trim)
@@ -1853,14 +2032,10 @@ Status: proposed
             .trim_matches('\'')
             .trim_matches('"')
             .to_string();
-        let fields: Vec<&str> = cron_line.split_whitespace().collect();
-        if fields.len() != 5 {
-            return Err(format!("cron `{cron_line}` does not have five fields"));
-        }
-        let weekly_or_slower =
-            fields[0] != "*" && fields[1] != "*" && !(fields[2] == "*" && fields[4] == "*");
-        if !weekly_or_slower {
-            return Err(format!("cron `{cron_line}` fires more often than weekly"));
+        if !is_weekly_or_slower_cron(&cron_line) {
+            return Err(format!(
+                "cron `{cron_line}` is not a bounded weekly-or-slower schedule"
+            ));
         }
         // Trigger 2: explicit operator invocation.
         if !text.contains("  workflow_dispatch:") {
@@ -1922,7 +2097,88 @@ Status: proposed
                     .to_string(),
             );
         }
+        // Backticks inside a double-quoted echo run as shell command
+        // substitution: `echo "Head: `sha`"` executes the SHA as a command
+        // and silently publishes an empty value. Every backtick-bearing
+        // echo must be single-quoted or escape its backticks.
+        for line in text.lines() {
+            if double_quoted_echo_has_unescaped_backtick(line) {
+                return Err(format!(
+                    "workflow echo would run command substitution inside double quotes: {line}"
+                ));
+            }
+        }
         Ok(())
+    }
+
+    #[test]
+    fn weekly_cadence_predicate_accepts_only_single_shot_weekly_schedules() -> Result<(), String> {
+        for passing in ["37 6 * * 1", "0 9 * * 1"] {
+            if !is_weekly_or_slower_cron(passing) {
+                return Err(format!("`{passing}` should pass the weekly predicate"));
+            }
+        }
+        for failing in [
+            "37 6 * * 1-5",  // five runs per week
+            "37 6 * * 1,3",  // twice per week
+            "37 6 1-31 * *", // daily
+            "37 6 */2 * 1",  // stepped minutes
+            "* * * * *",     // every minute
+            "37 6 * * *",    // daily via wildcard day-of-week
+            "37 6 * * 1-7",  // daily via a full day-of-week range
+        ] {
+            if is_weekly_or_slower_cron(failing) {
+                return Err(format!("`{failing}` should fail the weekly predicate"));
+            }
+        }
+        Ok(())
+    }
+
+    /// A bounded weekly-or-slower cron: a single minute (0-59) and hour
+    /// (0-23), `*` for day-of-month and month, and a day-of-week that is
+    /// exactly one integer 0-6. Comma lists and ranges in the day-of-week
+    /// field fire more often than weekly; a non-`*` day-of-month or a
+    /// non-`*` month is more frequent than weekly; step values (`*/2`) are
+    /// not a single fire time and are rejected.
+    fn is_weekly_or_slower_cron(cron: &str) -> bool {
+        let fields: Vec<&str> = cron.split_whitespace().collect();
+        if fields.len() != 5 {
+            return false;
+        }
+        let single_bounded_integer = |field: &str, max: u32| -> bool {
+            field
+                .parse::<u32>()
+                .map(|value| value <= max)
+                .unwrap_or(false)
+        };
+        single_bounded_integer(fields[0], 59)
+            && single_bounded_integer(fields[1], 23)
+            && fields[2] == "*"
+            && fields[3] == "*"
+            && single_bounded_integer(fields[4], 6)
+    }
+
+    /// True when an `echo "..."` line carries a backtick the shell would
+    /// treat as command substitution (an unescaped backtick inside the
+    /// double quotes). Escaped backticks (`\``) render literally and are
+    /// safe.
+    fn double_quoted_echo_has_unescaped_backtick(line: &str) -> bool {
+        let Some(rest) = line.trim_start().strip_prefix("echo \"") else {
+            return false;
+        };
+        let Some(end) = rest.rfind('"') else {
+            return false;
+        };
+        let payload = &rest[..end];
+        payload.match_indices('`').any(|(index, _)| {
+            let backslashes = payload[..index]
+                .chars()
+                .rev()
+                .take_while(|&character| character == '\\')
+                .count();
+            // An even run of backslashes does not escape the backtick.
+            backslashes % 2 == 0
+        })
     }
 
     /// Collects the `paths:` entries of one `on:` event block. Deliberate
