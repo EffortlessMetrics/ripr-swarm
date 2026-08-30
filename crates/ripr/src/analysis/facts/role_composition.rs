@@ -211,12 +211,23 @@ fn resolved_module_edges(index: &RustIndex) -> BTreeMap<PathBuf, Result<ModuleEd
     }
 
     let mut edges = BTreeMap::new();
+    // Ambiguity is fail-closed per child: another declaration's multiple
+    // default layouts mark the child ambiguous even when this declaration
+    // has a single exact owner (two declarations can both reach the same
+    // child file). The candidates loop runs first and skips ambiguous
+    // children; the moved set then seeds their errors.
+    for (child, owners) in &candidates {
+        if owners.len() > 1 || ambiguous.contains(child) {
+            edges.insert(child.clone(), Err(REASON_MODULE_AMBIGUOUS_PARENT));
+        }
+    }
     for child in ambiguous {
-        edges.insert(child, Err(REASON_MODULE_AMBIGUOUS_PARENT));
+        edges
+            .entry(child)
+            .or_insert_with(|| Err(REASON_MODULE_AMBIGUOUS_PARENT));
     }
     for (child, owners) in candidates {
-        if owners.len() > 1 {
-            edges.insert(child, Err(REASON_MODULE_AMBIGUOUS_PARENT));
+        if owners.len() > 1 || edges.contains_key(&child) {
             continue;
         }
         if let Some((parent, line, declaration, requires_test)) = owners.into_iter().next() {
@@ -451,6 +462,12 @@ impl ContextResolver<'_> {
                         } else {
                             Context::Production
                         };
+                        // Earliest unresolved wins across BOTH chains: the
+                        // include chain's reason must survive the merge.
+                        if provenance.earliest_unresolved_reason.is_none() {
+                            provenance.earliest_unresolved_reason =
+                                include_provenance.earliest_unresolved_reason;
+                        }
                         if provenance.earliest_unresolved_reason.is_none() {
                             provenance.earliest_unresolved_reason = context.unresolved_reason();
                         }
@@ -974,6 +991,106 @@ mod tests {
             FunctionSourceRole::CfgTestModule,
             "a warm cache hit must not serve composition-blind facts"
         );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod cycle_depth_tests {
+    use super::*;
+
+    fn temp_dir(name: &str) -> Result<PathBuf, String> {
+        let root = std::env::temp_dir().join(format!(
+            "role-cycle-{name}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default()
+        ));
+        std::fs::create_dir_all(root.join("src"))
+            .map_err(|error| format!("create {}: {error}", root.display()))?;
+        Ok(root)
+    }
+
+    // XnBs (review): the cycle guard at resolve() must stay exercised —
+    // mutual #[path] declarations keep Production roles and name the cycle
+    // reason on the provenance chain.
+    #[test]
+    fn mutual_module_path_cycle_fails_closed_with_cycle_reason() -> Result<(), String> {
+        let root = temp_dir("role-cycle-mutual")?;
+        std::fs::write(
+            root.join("src/a.rs"),
+            "#[path = \"b.rs\"]\nmod b;\n\npub fn a_helper() -> i32 { 1 }\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("src/b.rs"),
+            "#[path = \"a.rs\"]\nmod a;\n\npub fn b_helper() -> i32 { 2 }\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("src/lib.rs"), "#[path = \"a.rs\"]\nmod a;\n")
+            .map_err(|error| error.to_string())?;
+
+        let index = crate::analysis::facts::build_index(
+            &root,
+            &[
+                PathBuf::from("src/a.rs"),
+                PathBuf::from("src/b.rs"),
+                PathBuf::from("src/lib.rs"),
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+
+        // The mutual pair resolves as ambiguous parents (both declarations
+        // reach both files) — fail-closed before any recursion.
+        for (file, helper) in [("src/a.rs", "a_helper"), ("src/b.rs", "b_helper")] {
+            let facts = index
+                .files
+                .get(Path::new(file))
+                .ok_or_else(|| format!("expected {file} in the index"))?;
+            for function in &facts.functions {
+                if function.name == helper {
+                    assert_eq!(
+                        function.source_role,
+                        FunctionSourceRole::Production,
+                        "mutual cycle must keep {helper} production"
+                    );
+                }
+            }
+            let provenance = &index.files[Path::new(file)].role_provenance;
+            assert_eq!(
+                provenance.earliest_unresolved_reason.as_deref(),
+                Some(REASON_MODULE_AMBIGUOUS_PARENT),
+                "{file} must name the ambiguity reason"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn self_referential_module_path_names_the_cycle_reason() -> Result<(), String> {
+        let root = temp_dir("role-cycle-self")?;
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "#[path = \"lib.rs\"]
+mod self_cycle;
+
+pub fn helper() -> i32 { 1 }
+",
+        )
+        .map_err(|error| error.to_string())?;
+
+        let index = crate::analysis::facts::build_index(&root, &[PathBuf::from("src/lib.rs")])
+            .map_err(|error| error.to_string())?;
+
+        let provenance = &index.files[Path::new("src/lib.rs")].role_provenance;
+        assert_eq!(
+            provenance.earliest_unresolved_reason.as_deref(),
+            Some(REASON_MODULE_CYCLE_OR_DEPTH_LIMIT),
+            "a self-referential module path must name the cycle reason"
+        );
+        let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
 }
