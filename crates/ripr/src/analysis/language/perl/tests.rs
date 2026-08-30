@@ -3858,6 +3858,12 @@ fn perl_packet_contract_migration_corpus_pins_real_producer_dispositions() -> Re
             .ok_or("dispositions findings_count missing")? as usize,
         "dispositions findings_count must match the projected findings"
     );
+    if std::env::var("RIPR_DEBUG_PERL").is_ok() {
+        eprintln!(
+            "DEBUG class={:?} finding={:#?}",
+            findings[0].class, findings[0]
+        );
+    }
     assert_eq!(
         findings[0].class,
         ExposureClass::Exposed,

@@ -16,7 +16,15 @@ use std::collections::BTreeSet;
 /// would fabricate evidence.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct Projection {
+    /// Blocks strict actionability (any operational limitation or boundary).
     pub(super) blocks: bool,
+    /// Caps the exposure CLASS. Pre-#3520 the class was capped only by
+    /// semantic dynamic-dispatch evidence — boundaries, or a limitation
+    /// explicitly typed `dynamic_dispatch`. Operational states such as
+    /// `partial_emitter` keep findings advisory but never mask an earned
+    /// class: hiding evidence the packet actually carries is the
+    /// analyzer-cannot-resolve vs missing-proof inversion (#3215).
+    pub(super) blocks_class: bool,
     pub(super) kind: Option<StaticLimitKind>,
 }
 
@@ -46,6 +54,7 @@ pub(super) fn for_change(
         }
 
         projection.blocks = true;
+        projection.blocks_class = true;
         if let Some(kind) = boundary_kind(boundary.kind) {
             select_more_specific(&mut projection.kind, kind);
         }
@@ -73,6 +82,9 @@ pub(super) fn for_change(
         }
         if let Some(kind) = limitation_kind(&limitation.kind) {
             projection.blocks = true;
+            if kind == StaticLimitKind::DynamicDispatch {
+                projection.blocks_class = true;
+            }
             select_more_specific(&mut projection.kind, kind);
         }
     }
