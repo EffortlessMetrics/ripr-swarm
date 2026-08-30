@@ -66,5 +66,38 @@ bytes plus a fixed `--as-of` value reproducible.
 Git history is optional. When it is unavailable, the report says so and keeps
 repository-only findings. Age is an observation or ordering hint only; it
 never changes spec validity, lifecycle, support posture, branch protection, or
-merge eligibility. The report does not create review receipts, publish
-digests, alter workflows, or infer that implementation or evidence exists.
+merge eligibility. The report does not create review receipts, alter
+workflows, or infer that implementation or evidence exists.
+
+## Advisory digest (#3467)
+
+`cargo xtask specs digest --as-of YYYY-MM-DD` runs the same inventory pipeline
+(one history capture, one receipt scan, one `build_report`) and writes three
+files: the full `spec-maintenance.json` and `spec-maintenance.md` reports plus
+a short `spec-maintenance-digest.md` rendered from the same DTO. There is no
+second parser and no second scan. The digest keeps a bounded top-of-queue
+(stalest first, capped at 8), status and reason counts for open findings,
+receipt observations, limitations, a link to the full report, and one
+machine-readable `maintenance_status` line.
+
+The digest distinguishes exactly three states:
+
+```text
+maintenance candidates found  = attention_required, successful observation
+no maintenance candidates     = clean, successful observation
+instrument failure            = nonzero exit; no digest is written
+```
+
+Candidate counts never change the exit status: both `clean` and
+`attention_required` are successful observations. An unreadable or non-UTF-8
+required spec fails the pipeline before any digest is written, so a broken
+instrument is never rendered as a clean inventory.
+
+The Source of Truth workflow publishes the digest on a weekly schedule, on
+explicit `workflow_dispatch`, and on pull requests that touch spec
+governance paths (specs, templates, traceability, implementation slices,
+support tiers, or the workflow itself). Its digest job is advisory
+(`continue-on-error`): a failed instrument is annotated as a failed advisory
+observation, the full report is retained as an artifact, and no maintenance
+context is required by branch protection. The workflow does not create
+issues, comments, labels, or any other repository mutation.

@@ -16,9 +16,22 @@ use super::spec_receipts::{
 
 const JSON_FILE: &str = "spec-maintenance.json";
 const MARKDOWN_FILE: &str = "spec-maintenance.md";
+const DIGEST_FILE: &str = "spec-maintenance-digest.md";
 const SCHEMA_VERSION: &str = "2";
 const USAGE: &str =
     "usage: cargo xtask specs maintenance --as-of YYYY-MM-DD [--json] [--receipts <dir>]";
+const DIGEST_USAGE: &str =
+    "usage: cargo xtask specs digest --as-of YYYY-MM-DD [--json] [--receipts <dir>]";
+
+/// Bounded top-candidate queue rendered by the advisory digest (#3467); the
+/// full report retains the complete denominator and every candidate.
+const DIGEST_TOP_N: usize = 8;
+
+/// The two maintenance states a successful observation can report (#3467).
+/// Candidate presence never changes the exit status: both are useful
+/// successful observations. Only an `Err` return is an instrument failure.
+pub(crate) const MAINTENANCE_STATUS_CLEAN: &str = "clean";
+pub(crate) const MAINTENANCE_STATUS_ATTENTION_REQUIRED: &str = "attention_required";
 
 /// New reason codes introduced with content-bound review receipts (#3466):
 /// a valid receipt whose bound content no longer matches the current spec
@@ -130,7 +143,56 @@ pub(crate) fn spec_maintenance(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let options = parse_options(args)?;
-    let root = Path::new(".");
+    let (report, json) = run_inventory(Path::new("."), &options)?;
+    crate::write_report(JSON_FILE, &format!("{json}\n"))?;
+    crate::write_report(MARKDOWN_FILE, &render_markdown(&report))?;
+    if options.json {
+        println!("{json}");
+    } else {
+        println!("Wrote target/ripr/reports/{JSON_FILE}");
+        println!("Wrote target/ripr/reports/{MARKDOWN_FILE}");
+    }
+    Ok(())
+}
+
+/// Advisory digest entry point (#3467): runs the same inventory pipeline as
+/// `specs maintenance`, keeps the full JSON/Markdown report as the retained
+/// artifact, and renders one short bounded digest from the same DTO. The
+/// digest never introduces a second parser or a second scan.
+pub(crate) fn spec_digest(args: &[String]) -> Result<(), String> {
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        println!("{DIGEST_USAGE}");
+        return Ok(());
+    }
+    let options = parse_options(args)?;
+    let (report, json) = run_inventory(Path::new("."), &options)?;
+    let status = maintenance_status(&report);
+    crate::write_report(JSON_FILE, &format!("{json}\n"))?;
+    crate::write_report(MARKDOWN_FILE, &render_markdown(&report))?;
+    crate::write_report(DIGEST_FILE, &render_digest(&report))?;
+    if options.json {
+        println!("{json}");
+    } else {
+        println!("Wrote target/ripr/reports/{JSON_FILE}");
+        println!("Wrote target/ripr/reports/{MARKDOWN_FILE}");
+        println!("Wrote target/ripr/reports/{DIGEST_FILE}");
+        // The machine-readable closing state for the advisory workflow:
+        // found and none are both successful observations, distinguished by
+        // value; an instrument failure never reaches this line because the
+        // pipeline above returned `Err` first.
+        println!("maintenance_status={status}");
+    }
+    Ok(())
+}
+
+/// Shared inventory pipeline for `specs maintenance` and `specs digest`:
+/// one history capture, one receipt scan, one `build_report`, one JSON
+/// serialization. Instrument failures (unreadable or non-UTF-8 required
+/// specs, Git failures, serialization errors) surface here as `Err`.
+fn run_inventory(
+    root: &Path,
+    options: &Options,
+) -> Result<(SpecMaintenanceReportV1, String), String> {
     let history = capture_history(root)?;
     // `--receipts <dir>` overrides the receipts directory; the default is the
     // committed `.allow/spec-system/reviews` directory when it exists, and
@@ -157,15 +219,19 @@ pub(crate) fn spec_maintenance(args: &[String]) -> Result<(), String> {
     let report = build_report(root, &options.as_of, &history, &receipts)?;
     let json = serde_json::to_string_pretty(&report)
         .map_err(|error| format!("serialize spec maintenance report: {error}"))?;
-    crate::write_report(JSON_FILE, &format!("{json}\n"))?;
-    crate::write_report(MARKDOWN_FILE, &render_markdown(&report))?;
-    if options.json {
-        println!("{json}");
+    Ok((report, json))
+}
+
+/// The advisory maintenance state of a successful observation (#3467):
+/// `clean` when the open queue is empty, `attention_required` otherwise.
+/// Candidate counts never make this a failure; only the pipeline's `Err`
+/// path is an instrument failure.
+pub(crate) fn maintenance_status(report: &SpecMaintenanceReportV1) -> &'static str {
+    if report.specs.is_empty() {
+        MAINTENANCE_STATUS_CLEAN
     } else {
-        println!("Wrote target/ripr/reports/{JSON_FILE}");
-        println!("Wrote target/ripr/reports/{MARKDOWN_FILE}");
+        MAINTENANCE_STATUS_ATTENTION_REQUIRED
     }
-    Ok(())
 }
 
 fn parse_options(args: &[String]) -> Result<Options, String> {
@@ -175,7 +241,9 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
-            "maintenance" => {}
+            // Both subcommands share one option parser; dispatch strips the
+            // subcommand token, but a repeated token stays harmless.
+            "maintenance" | "digest" => {}
             "--json" => json = true,
             "--as-of" => {
                 index += 1;
@@ -682,6 +750,109 @@ fn markdown_links(text: &str) -> Vec<String> {
 
 fn relative_path(root: &Path, path: &Path) -> String {
     crate::normalize_path(path.strip_prefix(root).unwrap_or(path))
+}
+
+/// Bounded advisory digest (#3467), rendered as a pure function of the report
+/// DTO: identical inputs produce byte-identical output, and the queue is
+/// capped so the summary stays small while the full report keeps the whole
+/// denominator.
+fn render_digest(report: &SpecMaintenanceReportV1) -> String {
+    let mut out = String::from("# Specification maintenance digest\n\nStatus: advisory\n\n");
+    out.push_str(&format!(
+        "maintenance_status: {}\n\n",
+        maintenance_status(report)
+    ));
+    out.push_str(&format!(
+        "- As of: `{}`\n- Schema: `{}`\n- Discoverable: `{}` — open `{}`, closed `{}`, omitted `{}`\n",
+        report.as_of,
+        report.schema_version,
+        report.denominator.discoverable,
+        report.denominator.included,
+        report.denominator.closed,
+        report.denominator.omitted.len(),
+    ));
+    out.push_str(&format!(
+        "- History: `{}`\n",
+        if report.history.available {
+            "available"
+        } else {
+            "unavailable"
+        }
+    ));
+    out.push_str(&format!(
+        "- Receipts: parsed `{}`, applied `{}`, rejected `{}`\n\n",
+        report.receipts.parsed,
+        report.receipts.applied,
+        report.receipts.rejected.len(),
+    ));
+    out.push_str("## Status counts (open findings)\n\n| Status | Count |\n| --- | --- |\n");
+    if report.status_counts.is_empty() {
+        out.push_str("| — | 0 |\n");
+    } else {
+        for (status, count) in &report.status_counts {
+            out.push_str(&format!("| `{status}` | {count} |\n"));
+        }
+    }
+    out.push_str("\n## Reason counts (open findings)\n\n| Reason | Count |\n| --- | --- |\n");
+    if report.reason_counts.is_empty() {
+        out.push_str("| — | 0 |\n");
+    } else {
+        for (reason, count) in &report.reason_counts {
+            out.push_str(&format!("| `{reason}` | {count} |\n"));
+        }
+    }
+    out.push_str(&format!(
+        "\n## Top candidates (stalest first, bounded to {DIGEST_TOP_N})\n\n| ID | Path | Status | Age bucket | Reasons |\n| --- | --- | --- | --- | --- |\n"
+    ));
+    for row in top_candidates(report) {
+        let age = row
+            .age_observation
+            .as_ref()
+            .map(|observation| observation.bucket.as_str())
+            .unwrap_or("-");
+        out.push_str(&format!(
+            "| `{}` | `{}` | `{}` | `{}` | `{}` |\n",
+            row.id,
+            row.path,
+            row.status,
+            age,
+            row.reason_codes.join(", ")
+        ));
+    }
+    if report.specs.is_empty() {
+        out.push_str("| — | — | — | — | no open candidates |\n");
+    }
+    out.push_str("\n## Limitations\n\n");
+    for limitation in &report.limitations {
+        out.push_str(&format!("- {limitation}\n"));
+    }
+    out.push_str(
+        "\nFull inventory: `target/ripr/reports/spec-maintenance.md`; the full JSON and\nMarkdown reports are retained as the workflow artifact with the complete\ndenominator and every candidate.\n\n",
+    );
+    out.push_str(
+        "Advisory only: candidate counts never gate merges; an instrument failure is a\nfailed advisory observation, not a failed required product gate.\n",
+    );
+    out
+}
+
+/// The bounded top-of-queue: stalest first by observed age, rows without an
+/// age observation last, ID as the deterministic tie-break.
+fn top_candidates(report: &SpecMaintenanceReportV1) -> Vec<&SpecMaintenanceRow> {
+    let mut rows: Vec<&SpecMaintenanceRow> = report.specs.iter().collect();
+    rows.sort_by(|left_row, right_row| {
+        let left_days = left_row.age_observation.as_ref().and_then(|age| age.days);
+        let right_days = right_row.age_observation.as_ref().and_then(|age| age.days);
+        match (left_days, right_days) {
+            (Some(left), Some(right)) => right
+                .cmp(&left)
+                .then_with(|| left_row.id.cmp(&right_row.id)),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => left_row.id.cmp(&right_row.id),
+        }
+    });
+    rows.truncate(DIGEST_TOP_N);
+    rows
 }
 
 fn render_markdown(report: &SpecMaintenanceReportV1) -> String {
@@ -1511,5 +1682,322 @@ Status: proposed
             return Err("rejected receipts are not sorted by path".to_string());
         }
         Ok(())
+    }
+
+    // --- Advisory digest (#3467) --------------------------------------------
+
+    fn write_aged_spec(root: &Path, id: &str) -> Result<(), String> {
+        let relative = format!("docs/specs/RIPR-SPEC-{id}-digest.md");
+        fs::write(
+            root.join(&relative),
+            "# Example\n\n## Review\nnote\n\nStatus: proposed\n",
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    fn digest_row_count(digest: &str) -> usize {
+        let table = match digest.split("## Top candidates").nth(1) {
+            Some(table) => table,
+            None => return 0,
+        };
+        table
+            .lines()
+            .filter(|line| line.starts_with("| `RIPR-SPEC-"))
+            .count()
+    }
+
+    #[test]
+    fn digest_is_deterministic_and_bounded_from_one_dto() -> Result<(), String> {
+        let root = fixture_root()?;
+        let mut history = HistoryInput {
+            repository_available: true,
+            source: "fixture".to_string(),
+            ..HistoryInput::default()
+        };
+        let ages = [
+            ("0001", "2020-01-01"),
+            ("0002", "2021-06-01"),
+            ("0003", "2022-03-01"),
+            ("0004", "2023-09-01"),
+            ("0005", "2024-02-01"),
+            ("0006", "2025-01-01"),
+            ("0007", "2025-05-01"),
+            ("0008", "2025-07-01"),
+            ("0009", "2026-01-01"),
+            ("0010", "2026-08-01"),
+        ];
+        for (id, changed) in ages {
+            write_aged_spec(&root, id)?;
+            history.last_changed.insert(
+                format!("docs/specs/RIPR-SPEC-{id}-digest.md"),
+                changed.to_string(),
+            );
+        }
+        let report = build_report(&root, "2026-08-27", &history, &ReceiptInput::default())?;
+        let left = render_digest(&report);
+        let right = render_digest(&report);
+        if left != right {
+            return Err("the same DTO rendered two different digests".to_string());
+        }
+        // The queue is bounded even when the denominator is not.
+        if report.specs.len() != ages.len() {
+            return Err("fixture denominator did not match the written specs".to_string());
+        }
+        if digest_row_count(&left) != DIGEST_TOP_N {
+            return Err(format!(
+                "digest queue was not bounded to {DIGEST_TOP_N}: {}",
+                digest_row_count(&left)
+            ));
+        }
+        // Stalest first: the 2020 spec leads, the 2026 spec is absent.
+        let queue = left.split("## Top candidates").nth(1).unwrap_or_default();
+        if !queue.contains("RIPR-SPEC-0001") || queue.contains("RIPR-SPEC-0009") {
+            return Err("digest queue is not ordered stalest first".to_string());
+        }
+        if !left.contains("maintenance_status: attention_required") {
+            return Err("digest did not report the attention_required state".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn digest_pins_found_and_none_as_two_successful_states() -> Result<(), String> {
+        if MAINTENANCE_STATUS_CLEAN != "clean"
+            || MAINTENANCE_STATUS_ATTENTION_REQUIRED != "attention_required"
+        {
+            return Err("maintenance status vocabulary drifted".to_string());
+        }
+        // State 1: candidates found is a useful successful observation.
+        let root = fixture_root()?;
+        fs::write(
+            root.join("docs/specs/RIPR-SPEC-9501-found.md"),
+            "# Example\n\nStatus: planned\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let found = build_report(
+            &root,
+            "2026-08-27",
+            &HistoryInput::default(),
+            &ReceiptInput::default(),
+        )?;
+        if maintenance_status(&found) != MAINTENANCE_STATUS_ATTENTION_REQUIRED {
+            return Err("candidates found did not report attention_required".to_string());
+        }
+        let found_digest = render_digest(&found);
+        if !found_digest.contains("maintenance_status: attention_required")
+            || !found_digest.contains("| `never_reviewed` | 1 |")
+        {
+            return Err("found-state digest is missing the status or reason counts".to_string());
+        }
+        // State 2: no candidates is also a useful successful observation.
+        let empty = fixture_root()?;
+        let empty_report = build_report(
+            &empty,
+            "2026-08-27",
+            &HistoryInput::default(),
+            &ReceiptInput::default(),
+        )?;
+        if maintenance_status(&empty_report) != MAINTENANCE_STATUS_CLEAN {
+            return Err("an empty queue did not report clean".to_string());
+        }
+        let clean_digest = render_digest(&empty_report);
+        if !clean_digest.contains("maintenance_status: clean")
+            || !clean_digest.contains("no open candidates")
+        {
+            return Err("clean-state digest is missing the empty-queue rendering".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn digest_instrument_failure_is_a_command_error_not_a_status() -> Result<(), String> {
+        // State 3: an untrustworthy report (unreadable/non-UTF-8 required
+        // spec) makes the pipeline return `Err`, so no maintenance_status is
+        // printed and the advisory workflow observes a failed instrument.
+        let root = fixture_root()?;
+        fs::write(
+            root.join("docs/specs/RIPR-SPEC-9502-broken.md"),
+            [0xff, 0xfe],
+        )
+        .map_err(|error| error.to_string())?;
+        let outcome = build_report(
+            &root,
+            "2026-08-27",
+            &HistoryInput::default(),
+            &ReceiptInput::default(),
+        );
+        if outcome.is_ok() {
+            return Err("an untrustworthy inventory did not fail the instrument".to_string());
+        }
+        // The status helper only classifies successful observations: the
+        // `Err` from the shared pipeline is the instrument-failure state,
+        // and the digest file is never written from a failed run because
+        // `spec_digest` propagates the error before any write_report call.
+        Ok(())
+    }
+
+    #[test]
+    fn source_of_truth_workflow_publishes_the_advisory_digest() -> Result<(), String> {
+        let workflow_path = crate::repo_root()?.join(".github/workflows/source-of-truth.yml");
+        let text = fs::read_to_string(&workflow_path)
+            .map_err(|error| format!("read {}: {error}", workflow_path.display()))?;
+
+        // Trigger 1: bounded schedule, no more frequent than weekly.
+        let cron_line = text
+            .lines()
+            .map(str::trim)
+            .find_map(|line| line.strip_prefix("- cron:"))
+            .ok_or_else(|| "source-of-truth.yml is missing its schedule cron".to_string())?
+            .trim()
+            .trim_matches('\'')
+            .trim_matches('"')
+            .to_string();
+        let fields: Vec<&str> = cron_line.split_whitespace().collect();
+        if fields.len() != 5 {
+            return Err(format!("cron `{cron_line}` does not have five fields"));
+        }
+        let weekly_or_slower =
+            fields[0] != "*" && fields[1] != "*" && !(fields[2] == "*" && fields[4] == "*");
+        if !weekly_or_slower {
+            return Err(format!("cron `{cron_line}` fires more often than weekly"));
+        }
+        // Trigger 2: explicit operator invocation.
+        if !text.contains("  workflow_dispatch:") {
+            return Err("source-of-truth.yml is missing workflow_dispatch".to_string());
+        }
+        // Trigger 3: PR execution only when spec-governance paths change.
+        for event in ["pull_request", "push"] {
+            let paths = workflow_event_paths(&text, event)?;
+            for required in [
+                ".allow/spec-system/**",
+                ".github/workflows/source-of-truth.yml",
+                ".ripr/traceability.toml",
+                "docs/specs/**",
+                "docs/status/SUPPORT_TIERS.md",
+                "docs/templates/**",
+            ] {
+                if !paths.iter().any(|path| path == required) {
+                    return Err(format!(
+                        "{event} trigger is missing spec-governance path `{required}`: {paths:?}"
+                    ));
+                }
+            }
+        }
+
+        // The digest job stays advisory: a failed instrument is a failed
+        // advisory observation, never a failed required gate.
+        let job = workflow_job_block(&text, "  spec-maintenance-digest:").ok_or_else(|| {
+            "source-of-truth.yml is missing the spec-maintenance-digest job".to_string()
+        })?;
+        if !job.contains("continue-on-error: true") {
+            return Err(
+                "the digest job is not advisory (missing continue-on-error: true)".to_string(),
+            );
+        }
+        if !job.contains("cancel-in-progress: false") {
+            return Err(
+                "the digest job must queue a nearly complete scheduled inventory, not cancel it"
+                    .to_string(),
+            );
+        }
+        let digest_step = job
+            .lines()
+            .find(|line| line.trim().starts_with("run: cargo xtask specs digest"))
+            .ok_or_else(|| "the digest job does not invoke cargo xtask specs digest".to_string())?;
+        if digest_step.contains("|| true") {
+            return Err(
+                "the digest instrument must not be shielded: a broken instrument must stay visible"
+                    .to_string(),
+            );
+        }
+        if !job.contains("if: always()") {
+            return Err(
+                "the digest job must publish its summary (or instrument-failure annotation) with if: always()".to_string(),
+            );
+        }
+        if !job.contains("actions/upload-artifact@v7") || !job.contains("ripr-spec-maintenance") {
+            return Err(
+                "the digest job must retain the full report as the ripr-spec-maintenance artifact"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    /// Collects the `paths:` entries of one `on:` event block. Deliberate
+    /// line-scanning: check-workflows reads workflows the same way and the
+    /// repo does not take a YAML dependency.
+    fn workflow_event_paths(text: &str, event: &str) -> Result<Vec<String>, String> {
+        let mut paths = Vec::new();
+        let mut in_event = false;
+        let mut in_paths = false;
+        for line in text.lines() {
+            let indent = line.len() - line.trim_start().len();
+            let trimmed = line.trim();
+            if indent == 0 {
+                if in_event {
+                    break;
+                }
+                if trimmed == "on:" {
+                    continue;
+                }
+            }
+            if indent == 2 {
+                if trimmed == format!("{event}:") {
+                    in_event = true;
+                    continue;
+                }
+                if in_event {
+                    break;
+                }
+            }
+            if !in_event {
+                continue;
+            }
+            if indent == 4 {
+                in_paths = trimmed == "paths:";
+                continue;
+            }
+            if in_paths
+                && indent > 4
+                && let Some(entry) = trimmed.strip_prefix("- ")
+            {
+                paths.push(entry.trim_matches('\'').trim_matches('"').to_string());
+            }
+        }
+        if !in_event && paths.is_empty() {
+            return Err(format!(
+                "source-of-truth.yml has no `{event}` trigger block"
+            ));
+        }
+        Ok(paths)
+    }
+
+    /// Returns the body of one top-level job block (two-space indented key).
+    fn workflow_job_block(text: &str, job_key: &str) -> Option<String> {
+        let mut body = Vec::new();
+        let mut in_job = false;
+        for line in text.lines() {
+            let indent = line.len() - line.trim_start().len();
+            if indent == 0 && !line.trim().is_empty() {
+                in_job = false;
+            }
+            if indent == 2 && line.trim_end() == job_key.trim_end() {
+                in_job = true;
+                continue;
+            }
+            if in_job {
+                if indent == 2 && !line.trim().is_empty() {
+                    break;
+                }
+                body.push(line);
+            }
+        }
+        if body.is_empty() {
+            None
+        } else {
+            Some(body.join("\n"))
+        }
     }
 }

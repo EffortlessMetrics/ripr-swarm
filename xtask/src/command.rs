@@ -432,6 +432,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "worktree doctor",
         "specs next",
         "specs maintenance --as-of YYYY-MM-DD [--json] [--receipts <dir>]",
+        "specs digest --as-of YYYY-MM-DD [--json] [--receipts <dir>]",
         "specs close --spec RIPR-SPEC-NNNN --disposition <label> --as-of YYYY-MM-DD --reviewed-by <identity>",
         "ci-fast",
         "ci-full",
@@ -1302,6 +1303,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Writes an advisory, reason-coded specification maintenance inventory that honors content-bound review receipts; rejected receipts close nothing.",
+        ),
+        command_entry(
+            "specs digest --as-of YYYY-MM-DD [--json] [--receipts <dir>]",
+            "report_only",
+            "target/ripr/reports/spec-maintenance.{json,md,digest.md}",
+            false,
+            false,
+            "Writes the full advisory maintenance inventory plus one short bounded digest from the same DTO for the Source of Truth workflow step summary; maintenance_status is clean or attention_required and never gates merges.",
         ),
         command_entry(
             "specs close --spec RIPR-SPEC-NNNN --disposition <label> --as-of YYYY-MM-DD --reviewed-by <identity>",
