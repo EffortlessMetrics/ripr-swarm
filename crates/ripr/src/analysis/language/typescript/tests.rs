@@ -4068,6 +4068,7 @@ fn analyze_diff_returns_zero_findings_and_counts_accepted_files() -> Result<(), 
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
         resolved_subject_identity: None,
     };
     let policy = OraclePolicy::default();
@@ -4101,6 +4102,7 @@ fn analyze_diff_splits_changed_files_into_typescript_and_javascript() -> Result<
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
         resolved_subject_identity: None,
     };
     let policy = OraclePolicy::default();
@@ -4136,6 +4138,7 @@ fn analyze_repo_returns_empty_scaffold() -> Result<(), String> {
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
         resolved_subject_identity: None,
     };
     let policy = OraclePolicy::default();
@@ -7400,6 +7403,7 @@ fn delta5_verify_command_absent_from_missing_list_when_runner_resolved() -> Resu
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
         resolved_subject_identity: None,
     };
     let policy = OraclePolicy::default();
@@ -7495,6 +7499,7 @@ fn delta5_verify_command_stays_in_missing_list_when_runner_unresolved() -> Resul
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
         resolved_subject_identity: None,
     };
     let policy = OraclePolicy::default();

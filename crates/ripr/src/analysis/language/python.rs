@@ -6668,6 +6668,7 @@ impl LanguageAdapter for PythonAdapter {
         }
         Ok(LanguageDiffResult {
             findings,
+            harness_projections: Vec::new(),
             changed_files: changed_count,
             candidate_line_count: 0,
             changed_files_by_language: Vec::new(),
@@ -6690,6 +6691,7 @@ impl LanguageAdapter for PythonAdapter {
         // § "Repo-Mode Analysis Is Rust-Only" for the limitation contract.
         Ok(LanguageRepoResult {
             findings: Vec::new(),
+            harness_projections: Vec::new(),
             production_files: 0,
             skipped_files: 0,
         })
@@ -10609,6 +10611,7 @@ def test_build_user_smoke():
             git_timeout: None,
             git_candidate: None,
             production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
             resolved_subject_identity: None,
         };
         let policy = OraclePolicy::default();
@@ -10639,6 +10642,7 @@ def test_build_user_smoke():
             git_timeout: None,
             git_candidate: None,
             production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
             resolved_subject_identity: None,
         };
         let policy = OraclePolicy::default();

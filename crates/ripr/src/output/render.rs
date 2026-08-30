@@ -925,6 +925,7 @@ mod tests {
 
     fn check_output_with(findings: Vec<Finding>) -> CheckOutput {
         CheckOutput {
+            harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
             mode: Mode::Draft,

@@ -1412,6 +1412,7 @@ fn analyze_diff_emits_finding_for_changed_python_file_on_disk() -> Result<(), St
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
         resolved_subject_identity: None,
     };
     let policy = OraclePolicy::default();
@@ -1503,6 +1504,7 @@ fn analyze_diff_suppresses_multiline_docstring_interior_change() -> Result<(), S
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
         resolved_subject_identity: None,
     };
     let changed_files = vec![ChangedFile {
@@ -1554,6 +1556,7 @@ fn analyze_diff_does_not_hide_behavior_after_same_line_docstring() -> Result<(),
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
         resolved_subject_identity: None,
     };
     let changed_files = vec![ChangedFile {
@@ -1602,6 +1605,7 @@ fn analyze_diff_does_not_hide_code_replaced_by_multiline_docstring() -> Result<(
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
         resolved_subject_identity: None,
     };
     let changed_files = vec![ChangedFile {
@@ -1693,6 +1697,7 @@ def test_encode_status():\n    assert encode_status('paid')['status'] == 'paid'\
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
         resolved_subject_identity: None,
     };
     let policy = OraclePolicy::default();
@@ -2468,6 +2473,7 @@ fn analyze_diff_counts_python_file_but_skips_unreadable_workspace_source() -> Re
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
         resolved_subject_identity: None,
     };
     let policy = OraclePolicy::default();

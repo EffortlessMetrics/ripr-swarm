@@ -5,6 +5,7 @@ mod classify;
 mod diff;
 mod extract;
 mod facts;
+pub(crate) mod harness_projection;
 mod language;
 mod pipeline;
 mod probes;
@@ -176,6 +177,7 @@ pub(crate) fn targeted_typescript_findings_for_scope(
         git_timeout: None,
         git_candidate: None,
         production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
     };
     let result = TypeScriptAdapter.analyze_diff(
         &options,
@@ -423,6 +425,10 @@ pub struct AnalysisOptions {
     /// production behavior even though their layout or Cargo target
     /// declares evidence role. Empty by default.
     pub production_like_targets: std::collections::BTreeSet<std::path::PathBuf>,
+    /// Repository-governed test-harness registrations (#3532): exact
+    /// configured custom-harness targets and registered test-producing
+    /// attributes. Empty by default — nothing is inferred.
+    pub test_harnesses: Vec<crate::config::TestHarnessRegistration>,
     /// Immutable Git candidate subject (#3237 / #3276 R1). Threaded from
     /// `CheckInput` so the object producer (#3277) can consume it here;
     /// no current analysis path executes it, and `run_check` rejects
@@ -547,6 +553,11 @@ impl LanguageRunStatus {
 
 #[derive(Clone, Debug)]
 pub struct AnalysisResult {
+    /// Test-harness registry projections (#3532): what each exact
+    /// registration established for this run — harness kind, provenance,
+    /// subject identity, selector capability, and typed limitations.
+    /// Empty when the repository has no registrations.
+    pub harness_projections: Vec<harness_projection::TestHarnessProjection>,
     /// Producer-owned completeness and limitation facts. Diff/worktree
     /// pipelines populate this; repo-scope analysis has no diff denominator.
     pub(crate) analysis_outcome: Option<crate::analysis_outcome::AnalysisOutcome>,
@@ -857,6 +868,7 @@ index 0000000..1111111 100644
             git_candidate: None,
             resolved_subject_identity: None,
             production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
         })
         .unwrap();
         assert!(!out.findings.is_empty());
@@ -879,6 +891,7 @@ index 0000000..1111111 100644
             git_candidate: None,
             resolved_subject_identity: None,
             production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
         })
         .unwrap();
         assert!(instant.findings.iter().any(|finding| {
@@ -932,6 +945,7 @@ fn premium_customer_gets_discount() {
             git_candidate: None,
             resolved_subject_identity: None,
             production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
         })?;
 
         if out.findings.is_empty() {
@@ -1080,6 +1094,7 @@ fn test_with_predicate() {
             git_candidate: None,
             resolved_subject_identity: None,
             production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
         })?;
 
         for finding in &out.findings {
@@ -1148,6 +1163,7 @@ index 0000000..1111111 100644
             git_candidate: None,
             resolved_subject_identity: None,
             production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
         })?;
 
         if !diff_out.findings.is_empty() {
@@ -1166,6 +1182,7 @@ index 0000000..1111111 100644
             git_candidate: None,
             resolved_subject_identity: None,
             production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
         })?;
 
         if repo_out.findings.is_empty() {
@@ -1210,6 +1227,7 @@ mod git_candidate_entry_tests {
             git_candidate: None,
             resolved_subject_identity: None,
             production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
         })
     }
 

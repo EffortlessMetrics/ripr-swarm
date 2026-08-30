@@ -76,6 +76,7 @@ fn sample_finding(file: &str, line: usize) -> Finding {
 
 fn check_output_with(findings: Vec<Finding>) -> CheckOutput {
     CheckOutput {
+        harness_projections: Vec::new(),
         schema_version: CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
         tool: "ripr".to_string(),
         mode: Mode::Draft,

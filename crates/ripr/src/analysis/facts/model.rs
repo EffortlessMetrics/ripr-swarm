@@ -246,6 +246,20 @@ pub struct RustIndex {
     pub include_parents: BTreeMap<PathBuf, PathBuf>,
     #[serde(default)]
     pub include_limitations: Vec<RustIncludeLimitation>,
+    /// Executable test subjects established by registered harness
+    /// adapters (#3532). Empty without registrations; every entry carries
+    /// its registration provenance, harness kind, adapter generation,
+    /// subject identity, and selector capability so consumers project
+    /// them without reconstructing any of it.
+    #[serde(default)]
+    pub harness_subjects: Vec<HarnessSubjectFact>,
+    /// Typed limitations recorded by registered harness adapters (#3532):
+    /// shapes the registration saw but could not classify (dynamic names,
+    /// loop-driven registration, ambiguous imports). Unregistered or
+    /// ambiguous harnesses are limitations here, never production or
+    /// executable-test optimism.
+    #[serde(default)]
+    pub harness_limitations: Vec<HarnessLimitationFact>,
     #[serde(default)]
     pub(crate) workspace_authority: Option<WorkspaceRootAuthority>,
 }
@@ -288,11 +302,21 @@ pub struct FileFacts {
 /// - `TestAttribute` and `ParameterizedExpansion` are executable tests:
 ///   they carry (or were promoted from) an exact supported test-defining
 ///   attribute and register `TestFact`s — the test selector denominator.
+/// - `RegisteredTestAttribute` is an executable test carrying an exact
+///   repository-registered test-producing attribute (#3532 harness
+///   registry); it registers a `TestFact` through this same role
+///   authority.
 /// - `CfgTestModule` is evidence-only helper role: a function inside a
 ///   test-required module (`#[cfg(test)]`, or a `test` conjunct in
 ///   `cfg(all(...))` through the shared `cfg_predicates` authority). It
 ///   stays evidence-capable without entering the executable-test
 ///   denominator.
+/// - `HarnessHelper` is evidence-only helper role inside a registered
+///   custom test-harness target (#3532, e.g. a `[[test]]`
+///   `harness = false` libtest-mimic suite): the custom harness never
+///   runs libtest collection, so an attribute alone never makes a member
+///   an executable test. Executable subjects come only from the harness
+///   registry's adapter.
 /// - `Production` is ordinary non-evidence source and remains a
 ///   production-subject candidate. Production-subject *eligibility* is
 ///   still the consumer-side composition of this role with the file-level
@@ -303,10 +327,8 @@ pub struct FileFacts {
 /// Dimensions with no function-level producer today are deliberately absent
 /// rather than fabricated: the explicit production-like opt-in
 /// (`analysis.production_like_targets`) acts at the file `SourceRole`
-/// layer, and a typed unknown awaits a real producer (#3499 / #3532 own the
-/// next attribute and registered-harness families). Extending this enum is
-/// a producer change; a renderer or consumer may display the role but may
-/// not recalculate it.
+/// layer. Extending this enum is a producer change; a renderer or
+/// consumer may display the role but may not recalculate it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FunctionSourceRole {
@@ -328,6 +350,17 @@ pub enum FunctionSourceRole {
     /// (`facts::parameterized_tests`) from an exact `#[test_case(...)]`
     /// family attribute. Registers an executable, promoted `TestFact`.
     ParameterizedExpansion,
+    /// Carries an exact repository-registered test-producing attribute
+    /// through the harness registry (#3532, `analysis.test_harnesses`).
+    /// Classified through this same role authority; registers an
+    /// executable `TestFact` whose provenance is the registration.
+    RegisteredTestAttribute,
+    /// Member of a registered custom test-harness target (#3532, e.g. a
+    /// `[[test]]` `harness = false` libtest-mimic suite). Evidence-only:
+    /// the custom harness does not run libtest collection, so no
+    /// executable `TestFact` is registered for this variant alone.
+    /// Executable subjects are the adapter-established harness subjects.
+    HarnessHelper,
 }
 
 impl FunctionSourceRole {
@@ -341,6 +374,16 @@ impl FunctionSourceRole {
     /// the file-level `SourceRole` instead of widening this predicate.
     pub fn is_evidence_role(self) -> bool {
         !matches!(self, Self::Production)
+    }
+
+    /// Whether functions with this role register executable `TestFact`s —
+    /// the test selector denominator. Evidence-only helper roles
+    /// (`CfgTestModule`, `HarnessHelper`) never enter it on their own.
+    pub fn registers_executable_test(self) -> bool {
+        matches!(
+            self,
+            Self::TestAttribute | Self::ParameterizedExpansion | Self::RegisteredTestAttribute
+        )
     }
 }
 
@@ -379,6 +422,102 @@ pub struct TestFact {
     /// case-driven tests so value resolution can map case literals to
     /// test parameters.
     pub attrs: Vec<String>,
+}
+
+/// Whether a selector route is known for one harness subject (#3532).
+/// A registration can describe a selector adapter; passive analysis
+/// never runs it, so every capability stays explicitly unexecuted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HarnessSelectorCapability {
+    /// No selector route is known to RIPR for this subject.
+    None,
+    /// A named selector candidate exists (e.g. the libtest-mimic trial
+    /// name, or the registered attribute's test name). Represented as
+    /// unexecuted: no passive analysis starts Cargo or the harness.
+    NamedUnexecuted,
+}
+
+impl HarnessSelectorCapability {
+    /// Stable wire string for projections.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::NamedUnexecuted => "named_unexecuted",
+        }
+    }
+}
+
+/// What the adapter claims one harness subject is (#3532). The claim is
+/// stated per subject so consumers never assume expansion.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HarnessSubjectClaim {
+    /// The source invocation itself is one source-level test subject
+    /// (e.g. one `Trial::test("name", ...)` registration). Generated
+    /// cases inside it are not enumerated.
+    NamedInvocation,
+    /// The function is one executable test (registered test-producing
+    /// attribute).
+    NamedFunction,
+}
+
+impl HarnessSubjectClaim {
+    /// Stable wire string for projections.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NamedInvocation => "named_invocation",
+            Self::NamedFunction => "named_function",
+        }
+    }
+}
+
+/// One executable test subject established by a registered harness
+/// adapter (#3532). A matching adapter emits these typed subject facts
+/// rather than mutating `FunctionFact` ad hoc. Each subject also
+/// registers an ordinary `TestFact` (same name/file/span) so the
+/// executable-test denominator and every existing test consumer see it.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct HarnessSubjectFact {
+    /// The registration that authorized this subject.
+    pub registration_id: String,
+    /// Harness family (e.g. `custom_harness`, `registered_attribute`).
+    pub harness_kind: String,
+    /// Adapter generation (e.g. `libtest_mimic_v1`).
+    pub adapter: String,
+    /// Exact source marker the adapter matched (crate path or attribute
+    /// path). Prefix/suffix lookalikes never produce subjects.
+    pub marker: String,
+    /// Stable subject identity: the trial name or the test fn name.
+    pub name: String,
+    pub file: PathBuf,
+    pub start_line: usize,
+    pub end_line: usize,
+    pub body: String,
+    pub calls: Vec<CallFact>,
+    pub assertions: Vec<OracleFact>,
+    pub literals: Vec<LiteralFact>,
+    pub selector: HarnessSelectorCapability,
+    pub claim: HarnessSubjectClaim,
+    /// Trust provenance of the authorizing registration (e.g.
+    /// `ripr.toml [analysis.test_harnesses]`).
+    pub provenance: String,
+}
+
+/// One typed limitation recorded by a registered harness adapter (#3532):
+/// a shape the registration saw but could not classify statically.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct HarnessLimitationFact {
+    /// The registration that observed the limitation.
+    pub registration_id: String,
+    /// Stable limitation code, e.g. `dynamic_trial_name`,
+    /// `dynamic_trial_registration`, `ambiguous_import`,
+    /// `unanchored_trial_path`.
+    pub code: String,
+    pub file: PathBuf,
+    pub line: usize,
+    /// Human-readable detail naming what could not be classified and why.
+    pub detail: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

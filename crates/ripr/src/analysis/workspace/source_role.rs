@@ -9,15 +9,18 @@
 //!    `ripr.toml`) — a repository that intentionally treats a test-support
 //!    target as production-like behavior restores ordinary production
 //!    analysis for that target only;
-//! 2. declared Cargo targets (`[[test]]` / `[[bench]]` with an explicit
+//! 2. registered test-harness targets (`[analysis.test_harnesses]`,
+//!    #3532) — exact configured custom-harness and registered-test-producer
+//!    files are evidence role;
+//! 3. declared Cargo targets (`[[test]]` / `[[bench]]` with an explicit
 //!    `path = ...`) — confirms evidence role even outside the default
 //!    `tests/` / `benches/` layouts, which is what lets a confirmed
 //!    `*_test.rs` / `test_*.rs` convention carry evidence role while an
 //!    unconfirmed filename stays a production subject;
-//! 3. package layout (`tests/`, `benches/`, `examples/`) and the
+//! 4. package layout (`tests/`, `benches/`, `examples/`) and the
 //!    non-source directories (`fixtures/`, `target/`, `.git/`, `.ripr/`,
 //!    `node_modules/`, `editors/`);
-//! 4. everything else under a source layout is a production subject.
+//! 5. everything else under a source layout is a production subject.
 //!
 //! A filename convention alone never classifies a file: without target
 //! metadata or layout corroboration, `src/foo_test.rs` remains a
@@ -88,8 +91,9 @@ impl SourceRole {
     }
 }
 
-/// Authoritative context beyond package layout: declared Cargo targets
-/// and the repository's explicit production-like opt-in.
+/// Authoritative context beyond package layout: declared Cargo targets,
+/// the repository's explicit production-like opt-in, and registered
+/// test-harness targets.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SourceRoleContext {
     /// Relative paths of files named by explicit `[[test]]` `path = ...`
@@ -100,6 +104,11 @@ pub(crate) struct SourceRoleContext {
     pub(crate) declared_bench_targets: BTreeSet<PathBuf>,
     /// Relative paths opted in via `[analysis] production_like_targets`.
     pub(crate) production_like_targets: BTreeSet<PathBuf>,
+    /// Relative paths registered via `[analysis.test_harnesses]` (#3532):
+    /// exact configured custom-harness targets and registered test
+    /// producers. Evidence role; the explicit production-like opt-in
+    /// still wins over a harness registration.
+    pub(crate) harness_targets: BTreeSet<PathBuf>,
 }
 
 impl SourceRoleContext {
@@ -116,6 +125,9 @@ pub(crate) fn classify_with(path: &Path, context: &SourceRoleContext) -> SourceR
     let normalized = normalize(path);
     if context.production_like_targets.contains(&normalized) {
         return SourceRole::ProductionLikeTestInfrastructure;
+    }
+    if context.harness_targets.contains(&normalized) {
+        return SourceRole::TestEvidence;
     }
     if context.declared_test_targets.contains(&normalized) {
         return SourceRole::TestEvidence;
@@ -339,6 +351,53 @@ mod tests {
             classify_with(Path::new("src/unrelated_test.rs"), &context),
             SourceRole::ProductionSubject,
             "confirmation does not leak to undeclared filenames"
+        );
+    }
+
+    #[test]
+    fn harness_registrations_confirm_evidence_role_but_opt_in_wins() {
+        // #3532: an exact registered harness target is evidence role even
+        // outside the default layouts; the explicit production-like opt-in
+        // stays a separate, stronger control; nothing leaks to siblings.
+        let mut context = SourceRoleContext::empty();
+        context
+            .harness_targets
+            .insert(PathBuf::from("src/custom_mimic.rs"));
+        context
+            .production_like_targets
+            .insert(PathBuf::from("tests/opted_in.rs"));
+        context
+            .declared_test_targets
+            .insert(PathBuf::from("src/contract_test.rs"));
+
+        assert_eq!(
+            classify_with(Path::new("src/custom_mimic.rs"), &context),
+            SourceRole::TestEvidence,
+            "a registered harness target is evidence role in any layout"
+        );
+        assert!(
+            !classify_with(Path::new("src/custom_mimic.rs"), &context).seeds_production_findings(),
+            "a registered harness target never seeds production seams"
+        );
+        assert_eq!(
+            classify_with(Path::new("tests/opted_in.rs"), &context),
+            SourceRole::ProductionLikeTestInfrastructure,
+            "the production-like opt-in wins over harness role"
+        );
+        assert_eq!(
+            classify_with(Path::new("tests/other.rs"), &context),
+            SourceRole::TestEvidence
+        );
+        assert_eq!(
+            classify_with(Path::new("src/undeclared.rs"), &context),
+            SourceRole::ProductionSubject,
+            "registration must not leak to unregistered files"
+        );
+        // Declared-target confirmation and harness registration agree on
+        // evidence role; priority between them is not observable.
+        assert_eq!(
+            classify_with(Path::new("src/contract_test.rs"), &context),
+            SourceRole::TestEvidence
         );
     }
 
