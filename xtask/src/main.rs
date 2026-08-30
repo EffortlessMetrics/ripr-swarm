@@ -16304,14 +16304,40 @@ fn ensure_receipts_dir() -> Result<(), String> {
 }
 
 pub(crate) fn write_report(file_name: &str, body: &str) -> Result<(), String> {
-    ensure_reports_dir()?;
-    let path = reports_dir().join(file_name);
+    write_report_in(&reports_dir(), file_name, body)
+}
+
+/// `write_report` against an explicit report directory, so parameterized
+/// pipelines (and their tests) can target a hermetic location.
+pub(crate) fn write_report_in(directory: &Path, file_name: &str, body: &str) -> Result<(), String> {
+    fs::create_dir_all(directory).map_err(|err| {
+        format!(
+            "failed to create {}: {err}\nrerun with `cargo xtask shape` after fixing directory permissions",
+            directory.display()
+        )
+    })?;
+    let path = directory.join(file_name);
     fs::write(&path, body).map_err(|err| {
         format!(
             "failed to write {}: {err}\nrerun with `cargo xtask shape` after fixing file permissions",
             path.display()
         )
     })
+}
+
+/// Removes one report file, absorbing every error: a missing or locked
+/// stale artifact must never fail the run that is about to rewrite it
+/// (same style as `remove_evidence_health_report_artifacts`).
+pub(crate) fn remove_report_in(directory: &Path, file_name: &str) -> Result<(), String> {
+    let path = directory.join(file_name);
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "failed to remove stale report {}: {error}",
+            path.display()
+        )),
+    }
 }
 
 fn write_receipt(file_name: &str, body: &str) -> Result<(), String> {
@@ -16325,7 +16351,7 @@ fn write_receipt(file_name: &str, body: &str) -> Result<(), String> {
     })
 }
 
-fn reports_dir() -> PathBuf {
+pub(crate) fn reports_dir() -> PathBuf {
     Path::new("target").join("ripr").join("reports")
 }
 

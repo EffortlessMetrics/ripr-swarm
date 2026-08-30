@@ -352,11 +352,12 @@ retained as the `ripr-spec-maintenance` artifact.
   itself). Source-only PRs do not start it.
 - **Three states.** Candidates found (`maintenance_status:
   attention_required`) and no candidates (`clean`) are both successful
-  observations; neither count changes the exit status. An instrument
-  failure (unreadable spec, serialization error) exits nonzero with no
-  digest written, the step fails visibly, and the `if: always()` summary
-  annotates `maintenance_status: instrument_failure` — a failed advisory
-  observation, not a failed required gate.
+  observations; neither count changes the exit status. A structurally blind
+  scan (the spec index absent and nothing scanned) is `attention_required`,
+  not `clean`. An instrument failure (unreadable spec, serialization error)
+  exits nonzero with no digest written, the step fails visibly, and the
+  `if: always()` summary annotates `maintenance_status: instrument_failure`
+  — a failed advisory observation, not a failed required gate.
 - **Non-blocking by construction.** The digest job is `continue-on-error`
   and is not in `.github/settings.yml` required contexts; a scheduled run
   queues behind an active one (`cancel-in-progress: false`) so a nearly
