@@ -512,13 +512,11 @@ promotion.
 
 ## Release Position
 
-The current source package is `ripr` 0.10.0 (`crates/ripr/Cargo.toml`). Its
+The current source package is `ripr` 0.11.0 (`crates/ripr/Cargo.toml`). Its
 release notes are staged as unreleased in [CHANGELOG.md](../CHANGELOG.md); the
-swarm repository therefore uses 0.10.0 as the current release frame without
-claiming a published crates.io release. The 0.9.0 language-adapter frame below
-is historical, and the 0.11.0 replacement freeze is a staged next-release
-candidate, not current release authority. The active 0.11.0 selection rule is
-the exact transaction-boundary live swarm head in
+repository version now carries the 0.11.0 frame ahead of the publication
+transaction. The 0.9.0 language-adapter frame below is historical. The active
+0.11.0 selection rule is the exact transaction-boundary live swarm head in
 `release-candidates/0.11.0-live-head-selection.json`.
 
 ### `0.11.0` - Replacement freeze (historical, superseded)
