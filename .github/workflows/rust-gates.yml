@@ -176,7 +176,7 @@ jobs:
           # Raised from the 2000 default as the PR #3592 decision artifact; the variable is documented in docs/CONFIGURATION.md.
           RIPR_MAX_DIFF_CHANGED_RUST_LINES: "3000"
           # Match the raised max limit: the partial-budget clamp bounds against
-          # the effective limit, so without this a 2001-2500-line PR passes the
+          # the effective limit, so without this a 2001-3000-line PR passes the
           # hard guard but still lands in gate-ineligible limited_partial_scope.
           RIPR_PARTIAL_DIFF_LINE_BUDGET: "3000"
         run: |
