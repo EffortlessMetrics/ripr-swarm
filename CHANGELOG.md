@@ -41,7 +41,7 @@ are scoped or reviewed.
   modifiers
   ([#3506](https://github.com/EffortlessMetrics/ripr-swarm/pull/3506)).
 
-- The perl preview lane no longer lets operational producer limitations
+- The Perl preview lane no longer lets operational producer limitations
   mask an earned exposure class: the class cap and the actionability
   gate are now separate in the static-limit projection
   ([#3583](https://github.com/EffortlessMetrics/ripr-swarm/pull/3583)).
