@@ -276,23 +276,34 @@ pub(crate) fn partial_diff_budgets() -> Result<PartialDiffBudgets, String> {
     partial_diff_budgets_from_env(
         std::env::var(PARTIAL_DIFF_FILE_BUDGET_ENV),
         std::env::var(PARTIAL_DIFF_LINE_BUDGET_ENV),
+        diff_index_file_limit()?,
+        diff_changed_rust_line_limit()?,
     )
 }
 
+/// `effective_file_limit` / `effective_line_limit` are the resolved
+/// analysis-cost limits (env override or built-in default) the same run's
+/// hard guards enforce. Clamping against the *effective* limit — not the
+/// built-in default — keeps the budgets coherent when an operator raises a
+/// limit: a run that authorizes `RIPR_MAX_DIFF_CHANGED_RUST_LINES=2500` must
+/// accept a 2,501+ line-budget override up to that same ceiling instead of
+/// silently truncating it back to the default (#3595 review).
 fn partial_diff_budgets_from_env(
     file_value: Result<String, std::env::VarError>,
     line_value: Result<String, std::env::VarError>,
+    effective_file_limit: usize,
+    effective_line_limit: usize,
 ) -> Result<PartialDiffBudgets, String> {
     let (file_budget, file_disclosure) = partial_budget_from_env(
         PARTIAL_DIFF_FILE_BUDGET_ENV,
         PARTIAL_DIFF_FILE_BUDGET_DEFAULT,
-        DIFF_INDEX_FILE_LIMIT,
+        effective_file_limit,
         file_value,
     )?;
     let (line_budget, line_disclosure) = partial_budget_from_env(
         PARTIAL_DIFF_LINE_BUDGET_ENV,
         PARTIAL_DIFF_LINE_BUDGET_DEFAULT,
-        DIFF_CHANGED_RUST_LINE_LIMIT,
+        effective_line_limit,
         line_value,
     )?;
     let mut disclosures = Vec::new();
@@ -310,22 +321,22 @@ fn partial_diff_budgets_from_env(
 /// overflowing value is a parse failure, and zero is rejected; every failure
 /// fails closed as a named `partial_budget_invalid` error — never a silent
 /// unlimited or hidden fallback. A valid override above the corresponding
-/// hard analysis-cost guard is clamped to the guard value and the clamp is
+/// effective analysis-cost limit is clamped to that limit and the clamp is
 /// disclosed (RIPR-PROP-0019 decision 3).
 fn partial_budget_from_env(
     env_name: &str,
     default: usize,
-    hard_guard: usize,
+    effective_limit: usize,
     value: Result<String, std::env::VarError>,
 ) -> Result<(usize, Option<String>), String> {
     let parsed = positive_limit_from_env(env_name, default, value)
         .map_err(|err| format!("partial_budget_invalid: {err}"))?;
-    if parsed > hard_guard {
+    if parsed > effective_limit {
         Ok((
-            hard_guard,
+            effective_limit,
             Some(format!(
-                "{env_name}={parsed} exceeds the hard analysis-cost guard ({hard_guard}); \
-                 clamped to {hard_guard}"
+                "{env_name}={parsed} exceeds the effective analysis-cost limit \
+                 ({effective_limit}); clamped to {effective_limit}"
             )),
         ))
     } else {
@@ -2853,8 +2864,12 @@ fn absent_delimiter_boundary_returns_head() {
 
     #[test]
     fn partial_budget_env_defaults_when_unset() -> Result<(), String> {
-        let resolved =
-            partial_diff_budgets_from_env(Err(VarError::NotPresent), Err(VarError::NotPresent))?;
+        let resolved = partial_diff_budgets_from_env(
+            Err(VarError::NotPresent),
+            Err(VarError::NotPresent),
+            DIFF_INDEX_FILE_LIMIT,
+            DIFF_CHANGED_RUST_LINE_LIMIT,
+        )?;
         assert_eq!(resolved.file_budget, PARTIAL_DIFF_FILE_BUDGET_DEFAULT);
         assert_eq!(resolved.line_budget, PARTIAL_DIFF_LINE_BUDGET_DEFAULT);
         assert!(resolved.disclosures.is_empty());
@@ -2867,7 +2882,12 @@ fn absent_delimiter_boundary_returns_head() {
     }
 
     fn invalid_budget_message(file: &str, line: &str) -> String {
-        match partial_diff_budgets_from_env(Ok(file.to_string()), Ok(line.to_string())) {
+        match partial_diff_budgets_from_env(
+            Ok(file.to_string()),
+            Ok(line.to_string()),
+            DIFF_INDEX_FILE_LIMIT,
+            DIFF_CHANGED_RUST_LINE_LIMIT,
+        ) {
             Ok(resolved) => format!(
                 "expected partial_budget_invalid for file={file:?} line={line:?}, got {resolved:?}"
             ),
@@ -2956,6 +2976,8 @@ fn absent_delimiter_boundary_returns_head() {
         let result = partial_diff_budgets_from_env(
             Err(VarError::NotUnicode("x".into())),
             Err(VarError::NotPresent),
+            DIFF_INDEX_FILE_LIMIT,
+            DIFF_CHANGED_RUST_LINE_LIMIT,
         );
         assert!(
             matches!(&result, Err(message) if message.starts_with("partial_budget_invalid:")),
@@ -2968,6 +2990,8 @@ fn absent_delimiter_boundary_returns_head() {
         let resolved = partial_diff_budgets_from_env(
             Ok((DIFF_INDEX_FILE_LIMIT + 1).to_string()),
             Ok((DIFF_CHANGED_RUST_LINE_LIMIT + 1).to_string()),
+            DIFF_INDEX_FILE_LIMIT,
+            DIFF_CHANGED_RUST_LINE_LIMIT,
         )?;
 
         assert_eq!(resolved.file_budget, DIFF_INDEX_FILE_LIMIT);
@@ -2983,11 +3007,59 @@ fn absent_delimiter_boundary_returns_head() {
         assert!(resolved.disclosures[1].contains(PARTIAL_DIFF_LINE_BUDGET_ENV));
 
         // A valid in-range override applies without disclosure.
-        let resolved =
-            partial_diff_budgets_from_env(Ok(" 50 ".to_string()), Ok("250".to_string()))?;
+        let resolved = partial_diff_budgets_from_env(
+            Ok(" 50 ".to_string()),
+            Ok("250".to_string()),
+            DIFF_INDEX_FILE_LIMIT,
+            DIFF_CHANGED_RUST_LINE_LIMIT,
+        )?;
         assert_eq!(resolved.file_budget, 50);
         assert_eq!(resolved.line_budget, 250);
         assert!(resolved.disclosures.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn partial_budget_clamp_bounds_against_effective_limit_not_default() -> Result<(), String> {
+        // When RIPR_MAX_DIFF_CHANGED_RUST_LINES raises the analysis-cost
+        // limit, the partial-budget clamp must follow the effective limit,
+        // not the built-in 2000 default (#3595 review): otherwise a CI runner
+        // that raises the limit and the budget together still truncates the
+        // partition back to the default ceiling and loses full-scope
+        // evidence.
+        let effective_max = diff_changed_rust_line_limit_from_env(Ok("2500".to_string()))?;
+        assert_eq!(effective_max, 2500);
+
+        // 2001 exceeds the 2000 default but sits inside the raised limit, so
+        // it applies verbatim with no clamp disclosure.
+        let resolved = partial_diff_budgets_from_env(
+            Err(VarError::NotPresent),
+            Ok((DIFF_CHANGED_RUST_LINE_LIMIT + 1).to_string()),
+            DIFF_INDEX_FILE_LIMIT,
+            effective_max,
+        )?;
+        assert_eq!(
+            resolved.line_budget,
+            DIFF_CHANGED_RUST_LINE_LIMIT + 1,
+            "an override inside the raised limit must not clamp to the 2000 default"
+        );
+        assert!(resolved.disclosures.is_empty());
+
+        // An override above the raised limit still clamps, to the raised
+        // limit — never to the default.
+        let clamped = partial_diff_budgets_from_env(
+            Err(VarError::NotPresent),
+            Ok("3000".to_string()),
+            DIFF_INDEX_FILE_LIMIT,
+            effective_max,
+        )?;
+        assert_eq!(clamped.line_budget, 2500);
+        assert_eq!(clamped.disclosures.len(), 1);
+        assert!(
+            clamped.disclosures[0].contains("2500"),
+            "clamp must bound against the raised limit: {:?}",
+            clamped.disclosures[0]
+        );
         Ok(())
     }
 
