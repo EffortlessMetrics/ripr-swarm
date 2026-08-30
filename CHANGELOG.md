@@ -17,8 +17,180 @@ are scoped or reviewed.
   over newline-delimited JSON-RPC. Protocol errors always carry a
   response `id` (`null` when the request id is unreadable), discovery
   requires current-protocol `_meta`, and invalid roots fail closed
+  without leaking paths. Startup routes `ripr mcp` (and `ripr help mcp`)
+  ahead of general CLI initialization, and the global `--verbose` flag
+  works in any position without contaminating the protocol stdout stream
+  ([#3088](https://github.com/EffortlessMetrics/ripr-swarm/issues/3088),
+  [#3525](https://github.com/EffortlessMetrics/ripr-swarm/pull/3525),
+  [#3587](https://github.com/EffortlessMetrics/ripr-swarm/pull/3587)).
+
+- New `ripr rerun` command: changed-test targeted re-analysis. Selects
+  ledger gaps whose guarding tests changed, invalidates stale analysis
+  by input and content fingerprints, and runs the bounded check pipeline
+  only for the impacted scope
+  ([#1520](https://github.com/EffortlessMetrics/ripr-swarm/pull/1520)).
+
+- New binary-first evidence and gate surface: `ripr plus` (repo-level
+  quality receipt), `ripr pr-summary` (PR readiness summary),
+  `ripr pr-evidence` (PR evidence packet), `ripr annotations` (GitHub
+  Actions annotations), and `ripr impacted-evidence` (mutation routing
+  evidence). Each is advisory output, not a merge gate
+  ([#1476](https://github.com/EffortlessMetrics/ripr-swarm/pull/1476),
+  [#1460](https://github.com/EffortlessMetrics/ripr-swarm/pull/1460),
+  [#1468](https://github.com/EffortlessMetrics/ripr-swarm/pull/1468),
+  [#1467](https://github.com/EffortlessMetrics/ripr-swarm/pull/1467),
+  [#1474](https://github.com/EffortlessMetrics/ripr-swarm/pull/1474)).
+
+- `ripr check --suppression-policy <toml>` applies path-glob finding
+  suppression from a committed policy file, and `ripr gate evaluate
+  --exception-policy <toml>` applies dated burndown exceptions from a
+  ledger. Suppressed findings stay visible as suppressed, never deleted
+  ([#1475](https://github.com/EffortlessMetrics/ripr-swarm/pull/1475),
+  [#1477](https://github.com/EffortlessMetrics/ripr-swarm/pull/1477)).
+
+- Cache management surface: `ripr cache status` reports the analysis
+  cache state per workspace, `ripr cache clear` removes it (with
+  `--dry-run` and `--force` gates), and cache and receipt writes are
+  atomic, so a crashed run can no longer leave a half-written cache
+  entry behind
+  ([#1822](https://github.com/EffortlessMetrics/ripr-swarm/pull/1822),
+  [#2865](https://github.com/EffortlessMetrics/ripr-swarm/pull/2865),
+  [#2738](https://github.com/EffortlessMetrics/ripr-swarm/pull/2738)).
+
+- LSP capability wave: pull diagnostics with stable result IDs, the
+  `ripr/listActionableItems` handler, transport framing/payload/
+  concurrency bounds, work-done progress for long refreshes, UTF-16
+  position encoding, refresh-status disclosure, and a versioned
+  diagnostic-code catalog. The server remains an experimental sidecar
+  over saved workspaces
+  ([#1669](https://github.com/EffortlessMetrics/ripr-swarm/pull/1669),
+  [#3012](https://github.com/EffortlessMetrics/ripr-swarm/pull/3012),
+  [#2185](https://github.com/EffortlessMetrics/ripr-swarm/pull/2185)).
+
+- Analysis performance: a per-file fact cache on the diff path (the
+  largest single win — unchanged files reuse their previous facts
+  instead of re-parsing), parallel index-build parsing via rayon, and
+  artifact reuse across `check`/`explain`/`context` so follow-up
+  commands do not re-run the analysis
+  ([#2039](https://github.com/EffortlessMetrics/ripr-swarm/pull/2039),
+  [#2322](https://github.com/EffortlessMetrics/ripr-swarm/pull/2322),
+  [#2250](https://github.com/EffortlessMetrics/ripr-swarm/pull/2250)).
+
+- New `ripr mcp --stdio [--root PATH]` command: a bounded, read-only
+  Model Context Protocol server that exposes exact workspace status
+  (`ripr_workspace_status` tool and `ripr://workspace/status` resource)
+  over newline-delimited JSON-RPC. Protocol errors always carry a
+  response `id` (`null` when the request id is unreadable), discovery
+  requires current-protocol `_meta`, and invalid roots fail closed
   without leaking paths
   ([#3088](https://github.com/EffortlessMetrics/ripr-swarm/issues/3088)).
+
+- The `ripr agent start` workflow packet now states that its generated commands
+  assume bash. `commands.md` carries a prose note above the first command block,
+  and `workflow.json` gains an additive `command_shell: "bash"` field. The
+  command strings have always used POSIX single-quote quoting and `>`
+  redirection, so copying one into cmd.exe (which treats `'` as a literal
+  character) or PowerShell (which rejects the `'\''` escape) mis-passes or
+  rejects quoted arguments. The note names Git Bash specifically rather than
+  "bash on Windows": generated paths keep their Windows drive-letter prefix,
+  which WSL resolves as a relative path, so WSL needs each path translated to
+  `/mnt/c/...` and `ripr` installed inside it. This is disclosure only: no
+  command string, schema version, or existing field changed. A shell-neutral
+  argv form (#1617) and a PowerShell variant (#2964) remain separate work
+  ([#2963](https://github.com/EffortlessMetrics/ripr-swarm/issues/2963)).
+
+- Published schemas that had only a reverse-direction `schema_version` check are
+  now bound to real producer bytes by the verification-contract registry. The
+  Rust repair trust corpus of record (`metrics/rust-repair-trust/corpus.json`)
+  validates as itself rather than through a copy; the `command_spec` and
+  `verification_command_spec` shapes in `schemas/ripr/repair-assurance.schema.json`
+  validate against the `command_specs` a generated agent packet actually emits;
+  and the design-only `RepairAssuranceV1` envelope validates against the
+  assurance vocabulary corpus records that carry a `record` and are not marked
+  `invalid`, making a claim that `fixtures/assurance_vocabulary/SPEC.md`
+  previously stated but nothing enforced. Patch-shaped cases and advertised
+  negatives stay outside that walk and are covered by their own tests, so the
+  subject count does not imply coverage it lacks. Each pair carries a negative mutation that must fail.
+  `docs/verification/schema-producer-audit.md` records the producer, canonical
+  subject, negative mutation, and explicit exemption for every published schema
+  — including the `riprAgent` protocol schemas, which remain reserved and
+  routed to [#3009](https://github.com/EffortlessMetrics/ripr-swarm/issues/3009)
+  ([#2923](https://github.com/EffortlessMetrics/ripr-swarm/issues/2923)).
+
+- The contract validator now evaluates `oneOf`, `if`/`then`/`else`, `not`,
+  `minItems`, `maxItems`, `uniqueItems`, `maximum`, and `pattern`. Conditional
+  requirements and identity commitments — 40-character head SHAs, `sha256:`
+  digests, and the relative `working_directory` constraint — were declared by
+  the published schemas and enforced by nothing. `pattern` support is
+  fail-closed: an uninterpretable expression is reported as a violation instead
+  of assumed to match
+  ([#2923](https://github.com/EffortlessMetrics/ripr-swarm/issues/2923)).
+
+- `policy/release-targets.toml` records the committed release-candidate
+  membership graph, and `cargo xtask check-release-targets` validates it
+  offline. The manifest distinguishes the release goal, claim blockers,
+  qualification/proof blockers, release companions, conditional candidates, and
+  release-referenced rolling work, and records umbrella parents with an explicit
+  `counted_in` and justification so parent/leaf double counting cannot be
+  silent. Eight rules are enforced — schema, release identity, role uniqueness,
+  committed disjointness, conditional/rolling exclusion, prerequisite ordering,
+  parent accounting, and referential closure — each with a fixture that violates
+  exactly that rule. Reports land at
+  `target/ripr/reports/release-targets.{json,md}`, and the check runs inside
+  `cargo xtask precommit` and the CI policy-check pass.
+
+  The checker deliberately does not parse release-goal issue prose. Those bodies
+  write some membership as en-dash ranges (`#2665 / #2968-#2970`), so a prose
+  parser would silently miss the members inside a range and then report a clean
+  graph over issues it never saw. The manifest is the parsed authority; the goal
+  bodies remain human-validated documentation. This check is network-free and
+  does not compare against live GitHub milestones, does not qualify a candidate,
+  and does not represent publication
+  ([#3013](https://github.com/EffortlessMetrics/ripr-swarm/issues/3013)).
+
+- `[profile.dev]` now uses `debug = "line-tables-only"` instead of the cargo
+  default (`debug = "full"`). Line tables give backtraces with file:line
+  resolution without the full variable-debuginfo cost, cutting link time and
+  binary size (~9% smaller debug binaries). Full debuginfo is still available
+  via `CARGO_PROFILE_DEV_DEBUG=true cargo test` when a developer needs
+  step-debugging with variable inspection (#2420).
+
+- `cargo xtask module-health` now reports a **responsibility signal** alongside
+  its line count: a heuristic count of distinct top-level concerns (distinct
+  `impl` blocks plus distinct public-API identifier prefixes) per file, flagged
+  when it exceeds a fixed threshold. This surfaces the "structurally entangled
+  even if not huge" case that a pure line count misses (e.g. a small file
+  exposing many distinct concern families). Both signals appear in the JSON and
+  Markdown reports (`module-health.json` schema bumped to `0.2`, additive). The
+  responsibility signal is documented as a smell, not a measurement; the
+  advisory still always exits 0 and is never wired into CI gates.
+
+- Property-based tests (`proptest`) added for the diff parser, covering parser
+  totality (never panics on arbitrary input), structural invariants (no empty
+  paths, no newlines in line text), and line-number validity (`new_side_line >= 1`).
+  This is the first property-based testing infrastructure in the repo (#2751).
+
+### Changed
+
+- The 0.11.0 support claim now describes the Rust gap-repair loop as `usable
+  alpha`, not unqualified `usable`. Fixture, package, editor, bounded test-only
+  packet, and before/after receipt proof remains intact, but the governed
+  real-repository corpus currently contains zero eligible attempts, so route
+  yield and ordinary-user success are not established. `cargo xtask
+  check-support-tiers` now hard-caps the uniquely named canonical row at
+  `usable alpha` until one promotion decision covers both the full governed
+  corpus and the installed CLI/packaged VS Code pilot. A complete trust report
+  with real movement is necessary evidence, but cannot promote the claim by
+  itself (#3077).
+
+- The default diagnostic severity for `exposed` findings has been raised from
+  `info` to `warning`. Previously, the strongest classification (`exposed`)
+  rendered as a quieter blue info squiggle while weaker classes
+  (`weakly_exposed`, `reachable_unrevealed`) rendered as yellow warnings — an
+  inversion of the importance hierarchy. Now `exposed` matches `weakly_exposed`
+  at `warning`, so the Problems panel and GitHub annotations surface the most
+  actionable signal at equal or higher prominence than uncertain ones
+  ([#2592](https://github.com/EffortlessMetrics/ripr-swarm/issues/2592)).
 
 ### Fixed
 
@@ -184,117 +356,6 @@ are scoped or reviewed.
   The paths now include the process ID so parallel test threads never share
   a directory ([#2685](https://github.com/EffortlessMetrics/ripr-swarm/issues/2685)).
 
-### Changed
-
-- The 0.11.0 support claim now describes the Rust gap-repair loop as `usable
-  alpha`, not unqualified `usable`. Fixture, package, editor, bounded test-only
-  packet, and before/after receipt proof remains intact, but the governed
-  real-repository corpus currently contains zero eligible attempts, so route
-  yield and ordinary-user success are not established. `cargo xtask
-  check-support-tiers` now hard-caps the uniquely named canonical row at
-  `usable alpha` until one promotion decision covers both the full governed
-  corpus and the installed CLI/packaged VS Code pilot. A complete trust report
-  with real movement is necessary evidence, but cannot promote the claim by
-  itself (#3077).
-
-- The default diagnostic severity for `exposed` findings has been raised from
-  `info` to `warning`. Previously, the strongest classification (`exposed`)
-  rendered as a quieter blue info squiggle while weaker classes
-  (`weakly_exposed`, `reachable_unrevealed`) rendered as yellow warnings — an
-  inversion of the importance hierarchy. Now `exposed` matches `weakly_exposed`
-  at `warning`, so the Problems panel and GitHub annotations surface the most
-  actionable signal at equal or higher prominence than uncertain ones
-  ([#2592](https://github.com/EffortlessMetrics/ripr-swarm/issues/2592)).
-
-### Added
-
-- The `ripr agent start` workflow packet now states that its generated commands
-  assume bash. `commands.md` carries a prose note above the first command block,
-  and `workflow.json` gains an additive `command_shell: "bash"` field. The
-  command strings have always used POSIX single-quote quoting and `>`
-  redirection, so copying one into cmd.exe (which treats `'` as a literal
-  character) or PowerShell (which rejects the `'\''` escape) mis-passes or
-  rejects quoted arguments. The note names Git Bash specifically rather than
-  "bash on Windows": generated paths keep their Windows drive-letter prefix,
-  which WSL resolves as a relative path, so WSL needs each path translated to
-  `/mnt/c/...` and `ripr` installed inside it. This is disclosure only: no
-  command string, schema version, or existing field changed. A shell-neutral
-  argv form (#1617) and a PowerShell variant (#2964) remain separate work
-  ([#2963](https://github.com/EffortlessMetrics/ripr-swarm/issues/2963)).
-
-- Published schemas that had only a reverse-direction `schema_version` check are
-  now bound to real producer bytes by the verification-contract registry. The
-  Rust repair trust corpus of record (`metrics/rust-repair-trust/corpus.json`)
-  validates as itself rather than through a copy; the `command_spec` and
-  `verification_command_spec` shapes in `schemas/ripr/repair-assurance.schema.json`
-  validate against the `command_specs` a generated agent packet actually emits;
-  and the design-only `RepairAssuranceV1` envelope validates against the
-  assurance vocabulary corpus records that carry a `record` and are not marked
-  `invalid`, making a claim that `fixtures/assurance_vocabulary/SPEC.md`
-  previously stated but nothing enforced. Patch-shaped cases and advertised
-  negatives stay outside that walk and are covered by their own tests, so the
-  subject count does not imply coverage it lacks. Each pair carries a negative mutation that must fail.
-  `docs/verification/schema-producer-audit.md` records the producer, canonical
-  subject, negative mutation, and explicit exemption for every published schema
-  — including the `riprAgent` protocol schemas, which remain reserved and
-  routed to [#3009](https://github.com/EffortlessMetrics/ripr-swarm/issues/3009)
-  ([#2923](https://github.com/EffortlessMetrics/ripr-swarm/issues/2923)).
-
-- The contract validator now evaluates `oneOf`, `if`/`then`/`else`, `not`,
-  `minItems`, `maxItems`, `uniqueItems`, `maximum`, and `pattern`. Conditional
-  requirements and identity commitments — 40-character head SHAs, `sha256:`
-  digests, and the relative `working_directory` constraint — were declared by
-  the published schemas and enforced by nothing. `pattern` support is
-  fail-closed: an uninterpretable expression is reported as a violation instead
-  of assumed to match
-  ([#2923](https://github.com/EffortlessMetrics/ripr-swarm/issues/2923)).
-
-- `policy/release-targets.toml` records the committed release-candidate
-  membership graph, and `cargo xtask check-release-targets` validates it
-  offline. The manifest distinguishes the release goal, claim blockers,
-  qualification/proof blockers, release companions, conditional candidates, and
-  release-referenced rolling work, and records umbrella parents with an explicit
-  `counted_in` and justification so parent/leaf double counting cannot be
-  silent. Eight rules are enforced — schema, release identity, role uniqueness,
-  committed disjointness, conditional/rolling exclusion, prerequisite ordering,
-  parent accounting, and referential closure — each with a fixture that violates
-  exactly that rule. Reports land at
-  `target/ripr/reports/release-targets.{json,md}`, and the check runs inside
-  `cargo xtask precommit` and the CI policy-check pass.
-
-  The checker deliberately does not parse release-goal issue prose. Those bodies
-  write some membership as en-dash ranges (`#2665 / #2968-#2970`), so a prose
-  parser would silently miss the members inside a range and then report a clean
-  graph over issues it never saw. The manifest is the parsed authority; the goal
-  bodies remain human-validated documentation. This check is network-free and
-  does not compare against live GitHub milestones, does not qualify a candidate,
-  and does not represent publication
-  ([#3013](https://github.com/EffortlessMetrics/ripr-swarm/issues/3013)).
-
-- `[profile.dev]` now uses `debug = "line-tables-only"` instead of the cargo
-  default (`debug = "full"`). Line tables give backtraces with file:line
-  resolution without the full variable-debuginfo cost, cutting link time and
-  binary size (~9% smaller debug binaries). Full debuginfo is still available
-  via `CARGO_PROFILE_DEV_DEBUG=true cargo test` when a developer needs
-  step-debugging with variable inspection (#2420).
-
-- `cargo xtask module-health` now reports a **responsibility signal** alongside
-  its line count: a heuristic count of distinct top-level concerns (distinct
-  `impl` blocks plus distinct public-API identifier prefixes) per file, flagged
-  when it exceeds a fixed threshold. This surfaces the "structurally entangled
-  even if not huge" case that a pure line count misses (e.g. a small file
-  exposing many distinct concern families). Both signals appear in the JSON and
-  Markdown reports (`module-health.json` schema bumped to `0.2`, additive). The
-  responsibility signal is documented as a smell, not a measurement; the
-  advisory still always exits 0 and is never wired into CI gates.
-
-- Property-based tests (`proptest`) added for the diff parser, covering parser
-  totality (never panics on arbitrary input), structural invariants (no empty
-  paths, no newlines in line text), and line-number validity (`new_side_line >= 1`).
-  This is the first property-based testing infrastructure in the repo (#2751).
-
-### Fixed
-
 - Unrecognized CLI flags now suggest the nearest documented flag and point at
   the command's own help, matching what unknown *commands* already did. A
   mistyped flag is the more common slip, but it produced a bare
@@ -390,7 +451,7 @@ are scoped or reviewed.
 
 ## 0.10.0 - Honest-by-construction evidence and downstream gate adoption
 
-Release date: staged (unreleased).
+Release date: 2026-06-15 (crates.io publication; the GitHub release draft for this version remains unfinalized).
 
 RIPR 0.10.0 hardens the central promise that evidence is only credited to a seam
 it actually observes. The headline is honesty-by-construction: across Rust,
