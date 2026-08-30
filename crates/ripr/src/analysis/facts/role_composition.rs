@@ -648,7 +648,10 @@ impl ContextResolver<'_> {
                     child: file.to_path_buf(),
                     declaration: "include!".to_string(),
                     line: 0,
-                    requires_test: include_verdict.unwrap_or(false),
+                    // The edge records the include directive's own gate
+                    // (always false: include! carries no cfg of its own);
+                    // the composed requirement lives on the context.
+                    requires_test: false,
                 });
                 provenance.edges.append(&mut edges);
                 match (module_verdict, include_verdict) {

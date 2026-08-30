@@ -124,12 +124,14 @@ pub(crate) fn module_composition_disclosure(index: &RustIndex) -> Option<String>
         }
         for declaration in &facts.module_declarations {
             if declaration.path_target == ModulePathTarget::Unknown {
-                details.insert(format!(
+                let inserted = details.insert(format!(
                     "{}:{}:rust_module_unresolved_target",
                     escaped_path_display(file),
                     declaration.line
                 ));
-                count += 1;
+                if inserted {
+                    count += 1;
+                }
             }
         }
     }
