@@ -336,6 +336,33 @@ produced the identical `timed out waiting for response id 3`, and it reproduces
 5 of 5 on a Windows developer host. That is the lane doing its job — a platform
 question that could not be settled from one machine, settled by CI.
 
+### Advisory Specification Maintenance Digest
+
+The Source of Truth workflow owns the advisory spec maintenance digest
+(#3467). `cargo xtask specs digest` runs the same inventory pipeline as
+`specs maintenance` (one scan, one DTO) and writes the full
+`spec-maintenance.{json,md}` reports plus a short bounded
+`spec-maintenance-digest.md` for the step summary; the full report is
+retained as the `ripr-spec-maintenance` artifact.
+
+- **Triggers.** A weekly schedule (no more frequent than weekly), explicit
+  `workflow_dispatch`, and pull requests that touch spec governance paths
+  (`docs/specs/**`, `docs/templates/**`, `.ripr/traceability.toml`,
+  `.allow/spec-system/**`, `docs/status/SUPPORT_TIERS.md`, or the workflow
+  itself). Source-only PRs do not start it.
+- **Three states.** Candidates found (`maintenance_status:
+  attention_required`) and no candidates (`clean`) are both successful
+  observations; neither count changes the exit status. An instrument
+  failure (unreadable spec, serialization error) exits nonzero with no
+  digest written, the step fails visibly, and the `if: always()` summary
+  annotates `maintenance_status: instrument_failure` — a failed advisory
+  observation, not a failed required gate.
+- **Non-blocking by construction.** The digest job is `continue-on-error`
+  and is not in `.github/settings.yml` required contexts; a scheduled run
+  queues behind an active one (`cancel-in-progress: false`) so a nearly
+  complete inventory is not discarded. The lane creates no issues,
+  comments, labels, or branch-protection mutation.
+
 ### Cheaper Signal First
 
 When adding CI coverage for a failure mode, prefer the cheapest stable signal

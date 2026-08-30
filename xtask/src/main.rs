@@ -5963,7 +5963,7 @@ fn check_spec_format() -> Result<(), String> {
     )
 }
 
-const SPECS_USAGE: &str = "usage: cargo xtask specs next | maintenance --as-of YYYY-MM-DD [--json] [--receipts <dir>] | close --spec RIPR-SPEC-NNNN --disposition <label> --as-of YYYY-MM-DD --reviewed-by <identity> [--waived-until YYYY-MM-DD] [--detail <text>]";
+const SPECS_USAGE: &str = "usage: cargo xtask specs next | maintenance --as-of YYYY-MM-DD [--json] [--receipts <dir>] | digest --as-of YYYY-MM-DD [--json] [--receipts <dir>] | close --spec RIPR-SPEC-NNNN --disposition <label> --as-of YYYY-MM-DD --reviewed-by <identity> [--waived-until YYYY-MM-DD] [--detail <text>]";
 
 fn specs(args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
@@ -5972,6 +5972,7 @@ fn specs(args: &[String]) -> Result<(), String> {
             Ok(())
         }
         Some("maintenance") => reports::spec_maintenance(&args[1..]),
+        Some("digest") => reports::spec_digest(&args[1..]),
         Some("close") => reports::spec_close(&args[1..]),
         Some(other) => Err(format!("unknown specs command `{other}`\n{SPECS_USAGE}")),
         None => Err(format!("missing specs command\n{SPECS_USAGE}")),

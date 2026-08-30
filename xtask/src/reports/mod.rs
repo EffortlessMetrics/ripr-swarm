@@ -134,6 +134,7 @@ pub(crate) use sarif::{
     sarif_policy_report_json, sarif_policy_report_markdown,
 };
 pub(crate) use source_promotion::source_promotion;
+pub(crate) use spec_maintenance::spec_digest;
 pub(crate) use spec_maintenance::spec_maintenance;
 pub(crate) use spec_receipts::spec_close;
 #[cfg(test)]
