@@ -287,8 +287,8 @@ pub(crate) use reports::{
     GoldenDriftEntry, GoldenDriftSemantics, first_line_difference, fixture_cache_dir,
     fixture_contract_violations, golden_assistant_loop_health_contract_violations_at,
     golden_drift_semantics, golden_drift_type, goldens_check_failure_message,
-    json_string_values_for_key, normalize_golden_text, parse_reason, run_fixture,
-    run_fixture_outputs, validate_bless_reason,
+    json_string_values_for_key, next_pending_heading, normalize_golden_text, parse_reason,
+    run_fixture, run_fixture_outputs, validate_bless_reason,
 };
 #[cfg(test)]
 pub(crate) use reports::{

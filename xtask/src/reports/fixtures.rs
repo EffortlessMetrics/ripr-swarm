@@ -288,17 +288,18 @@ fn goldens_bless(name: &str, reason: &str) -> Result<(), String> {
         })?;
     }
     let changelog = expected.join("CHANGELOG.md");
-    let mut entry = format!(
-        "\n## Pending\n\nReason:\n{reason}\n\nCommand:\n`cargo xtask goldens bless {name} --reason \"...\"`\n\nUpdated:\n- `expected/check.json`\n- `expected/human.txt`\n"
-    );
-    if updated_human_full {
-        entry.push_str("- `expected/human-full.txt`\n");
-    }
     let mut text = if changelog.exists() {
         read_text_lossy(&changelog)?
     } else {
         "# Golden Output Changes\n".to_string()
     };
+    let mut entry = format!(
+        "\n{}\n\nReason:\n{reason}\n\nCommand:\n`cargo xtask goldens bless {name} --reason \"...\"`\n\nUpdated:\n- `expected/check.json`\n- `expected/human.txt`\n",
+        next_pending_heading(&text, name)
+    );
+    if updated_human_full {
+        entry.push_str("- `expected/human-full.txt`\n");
+    }
     text.push_str(&entry);
     fs::write(&changelog, text)
         .map_err(|err| format!("failed to write {}: {err}", normalize_path(&changelog)))?;
@@ -322,6 +323,38 @@ fn goldens_bless(name: &str, reason: &str) -> Result<(), String> {
         normalize_path(&fixture)
     );
     write_report("goldens-bless.md", &body)
+}
+
+/// Unique heading for the next appended pending changelog entry.
+///
+/// MD024 (no-duplicate-heading) rejects repeated heading text, so each entry
+/// heading embeds the fixture name plus a sequence number computed from every
+/// pending heading already in the log — including legacy plain `## Pending`
+/// headings — so repeated blesses of the same fixture never collide.
+pub(crate) fn next_pending_heading(existing_log: &str, fixture_name: &str) -> String {
+    // Pick the first UNUSED number rather than count+1: a deleted or
+    // hand-edited entry must never cause a duplicate heading. A bare legacy
+    // `## Pending` heading implicitly reserved number 1.
+    let mut used: Vec<usize> = existing_log
+        .lines()
+        .filter(|line| line.starts_with("## Pending"))
+        .filter_map(|line| {
+            let open = line.rfind('(')?;
+            let close = line.rfind(')')?;
+            line[open + 1..close].trim().parse().ok()
+        })
+        .collect();
+    if existing_log
+        .lines()
+        .any(|line| line.trim_end() == "## Pending")
+    {
+        used.push(1);
+    }
+    let mut candidate = 1usize;
+    while used.contains(&candidate) {
+        candidate += 1;
+    }
+    format!("## Pending — {fixture_name} ({candidate})")
 }
 
 pub(crate) fn fixture_dirs() -> Result<Vec<PathBuf>, String> {
