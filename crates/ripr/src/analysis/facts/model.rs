@@ -290,9 +290,12 @@ pub enum ModulePathTarget {
     /// non-inline `#[path]` targets).
     Literal(String),
     /// A `#[path]` attribute that is not a plain string literal (macro call,
-    /// concatenation, `concat!(env!("OUT_DIR"), ...)`). Typed unknown —
-    /// composition fails closed for this declaration instead of falling back
-    /// to default name resolution, which would resolve the wrong file.
+    /// concatenation, `concat!(env!("OUT_DIR"), ...)`), or a `path` attribute
+    /// introduced conditionally by `cfg_attr` — the effective target then
+    /// depends on the active configuration and no static single file exists.
+    /// Typed unknown — composition fails closed for this declaration instead
+    /// of falling back to default name resolution, which would resolve a file
+    /// Rust does not compile under the conditional configuration.
     Unknown,
 }
 

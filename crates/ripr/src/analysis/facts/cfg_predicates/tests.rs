@@ -206,6 +206,75 @@ fn cfg_attr_forms_never_require_test() {
     }
 }
 
+/// Conditional `path` introductions make a module's file target
+/// configuration-dependent (#3533): every spelling that introduces `path`
+/// from a `cfg_attr` must be detected so the module-path producer fails
+/// closed to a typed unknown instead of resolving the default layout.
+#[test]
+fn cfg_attr_introduced_path_attributes_are_detected() {
+    // The review's exact spelling: a conditional test target next to the
+    // test gate that activates it.
+    assert!(super::attributes_conditionally_introduce_path([
+        "#[cfg(test)]",
+        "#[cfg_attr(test, path = \"test_impl.rs\")]",
+    ]));
+    // Platform selection shape.
+    assert!(super::attributes_conditionally_introduce_path([
+        "#[cfg_attr(windows, path = \"windows.rs\")]",
+    ]));
+    // A non-literal introduction value, and the bare attribute head.
+    assert!(super::attributes_conditionally_introduce_path([
+        "#[cfg_attr(feature = \"x\", path = concat!(env!(\"OUT_DIR\"), \"gen.rs\"))]",
+    ]));
+    assert!(super::attributes_conditionally_introduce_path([
+        "#[cfg_attr(feature = \"x\", path)]",
+    ]));
+    // Nested cfg_attr introductions are followed: a missed conditional
+    // `path` would resolve the wrong module file (over-emission direction).
+    assert!(super::attributes_conditionally_introduce_path([
+        "#[cfg_attr(unix, cfg_attr(test, path = \"unix_test.rs\"))]",
+    ]));
+    // Whitespace inside the introduced attribute still matches.
+    assert!(super::attributes_conditionally_introduce_path([
+        "#[ cfg_attr( test , path = \"late.rs\" ) ]",
+    ]));
+}
+
+/// Controls: cfg_attr without a `path` introduction, direct `#[path]`,
+/// cfg key-value predicates whose strings mention path, and other
+/// attributes must not be read as conditional module paths.
+#[test]
+fn non_path_cfg_attr_shapes_are_not_path_introductions() {
+    assert!(!super::attributes_conditionally_introduce_path([
+        "#[cfg_attr(test, allow(dead_code))]",
+    ]));
+    assert!(!super::attributes_conditionally_introduce_path([
+        "#[cfg_attr(test, cfg(test))]",
+    ]));
+    // A direct `#[path]` is unconditional, not a conditional introduction.
+    assert!(!super::attributes_conditionally_introduce_path([
+        "#[path = \"direct.rs\"]",
+    ]));
+    // The word `path` inside an opaque literal or a predicate value cannot
+    // manufacture an introduction.
+    assert!(!super::attributes_conditionally_introduce_path([
+        "#[cfg(feature = \"path\")]",
+    ]));
+    assert!(!super::attributes_conditionally_introduce_path([
+        "#[cfg_attr(test, doc = \"path = x\")]",
+    ]));
+    // A cfg(...) introduction is skipped entirely: its key-value custom
+    // options are predicates, not attributes.
+    assert!(!super::attributes_conditionally_introduce_path([
+        "#[cfg_attr(unix, cfg(path = \"x\"))]",
+    ]));
+    // Non-attribute text and malformed envelopes detect nothing.
+    assert!(!super::attributes_conditionally_introduce_path([
+        "fn plain() {}",
+        "#[cfg_attr(test, path = \"unbalanced\"",
+    ]));
+}
+
 #[test]
 fn multiple_attributes_compose_conjunctively_without_optimism() {
     // A definitely test-required gate dominates independent gates.

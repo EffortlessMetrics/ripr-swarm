@@ -175,7 +175,11 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `module_declarations` producer entirely: without the bump a warm hit
 /// would serve composition-blind facts and silently disable composed
 /// roles for that file.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "0.8";
+/// `0.8` -> `0.9`: `cfg_attr`-introduced `#[path]` targets now classify as
+/// a typed unknown (#3533 review). Entries from the `0.8` generation store
+/// such declarations as `Default`, which would resolve the default file
+/// Rust does not compile under the conditional configuration.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "0.9";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -2518,7 +2522,7 @@ mod tests {
     /// change so no warm cache serves stale roles.
     #[test]
     fn schema_versions_pin_the_role_composition_generation() {
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "0.8");
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "0.9");
         assert_eq!(CACHE_SCHEMA_VERSION, "1.3");
         assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.9");
         assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.10");

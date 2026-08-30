@@ -96,8 +96,8 @@ impl Context {
 /// Composes contextual source roles across the include and module edges of a
 /// fully parsed, normalized index. Deterministic: all intermediate maps are
 /// ordered, so grants and provenance are byte-identical across runs.
-pub(super) fn compose_index_source_roles(index: &mut RustIndex) {
-    let module_edges = resolved_module_edges(index);
+pub(super) fn compose_index_source_roles(index: &mut RustIndex, workspace_root: &Path) {
+    let module_edges = resolved_module_edges(index, workspace_root);
     // Phase 1 (immutable): resolve every file's context and provenance.
     // The resolver borrows `include_parents`, so all mutations wait for it
     // to go out of scope.
@@ -176,24 +176,36 @@ enum DeclarationTargets {
 /// keeping exactly one edge per child. Ambiguous resolution yields no edge:
 /// the child keeps its standalone roles and records the ambiguity on its
 /// provenance.
-fn resolved_module_edges(index: &RustIndex) -> BTreeMap<PathBuf, Result<ModuleEdge, &'static str>> {
+fn resolved_module_edges(
+    index: &RustIndex,
+    workspace_root: &Path,
+) -> BTreeMap<PathBuf, Result<ModuleEdge, &'static str>> {
     let mut candidates: BTreeMap<PathBuf, BTreeSet<(PathBuf, usize, String, bool)>> =
         BTreeMap::new();
     let mut ambiguous: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut resolver = DeclarationResolver {
+        index,
+        workspace_root,
+        crate_roots: CrateRoots::default(),
+    };
 
     for (file, facts) in &index.files {
         if facts.used_lexical_fallback || facts.module_declarations.is_empty() {
             continue;
         }
-        // Module declarations inside an include fragment are pasted into the
-        // compilation unit, so resolution anchors at the unit's location.
-        let anchor = compilation_unit_path_from_parents(&index.include_parents, file);
+        // Literal `#[path]` targets resolve relative to the file that
+        // physically contains the declaration (#3533): inside an include
+        // fragment that is the fragment file, not the compilation unit the
+        // fragment is pasted into. Default `mod name;` resolution follows
+        // the pasted compilation-unit context instead, so the two anchors
+        // differ for fragment declarations.
+        let unit_anchor = compilation_unit_path_from_parents(&index.include_parents, file);
         for declaration in &facts.module_declarations {
-            match declaration_targets(index, &anchor, declaration) {
+            match resolver.declaration_targets(file, &unit_anchor, declaration) {
                 DeclarationTargets::Unresolvable => {
-                    // Dynamic or out-of-repository `#[path]` targets grant
-                    // nothing; there is no child identity to attach
-                    // provenance to.
+                    // Dynamic, conditional, or out-of-repository `#[path]`
+                    // targets grant nothing; there is no child identity to
+                    // attach provenance to.
                 }
                 DeclarationTargets::Ambiguous(children) => {
                     ambiguous.extend(children);
@@ -245,65 +257,218 @@ fn resolved_module_edges(index: &RustIndex) -> BTreeMap<PathBuf, Result<ModuleEd
     edges
 }
 
-/// Resolves one declaration against the index. An exact string-literal
-/// `#[path]` resolves relative to the declaring file's containing directory
-/// (the Rust reference rule for non-inline `#[path]` targets, which differs
-/// from the default stem-directory rule). Default resolution prefers
-/// `<module-dir>/<name>.rs` over `<module-dir>/<name>/mod.rs`.
-fn declaration_targets(
-    index: &RustIndex,
-    anchor: &Path,
-    declaration: &ModuleDeclarationFact,
-) -> DeclarationTargets {
-    match &declaration.path_target {
-        ModulePathTarget::Unknown => DeclarationTargets::Unresolvable,
-        ModulePathTarget::Literal(literal) => {
-            match resolve_relative(&directory_of(anchor), literal) {
-                Some(child) if index.files.contains_key(&child) => DeclarationTargets::Exact(child),
-                _ => DeclarationTargets::Unresolvable,
+/// Resolves declarations against the index, memoizing crate-root lookups for
+/// the duration of one composition pass.
+struct DeclarationResolver<'index> {
+    index: &'index RustIndex,
+    workspace_root: &'index Path,
+    crate_roots: CrateRoots,
+}
+
+impl DeclarationResolver<'_> {
+    /// Resolves one declaration against the index. An exact string-literal
+    /// `#[path]` resolves relative to the directory of the file physically
+    /// containing the declaration (the Rust reference rule for non-inline
+    /// `#[path]` targets, which differs from the default stem-directory
+    /// rule). Default resolution prefers `<module-dir>/<name>.rs` over
+    /// `<module-dir>/<name>/mod.rs`.
+    fn declaration_targets(
+        &mut self,
+        physical_file: &Path,
+        unit_anchor: &Path,
+        declaration: &ModuleDeclarationFact,
+    ) -> DeclarationTargets {
+        match &declaration.path_target {
+            ModulePathTarget::Unknown => DeclarationTargets::Unresolvable,
+            ModulePathTarget::Literal(literal) => {
+                match resolve_relative(&directory_of(physical_file), literal) {
+                    Some(child) if self.index.files.contains_key(&child) => {
+                        DeclarationTargets::Exact(child)
+                    }
+                    _ => DeclarationTargets::Unresolvable,
+                }
+            }
+            ModulePathTarget::Default => {
+                let indexed: Vec<PathBuf> = self
+                    .default_candidates(unit_anchor, &declaration.name)
+                    .into_iter()
+                    .filter(|candidate| self.index.files.contains_key(candidate))
+                    .collect();
+                match indexed.as_slice() {
+                    [] => DeclarationTargets::Unresolvable,
+                    [single] => DeclarationTargets::Exact(single.clone()),
+                    // Both default layouts indexed at once: ambiguous.
+                    [..] => DeclarationTargets::Ambiguous(indexed.clone()),
+                }
             }
         }
-        ModulePathTarget::Default => {
-            let indexed: Vec<PathBuf> = default_candidates(anchor, &declaration.name)
-                .into_iter()
-                .filter(|candidate| index.files.contains_key(candidate))
-                .collect();
-            match indexed.as_slice() {
-                [] => DeclarationTargets::Unresolvable,
-                [single] => DeclarationTargets::Exact(single.clone()),
-                // Both default layouts indexed at once: ambiguous.
-                [..] => DeclarationTargets::Ambiguous(indexed.clone()),
+    }
+
+    /// The default-resolution candidate layouts for `mod <name>;` declared in
+    /// `anchor`: `<module-dir>/<name>.rs` and `<module-dir>/<name>/mod.rs`.
+    fn default_candidates(&mut self, anchor: &Path, name: &str) -> Vec<PathBuf> {
+        let name = name.strip_prefix("r#").unwrap_or(name);
+        let module_dir = self.module_directory(anchor);
+        vec![
+            module_dir.join(format!("{name}.rs")),
+            module_dir.join(name).join("mod.rs"),
+        ]
+    }
+
+    /// The module directory of a file: its containing directory for
+    /// `mod.rs`, `lib.rs`, `main.rs`, and every other crate root;
+    /// otherwise the directory named after the file stem (`test_styles.rs`
+    /// resolves child modules under `test_styles/`).
+    fn module_directory(&mut self, file: &Path) -> PathBuf {
+        let file_name = file
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        let directory = directory_of(file);
+        match file_name {
+            "mod.rs" | "lib.rs" | "main.rs" => directory,
+            _ => {
+                if self.crate_roots.is_crate_root(self.workspace_root, file) {
+                    directory
+                } else {
+                    match file.file_stem() {
+                        Some(stem) => directory.join(stem),
+                        None => directory,
+                    }
+                }
             }
         }
     }
 }
 
-/// The default-resolution candidate layouts for `mod <name>;` declared in
-/// `anchor`: `<module-dir>/<name>.rs` and `<module-dir>/<name>/mod.rs`.
-fn default_candidates(anchor: &Path, name: &str) -> Vec<PathBuf> {
-    let name = name.strip_prefix("r#").unwrap_or(name);
-    let module_dir = module_directory(anchor);
-    vec![
-        module_dir.join(format!("{name}.rs")),
-        module_dir.join(name).join("mod.rs"),
-    ]
+/// Crate-root identity for default module resolution (#3533 review).
+///
+/// Rust resolves `mod name;` in a crate root relative to the root file's
+/// containing directory regardless of the root's filename, while an ordinary
+/// module file resolves children under the directory named after its own
+/// stem. Treating every non-`lib.rs`/`main.rs` file as an ordinary module
+/// mis-anchors a custom-named crate root (`[lib] path = "source/root.rs"`)
+/// and every integration-test, bench, and example target file.
+///
+/// Crate roots are recognized statically, in two fail-closed ways:
+/// - layout autodiscovery, relative to the nearest ancestor directory that
+///   contains a `Cargo.toml`: `src/lib.rs`, `src/main.rs`, one file directly
+///   under `src/bin/`, and one file directly under `tests/`, `benches/`, or
+///   `examples/`;
+/// - manifest declaration: any `path = ...` on `[lib]`, `[[bin]]`,
+///   `[[test]]`, `[[bench]]`, or `[[example]]` of that manifest.
+///
+/// A file with no ancestor manifest keeps the stem-directory rule (the
+/// status quo for fixture trees and manifest-less scans). Every lookup is
+/// memoized for the composition pass, so the filesystem cost is bounded by
+/// the distinct declaring files and their bounded ancestor walks.
+#[derive(Default)]
+struct CrateRoots {
+    verdicts: BTreeMap<PathBuf, bool>,
+    manifest_dirs: BTreeMap<PathBuf, Option<PathBuf>>,
+    declared_roots: BTreeMap<PathBuf, Vec<PathBuf>>,
 }
 
-/// The module directory of a file: its containing directory for `mod.rs`,
-/// `lib.rs`, and `main.rs`, otherwise the directory named after the file stem
-/// (`test_styles.rs` resolves child modules under `test_styles/`).
-fn module_directory(file: &Path) -> PathBuf {
-    let file_name = file
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default();
-    let directory = directory_of(file);
-    match file_name {
-        "mod.rs" | "lib.rs" | "main.rs" => directory,
-        _ => match file.file_stem() {
-            Some(stem) => directory.join(stem),
-            None => directory,
-        },
+impl CrateRoots {
+    fn is_crate_root(&mut self, workspace_root: &Path, file: &Path) -> bool {
+        if let Some(verdict) = self.verdicts.get(file) {
+            return *verdict;
+        }
+        let verdict = self.compute_is_crate_root(workspace_root, file);
+        self.verdicts.insert(file.to_path_buf(), verdict);
+        verdict
+    }
+
+    fn compute_is_crate_root(&mut self, workspace_root: &Path, file: &Path) -> bool {
+        let Some(package_dir) = self.package_manifest_dir(workspace_root, file) else {
+            return false;
+        };
+        let Ok(relative) = file.strip_prefix(&package_dir) else {
+            return false;
+        };
+        if is_layout_autodiscovered_root(relative) {
+            return true;
+        }
+        let declared = self.manifest_declared_roots(workspace_root, &package_dir);
+        declared
+            .iter()
+            .any(|target| package_dir.join(target) == file)
+    }
+
+    /// The nearest ancestor directory (including the workspace root itself)
+    /// that contains a `Cargo.toml`, memoized per directory. Walks are
+    /// depth-bounded: exotic nesting past the bound keeps the stem rule.
+    fn package_manifest_dir(&mut self, workspace_root: &Path, file: &Path) -> Option<PathBuf> {
+        let mut cursor = file.parent().map(Path::to_path_buf)?;
+        for _ in 0..=MAX_CONTEXT_CHAIN_DEPTH {
+            if let Some(found) = self.manifest_dirs.get(&cursor) {
+                return found.clone();
+            }
+            let exists = workspace_root.join(&cursor).join("Cargo.toml").is_file();
+            self.manifest_dirs
+                .insert(cursor.clone(), exists.then(|| cursor.clone()));
+            if exists {
+                return Some(cursor);
+            }
+            if !cursor.pop() {
+                return None;
+            }
+        }
+        None
+    }
+
+    fn manifest_declared_roots(
+        &mut self,
+        workspace_root: &Path,
+        package_dir: &Path,
+    ) -> Vec<PathBuf> {
+        if let Some(declared) = self.declared_roots.get(package_dir) {
+            return declared.clone();
+        }
+        let declared = std::fs::read_to_string(workspace_root.join(package_dir).join("Cargo.toml"))
+            .map(|text| {
+                crate::analysis::workspace::declared_crate_root_paths_from_manifest(
+                    &text,
+                    package_dir,
+                )
+            })
+            .unwrap_or_default();
+        self.declared_roots
+            .insert(package_dir.to_path_buf(), declared.clone());
+        declared
+    }
+}
+
+/// True when `relative` (a file path relative to its package directory)
+/// matches Cargo's autodiscovered target layout: `src/lib.rs`, `src/main.rs`,
+/// one file directly under `src/bin/`, or one file directly under `tests/`,
+/// `benches/`, or `examples/`. Deeper files are module children, not roots.
+fn is_layout_autodiscovered_root(relative: &Path) -> bool {
+    let name_of = |component: &std::path::Component| match component {
+        Component::Normal(name) => Some(name.to_string_lossy().to_string()),
+        _ => None,
+    };
+    let components: Vec<_> = relative.components().collect();
+    match components.as_slice() {
+        [first, file_name] => {
+            let (Some(dir), Some(file_name)) = (name_of(first), name_of(file_name)) else {
+                return false;
+            };
+            match dir.as_str() {
+                "src" => matches!(file_name.as_str(), "lib.rs" | "main.rs"),
+                "tests" | "benches" | "examples" => file_name.ends_with(".rs"),
+                _ => false,
+            }
+        }
+        [first, second, file_name] => {
+            let (Some(first), Some(second), Some(file_name)) =
+                (name_of(first), name_of(second), name_of(file_name))
+            else {
+                return false;
+            };
+            first == "src" && second == "bin" && file_name.ends_with(".rs")
+        }
+        _ => false,
     }
 }
 
@@ -506,6 +671,7 @@ impl ContextResolver<'_> {
 mod tests {
     use super::*;
     use crate::analysis::facts::build_index_from_loaded_files_with_cache;
+    use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
     use std::fs;
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -991,6 +1157,205 @@ mod tests {
             FunctionSourceRole::CfgTestModule,
             "a warm cache hit must not serve composition-blind facts"
         );
+        Ok(())
+    }
+
+    /// A `path` attribute introduced conditionally by `cfg_attr` fails
+    /// closed (#3533 review): which file the compiler loads depends on the
+    /// active configuration, so neither the conditional target nor the
+    /// default layout may gain a composed evidence role.
+    #[test]
+    fn cfg_attr_introduced_path_target_fails_closed() -> Result<(), String> {
+        let root = temp_dir("cfg-attr-path")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(
+                &root,
+                "src/lib.rs",
+                "#[cfg(test)]\n#[cfg_attr(test, path = \"test_impl.rs\")]\nmod imp;\n",
+            )?,
+            write(
+                &root,
+                "src/imp.rs",
+                "pub fn default_layout_helper() -> i32 { 1 }\n",
+            )?,
+            write(
+                &root,
+                "src/test_impl.rs",
+                "pub fn conditional_target_helper() -> i32 { 2 }\n",
+            )?,
+        ];
+
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            role_of(&index, "src/imp.rs", "default_layout_helper")?,
+            FunctionSourceRole::Production,
+            "the default file is not compiled under the conditional configuration and must not compose a role"
+        );
+        assert_eq!(
+            role_of(&index, "src/test_impl.rs", "conditional_target_helper")?,
+            FunctionSourceRole::Production,
+            "the conditional target is not statically resolvable and must not be credited either"
+        );
+        // The producer classifies the declaration as a typed unknown.
+        let facts = RaRustSyntaxAdapter
+            .summarize_file(
+                Path::new("src/lib.rs"),
+                &std::fs::read_to_string(root.join("src/lib.rs"))
+                    .map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?;
+        assert_eq!(facts.module_declarations.len(), 1);
+        assert_eq!(
+            facts.module_declarations[0].path_target,
+            ModulePathTarget::Unknown
+        );
+        assert!(facts.module_declarations[0].requires_test);
+        Ok(())
+    }
+
+    /// A literal `#[path]` inside an included fragment resolves relative to
+    /// the fragment file's directory (#3533 review) — the Rust rule for
+    /// non-inline `#[path]` targets. Anchoring at the compilation unit
+    /// instead would grant the evidence role to a same-named file beside the
+    /// including file that Rust never compiles as this module.
+    #[test]
+    fn included_fragment_path_attribute_resolves_from_the_fragment() -> Result<(), String> {
+        let root = temp_dir("fragment-path")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(&root, "src/lib.rs", "include!(\"frags/frag.rs\");\n")?,
+            write(
+                &root,
+                "src/frags/frag.rs",
+                "#[cfg(test)]\n#[path = \"child.rs\"]\nmod child;\n",
+            )?,
+            write(
+                &root,
+                "src/frags/child.rs",
+                "pub fn fragment_child_helper() -> i32 { 1 }\n",
+            )?,
+            write(
+                &root,
+                "src/child.rs",
+                "pub fn unit_side_helper() -> i32 { 2 }\n",
+            )?,
+        ];
+
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            role_of(&index, "src/frags/child.rs", "fragment_child_helper")?,
+            FunctionSourceRole::CfgTestModule,
+            "the fragment-relative target inherits the include chain's context"
+        );
+        assert_eq!(
+            role_of(&index, "src/child.rs", "unit_side_helper")?,
+            FunctionSourceRole::Production,
+            "the same-named file beside the compilation unit is not this module"
+        );
+        let provenance = &index.files[Path::new("src/frags/child.rs")].role_provenance;
+        assert!(provenance.earliest_unresolved_reason.is_none());
+        let edges = &provenance.edges;
+        assert_eq!(
+            edges.len(),
+            2,
+            "the include chain edge then the module edge"
+        );
+        assert_eq!(edges[0].kind, SourceRoleProvenanceEdgeKind::Include);
+        assert_eq!(edges[0].parent, Path::new("src/lib.rs"));
+        assert_eq!(edges[1].kind, SourceRoleProvenanceEdgeKind::Module);
+        assert_eq!(edges[1].parent, Path::new("src/frags/frag.rs"));
+        assert_eq!(edges[1].child, Path::new("src/frags/child.rs"));
+        assert!(edges[1].requires_test);
+        Ok(())
+    }
+
+    /// A custom-named crate root (`[lib] path = "source/root.rs"`) resolves
+    /// its out-of-line modules relative to its own containing directory
+    /// (#3533 review), not under a directory named after its stem.
+    #[test]
+    fn custom_crate_root_resolves_modules_relative_to_its_directory() -> Result<(), String> {
+        let root = temp_dir("custom-crate-root")?;
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname='role-composition'\nversion='0.1.0'\nedition='2024'\n\n[lib]\npath = \"source/root.rs\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let files = vec![
+            write(
+                &root,
+                "source/root.rs",
+                "pub fn root_helper() -> i32 { 1 }\n\n#[cfg(test)]\nmod tests;\n",
+            )?,
+            write(
+                &root,
+                "source/tests.rs",
+                "pub fn unattributed_helper() -> i32 { 2 }\n",
+            )?,
+        ];
+
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            role_of(&index, "source/root.rs", "root_helper")?,
+            FunctionSourceRole::Production
+        );
+        assert_eq!(
+            role_of(&index, "source/tests.rs", "unattributed_helper")?,
+            FunctionSourceRole::CfgTestModule,
+            "the crate root's sibling tests.rs is the real module child"
+        );
+        let provenance = &index.files[Path::new("source/tests.rs")].role_provenance;
+        assert!(provenance.earliest_unresolved_reason.is_none());
+        assert_eq!(provenance.edges.len(), 1);
+        assert_eq!(provenance.edges[0].parent, Path::new("source/root.rs"));
+        assert_eq!(provenance.edges[0].child, Path::new("source/tests.rs"));
+        assert!(provenance.edges[0].requires_test);
+        Ok(())
+    }
+
+    /// Layout-autodiscovered target files are crate roots too: one file
+    /// directly under `tests/`, `benches/`, `examples/`, or `src/bin/`
+    /// resolves its modules from its own directory. Controls pin the
+    /// stem-directory rule for ordinary module files.
+    #[test]
+    fn layout_autodiscovered_targets_are_crate_roots() -> Result<(), String> {
+        let root = temp_dir("layout-roots")?;
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname='role-composition'\nversion='0.1.0'\nedition='2024'\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let mut crate_roots = CrateRoots::default();
+        for file in [
+            "tests/pricing.rs",
+            "benches/perf.rs",
+            "examples/demo.rs",
+            "src/bin/tool.rs",
+        ] {
+            assert!(
+                crate_roots.is_crate_root(&root, Path::new(file)),
+                "{file} is an autodiscovered crate root"
+            );
+            assert_eq!(
+                directory_of(Path::new(file)),
+                Path::new(file)
+                    .parent()
+                    .map(Path::to_path_buf)
+                    .unwrap_or_default()
+            );
+        }
+        // Controls: ordinary module files keep the stem rule, and a file
+        // with no ancestor manifest keeps the status-quo stem rule too.
+        assert!(!crate_roots.is_crate_root(&root, Path::new("src/foo.rs")));
+        assert!(!crate_roots.is_crate_root(&root, Path::new("tests/nested/inner.rs")));
+        let orphan_root = temp_dir("layout-roots-orphan")?;
+        assert!(!crate_roots.is_crate_root(&orphan_root, Path::new("loose/foo.rs")));
         Ok(())
     }
 }

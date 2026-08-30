@@ -323,6 +323,106 @@ fn classify_cfg_attr_arguments(arguments: &[Token]) -> CfgTestRequirement {
     }
 }
 
+/// True when any attribute in the set is a `cfg_attr` that conditionally
+/// introduces a `path` attribute on the item (#3533).
+///
+/// `#[cfg_attr(condition, path = "...")]` makes the item's module file target
+/// configuration-dependent: the compiler loads the introduced target when the
+/// condition holds and the default layout (or nothing) otherwise, so no
+/// single static target exists. The module-path producer treats such
+/// declarations as a typed unknown instead of resolving the default file,
+/// which Rust would not compile under the conditional configuration.
+///
+/// Structural detection only: `path` must introduce an attribute at a
+/// `cfg_attr` argument position. String contents are opaque tokens, so
+/// `cfg(feature = "path")` conditions and comments cannot trigger it. Nested
+/// `cfg_attr` introductions are followed (their conditions skipped, depth
+/// bounded) because a missed conditional `path` would resolve the wrong
+/// module file — the over-emission direction. Unreadable nesting beyond the
+/// bound fails closed to `true`: unreadable input could hide a path
+/// introduction.
+pub(crate) fn attributes_conditionally_introduce_path<I>(attributes: I) -> bool
+where
+    I: IntoIterator,
+    I::Item: AsRef<str>,
+{
+    attributes
+        .into_iter()
+        .any(|attribute| attribute_conditionally_introduces_path(attribute.as_ref()))
+}
+
+fn attribute_conditionally_introduces_path(attribute: &str) -> bool {
+    let Some(tokens) = positioned_tokens(attribute) else {
+        return false;
+    };
+    let plain: Vec<Token> = tokens
+        .into_iter()
+        .map(|positioned| positioned.token)
+        .collect();
+    let body = match plain.as_slice() {
+        [
+            Token::Punct('#'),
+            Token::Punct('['),
+            body @ ..,
+            Token::Punct(']'),
+        ] => body,
+        [
+            Token::Punct('#'),
+            Token::Punct('!'),
+            Token::Punct('['),
+            body @ ..,
+            Token::Punct(']'),
+        ] => body,
+        _ => return false,
+    };
+    if !body_is_balanced(body) {
+        return false;
+    }
+    match body {
+        [
+            Token::Word(name),
+            Token::Punct('('),
+            inner @ ..,
+            Token::Punct(')'),
+        ] if name == "cfg_attr" && body_is_balanced(inner) => {
+            cfg_attr_arguments_introduce_path(inner, 0)
+        }
+        _ => false,
+    }
+}
+
+/// Walks `cfg_attr(condition, introduced...)` argument tokens at a bounded
+/// depth: an introduced attribute whose head is the word `path` before `=`
+/// marks a conditional module path. Nested `cfg_attr` introductions are
+/// followed (their conditions skipped) for the same fail-closed reason.
+fn cfg_attr_arguments_introduce_path(arguments: &[Token], depth: usize) -> bool {
+    if depth > MAX_PREDICATE_NESTING {
+        // Unreadable nesting could hide a `path` introduction: fail closed.
+        return true;
+    }
+    for part in split_top_level_commas(arguments).iter().skip(1) {
+        match part {
+            // `path = "..."` and the bare attribute name both introduce a
+            // `path` attribute; either makes the target conditional.
+            [Token::Word(name), Token::Punct('='), ..] if name == "path" => return true,
+            [Token::Word(name)] if name == "path" => return true,
+            [
+                Token::Word(name),
+                Token::Punct('('),
+                inner @ ..,
+                Token::Punct(')'),
+            ] if name == "cfg_attr"
+                && body_is_balanced(inner)
+                && cfg_attr_arguments_introduce_path(inner, depth + 1) =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 /// Recognizes a directly introduced `cfg(...)` attribute inside `cfg_attr`
 /// and classifies its predicate. Nested `cfg_attr` introductions are a
 /// documented bound: they are not credited as test gates here.

@@ -345,7 +345,19 @@ fn module_declaration_facts(
 /// falls back to default name resolution; anything else (multiple `path`
 /// attributes, macro-call arguments, concatenated targets) is a typed unknown
 /// that fails closed downstream instead of resolving the wrong file.
+///
+/// A `path` attribute introduced conditionally by `cfg_attr` is also a typed
+/// unknown (#3533): which file the compiler loads depends on the active
+/// configuration, so neither the introduced target nor the default layout is
+/// statically resolvable. Returning `Default` here would resolve the default
+/// file that Rust does not compile under the conditional configuration and
+/// could hand its functions an evidence role they did not earn.
 fn path_target_from_attributes(attributes: &[String]) -> ModulePathTarget {
+    if cfg_predicates::attributes_conditionally_introduce_path(
+        attributes.iter().map(String::as_str),
+    ) {
+        return ModulePathTarget::Unknown;
+    }
     let path_attributes = attributes
         .iter()
         .filter(|attribute| attribute_path_name(attribute).as_deref() == Some("path"))

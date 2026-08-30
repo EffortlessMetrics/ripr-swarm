@@ -15,8 +15,9 @@ pub fn build_index(root: &Path, files: &[PathBuf]) -> Result<model::RustIndex, S
     // Composition runs strictly after the normalizer: the normalizer
     // recomputes every role from same-file text and would stomp composed
     // roles (#3533). Composed grants only ever upgrade `Production` to the
-    // evidence-only `CfgTestModule`, never the reverse.
-    role_composition::compose_index_source_roles(&mut index);
+    // evidence-only `CfgTestModule`, never the reverse. The workspace root
+    // anchors crate-root identity for default module resolution.
+    role_composition::compose_index_source_roles(&mut index, root);
     Ok(index)
 }
 
@@ -27,7 +28,7 @@ pub(crate) fn build_index_from_loaded_files_with_cache(
     let mut cached = build::build_index_from_loaded_files_with_cache(root, files)?;
     parameterized_tests::promote_explicit_test_case_functions(&mut cached.index);
     test_styles::normalize_index_test_styles(&mut cached.index);
-    role_composition::compose_index_source_roles(&mut cached.index);
+    role_composition::compose_index_source_roles(&mut cached.index, root);
     Ok(cached)
 }
 
