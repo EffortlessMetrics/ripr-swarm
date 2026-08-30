@@ -1,5 +1,5 @@
 use serde_json::{Value, json};
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
@@ -47,13 +47,11 @@ fn run_mcp(root: &Path, chunks: &[&[u8]]) -> Result<Output, String> {
         .ok_or_else(|| "spawned MCP process did not expose stderr".to_string())?;
     let stdout_reader = std::thread::spawn(move || {
         let mut buffer = Vec::new();
-        use std::io::Read;
         let _ = std::io::Read::read_to_end(&mut stdout_pipe, &mut buffer);
         buffer
     });
     let stderr_reader = std::thread::spawn(move || {
         let mut buffer = Vec::new();
-        use std::io::Read;
         let _ = std::io::Read::read_to_end(&mut stderr_pipe, &mut buffer);
         buffer
     });
@@ -77,19 +75,21 @@ fn run_mcp(root: &Path, chunks: &[&[u8]]) -> Result<Output, String> {
                 child
                     .kill()
                     .map_err(|error| format!("kill hung ripr mcp: {error}"))?;
-                status = Some(
-                    child
-                        .wait()
-                        .map_err(|error| format!("reap hung ripr mcp: {error}"))?,
-                );
+                child
+                    .wait()
+                    .map_err(|error| format!("reap hung ripr mcp: {error}"))?;
                 timed_out = true;
                 break;
             }
         }
     }
     let _ = writer.join();
-    let stdout = stdout_reader.join().map_err(|_| "stdout reader panicked")?;
-    let stderr = stderr_reader.join().map_err(|_| "stderr reader panicked")?;
+    let stdout = stdout_reader
+        .join()
+        .map_err(|_join_error| "stdout reader panicked")?;
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_join_error| "stderr reader panicked")?;
     let status = status.ok_or("ripr mcp status was not collected")?;
     if timed_out {
         return Err(format!(
