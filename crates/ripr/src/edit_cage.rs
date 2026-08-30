@@ -1396,21 +1396,42 @@ mod tests {
         Ok(ExternalFixture { root })
     }
 
+    /// Per-invocation fixture deadline. Host git slowness (Defender scans
+    /// of fresh `.git` directories on Windows) routinely pushes a single
+    /// `git add`/`commit` past shorter windows, so the deadline is generous
+    /// and a timeout is retried once before failing — the fixture setup is
+    /// idempotent, so a retry cannot corrupt state.
+    const FIXTURE_GIT_DEADLINE: Duration = Duration::from_secs(30);
+
     fn git_ok(root: &Path, args: &[&str]) -> Result<(), String> {
-        let output = crate::git::run_git_output_with_deadline_and_limit_isolated(
-            root,
-            args,
-            Duration::from_secs(10),
-            4 * 1024 * 1024,
-        )?;
-        if output.status.success() {
-            return Ok(());
+        let mut last_error = String::new();
+        for attempt in 0..2 {
+            let output = crate::git::run_git_output_with_deadline_and_limit_isolated(
+                root,
+                args,
+                FIXTURE_GIT_DEADLINE,
+                4 * 1024 * 1024,
+            );
+            match output {
+                Ok(output) if output.status.success() => return Ok(()),
+                Ok(output) => {
+                    return Err(format!(
+                        "isolated fixture git {args:?} failed in {}: {}",
+                        root.display(),
+                        String::from_utf8_lossy(&output.stderr).trim()
+                    ));
+                }
+                Err(error) if crate::git::is_git_invocation_timeout(&error) => {
+                    last_error = error;
+                    if attempt == 0 {
+                        continue;
+                    }
+                    return Err(last_error);
+                }
+                Err(error) => return Err(error),
+            }
         }
-        Err(format!(
-            "isolated fixture git {args:?} failed in {}: {}",
-            root.display(),
-            String::from_utf8_lossy(&output.stderr).trim()
-        ))
+        Err(last_error)
     }
 
     fn policy() -> Result<EditCagePolicy, String> {
