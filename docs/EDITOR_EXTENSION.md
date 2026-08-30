@@ -53,7 +53,7 @@ Use one of these surfaces:
 - VS Code Marketplace: install `EffortlessMetrics.ripr`.
 - Open VSX: install `EffortlessMetrics.ripr`.
 - Local VSIX smoke: run `npm run package`, then install
-  `editors/vscode/dist/ripr-<version>.vsix`.
+  `editors/vscode/dist/ripr-VERSION.vsix` (replace `VERSION` with the release version).
 
 On activation, the extension resolves a configured, bundled, cached,
 downloaded, or PATH server and writes the selected source to the `ripr` output
@@ -440,7 +440,8 @@ npm ci
 npm run compile
 npm run package
 npm run test:e2e
-code --install-extension dist/ripr-<version>.vsix --force
+VERSION=0.11.0
+code --install-extension "dist/ripr-${VERSION}.vsix" --force
 ```
 
 Manual smoke:
