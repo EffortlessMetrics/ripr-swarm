@@ -188,7 +188,7 @@ alpha` for selected pytest/unittest workflows (repair cards, verify commands,
 bounded agent packets, before/after receipts); TypeScript is an opt-in
 `preview`. `ripr` is advisory static analysis — not a merge gate and not a
 mutation runner. Perl repair routing is `preview`/advisory; its next
-checkpoint is `dogfood/perl-real-repo-evals-v1` before any usable-alpha
+checkpoint is `dogfood/perl-real-repo-evals-v2` before any usable-alpha
 claim. This README is
 a front door, not the metric source of truth: see
 [Support tiers](docs/status/SUPPORT_TIERS.md) for what is usable, preview, or
