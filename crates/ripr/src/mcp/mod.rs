@@ -45,7 +45,10 @@ pub fn run(args: &[String]) -> Result<(), String> {
                 // (`--root --help` must print help, not start a server
                 // rooted at a directory named `--help`; #3525 review).
                 let value = match args.get(index + 1) {
-                    Some(value) if !value.starts_with("--") => value.clone(),
+                    // Single-dash option tokens (-h, -V) are options too:
+                    // treating them as paths would swallow the next flag
+                    // (#3587 review).
+                    Some(value) if !value.starts_with('-') => value.clone(),
                     Some(unexpected) => {
                         return Err(format!(
                             "missing value for --root; found option {unexpected:?}"

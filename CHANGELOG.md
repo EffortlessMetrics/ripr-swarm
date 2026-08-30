@@ -9,6 +9,17 @@ are scoped or reviewed.
 
 ## Unreleased
 
+### Added
+
+- New `ripr mcp --stdio [--root PATH]` command: a bounded, read-only
+  Model Context Protocol server that exposes exact workspace status
+  (`ripr_workspace_status` tool and `ripr://workspace/status` resource)
+  over newline-delimited JSON-RPC. Protocol errors always carry a
+  response `id` (`null` when the request id is unreadable), discovery
+  requires current-protocol `_meta`, and invalid roots fail closed
+  without leaking paths
+  ([#3088](https://github.com/EffortlessMetrics/ripr-swarm/issues/3088)).
+
 ### Fixed
 
 - Rust source-role analysis now classifies source-visible `cfg` and
