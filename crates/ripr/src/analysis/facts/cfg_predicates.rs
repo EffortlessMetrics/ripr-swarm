@@ -353,7 +353,14 @@ where
 
 fn attribute_conditionally_introduces_path(attribute: &str) -> bool {
     let Some(tokens) = positioned_tokens(attribute) else {
-        return false;
+        // The bounded ASCII lexer cannot read this attribute. Rust accepts
+        // Unicode identifiers in predicate position (XID_Start/XID_Continue,
+        // e.g. `#[cfg_attr(é, path = "alternate.rs")]`), so an unreadable
+        // `cfg_attr` could hide a conditional `path` introduction that would
+        // resolve the wrong module file. Fail closed only for attributes
+        // whose head is recognizably `cfg_attr`; any other unlexable
+        // attribute cannot introduce a module path.
+        return unlexable_attribute_head_is_cfg_attr(attribute);
     };
     let plain: Vec<Token> = tokens
         .into_iter()
@@ -436,6 +443,25 @@ fn classify_introduced_cfg_gate(tokens: &[Token]) -> Option<CfgTestRequirement> 
         ] if path == "cfg" && body_is_balanced(inner) => Some(classify_predicate(inner)),
         _ => None,
     }
+}
+
+/// Bounded envelope check for attributes the ASCII lexer cannot read:
+/// true only when the attribute head is recognizably `cfg_attr`
+/// (`#[cfg_attr(` or `#![cfg_attr(`, whitespace-insensitive). This is a
+/// byte-prefix shape test, not a parse: it never needs to traverse the
+/// non-ASCII argument bytes that defeated the lexer, and `cfg_attr`-prefixed
+/// lookalike heads (`cfg_attrs`, `my_cfg_attr`) do not match.
+fn unlexable_attribute_head_is_cfg_attr(attribute: &str) -> bool {
+    let body = attribute.trim_start();
+    let body = body.strip_prefix('#').unwrap_or(body);
+    let body = body.strip_prefix('!').unwrap_or(body);
+    let Some(body) = body.strip_prefix('[') else {
+        return false;
+    };
+    let Some(rest) = body.trim_start().strip_prefix("cfg_attr") else {
+        return false;
+    };
+    rest.trim_start().starts_with('(')
 }
 
 /// Conjunction: a definitely test-required branch dominates; an unknown

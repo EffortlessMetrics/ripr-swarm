@@ -31,7 +31,9 @@
 
 use super::FunctionSourceRole;
 use super::compilation_unit_path_from_parents;
-use super::model::{ModuleDeclarationFact, ModulePathTarget, RustIndex, SourceRoleProvenance};
+use super::model::{
+    ModuleDeclarationFact, ModulePathTarget, ResolvedIncludeParent, RustIndex, SourceRoleProvenance,
+};
 use super::{SourceRoleProvenanceEdge, SourceRoleProvenanceEdgeKind};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
@@ -398,23 +400,41 @@ impl CrateRoots {
     /// The nearest ancestor directory (including the workspace root itself)
     /// that contains a `Cargo.toml`, memoized per directory. Walks are
     /// depth-bounded: exotic nesting past the bound keeps the stem rule.
+    ///
+    /// Every directory visited by a walk is memoized with the walk's resolved
+    /// answer, not just with "this directory itself has no manifest" (#3533
+    /// review): a cached `None` for an intermediate directory would stop a
+    /// later sibling's walk before it reached an ancestor manifest, so two
+    /// files in the same directory could disagree on crate-root identity
+    /// depending on index iteration order.
     fn package_manifest_dir(&mut self, workspace_root: &Path, file: &Path) -> Option<PathBuf> {
         let mut cursor = file.parent().map(Path::to_path_buf)?;
-        for _ in 0..=MAX_CONTEXT_CHAIN_DEPTH {
-            if let Some(found) = self.manifest_dirs.get(&cursor) {
-                return found.clone();
+        let mut visited: Vec<PathBuf> = Vec::new();
+        let resolved: Option<PathBuf> = 'walk: {
+            for _ in 0..=MAX_CONTEXT_CHAIN_DEPTH {
+                if let Some(found) = self.manifest_dirs.get(&cursor) {
+                    break 'walk found.clone();
+                }
+                if workspace_root.join(&cursor).join("Cargo.toml").is_file() {
+                    self.manifest_dirs
+                        .insert(cursor.clone(), Some(cursor.clone()));
+                    break 'walk Some(cursor);
+                }
+                visited.push(cursor.clone());
+                if !cursor.pop() {
+                    break 'walk None;
+                }
             }
-            let exists = workspace_root.join(&cursor).join("Cargo.toml").is_file();
-            self.manifest_dirs
-                .insert(cursor.clone(), exists.then(|| cursor.clone()));
-            if exists {
-                return Some(cursor);
-            }
-            if !cursor.pop() {
-                return None;
-            }
+            // Depth bound exhausted: exotic nesting keeps the fail-closed
+            // no-manifest answer.
+            None
+        };
+        // Every visited directory shares this walk's nearest-ancestor answer:
+        // they are all strict descendants of the directory it resolved at.
+        for directory in visited {
+            self.manifest_dirs.insert(directory, resolved.clone());
         }
-        None
+        resolved
     }
 
     fn manifest_declared_roots(
@@ -502,7 +522,7 @@ fn resolve_relative(base: &Path, literal: &str) -> Option<PathBuf> {
 /// and a depth bound, producing the provenance chain alongside the verdict.
 struct ContextResolver<'index> {
     module_edges: BTreeMap<PathBuf, Result<ModuleEdge, &'static str>>,
-    include_parents: &'index BTreeMap<PathBuf, PathBuf>,
+    include_parents: &'index BTreeMap<PathBuf, ResolvedIncludeParent>,
     memo: BTreeMap<PathBuf, (Context, SourceRoleProvenance)>,
 }
 
@@ -567,12 +587,23 @@ impl ContextResolver<'_> {
                 }
                 (context, provenance)
             }
-            (None, Some(parent)) => {
-                let (parent_context, mut provenance) = self.resolve(&parent, visiting, depth + 1);
-                let requires_test = parent_context.requires_test().unwrap_or(false);
+            (None, Some(include)) => {
+                let (parent_context, mut provenance) =
+                    self.resolve(&include.parent, visiting, depth + 1);
+                let parent_unresolved = parent_context.unresolved_reason();
+                // A cfg-gated include invocation only exists in test builds,
+                // so the fragment's content is test-only regardless of the
+                // parent context (#3533 review).
+                let context = if include.requires_test {
+                    Context::RequiresTest
+                } else {
+                    parent_context
+                };
+                let requires_test =
+                    include.requires_test || context.requires_test().unwrap_or(false);
                 provenance.edges.push(SourceRoleProvenanceEdge {
                     kind: SourceRoleProvenanceEdgeKind::Include,
-                    parent,
+                    parent: include.parent.clone(),
                     child: file.to_path_buf(),
                     declaration: "include!".to_string(),
                     // The include pass keeps only the parent map, not the
@@ -581,31 +612,39 @@ impl ContextResolver<'_> {
                     line: 0,
                     requires_test,
                 });
-                if let Some(reason) = parent_context.unresolved_reason()
+                // The gate resolves the verdict, but an unresolved edge in
+                // the ancestry still happened: keep naming it.
+                if let Some(reason) = parent_unresolved
                     && provenance.earliest_unresolved_reason.is_none()
                 {
                     provenance.earliest_unresolved_reason = Some(reason);
                 }
-                (parent_context, provenance)
+                (context, provenance)
             }
-            (Some(Ok(edge)), Some(parent)) => {
+            (Some(Ok(edge)), Some(include)) => {
                 // Dual contextual ownership: compose only when both sides
                 // agree on the verdict, naming the conflict otherwise (law 10).
                 let (module_context, module_provenance) =
                     self.resolve(&edge.parent, visiting, depth + 1);
                 let (include_context, include_provenance) =
-                    self.resolve(&parent, visiting, depth + 1);
+                    self.resolve(&include.parent, visiting, depth + 1);
                 let module_verdict = if edge.requires_test {
                     Some(true)
                 } else {
                     module_context.requires_test()
                 };
-                let include_verdict = include_context.requires_test();
+                // A cfg-gated invocation is test-only on its own (#3533
+                // review); an unconditional include inherits its context.
+                let include_verdict = if include.requires_test {
+                    Some(true)
+                } else {
+                    include_context.requires_test()
+                };
                 let mut provenance = module_provenance;
                 let mut edges = include_provenance.edges;
                 edges.push(SourceRoleProvenanceEdge {
                     kind: SourceRoleProvenanceEdgeKind::Include,
-                    parent,
+                    parent: include.parent.clone(),
                     child: file.to_path_buf(),
                     declaration: "include!".to_string(),
                     line: 0,
@@ -1002,6 +1041,100 @@ mod tests {
         Ok(())
     }
 
+    /// A `#[cfg(test)] include!(...)` invocation only exists in test builds,
+    /// so the fragment's content is test-only regardless of the including
+    /// file's own context (#3533 review). Without composing the invocation's
+    /// gate, the fragment's helpers re-enter the production inventory.
+    #[test]
+    fn cfg_gated_include_composes_test_context() -> Result<(), String> {
+        let root = temp_dir("gated-include")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(
+                &root,
+                "src/lib.rs",
+                "pub fn production_control() -> i32 { 1 }\n\n#[cfg(test)]\ninclude!(\"fragment.rs\");\n",
+            )?,
+            write(
+                &root,
+                "src/fragment.rs",
+                "pub fn gated_fragment_helper() -> i32 { 3 }\n",
+            )?,
+        ];
+
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            role_of(&index, "src/lib.rs", "production_control")?,
+            FunctionSourceRole::Production
+        );
+        assert_eq!(
+            role_of(&index, "src/fragment.rs", "gated_fragment_helper")?,
+            FunctionSourceRole::CfgTestModule,
+            "the fragment of a test-gated invocation is test-only even beside a production unit"
+        );
+        let provenance = &index.files[Path::new("src/fragment.rs")].role_provenance;
+        assert!(provenance.earliest_unresolved_reason.is_none());
+        assert_eq!(provenance.edges.len(), 1);
+        assert_eq!(
+            provenance.edges[0].kind,
+            SourceRoleProvenanceEdgeKind::Include
+        );
+        assert_eq!(provenance.edges[0].parent, Path::new("src/lib.rs"));
+        assert!(
+            provenance.edges[0].requires_test,
+            "the include edge records the invocation's test requirement"
+        );
+        Ok(())
+    }
+
+    /// One file whose include invocations disagree on the cfg-test
+    /// requirement (`include!` next to `#[cfg(test)] include!` of the same
+    /// fragment) resolves to no single context: the child keeps its
+    /// standalone roles and the conflict is named (#3533).
+    #[test]
+    fn conflicting_include_requirements_fail_closed() -> Result<(), String> {
+        let root = temp_dir("conflicting-include")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(
+                &root,
+                "src/lib.rs",
+                "include!(\"fragment.rs\");\n\n#[cfg(test)]\ninclude!(\"fragment.rs\");\n",
+            )?,
+            write(
+                &root,
+                "src/fragment.rs",
+                "pub fn contested_fragment_helper() -> i32 { 1 }\n",
+            )?,
+        ];
+
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+
+        assert!(
+            !index
+                .include_parents
+                .contains_key(Path::new("src/fragment.rs")),
+            "no single context exists for the contested fragment"
+        );
+        assert!(
+            index
+                .include_limitations
+                .iter()
+                .any(|limitation| limitation.reason_code
+                    == "rust_include_conflicting_cfg_requirement"),
+            "the conflict must be named on the include limitations"
+        );
+        assert_eq!(
+            role_of(&index, "src/fragment.rs", "contested_fragment_helper")?,
+            FunctionSourceRole::Production,
+            "the contested fragment keeps its standalone roles"
+        );
+        Ok(())
+    }
+
     /// Two parent declarations claiming the same child file fail closed and
     /// name the edge; the child keeps its standalone roles.
     #[test]
@@ -1216,6 +1349,82 @@ mod tests {
         Ok(())
     }
 
+    /// A Unicode-identifier `cfg_attr` condition is valid Rust the bounded
+    /// ASCII lexer cannot read (#3533 review). Treating that lexer failure as
+    /// "not a conditional path" would fall back to default name resolution
+    /// and grant an unrelated default-layout file the composed evidence role;
+    /// the unreadable `cfg_attr` must fail closed to a typed unknown instead.
+    #[test]
+    fn unlexable_unicode_cfg_attr_path_fails_closed() -> Result<(), String> {
+        let root = temp_dir("unicode-cfg-attr-path")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(
+                &root,
+                "src/lib.rs",
+                "#[cfg(test)]\n#[cfg_attr(é, path = \"alternate.rs\")]\nmod imp;\n",
+            )?,
+            write(
+                &root,
+                "src/imp.rs",
+                "pub fn default_layout_helper() -> i32 { 1 }\n",
+            )?,
+            write(
+                &root,
+                "src/alternate.rs",
+                "pub fn conditional_target_helper() -> i32 { 2 }\n",
+            )?,
+            // Non-cfg_attr Unicode control: an unlexable attribute that
+            // cannot introduce a path must keep default resolution working
+            // (fail closed only for cfg_attr heads, not for every unlexable
+            // attribute).
+            write(
+                &root,
+                "src/controls.rs",
+                "#[cfg(test)]\n#[allow(é)]\nmod control;\n",
+            )?,
+            write(
+                &root,
+                "src/controls/control.rs",
+                "pub fn control_helper() -> i32 { 3 }\n",
+            )?,
+        ];
+
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            role_of(&index, "src/imp.rs", "default_layout_helper")?,
+            FunctionSourceRole::Production,
+            "the unreadable cfg_attr must not resolve the default-layout file as the module child"
+        );
+        assert_eq!(
+            role_of(&index, "src/alternate.rs", "conditional_target_helper")?,
+            FunctionSourceRole::Production,
+            "the conditional target is not statically resolvable either"
+        );
+        assert_eq!(
+            role_of(&index, "src/controls/control.rs", "control_helper")?,
+            FunctionSourceRole::CfgTestModule,
+            "Unicode in a non-cfg_attr attribute must not block default resolution"
+        );
+        // The producer classifies the declaration as a typed unknown even
+        // though its condition cannot be tokenized.
+        let facts = RaRustSyntaxAdapter
+            .summarize_file(
+                Path::new("src/lib.rs"),
+                &std::fs::read_to_string(root.join("src/lib.rs"))
+                    .map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?;
+        assert_eq!(facts.module_declarations.len(), 1);
+        assert_eq!(
+            facts.module_declarations[0].path_target,
+            ModulePathTarget::Unknown
+        );
+        Ok(())
+    }
+
     /// A literal `#[path]` inside an included fragment resolves relative to
     /// the fragment file's directory (#3533 review) — the Rust rule for
     /// non-inline `#[path]` targets. Anchoring at the compilation unit
@@ -1356,6 +1565,51 @@ mod tests {
         assert!(!crate_roots.is_crate_root(&root, Path::new("tests/nested/inner.rs")));
         let orphan_root = temp_dir("layout-roots-orphan")?;
         assert!(!crate_roots.is_crate_root(&orphan_root, Path::new("loose/foo.rs")));
+        Ok(())
+    }
+
+    /// Sibling files in one directory share the crate-root verdict (#3533
+    /// review): the manifest walk must memoize the resolved ancestor answer,
+    /// not a per-directory `None`, or the second sibling's walk would stop
+    /// early and keep the stem rule — making the verdict depend on which
+    /// sibling was resolved first.
+    #[test]
+    fn sibling_files_share_the_resolved_manifest_answer() -> Result<(), String> {
+        let root = temp_dir("sibling-roots")?;
+        write_manifest(&root)?;
+        // Unit level: the first lookup warms the cache, the second must not
+        // stop at the cached intermediate directory.
+        let mut crate_roots = CrateRoots::default();
+        assert!(crate_roots.is_crate_root(&root, Path::new("tests/a.rs")));
+        assert!(
+            crate_roots.is_crate_root(&root, Path::new("tests/b.rs")),
+            "the second sibling in the same directory is a crate root too"
+        );
+
+        // End to end: tests/b.rs declares an out-of-line module and must
+        // resolve it from tests/ (crate-root rule), not from tests/b/.
+        let files = vec![
+            write(&root, "tests/a.rs", "pub fn a_helper() -> i32 { 1 }\n")?,
+            write(
+                &root,
+                "tests/b.rs",
+                "pub fn b_helper() -> i32 { 2 }\n\n#[cfg(test)]\nmod helpers;\n",
+            )?,
+            write(
+                &root,
+                "tests/helpers.rs",
+                "pub fn sibling_child_helper() -> i32 { 3 }\n",
+            )?,
+        ];
+
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            role_of(&index, "tests/helpers.rs", "sibling_child_helper")?,
+            FunctionSourceRole::CfgTestModule,
+            "the second sibling's out-of-line module child composes its evidence role"
+        );
         Ok(())
     }
 }

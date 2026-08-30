@@ -29,6 +29,10 @@ pub(crate) struct RustIncludeDirective {
     pub(crate) expression: String,
     pub(crate) literal_path: Option<PathBuf>,
     pub(crate) is_file_level: bool,
+    /// True when the `include!` invocation's own attributes structurally
+    /// require a test build (`#[cfg(test)] include!(...)`) — the invocation
+    /// then only exists in test builds (#3533).
+    pub(crate) requires_test: bool,
 }
 
 /// Extract actual `include!` macro nodes from parser-backed Rust syntax.
@@ -51,22 +55,37 @@ pub(crate) fn rust_include_directives(
         .descendants()
         .filter_map(ast::MacroCall::cast)
     {
-        let range = macro_call.syntax().text_range();
-        let expression = slice_text(text, range.start(), range.end());
+        // The macro-call node spans its attributes too, so the call's own
+        // text starts at its path token: an attributed invocation
+        // (`#[cfg(test)] include!(...)`) would otherwise carry the attribute
+        // prefix into the callee check and be silently dropped.
+        let call_range = macro_call.syntax().text_range();
+        let call_start = macro_call
+            .path()
+            .map(|path| path.syntax().text_range().start())
+            .unwrap_or(call_range.start());
+        let expression = slice_text(text, call_start, call_range.end());
         let Some((callee, _)) = expression.split_once('!') else {
             continue;
         };
         if callee.trim() != "include" {
             continue;
         }
+        let attributes = macro_call
+            .attrs()
+            .map(|attr| attr.syntax().text().to_string())
+            .collect::<Vec<_>>();
         directives.push(RustIncludeDirective {
-            line: line_index.line(range.start()),
+            line: line_index.line(call_start),
             literal_path: include_literal_path(&expression),
             is_file_level: !macro_call
                 .syntax()
                 .ancestors()
                 .skip(1)
                 .any(|node| ast::Module::can_cast(node.kind())),
+            requires_test: cfg_predicates::attributes_require_test(
+                attributes.iter().map(String::as_str),
+            ),
             expression,
         });
         if directives.len() > max_directives {

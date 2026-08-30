@@ -36,8 +36,8 @@ pub(crate) fn build_index_from_loaded_files_with_cache(
 pub(crate) use includes::compilation_unit_path_from_parents;
 pub use model::{
     CallFact, FileFacts, FunctionFact, FunctionSourceRole, FunctionSummary, LiteralFact,
-    ModuleDeclarationFact, ModulePathTarget, OracleFact, ProbeShapeFact, ReturnFact,
-    RustIncludeLimitation, RustIndex, SourceRoleProvenance, SourceRoleProvenanceEdge,
+    ModuleDeclarationFact, ModulePathTarget, OracleFact, ProbeShapeFact, ResolvedIncludeParent,
+    ReturnFact, RustIncludeLimitation, RustIndex, SourceRoleProvenance, SourceRoleProvenanceEdge,
     SourceRoleProvenanceEdgeKind, TestFact, TestSummary,
 };
 #[cfg(test)]

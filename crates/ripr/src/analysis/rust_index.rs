@@ -3,6 +3,7 @@ use super::facts::RustIncludeLimitation;
 use crate::config::OraclePolicy;
 #[cfg(test)]
 use crate::domain::{OracleKind, OracleStrength};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 #[cfg(test)]
@@ -16,6 +17,7 @@ pub(crate) use super::extract::{
     has_oracle_text_shape, is_known_probe_shape, is_unwrap_err_bound_error_assertion,
     unwrap_err_bound_variables,
 };
+use super::facts::ModulePathTarget;
 pub(crate) use super::facts::build_index_from_loaded_files_with_cache;
 #[cfg(test)]
 pub use super::facts::{CallFact, LiteralFact, ReturnFact};
@@ -100,6 +102,43 @@ pub(crate) fn include_resolution_disclosure(index: &RustIndex) -> Option<String>
     Some(format!(
         "ripr: {} Rust include boundary limitation(s): {details}; affected compilation-unit relations remain fail-closed.",
         index.include_limitations.len()
+    ))
+}
+
+/// Returns a stable disclosure when Rust module composition failed closed
+/// (#3533): a file whose composed context chain could not be resolved
+/// (ambiguous ownership, cycle or depth bound, context conflict), or a
+/// `mod` declaration whose target is a typed unknown (dynamic or
+/// conditionally introduced `#[path]`). Without this, module-side stop
+/// reasons were invisible outside the per-file provenance while include-side
+/// limitations were disclosed.
+pub(crate) fn module_composition_disclosure(index: &RustIndex) -> Option<String> {
+    let mut details = BTreeSet::new();
+    let mut count = 0usize;
+    for (file, facts) in &index.files {
+        if let Some(reason) = &facts.role_provenance.earliest_unresolved_reason
+            && reason.starts_with("rust_module_")
+        {
+            details.insert(format!("{}:{reason}", escaped_path_display(file)));
+            count += 1;
+        }
+        for declaration in &facts.module_declarations {
+            if declaration.path_target == ModulePathTarget::Unknown {
+                details.insert(format!(
+                    "{}:{}:rust_module_unresolved_target",
+                    escaped_path_display(file),
+                    declaration.line
+                ));
+                count += 1;
+            }
+        }
+    }
+    if count == 0 {
+        return None;
+    }
+    Some(format!(
+        "ripr: {count} Rust module composition limitation(s): {}; affected module contexts remain fail-closed.",
+        details.into_iter().collect::<Vec<_>>().join(", ")
     ))
 }
 
@@ -849,5 +888,60 @@ fn feature_gated_test() {}
                 "ripr: 1 Rust include boundary limitation(s): src/lib.rs:7:rust_include_dynamic_expression; affected compilation-unit relations remain fail-closed."
             )
         );
+    }
+
+    #[test]
+    fn module_composition_disclosure_names_stop_reasons_and_unknown_targets() -> Result<(), String>
+    {
+        let no_disclosure = || String::from("module limitations must be disclosed");
+        let mut index = RustIndex::default();
+        // A file whose composed context chain failed closed (ambiguous
+        // ownership), and a declaration whose target is a typed unknown.
+        index.files.insert(
+            PathBuf::from("src/shared.rs"),
+            FileFacts {
+                role_provenance: crate::analysis::facts::SourceRoleProvenance {
+                    edges: Vec::new(),
+                    earliest_unresolved_reason: Some("rust_module_ambiguous_parent".to_string()),
+                },
+                ..FileFacts::default()
+            },
+        );
+        index.files.insert(
+            PathBuf::from("src/lib.rs"),
+            FileFacts {
+                module_declarations: vec![crate::analysis::facts::ModuleDeclarationFact {
+                    name: "generated".to_string(),
+                    line: 4,
+                    path_target: ModulePathTarget::Unknown,
+                    requires_test: false,
+                }],
+                ..FileFacts::default()
+            },
+        );
+        // A clean file must not appear.
+        index
+            .files
+            .insert(PathBuf::from("src/plain.rs"), FileFacts::default());
+
+        let disclosure = module_composition_disclosure(&index).ok_or_else(no_disclosure)?;
+        assert!(
+            disclosure.contains("2 Rust module composition limitation(s)"),
+            "both limitation kinds are counted: {disclosure}"
+        );
+        assert!(
+            disclosure.contains("src/lib.rs:4:rust_module_unresolved_target"),
+            "typed-unknown targets are named with their line: {disclosure}"
+        );
+        assert!(
+            disclosure.contains("src/shared.rs:rust_module_ambiguous_parent"),
+            "composed-chain stop reasons are named: {disclosure}"
+        );
+        assert!(!disclosure.contains("src/plain.rs"));
+
+        // No limitations: no disclosure.
+        let clean = RustIndex::default();
+        assert_eq!(module_composition_disclosure(&clean), None);
+        Ok(())
     }
 }

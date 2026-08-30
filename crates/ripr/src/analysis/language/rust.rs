@@ -1614,6 +1614,9 @@ impl RustAdapter {
         if let Some(disclosure) = rust_index::include_resolution_disclosure(&index) {
             eprintln!("{disclosure}");
         }
+        if let Some(disclosure) = rust_index::module_composition_disclosure(&index) {
+            eprintln!("{disclosure}");
+        }
         rust_index::apply_oracle_policy(&mut index, oracle_policy);
 
         let mut findings = Vec::new();
@@ -1838,6 +1841,9 @@ impl RustAdapter {
             eprintln!("{disclosure}");
         }
         if let Some(disclosure) = rust_index::include_resolution_disclosure(&index) {
+            eprintln!("{disclosure}");
+        }
+        if let Some(disclosure) = rust_index::module_composition_disclosure(&index) {
             eprintln!("{disclosure}");
         }
         rust_index::apply_oracle_policy(&mut index, oracle_policy);

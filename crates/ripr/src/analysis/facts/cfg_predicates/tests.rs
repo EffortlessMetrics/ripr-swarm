@@ -275,6 +275,45 @@ fn non_path_cfg_attr_shapes_are_not_path_introductions() {
     ]));
 }
 
+/// An unlexable `cfg_attr` fails closed (#3533 review): Rust accepts Unicode
+/// identifiers in predicate position (XID_Start/XID_Continue), so
+/// `#[cfg_attr(é, path = "alternate.rs")]` is valid Rust the bounded ASCII
+/// lexer cannot tokenize. Converting that lexer failure to `false` would let
+/// the default-layout file resolve as the module child — the wrong identity.
+/// Only a `cfg_attr` head fails closed; unrelated unlexable attributes must
+/// not be read as conditional paths.
+#[test]
+fn unlexable_cfg_attr_conditions_fail_closed_to_conditional() {
+    // Unicode identifier condition that introduces a path: conditional.
+    assert!(super::attributes_conditionally_introduce_path([
+        "#[cfg_attr(é, path = \"alternate.rs\")]",
+    ]));
+    // Inner-head spelling with surrounding whitespace.
+    assert!(super::attributes_conditionally_introduce_path([
+        "#![ cfg_attr( φόβος , path = \"inner.rs\") ]",
+    ]));
+    // The condition is unreadable but no path is introduced: still
+    // conditional (unreadable arguments could hide a nested introduction).
+    assert!(super::attributes_conditionally_introduce_path([
+        "#[cfg_attr(测试, allow(dead_code))]",
+    ]));
+    // Non-cfg_attr controls: Unicode in an unrelated attribute cannot
+    // manufacture a conditional path.
+    assert!(!super::attributes_conditionally_introduce_path([
+        "#[allow(é)]",
+    ]));
+    assert!(!super::attributes_conditionally_introduce_path([
+        "#[doc = \"café\"]",
+    ]));
+    // cfg_attr-prefixed lookalike heads are different attributes.
+    assert!(!super::attributes_conditionally_introduce_path([
+        "#[cfg_attrs(é, path = \"x.rs\")]",
+    ]));
+    assert!(!super::attributes_conditionally_introduce_path([
+        "#[my_cfg_attr(é, path = \"x.rs\")]",
+    ]));
+}
+
 #[test]
 fn multiple_attributes_compose_conjunctively_without_optimism() {
     // A definitely test-required gate dominates independent gates.

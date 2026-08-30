@@ -243,11 +243,25 @@ pub struct RustIndex {
     pub tests: Vec<TestFact>,
     pub functions: Vec<FunctionFact>,
     #[serde(default)]
-    pub include_parents: BTreeMap<PathBuf, PathBuf>,
+    pub include_parents: BTreeMap<PathBuf, ResolvedIncludeParent>,
     #[serde(default)]
     pub include_limitations: Vec<RustIncludeLimitation>,
     #[serde(default)]
     pub(crate) workspace_authority: Option<WorkspaceRootAuthority>,
+}
+
+/// One resolved file-level include edge (#3533): the fragment's compilation
+/// unit parent plus the cfg-test requirement of the `include!` invocation
+/// itself. A `#[cfg(test)] include!(...)` invocation only exists in test
+/// builds, so the fragment's content is test-only regardless of the parent
+/// file's own context.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ResolvedIncludeParent {
+    /// The including file (physical path).
+    pub parent: PathBuf,
+    /// True when the `include!` invocation is structurally gated on a test
+    /// build (`cfg(test)` or a `test` conjunct through `cfg_predicates`).
+    pub requires_test: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
