@@ -490,7 +490,7 @@ fn foreign_trial_paths_are_not_adopted_through_an_import_binding()
             "use libtest_mimic::Trial;
 
 fn other() -> Vec<Trial> {
-    vec![other_module::Trial::test(\"foreign_case\", || Ok(()))]
+    vec![other_module :: Trial::test(\"foreign_case\", || Ok(()))]
 }
 ",
         )],
@@ -498,6 +498,39 @@ fn other() -> Vec<Trial> {
     let files = [PathBuf::from("tests/foreign_trial.rs")];
     let registrations = [custom_target_registration("tests/foreign_trial.rs")];
     let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    assert!(
+        index.harness_subjects.is_empty(),
+        "{:?}",
+        index.harness_subjects
+    );
+    assert!(index.tests.is_empty(), "{:?}", index.tests);
+    Ok(())
+}
+
+#[test]
+fn dormant_macro_templates_never_become_subjects() -> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("dormant-macro-template")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/dormant_template.rs",
+            "macro_rules! trial_template {
+    ($name:literal) => {
+        libtest_mimic::Trial::test($name, || Ok(()))
+    };
+}
+
+fn trials() -> Vec<libtest_mimic::Trial> {
+    Vec::new()
+}
+",
+        )],
+    )?;
+    let files = [PathBuf::from("tests/dormant_template.rs")];
+    let registrations = [custom_target_registration("tests/dormant_template.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    // The macro body is a template, not a registration: an uninvoked
+    // template must not fabricate an executable test.
     assert!(
         index.harness_subjects.is_empty(),
         "{:?}",

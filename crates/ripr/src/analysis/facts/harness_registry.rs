@@ -204,6 +204,11 @@ fn apply_libtest_mimic_target(
             }
         }
 
+        // A `Trial::test` template inside a `macro_rules!` definition is
+        // not a concrete registration; only a real invocation is.
+        if inside_macro_rules(tokens[position].parent_ancestors()) {
+            continue;
+        }
         if in_loop(tokens[position].parent_ancestors()) {
             limitations.push(HarnessLimitationFact {
                 registration_id: registration.registration_id.clone(),
@@ -384,16 +389,24 @@ struct TrialPathMatch {
     open_paren_index: usize,
 }
 
-/// Whether the token at `position` can begin a path: it is the first
-/// token or its predecessor is not a path separator.
+/// Whether the token at `position` can begin a path: scanning back past
+/// trivia, its predecessor is not a path separator (`other_module ::
+/// Trial` must not match at its inner `Trial` token).
 fn at_path_start(tokens: &[ra_ap_syntax::SyntaxToken], position: usize) -> bool {
-    if position == 0 {
-        return true;
+    let mut cursor = position;
+    while cursor > 0 {
+        cursor -= 1;
+        if !matches!(
+            tokens[cursor].kind(),
+            ra_ap_syntax::SyntaxKind::WHITESPACE | ra_ap_syntax::SyntaxKind::COMMENT
+        ) {
+            return !matches!(
+                tokens[cursor].kind(),
+                ra_ap_syntax::SyntaxKind::COLON2 | ra_ap_syntax::SyntaxKind::COLON
+            );
+        }
     }
-    !matches!(
-        tokens[position - 1].kind(),
-        ra_ap_syntax::SyntaxKind::COLON2 | ra_ap_syntax::SyntaxKind::COLON
-    )
+    true
 }
 
 /// Offset just past the `)` balancing the `(` at `open_paren_index`,
@@ -871,6 +884,12 @@ fn resolve_trial_binding(bindings: &BTreeSet<String>, marker: &str) -> TrialBind
 /// Whether the ancestor chain of a token sits inside a loop expression —
 /// the bounded signal for runtime-only trial discovery. Works through
 /// macro token trees too, because tokens keep their ancestor nodes.
+/// Whether the token sits inside a `macro_rules!` definition body: the
+/// tokens there are a template, not an executed registration.
+fn inside_macro_rules(mut ancestors: impl Iterator<Item = ra_ap_syntax::SyntaxNode>) -> bool {
+    ancestors.any(|ancestor| ast::MacroRules::can_cast(ancestor.kind()))
+}
+
 fn in_loop(mut ancestors: impl Iterator<Item = ra_ap_syntax::SyntaxNode>) -> bool {
     ancestors.any(|ancestor| {
         ast::WhileExpr::can_cast(ancestor.kind())
