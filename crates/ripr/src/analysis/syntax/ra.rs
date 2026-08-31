@@ -1072,7 +1072,7 @@ pub(crate) fn is_assertion_macro_leaf(name: &str) -> bool {
     matches!(
         name,
         "assert" | "assert_eq" | "assert_ne" | "assert_matches" | "matches"
-    ) || (name.starts_with("assert") && name.ends_with("snapshot"))
+    ) || (name.starts_with("assert_") && name.ends_with("snapshot"))
 }
 
 pub(crate) fn is_assertion_macro(macro_name: &str) -> bool {

@@ -371,6 +371,9 @@ fn match_trial_path(
     }
 
     for qualified in [false, true] {
+        if is_data_only_macro_input(tokens, position) {
+            continue;
+        }
         if (!qualified && !bare_path_starts_at_boundary(tokens, position))
             || (qualified && !qualified_path_starts_at_boundary(tokens, position))
         {
@@ -407,6 +410,61 @@ fn match_trial_path(
         }
     }
     None
+}
+
+fn is_data_only_macro_input(tokens: &[ra_ap_syntax::SyntaxToken], position: usize) -> bool {
+    let mut depth = 0usize;
+    let mut cursor = position;
+    while cursor > 0 {
+        cursor -= 1;
+        let kind = tokens[cursor].kind();
+        if matches!(
+            kind,
+            ra_ap_syntax::SyntaxKind::R_PAREN
+                | ra_ap_syntax::SyntaxKind::R_BRACK
+                | ra_ap_syntax::SyntaxKind::R_CURLY
+        ) {
+            depth += 1;
+            continue;
+        }
+        if matches!(
+            kind,
+            ra_ap_syntax::SyntaxKind::L_PAREN
+                | ra_ap_syntax::SyntaxKind::L_BRACK
+                | ra_ap_syntax::SyntaxKind::L_CURLY
+        ) {
+            if depth == 0 {
+                return false;
+            }
+            depth -= 1;
+            continue;
+        }
+        if depth == 0 && kind == ra_ap_syntax::SyntaxKind::BANG {
+            let mut name = cursor;
+            while name > 0 {
+                name -= 1;
+                if matches!(
+                    tokens[name].kind(),
+                    ra_ap_syntax::SyntaxKind::WHITESPACE | ra_ap_syntax::SyntaxKind::COMMENT
+                ) {
+                    continue;
+                }
+                return tokens[name].kind() == ra_ap_syntax::SyntaxKind::IDENT
+                    && matches!(
+                        tokens[name].text(),
+                        "stringify"
+                            | "concat"
+                            | "env"
+                            | "option_env"
+                            | "include"
+                            | "include_bytes"
+                            | "include_str"
+                    );
+            }
+            return false;
+        }
+    }
+    false
 }
 
 fn bare_path_starts_at_boundary(tokens: &[ra_ap_syntax::SyntaxToken], position: usize) -> bool {

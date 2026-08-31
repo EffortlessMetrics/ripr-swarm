@@ -490,6 +490,7 @@ fn snapshot_named_helpers_never_become_oracles_but_snapshot_asserts_do()
     vec![libtest_mimic::Trial::test(\"leaf_case\", || {
         snapshot_helper!();
         other_snapshot!();
+        assertsnapshot!(1);
         assert_snapshot!(1);
         Ok(())
     })]
@@ -591,7 +592,9 @@ fn macro_input_data_never_becomes_a_subject() -> Result<(), Box<dyn std::error::
         &root,
         &[(
             "tests/macro_input.rs",
-            "fn debug() -> String {
+            "use libtest_mimic::Trial;
+
+fn debug() -> String {
     stringify!(trial: Trial::test(\"ghost_case\", || Ok(())))
 }
 ",
