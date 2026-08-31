@@ -367,6 +367,77 @@ fn fully_qualified_trial_calls_match_the_marker_path() -> Result<(), Box<dyn std
             .collect::<Vec<_>>(),
         vec!["qualified_case"]
     );
+    // The token-local bare pattern re-matches the inner `Trial` of the
+    // qualified path; claiming the invocation must leave no false
+    // unanchored/duplicate limitation behind.
+    assert!(
+        index.harness_limitations.is_empty(),
+        "{:?}",
+        index.harness_limitations
+    );
+    Ok(())
+}
+
+#[test]
+fn qualified_trial_with_bare_import_emits_one_subject_and_no_false_limitation()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("qualified-with-import")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/both_forms.rs",
+            "use libtest_mimic::Trial;\n\nfn trials() -> Vec<Trial> {\n    vec![libtest_mimic::Trial::test(\"both_case\", || Ok(()))]\n}\n",
+        )],
+    )?;
+    let files = [PathBuf::from("tests/both_forms.rs")];
+    let registrations = [custom_target_registration("tests/both_forms.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    assert_eq!(
+        index
+            .harness_subjects
+            .iter()
+            .map(|subject| subject.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["both_case"]
+    );
+    assert!(
+        index.harness_limitations.is_empty(),
+        "{:?}",
+        index.harness_limitations
+    );
+    Ok(())
+}
+
+#[test]
+fn plain_idents_inside_trial_bodies_never_become_oracles() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = temp_dir("trial-ident-noise")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/ident_noise.rs",
+            "fn trials() -> Vec<libtest_mimic::Trial> {\n    vec![libtest_mimic::Trial::test(\"noise_case\", || {\n        let snapshots = load();\n        assert_eq!(snapshots, 1);\n        Ok(())\n    })]\n}\nfn load() -> i32 {\n    1\n}\n",
+        )],
+    )?;
+    let files = [PathBuf::from("tests/ident_noise.rs")];
+    let registrations = [custom_target_registration("tests/ident_noise.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    let subject_test = index
+        .tests
+        .iter()
+        .find(|test| test.name == "noise_case")
+        .ok_or("subject test present")?;
+    assert_eq!(
+        subject_test
+            .assertions
+            .iter()
+            .map(|assertion| assertion.text.as_str())
+            .collect::<Vec<_>>(),
+        // One macro-shaped oracle; the `let snapshots` ident never
+        // classifies (the token text omits the opening paren by the
+        // collector's existing shape).
+        vec!["assert_eq!snapshots, 1))"]
+    );
     Ok(())
 }
 

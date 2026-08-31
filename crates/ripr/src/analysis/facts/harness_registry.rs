@@ -154,11 +154,20 @@ fn apply_libtest_mimic_target(
         .filter_map(|element| element.into_token())
         .collect();
     let mut claimed_names = BTreeSet::new();
+    // One invocation is one open paren. A qualified path
+    // (`marker::Trial::test(`) also contains a token-local bare `Trial`
+    // position; claiming the paren prevents the bare pass from
+    // re-processing the same call and emitting a false
+    // duplicate_subject/unanchored_trial_path limitation.
+    let mut claimed_invocations = BTreeSet::new();
 
     for position in 0..tokens.len() {
         let Some(matched) = match_trial_path(&tokens, position, &registration.marker) else {
             continue;
         };
+        if !claimed_invocations.insert(matched.open_paren_index) {
+            continue;
+        }
         let line = line_index.line(tokens[position].text_range().start());
         // Anchoring: the bare `Trial` form needs a top-level import bound
         // from exactly the marker path; the qualified form carries the
@@ -400,34 +409,38 @@ fn parser_oracles_for_node_tokens(
                     index += 1;
                     continue;
                 }
-                // assert!(..) / assert_eq!(..) — the bang and token tree
-                // follow; the assertion text is the macro invocation.
-                let mut text = name.to_string();
-                let mut cursor = index + 1;
-                if tokens
-                    .get(cursor)
+                // Macro semantics: an assertion is an invocation, so the
+                // bang must directly follow the path segment. A plain
+                // identifier that merely contains an assertion keyword
+                // (`let snapshots = …`) never classifies.
+                if !tokens
+                    .get(index + 1)
                     .is_some_and(|token| token.kind() == ra_ap_syntax::SyntaxKind::BANG)
                 {
-                    text.push('!');
+                    index += 1;
+                    continue;
+                }
+                // assert!(..) / assert_eq!(..) — the token tree
+                // follows; the assertion text is the macro invocation.
+                let mut text = format!("{name}!");
+                let mut cursor = index + 2;
+                if tokens
+                    .get(cursor)
+                    .is_some_and(|token| token.kind() == ra_ap_syntax::SyntaxKind::L_PAREN)
+                {
+                    let mut macro_depth = 1;
                     cursor += 1;
-                    if tokens
-                        .get(cursor)
-                        .is_some_and(|token| token.kind() == ra_ap_syntax::SyntaxKind::L_PAREN)
-                    {
-                        let mut macro_depth = 1;
-                        cursor += 1;
-                        while cursor < tokens.len() && macro_depth > 0 {
-                            let inner = &tokens[cursor];
-                            match inner.kind() {
-                                ra_ap_syntax::SyntaxKind::L_PAREN => macro_depth += 1,
-                                ra_ap_syntax::SyntaxKind::R_PAREN => macro_depth -= 1,
-                                _ => {}
-                            }
-                            text.push_str(inner.text());
-                            cursor += 1;
+                    while cursor < tokens.len() && macro_depth > 0 {
+                        let inner = &tokens[cursor];
+                        match inner.kind() {
+                            ra_ap_syntax::SyntaxKind::L_PAREN => macro_depth += 1,
+                            ra_ap_syntax::SyntaxKind::R_PAREN => macro_depth -= 1,
+                            _ => {}
                         }
-                        text.push(')');
+                        text.push_str(inner.text());
+                        cursor += 1;
                     }
+                    text.push(')');
                 }
                 let classification = classify_assertion(&text);
                 assertions.push(OracleFact {
@@ -446,12 +459,16 @@ fn parser_oracles_for_node_tokens(
     assertions
 }
 
+/// Path segments that introduce an assertion macro when followed by a
+/// bang. Mirrors the source-side predicate in `analysis/syntax/ra.rs`
+/// (`is_assertion_macro`); a token-local ident cannot contain `::`, so
+/// qualified spellings (`insta::assert_snapshot!`) match on their final
+/// segment.
 fn is_assertion_macro_name(name: &str) -> bool {
     matches!(
         name,
-        "assert" | "assert_eq" | "assert_ne" | "assert_matches" | "matches"
-    ) || name.starts_with("insta::assert")
-        || name.contains("snapshot")
+        "assert" | "assert_eq" | "assert_ne" | "assert_matches" | "matches" | "assert_snapshot"
+    )
 }
 /// Exact registered test-producing attribute adapter, generation 1
 /// (#3532). Promotes functions carrying the exact registered attribute
