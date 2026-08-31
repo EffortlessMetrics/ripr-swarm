@@ -50,6 +50,10 @@ jobs:
           root: .
           base: origin/${{ github.base_ref }}
           head: HEAD
+          # The pull_request event checks out a synthetic merge commit; the
+          # action's revision admission refuses to relabel a two-parent
+          # checkout as a candidate head without this metadata.
+          pr-head-sha: ${{ github.event.pull_request.head.sha }}
           out: target/ub-review
           posting: review
 
