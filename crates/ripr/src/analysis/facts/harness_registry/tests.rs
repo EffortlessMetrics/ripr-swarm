@@ -508,6 +508,41 @@ fn other() -> Vec<Trial> {
 }
 
 #[test]
+fn struct_field_initializers_still_start_trial_paths() -> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("struct-field-trial")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/field_trial.rs",
+            "use libtest_mimic::Trial;
+
+struct Suite {
+    trials: Vec<Trial>,
+}
+
+fn suite() -> Suite {
+    Suite {
+        trials: vec![Trial::test(\"field_case\", || Ok(()))],
+    }
+}
+",
+        )],
+    )?;
+    let files = [PathBuf::from("tests/field_trial.rs")];
+    let registrations = [custom_target_registration("tests/field_trial.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    assert_eq!(
+        index
+            .harness_subjects
+            .iter()
+            .map(|subject| subject.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["field_case"]
+    );
+    Ok(())
+}
+
+#[test]
 fn dormant_macro_templates_never_become_subjects() -> Result<(), Box<dyn std::error::Error>> {
     let root = temp_dir("dormant-macro-template")?;
     write_workspace(

@@ -390,23 +390,47 @@ struct TrialPathMatch {
 }
 
 /// Whether the token at `position` can begin a path: scanning back past
-/// trivia, its predecessor is not a path separator (`other_module ::
-/// Trial` must not match at its inner `Trial` token).
+/// trivia, its predecessor must not be a path separator (`other_module
+/// :: Trial` must not match at its inner `Trial` token). `::` may reach
+/// the scanner as one COLON2 token or as two adjacent COLON tokens, so a
+/// single COLON only continues a path when another colon precedes it; a
+/// lone `:` is struct-field syntax and a field initializer like
+/// `trials: Trial::test(...)` still starts a path.
 fn at_path_start(tokens: &[ra_ap_syntax::SyntaxToken], position: usize) -> bool {
     let mut cursor = position;
     while cursor > 0 {
         cursor -= 1;
-        if !matches!(
+        if matches!(
             tokens[cursor].kind(),
             ra_ap_syntax::SyntaxKind::WHITESPACE | ra_ap_syntax::SyntaxKind::COMMENT
         ) {
-            return !matches!(
-                tokens[cursor].kind(),
-                ra_ap_syntax::SyntaxKind::COLON2 | ra_ap_syntax::SyntaxKind::COLON
-            );
+            continue;
         }
+        return match tokens[cursor].kind() {
+            ra_ap_syntax::SyntaxKind::COLON2 => false,
+            ra_ap_syntax::SyntaxKind::COLON => !previous_significant_is_colon(tokens, cursor),
+            _ => true,
+        };
     }
     true
+}
+
+fn previous_significant_is_colon(tokens: &[ra_ap_syntax::SyntaxToken], from: usize) -> bool {
+    let mut cursor = from;
+    while cursor > 0 {
+        cursor -= 1;
+        if matches!(
+            tokens[cursor].kind(),
+            ra_ap_syntax::SyntaxKind::WHITESPACE | ra_ap_syntax::SyntaxKind::COMMENT
+        ) {
+            continue;
+        }
+        return matches!(
+            tokens[cursor].kind(),
+            ra_ap_syntax::SyntaxKind::COLON | ra_ap_syntax::SyntaxKind::COLON2
+        );
+    }
+    false
 }
 
 /// Offset just past the `)` balancing the `(` at `open_paren_index`,
