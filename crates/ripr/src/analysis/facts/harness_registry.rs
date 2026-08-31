@@ -265,7 +265,7 @@ fn apply_libtest_mimic_target(
                             "trial callback `{callback_name}` is not a unique function item in the registered target; subject evidence remains unresolved"
                         ),
                     });
-                    continue;
+                    None
                 }
             },
             None => None,
@@ -441,10 +441,52 @@ fn trial_callback_name(
             }) {
                 callback_index += 1;
             }
-            return tokens
-                .get(callback_index)
-                .filter(|callback| callback.kind() == ra_ap_syntax::SyntaxKind::IDENT)
-                .map(|callback| callback.text().to_string());
+            let first = tokens.get(callback_index)?;
+            if first.kind() != ra_ap_syntax::SyntaxKind::IDENT {
+                return None;
+            }
+            let mut callback = first.text().to_string();
+            callback_index += 1;
+            loop {
+                while tokens.get(callback_index).is_some_and(|token| {
+                    matches!(
+                        token.kind(),
+                        ra_ap_syntax::SyntaxKind::WHITESPACE | ra_ap_syntax::SyntaxKind::COMMENT
+                    )
+                }) {
+                    callback_index += 1;
+                }
+                let separator_width = match tokens.get(callback_index).map(|token| token.kind()) {
+                    Some(ra_ap_syntax::SyntaxKind::COLON2) => Some(1),
+                    Some(ra_ap_syntax::SyntaxKind::COLON)
+                        if tokens.get(callback_index + 1).is_some_and(|token| {
+                            token.kind() == ra_ap_syntax::SyntaxKind::COLON
+                        }) =>
+                    {
+                        Some(2)
+                    }
+                    _ => None,
+                };
+                let Some(separator_width) = separator_width else {
+                    break;
+                };
+                callback_index += separator_width;
+                while tokens.get(callback_index).is_some_and(|token| {
+                    matches!(
+                        token.kind(),
+                        ra_ap_syntax::SyntaxKind::WHITESPACE | ra_ap_syntax::SyntaxKind::COMMENT
+                    )
+                }) {
+                    callback_index += 1;
+                }
+                let segment = tokens
+                    .get(callback_index)
+                    .filter(|token| token.kind() == ra_ap_syntax::SyntaxKind::IDENT)?;
+                callback.push_str("::");
+                callback.push_str(segment.text());
+                callback_index += 1;
+            }
+            return Some(callback);
         }
         if token.kind() == ra_ap_syntax::SyntaxKind::R_PAREN {
             return None;
@@ -455,6 +497,10 @@ fn trial_callback_name(
 }
 
 fn unique_callback_function(index: &RustIndex, target: &Path, name: &str) -> Option<FunctionFact> {
+    let name = match name.rsplit("::").next() {
+        Some(name) => name,
+        None => name,
+    };
     let mut matches = index
         .files
         .get(target)?
@@ -509,16 +555,34 @@ fn parser_oracles_for_node_tokens(
             ra_ap_syntax::SyntaxKind::IDENT => {
                 let name = token.text();
                 let next = tokens.get(index + 1);
-                let is_macro_invocation = is_assertion_macro_name(name)
+                let macro_open_index = if is_assertion_macro_name(name)
                     && next.is_some_and(|token| token.kind() == ra_ap_syntax::SyntaxKind::BANG)
-                    && tokens.get(index + 2).is_some_and(|token| {
+                {
+                    let mut open_index = index + 2;
+                    while tokens.get(open_index).is_some_and(|token| {
                         matches!(
                             token.kind(),
-                            ra_ap_syntax::SyntaxKind::L_PAREN
-                                | ra_ap_syntax::SyntaxKind::L_CURLY
-                                | ra_ap_syntax::SyntaxKind::L_BRACK
+                            ra_ap_syntax::SyntaxKind::WHITESPACE
+                                | ra_ap_syntax::SyntaxKind::COMMENT
                         )
-                    });
+                    }) {
+                        open_index += 1;
+                    }
+                    tokens
+                        .get(open_index)
+                        .is_some_and(|token| {
+                            matches!(
+                                token.kind(),
+                                ra_ap_syntax::SyntaxKind::L_PAREN
+                                    | ra_ap_syntax::SyntaxKind::L_CURLY
+                                    | ra_ap_syntax::SyntaxKind::L_BRACK
+                            )
+                        })
+                        .then_some(open_index)
+                } else {
+                    None
+                };
+                let is_macro_invocation = macro_open_index.is_some();
                 let is_fallible_call = matches!(name, "unwrap" | "expect")
                     && index >= 1
                     && tokens[index - 1].kind() == ra_ap_syntax::SyntaxKind::DOT
@@ -541,24 +605,11 @@ fn parser_oracles_for_node_tokens(
                         .is_some_and(|token| token.kind() == ra_ap_syntax::SyntaxKind::BANG)
                 {
                     text.push('!');
-                    cursor += 1;
-                    if tokens
-                        .get(cursor)
-                        .is_some_and(|token| token.kind() == ra_ap_syntax::SyntaxKind::L_PAREN)
-                    {
-                        let mut macro_depth = 1;
-                        cursor += 1;
-                        while cursor < tokens.len() && macro_depth > 0 {
-                            let inner = &tokens[cursor];
-                            match inner.kind() {
-                                ra_ap_syntax::SyntaxKind::L_PAREN => macro_depth += 1,
-                                ra_ap_syntax::SyntaxKind::R_PAREN => macro_depth -= 1,
-                                _ => {}
-                            }
-                            text.push_str(inner.text());
-                            cursor += 1;
-                        }
-                        text.push(')');
+                    if let Some(open_index) = macro_open_index {
+                        cursor = open_index;
+                    }
+                    if let Some(tree_text) = macro_token_tree_text(tokens, cursor) {
+                        text.push_str(&tree_text);
                     }
                 } else if is_fallible_call {
                     // The method name itself is sufficient for the shared
@@ -580,6 +631,42 @@ fn parser_oracles_for_node_tokens(
     }
     assertions.sort_by(|left, right| left.line.cmp(&right.line).then(left.text.cmp(&right.text)));
     assertions
+}
+
+fn macro_token_tree_text(
+    tokens: &[ra_ap_syntax::SyntaxToken],
+    open_index: usize,
+) -> Option<String> {
+    let mut delimiters = Vec::new();
+    let mut text = String::new();
+    for token in tokens.iter().skip(open_index) {
+        let kind = token.kind();
+        match kind {
+            ra_ap_syntax::SyntaxKind::L_PAREN
+            | ra_ap_syntax::SyntaxKind::L_CURLY
+            | ra_ap_syntax::SyntaxKind::L_BRACK => delimiters.push(kind),
+            ra_ap_syntax::SyntaxKind::R_PAREN
+            | ra_ap_syntax::SyntaxKind::R_CURLY
+            | ra_ap_syntax::SyntaxKind::R_BRACK => {
+                let opening = delimiters.pop()?;
+                let expected = match opening {
+                    ra_ap_syntax::SyntaxKind::L_PAREN => ra_ap_syntax::SyntaxKind::R_PAREN,
+                    ra_ap_syntax::SyntaxKind::L_CURLY => ra_ap_syntax::SyntaxKind::R_CURLY,
+                    ra_ap_syntax::SyntaxKind::L_BRACK => ra_ap_syntax::SyntaxKind::R_BRACK,
+                    _ => return None,
+                };
+                if kind != expected {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+        text.push_str(token.text());
+        if delimiters.is_empty() {
+            return Some(text);
+        }
+    }
+    None
 }
 
 fn is_assertion_macro_name(name: &str) -> bool {

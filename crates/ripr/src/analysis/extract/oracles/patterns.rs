@@ -266,7 +266,9 @@ pub(super) fn is_broad_error_assertion(line: &str) -> bool {
 }
 
 pub(super) fn is_whole_object_equality_assertion(line: &str) -> bool {
-    (line.contains("assert_eq!") || line.contains("assert_ne!")) && line.contains('{')
+    (line.contains("assert_eq!") || line.contains("assert_ne!"))
+        && equality_assertion_arguments(line)
+            .is_some_and(|arguments| arguments.get(1).is_some_and(|right| right.contains('{')))
 }
 
 pub(super) fn is_duplicative_equality_assertion(line: &str) -> bool {

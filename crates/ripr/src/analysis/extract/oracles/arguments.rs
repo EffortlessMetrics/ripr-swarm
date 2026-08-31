@@ -25,7 +25,7 @@ fn macro_invocation_arguments(line: &str, macro_name: &str) -> Option<Vec<String
             let open_offset = line[suffix_start..]
                 .char_indices()
                 .find_map(|(offset, ch)| (!ch.is_whitespace()).then_some((offset, ch)))?;
-            if !prefix_ok || open_offset.1 != '(' {
+            if !prefix_ok || !matches!(open_offset.1, '(' | '[' | '{') {
                 return None;
             }
             let open = suffix_start + open_offset.0;
@@ -39,7 +39,7 @@ fn delimited_contents_at(text: &str, open_index: usize) -> Option<String> {
     if open != b'(' {
         return None;
     }
-    let mut depth = 0i32;
+    let mut delimiters = Vec::new();
     let mut in_string = false;
     let mut escaped = false;
     let mut content_start = None;
@@ -57,15 +57,24 @@ fn delimited_contents_at(text: &str, open_index: usize) -> Option<String> {
         }
         match ch {
             '"' => in_string = true,
-            '(' => {
-                depth += 1;
-                if depth == 1 {
+            '(' | '[' | '{' => {
+                delimiters.push(ch);
+                if delimiters.len() == 1 {
                     content_start = Some(index + ch.len_utf8());
                 }
             }
-            ')' => {
-                depth -= 1;
-                if depth == 0 {
+            ')' | ']' | '}' => {
+                let opening = delimiters.pop()?;
+                let expected = match opening {
+                    '(' => ')',
+                    '[' => ']',
+                    '{' => '}',
+                    _ => return None,
+                };
+                if ch != expected {
+                    return None;
+                }
+                if delimiters.is_empty() {
                     let start = content_start?;
                     return Some(text[start..index].to_string());
                 }

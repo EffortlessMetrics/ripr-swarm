@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::analysis::facts::build_index_with_test_harnesses;
+use crate::domain::OracleKind;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
@@ -454,6 +455,97 @@ fn trial_oracles_require_real_macros_and_preserve_source_lines()
             .map(|oracle| oracle.line)
             .any(|line| line > subject.start_line)
     );
+    Ok(())
+}
+
+#[test]
+fn qualified_trial_callbacks_keep_subjects_and_resolve_terminal_function_names()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("qualified-callbacks")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/callbacks.rs",
+            r#"
+use libtest_mimic::Trial;
+fn check() {
+    assert_eq!(1, 1);
+}
+fn trials() -> Vec<Trial> {
+    vec![
+        Trial::test("resolved_callback", callbacks::check),
+        Trial::test("unresolved_callback", missing::callback),
+    ]
+}
+"#,
+        )],
+    )?;
+    let index = build_index_with_test_harnesses(
+        &root.0,
+        &[PathBuf::from("tests/callbacks.rs")],
+        &[custom_target_registration("tests/callbacks.rs")],
+    )?;
+    assert_eq!(index.harness_subjects.len(), 2);
+    let resolved = index
+        .harness_subjects
+        .iter()
+        .find(|subject| subject.name == "resolved_callback")
+        .ok_or("missing resolved callback subject")?;
+    assert!(
+        resolved
+            .assertions
+            .iter()
+            .any(|oracle| oracle.text.starts_with("assert_eq!"))
+    );
+    assert!(index.harness_limitations.iter().any(|limitation| {
+        limitation.code == "unresolved_trial_callback"
+            && limitation.detail.contains("missing::callback")
+    }));
+    Ok(())
+}
+
+#[test]
+fn trial_oracles_preserve_brace_and_bracket_macro_delimiters()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("delimited-oracles")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/delimiters.rs",
+            r#"
+use libtest_mimic::Trial;
+fn trials() -> Vec<Trial> {
+    vec![Trial::test("delimiters", || {
+        let result = 1;
+        assert_eq! { result, 1 };
+        assert_eq! [result, 1];
+        Ok(())
+    })]
+}
+"#,
+        )],
+    )?;
+    let index = build_index_with_test_harnesses(
+        &root.0,
+        &[PathBuf::from("tests/delimiters.rs")],
+        &[custom_target_registration("tests/delimiters.rs")],
+    )?;
+    let subject = index
+        .harness_subjects
+        .iter()
+        .find(|subject| subject.name == "delimiters")
+        .ok_or("missing delimiter subject")?;
+    assert_eq!(subject.assertions.len(), 2);
+    assert!(subject.assertions.iter().any(|oracle| {
+        oracle.kind == OracleKind::ExactValue
+            && oracle.text.contains("{")
+            && oracle.text.contains("}")
+    }));
+    assert!(subject.assertions.iter().any(|oracle| {
+        oracle.kind == OracleKind::ExactValue
+            && oracle.text.contains("[")
+            && oracle.text.contains("]")
+    }));
     Ok(())
 }
 
