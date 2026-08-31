@@ -86,10 +86,11 @@ pub(crate) fn inventory_seams_at_with_config(
     // Index the full set so `find_owner_function` can resolve owners
     // even when the seam appears in a file the production filter
     // includes but tests reference.
-    let index = rust_index::build_index_with_test_harnesses(
+    let index = rust_index::build_index_with_test_harnesses_and_production_like_targets(
         root,
         &rust_files,
         harness_registrations(config),
+        config.analysis().production_like_targets(),
     )?;
     Ok(inventory_seams_from_index(&production_files, &index))
 }

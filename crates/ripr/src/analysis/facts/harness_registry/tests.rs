@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::analysis::facts::build_index_with_test_harnesses;
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -311,7 +312,7 @@ fn trials() -> Vec<Trial> {
 }
 
 #[test]
-fn duplicate_trial_names_name_the_conflict_and_stay_one_subject()
+fn duplicate_trial_names_name_the_conflict_and_remove_both_subjects()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = temp_dir("duplicate-trials")?;
     write_workspace(
@@ -333,7 +334,7 @@ fn trials() -> Vec<Trial> {
     let files = [PathBuf::from("tests/duplicates.rs")];
     let registrations = [custom_target_registration("tests/duplicates.rs")];
     let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
-    assert_eq!(index.harness_subjects.len(), 1);
+    assert_eq!(index.harness_subjects.len(), 0);
     assert!(
         index
             .harness_limitations
@@ -343,6 +344,42 @@ fn trials() -> Vec<Trial> {
         "{:?}",
         index.harness_limitations
     );
+    assert!(
+        index.tests.iter().all(|test| test.name != "same_name"),
+        "a duplicate subject must not leave an executable test fact"
+    );
+    Ok(())
+}
+
+#[test]
+fn production_like_target_precedence_survives_harness_registration()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("production-like-precedence")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/mimic.rs",
+            "use libtest_mimic::Trial;\nfn helper() -> i32 { 1 }\nTrial::test(\"one\", || Ok(()));\n",
+        )],
+    )?;
+    let target = PathBuf::from("tests/mimic.rs");
+    let registrations = [custom_target_registration("tests/mimic.rs")];
+    let mut production_like = BTreeSet::new();
+    production_like.insert(target.clone());
+    let index =
+        crate::analysis::facts::build_index_with_test_harnesses_and_production_like_targets(
+            &root.0,
+            &[target],
+            &registrations,
+            &production_like,
+        )?;
+    let helper = index
+        .functions
+        .iter()
+        .find(|function| function.name == "helper")
+        .ok_or("missing helper")?;
+    assert_eq!(helper.source_role, FunctionSourceRole::Production);
+    assert!(index.harness_subjects.is_empty());
     Ok(())
 }
 
@@ -353,7 +390,7 @@ fn fully_qualified_trial_calls_match_the_marker_path() -> Result<(), Box<dyn std
         &root,
         &[(
             "tests/qualified.rs",
-            "fn trials() -> Vec<libtest_mimic::Trial> {\n    vec![libtest_mimic::Trial::test(\"qualified_case\", || Ok(()))]\n}\n",
+            "fn trials() -> Vec<libtest_mimic::Trial> {\n    vec![libtest_mimic::Trial::test(\"qualified_case\", || Ok(())), other::libtest_mimic::Trial::test(\"suffix_lookalike\", || Ok(()))]\n}\n",
         )],
     )?;
     let files = [PathBuf::from("tests/qualified.rs")];
@@ -637,6 +674,56 @@ fn trials() -> Vec<libtest_mimic::Trial> {
         index.harness_subjects
     );
     assert!(index.tests.is_empty(), "{:?}", index.tests);
+    Ok(())
+}
+
+#[test]
+fn trial_oracles_require_real_macros_and_preserve_source_lines()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("trial-oracles")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/oracles.rs",
+            "use libtest_mimic::Trial;\nfn trials() -> Vec<Trial> {\n    vec![Trial::test(\"oracle_case\", || {\n        let snapshot_value = 1;\n        let result = Some(snapshot_value).unwrap();\n        assert_eq!(result, 1);\n        result.expect(\"present\");\n        Ok(())\n    })]\n}\n",
+        )],
+    )?;
+    let index = build_index_with_test_harnesses(
+        &root.0,
+        &[PathBuf::from("tests/oracles.rs")],
+        &[custom_target_registration("tests/oracles.rs")],
+    )?;
+    let subject = index
+        .harness_subjects
+        .iter()
+        .find(|subject| subject.name == "oracle_case")
+        .ok_or("missing oracle subject")?;
+    assert_eq!(subject.assertions.len(), 3);
+    assert!(
+        subject
+            .assertions
+            .iter()
+            .any(|oracle| oracle.text == "unwrap" || oracle.text == ".unwrap(")
+    );
+    assert!(
+        subject
+            .assertions
+            .iter()
+            .any(|oracle| oracle.text == ".expect(")
+    );
+    assert!(
+        subject
+            .assertions
+            .iter()
+            .any(|oracle| oracle.text.starts_with("assert_eq!"))
+    );
+    assert!(
+        subject
+            .assertions
+            .iter()
+            .map(|oracle| oracle.line)
+            .any(|line| line > subject.start_line)
+    );
     Ok(())
 }
 

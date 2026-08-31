@@ -33,6 +33,7 @@ use super::test_styles::normalized_test_attribute_path as normalized_attribute_p
 use super::{
     HarnessLimitationFact, HarnessSelectorCapability, HarnessSubjectClaim, HarnessSubjectFact,
 };
+use crate::analysis::extract::extract_assertions;
 use crate::analysis::rust_index::{
     OracleFact, classify_assertion, extract_call_facts, extract_identifier_tokens,
     extract_literal_facts,
@@ -52,6 +53,7 @@ use std::path::Path;
 pub(super) fn apply_registrations(
     index: &mut RustIndex,
     registrations: &[TestHarnessRegistration],
+    production_like_targets: &std::collections::BTreeSet<std::path::PathBuf>,
 ) {
     if registrations.is_empty() {
         return;
@@ -68,6 +70,9 @@ pub(super) fn apply_registrations(
         let source = facts.source.clone();
         match (registration.kind, registration.adapter) {
             (TestHarnessKind::CustomHarnessTarget, TestHarnessAdapter::LibtestMimicV1) => {
+                if production_like_targets.contains(&registration.target) {
+                    continue;
+                }
                 apply_libtest_mimic_target(
                     index,
                     registration,
@@ -77,6 +82,9 @@ pub(super) fn apply_registrations(
                 )
             }
             (TestHarnessKind::RegisteredAttribute, TestHarnessAdapter::ExactAttributeV1) => {
+                if production_like_targets.contains(&registration.target) {
+                    continue;
+                }
                 apply_registered_attribute(
                     index,
                     registration,
@@ -244,6 +252,13 @@ fn apply_libtest_mimic_target(
                     "trial name `{name}` is registered more than once; conflicting subject claims fail closed"
                 ),
             });
+            subjects.retain(|subject| {
+                !(subject.registration_id == registration.registration_id && subject.name == name)
+            });
+            remove_file_test(index, &target, &name);
+            index
+                .tests
+                .retain(|test| !(test.file == target && test.name == name));
             continue;
         }
         // The subject span runs from the trial path to the balanced
@@ -251,14 +266,40 @@ fn apply_libtest_mimic_target(
         let Some(end_offset) = balanced_call_end(&tokens, matched.open_paren_index) else {
             continue;
         };
+        let callback = match trial_callback_name(&tokens, matched.name_token_index) {
+            Some(callback_name) => match unique_callback_function(index, &target, &callback_name) {
+                Some(function) => Some(function),
+                None => {
+                    limitations.push(HarnessLimitationFact {
+                        registration_id: registration.registration_id.clone(),
+                        code: "unresolved_trial_callback".to_string(),
+                        file: target.clone(),
+                        line,
+                        detail: format!(
+                            "trial callback `{callback_name}` is not a unique function item in the registered target; subject evidence remains unresolved"
+                        ),
+                    });
+                    continue;
+                }
+            },
+            None => None,
+        };
         let start: TextSize = tokens[position].text_range().start();
         let start_line = line_index.line(start);
         let end_line = line_index.line_for_range_end(TextSize::new(end_offset));
         let body = slice_text(source, start, TextSize::new(end_offset));
-        let calls = extract_call_facts(&body, start_line);
-        let literals = extract_literal_facts(&body, start_line);
-        let assertions =
-            parser_oracles_for_node_tokens(&tokens, matched.name_token_index, &line_index);
+        let (calls, literals, assertions) = match callback.as_ref() {
+            Some(function) => (
+                function.calls.clone(),
+                function.literals.clone(),
+                extract_assertions(&function.body, function.start_line),
+            ),
+            None => (
+                extract_call_facts(&body, start_line),
+                extract_literal_facts(&body, start_line),
+                parser_oracles_for_node_tokens(&tokens, matched.name_token_index, &line_index),
+            ),
+        };
         let subject = HarnessSubjectFact {
             registration_id: registration.registration_id.clone(),
             harness_kind: registration.kind.as_str().to_string(),
@@ -342,7 +383,9 @@ fn match_trial_path(
         // A bare `Trial` match is only a candidate at a path start; the
         // inner `Trial` of `other::Trial::test(` is a foreign path and
         // must not be adopted through an unrelated import binding.
-        if !qualified && !at_path_start(tokens, position, lone_colon_is_record_field) {
+        if (!qualified && !at_path_start(tokens, position, lone_colon_is_record_field))
+            || (qualified && !qualified_path_starts_at_boundary(tokens, position))
+        {
             continue;
         }
         let mut segments: Vec<&str> = if qualified {
@@ -390,6 +433,32 @@ fn match_trial_path(
         }
     }
     None
+}
+
+fn qualified_path_starts_at_boundary(
+    tokens: &[ra_ap_syntax::SyntaxToken],
+    position: usize,
+) -> bool {
+    let Some(previous) = position.checked_sub(1).and_then(|index| tokens.get(index)) else {
+        return true;
+    };
+    let prefix_end = if previous.kind() == ra_ap_syntax::SyntaxKind::COLON2 {
+        position.saturating_sub(2)
+    } else if previous.kind() == ra_ap_syntax::SyntaxKind::COLON
+        && tokens
+            .get(position.saturating_sub(2))
+            .is_some_and(|token| token.kind() == ra_ap_syntax::SyntaxKind::COLON)
+    {
+        position.saturating_sub(3)
+    } else {
+        return true;
+    };
+    // Permit an explicitly rooted `::marker::Trial` path, but reject
+    // `other::marker::Trial`: the configured marker must own the complete
+    // qualified path rather than merely appear as a suffix.
+    tokens
+        .get(prefix_end)
+        .is_none_or(|token| token.kind() != ra_ap_syntax::SyntaxKind::IDENT)
 }
 
 struct TrialPathMatch {
@@ -486,6 +555,38 @@ fn previous_significant_is_colon(tokens: &[ra_ap_syntax::SyntaxToken], from: usi
         );
     }
     false
+fn trial_callback_name(
+    tokens: &[ra_ap_syntax::SyntaxToken],
+    name_token_index: usize,
+) -> Option<String> {
+    let mut index = name_token_index + 1;
+    while let Some(token) = tokens.get(index) {
+        if token.kind() == ra_ap_syntax::SyntaxKind::COMMA {
+            return tokens
+                .get(index + 1)
+                .filter(|callback| callback.kind() == ra_ap_syntax::SyntaxKind::IDENT)
+                .map(|callback| callback.text().to_string());
+        }
+        if token.kind() == ra_ap_syntax::SyntaxKind::R_PAREN {
+            return None;
+        }
+        index += 1;
+    }
+    None
+}
+
+fn unique_callback_function(index: &RustIndex, target: &Path, name: &str) -> Option<FunctionFact> {
+    let mut matches = index
+        .files
+        .get(target)?
+        .functions
+        .iter()
+        .filter(|function| {
+            function.name == name && function.source_role == FunctionSourceRole::HarnessHelper
+        })
+        .cloned();
+    let function = matches.next()?;
+    matches.next().is_none().then_some(function)
 }
 
 /// Offset just past the `)` balancing the `(` at `open_paren_index`,
@@ -529,6 +630,7 @@ fn parser_oracles_for_node_tokens(
             ra_ap_syntax::SyntaxKind::R_PAREN => depth = depth.saturating_sub(1),
             ra_ap_syntax::SyntaxKind::IDENT => {
                 let name = token.text();
+<<<<<<< HEAD
                 // Shared leaf predicate; the bang gate below restores
                 // MacroCall semantics, and the leaf boundary keeps
                 // `snapshot_helper!`-style names out of the oracle set.
@@ -559,6 +661,41 @@ fn parser_oracles_for_node_tokens(
                 };
                 if text.ends_with('(') {
                     let mut macro_depth = 1;
+=======
+                let next = tokens.get(index + 1);
+                let is_macro_invocation = is_assertion_macro_name(name)
+                    && next.is_some_and(|token| token.kind() == ra_ap_syntax::SyntaxKind::BANG)
+                    && tokens.get(index + 2).is_some_and(|token| {
+                        matches!(
+                            token.kind(),
+                            ra_ap_syntax::SyntaxKind::L_PAREN
+                                | ra_ap_syntax::SyntaxKind::L_CURLY
+                                | ra_ap_syntax::SyntaxKind::L_BRACK
+                        )
+                    });
+                let is_fallible_call = matches!(name, "unwrap" | "expect")
+                    && index >= 1
+                    && tokens[index - 1].kind() == ra_ap_syntax::SyntaxKind::DOT
+                    && next.is_some_and(|token| token.kind() == ra_ap_syntax::SyntaxKind::L_PAREN);
+                if !is_macro_invocation && !is_fallible_call {
+                    index += 1;
+                    continue;
+                }
+                // assert!(..) / assert_eq!(..) — the bang and token tree
+                // follow; the assertion text is the macro invocation.
+                let mut text = if is_fallible_call {
+                    format!(".{name}(")
+                } else {
+                    name.to_string()
+                };
+                let mut cursor = index + 1;
+                if is_macro_invocation
+                    && tokens
+                        .get(cursor)
+                        .is_some_and(|token| token.kind() == ra_ap_syntax::SyntaxKind::BANG)
+                {
+                    text.push('!');
+>>>>>>> 195097cf2 (fix(analysis): harden registered harness evidence)
                     cursor += 1;
                     while cursor < tokens.len() && macro_depth > 0 {
                         let inner = &tokens[cursor];
@@ -570,10 +707,18 @@ fn parser_oracles_for_node_tokens(
                         text.push_str(inner.text());
                         cursor += 1;
                     }
+                } else if is_fallible_call {
+                    // The method name itself is sufficient for the shared
+                    // classifier to establish a smoke oracle. Keep the
+                    // argument body out of this small structural witness.
                 }
                 let classification = classify_assertion(&text);
                 assertions.push(OracleFact {
+<<<<<<< HEAD
                     line: line_index.line(tokens[index].text_range().start()) + 1,
+=======
+                    line: line_index.line(token.text_range().start()),
+>>>>>>> 195097cf2 (fix(analysis): harden registered harness evidence)
                     kind: classification.kind,
                     strength: classification.strength,
                     observed_tokens: extract_identifier_tokens(&text),
@@ -768,6 +913,12 @@ fn push_file_test(index: &mut RustIndex, target: &Path, test: TestFact) {
     }
 }
 
+fn remove_file_test(index: &mut RustIndex, target: &Path, name: &str) {
+    if let Some(facts) = index.files.get_mut(target) {
+        facts.tests.retain(|test| test.name != name);
+    }
+}
+
 /// Demote every function in a registered `harness = false` target to the
 /// evidence-only helper role and drop the target's executable
 /// `TestFact`s. With `harness = false` the libtest harness never
@@ -938,9 +1089,8 @@ enum TrialBindingResolution {
 
 fn resolve_trial_binding(bindings: &BTreeSet<String>, marker: &str) -> TrialBindingResolution {
     let anchored_full = format!("{marker}::Trial");
-    let matches_marker = |binding: &String| {
-        binding == &anchored_full || binding.ends_with(&format!("::{anchored_full}"))
-    };
+    let matches_marker =
+        |binding: &String| binding == &anchored_full || binding == &format!("::{anchored_full}");
     let anchored = bindings.iter().any(matches_marker);
     let conflicting = bindings
         .iter()
