@@ -162,20 +162,11 @@ fn apply_libtest_mimic_target(
         .filter_map(|element| element.into_token())
         .collect();
     let mut claimed_names = BTreeSet::new();
-    // One invocation is one open paren. A qualified path
-    // (`marker::Trial::test(`) also contains a token-local bare `Trial`
-    // position; claiming the paren prevents the bare pass from
-    // re-processing the same call and emitting a false
-    // duplicate_subject/unanchored_trial_path limitation.
-    let mut claimed_invocations = BTreeSet::new();
 
     for position in 0..tokens.len() {
         let Some(matched) = match_trial_path(&tokens, position, &registration.marker) else {
             continue;
         };
-        if !claimed_invocations.insert(matched.open_paren_index) {
-            continue;
-        }
         let line = line_index.line(tokens[position].text_range().start());
         // Anchoring: the bare `Trial` form needs a top-level import bound
         // from exactly the marker path; the qualified form carries the
@@ -212,11 +203,6 @@ fn apply_libtest_mimic_target(
             }
         }
 
-        // A `Trial::test` template inside a `macro_rules!` definition is
-        // not a concrete registration; only a real invocation is.
-        if inside_macro_rules(tokens[position].parent_ancestors()) {
-            continue;
-        }
         if in_loop(tokens[position].parent_ancestors()) {
             limitations.push(HarnessLimitationFact {
                 registration_id: registration.registration_id.clone(),
@@ -279,7 +265,7 @@ fn apply_libtest_mimic_target(
                             "trial callback `{callback_name}` is not a unique function item in the registered target; subject evidence remains unresolved"
                         ),
                     });
-                    continue;
+                    None
                 }
             },
             None => None,
@@ -370,22 +356,8 @@ fn match_trial_path(
         }
     }
 
-    // A lone `:` predecessor only continues into a candidate when it is
-    // a record field (`trials: Trial::test(...)`) - either parsed as one,
-    // or shaped like one inside a macro's token tree (field name `ident`
-    // preceded by `{` or `,`). Macro input like `stringify!(trial:
-    // Trial::test(...))` is inert data and must not adopt the exception.
-    let lone_colon_is_record_field = tokens[position].parent_ancestors().any(|ancestor| {
-        ast::RecordExprField::can_cast(ancestor.kind())
-            || ast::RecordExprFieldList::can_cast(ancestor.kind())
-    }) || preceded_by_record_literal_shape(tokens, position);
     for qualified in [false, true] {
-        // A bare `Trial` match is only a candidate at a path start; the
-        // inner `Trial` of `other::Trial::test(` is a foreign path and
-        // must not be adopted through an unrelated import binding.
-        if (!qualified && !at_path_start(tokens, position, lone_colon_is_record_field))
-            || (qualified && !qualified_path_starts_at_boundary(tokens, position))
-        {
+        if qualified && !qualified_path_starts_at_boundary(tokens, position) {
             continue;
         }
         let mut segments: Vec<&str> = if qualified {
@@ -411,23 +383,9 @@ fn match_trial_path(
             }
         }
         if matched_segments == segments.len() && l_paren(cursor) {
-            // The name literal need not be adjacent to the paren:
-            // `Trial::test( "name", …)` is legal, so skip trivia before
-            // reading the name token.
-            let mut name_token_index = cursor + 1;
-            while let Some(token) = tokens.get(name_token_index) {
-                if matches!(
-                    token.kind(),
-                    ra_ap_syntax::SyntaxKind::WHITESPACE | ra_ap_syntax::SyntaxKind::COMMENT
-                ) {
-                    name_token_index += 1;
-                } else {
-                    break;
-                }
-            }
             return Some(TrialPathMatch {
                 qualified,
-                name_token_index,
+                name_token_index: cursor + 1,
                 open_paren_index: cursor,
             });
         }
@@ -467,94 +425,6 @@ struct TrialPathMatch {
     open_paren_index: usize,
 }
 
-/// Whether the token at `position` can begin a path: scanning back past
-/// trivia, its predecessor must not be a path separator (`other_module
-/// :: Trial` must not match at its inner `Trial` token). `::` may reach
-/// the scanner as one COLON2 token or as two adjacent COLON tokens, so a
-/// single COLON only continues a path when another colon precedes it; a
-/// lone `:` is struct-field syntax and a field initializer like
-/// `trials: Trial::test(...)` still starts a path.
-fn at_path_start(
-    tokens: &[ra_ap_syntax::SyntaxToken],
-    position: usize,
-    lone_colon_is_record_field: bool,
-) -> bool {
-    let mut cursor = position;
-    while cursor > 0 {
-        cursor -= 1;
-        if matches!(
-            tokens[cursor].kind(),
-            ra_ap_syntax::SyntaxKind::WHITESPACE | ra_ap_syntax::SyntaxKind::COMMENT
-        ) {
-            continue;
-        }
-        return match tokens[cursor].kind() {
-            ra_ap_syntax::SyntaxKind::COLON2 => false,
-            ra_ap_syntax::SyntaxKind::COLON => {
-                !previous_significant_is_colon(tokens, cursor) && lone_colon_is_record_field
-            }
-            _ => true,
-        };
-    }
-    true
-}
-
-/// Whether a lone-colon candidate at `position` carries the record
-/// literal shape inside a macro token tree: `field_ident :` preceded by
-/// `{` or `,` (`vec![Suite { trials: Trial::test(...) }]`). A macro
-/// input label (`stringify!(trial: ...)`) is preceded by the opening
-/// delimiter instead and stays excluded.
-fn preceded_by_record_literal_shape(tokens: &[ra_ap_syntax::SyntaxToken], position: usize) -> bool {
-    let mut cursor = position;
-    let mut saw_colon = false;
-    let mut saw_field_ident = false;
-    while cursor > 0 {
-        cursor -= 1;
-        let token = &tokens[cursor];
-        if matches!(
-            token.kind(),
-            ra_ap_syntax::SyntaxKind::WHITESPACE | ra_ap_syntax::SyntaxKind::COMMENT
-        ) {
-            continue;
-        }
-        if !saw_colon {
-            if token.kind() != ra_ap_syntax::SyntaxKind::COLON {
-                return false;
-            }
-            saw_colon = true;
-            continue;
-        }
-        if !saw_field_ident {
-            if token.kind() != ra_ap_syntax::SyntaxKind::IDENT {
-                return false;
-            }
-            saw_field_ident = true;
-            continue;
-        }
-        return matches!(
-            token.kind(),
-            ra_ap_syntax::SyntaxKind::L_CURLY | ra_ap_syntax::SyntaxKind::COMMA
-        );
-    }
-    false
-}
-
-fn previous_significant_is_colon(tokens: &[ra_ap_syntax::SyntaxToken], from: usize) -> bool {
-    let mut cursor = from;
-    while cursor > 0 {
-        cursor -= 1;
-        if matches!(
-            tokens[cursor].kind(),
-            ra_ap_syntax::SyntaxKind::WHITESPACE | ra_ap_syntax::SyntaxKind::COMMENT
-        ) {
-            continue;
-        }
-        return matches!(
-            tokens[cursor].kind(),
-            ra_ap_syntax::SyntaxKind::COLON | ra_ap_syntax::SyntaxKind::COLON2
-        );
-    }
-    false
 fn trial_callback_name(
     tokens: &[ra_ap_syntax::SyntaxToken],
     name_token_index: usize,
@@ -571,10 +441,52 @@ fn trial_callback_name(
             }) {
                 callback_index += 1;
             }
-            return tokens
-                .get(callback_index)
-                .filter(|callback| callback.kind() == ra_ap_syntax::SyntaxKind::IDENT)
-                .map(|callback| callback.text().to_string());
+            let first = tokens.get(callback_index)?;
+            if first.kind() != ra_ap_syntax::SyntaxKind::IDENT {
+                return None;
+            }
+            let mut callback = first.text().to_string();
+            callback_index += 1;
+            loop {
+                while tokens.get(callback_index).is_some_and(|token| {
+                    matches!(
+                        token.kind(),
+                        ra_ap_syntax::SyntaxKind::WHITESPACE | ra_ap_syntax::SyntaxKind::COMMENT
+                    )
+                }) {
+                    callback_index += 1;
+                }
+                let separator_width = match tokens.get(callback_index).map(|token| token.kind()) {
+                    Some(ra_ap_syntax::SyntaxKind::COLON2) => Some(1),
+                    Some(ra_ap_syntax::SyntaxKind::COLON)
+                        if tokens.get(callback_index + 1).is_some_and(|token| {
+                            token.kind() == ra_ap_syntax::SyntaxKind::COLON
+                        }) =>
+                    {
+                        Some(2)
+                    }
+                    _ => None,
+                };
+                let Some(separator_width) = separator_width else {
+                    break;
+                };
+                callback_index += separator_width;
+                while tokens.get(callback_index).is_some_and(|token| {
+                    matches!(
+                        token.kind(),
+                        ra_ap_syntax::SyntaxKind::WHITESPACE | ra_ap_syntax::SyntaxKind::COMMENT
+                    )
+                }) {
+                    callback_index += 1;
+                }
+                let segment = tokens
+                    .get(callback_index)
+                    .filter(|token| token.kind() == ra_ap_syntax::SyntaxKind::IDENT)?;
+                callback.push_str("::");
+                callback.push_str(segment.text());
+                callback_index += 1;
+            }
+            return Some(callback);
         }
         if token.kind() == ra_ap_syntax::SyntaxKind::R_PAREN {
             return None;
@@ -585,6 +497,10 @@ fn trial_callback_name(
 }
 
 fn unique_callback_function(index: &RustIndex, target: &Path, name: &str) -> Option<FunctionFact> {
+    let name = match name.rsplit("::").next() {
+        Some(name) => name,
+        None => name,
+    };
     let mut matches = index
         .files
         .get(target)?
@@ -622,8 +538,7 @@ fn balanced_call_end(tokens: &[ra_ap_syntax::SyntaxToken], open_paren_index: usi
 /// Assertion evidence for one trial subject: the exact assertion-macro and
 /// `unwrap`/`expect` tokens inside the registration's own argument span.
 /// Only tokens between the name argument and the balanced close count, so
-/// adjacent code never credits this subject. Each oracle carries the real
-/// source line of its invocation.
+/// adjacent code never credits this subject.
 fn parser_oracles_for_node_tokens(
     tokens: &[ra_ap_syntax::SyntaxToken],
     name_token_index: usize,
@@ -639,49 +554,35 @@ fn parser_oracles_for_node_tokens(
             ra_ap_syntax::SyntaxKind::R_PAREN => depth = depth.saturating_sub(1),
             ra_ap_syntax::SyntaxKind::IDENT => {
                 let name = token.text();
-<<<<<<< HEAD
-                // Shared leaf predicate; the bang gate below restores
-                // MacroCall semantics, and the leaf boundary keeps
-                // `snapshot_helper!`-style names out of the oracle set.
-                if !crate::analysis::syntax::ra::is_assertion_macro_leaf(name) {
-                    index += 1;
-                    continue;
-                }
-                // Macro semantics: an assertion is an invocation, so a
-                // bang must follow the path segment (trivia allowed). A
-                // plain identifier that merely contains an assertion
-                // keyword (`let snapshots = …`) never classifies.
-                let bang_index = match next_significant(tokens, index + 1) {
-                    Some(next) if tokens[next].kind() == ra_ap_syntax::SyntaxKind::BANG => next,
-                    _ => {
-                        index += 1;
-                        continue;
-                    }
-                };
-                // assert!(..) / assert_eq!(..) — the token tree follows;
-                // the assertion text is the macro invocation.
-                let mut text = format!("{name}!");
-                let mut cursor = match next_significant(tokens, bang_index + 1) {
-                    Some(next) if tokens[next].kind() == ra_ap_syntax::SyntaxKind::L_PAREN => {
-                        text.push('(');
-                        next
-                    }
-                    _ => bang_index + 1,
-                };
-                if text.ends_with('(') {
-                    let mut macro_depth = 1;
-=======
                 let next = tokens.get(index + 1);
-                let is_macro_invocation = is_assertion_macro_name(name)
+                let macro_open_index = if is_assertion_macro_name(name)
                     && next.is_some_and(|token| token.kind() == ra_ap_syntax::SyntaxKind::BANG)
-                    && tokens.get(index + 2).is_some_and(|token| {
+                {
+                    let mut open_index = index + 2;
+                    while tokens.get(open_index).is_some_and(|token| {
                         matches!(
                             token.kind(),
-                            ra_ap_syntax::SyntaxKind::L_PAREN
-                                | ra_ap_syntax::SyntaxKind::L_CURLY
-                                | ra_ap_syntax::SyntaxKind::L_BRACK
+                            ra_ap_syntax::SyntaxKind::WHITESPACE
+                                | ra_ap_syntax::SyntaxKind::COMMENT
                         )
-                    });
+                    }) {
+                        open_index += 1;
+                    }
+                    tokens
+                        .get(open_index)
+                        .is_some_and(|token| {
+                            matches!(
+                                token.kind(),
+                                ra_ap_syntax::SyntaxKind::L_PAREN
+                                    | ra_ap_syntax::SyntaxKind::L_CURLY
+                                    | ra_ap_syntax::SyntaxKind::L_BRACK
+                            )
+                        })
+                        .then_some(open_index)
+                } else {
+                    None
+                };
+                let is_macro_invocation = macro_open_index.is_some();
                 let is_fallible_call = matches!(name, "unwrap" | "expect")
                     && index >= 1
                     && tokens[index - 1].kind() == ra_ap_syntax::SyntaxKind::DOT
@@ -704,17 +605,11 @@ fn parser_oracles_for_node_tokens(
                         .is_some_and(|token| token.kind() == ra_ap_syntax::SyntaxKind::BANG)
                 {
                     text.push('!');
->>>>>>> 195097cf2 (fix(analysis): harden registered harness evidence)
-                    cursor += 1;
-                    while cursor < tokens.len() && macro_depth > 0 {
-                        let inner = &tokens[cursor];
-                        match inner.kind() {
-                            ra_ap_syntax::SyntaxKind::L_PAREN => macro_depth += 1,
-                            ra_ap_syntax::SyntaxKind::R_PAREN => macro_depth -= 1,
-                            _ => {}
-                        }
-                        text.push_str(inner.text());
-                        cursor += 1;
+                    if let Some(open_index) = macro_open_index {
+                        cursor = open_index;
+                    }
+                    if let Some(tree_text) = macro_token_tree_text(tokens, cursor) {
+                        text.push_str(&tree_text);
                     }
                 } else if is_fallible_call {
                     // The method name itself is sufficient for the shared
@@ -723,20 +618,12 @@ fn parser_oracles_for_node_tokens(
                 }
                 let classification = classify_assertion(&text);
                 assertions.push(OracleFact {
-<<<<<<< HEAD
-                    line: line_index.line(tokens[index].text_range().start()) + 1,
-=======
                     line: line_index.line(token.text_range().start()),
->>>>>>> 195097cf2 (fix(analysis): harden registered harness evidence)
                     kind: classification.kind,
                     strength: classification.strength,
                     observed_tokens: extract_identifier_tokens(&text),
                     text,
                 });
-                // The macro body has been consumed; resuming inside it
-                // would rescan nested idents as separate top-level
-                // oracles.
-                index = cursor.saturating_sub(1);
             }
             _ => {}
         }
@@ -746,16 +633,49 @@ fn parser_oracles_for_node_tokens(
     assertions
 }
 
-/// Index of the next non-trivia token at or after `from`.
-fn next_significant(tokens: &[ra_ap_syntax::SyntaxToken], from: usize) -> Option<usize> {
-    (from..tokens.len()).find(|index| {
-        !matches!(
-            tokens[*index].kind(),
-            ra_ap_syntax::SyntaxKind::WHITESPACE | ra_ap_syntax::SyntaxKind::COMMENT
-        )
-    })
+fn macro_token_tree_text(
+    tokens: &[ra_ap_syntax::SyntaxToken],
+    open_index: usize,
+) -> Option<String> {
+    let mut delimiters = Vec::new();
+    let mut text = String::new();
+    for token in tokens.iter().skip(open_index) {
+        let kind = token.kind();
+        match kind {
+            ra_ap_syntax::SyntaxKind::L_PAREN
+            | ra_ap_syntax::SyntaxKind::L_CURLY
+            | ra_ap_syntax::SyntaxKind::L_BRACK => delimiters.push(kind),
+            ra_ap_syntax::SyntaxKind::R_PAREN
+            | ra_ap_syntax::SyntaxKind::R_CURLY
+            | ra_ap_syntax::SyntaxKind::R_BRACK => {
+                let opening = delimiters.pop()?;
+                let expected = match opening {
+                    ra_ap_syntax::SyntaxKind::L_PAREN => ra_ap_syntax::SyntaxKind::R_PAREN,
+                    ra_ap_syntax::SyntaxKind::L_CURLY => ra_ap_syntax::SyntaxKind::R_CURLY,
+                    ra_ap_syntax::SyntaxKind::L_BRACK => ra_ap_syntax::SyntaxKind::R_BRACK,
+                    _ => return None,
+                };
+                if kind != expected {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+        text.push_str(token.text());
+        if delimiters.is_empty() {
+            return Some(text);
+        }
+    }
+    None
 }
 
+fn is_assertion_macro_name(name: &str) -> bool {
+    matches!(
+        name,
+        "assert" | "assert_eq" | "assert_ne" | "assert_matches" | "matches"
+    ) || name.starts_with("insta::assert")
+        || name.contains("snapshot")
+}
 /// Exact registered test-producing attribute adapter, generation 1
 /// (#3532). Promotes functions carrying the exact registered attribute
 /// path through the shared #3531 role authority. The attribute must
@@ -771,20 +691,18 @@ fn apply_registered_attribute(
 ) {
     let target = registration.target.clone();
     let parse = SourceFile::parse(source, Edition::CURRENT);
-    if !parse.errors().is_empty() {
-        // Fail closed: subject promotion over an unparseable target is
-        // unsound, so nothing beyond the typed limitation is established.
+    let use_bindings = if parse.errors().is_empty() {
+        top_level_use_bindings(parse.tree().syntax(), marker_leaf(&registration.marker))
+    } else {
         limitations.push(HarnessLimitationFact {
             registration_id: registration.registration_id.clone(),
             code: "parse_unavailable".to_string(),
-            file: target,
+            file: target.clone(),
             line: 1,
             detail: "the registered attribute target did not parse; no registered subjects were established (fail closed)".to_string(),
         });
-        return;
-    }
-    let use_bindings =
-        top_level_use_bindings(parse.tree().syntax(), marker_leaf(&registration.marker));
+        BTreeSet::new()
+    };
     let promoted_functions: Vec<(usize, String, TestFact, HarnessSubjectFact)> = {
         let Some(facts) = index.files.get(&target) else {
             return;
@@ -979,21 +897,16 @@ fn resolve_registered_attribute(
     marker: &str,
     use_bindings: &BTreeSet<String>,
 ) -> Option<RegisteredAttributeResolution> {
-    // Exact full-path spellings win regardless of attribute order: an
-    // earlier bare spelling must not mask a later exact `#[<marker>]`.
-    for attribute in attrs {
-        if normalized_attribute_path(attribute).as_deref() == Some(marker) {
-            return Some(RegisteredAttributeResolution::Matched);
-        }
-    }
-    let (_prefix, name) = marker.rsplit_once("::")?;
     for attribute in attrs {
         let Some(path) = normalized_attribute_path(attribute) else {
             continue;
         };
         if path == marker {
-            continue;
+            return Some(RegisteredAttributeResolution::Matched);
         }
+        let Some((_prefix, name)) = marker.rsplit_once("::") else {
+            continue;
+        };
         if path != name {
             continue;
         }
@@ -1122,12 +1035,6 @@ fn resolve_trial_binding(bindings: &BTreeSet<String>, marker: &str) -> TrialBind
 /// Whether the ancestor chain of a token sits inside a loop expression —
 /// the bounded signal for runtime-only trial discovery. Works through
 /// macro token trees too, because tokens keep their ancestor nodes.
-/// Whether the token sits inside a `macro_rules!` definition body: the
-/// tokens there are a template, not an executed registration.
-fn inside_macro_rules(mut ancestors: impl Iterator<Item = ra_ap_syntax::SyntaxNode>) -> bool {
-    ancestors.any(|ancestor| ast::MacroRules::can_cast(ancestor.kind()))
-}
-
 fn in_loop(mut ancestors: impl Iterator<Item = ra_ap_syntax::SyntaxNode>) -> bool {
     ancestors.any(|ancestor| {
         ast::WhileExpr::can_cast(ancestor.kind())
