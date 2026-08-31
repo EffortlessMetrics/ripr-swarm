@@ -270,7 +270,7 @@ mod tests {
             file_budget: 2,
             line_budget: 100,
             budget_disclosures: vec![
-                "RIPR_PARTIAL_DIFF_LINE_BUDGET=2001 exceeds the hard analysis-cost guard (2000); clamped to 2000".to_string(),
+                "RIPR_PARTIAL_DIFF_LINE_BUDGET=2001 exceeds the effective analysis-cost limit (2000); clamped to 2000".to_string(),
             ],
             selected_files: vec!["src/a.rs".to_string()],
             selected_changed_lines: 60,

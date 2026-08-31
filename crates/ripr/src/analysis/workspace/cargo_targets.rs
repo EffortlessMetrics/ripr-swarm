@@ -74,6 +74,61 @@ fn collect_explicit_paths(
     }
 }
 
+/// Crate-root paths declared by one manifest, relative to `manifest_dir`
+/// (#3533 review): `path = ...` on `[lib]`, `[[bin]]`, `[[test]]`,
+/// `[[bench]]`, and `[[example]]` targets. Rust resolves out-of-line
+/// `mod name;` in these files relative to the file's containing directory
+/// regardless of its filename, so module composition needs this identity.
+/// Entries whose declared path escapes the package directory are dropped
+/// rather than trusted. Malformed manifests yield no declared roots.
+pub(crate) fn declared_crate_root_paths_from_manifest(
+    manifest_text: &str,
+    manifest_dir: &Path,
+) -> Vec<PathBuf> {
+    let Ok(value) = toml::from_str::<toml::Value>(manifest_text) else {
+        return Vec::new();
+    };
+    let normalized_dir = normalize(manifest_dir);
+    let mut normalized = BTreeSet::new();
+    for key in ["lib", "bin", "test", "bench", "example"] {
+        let entries = match value.get(key) {
+            // `[lib]` is a single table; the targets are arrays of tables.
+            Some(toml::Value::Array(entries)) => entries.iter().collect::<Vec<_>>(),
+            Some(table @ toml::Value::Table(_)) => vec![table],
+            _ => continue,
+        };
+        for entry in entries {
+            let Some(path) = entry.get("path").and_then(|path| path.as_str()) else {
+                continue;
+            };
+            let path = path.trim();
+            if path.is_empty() {
+                continue;
+            }
+            normalized.insert(normalize(&manifest_dir.join(path)));
+        }
+    }
+    normalized
+        .into_iter()
+        .filter_map(|target| {
+            target
+                .strip_prefix(&normalized_dir)
+                .ok()
+                .map(|relative| relative.to_path_buf())
+        })
+        .filter(|relative| {
+            // ParentDir (or absolute/prefix) components escape the package
+            // directory: drop the target rather than trust it.
+            relative.components().all(|component| {
+                matches!(
+                    component,
+                    std::path::Component::Normal(_) | std::path::Component::CurDir
+                )
+            })
+        })
+        .collect()
+}
+
 /// Build the source-role context for a set of analyzed files: read each
 /// distinct owning package manifest once. `files` are workspace-relative
 /// discovery identities; `workspace_root` anchors the package-root walk
@@ -150,6 +205,33 @@ fn normalize(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Crate-root identity extraction (#3533 review): `[lib]` tables and
+    /// `[[bin]]`/`[[test]]`/`[[bench]]`/`[[example]]` arrays contribute
+    /// package-relative paths; entries without `path` and escaping paths
+    /// contribute nothing.
+    #[test]
+    fn crate_root_paths_cover_lib_table_and_target_arrays() {
+        let manifest = "[package]\nname='x'\nversion='0.1.0'\n\
+            \n[lib]\npath='source/root.rs'\n\
+            \n[[bin]]\nname='tool'\npath='src/tool.rs'\n\
+            \n[[bin]]\nname='autodiscovered'\n\
+            \n[[test]]\npath='../escaped.rs'\n\
+            \n[[bench]]\npath='benches/perf.rs'\n";
+        let roots = declared_crate_root_paths_from_manifest(manifest, Path::new("/ws/pkg-a"));
+        assert_eq!(
+            roots,
+            vec![
+                PathBuf::from("benches/perf.rs"),
+                PathBuf::from("source/root.rs"),
+                PathBuf::from("src/tool.rs"),
+            ]
+        );
+        assert!(
+            declared_crate_root_paths_from_manifest("not [ valid toml", Path::new("/ws/pkg-a"))
+                .is_empty()
+        );
+    }
 
     #[test]
     fn explicit_test_and_bench_paths_are_extracted() {

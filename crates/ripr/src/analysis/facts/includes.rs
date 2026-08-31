@@ -1,4 +1,4 @@
-use super::{RustIncludeLimitation, RustIndex};
+use super::{ResolvedIncludeParent, RustIncludeLimitation, RustIndex};
 use crate::analysis::syntax::rust_include_directives;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
@@ -109,6 +109,7 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
                 parent.clone(),
                 directive.line,
                 directive.expression,
+                directive.requires_test,
             ));
         }
     }
@@ -127,22 +128,30 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
         return;
     }
 
-    let mut parents_by_child: BTreeMap<PathBuf, Vec<(PathBuf, usize, String)>> = BTreeMap::new();
-    for (child, parent, line, expression) in edges {
+    let mut parents_by_child: BTreeMap<PathBuf, Vec<(PathBuf, usize, String, bool)>> =
+        BTreeMap::new();
+    for (child, parent, line, expression, requires_test) in edges {
         parents_by_child
             .entry(child)
             .or_default()
-            .push((parent, line, expression));
+            .push((parent, line, expression, requires_test));
     }
 
     let mut parents = BTreeMap::new();
     for (child, owners) in parents_by_child {
         let distinct = owners
             .iter()
-            .map(|(parent, _, _)| parent)
+            .map(|(parent, _, _, _)| parent)
+            .collect::<BTreeSet<_>>();
+        // Ambiguous ownership, or one parent whose include invocations
+        // disagree on the cfg-test requirement (#3533): neither resolves to
+        // one context, so the child keeps its standalone roles.
+        let requirements = owners
+            .iter()
+            .map(|(_, _, _, requires_test)| *requires_test)
             .collect::<BTreeSet<_>>();
         if distinct.len() != 1 {
-            for (parent, line, expression) in owners {
+            for (parent, line, expression, _) in owners {
                 limitations.push(limitation(
                     &parent,
                     line,
@@ -152,15 +161,32 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
             }
             continue;
         }
-        if let Some((parent, _, _)) = owners.into_iter().next() {
-            parents.insert(child, parent);
+        if requirements.len() != 1 {
+            for (parent, line, expression, _) in owners {
+                limitations.push(limitation(
+                    &parent,
+                    line,
+                    &expression,
+                    "rust_include_conflicting_cfg_requirement",
+                ));
+            }
+            continue;
+        }
+        if let Some((parent, _, _, requires_test)) = owners.into_iter().next() {
+            parents.insert(
+                child,
+                ResolvedIncludeParent {
+                    parent,
+                    requires_test,
+                },
+            );
         }
     }
 
     let unsafe_children = cycle_or_depth_limited_children(&parents);
     for child in &unsafe_children {
         let parent = match parents.get(child) {
-            Some(parent) => parent.as_path(),
+            Some(edge) => edge.parent.as_path(),
             None => Path::new("."),
         };
         limitations.push(limitation(
@@ -278,7 +304,9 @@ fn include_edge_count_within_limit(count: usize) -> bool {
     count <= MAX_INCLUDE_EDGES
 }
 
-fn cycle_or_depth_limited_children(parents: &BTreeMap<PathBuf, PathBuf>) -> BTreeSet<PathBuf> {
+fn cycle_or_depth_limited_children(
+    parents: &BTreeMap<PathBuf, ResolvedIncludeParent>,
+) -> BTreeSet<PathBuf> {
     let mut unsafe_children = BTreeSet::new();
     for child in parents.keys() {
         let mut seen = BTreeSet::new();
@@ -289,7 +317,7 @@ fn cycle_or_depth_limited_children(parents: &BTreeMap<PathBuf, PathBuf>) -> BTre
                 cycle_detected = true;
                 break;
             }
-            let Some(parent) = parents.get(cursor) else {
+            let Some(parent) = parents.get(cursor).map(|edge| &edge.parent) else {
                 break;
             };
             cursor = parent;
@@ -315,7 +343,7 @@ fn rebase_function_identities(index: &mut RustIndex) {
 
 fn rebase_function_identity(
     function: &mut super::FunctionFact,
-    parents: &BTreeMap<PathBuf, PathBuf>,
+    parents: &BTreeMap<PathBuf, ResolvedIncludeParent>,
 ) {
     let compilation_unit = compilation_unit_path_from_parents(parents, &function.file);
     if compilation_unit == function.file {
@@ -328,15 +356,15 @@ fn rebase_function_identity(
 }
 
 pub(crate) fn compilation_unit_path_from_parents(
-    parents: &BTreeMap<PathBuf, PathBuf>,
+    parents: &BTreeMap<PathBuf, ResolvedIncludeParent>,
     file: &Path,
 ) -> PathBuf {
     let mut cursor = file.to_path_buf();
     for _ in 0..MAX_INCLUDE_DEPTH {
-        let Some(parent) = parents.get(&cursor) else {
+        let Some(parent) = parents.get(&cursor).map(|edge| edge.parent.clone()) else {
             break;
         };
-        cursor = parent.clone();
+        cursor = parent;
     }
     cursor
 }
@@ -398,10 +426,13 @@ mod tests {
         for depth in 0..=MAX_INCLUDE_DEPTH {
             parents.insert(
                 PathBuf::from(format!("src/fragment-{depth}.rs")),
-                if depth == MAX_INCLUDE_DEPTH {
-                    PathBuf::from("src/lib.rs")
-                } else {
-                    PathBuf::from(format!("src/fragment-{}.rs", depth + 1))
+                ResolvedIncludeParent {
+                    parent: if depth == MAX_INCLUDE_DEPTH {
+                        PathBuf::from("src/lib.rs")
+                    } else {
+                        PathBuf::from(format!("src/fragment-{}.rs", depth + 1))
+                    },
+                    requires_test: false,
                 },
             );
         }
@@ -421,5 +452,21 @@ mod tests {
         let over_limit = "x".repeat(MAX_INCLUDED_FILE_BYTES + 1);
         assert!(included_file_within_size_limit(&at_limit));
         assert!(!included_file_within_size_limit(&over_limit));
+    }
+
+    /// One parent whose include invocations disagree on the cfg-test
+    /// requirement resolves to no single context: the child keeps its
+    /// standalone roles and the conflict is named (#3533).
+    #[test]
+    fn conflicting_include_requirements_fail_closed() -> Result<(), String> {
+        // Producer level: the invocation's own attributes classify through
+        // the shared cfg authority.
+        let source = "include!(\"fragment.rs\");\n\n#[cfg(test)]\ninclude!(\"fragment.rs\");\n";
+        let directives =
+            crate::analysis::syntax::rust_include_directives(Path::new("src/lib.rs"), source, 16)?;
+        assert_eq!(directives.len(), 2);
+        assert!(!directives[0].requires_test);
+        assert!(directives[1].requires_test);
+        Ok(())
     }
 }

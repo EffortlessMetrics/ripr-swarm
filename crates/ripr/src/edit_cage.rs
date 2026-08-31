@@ -1396,21 +1396,109 @@ mod tests {
         Ok(ExternalFixture { root })
     }
 
+    /// Per-invocation fixture deadline. Host git slowness (Defender scans
+    /// of fresh `.git` directories on Windows) routinely pushes a single
+    /// `git add`/`commit` past shorter windows, so the deadline is generous
+    /// and idempotent commands are retried once on a timeout.
+    const FIXTURE_GIT_DEADLINE: Duration = Duration::from_secs(30);
+
+    /// Fixture git commands whose re-execution cannot change fixture state.
+    /// `commit` is deliberately absent: a timed-out commit may still have
+    /// landed, so it is reconciled by checking whether HEAD exists instead
+    /// of blindly re-running (a re-run would fail with "nothing to
+    /// commit"), (#3597 review).
+    const RETRYABLE_FIXTURE_GIT: &[&str] = &[
+        "init",
+        "config",
+        "add",
+        "checkout",
+        "update-ref",
+        "rev-parse",
+        "status",
+    ];
+
     fn git_ok(root: &Path, args: &[&str]) -> Result<(), String> {
-        let output = crate::git::run_git_output_with_deadline_and_limit_isolated(
+        // A `commit` is reconciled against the revision it started from: a
+        // timed-out commit that moved HEAD landed; one that left HEAD
+        // unchanged did not and must not be re-run blindly ("nothing to
+        // commit" would mask the real failure).
+        let head_before = if args.first() == Some(&"commit") {
+            current_head(root)
+        } else {
+            None
+        };
+
+        let first = match crate::git::run_git_output_with_deadline_and_limit_isolated(
             root,
             args,
-            Duration::from_secs(10),
+            FIXTURE_GIT_DEADLINE,
             4 * 1024 * 1024,
-        )?;
-        if output.status.success() {
-            return Ok(());
+        ) {
+            Ok(output) if output.status.success() => return Ok(()),
+            Ok(output) => {
+                return Err(format!(
+                    "isolated fixture git {args:?} failed in {}: {}",
+                    root.display(),
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ));
+            }
+            // The timeout is the retryable/reconcilable outcome; every other
+            // runner error propagates untouched.
+            Err(error) if crate::git::is_git_invocation_timeout(&error) => error,
+            Err(error) => return Err(error),
+        };
+
+        // Reconcile a timed-out commit: HEAD moved past the pre-commit
+        // revision, so the commit landed despite the deadline.
+        if args.first() == Some(&"commit") {
+            let head_after = current_head(root);
+            let landed = head_after.is_some() && head_after != head_before;
+            if landed {
+                return Ok(());
+            }
+            return Err(first);
         }
-        Err(format!(
-            "isolated fixture git {args:?} failed in {}: {}",
-            root.display(),
-            String::from_utf8_lossy(&output.stderr).trim()
-        ))
+
+        // Only provably idempotent commands are re-executed.
+        if !args
+            .first()
+            .is_some_and(|command| RETRYABLE_FIXTURE_GIT.contains(command))
+        {
+            return Err(first);
+        }
+        match crate::git::run_git_output_with_deadline_and_limit_isolated(
+            root,
+            args,
+            FIXTURE_GIT_DEADLINE,
+            4 * 1024 * 1024,
+        ) {
+            Ok(output) if output.status.success() => Ok(()),
+            Ok(output) => Err(format!(
+                "isolated fixture git {args:?} failed again in {}: {}",
+                root.display(),
+                String::from_utf8_lossy(&output.stderr).trim()
+            )),
+            Err(error) if crate::git::is_git_invocation_timeout(&error) => {
+                Err(format!("retry timed out: {error}"))
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Current HEAD revision of the fixture repository, or `None` when the
+    /// repository has no commits (fresh `git init`).
+    fn current_head(root: &Path) -> Option<String> {
+        let output = crate::git::run_git_output_with_deadline_and_limit_isolated(
+            root,
+            &["rev-parse", "-q", "--verify", "HEAD"],
+            FIXTURE_GIT_DEADLINE,
+            4 * 1024 * 1024,
+        )
+        .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 
     fn policy() -> Result<EditCagePolicy, String> {

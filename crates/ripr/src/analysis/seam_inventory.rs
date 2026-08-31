@@ -1313,6 +1313,9 @@ pub(crate) fn inventory_seams_from_index(
     if let Some(disclosure) = rust_index::include_resolution_disclosure(index) {
         eprintln!("{disclosure}");
     }
+    if let Some(disclosure) = rust_index::module_composition_disclosure(index) {
+        eprintln!("{disclosure}");
+    }
     let mut seams: Vec<RepoSeam> = Vec::new();
 
     // Iterate `production_files` in caller-given order, but the final

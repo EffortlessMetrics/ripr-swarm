@@ -47,6 +47,22 @@ are scoped or reviewed.
   only for the impacted scope
   ([#1520](https://github.com/EffortlessMetrics/ripr-swarm/pull/1520)).
 
+- Rust test discovery now recognizes test-case parameterized tests
+  ([#3522](https://github.com/EffortlessMetrics/ripr-swarm/pull/3522)).
+
+- Rust test discovery now recognizes explicit nonstandard test
+  attributes
+  ([#3513](https://github.com/EffortlessMetrics/ripr-swarm/pull/3513)).
+
+- TypeScript test discovery now recognizes active Jest/Vitest test
+  modifiers
+  ([#3506](https://github.com/EffortlessMetrics/ripr-swarm/pull/3506)).
+
+- The Perl preview lane no longer lets operational producer limitations
+  mask an earned exposure class: the class cap and the actionability
+  gate are now separate in the static-limit projection
+  ([#3583](https://github.com/EffortlessMetrics/ripr-swarm/pull/3583)).
+
 - New binary-first evidence and gate surface: `ripr plus` (repo-level
   quality receipt), `ripr pr-summary` (PR readiness summary),
   `ripr pr-evidence` (PR evidence packet), `ripr annotations` (GitHub
@@ -363,6 +379,18 @@ are scoped or reviewed.
   could collide under parallel test execution, causing intermittent flakes.
   The paths now include the process ID so parallel test threads never share
   a directory ([#2685](https://github.com/EffortlessMetrics/ripr-swarm/issues/2685)).
+
+- The Python LSP server now reloads its configuration when project
+  markers change, and auto-detection invalidates when Python source
+  presence changes
+  ([#3503](https://github.com/EffortlessMetrics/ripr-swarm/pull/3503),
+  [#3576](https://github.com/EffortlessMetrics/ripr-swarm/pull/3576)).
+
+- Policy covered_by enumeration is now reliable and diagnosable
+  ([#3577](https://github.com/EffortlessMetrics/ripr-swarm/pull/3577)).
+
+- The PR review front panel now preserves movement vocabulary
+  ([#3491](https://github.com/EffortlessMetrics/ripr-swarm/pull/3491)).
 
 - Unrecognized CLI flags now suggest the nearest documented flag and point at
   the command's own help, matching what unknown *commands* already did. A
