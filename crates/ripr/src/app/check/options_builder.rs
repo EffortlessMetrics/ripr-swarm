@@ -17,6 +17,7 @@ pub(crate) fn analysis_options_from_input_and_config(
         git_timeout: input.git_timeout,
         git_candidate: input.git_candidate.clone(),
         production_like_targets: config.analysis().production_like_targets().clone(),
+        test_harnesses: config.analysis().test_harnesses().to_vec(),
         resolved_subject_identity: None,
     }
 }

@@ -11,6 +11,23 @@ are scoped or reviewed.
 
 ### Added
 
+- New repository-governed Rust test-harness registry
+  (`[analysis.test_harnesses]` in `ripr.toml`): repositories can teach
+  ripr, through exact registrations only, about bounded custom test
+  harnesses and test-producing source forms. A registered
+  `harness = false` custom target (libtest-mimic adapter) is evidence
+  role whose exact source-visible `Trial::test("name", ...)` trials with
+  stable names become the executable subjects, its inert `#[test]`
+  attributes never enter the test denominator, and one exact registered
+  test-producing attribute is classified through the shared source-role
+  authority. Subject facts carry harness kind, adapter generation,
+  provenance, subject identity, and a named-unexecuted selector
+  capability; dynamic trial names, loop-driven registration, ambiguous
+  imports, lookalike markers, stale or conflicting registrations, and
+  unknown adapter versions are named fail-closed limitations. Check JSON
+  gains a `test_harnesses` projection only when registrations exist
+  ([#3532](https://github.com/EffortlessMetrics/ripr-swarm/issues/3532)).
+
 - New `ripr mcp --stdio [--root PATH]` command: a bounded, read-only
   Model Context Protocol server that exposes exact workspace status
   (`ripr_workspace_status` tool and `ripr://workspace/status` resource)

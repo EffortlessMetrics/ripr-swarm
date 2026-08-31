@@ -187,6 +187,11 @@ impl Mode {
 pub struct CheckOutput {
     /// Output schema version for machine consumers.
     pub schema_version: String,
+    /// Test-harness registry projections (#3532): what each exact
+    /// registration established for this run. Empty when the repository
+    /// has no registrations, so every existing consumer output is
+    /// unchanged.
+    pub harness_projections: Vec<crate::analysis::harness_projection::TestHarnessProjection>,
     /// Tool identifier.
     pub tool: String,
     /// Mode used for this analysis.

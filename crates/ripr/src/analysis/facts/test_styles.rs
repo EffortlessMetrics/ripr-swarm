@@ -276,7 +276,7 @@ fn join_leading_attribute(lines: &[&str]) -> Option<(String, String, usize)> {
     None
 }
 
-fn normalized_test_attribute_path(attribute: &str) -> Option<String> {
+pub(super) fn normalized_test_attribute_path(attribute: &str) -> Option<String> {
     let body = attribute.trim().strip_prefix("#[")?;
     let closing = body.rfind(']')?;
     let trailing = body.get(closing + 1..)?.trim();

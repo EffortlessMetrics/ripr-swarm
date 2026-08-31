@@ -294,6 +294,7 @@ impl LanguageAdapter for TypeScriptAdapter {
             .collect::<Result<Vec<_>, String>>()?;
         Ok(LanguageDiffResult {
             findings,
+            harness_projections: Vec::new(),
             changed_files: changed_count,
             candidate_line_count: 0,
             changed_files_by_language,
@@ -320,6 +321,7 @@ impl LanguageAdapter for TypeScriptAdapter {
         // Rust-Only" for the limitation contract.
         Ok(LanguageRepoResult {
             findings: Vec::new(),
+            harness_projections: Vec::new(),
             production_files: 0,
             skipped_files: 0,
         })

@@ -386,6 +386,7 @@ mod tests {
     #[test]
     fn render_adds_presentation_text_finding_alignment_when_supported() -> Result<(), String> {
         let output = CheckOutput {
+            harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
             mode: Mode::Draft,
@@ -488,6 +489,7 @@ mod tests {
             relation_confidence: None,
         };
         let output = CheckOutput {
+            harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
             mode: Mode::Draft,
@@ -622,6 +624,7 @@ mod tests {
             relation_confidence: None,
         };
         let output = CheckOutput {
+            harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
             mode: Mode::Draft,
@@ -1368,6 +1371,7 @@ mod tests {
 
     fn sample_output(base: Option<String>) -> CheckOutput {
         CheckOutput {
+            harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
             mode: Mode::Draft,
@@ -1502,6 +1506,7 @@ mod tests {
             .collect();
 
         let output = CheckOutput {
+            harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
             mode: Mode::Draft,
@@ -1551,6 +1556,7 @@ mod tests {
         // When no_scope_provided=true the JSON output must include the
         // scope_disclosures additive field with scope_status=no_scope_provided.
         let output = CheckOutput {
+            harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
             mode: Mode::Draft,
@@ -1608,6 +1614,7 @@ mod tests {
         // When no_scope_provided=false (scope was provided) the scope_disclosures
         // field must be absent — this is a real analyzed-empty result.
         let output = CheckOutput {
+            harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
             mode: Mode::Draft,
@@ -1644,6 +1651,7 @@ mod tests {
         // --format repo-exposure-md and NOT --mode fast.
         // --mode is a speed tier; --format repo-exposure-md is the real full-repo scope.
         let output = CheckOutput {
+            harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
             mode: Mode::Draft,
