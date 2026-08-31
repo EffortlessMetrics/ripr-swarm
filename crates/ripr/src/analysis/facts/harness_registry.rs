@@ -420,8 +420,11 @@ fn is_data_only_macro_input(tokens: &[ra_ap_syntax::SyntaxToken], position: usiz
             let Some(path) = macro_call.path() else {
                 return false;
             };
-            let name = path.syntax().text().to_string().replace(' ', "");
-            is_data_only_macro_name(&name) && !data_only_macro_is_shadowed(tokens, position, &name)
+            let path = path.syntax().text().to_string().replace(' ', "");
+            let Some(name) = supported_data_only_macro_name(&path) else {
+                return false;
+            };
+            !data_only_macro_is_shadowed(tokens, position, name)
         })
 }
 
@@ -430,6 +433,16 @@ fn is_data_only_macro_name(name: &str) -> bool {
         name,
         "stringify" | "concat" | "env" | "option_env" | "include" | "include_bytes" | "include_str"
     )
+}
+
+fn supported_data_only_macro_name(path: &str) -> Option<&str> {
+    if is_data_only_macro_name(path) {
+        return Some(path);
+    }
+    ["std::", "core::"]
+        .iter()
+        .find_map(|prefix| path.strip_prefix(prefix))
+        .filter(|name| is_data_only_macro_name(name))
 }
 
 fn data_only_macro_is_shadowed(
@@ -470,12 +483,15 @@ fn data_only_macro_is_shadowed(
         let Some(declaration) = token.parent_ancestors().find_map(ast::MacroRules::cast) else {
             return false;
         };
-        let declaration_scopes = lexical_scopes(declaration.syntax().ancestors());
-        declaration_scopes.iter().any(|declaration_scope| {
-            invocation_scopes
-                .iter()
-                .any(|invocation_scope| same_syntax_node(declaration_scope, invocation_scope))
-        })
+        let Some(declaration_scope) = lexical_scopes(declaration.syntax().ancestors())
+            .into_iter()
+            .next()
+        else {
+            return false;
+        };
+        invocation_scopes
+            .iter()
+            .any(|invocation_scope| same_syntax_node(&declaration_scope, invocation_scope))
     })
 }
 

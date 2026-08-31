@@ -712,12 +712,12 @@ fn sibling_data_macro_declaration_does_not_shadow_a_builtin_input()
             "tests/sibling_shadow.rs",
             "use libtest_mimic::Trial;
 
-fn trials() -> Vec<Trial> {
-    stringify!(vec![Trial::test(\"builtin_case\", || Ok(()))])
-}
-
 mod sibling {
     macro_rules! stringify { ($value:expr) => { $value }; }
+}
+
+fn trials() -> Vec<Trial> {
+    stringify!(vec![Trial::test(\"builtin_case\", || Ok(()))])
 }
 ",
         )],
@@ -731,6 +731,40 @@ mod sibling {
         index.harness_subjects
     );
     assert!(index.tests.is_empty(), "{:?}", index.tests);
+    Ok(())
+}
+
+#[test]
+fn qualified_data_only_macros_accept_std_and_reject_arbitrary_prefixes()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("qualified-data-only-macro")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/qualified_shadow.rs",
+            "use libtest_mimic::Trial;
+
+fn std_builtin() -> Vec<Trial> {
+    std::stringify!(vec![Trial::test(\"std_builtin_case\", || Ok(()))])
+}
+
+fn arbitrary_prefix() -> Vec<Trial> {
+    other::stringify!(vec![Trial::test(\"arbitrary_case\", || Ok(()))])
+}
+",
+        )],
+    )?;
+    let files = [PathBuf::from("tests/qualified_shadow.rs")];
+    let registrations = [custom_target_registration("tests/qualified_shadow.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    assert_eq!(
+        index
+            .harness_subjects
+            .iter()
+            .map(|subject| subject.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["arbitrary_case"]
+    );
     Ok(())
 }
 
