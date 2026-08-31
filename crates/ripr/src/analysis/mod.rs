@@ -402,7 +402,10 @@ pub(crate) fn stable_path_text(path: &Path) -> String {
                     break;
                 }
                 Err(error) => {
-                    push_stable_path_text(&mut output, &remaining[..error.valid_up_to()]);
+                    let valid_prefix = &remaining[..error.valid_up_to()];
+                    if let Ok(valid) = std::str::from_utf8(valid_prefix) {
+                        push_stable_path_text(&mut output, valid);
+                    }
                     let invalid = error
                         .error_len()
                         .unwrap_or(remaining.len() - error.valid_up_to());
