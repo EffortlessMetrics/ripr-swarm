@@ -33,7 +33,6 @@ use super::test_styles::normalized_test_attribute_path as normalized_attribute_p
 use super::{
     HarnessLimitationFact, HarnessSelectorCapability, HarnessSubjectClaim, HarnessSubjectFact,
 };
-use crate::analysis::extract::extract_assertions;
 use crate::analysis::rust_index::{
     OracleFact, classify_assertion, extract_call_facts, extract_identifier_tokens,
     extract_literal_facts,
@@ -216,7 +215,8 @@ fn apply_libtest_mimic_target(
         if in_macro_definition(tokens[position].parent_ancestors()) {
             continue;
         }
-        let Some(name_token) = tokens.get(matched.name_token_index) else {
+        let name_token_index = next_significant(&tokens, matched.name_token_index);
+        let Some(name_token) = name_token_index.and_then(|index| tokens.get(index)) else {
             continue;
         };
         let Some(name) = string_literal_token_text(name_token) else {
@@ -281,7 +281,15 @@ fn apply_libtest_mimic_target(
             Some(function) => (
                 function.calls.clone(),
                 function.literals.clone(),
-                extract_assertions(&function.body, function.start_line),
+                parser_oracles_for_function(&function.body, function.start_line).unwrap_or_else(
+                    || {
+                        parser_oracles_for_node_tokens(
+                            &tokens,
+                            name_token_index.unwrap_or(matched.name_token_index),
+                            &line_index,
+                        )
+                    },
+                ),
             ),
             None => (
                 extract_call_facts(&body, start_line),
@@ -436,26 +444,44 @@ fn qualified_path_starts_at_boundary(
     tokens: &[ra_ap_syntax::SyntaxToken],
     position: usize,
 ) -> bool {
-    let Some(previous) = position.checked_sub(1).and_then(|index| tokens.get(index)) else {
+    let Some(previous_index) = previous_significant(tokens, position) else {
         return true;
     };
-    let prefix_end = if previous.kind() == ra_ap_syntax::SyntaxKind::COLON2 {
-        position.saturating_sub(2)
+    let previous = &tokens[previous_index];
+    let separator_start = if previous.kind() == ra_ap_syntax::SyntaxKind::COLON2 {
+        previous_index
     } else if previous.kind() == ra_ap_syntax::SyntaxKind::COLON
         && tokens
-            .get(position.saturating_sub(2))
+            .get(previous_index.saturating_sub(1))
             .is_some_and(|token| token.kind() == ra_ap_syntax::SyntaxKind::COLON)
     {
-        position.saturating_sub(3)
+        previous_index.saturating_sub(1)
     } else {
         return true;
     };
     // Permit an explicitly rooted `::marker::Trial` path, but reject
     // `other::marker::Trial`: the configured marker must own the complete
     // qualified path rather than merely appear as a suffix.
-    tokens
-        .get(prefix_end)
-        .is_none_or(|token| token.kind() != ra_ap_syntax::SyntaxKind::IDENT)
+    previous_significant(tokens, separator_start)
+        .is_none_or(|index| tokens[index].kind() != ra_ap_syntax::SyntaxKind::IDENT)
+}
+
+fn previous_significant(tokens: &[ra_ap_syntax::SyntaxToken], before: usize) -> Option<usize> {
+    (0..before).rev().find(|index| {
+        !matches!(
+            tokens[*index].kind(),
+            ra_ap_syntax::SyntaxKind::WHITESPACE | ra_ap_syntax::SyntaxKind::COMMENT
+        )
+    })
+}
+
+fn next_significant(tokens: &[ra_ap_syntax::SyntaxToken], from: usize) -> Option<usize> {
+    (from..tokens.len()).find(|index| {
+        !matches!(
+            tokens[*index].kind(),
+            ra_ap_syntax::SyntaxKind::WHITESPACE | ra_ap_syntax::SyntaxKind::COMMENT
+        )
+    })
 }
 
 struct TrialPathMatch {
@@ -593,31 +619,26 @@ fn parser_oracles_for_node_tokens(
             ra_ap_syntax::SyntaxKind::R_PAREN => depth = depth.saturating_sub(1),
             ra_ap_syntax::SyntaxKind::IDENT => {
                 let name = token.text();
-                let next = tokens.get(index + 1);
+                let bang_index = next_significant(tokens, index + 1);
                 let macro_open_index = if is_assertion_macro_name(name)
-                    && next.is_some_and(|token| token.kind() == ra_ap_syntax::SyntaxKind::BANG)
+                    && bang_index
+                        .and_then(|index| tokens.get(index))
+                        .is_some_and(|token| token.kind() == ra_ap_syntax::SyntaxKind::BANG)
                 {
-                    let mut open_index = index + 2;
-                    while tokens.get(open_index).is_some_and(|token| {
-                        matches!(
-                            token.kind(),
-                            ra_ap_syntax::SyntaxKind::WHITESPACE
-                                | ra_ap_syntax::SyntaxKind::COMMENT
-                        )
-                    }) {
-                        open_index += 1;
-                    }
-                    tokens
-                        .get(open_index)
-                        .is_some_and(|token| {
-                            matches!(
-                                token.kind(),
-                                ra_ap_syntax::SyntaxKind::L_PAREN
-                                    | ra_ap_syntax::SyntaxKind::L_CURLY
-                                    | ra_ap_syntax::SyntaxKind::L_BRACK
-                            )
-                        })
-                        .then_some(open_index)
+                    bang_index.and_then(|bang_index| {
+                        let open_index = next_significant(tokens, bang_index + 1)?;
+                        tokens
+                            .get(open_index)
+                            .is_some_and(|token| {
+                                matches!(
+                                    token.kind(),
+                                    ra_ap_syntax::SyntaxKind::L_PAREN
+                                        | ra_ap_syntax::SyntaxKind::L_CURLY
+                                        | ra_ap_syntax::SyntaxKind::L_BRACK
+                                )
+                            })
+                            .then_some(open_index)
+                    })
                 } else {
                     None
                 };
@@ -625,7 +646,9 @@ fn parser_oracles_for_node_tokens(
                 let is_fallible_call = matches!(name, "unwrap" | "expect")
                     && index >= 1
                     && tokens[index - 1].kind() == ra_ap_syntax::SyntaxKind::DOT
-                    && next.is_some_and(|token| token.kind() == ra_ap_syntax::SyntaxKind::L_PAREN);
+                    && next_significant(tokens, index + 1)
+                        .and_then(|index| tokens.get(index))
+                        .is_some_and(|token| token.kind() == ra_ap_syntax::SyntaxKind::L_PAREN);
                 if !is_macro_invocation && !is_fallible_call {
                     index += 1;
                     continue;
@@ -638,11 +661,7 @@ fn parser_oracles_for_node_tokens(
                     name.to_string()
                 };
                 let mut cursor = index + 1;
-                if is_macro_invocation
-                    && tokens
-                        .get(cursor)
-                        .is_some_and(|token| token.kind() == ra_ap_syntax::SyntaxKind::BANG)
-                {
+                if is_macro_invocation {
                     text.push('!');
                     if let Some(open_index) = macro_open_index {
                         cursor = open_index;
