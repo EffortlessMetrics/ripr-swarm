@@ -194,19 +194,27 @@ pub fn find_owner_function<'a>(
     // lookup above misses (`src\pricing.rs` is a single component on
     // Linux), so fall back to matching normalized key forms. The scan
     // only runs after the direct lookup missed, so native-separator
-    // inputs keep the exact-lookup cost.
-    let target = normalize_display(file);
+    // inputs keep the exact-lookup cost. Non-UTF-8 paths fail closed:
+    // lossy replacement characters can collapse distinct names into
+    // one form and attribute the wrong owner, so neither side of the
+    // comparison may pass through lossy conversion.
+    let target = file.to_str()?.replace('\\', "/");
     index
         .files
         .iter()
-        .find(|(key, _)| normalize_display(key) == target)
-        .and_then(|(_, summary)| owner_in(summary))
+        .find_map(|(key, summary)| {
+            let key_text = key.to_str()?;
+            (key_text.replace('\\', "/") == target).then_some(summary)
+        })
+        .and_then(owner_in)
 }
 
 /// `/`-separated display form of a path, independent of the host's
-/// native separator. Shared by the normalized-key fallback in
-/// [`find_owner_function`] and [`is_test_file`] so both judge the same
-/// normalized form.
+/// native separator. Used by [`is_test_file`] to judge the normalized
+/// form; lossy text is safe here because replacement characters can
+/// never become separators. The [`find_owner_function`] fallback does
+/// NOT use this helper — identity attribution must not pass through
+/// lossy conversion.
 fn normalize_display(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
@@ -265,6 +273,30 @@ mod tests {
         assert!(!is_test_file(Path::new("src\\pricing.rs")));
         // A `tests`-prefixed sibling directory name stays production.
         assert!(!is_test_file(Path::new("testing\\pricing.rs")));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn find_owner_function_fails_closed_on_non_utf8_fallback() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let facts = summarize_file(
+            PathBuf::from(OsStr::from_bytes(b"src/pricing_\xff.rs")),
+            "fn apply_discount(amount: i32) -> i32 { amount }\n".to_string(),
+        );
+        let mut index = RustIndex::default();
+        index.files.insert(
+            PathBuf::from(OsStr::from_bytes(b"src/pricing_\xff.rs")),
+            facts,
+        );
+        // A query whose lossy rendering collides with the indexed key
+        // must not attribute the owner through lossy text: the fallback
+        // requires valid UTF-8 on both sides.
+        let colliding = Path::new(OsStr::from_bytes(b"src\\pricing_\xfe.rs"));
+        assert_eq!(
+            find_owner_function(&index, colliding, 1).map(|f| f.name.as_str()),
+            None
+        );
     }
 
     #[test]
