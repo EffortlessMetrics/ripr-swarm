@@ -226,6 +226,9 @@ impl LanguageAdapter for PerlAdapter {
             changed_files_by_language: Vec::new(),
             partial_scope: None,
             skipped_files: 0,
+            // Perl has no harness registry: the projection is empty, as
+            // for every non-Rust adapter (#3532).
+            harness_projections: Vec::new(),
             limitations,
         })
     }
@@ -261,6 +264,9 @@ impl LanguageAdapter for PerlAdapter {
             findings,
             production_files,
             skipped_files: 0,
+            // Perl has no harness registry: the projection is empty, as
+            // for every non-Rust adapter (#3532).
+            harness_projections: Vec::new(),
         })
     }
 }
