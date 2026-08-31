@@ -1362,7 +1362,15 @@ marker = "myco::contract_test"
         .find(|field| field.name == "analysis.test_harnesses")
         .ok_or("identity must classify test_harnesses")?;
     assert_eq!(field.role, ConfigIdentityRole::FindingAffecting);
-    assert!(field.value.is_some());
+    // Pin the canonical encoding itself: the value feeds artifact reuse,
+    // so an accidental encoding drift must fail here (a deliberate change
+    // bumps CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION and this pin).
+    assert_eq!(
+        field.value.as_deref(),
+        Some(
+            "2 11:mimic-suite 20:tests/price_mimic.rs 14:custom_harness 16:libtest_mimic_v1 13:libtest_mimic  14:contract-tests 27:crates/pricing/tests/api.rs 20:registered_attribute 18:exact_attribute_v1 19:myco::contract_test "
+        )
+    );
     Ok(())
 }
 

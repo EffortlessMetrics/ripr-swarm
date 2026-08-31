@@ -831,10 +831,12 @@ fn parse_relative_path(field: &str, value: &str) -> Result<PathBuf, String> {
     if path.components().any(|component| {
         matches!(
             component,
-            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) | Component::CurDir
         )
     }) {
-        return Err(format!("{field} `{value}` must stay within the repository"));
+        return Err(format!(
+            "{field} `{value}` must stay within the repository (`.` and `..` segments are rejected so target identity stays canonical)"
+        ));
     }
     Ok(path)
 }

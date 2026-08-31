@@ -419,7 +419,9 @@ fn parser_oracles_for_node_tokens(
             ra_ap_syntax::SyntaxKind::R_PAREN => depth = depth.saturating_sub(1),
             ra_ap_syntax::SyntaxKind::IDENT => {
                 let name = token.text();
-                if !is_assertion_macro_name(name) {
+                // Shared with the source-side predicate; the bang gate
+                // below restores MacroCall semantics for bare idents.
+                if !crate::analysis::syntax::ra::is_assertion_macro(name) {
                     index += 1;
                     continue;
                 }
@@ -489,17 +491,6 @@ fn next_significant(tokens: &[ra_ap_syntax::SyntaxToken], from: usize) -> Option
     })
 }
 
-/// Path segments that introduce an assertion macro when followed by a
-/// bang. Mirrors the source-side predicate in `analysis/syntax/ra.rs`
-/// (`is_assertion_macro`); a token-local ident cannot contain `::`, so
-/// qualified spellings (`insta::assert_snapshot!`) match on their final
-/// segment.
-fn is_assertion_macro_name(name: &str) -> bool {
-    matches!(
-        name,
-        "assert" | "assert_eq" | "assert_ne" | "assert_matches" | "matches"
-    ) || name.ends_with("snapshot")
-}
 /// Exact registered test-producing attribute adapter, generation 1
 /// (#3532). Promotes functions carrying the exact registered attribute
 /// path through the shared #3531 role authority. The attribute must
@@ -515,18 +506,20 @@ fn apply_registered_attribute(
 ) {
     let target = registration.target.clone();
     let parse = SourceFile::parse(source, Edition::CURRENT);
-    let use_bindings = if parse.errors().is_empty() {
-        top_level_use_bindings(parse.tree().syntax(), marker_leaf(&registration.marker))
-    } else {
+    if !parse.errors().is_empty() {
+        // Fail closed: subject promotion over an unparseable target is
+        // unsound, so nothing beyond the typed limitation is established.
         limitations.push(HarnessLimitationFact {
             registration_id: registration.registration_id.clone(),
             code: "parse_unavailable".to_string(),
-            file: target.clone(),
+            file: target,
             line: 1,
             detail: "the registered attribute target did not parse; no registered subjects were established (fail closed)".to_string(),
         });
-        BTreeSet::new()
-    };
+        return;
+    }
+    let use_bindings =
+        top_level_use_bindings(parse.tree().syntax(), marker_leaf(&registration.marker));
     let promoted_functions: Vec<(usize, String, TestFact, HarnessSubjectFact)> = {
         let Some(facts) = index.files.get(&target) else {
             return;
@@ -715,16 +708,21 @@ fn resolve_registered_attribute(
     marker: &str,
     use_bindings: &BTreeSet<String>,
 ) -> Option<RegisteredAttributeResolution> {
+    // Exact full-path spellings win regardless of attribute order: an
+    // earlier bare spelling must not mask a later exact `#[<marker>]`.
+    for attribute in attrs {
+        if normalized_attribute_path(attribute).as_deref() == Some(marker) {
+            return Some(RegisteredAttributeResolution::Matched);
+        }
+    }
+    let (_prefix, name) = marker.rsplit_once("::")?;
     for attribute in attrs {
         let Some(path) = normalized_attribute_path(attribute) else {
             continue;
         };
         if path == marker {
-            return Some(RegisteredAttributeResolution::Matched);
-        }
-        let Some((_prefix, name)) = marker.rsplit_once("::") else {
             continue;
-        };
+        }
         if path != name {
             continue;
         }

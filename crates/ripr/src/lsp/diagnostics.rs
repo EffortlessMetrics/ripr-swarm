@@ -2292,6 +2292,7 @@ fn partition_out_of_scope_test_file_findings(
         .analysis()
         .test_harnesses()
         .iter()
+        .filter(|registration| registration.file_wide_harness_evidence())
         .map(|registration| registration.target.clone())
         .collect();
     let mut scoped = Vec::with_capacity(findings.len());

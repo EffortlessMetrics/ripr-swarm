@@ -120,9 +120,11 @@ pub enum TestHarnessKind {
     /// A custom Cargo test target (`[[test]]` with `harness = false`):
     /// the whole target is evidence role and its executable subjects come
     /// from the harness's own source-visible registration calls.
+    #[serde(rename = "custom_harness")]
     CustomHarnessTarget,
     /// A repository-configured test-producing attribute or macro path
     /// applied to functions inside one exact target file.
+    #[serde(rename = "registered_attribute")]
     RegisteredAttribute,
 }
 
