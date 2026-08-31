@@ -824,19 +824,32 @@ fn parse_relative_path(field: &str, value: &str) -> Result<PathBuf, String> {
             "{field} `{value}` uses a drive or scheme prefix; use a repository-relative path"
         ));
     }
-    let path = PathBuf::from(trimmed);
-    if path.is_absolute() {
-        return Err(format!("{field} `{value}` must be repository-relative"));
+    // `.` segments are normalized away rather than rejected: shared path
+    // settings legitimately carry `./` prefixes, and canonical target
+    // identity needs `./tests/a.rs` and `tests/a.rs` to be one path.
+    // Normalization stays on the `/`-separated string form so the stored
+    // path keeps its workspace-relative display on every host.
+    if trimmed.starts_with('/') {
+        return Err(format!(
+            "{field} `{value}` uses a leading `/`; use a repository-relative path"
+        ));
     }
+    let normalized = trimmed
+        .split('/')
+        .filter(|segment| !segment.is_empty() && *segment != ".")
+        .collect::<Vec<_>>()
+        .join("/");
+    if normalized.is_empty() {
+        return Err(format!("{field} `{value}` must name a path"));
+    }
+    let path = PathBuf::from(&normalized);
     if path.components().any(|component| {
         matches!(
             component,
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) | Component::CurDir
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
         )
     }) {
-        return Err(format!(
-            "{field} `{value}` must stay within the repository (`.` and `..` segments are rejected so target identity stays canonical)"
-        ));
+        return Err(format!("{field} `{value}` must stay within the repository"));
     }
     Ok(path)
 }

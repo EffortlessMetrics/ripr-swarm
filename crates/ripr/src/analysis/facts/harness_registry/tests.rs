@@ -441,6 +441,73 @@ fn plain_idents_inside_trial_bodies_never_become_oracles() -> Result<(), Box<dyn
 }
 
 #[test]
+fn snapshot_named_helpers_never_become_oracles_but_snapshot_asserts_do()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("leaf-snapshot-boundary")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/leaf_boundary.rs",
+            "fn trials() -> Vec<libtest_mimic::Trial> {
+    vec![libtest_mimic::Trial::test(\"leaf_case\", || {
+        snapshot_helper!();
+        assert_snapshot!(1);
+        Ok(())
+    })]
+}
+",
+        )],
+    )?;
+    let files = [PathBuf::from("tests/leaf_boundary.rs")];
+    let registrations = [custom_target_registration("tests/leaf_boundary.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    let subject_test = index
+        .tests
+        .iter()
+        .find(|test| test.name == "leaf_case")
+        .ok_or("subject test present")?;
+    assert_eq!(
+        subject_test
+            .assertions
+            .iter()
+            .map(|assertion| assertion.text.as_str())
+            .collect::<Vec<_>>(),
+        // The *_snapshot naming boundary keeps helper-style macros out
+        // while the assert_snapshot family still classifies.
+        vec!["assert_snapshot!(1)"]
+    );
+    Ok(())
+}
+
+#[test]
+fn foreign_trial_paths_are_not_adopted_through_an_import_binding()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("foreign-trial-path")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/foreign_trial.rs",
+            "use libtest_mimic::Trial;
+
+fn other() -> Vec<Trial> {
+    vec![other_module::Trial::test(\"foreign_case\", || Ok(()))]
+}
+",
+        )],
+    )?;
+    let files = [PathBuf::from("tests/foreign_trial.rs")];
+    let registrations = [custom_target_registration("tests/foreign_trial.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    assert!(
+        index.harness_subjects.is_empty(),
+        "{:?}",
+        index.harness_subjects
+    );
+    assert!(index.tests.is_empty(), "{:?}", index.tests);
+    Ok(())
+}
+
+#[test]
 fn registered_attribute_promotes_exact_matches_only() -> Result<(), Box<dyn std::error::Error>> {
     let root = temp_dir("registered-attribute")?;
     write_workspace(

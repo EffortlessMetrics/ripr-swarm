@@ -325,6 +325,12 @@ fn match_trial_path(
     }
 
     for qualified in [false, true] {
+        // A bare `Trial` match is only a candidate at a path start; the
+        // inner `Trial` of `other::Trial::test(` is a foreign path and
+        // must not be adopted through an unrelated import binding.
+        if !qualified && !at_path_start(tokens, position) {
+            continue;
+        }
         let mut segments: Vec<&str> = if qualified {
             marker.split("::").collect()
         } else {
@@ -378,6 +384,18 @@ struct TrialPathMatch {
     open_paren_index: usize,
 }
 
+/// Whether the token at `position` can begin a path: it is the first
+/// token or its predecessor is not a path separator.
+fn at_path_start(tokens: &[ra_ap_syntax::SyntaxToken], position: usize) -> bool {
+    if position == 0 {
+        return true;
+    }
+    !matches!(
+        tokens[position - 1].kind(),
+        ra_ap_syntax::SyntaxKind::COLON2 | ra_ap_syntax::SyntaxKind::COLON
+    )
+}
+
 /// Offset just past the `)` balancing the `(` at `open_paren_index`,
 /// bounded to the token stream. `None` (unbalanced) means the span is not
 /// provable and the match is skipped.
@@ -419,9 +437,10 @@ fn parser_oracles_for_node_tokens(
             ra_ap_syntax::SyntaxKind::R_PAREN => depth = depth.saturating_sub(1),
             ra_ap_syntax::SyntaxKind::IDENT => {
                 let name = token.text();
-                // Shared with the source-side predicate; the bang gate
-                // below restores MacroCall semantics for bare idents.
-                if !crate::analysis::syntax::ra::is_assertion_macro(name) {
+                // Shared leaf predicate; the bang gate below restores
+                // MacroCall semantics, and the leaf boundary keeps
+                // `snapshot_helper!`-style names out of the oracle set.
+                if !crate::analysis::syntax::ra::is_assertion_macro_leaf(name) {
                     index += 1;
                     continue;
                 }

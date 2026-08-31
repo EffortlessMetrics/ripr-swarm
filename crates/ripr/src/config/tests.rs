@@ -1307,6 +1307,28 @@ fn parse_config_rejects_absolute_production_like_target() -> Result<(), String> 
     Ok(())
 }
 
+#[test]
+fn parse_config_normalizes_curdir_harness_targets_to_canonical_identity() -> Result<(), String> {
+    // `./tests/a.rs` and `tests/a.rs` must be one target identity: the
+    // canonical form drops `.` segments while keeping `/` separators, so
+    // the duplicate-target guard cannot be bypassed by a `./` prefix and
+    // shared `./`-prefixed path settings keep loading.
+    let registrations = parse_test_harnesses(
+        "[[analysis.test_harnesses]]
+registration_id = 'x'
+target = './tests/a.rs'
+kind = 'custom_harness'
+adapter = 'libtest_mimic_v1'
+marker = 'libtest_mimic'
+",
+    )?;
+    assert_eq!(
+        registrations[0].target,
+        std::path::PathBuf::from("tests/a.rs")
+    );
+    Ok(())
+}
+
 fn parse_test_harnesses(toml_text: &str) -> Result<Vec<TestHarnessRegistration>, String> {
     let raw = toml::from_str::<RawConfig>(toml_text).map_err(|error| error.to_string())?;
     RiprConfig::from_raw(raw).map(|config| config.analysis.test_harnesses)
