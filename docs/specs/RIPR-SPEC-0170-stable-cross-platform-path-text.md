@@ -52,7 +52,7 @@ the three characters `%FF` renders as `%25FF`.
 
 ## Non-Goals
 
-- changing C-quoted diff decoding or native path confinement;
+- changing native path confinement;
 - adding arbitrary-byte path support to Windows or other non-Unix platforms;
 - changing JSON schemas, probe-ID formats beyond the reserved escaping rule,
   or support tiers;
@@ -75,6 +75,14 @@ the three characters `%FF` renders as `%25FF`.
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/mod.rs` owns the shared textual projection.
+- `crates/ripr/src/analysis/diff/path.rs` owns the C-quoted decoder feeding
+  native path identity into the projection; its `DecodedPath` split (valid
+  text vs Unix raw bytes) is the byte-preserving source this contract
+  renders.
+- `crates/ripr/src/analysis/syntax/ra.rs` consumes the projection for owner
+  symbol identity so distinct raw-byte files keep distinct owners.
+- `crates/ripr/src/app/check_artifact.rs` renders non-UTF-8 finding paths
+  through the projection at the artifact boundary.
 - `crates/ripr/src/analysis/language/rust.rs`,
   `crates/ripr/src/analysis/probes/ids.rs`, and
   `crates/ripr/src/output/path.rs` consume that projection for their existing
