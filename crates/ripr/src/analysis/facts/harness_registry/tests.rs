@@ -489,6 +489,7 @@ fn snapshot_named_helpers_never_become_oracles_but_snapshot_asserts_do()
             "fn trials() -> Vec<libtest_mimic::Trial> {
     vec![libtest_mimic::Trial::test(\"leaf_case\", || {
         snapshot_helper!();
+        other_snapshot!();
         assert_snapshot!(1);
         Ok(())
     })]

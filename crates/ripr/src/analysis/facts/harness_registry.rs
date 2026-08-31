@@ -166,6 +166,12 @@ fn apply_libtest_mimic_target(
         let Some(matched) = match_trial_path(&tokens, position, &registration.marker) else {
             continue;
         };
+        // Macro definitions are templates, not executable registrations. Do
+        // this before path/import/loop diagnostics so dormant templates do
+        // not emit limitations either.
+        if in_macro_definition(tokens[position].parent_ancestors()) {
+            continue;
+        }
         let line = line_index.line(tokens[position].text_range().start());
         // Anchoring: the bare `Trial` form needs a top-level import bound
         // from exactly the marker path; the qualified form carries the
@@ -210,9 +216,6 @@ fn apply_libtest_mimic_target(
                 line,
                 detail: "trial registration runs inside a loop; runtime-discovered trials remain unresolved".to_string(),
             });
-            continue;
-        }
-        if in_macro_definition(tokens[position].parent_ancestors()) {
             continue;
         }
         let name_token_index = next_significant(&tokens, matched.name_token_index);

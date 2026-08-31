@@ -1064,15 +1064,15 @@ fn extract_parser_oracles(
 
 /// Token-local leaf form of [`is_assertion_macro`] for scanners that see
 /// one path segment at a time: the exact built-in assertion names plus the
-/// supported snapshot-macro naming boundary (`*_snapshot`). The
+/// supported assertion-snapshot naming boundary (`assert*_snapshot`). The
 /// source-side `contains("snapshot")` rule is deliberately NOT carried
-/// over — a leaf ident like `snapshot_helper` must not classify, while
-/// `assert_snapshot` / `assert_json_snapshot` do.
+/// over — a leaf ident like `snapshot_helper` or `other_snapshot` must not
+/// classify, while `assert_snapshot` / `assert_json_snapshot` do.
 pub(crate) fn is_assertion_macro_leaf(name: &str) -> bool {
     matches!(
         name,
         "assert" | "assert_eq" | "assert_ne" | "assert_matches" | "matches"
-    ) || name.ends_with("snapshot")
+    ) || (name.starts_with("assert") && name.ends_with("snapshot"))
 }
 
 pub(crate) fn is_assertion_macro(macro_name: &str) -> bool {
