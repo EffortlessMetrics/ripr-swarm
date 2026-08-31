@@ -974,10 +974,16 @@ mod tests {
     fn given_non_utf8_stems_when_classify_extracts_then_lossy_collision_fails_closed() {
         use std::ffi::OsStr;
         use std::os::unix::ffi::OsStrExt;
+        // Two distinct non-UTF-8 leaf names share one lossy rendering;
+        // deriving stems through lossy conversion would fabricate
+        // file-name affinity between unrelated entities, so extraction
+        // must fail closed instead (#3599).
         let first = Path::new(OsStr::from_bytes(b"crates/app/src/pricing_\xff.rs"));
         let second = Path::new(OsStr::from_bytes(b"crates/app/src/pricing_\xfe.rs"));
         assert_eq!(normalized_file_stem(first), "");
         assert_eq!(normalized_file_stem(second), "");
+        // Valid-UTF-8 stems are unchanged, including dotfiles and
+        // `./`-prefixed forms that `normalize_path` trims.
         assert_eq!(normalized_file_stem(Path::new("src/config.rs")), "config");
         assert_eq!(normalized_file_stem(Path::new("./src/config.rs")), "config");
     }

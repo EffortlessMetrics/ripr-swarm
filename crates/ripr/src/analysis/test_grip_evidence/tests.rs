@@ -10260,6 +10260,12 @@ fn given_foreign_separator_paths_when_grip_associates_then_same_test_file_still_
             .find(|s| s.kind() == SeamKind::PredicateBoundary)
             .ok_or_else(|| "predicate seam present".to_string())?;
         let evidence = evidence_for_seam(predicate, &index);
+        let context = CompactGripContext::new(&index);
+        let owner_fn = crate::analysis::rust_index::find_owner_function(
+            &index,
+            predicate.file(),
+            predicate.display_line(),
+        );
         assert!(
             evidence
                 .related_tests
