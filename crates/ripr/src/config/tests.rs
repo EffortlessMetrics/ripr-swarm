@@ -1307,6 +1307,28 @@ fn parse_config_rejects_absolute_production_like_target() -> Result<(), String> 
     Ok(())
 }
 
+#[test]
+fn parse_config_normalizes_curdir_harness_targets_to_canonical_identity() -> Result<(), String> {
+    // `./tests/a.rs` and `tests/a.rs` must be one target identity: the
+    // canonical form drops `.` segments while keeping `/` separators, so
+    // the duplicate-target guard cannot be bypassed by a `./` prefix and
+    // shared `./`-prefixed path settings keep loading.
+    let registrations = parse_test_harnesses(
+        "[[analysis.test_harnesses]]
+registration_id = 'x'
+target = './tests/a.rs'
+kind = 'custom_harness'
+adapter = 'libtest_mimic_v1'
+marker = 'libtest_mimic'
+",
+    )?;
+    assert_eq!(
+        registrations[0].target,
+        std::path::PathBuf::from("tests/a.rs")
+    );
+    Ok(())
+}
+
 fn parse_test_harnesses(toml_text: &str) -> Result<Vec<TestHarnessRegistration>, String> {
     let raw = toml::from_str::<RawConfig>(toml_text).map_err(|error| error.to_string())?;
     RiprConfig::from_raw(raw).map(|config| config.analysis.test_harnesses)
@@ -1362,7 +1384,15 @@ marker = "myco::contract_test"
         .find(|field| field.name == "analysis.test_harnesses")
         .ok_or("identity must classify test_harnesses")?;
     assert_eq!(field.role, ConfigIdentityRole::FindingAffecting);
-    assert!(field.value.is_some());
+    // Pin the canonical encoding itself: the value feeds artifact reuse,
+    // so an accidental encoding drift must fail here (a deliberate change
+    // bumps CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION and this pin).
+    assert_eq!(
+        field.value.as_deref(),
+        Some(
+            "2 11:mimic-suite 20:tests/price_mimic.rs 14:custom_harness 16:libtest_mimic_v1 13:libtest_mimic  14:contract-tests 27:crates/pricing/tests/api.rs 20:registered_attribute 18:exact_attribute_v1 19:myco::contract_test "
+        )
+    );
     Ok(())
 }
 
@@ -1404,16 +1434,6 @@ fn parse_config_rejects_harness_root_escape_and_lookalike_marker() -> Result<(),
         marker_error.contains("exact identifier path"),
         "{marker_error}"
     );
-
-    for marker in ["fn", "myco::match"] {
-        let reserved_error = harness_parse_error(&format!(
-            "[[analysis.test_harnesses]]\nregistration_id = 'x'\ntarget = 'tests/a.rs'\nkind = 'registered_attribute'\nadapter = 'exact_attribute_v1'\nmarker = '{marker}'\n"
-        ))?;
-        assert!(
-            reserved_error.contains("exact identifier path"),
-            "{reserved_error}"
-        );
-    }
     Ok(())
 }
 

@@ -120,9 +120,11 @@ pub enum TestHarnessKind {
     /// A custom Cargo test target (`[[test]]` with `harness = false`):
     /// the whole target is evidence role and its executable subjects come
     /// from the harness's own source-visible registration calls.
+    #[serde(rename = "custom_harness")]
     CustomHarnessTarget,
     /// A repository-configured test-producing attribute or macro path
     /// applied to functions inside one exact target file.
+    #[serde(rename = "registered_attribute")]
     RegisteredAttribute,
 }
 
@@ -227,6 +229,15 @@ impl TestHarnessRegistration {
     /// projection can name where the authority came from.
     pub(crate) fn provenance() -> &'static str {
         "ripr.toml [analysis.test_harnesses]"
+    }
+
+    /// Whether the registration makes its whole target file evidence
+    /// role. Only a custom `harness = false` target is harness-driven
+    /// end to end; a registered attribute applies to individual
+    /// functions, so the rest of a mixed production file must keep
+    /// seeding production seams (#3532 review).
+    pub(crate) fn file_wide_harness_evidence(&self) -> bool {
+        matches!(self.kind, TestHarnessKind::CustomHarnessTarget)
     }
 }
 

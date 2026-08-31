@@ -24,20 +24,6 @@ pub fn build_index_with_test_harnesses(
     files: &[PathBuf],
     registrations: &[TestHarnessRegistration],
 ) -> Result<model::RustIndex, String> {
-    build_index_with_test_harnesses_and_production_like_targets(
-        root,
-        files,
-        registrations,
-        &std::collections::BTreeSet::new(),
-    )
-}
-
-pub fn build_index_with_test_harnesses_and_production_like_targets(
-    root: &Path,
-    files: &[PathBuf],
-    registrations: &[TestHarnessRegistration],
-    production_like_targets: &std::collections::BTreeSet<PathBuf>,
-) -> Result<model::RustIndex, String> {
     let mut index = build::build_index(root, files)?;
     parameterized_tests::promote_explicit_test_case_functions(&mut index);
     test_styles::normalize_index_test_styles(&mut index);
@@ -47,39 +33,26 @@ pub fn build_index_with_test_harnesses_and_production_like_targets(
     // evidence-only `CfgTestModule`, never the reverse. The workspace root
     // anchors crate-root identity for default module resolution.
     role_composition::compose_index_source_roles(&mut index, root);
-    harness_registry::apply_registrations(&mut index, registrations, production_like_targets);
+    // Explicit harness registrations are the most specific authority, so
+    // they run after composition and a composed generic grant can never
+    // overwrite a registered subject's role (#3532).
+    harness_registry::apply_registrations(&mut index, registrations);
     Ok(index)
 }
 
-#[cfg(test)]
 pub(crate) fn build_index_from_loaded_files_with_cache_and_test_harnesses(
     root: &Path,
     files: &[(PathBuf, Vec<u8>)],
     registrations: &[TestHarnessRegistration],
 ) -> Result<build::CachedRustIndex, String> {
-    build_index_from_loaded_files_with_cache_and_test_harnesses_and_production_like_targets(
-        root,
-        files,
-        registrations,
-        &std::collections::BTreeSet::new(),
-    )
-}
-
-pub(crate) fn build_index_from_loaded_files_with_cache_and_test_harnesses_and_production_like_targets(
-    root: &Path,
-    files: &[(PathBuf, Vec<u8>)],
-    registrations: &[TestHarnessRegistration],
-    production_like_targets: &std::collections::BTreeSet<PathBuf>,
-) -> Result<build::CachedRustIndex, String> {
     let mut cached = build::build_index_from_loaded_files_with_cache(root, files)?;
     parameterized_tests::promote_explicit_test_case_functions(&mut cached.index);
     test_styles::normalize_index_test_styles(&mut cached.index);
     role_composition::compose_index_source_roles(&mut cached.index, root);
-    harness_registry::apply_registrations(
-        &mut cached.index,
-        registrations,
-        production_like_targets,
-    );
+    // Explicit harness registrations are the most specific authority, so
+    // they run after composition and a composed generic grant can never
+    // overwrite a registered subject's role (#3532).
+    harness_registry::apply_registrations(&mut cached.index, registrations);
     Ok(cached)
 }
 

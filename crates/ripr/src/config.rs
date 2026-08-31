@@ -824,10 +824,25 @@ fn parse_relative_path(field: &str, value: &str) -> Result<PathBuf, String> {
             "{field} `{value}` uses a drive or scheme prefix; use a repository-relative path"
         ));
     }
-    let path = PathBuf::from(trimmed);
-    if path.is_absolute() {
-        return Err(format!("{field} `{value}` must be repository-relative"));
+    // `.` segments are normalized away rather than rejected: shared path
+    // settings legitimately carry `./` prefixes, and canonical target
+    // identity needs `./tests/a.rs` and `tests/a.rs` to be one path.
+    // Normalization stays on the `/`-separated string form so the stored
+    // path keeps its workspace-relative display on every host.
+    if trimmed.starts_with('/') {
+        return Err(format!(
+            "{field} `{value}` uses a leading `/`; use a repository-relative path"
+        ));
     }
+    let normalized = trimmed
+        .split('/')
+        .filter(|segment| !segment.is_empty() && *segment != ".")
+        .collect::<Vec<_>>()
+        .join("/");
+    if normalized.is_empty() {
+        return Err(format!("{field} `{value}` must name a path"));
+    }
+    let path = PathBuf::from(&normalized);
     if path.components().any(|component| {
         matches!(
             component,
@@ -922,64 +937,7 @@ fn marker_path_is_exact(marker: &str) -> bool {
             let mut characters = segment.chars();
             matches!(characters.next(), Some(first) if first.is_ascii_alphabetic() || first == '_')
                 && characters.all(|rest| rest.is_ascii_alphanumeric() || rest == '_')
-                && !is_reserved_rust_identifier(segment)
         })
-}
-
-fn is_reserved_rust_identifier(identifier: &str) -> bool {
-    matches!(
-        identifier,
-        "as" | "break"
-            | "const"
-            | "continue"
-            | "crate"
-            | "else"
-            | "enum"
-            | "extern"
-            | "false"
-            | "fn"
-            | "for"
-            | "if"
-            | "impl"
-            | "in"
-            | "let"
-            | "loop"
-            | "match"
-            | "mod"
-            | "move"
-            | "mut"
-            | "pub"
-            | "ref"
-            | "return"
-            | "self"
-            | "Self"
-            | "static"
-            | "struct"
-            | "super"
-            | "trait"
-            | "true"
-            | "type"
-            | "unsafe"
-            | "use"
-            | "where"
-            | "while"
-            | "async"
-            | "await"
-            | "dyn"
-            | "abstract"
-            | "become"
-            | "box"
-            | "do"
-            | "final"
-            | "macro"
-            | "override"
-            | "priv"
-            | "typeof"
-            | "unsized"
-            | "virtual"
-            | "yield"
-            | "try"
-    )
 }
 
 #[cfg(test)]

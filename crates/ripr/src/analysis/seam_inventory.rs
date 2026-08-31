@@ -86,11 +86,10 @@ pub(crate) fn inventory_seams_at_with_config(
     // Index the full set so `find_owner_function` can resolve owners
     // even when the seam appears in a file the production filter
     // includes but tests reference.
-    let index = rust_index::build_index_with_test_harnesses_and_production_like_targets(
+    let index = rust_index::build_index_with_test_harnesses(
         root,
         &rust_files,
         harness_registrations(config),
-        config.analysis().production_like_targets(),
     )?;
     Ok(inventory_seams_from_index(&production_files, &index))
 }
@@ -402,11 +401,10 @@ pub(crate) fn inventory_classified_seams_uncached_with_config(
     trace_latency_phase("filter_production_files", "ok", filter_started.elapsed());
 
     let index_started = Instant::now();
-    let mut index = match rust_index::build_index_with_test_harnesses_and_production_like_targets(
+    let mut index = match rust_index::build_index_with_test_harnesses(
         root,
         &rust_files,
         harness_registrations(config),
-        config.analysis().production_like_targets(),
     ) {
         Ok(index) => {
             trace_latency_phase("build_index", "ok", index_started.elapsed());
@@ -578,11 +576,10 @@ fn inventory_seam_grip_class_counts_uncached_with_config(
         .cloned()
         .collect();
 
-    let mut index = rust_index::build_index_with_test_harnesses_and_production_like_targets(
+    let mut index = rust_index::build_index_with_test_harnesses(
         root,
         &rust_files,
         harness_registrations(config),
-        config.analysis().production_like_targets(),
     )?;
     rust_index::apply_oracle_policy(&mut index, config.oracles());
     let seams = inventory_seams_from_index(&production_files, &index);
@@ -611,11 +608,10 @@ fn inventory_compact_classified_seams_from_state_with_config(
         ),
         Duration::ZERO,
     );
-    let mut cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses_and_production_like_targets(
+    let mut cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
         &state.workspace_root,
         &state.files,
         harness_registrations(config),
-        config.analysis().production_like_targets(),
     )?;
     cancellation::checkpoint()?;
     trace_latency_phase(
@@ -658,11 +654,10 @@ fn inventory_classified_seams_from_state_with_config(
         ),
         Duration::ZERO,
     );
-    let mut cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses_and_production_like_targets(
+    let mut cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
         &state.workspace_root,
         &state.files,
         harness_registrations(config),
-        config.analysis().production_like_targets(),
     )?;
     trace_latency_phase(
         "file_fact_cache",
@@ -731,11 +726,10 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
     let state = collect_workspace_state(root, config)?;
     let workspace_cache_key = state.cache_key();
     let changed_test = normalized_inventory_path(changed_test);
-    let mut cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses_and_production_like_targets(
+    let mut cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
         &state.workspace_root,
         &state.files,
         harness_registrations(config),
-        config.analysis().production_like_targets(),
     )?;
     rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
 
@@ -855,11 +849,10 @@ pub(crate) fn inventory_diff_scoped_classified_seams_at_with_config(
         ),
         Duration::ZERO,
     );
-    let mut cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses_and_production_like_targets(
+    let mut cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
         &state.workspace_root,
         &state.files,
         harness_registrations(config),
-        config.analysis().production_like_targets(),
     )?;
     trace_latency_phase(
         "file_fact_cache",
@@ -1091,11 +1084,10 @@ fn inventory_seam_grip_class_counts_from_state_with_config(
         ),
         Duration::ZERO,
     );
-    let mut cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses_and_production_like_targets(
+    let mut cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
         &state.workspace_root,
         &state.files,
         harness_registrations(config),
-        config.analysis().production_like_targets(),
     )?;
     trace_latency_phase(
         "file_fact_cache",
@@ -1121,6 +1113,7 @@ fn harness_targets_from_config(config: &RiprConfig) -> std::collections::BTreeSe
         .analysis()
         .test_harnesses()
         .iter()
+        .filter(|registration| registration.file_wide_harness_evidence())
         .map(|registration| registration.target.clone())
         .collect()
 }
@@ -1462,6 +1455,38 @@ fn expected_sink_for(kind: SeamKind) -> ExpectedSink {
 mod tests {
     use super::*;
     use crate::analysis::facts::FunctionSourceRole;
+
+    #[test]
+    fn only_custom_harness_targets_receive_file_wide_evidence_role() -> Result<(), String> {
+        // #3532 review: a registered attribute applies to individual
+        // functions, so its target must not enter the file-wide harness
+        // evidence set — a mixed production file keeps seeding seams.
+        let config = crate::config::tests_only_parse(
+            r#"[analysis]
+[[analysis.test_harnesses]]
+registration_id = "mimic"
+target = "tests/mimic.rs"
+kind = "custom_harness"
+adapter = "libtest_mimic_v1"
+marker = "libtest_mimic::Trial"
+
+[[analysis.test_harnesses]]
+registration_id = "contract"
+target = "src/lib.rs"
+kind = "registered_attribute"
+adapter = "exact_attribute_v1"
+marker = "myco::contract_test"
+"#,
+        )
+        .map_err(|error| format!("fixture config parses: {error}"))?;
+        let targets = harness_targets_from_config(&config);
+        assert_eq!(
+            targets,
+            std::iter::once(PathBuf::from("tests/mimic.rs"))
+                .collect::<std::collections::BTreeSet<_>>()
+        );
+        Ok(())
+    }
     use crate::analysis::rust_index::{
         FileFacts, FunctionFact, RaRustSyntaxAdapter, RustSyntaxAdapter,
     };

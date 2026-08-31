@@ -174,7 +174,7 @@ jobs:
           GITHUB_PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           RIPR_REVIEW_COMMENTS_TIMEOUT_SECS: "60"
           # Raised from the 2000 default as the PR #3592 decision artifact, then
-          # to 3500 for #3532 (3,222-line capability diff); the variable is
+          # to 3500 for #3532 (3,060-line capability diff); the variable is
           # documented in docs/CONFIGURATION.md.
           RIPR_MAX_DIFF_CHANGED_RUST_LINES: "3500"
           # Match the raised max limit: the partial-budget clamp bounds against

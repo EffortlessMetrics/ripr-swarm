@@ -709,7 +709,7 @@ impl ContextResolver<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::facts::build_index_from_loaded_files_with_cache;
+    use crate::analysis::facts::build_index_from_loaded_files_with_cache_and_test_harnesses;
     use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
     use std::fs;
     use std::path::Path;
@@ -1272,14 +1272,14 @@ mod tests {
             loaded.push((file.clone(), bytes));
         }
 
-        let cold = build_index_from_loaded_files_with_cache(&root, &loaded)
+        let cold = build_index_from_loaded_files_with_cache_and_test_harnesses(&root, &loaded, &[])
             .map_err(|error| error.to_string())?;
         assert_eq!(
             role_of(&cold.index, "src/tests.rs", "unattributed_helper")?,
             FunctionSourceRole::CfgTestModule
         );
 
-        let warm = build_index_from_loaded_files_with_cache(&root, &loaded)
+        let warm = build_index_from_loaded_files_with_cache_and_test_harnesses(&root, &loaded, &[])
             .map_err(|error| error.to_string())?;
         assert!(
             warm.file_fact_cache.hits > 0,

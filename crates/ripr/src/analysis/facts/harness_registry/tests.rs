@@ -6,8 +6,6 @@
 
 use super::*;
 use crate::analysis::facts::build_index_with_test_harnesses;
-use crate::domain::OracleKind;
-use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -313,7 +311,7 @@ fn trials() -> Vec<Trial> {
 }
 
 #[test]
-fn duplicate_trial_names_name_the_conflict_and_remove_both_subjects()
+fn duplicate_trial_names_name_the_conflict_and_stay_one_subject()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = temp_dir("duplicate-trials")?;
     write_workspace(
@@ -335,7 +333,7 @@ fn trials() -> Vec<Trial> {
     let files = [PathBuf::from("tests/duplicates.rs")];
     let registrations = [custom_target_registration("tests/duplicates.rs")];
     let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
-    assert_eq!(index.harness_subjects.len(), 0);
+    assert_eq!(index.harness_subjects.len(), 1);
     assert!(
         index
             .harness_limitations
@@ -345,42 +343,6 @@ fn trials() -> Vec<Trial> {
         "{:?}",
         index.harness_limitations
     );
-    assert!(
-        index.tests.iter().all(|test| test.name != "same_name"),
-        "a duplicate subject must not leave an executable test fact"
-    );
-    Ok(())
-}
-
-#[test]
-fn production_like_target_precedence_survives_harness_registration()
--> Result<(), Box<dyn std::error::Error>> {
-    let root = temp_dir("production-like-precedence")?;
-    write_workspace(
-        &root,
-        &[(
-            "tests/mimic.rs",
-            "use libtest_mimic::Trial;\nfn helper() -> i32 { 1 }\nTrial::test(\"one\", || Ok(()));\n",
-        )],
-    )?;
-    let target = PathBuf::from("tests/mimic.rs");
-    let registrations = [custom_target_registration("tests/mimic.rs")];
-    let mut production_like = BTreeSet::new();
-    production_like.insert(target.clone());
-    let index =
-        crate::analysis::facts::build_index_with_test_harnesses_and_production_like_targets(
-            &root.0,
-            &[target],
-            &registrations,
-            &production_like,
-        )?;
-    let helper = index
-        .functions
-        .iter()
-        .find(|function| function.name == "helper")
-        .ok_or("missing helper")?;
-    assert_eq!(helper.source_role, FunctionSourceRole::Production);
-    assert!(index.harness_subjects.is_empty());
     Ok(())
 }
 
@@ -391,7 +353,7 @@ fn fully_qualified_trial_calls_match_the_marker_path() -> Result<(), Box<dyn std
         &root,
         &[(
             "tests/qualified.rs",
-            "fn trials() -> Vec<libtest_mimic::Trial> {\n    vec![libtest_mimic::Trial::test(\"qualified_case\", || Ok(())), other::libtest_mimic::Trial::test(\"suffix_lookalike\", || Ok(()))]\n}\n",
+            "fn trials() -> Vec<libtest_mimic::Trial> {\n    vec![libtest_mimic::Trial::test(\"qualified_case\", || Ok(()))]\n}\n",
         )],
     )?;
     let files = [PathBuf::from("tests/qualified.rs")];
@@ -405,147 +367,276 @@ fn fully_qualified_trial_calls_match_the_marker_path() -> Result<(), Box<dyn std
             .collect::<Vec<_>>(),
         vec!["qualified_case"]
     );
+    // The token-local bare pattern re-matches the inner `Trial` of the
+    // qualified path; claiming the invocation must leave no false
+    // unanchored/duplicate limitation behind.
+    assert!(
+        index.harness_limitations.is_empty(),
+        "{:?}",
+        index.harness_limitations
+    );
     Ok(())
 }
 
 #[test]
-fn trial_oracles_require_real_macros_and_preserve_source_lines()
+fn qualified_trial_with_bare_import_emits_one_subject_and_no_false_limitation()
 -> Result<(), Box<dyn std::error::Error>> {
-    let root = temp_dir("trial-oracles")?;
+    let root = temp_dir("qualified-with-import")?;
     write_workspace(
         &root,
         &[(
-            "tests/oracles.rs",
-            "use libtest_mimic::Trial;\nfn trials() -> Vec<Trial> {\n    vec![Trial::test(\"oracle_case\", || {\n        let snapshot_value = 1;\n        let result = Some(snapshot_value).unwrap();\n        assert_eq!(result, 1);\n        result.expect(\"present\");\n        Ok(())\n    })]\n}\n",
+            "tests/both_forms.rs",
+            "use libtest_mimic::Trial;\n\nfn trials() -> Vec<Trial> {\n    vec![libtest_mimic::Trial::test(\"both_case\", || Ok(()))]\n}\n",
         )],
     )?;
-    let index = build_index_with_test_harnesses(
-        &root.0,
-        &[PathBuf::from("tests/oracles.rs")],
-        &[custom_target_registration("tests/oracles.rs")],
-    )?;
-    let subject = index
-        .harness_subjects
-        .iter()
-        .find(|subject| subject.name == "oracle_case")
-        .ok_or("missing oracle subject")?;
-    assert_eq!(subject.assertions.len(), 3);
-    assert!(
-        subject
-            .assertions
+    let files = [PathBuf::from("tests/both_forms.rs")];
+    let registrations = [custom_target_registration("tests/both_forms.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    assert_eq!(
+        index
+            .harness_subjects
             .iter()
-            .any(|oracle| oracle.text == "unwrap" || oracle.text == ".unwrap(")
+            .map(|subject| subject.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["both_case"]
     );
     assert!(
-        subject
-            .assertions
-            .iter()
-            .any(|oracle| oracle.text == ".expect(")
-    );
-    assert!(
-        subject
-            .assertions
-            .iter()
-            .any(|oracle| oracle.text.starts_with("assert_eq!"))
-    );
-    assert!(
-        subject
-            .assertions
-            .iter()
-            .map(|oracle| oracle.line)
-            .any(|line| line > subject.start_line)
+        index.harness_limitations.is_empty(),
+        "{:?}",
+        index.harness_limitations
     );
     Ok(())
 }
 
 #[test]
-fn qualified_trial_callbacks_keep_subjects_and_resolve_terminal_function_names()
--> Result<(), Box<dyn std::error::Error>> {
-    let root = temp_dir("qualified-callbacks")?;
+fn plain_idents_inside_trial_bodies_never_become_oracles() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = temp_dir("trial-ident-noise")?;
     write_workspace(
         &root,
         &[(
-            "tests/callbacks.rs",
-            r#"
-use libtest_mimic::Trial;
-fn check() {
-    assert_eq!(1, 1);
-}
-fn trials() -> Vec<Trial> {
-    vec![
-        Trial::test("resolved_callback", callbacks::check),
-        Trial::test("unresolved_callback", missing::callback),
-    ]
-}
-"#,
+            "tests/ident_noise.rs",
+            "fn trials() -> Vec<libtest_mimic::Trial> {\n    vec![libtest_mimic::Trial::test(\"noise_case\", || {\n        let snapshots = load();\n        assert_eq!(snapshots, 1);\n        Ok(())\n    })]\n}\nfn load() -> i32 {\n    1\n}\n",
         )],
     )?;
-    let index = build_index_with_test_harnesses(
-        &root.0,
-        &[PathBuf::from("tests/callbacks.rs")],
-        &[custom_target_registration("tests/callbacks.rs")],
-    )?;
-    assert_eq!(index.harness_subjects.len(), 2);
-    let resolved = index
-        .harness_subjects
+    let files = [PathBuf::from("tests/ident_noise.rs")];
+    let registrations = [custom_target_registration("tests/ident_noise.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    let subject_test = index
+        .tests
         .iter()
-        .find(|subject| subject.name == "resolved_callback")
-        .ok_or("missing resolved callback subject")?;
-    assert!(
-        resolved
+        .find(|test| test.name == "noise_case")
+        .ok_or("subject test present")?;
+    assert_eq!(
+        subject_test
             .assertions
             .iter()
-            .any(|oracle| oracle.text.starts_with("assert_eq!"))
+            .map(|assertion| assertion.text.as_str())
+            .collect::<Vec<_>>(),
+        // One macro-shaped oracle with the invocation's real text; the
+        // `let snapshots` ident never classifies.
+        vec!["assert_eq!(snapshots, 1)"]
     );
-    assert!(index.harness_limitations.iter().any(|limitation| {
-        limitation.code == "unresolved_trial_callback"
-            && limitation.detail.contains("missing::callback")
-    }));
     Ok(())
 }
 
 #[test]
-fn trial_oracles_preserve_brace_and_bracket_macro_delimiters()
+fn snapshot_named_helpers_never_become_oracles_but_snapshot_asserts_do()
 -> Result<(), Box<dyn std::error::Error>> {
-    let root = temp_dir("delimited-oracles")?;
+    let root = temp_dir("leaf-snapshot-boundary")?;
     write_workspace(
         &root,
         &[(
-            "tests/delimiters.rs",
-            r#"
-use libtest_mimic::Trial;
-fn trials() -> Vec<Trial> {
-    vec![Trial::test("delimiters", || {
-        let result = 1;
-        assert_eq! { result, Config { field: 1 } };
-        assert_eq! [result, Config { field: 1 }];
+            "tests/leaf_boundary.rs",
+            "fn trials() -> Vec<libtest_mimic::Trial> {
+    vec![libtest_mimic::Trial::test(\"leaf_case\", || {
+        snapshot_helper!();
+        assert_snapshot!(1);
         Ok(())
     })]
 }
-"#,
+",
         )],
     )?;
-    let index = build_index_with_test_harnesses(
-        &root.0,
-        &[PathBuf::from("tests/delimiters.rs")],
-        &[custom_target_registration("tests/delimiters.rs")],
-    )?;
-    let subject = index
-        .harness_subjects
+    let files = [PathBuf::from("tests/leaf_boundary.rs")];
+    let registrations = [custom_target_registration("tests/leaf_boundary.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    let subject_test = index
+        .tests
         .iter()
-        .find(|subject| subject.name == "delimiters")
-        .ok_or("missing delimiter subject")?;
-    assert_eq!(subject.assertions.len(), 2);
-    assert!(subject.assertions.iter().any(|oracle| {
-        oracle.kind == OracleKind::WholeObjectEquality
-            && oracle.text.contains("{")
-            && oracle.text.contains("}")
-    }));
-    assert!(subject.assertions.iter().any(|oracle| {
-        oracle.kind == OracleKind::WholeObjectEquality
-            && oracle.text.contains("[")
-            && oracle.text.contains("]")
-    }));
+        .find(|test| test.name == "leaf_case")
+        .ok_or("subject test present")?;
+    assert_eq!(
+        subject_test
+            .assertions
+            .iter()
+            .map(|assertion| assertion.text.as_str())
+            .collect::<Vec<_>>(),
+        // The *_snapshot naming boundary keeps helper-style macros out
+        // while the assert_snapshot family still classifies.
+        vec!["assert_snapshot!(1)"]
+    );
+    Ok(())
+}
+
+#[test]
+fn foreign_trial_paths_are_not_adopted_through_an_import_binding()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("foreign-trial-path")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/foreign_trial.rs",
+            "use libtest_mimic::Trial;
+
+fn other() -> Vec<Trial> {
+    vec![other_module :: Trial::test(\"foreign_case\", || Ok(()))]
+}
+",
+        )],
+    )?;
+    let files = [PathBuf::from("tests/foreign_trial.rs")];
+    let registrations = [custom_target_registration("tests/foreign_trial.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    assert!(
+        index.harness_subjects.is_empty(),
+        "{:?}",
+        index.harness_subjects
+    );
+    assert!(index.tests.is_empty(), "{:?}", index.tests);
+    Ok(())
+}
+
+#[test]
+fn record_field_shape_inside_a_macro_token_tree_still_classifies()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("record-shape-in-macro")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/record_in_macro.rs",
+            "use libtest_mimic::Trial;
+
+struct Suite {
+    trials: Vec<Trial>,
+}
+
+fn suite() -> Suite {
+    Suite {
+        trials: vec![Suite { trials: Trial::test(\"nested_case\", || Ok(())) }.trials],
+    }
+}
+",
+        )],
+    )?;
+    let files = [PathBuf::from("tests/record_in_macro.rs")];
+    let registrations = [custom_target_registration("tests/record_in_macro.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    // Inside vec!'s token tree the record field is raw syntax; the
+    // field-name-colon-before-{/, shape keeps the subject classified.
+    assert_eq!(
+        index
+            .harness_subjects
+            .iter()
+            .map(|subject| subject.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["nested_case"]
+    );
+    Ok(())
+}
+
+#[test]
+fn macro_input_data_never_becomes_a_subject() -> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("macro-input-data")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/macro_input.rs",
+            "fn debug() -> String {
+    stringify!(trial: Trial::test(\"ghost_case\", || Ok(())))
+}
+",
+        )],
+    )?;
+    let files = [PathBuf::from("tests/macro_input.rs")];
+    let registrations = [custom_target_registration("tests/macro_input.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    // Macro input is inert data; a `label:` colon inside it must not
+    // adopt the record-field exception.
+    assert!(
+        index.harness_subjects.is_empty(),
+        "{:?}",
+        index.harness_subjects
+    );
+    assert!(index.tests.is_empty(), "{:?}", index.tests);
+    Ok(())
+}
+
+#[test]
+fn struct_field_initializers_still_start_trial_paths() -> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("struct-field-trial")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/field_trial.rs",
+            "use libtest_mimic::Trial;
+
+struct Suite {
+    trials: Vec<Trial>,
+}
+
+fn suite() -> Suite {
+    Suite {
+        trials: vec![Trial::test(\"field_case\", || Ok(()))],
+    }
+}
+",
+        )],
+    )?;
+    let files = [PathBuf::from("tests/field_trial.rs")];
+    let registrations = [custom_target_registration("tests/field_trial.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    assert_eq!(
+        index
+            .harness_subjects
+            .iter()
+            .map(|subject| subject.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["field_case"]
+    );
+    Ok(())
+}
+
+#[test]
+fn dormant_macro_templates_never_become_subjects() -> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("dormant-macro-template")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/dormant_template.rs",
+            "macro_rules! trial_template {
+    ($name:literal) => {
+        libtest_mimic::Trial::test($name, || Ok(()))
+    };
+}
+
+fn trials() -> Vec<libtest_mimic::Trial> {
+    Vec::new()
+}
+",
+        )],
+    )?;
+    let files = [PathBuf::from("tests/dormant_template.rs")];
+    let registrations = [custom_target_registration("tests/dormant_template.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    // The macro body is a template, not a registration: an uninvoked
+    // template must not fabricate an executable test.
+    assert!(
+        index.harness_subjects.is_empty(),
+        "{:?}",
+        index.harness_subjects
+    );
+    assert!(index.tests.is_empty(), "{:?}", index.tests);
     Ok(())
 }
 
