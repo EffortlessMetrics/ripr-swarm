@@ -149,19 +149,22 @@ impl PathDependencyAdjacency {
         let mut nodes: BTreeSet<String> = BTreeSet::new();
         let mut connected_edge_count = 0usize;
         for edge in edges {
-            nodes.insert(edge.from_manifest.clone());
             // Only `Resolved` edges name a manifest that exists inside the
             // scan root. Outside-root, missing-target, absolute, and
             // invalid declarations stay disconnected: inventing a node for
             // them would fabricate a phantom workspace manifest in a
             // `complete` graph (#3613 review); they remain disclosed in
-            // `edge_count` and the detail/limitations.
+            // `edge_count` and the detail/limitations. The declaring
+            // manifest joins the node set only through a connected edge so
+            // a manifest whose every edge is disconnected does not appear
+            // as an isolated participant.
             if edge.resolution != crate::analysis::seam_cache::PathDependencyResolution::Resolved {
                 continue;
             }
             let Some(resolved) = edge.resolved_path.as_deref() else {
                 continue;
             };
+            nodes.insert(edge.from_manifest.clone());
             let target = manifest_identity_from_resolved_path(resolved);
             nodes.insert(target.clone());
             forward
@@ -810,13 +813,16 @@ mod tests {
     /// as adjacency nodes (#3613 review).
     #[test]
     fn adjacency_excludes_outside_root_and_missing_target_edges() -> Result<(), String> {
+        let mut stray =
+            edge_with_resolution(PathDependencyResolution::TargetMissing, Some("ghost"));
+        stray.from_manifest = "stray/Cargo.toml".to_string();
         let edges = vec![
             edge_with_resolution(PathDependencyResolution::Resolved, Some("lib/dep")),
             edge_with_resolution(
                 PathDependencyResolution::ResolvedOutsideWorkspace,
                 Some("../outside"),
             ),
-            edge_with_resolution(PathDependencyResolution::TargetMissing, Some("ghost")),
+            stray,
         ];
         let provenance = WorkspaceGraphProvenance {
             package_graph_status: "complete".to_string(),
@@ -834,6 +840,11 @@ mod tests {
         assert!(
             !adjacency.contains_node("ghost/Cargo.toml"),
             "a missing-target resolution must not become a node"
+        );
+        assert!(
+            !adjacency.contains_node("stray/Cargo.toml"),
+            "a manifest whose every edge is disconnected must not appear as an \
+             isolated participant (#3613 review)"
         );
         assert!(
             adjacency
