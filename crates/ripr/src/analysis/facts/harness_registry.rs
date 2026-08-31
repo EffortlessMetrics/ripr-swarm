@@ -562,8 +562,17 @@ fn trial_callback_name(
     let mut index = name_token_index + 1;
     while let Some(token) = tokens.get(index) {
         if token.kind() == ra_ap_syntax::SyntaxKind::COMMA {
+            let mut callback_index = index + 1;
+            while tokens.get(callback_index).is_some_and(|callback| {
+                matches!(
+                    callback.kind(),
+                    ra_ap_syntax::SyntaxKind::WHITESPACE | ra_ap_syntax::SyntaxKind::COMMENT
+                )
+            }) {
+                callback_index += 1;
+            }
             return tokens
-                .get(index + 1)
+                .get(callback_index)
                 .filter(|callback| callback.kind() == ra_ap_syntax::SyntaxKind::IDENT)
                 .map(|callback| callback.text().to_string());
         }

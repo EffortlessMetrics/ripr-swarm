@@ -51,6 +51,7 @@ pub fn build_index_with_test_harnesses_and_production_like_targets(
     Ok(index)
 }
 
+#[cfg(test)]
 pub(crate) fn build_index_from_loaded_files_with_cache_and_test_harnesses(
     root: &Path,
     files: &[(PathBuf, Vec<u8>)],

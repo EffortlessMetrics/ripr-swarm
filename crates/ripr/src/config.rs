@@ -937,7 +937,64 @@ fn marker_path_is_exact(marker: &str) -> bool {
             let mut characters = segment.chars();
             matches!(characters.next(), Some(first) if first.is_ascii_alphabetic() || first == '_')
                 && characters.all(|rest| rest.is_ascii_alphanumeric() || rest == '_')
+                && !is_reserved_rust_identifier(segment)
         })
+}
+
+fn is_reserved_rust_identifier(identifier: &str) -> bool {
+    matches!(
+        identifier,
+        "as" | "break"
+            | "const"
+            | "continue"
+            | "crate"
+            | "else"
+            | "enum"
+            | "extern"
+            | "false"
+            | "fn"
+            | "for"
+            | "if"
+            | "impl"
+            | "in"
+            | "let"
+            | "loop"
+            | "match"
+            | "mod"
+            | "move"
+            | "mut"
+            | "pub"
+            | "ref"
+            | "return"
+            | "self"
+            | "Self"
+            | "static"
+            | "struct"
+            | "super"
+            | "trait"
+            | "true"
+            | "type"
+            | "unsafe"
+            | "use"
+            | "where"
+            | "while"
+            | "async"
+            | "await"
+            | "dyn"
+            | "abstract"
+            | "become"
+            | "box"
+            | "do"
+            | "final"
+            | "macro"
+            | "override"
+            | "priv"
+            | "typeof"
+            | "unsized"
+            | "virtual"
+            | "yield"
+            | "try"
+    )
 }
 
 #[cfg(test)]
