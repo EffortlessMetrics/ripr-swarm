@@ -15486,7 +15486,23 @@ targeted-rerun receipt shape:
         "feature_graph_hash": "…",
         "feature_graph_detail": null,
         "external_dependency_graph_status": "unavailable",
-        "external_dependency_graph_detail": "external dependency metadata is not resolved; no network access was used"
+        "external_dependency_graph_detail": "external dependency metadata is not resolved; no network access was used",
+        "path_dependency_graph": {
+          "status": "complete",
+          "detail": null,
+          "edge_count": 2,
+          "connected_edge_count": 2,
+          "adjacency": {
+            "crates/app/Cargo.toml": {
+              "forward": ["crates/shared/Cargo.toml"],
+              "reverse": []
+            },
+            "crates/shared/Cargo.toml": {
+              "forward": [],
+              "reverse": ["crates/app/Cargo.toml"]
+            }
+          }
+        }
       }
     }
   },
@@ -15618,6 +15634,29 @@ use network or ambient Cargo metadata. Graph changes are named as
 `input_changed:feature_graph_provenance` or
 `input_changed:external_dependency_graph_provenance`; parity fails closed when
 required local graph provenance is unavailable.
+
+`input_fingerprint.graph_provenance.path_dependency_graph` discloses the
+forward/reverse path-dependency adjacency built in memory from the
+path-dependency edges captured from local Cargo manifests (#2969). `status`
+is `complete`, `limited`, or `unavailable`: `limited` means edge capture
+reported limitations, so the adjacency covers a partial edge inventory;
+`complete` with an empty `adjacency` means no path dependencies were declared
+in the scanned manifests, not an omitted analysis; `unavailable` means no
+manifest was found. `edge_count` names the captured edges and
+`connected_edge_count` the subset carrying a resolved repo-relative identity;
+edges without one (absolute paths, unresolved workspace inheritance, invalid
+declarations) never participate, and the remainder is named in `detail`.
+`adjacency` maps every participating repo-relative manifest to sorted
+`forward` (the manifests it declares path dependencies on) and `reverse`
+(the manifests that declare a path dependency on it) neighbor lists; crates
+with no path-dependency edges are absent because they are isolated from the
+path-dependency graph. The adjacency is derived without network access or
+filesystem walking of dependencies; external dependency status stays
+unavailable. The section is disclosure only in this slice: it does not yet
+contribute to `input_changed` naming or parity input mismatches, because
+workspace scope expansion does not consume the graph yet (#2970). Before
+artifacts written before this section existed deserialize with an empty
+default whose empty status is never read as a recorded graph fact.
 
 Pass `--check-parity` to request an explicit full-inventory comparison. The
 optional `parity` object reports `matched` only when the targeted and expected
