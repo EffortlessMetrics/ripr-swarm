@@ -508,6 +508,44 @@ fn other() -> Vec<Trial> {
 }
 
 #[test]
+fn record_field_shape_inside_a_macro_token_tree_still_classifies()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("record-shape-in-macro")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/record_in_macro.rs",
+            "use libtest_mimic::Trial;
+
+struct Suite {
+    trials: Vec<Trial>,
+}
+
+fn suite() -> Suite {
+    Suite {
+        trials: vec![Suite { trials: Trial::test(\"nested_case\", || Ok(())) }.trials],
+    }
+}
+",
+        )],
+    )?;
+    let files = [PathBuf::from("tests/record_in_macro.rs")];
+    let registrations = [custom_target_registration("tests/record_in_macro.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    // Inside vec!'s token tree the record field is raw syntax; the
+    // field-name-colon-before-{/, shape keeps the subject classified.
+    assert_eq!(
+        index
+            .harness_subjects
+            .iter()
+            .map(|subject| subject.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["nested_case"]
+    );
+    Ok(())
+}
+
+#[test]
 fn macro_input_data_never_becomes_a_subject() -> Result<(), Box<dyn std::error::Error>> {
     let root = temp_dir("macro-input-data")?;
     write_workspace(

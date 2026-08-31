@@ -330,13 +330,14 @@ fn match_trial_path(
     }
 
     // A lone `:` predecessor only continues into a candidate when it is
-    // syntactically a record field (`trials: Trial::test(...)`); macro
-    // input like `stringify!(trial: Trial::test(...))` is inert data and
-    // must not adopt the exception.
+    // a record field (`trials: Trial::test(...)`) - either parsed as one,
+    // or shaped like one inside a macro's token tree (field name `ident`
+    // preceded by `{` or `,`). Macro input like `stringify!(trial:
+    // Trial::test(...))` is inert data and must not adopt the exception.
     let lone_colon_is_record_field = tokens[position].parent_ancestors().any(|ancestor| {
         ast::RecordExprField::can_cast(ancestor.kind())
             || ast::RecordExprFieldList::can_cast(ancestor.kind())
-    });
+    }) || preceded_by_record_literal_shape(tokens, position);
     for qualified in [false, true] {
         // A bare `Trial` match is only a candidate at a path start; the
         // inner `Trial` of `other::Trial::test(` is a foreign path and
@@ -427,6 +428,46 @@ fn at_path_start(
         };
     }
     true
+}
+
+/// Whether a lone-colon candidate at `position` carries the record
+/// literal shape inside a macro token tree: `field_ident :` preceded by
+/// `{` or `,` (`vec![Suite { trials: Trial::test(...) }]`). A macro
+/// input label (`stringify!(trial: ...)`) is preceded by the opening
+/// delimiter instead and stays excluded.
+fn preceded_by_record_literal_shape(tokens: &[ra_ap_syntax::SyntaxToken], position: usize) -> bool {
+    let mut cursor = position;
+    let mut saw_colon = false;
+    let mut saw_field_ident = false;
+    while cursor > 0 {
+        cursor -= 1;
+        let token = &tokens[cursor];
+        if matches!(
+            token.kind(),
+            ra_ap_syntax::SyntaxKind::WHITESPACE | ra_ap_syntax::SyntaxKind::COMMENT
+        ) {
+            continue;
+        }
+        if !saw_colon {
+            if token.kind() != ra_ap_syntax::SyntaxKind::COLON {
+                return false;
+            }
+            saw_colon = true;
+            continue;
+        }
+        if !saw_field_ident {
+            if token.kind() != ra_ap_syntax::SyntaxKind::IDENT {
+                return false;
+            }
+            saw_field_ident = true;
+            continue;
+        }
+        return matches!(
+            token.kind(),
+            ra_ap_syntax::SyntaxKind::L_CURLY | ra_ap_syntax::SyntaxKind::COMMA
+        );
+    }
+    false
 }
 
 fn previous_significant_is_colon(tokens: &[ra_ap_syntax::SyntaxToken], from: usize) -> bool {
