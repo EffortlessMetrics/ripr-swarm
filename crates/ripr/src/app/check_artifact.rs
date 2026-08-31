@@ -103,14 +103,6 @@ pub(crate) struct AnalysisOptionsIdentity {
     pub(crate) perl_facts_content_hash: Option<String>,
 }
 
-/// Write the artifact for one completed check run, atomically.
-///
-/// The identity is recomputed here from the resolved input: the diff source
-/// is re-resolved with the same loaders the pipeline used, so the recorded
-/// hash commits to the exact diff bytes of this run. `worktree` marks a
-/// `--worktree` producing run so its diff source is recorded as the
-/// base-to-live-working-tree diff (re-resolvable at reuse time) instead of
-/// the committed `base...HEAD` pair.
 /// Raw-byte diff paths cannot serialize into JSON strings, so any
 /// non-UTF-8 path field renders through the injective stable text
 /// projection (#3609): the artifact stays writable and each distinct
@@ -531,12 +523,12 @@ mod tests;
 #[cfg(all(test, unix))]
 mod raw_path_tests {
     use super::*;
-    use crate::domain::{Probe, SourceLocation};
     use crate::domain::{
         ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, FlowSinkKind,
         OracleKind, OracleStrength, ProbeFamily, ProbeId, RelatedTest, RevealEvidence,
         RiprEvidence, SourceCurrentness, StageEvidence, StageState, StopReason,
     };
+    use crate::domain::{Probe, SourceLocation};
     use std::ffi::OsStr;
     use std::os::unix::ffi::OsStrExt;
     use std::path::PathBuf;
