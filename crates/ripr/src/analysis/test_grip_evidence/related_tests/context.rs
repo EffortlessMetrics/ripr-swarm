@@ -159,11 +159,9 @@ impl<'a> CompactGripContext<'a> {
                         .or_default()
                         .push(test_index);
                 }
-                if let Some(stem) = test.file.file_stem().and_then(|stem| stem.to_str()) {
-                    tests_by_file_stem
-                        .entry(stem.to_string())
-                        .or_default()
-                        .push(test_index);
+                let stem = normalized_file_stem(&test.file);
+                if !stem.is_empty() {
+                    tests_by_file_stem.entry(stem).or_default().push(test_index);
                 }
                 for token in import_affinity_tokens(&code_lines) {
                     tests_by_import_token

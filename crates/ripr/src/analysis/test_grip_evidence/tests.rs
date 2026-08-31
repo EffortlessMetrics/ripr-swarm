@@ -10230,6 +10230,99 @@ fn given_same_module_test_without_direct_call_when_related_tests_are_ranked_then
     Ok(())
 }
 
+#[test]
+fn given_foreign_separator_paths_when_grip_associates_then_same_test_file_still_matches()
+-> Result<(), String> {
+    // #3469: a path carrying the other platform's separator (facts
+    // materialized on Windows, analyzed on Linux, or vice versa) broke
+    // the SameTestFile relation in two stacked places: the owner lookup
+    // compared the seam's `/`-normalized file identity against raw
+    // host-separator index keys (`Path` component equality only
+    // absorbs this on `\`-native hosts), and both association stems
+    // were derived with the host-native `Path::file_stem`. Every
+    // separator combination must associate; the test body stays free
+    // of owner/discriminator identifiers so SameTestFile is the only
+    // reason that can fire.
+    let prod_src = "pub fn apply_discount(amount: i32, threshold: i32) -> i32 \
+                        { if amount >= threshold { amount - 10 } else { amount } }\n";
+    let test_src = "#[test] fn bounds_smoke() { assert_eq!(1, 1); }\n";
+    let combinations = [
+        ("src/pricing.rs", "tests/pricing_test.rs"),
+        ("src\\pricing.rs", "tests\\pricing_test.rs"),
+        ("src/pricing.rs", "tests\\pricing_test.rs"),
+        ("src\\pricing.rs", "tests/pricing_test.rs"),
+    ];
+    for (owner_path, test_path) in combinations {
+        let files: Vec<(PathBuf, &str)> = vec![
+            (PathBuf::from(owner_path), prod_src),
+            (PathBuf::from(test_path), test_src),
+        ];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from(owner_path)], &index);
+        let predicate = seams
+            .iter()
+            .find(|s| s.kind() == SeamKind::PredicateBoundary)
+            .ok_or_else(|| "predicate seam present".to_string())?;
+        let evidence = evidence_for_seam(predicate, &index);
+        let context = CompactGripContext::new(&index);
+        let owner_fn = crate::analysis::rust_index::find_owner_function(
+            &index,
+            predicate.file(),
+            predicate.display_line(),
+        );
+        let ctx_tests: Vec<String> = context
+            .tests
+            .iter()
+            .map(|t| t.test.file.to_string_lossy().to_string())
+            .collect();
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|grip| grip.relation_reason == RelationReason::SameTestFile),
+            "same-test-file association must hold for owner `{owner_path}` / test \
+             `{test_path}`; got {:?} | diag: index_files={:?} index_tests={} \
+             ctx_tests={ctx_tests:?} stem_keys={:?} seam_file={:?} seam_line={} \
+             owner={owner_fn:?} owner_stem_norm={:?} owner_stem_native={:?} \
+             test_stem_norm={:?} test_stem_native={:?}",
+            evidence.related_tests,
+            index.files.keys().collect::<Vec<_>>(),
+            index.tests.len(),
+            context.tests_by_file_stem.keys().collect::<Vec<_>>(),
+            predicate.file(),
+            predicate.display_line(),
+            normalized_file_stem_to_string(Path::new(owner_path)),
+            Path::new(owner_path)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string()),
+            normalized_file_stem_to_string(Path::new(test_path)),
+            Path::new(test_path)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string()),
+        );
+    }
+    Ok(())
+}
+
+fn normalized_file_stem_to_string(path: &Path) -> String {
+    super::related_tests::normalized_file_stem(path)
+}
+
+#[test]
+#[cfg(unix)]
+fn given_non_utf8_stems_when_grip_associates_then_lossy_collision_fails_closed() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    // Two distinct non-UTF-8 names can share one lossy rendering;
+    // deriving stems through lossy conversion would fabricate a
+    // same-test-file relation between unrelated entities, so stem
+    // extraction must fail closed instead.
+    let first = Path::new(OsStr::from_bytes(b"tests/pricing_\xff.rs"));
+    let second = Path::new(OsStr::from_bytes(b"tests/pricing_\xfe.rs"));
+    assert_eq!(normalized_file_stem(first), "");
+    assert_eq!(normalized_file_stem(second), "");
+}
+
 // -- helper coverage ---------------------------------------------
 //
 // Targeted unit tests for the small private helpers introduced by
