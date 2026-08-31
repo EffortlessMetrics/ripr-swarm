@@ -7,6 +7,9 @@ mod parameterized_tests;
 mod role_composition;
 mod test_styles;
 
+#[cfg(test)]
+pub(crate) use build::build_index_from_loaded_files_with_cache;
+
 use std::path::{Path, PathBuf};
 
 use crate::config::TestHarnessRegistration;
@@ -57,9 +60,8 @@ pub use model::{
     ModuleDeclarationFact, ModulePathTarget, OracleFact, ProbeShapeFact, ResolvedIncludeParent,
     ReturnFact, RustIncludeLimitation, RustIndex, SourceRoleProvenance, SourceRoleProvenanceEdge,
     SourceRoleProvenanceEdgeKind, TestFact, TestSummary,
-    CallFact, FileFacts, FunctionFact, FunctionSourceRole, FunctionSummary, HarnessLimitationFact,
-    HarnessSelectorCapability, HarnessSubjectClaim, HarnessSubjectFact, LiteralFact, OracleFact,
-    ProbeShapeFact, ReturnFact, RustIncludeLimitation, RustIndex, TestFact, TestSummary,
+    HarnessLimitationFact,
+    HarnessSelectorCapability, HarnessSubjectClaim, HarnessSubjectFact,
 };
 #[cfg(test)]
 pub(crate) use model::{WorkspaceFileAuthority, WorkspaceRootAuthority};

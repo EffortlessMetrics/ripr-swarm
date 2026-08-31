@@ -18,7 +18,6 @@ pub(crate) use super::extract::{
     unwrap_err_bound_variables,
 };
 use super::facts::ModulePathTarget;
-pub(crate) use super::facts::build_index_from_loaded_files_with_cache;
 pub(crate) use super::facts::build_index_from_loaded_files_with_cache_and_test_harnesses;
 #[cfg(test)]
 pub use super::facts::{CallFact, LiteralFact, ReturnFact};
