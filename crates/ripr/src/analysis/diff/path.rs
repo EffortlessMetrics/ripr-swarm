@@ -274,8 +274,8 @@ fn decode_path_bytes(bytes: Vec<u8>) -> DecodedPath {
         #[cfg(unix)]
         Err(err) => {
             use std::os::unix::ffi::OsStrExt;
-            let bytes = err.into_bytes();
-            DecodedPath::Raw(std::ffi::OsStr::from_bytes(&bytes).to_os_string())
+            use std::os::unix::ffi::OsStringExt;
+            DecodedPath::Raw(std::ffi::OsString::from_vec(err.into_bytes()))
         }
         #[cfg(not(unix))]
         Err(err) => DecodedPath::Text(octal_residue_text(err.into_bytes())),
