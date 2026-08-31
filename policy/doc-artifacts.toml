@@ -835,3 +835,11 @@ path = "docs/specs/RIPR-SPEC-0169-contextual-source-role-composition.md"
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Issue #3533 records the contextual source-role composition contract: evidence-only CfgTestModule grants across module and include edges, fail-closed unresolved chains with provenance reasons and disclosure, and crate-root-anchored default module resolution."
+
+[[artifact]]
+id = "RIPR-SPEC-0170"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0170-path-dependency-diff-scope.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #2665-C/#2970 records the reverse-dependency diff-scope contract: Draft/Fast package scope grows by the package roots that reach a changed package through the path-dependency adjacency, expansion only adds, limited/unavailable graphs disclose the boundary, non-narrowing selections are unchanged, and the diff-index scope cap stays fail-closed."

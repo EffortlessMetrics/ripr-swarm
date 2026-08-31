@@ -8,11 +8,39 @@ use std::path::{Path, PathBuf};
 /// fails closed (their children keep their standalone roles).
 const MAX_MODULE_CONTEXT_DEPTH: usize = 32;
 
-pub fn select_rust_files_for_mode(
+/// Pre-#2970 selection entry, kept for the selection test matrix: identical
+/// to [`select_rust_files_for_mode_with_dependent_packages`] with no
+/// dependent roots. The workspace module re-exports only the expansion-aware
+/// form, so this wrapper exists under `cfg(test)` alone.
+#[cfg(test)]
+fn select_rust_files_for_mode(
     all_files: &[PathBuf],
     changed_rust_files: &[PathBuf],
     mode: AnalysisMode,
     include_unchanged_tests: bool,
+) -> Vec<PathBuf> {
+    select_rust_files_for_mode_with_dependent_packages(
+        all_files,
+        changed_rust_files,
+        mode,
+        include_unchanged_tests,
+        &BTreeSet::new(),
+    )
+}
+
+/// The package-narrowing selection with the reverse-dependency expansion of
+/// the package scope (#2970 slice C): `dependent_package_roots` carries the
+/// package roots that reach a changed package through path dependencies, so
+/// the Draft/Fast package narrowing also indexes the tests of dependent
+/// crates instead of dropping them from scope. Expansion only ever adds
+/// packages; Instant's changed-files-only and Deep/Ready's whole-workspace
+/// selections ignore it, as does every branch without package narrowing.
+pub(crate) fn select_rust_files_for_mode_with_dependent_packages(
+    all_files: &[PathBuf],
+    changed_rust_files: &[PathBuf],
+    mode: AnalysisMode,
+    include_unchanged_tests: bool,
+    dependent_package_roots: &BTreeSet<String>,
 ) -> Vec<PathBuf> {
     let changed_existing = changed_existing_files(all_files, changed_rust_files);
     if matches!(mode, AnalysisMode::Instant) || !include_unchanged_tests {
@@ -32,9 +60,10 @@ pub fn select_rust_files_for_mode(
     }
 
     let package_files = all_files.iter().filter(|file| {
-        package_root(file)
-            .as_ref()
-            .is_some_and(|root| package_roots.iter().any(|changed| changed == root))
+        package_root(file).as_ref().is_some_and(|root| {
+            package_roots.iter().any(|changed| changed == root)
+                || dependent_package_roots.contains(root)
+        })
     });
     with_module_context_files(
         all_files,
@@ -433,5 +462,120 @@ mod tests {
             .wrapping_mul(6364136223846793005)
             .wrapping_add(1442695040888963407);
         *seed
+    }
+
+    /// #2970 slice C: the a <- b <- c path-dep chain plus unrelated d. The
+    /// dependent roots enter the Draft/Fast package selection, `d` stays out,
+    /// and the direction is discriminated: expansion from `a` (nothing
+    /// depends on `a` in the forward direction) is what brings `b`/`c` in, so
+    /// a swapped forward/reverse adjacency — whose expansion of `a` is empty
+    /// — loses the dependent files.
+    #[test]
+    fn dependent_packages_enter_draft_and_fast_selection() {
+        let all = files(&[
+            "a/src/lib.rs",
+            "b/src/lib.rs",
+            "b/tests/behavior.rs",
+            "c/src/lib.rs",
+            "d/src/lib.rs",
+            "d/tests/d.rs",
+        ]);
+        let changed = files(&["a/src/lib.rs"]);
+        let dependents = ["b/".to_string(), "c/".to_string()]
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+
+        for mode in [AnalysisMode::Draft, AnalysisMode::Fast] {
+            let selected = select_rust_files_for_mode_with_dependent_packages(
+                &all,
+                &changed,
+                mode,
+                true,
+                &dependents,
+            );
+            assert_eq!(
+                selected,
+                files(&[
+                    "a/src/lib.rs",
+                    "b/src/lib.rs",
+                    "b/tests/behavior.rs",
+                    "c/src/lib.rs"
+                ]),
+                "{mode:?}: dependent crates b and c enter scope, unrelated d stays out"
+            );
+        }
+    }
+
+    /// Empty dependent roots reproduce the unchanged package selection
+    /// exactly: expansion only ever adds, never narrows.
+    #[test]
+    fn empty_dependent_roots_reproduce_the_unchanged_selection() {
+        let all = files(&["a/src/lib.rs", "b/src/lib.rs", "b/tests/b.rs"]);
+        let changed = files(&["a/src/lib.rs"]);
+        let selected = select_rust_files_for_mode_with_dependent_packages(
+            &all,
+            &changed,
+            AnalysisMode::Draft,
+            true,
+            &std::collections::BTreeSet::new(),
+        );
+        assert_eq!(selected, files(&["a/src/lib.rs"]));
+    }
+
+    /// Modes and toggles without package narrowing ignore the dependent
+    /// roots: Instant stays changed-files-only, Deep/Ready stay
+    /// whole-workspace, and `include_unchanged_tests = false` stays
+    /// changed-files-only in every mode.
+    #[test]
+    fn dependent_roots_do_not_change_non_narrowing_selections() {
+        let all = files(&["a/src/lib.rs", "b/src/lib.rs", "b/tests/b.rs"]);
+        let changed = files(&["a/src/lib.rs"]);
+        let dependents = ["b/".to_string()]
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+
+        assert_eq!(
+            select_rust_files_for_mode_with_dependent_packages(
+                &all,
+                &changed,
+                AnalysisMode::Instant,
+                true,
+                &dependents
+            ),
+            files(&["a/src/lib.rs"]),
+            "Instant must stay changed-files-only"
+        );
+        for mode in [AnalysisMode::Deep, AnalysisMode::Ready] {
+            assert_eq!(
+                select_rust_files_for_mode_with_dependent_packages(
+                    &all,
+                    &changed,
+                    mode,
+                    true,
+                    &dependents
+                ),
+                files(&["a/src/lib.rs", "b/src/lib.rs", "b/tests/b.rs"]),
+                "{mode:?} already spans the workspace"
+            );
+        }
+        for mode in [
+            AnalysisMode::Instant,
+            AnalysisMode::Draft,
+            AnalysisMode::Fast,
+            AnalysisMode::Deep,
+            AnalysisMode::Ready,
+        ] {
+            assert_eq!(
+                select_rust_files_for_mode_with_dependent_packages(
+                    &all,
+                    &changed,
+                    mode,
+                    false,
+                    &dependents
+                ),
+                files(&["a/src/lib.rs"]),
+                "{mode:?} with include_unchanged_tests=false must stay changed-files-only"
+            );
+        }
     }
 }
