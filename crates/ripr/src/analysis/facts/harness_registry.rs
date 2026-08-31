@@ -413,9 +413,9 @@ fn parser_oracles_for_node_tokens(
                 // bang must directly follow the path segment. A plain
                 // identifier that merely contains an assertion keyword
                 // (`let snapshots = …`) never classifies.
-                if !tokens
+                if tokens
                     .get(index + 1)
-                    .is_some_and(|token| token.kind() == ra_ap_syntax::SyntaxKind::BANG)
+                    .is_none_or(|token| token.kind() != ra_ap_syntax::SyntaxKind::BANG)
                 {
                     index += 1;
                     continue;
