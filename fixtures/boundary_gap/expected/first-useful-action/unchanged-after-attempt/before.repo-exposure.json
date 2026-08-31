@@ -4,13 +4,13 @@
       "base_revision": null,
       "command": "ripr check --format repo-exposure-json",
       "format": "repo-exposure-json",
-      "input_identity": "input:v3:fnv1a64:279f227b14c46e0b",
+      "input_identity": "input:v3:fnv1a64:6019807aeb8b9ee6",
       "mode": "draft",
       "profile": "draft",
       "worktree": "dirty"
     },
     "canonicalization": "raw_json_placeholder_v1",
-    "content_sha256": "sha256:5c8faf85b702ef2f1556bcbca7c25ebe42c0f62ad1fe1213a0198d26ed1987a9",
+    "content_sha256": "sha256:b35c84811002ddb61802a12824b601880f2a140b2cb41c2c6c1bf3c287d6232d",
     "kind": "repo_exposure",
     "producer": {
       "tool": "ripr",
@@ -21,7 +21,7 @@
       "root": "."
     },
     "schema_version": "1",
-    "snapshot_identity": "snapshot:input:v3:fnv1a64:279f227b14c46e0b;revision:8a00693e680c8ad5172d5191bbb08484cbd5e300"
+    "snapshot_identity": "snapshot:input:v3:fnv1a64:6019807aeb8b9ee6;revision:8a00693e680c8ad5172d5191bbb08484cbd5e300"
   },
   "metrics": {
     "activation_unknown": 0,
