@@ -10,10 +10,10 @@ Linked issues: #3609
 
 Linked PRs: #3611
 
-Support-tier impact: none. This is a deterministic identity and rendering
-contract for paths already accepted by the analyzer. It does not promote
-arbitrary-byte path support on platforms whose native path type cannot carry
-those bytes.
+Support-tier impact: none; see [support tiers](../status/SUPPORT_TIERS.md).
+This is a deterministic identity and rendering contract for paths already
+accepted by the analyzer. It does not promote arbitrary-byte path support on
+platforms whose native path type cannot carry those bytes.
 
 Policy impact: none. The existing diff-path decoder and native filesystem path
 remain the authorities; this spec defines their shared textual projection.
