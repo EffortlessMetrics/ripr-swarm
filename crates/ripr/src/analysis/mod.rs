@@ -416,7 +416,7 @@ pub(crate) fn stable_path_text(path: &Path) -> String {
                 }
             }
         }
-        return output.replace('\\', "/");
+        output.replace('\\', "/")
     }
 
     #[cfg(not(unix))]
