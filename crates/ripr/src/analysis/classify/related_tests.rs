@@ -262,12 +262,18 @@ fn normalize_path(path: &Path) -> String {
 
 /// Extract a source-file stem after normalizing separators from either host.
 /// Analysis inputs can contain paths produced on a different platform than the
-/// host running the association pass.
+/// host running the association pass. Non-UTF-8 paths fail closed: lossy
+/// replacement characters can collapse distinct leaf names onto one stem and
+/// fabricate file-name affinity (#3599; same guard as the grip-side copy
+/// added in #3598).
 fn normalized_file_stem(path: &Path) -> String {
-    normalize_path(path)
-        .rsplit('/')
-        .next()
-        .and_then(|file| Path::new(file).file_stem())
+    let Some(text) = path.to_str() else {
+        return String::new();
+    };
+    let unified = text.replace('\\', "/").trim_start_matches("./").to_string();
+    let file = unified.rsplit('/').next().unwrap_or_default();
+    Path::new(file)
+        .file_stem()
         .and_then(|stem| stem.to_str())
         .unwrap_or_default()
         .to_string()
@@ -961,6 +967,25 @@ mod tests {
             assert_eq!(related[0].0.file, Path::new("crates/ripr/tests/.config.rs"));
             assert_eq!(related[0].1, RelationReason::SameTestFile);
         }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn given_non_utf8_stems_when_classify_extracts_then_lossy_collision_fails_closed() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        // Two distinct non-UTF-8 leaf names share one lossy rendering;
+        // deriving stems through lossy conversion would fabricate
+        // file-name affinity between unrelated entities, so extraction
+        // must fail closed instead (#3599).
+        let first = Path::new(OsStr::from_bytes(b"crates/app/src/pricing_\xff.rs"));
+        let second = Path::new(OsStr::from_bytes(b"crates/app/src/pricing_\xfe.rs"));
+        assert_eq!(normalized_file_stem(first), "");
+        assert_eq!(normalized_file_stem(second), "");
+        // Valid-UTF-8 stems are unchanged, including dotfiles and
+        // `./`-prefixed forms that `normalize_path` trims.
+        assert_eq!(normalized_file_stem(Path::new("src/config.rs")), "config");
+        assert_eq!(normalized_file_stem(Path::new("./src/config.rs")), "config");
     }
 
     // --- #1054 repro ---
