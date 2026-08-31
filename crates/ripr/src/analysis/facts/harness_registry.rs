@@ -706,10 +706,7 @@ fn macro_token_tree_text(
 }
 
 fn is_assertion_macro_name(name: &str) -> bool {
-    matches!(
-        name,
-        "assert" | "assert_eq" | "assert_ne" | "assert_matches" | "matches"
-    ) || name == "assert_snapshot"
+    crate::analysis::syntax::ra::is_assertion_macro_leaf(name)
 }
 /// Exact registered test-producing attribute adapter, generation 1
 /// (#3532). Promotes functions carrying the exact registered attribute

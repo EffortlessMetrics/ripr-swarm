@@ -83,18 +83,6 @@ pub(crate) fn build_index_from_loaded_files_with_cache_and_test_harnesses_and_pr
     Ok(cached)
 }
 
-/// Test-only compatibility facade for the cache path without harness
-/// registrations. Keep the same post-parse normalization and contextual
-/// role composition as the production index builder; callers that need the
-/// registry use the explicit sibling above.
-#[cfg(test)]
-pub(crate) fn build_index_from_loaded_files_with_cache(
-    root: &Path,
-    files: &[(PathBuf, Vec<u8>)],
-) -> Result<build::CachedRustIndex, String> {
-    build_index_from_loaded_files_with_cache_and_test_harnesses(root, files, &[])
-}
-
 // Keep compilation-unit rebasing available at the facts facade for index consumers.
 pub(crate) use includes::compilation_unit_path_from_parents;
 pub use model::{
