@@ -434,7 +434,7 @@ fn is_data_only_macro_input(tokens: &[ra_ap_syntax::SyntaxToken], position: usiz
                 | ra_ap_syntax::SyntaxKind::L_CURLY
         ) {
             if depth == 0 {
-                return false;
+                return data_only_macro_before(tokens, cursor);
             }
             depth -= 1;
             continue;
@@ -465,6 +465,41 @@ fn is_data_only_macro_input(tokens: &[ra_ap_syntax::SyntaxToken], position: usiz
         }
     }
     false
+}
+
+fn data_only_macro_before(tokens: &[ra_ap_syntax::SyntaxToken], open: usize) -> bool {
+    let significant = |mut index: usize| {
+        while index > 0 {
+            index -= 1;
+            if !matches!(
+                tokens[index].kind(),
+                ra_ap_syntax::SyntaxKind::WHITESPACE | ra_ap_syntax::SyntaxKind::COMMENT
+            ) {
+                return Some(index);
+            }
+        }
+        None
+    };
+    let Some(bang) = significant(open) else {
+        return false;
+    };
+    if tokens[bang].kind() != ra_ap_syntax::SyntaxKind::BANG {
+        return false;
+    }
+    let Some(name) = significant(bang) else {
+        return false;
+    };
+    tokens[name].kind() == ra_ap_syntax::SyntaxKind::IDENT
+        && matches!(
+            tokens[name].text(),
+            "stringify"
+                | "concat"
+                | "env"
+                | "option_env"
+                | "include"
+                | "include_bytes"
+                | "include_str"
+        )
 }
 
 fn bare_path_starts_at_boundary(tokens: &[ra_ap_syntax::SyntaxToken], position: usize) -> bool {
