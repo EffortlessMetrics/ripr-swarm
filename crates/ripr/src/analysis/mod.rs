@@ -386,6 +386,53 @@ use crate::domain::{Finding, Summary};
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
+/// Render a path for textual identity without collapsing distinct Unix byte
+/// paths through U+FFFD. Valid paths retain their usual spelling except that
+/// `%` is escaped, reserving `%XX` for bytes that are not valid UTF-8.
+pub(crate) fn stable_path_text(path: &Path) -> String {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let mut output = String::new();
+        let mut remaining = path.as_os_str().as_bytes();
+        while !remaining.is_empty() {
+            match std::str::from_utf8(remaining) {
+                Ok(valid) => {
+                    push_stable_path_text(&mut output, valid);
+                    break;
+                }
+                Err(error) => {
+                    push_stable_path_text(&mut output, &remaining[..error.valid_up_to()]);
+                    let invalid = error
+                        .error_len()
+                        .unwrap_or(remaining.len() - error.valid_up_to());
+                    for byte in &remaining[error.valid_up_to()..error.valid_up_to() + invalid] {
+                        output.push_str(&format!("%{byte:02X}"));
+                    }
+                    remaining = &remaining[error.valid_up_to() + invalid..];
+                }
+            }
+        }
+        return output.replace('\\', "/");
+    }
+
+    #[cfg(not(unix))]
+    {
+        path.to_string_lossy().replace('\\', "/")
+    }
+}
+
+#[cfg(unix)]
+fn push_stable_path_text(output: &mut String, text: &str) {
+    for character in text.chars() {
+        if character == '%' {
+            output.push_str("%25");
+        } else {
+            output.push(character);
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AnalysisMode {
     Instant,
