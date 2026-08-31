@@ -23,6 +23,11 @@ Linked PRs:
 
 Support-tier impact:
 
+- No tier promotion. Diff-scope expansion widens which files Draft/Fast
+  index; it adds no runtime evidence and does not change any support
+  tier. [docs/status/SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md) remains the
+  tier authority.
+
 Policy impact:
 
 ## Problem
