@@ -60,11 +60,7 @@ impl OwnerContext {
         let name = owner_fn.map(|f| f.name.as_str()).unwrap_or("").to_string();
         let name_lower = name.to_ascii_lowercase();
         let owner_file = owner_fn.map(|f| f.file.as_path());
-        let file_stem = owner_file
-            .and_then(|p| p.file_stem())
-            .and_then(|s| s.to_str())
-            .unwrap_or("")
-            .to_string();
+        let file_stem = owner_file.map(normalized_file_stem).unwrap_or_default();
         let module_path = owner_file.and_then(|file| module_path_for_index(context.index, file));
         let prefix = owner_fn.and_then(|f| package_prefix(&f.file));
         let fixture_names = owner_file
@@ -569,10 +565,10 @@ pub(super) fn assertion_targets_seam(test: &TestSummary, tokens: &[String]) -> b
 
 #[cfg(test)]
 pub(super) fn same_test_file(test_file: &Path, owner_stem: &str) -> bool {
-    let stem = match test_file.file_stem().and_then(|s| s.to_str()) {
-        Some(s) => s,
-        None => return false,
-    };
+    let stem = normalized_file_stem(test_file);
+    if stem.is_empty() {
+        return false;
+    }
     if stem == owner_stem {
         return true;
     }
@@ -769,6 +765,22 @@ pub(super) fn normalize_path(path: &Path) -> String {
     path.to_string_lossy()
         .replace('\\', "/")
         .trim_start_matches("./")
+        .to_string()
+}
+
+/// Extract a source-file stem after normalizing separators from either
+/// host. Grip inputs can carry paths produced on a different platform
+/// than the host resolving the association (#3469); a foreign separator
+/// makes [`std::path::Path::file_stem`] treat an entire relative path as
+/// one file name, so same-test-file lookups miss on exactly one host.
+/// Mirrors classify's `normalized_file_stem`.
+pub(super) fn normalized_file_stem(path: &Path) -> String {
+    normalize_path(path)
+        .rsplit('/')
+        .next()
+        .and_then(|file| Path::new(file).file_stem())
+        .and_then(|stem| stem.to_str())
+        .unwrap_or_default()
         .to_string()
 }
 

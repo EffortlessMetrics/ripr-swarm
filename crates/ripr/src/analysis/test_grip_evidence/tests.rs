@@ -10230,6 +10230,50 @@ fn given_same_module_test_without_direct_call_when_related_tests_are_ranked_then
     Ok(())
 }
 
+#[test]
+fn given_foreign_separator_paths_when_grip_associates_then_same_test_file_still_matches()
+-> Result<(), String> {
+    // #3469: the repo-seam grip path derived both association stems with
+    // the host-native `Path::file_stem`, so a path carrying the other
+    // platform's separator (facts materialized on Windows, analyzed on
+    // Linux, or vice versa) never matched and the SameTestFile relation
+    // silently vanished. Every separator combination must associate; the
+    // test body stays free of owner/discriminator identifiers so
+    // SameTestFile is the only reason that can fire.
+    let prod_src = "pub fn apply_discount(amount: i32, threshold: i32) -> i32 \
+                        { if amount >= threshold { amount - 10 } else { amount } }\n";
+    let test_src = "#[test] fn bounds_smoke() { assert_eq!(1, 1); }\n";
+    let combinations = [
+        ("src/pricing.rs", "tests/pricing_test.rs"),
+        ("src\\pricing.rs", "tests\\pricing_test.rs"),
+        ("src/pricing.rs", "tests\\pricing_test.rs"),
+        ("src\\pricing.rs", "tests/pricing_test.rs"),
+    ];
+    for (owner_path, test_path) in combinations {
+        let files: Vec<(PathBuf, &str)> = vec![
+            (PathBuf::from(owner_path), prod_src),
+            (PathBuf::from(test_path), test_src),
+        ];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from(owner_path)], &index);
+        let predicate = seams
+            .iter()
+            .find(|s| s.kind() == SeamKind::PredicateBoundary)
+            .ok_or_else(|| "predicate seam present".to_string())?;
+        let evidence = evidence_for_seam(predicate, &index);
+        assert!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|grip| grip.relation_reason == RelationReason::SameTestFile),
+            "same-test-file association must hold for owner `{owner_path}` / test \
+             `{test_path}`; got {:?}",
+            evidence.related_tests
+        );
+    }
+    Ok(())
+}
+
 // -- helper coverage ---------------------------------------------
 //
 // Targeted unit tests for the small private helpers introduced by
