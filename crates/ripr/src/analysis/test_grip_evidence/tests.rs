@@ -10233,7 +10233,14 @@ fn given_same_module_test_without_direct_call_when_related_tests_are_ranked_then
 #[test]
 fn given_foreign_separator_paths_when_grip_associates_then_same_test_file_still_matches()
 -> Result<(), String> {
-    let prod_src = "pub fn apply_discount(amount: i32, threshold: i32) -> i32 { if amount >= threshold { amount - 10 } else { amount } }\n";
+    // #3469: a path carrying the other platform's separator (facts
+    // materialized on Windows, analyzed on Linux, or vice versa) broke
+    // the SameTestFile relation in two stacked places: the owner lookup
+    // compared the seam's `/`-normalized file identity against raw
+    // host-separator index keys, and both association stems were derived
+    // with the host-native `Path::file_stem`.
+    let prod_src = "pub fn apply_discount(amount: i32, threshold: i32) -> i32 \
+                        { if amount >= threshold { amount - 10 } else { amount } }\n";
     let test_src = "#[test] fn bounds_smoke() { assert_eq!(1, 1); }\n";
     let combinations = [
         ("src/pricing.rs", "tests/pricing_test.rs"),
@@ -10253,11 +10260,26 @@ fn given_foreign_separator_paths_when_grip_associates_then_same_test_file_still_
             .find(|s| s.kind() == SeamKind::PredicateBoundary)
             .ok_or_else(|| "predicate seam present".to_string())?;
         let evidence = evidence_for_seam(predicate, &index);
+        let context = CompactGripContext::new(&index);
+        let owner_fn = crate::analysis::rust_index::find_owner_function(
+            &index,
+            predicate.file(),
+            predicate.display_line(),
+        );
         assert!(
             evidence
                 .related_tests
                 .iter()
-                .any(|grip| { grip.relation_reason == RelationReason::SameTestFile })
+                .any(|grip| grip.relation_reason == RelationReason::SameTestFile),
+            "same-test-file association must hold for owner `{owner_path}` / test \
+             `{test_path}`; got {:?} | index_files={:?} index_tests={} \
+             ctx_tests={:?} stem_keys={:?} seam_file={:?} seam_line={} owner={owner_fn:?}",
+            evidence.related_tests,
+            index.files.keys().collect::<Vec<_>>(),
+            index.tests.len(),
+            context.tests_by_file_stem.keys().collect::<Vec<_>>(),
+            predicate.file(),
+            predicate.display_line(),
         );
     }
     Ok(())
@@ -10270,6 +10292,7 @@ fn given_non_utf8_stems_when_grip_associates_then_lossy_collision_fails_closed()
     use std::os::unix::ffi::OsStrExt;
     let first = Path::new(OsStr::from_bytes(b"tests/pricing_\xff.rs"));
     let second = Path::new(OsStr::from_bytes(b"tests/pricing_\xfe.rs"));
+    // Two distinct non-UTF-8 names must never collide through lossy text.
     assert_eq!(normalized_file_stem(first), "");
     assert_eq!(normalized_file_stem(second), "");
 }
