@@ -121,7 +121,13 @@ impl PathDependencyAdjacency {
     /// Build the adjacency from the captured path-dependency edges in
     /// `provenance`. Pure: reads no filesystem and no network.
     pub(crate) fn build(provenance: &WorkspaceGraphProvenance) -> Self {
-        if provenance.package_graph_status == "unavailable" {
+        // `unavailable` is reserved for an absent manifest scan. When the
+        // capture still recorded limitations (a partial inventory), the
+        // adjacency must disclose them as `limited` instead of taking this
+        // shortcut and silently dropping the capture (#3613 review).
+        if provenance.package_graph_status == "unavailable"
+            && provenance.path_dependency_limitations.is_empty()
+        {
             return Self {
                 status: PathDependencyGraphStatus::Unavailable,
                 detail: Some(
@@ -144,6 +150,15 @@ impl PathDependencyAdjacency {
         let mut connected_edge_count = 0usize;
         for edge in edges {
             nodes.insert(edge.from_manifest.clone());
+            // Only `Resolved` edges name a manifest that exists inside the
+            // scan root. Outside-root, missing-target, absolute, and
+            // invalid declarations stay disconnected: inventing a node for
+            // them would fabricate a phantom workspace manifest in a
+            // `complete` graph (#3613 review); they remain disclosed in
+            // `edge_count` and the detail/limitations.
+            if edge.resolution != crate::analysis::seam_cache::PathDependencyResolution::Resolved {
+                continue;
+            }
             let Some(resolved) = edge.resolved_path.as_deref() else {
                 continue;
             };
@@ -368,8 +383,8 @@ fn compose_detail(
     let disconnected = edge_count - connected_edge_count;
     if disconnected > 0 {
         let boundary = format!(
-            "{disconnected} of {edge_count} edges have no resolved identity and do not \
-             participate in the adjacency"
+            "{disconnected} of {edge_count} edges do not resolve to an existing \
+             in-workspace manifest and do not participate in the adjacency"
         );
         detail = Some(match detail {
             Some(existing) => format!("{existing}; {boundary}"),
@@ -744,7 +759,10 @@ mod tests {
         assert_eq!(adjacency.connected_edge_count(), 1);
         assert_eq!(
             adjacency.detail(),
-            Some("3 of 4 edges have no resolved identity and do not participate in the adjacency")
+            Some(
+                "3 of 4 edges do not resolve to an existing in-workspace manifest and do \
+                 not participate in the adjacency"
+            )
         );
         let neighbors = adjacency
             .forward_neighbors("app/Cargo.toml")
@@ -781,8 +799,81 @@ mod tests {
             "the partial-inventory boundary must be named: {detail}"
         );
         assert!(
-            detail.contains("1 of 1 edges have no resolved identity"),
+            detail.contains("1 of 1 edges do not resolve to an existing in-workspace manifest"),
             "the non-participating edge count must be named: {detail}"
+        );
+    }
+
+    /// Outside-root and missing-target resolutions carry a lexical identity
+    /// but do not name an existing in-workspace manifest: they must stay
+    /// disconnected so receipts cannot report phantom or external manifests
+    /// as adjacency nodes (#3613 review).
+    #[test]
+    fn adjacency_excludes_outside_root_and_missing_target_edges() -> Result<(), String> {
+        let edges = vec![
+            edge_with_resolution(PathDependencyResolution::Resolved, Some("lib/dep")),
+            edge_with_resolution(
+                PathDependencyResolution::ResolvedOutsideWorkspace,
+                Some("../outside"),
+            ),
+            edge_with_resolution(PathDependencyResolution::TargetMissing, Some("ghost")),
+        ];
+        let provenance = WorkspaceGraphProvenance {
+            package_graph_status: "complete".to_string(),
+            path_dependency_edges: edges,
+            path_dependency_limitations: Vec::new(),
+            ..WorkspaceGraphProvenance::default()
+        };
+        let adjacency = PathDependencyAdjacency::build(&provenance);
+        assert_eq!(adjacency.edge_count(), 3);
+        assert_eq!(adjacency.connected_edge_count(), 1);
+        assert!(
+            !adjacency.contains_node("../outside/Cargo.toml"),
+            "an outside-root resolution must not become a node"
+        );
+        assert!(
+            !adjacency.contains_node("ghost/Cargo.toml"),
+            "a missing-target resolution must not become a node"
+        );
+        assert!(
+            adjacency
+                .forward_neighbors("app/Cargo.toml")
+                .is_some_and(
+                    |neighbors| neighbors.iter().collect::<Vec<_>>() == vec!["lib/dep/Cargo.toml"]
+                ),
+            "only the resolved in-workspace edge participates"
+        );
+        Ok(())
+    }
+
+    /// `unavailable` is reserved for an absent manifest scan: provenance that
+    /// captured a partial inventory plus limitations must stay `limited` with
+    /// its edges, not collapse into a bare `unavailable` that discards the
+    /// capture (#3613 review).
+    #[test]
+    fn unavailable_provenance_with_limitations_stays_limited_and_keeps_edges() {
+        let provenance = WorkspaceGraphProvenance {
+            package_graph_status: "unavailable".to_string(),
+            path_dependency_edges: vec![edge_with_resolution(
+                PathDependencyResolution::Resolved,
+                Some("lib/dep"),
+            )],
+            path_dependency_limitations: vec![PathDependencyLimitation {
+                manifest: "crates/app/Cargo.toml".to_string(),
+                kind: PathDependencyLimitationKind::UnfollowedWorkspaceRedirect,
+                detail: "redirect not followed".to_string(),
+            }],
+            ..WorkspaceGraphProvenance::default()
+        };
+        let adjacency = PathDependencyAdjacency::build(&provenance);
+        assert_eq!(adjacency.status(), PathDependencyGraphStatus::Limited);
+        assert_eq!(adjacency.connected_edge_count(), 1);
+        assert!(
+            adjacency
+                .detail()
+                .is_some_and(|detail| detail.contains("1 limitation(s)")),
+            "the capture limitations must be disclosed: {:?}",
+            adjacency.detail()
         );
     }
 
