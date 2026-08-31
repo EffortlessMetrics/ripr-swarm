@@ -517,8 +517,8 @@ use libtest_mimic::Trial;
 fn trials() -> Vec<Trial> {
     vec![Trial::test("delimiters", || {
         let result = 1;
-        assert_eq! { result, 1 };
-        assert_eq! [result, 1];
+        assert_eq! { result, Config { field: 1 } };
+        assert_eq! [result, Config { field: 1 }];
         Ok(())
     })]
 }
@@ -537,12 +537,12 @@ fn trials() -> Vec<Trial> {
         .ok_or("missing delimiter subject")?;
     assert_eq!(subject.assertions.len(), 2);
     assert!(subject.assertions.iter().any(|oracle| {
-        oracle.kind == OracleKind::ExactValue
+        oracle.kind == OracleKind::WholeObjectEquality
             && oracle.text.contains("{")
             && oracle.text.contains("}")
     }));
     assert!(subject.assertions.iter().any(|oracle| {
-        oracle.kind == OracleKind::ExactValue
+        oracle.kind == OracleKind::WholeObjectEquality
             && oracle.text.contains("[")
             && oracle.text.contains("]")
     }));

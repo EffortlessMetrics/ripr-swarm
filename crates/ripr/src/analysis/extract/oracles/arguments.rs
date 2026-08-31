@@ -36,7 +36,7 @@ fn macro_invocation_arguments(line: &str, macro_name: &str) -> Option<Vec<String
 
 fn delimited_contents_at(text: &str, open_index: usize) -> Option<String> {
     let open = text.as_bytes().get(open_index).copied()?;
-    if open != b'(' {
+    if !matches!(open, b'(' | b'[' | b'{') {
         return None;
     }
     let mut delimiters = Vec::new();
