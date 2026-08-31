@@ -478,10 +478,7 @@ mod tests {
 
         let diff = load_diff_range(&dir, &base, "HEAD").map_err(std::io::Error::other)?;
         let files = super::super::parse::parse_unified_diff(&diff);
-        let mut paths: Vec<String> = files
-            .iter()
-            .map(|file| file.path.to_string_lossy().to_string())
-            .collect();
+        let mut paths: Vec<PathBuf> = files.iter().map(|file| file.path.clone()).collect();
         paths.sort();
 
         assert_eq!(
@@ -490,23 +487,31 @@ mod tests {
             "distinct non-ASCII names must not collapse at decode: {paths:?} from:\n{diff}"
         );
         assert!(
-            paths.contains(&"café.rs".to_string()),
+            paths
+                .iter()
+                .any(|path| path.as_os_str().as_bytes() == "café.rs".as_bytes()),
             "valid UTF-8 names must decode to their on-disk identity: {paths:?}"
         );
-        for path in &paths {
-            assert!(
-                !path.contains('\u{FFFD}'),
-                "lossy replacement must not reach parsed paths: {paths:?}"
-            );
-        }
-        let invalid: Vec<&String> = paths
+        let invalid: Vec<&PathBuf> = paths
             .iter()
-            .filter(|path| path.starts_with("pricing_\\"))
+            .filter(|path| {
+                path.as_os_str().as_bytes().starts_with(b"pricing_")
+                    && path.as_os_str().as_bytes().ends_with(b".rs")
+            })
             .collect();
         assert_eq!(
             invalid.len(),
             2,
-            "distinct invalid-byte names must stay distinct as octal residue: {paths:?}"
+            "distinct invalid-byte names must stay distinct: {paths:?}"
+        );
+        assert!(
+            invalid
+                .iter()
+                .any(|path| path.as_os_str().as_bytes() == b"pricing_\xff.rs")
+                && invalid
+                    .iter()
+                    .any(|path| path.as_os_str().as_bytes() == b"pricing_\xfe.rs"),
+            "raw invalid bytes must remain distinct in parsed paths: {paths:?}"
         );
 
         let _ = fs::remove_dir_all(&dir);
