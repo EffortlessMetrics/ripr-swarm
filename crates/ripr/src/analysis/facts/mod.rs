@@ -103,8 +103,6 @@ pub use model::{
     ModuleDeclarationFact, ModulePathTarget, OracleFact, ProbeShapeFact, ResolvedIncludeParent,
     ReturnFact, RustIncludeLimitation, RustIndex, SourceRoleProvenance, SourceRoleProvenanceEdge,
     SourceRoleProvenanceEdgeKind, TestFact, TestSummary,
-     HarnessLimitationFact,
-     HarnessSelectorCapability, HarnessSubjectClaim, HarnessSubjectFact,
 };
 #[cfg(test)]
 pub(crate) use model::{WorkspaceFileAuthority, WorkspaceRootAuthority};
