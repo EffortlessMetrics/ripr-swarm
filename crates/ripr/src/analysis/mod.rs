@@ -421,11 +421,12 @@ pub(crate) fn stable_path_text(path: &Path) -> String {
 
     #[cfg(not(unix))]
     {
-        path.to_string_lossy().replace('\\', "/")
+        let mut output = String::new();
+        push_stable_path_text(&mut output, &path.to_string_lossy());
+        output.replace('\\', "/")
     }
 }
 
-#[cfg(unix)]
 fn push_stable_path_text(output: &mut String, text: &str) {
     for character in text.chars() {
         if character == '%' {
@@ -755,6 +756,32 @@ mod tests {
     use super::*;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn stable_path_text_escapes_reserved_percent_on_every_platform() {
+        assert_eq!(
+            stable_path_text(Path::new("pricing_%FF.rs")),
+            "pricing_%25FF.rs"
+        );
+        assert_ne!(
+            stable_path_text(Path::new("pricing_%FF.rs")),
+            "pricing_%FF.rs"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stable_path_text_keeps_invalid_byte_encoding_distinct_from_literal_escape() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let invalid = PathBuf::from(OsString::from_vec(b"pricing_\xff.rs".to_vec()));
+        let literal = Path::new("pricing_%FF.rs");
+
+        assert_eq!(stable_path_text(&invalid), "pricing_%FF.rs");
+        assert_eq!(stable_path_text(literal), "pricing_%25FF.rs");
+        assert_ne!(stable_path_text(&invalid), stable_path_text(literal));
+    }
 
     /// Each rejection branch of the rerun-anchor guard, asserted by reason so a
     /// single platform's `is_absolute()` behavior cannot mask an unexercised

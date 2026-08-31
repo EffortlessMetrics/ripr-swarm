@@ -201,6 +201,12 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Diff-path textual identities now escape literal percent signs consistently on
+  every platform. Unix invalid bytes retain their native `%XX` encoding, while
+  a valid filename that literally contains `%FF` remains distinct
+  ([#3609](https://github.com/EffortlessMetrics/ripr-swarm/issues/3609),
+  [#3611](https://github.com/EffortlessMetrics/ripr-swarm/pull/3611)).
+
 - Rust source-role analysis now classifies source-visible `cfg` and
   `cfg_attr` predicates through one closed authority shared by the parser
   producer and the facts normalizer. Nested `test` conjunctions in
