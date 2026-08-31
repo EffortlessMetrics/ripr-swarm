@@ -7,9 +7,6 @@ mod parameterized_tests;
 mod role_composition;
 mod test_styles;
 
-#[cfg(test)]
-pub(crate) use build::build_index_from_loaded_files_with_cache;
-
 use std::path::{Path, PathBuf};
 
 use crate::config::TestHarnessRegistration;
