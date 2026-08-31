@@ -413,93 +413,51 @@ fn match_trial_path(
 }
 
 fn is_data_only_macro_input(tokens: &[ra_ap_syntax::SyntaxToken], position: usize) -> bool {
-    let mut depth = 0usize;
-    let mut cursor = position;
-    while cursor > 0 {
-        cursor -= 1;
-        let kind = tokens[cursor].kind();
-        if matches!(
-            kind,
-            ra_ap_syntax::SyntaxKind::R_PAREN
-                | ra_ap_syntax::SyntaxKind::R_BRACK
-                | ra_ap_syntax::SyntaxKind::R_CURLY
-        ) {
-            depth += 1;
-            continue;
-        }
-        if matches!(
-            kind,
-            ra_ap_syntax::SyntaxKind::L_PAREN
-                | ra_ap_syntax::SyntaxKind::L_BRACK
-                | ra_ap_syntax::SyntaxKind::L_CURLY
-        ) {
-            if depth == 0 {
-                return data_only_macro_before(tokens, cursor);
-            }
-            depth -= 1;
-            continue;
-        }
-        if depth == 0 && kind == ra_ap_syntax::SyntaxKind::BANG {
-            let mut name = cursor;
-            while name > 0 {
-                name -= 1;
-                if matches!(
-                    tokens[name].kind(),
-                    ra_ap_syntax::SyntaxKind::WHITESPACE | ra_ap_syntax::SyntaxKind::COMMENT
-                ) {
-                    continue;
-                }
-                return tokens[name].kind() == ra_ap_syntax::SyntaxKind::IDENT
-                    && matches!(
-                        tokens[name].text(),
-                        "stringify"
-                            | "concat"
-                            | "env"
-                            | "option_env"
-                            | "include"
-                            | "include_bytes"
-                            | "include_str"
-                    );
-            }
-            return false;
-        }
-    }
-    false
+    tokens[position]
+        .parent_ancestors()
+        .filter_map(ast::MacroCall::cast)
+        .any(|macro_call| {
+            let Some(path) = macro_call.path() else {
+                return false;
+            };
+            let name = path.syntax().text().to_string().replace(' ', "");
+            is_data_only_macro_name(&name) && !data_only_macro_is_shadowed(tokens, &name)
+        })
 }
 
-fn data_only_macro_before(tokens: &[ra_ap_syntax::SyntaxToken], open: usize) -> bool {
-    let significant = |mut index: usize| {
-        while index > 0 {
-            index -= 1;
-            if !matches!(
-                tokens[index].kind(),
-                ra_ap_syntax::SyntaxKind::WHITESPACE | ra_ap_syntax::SyntaxKind::COMMENT
-            ) {
-                return Some(index);
-            }
+fn is_data_only_macro_name(name: &str) -> bool {
+    matches!(
+        name,
+        "stringify" | "concat" | "env" | "option_env" | "include" | "include_bytes" | "include_str"
+    )
+}
+
+fn data_only_macro_is_shadowed(tokens: &[ra_ap_syntax::SyntaxToken], name: &str) -> bool {
+    let significant = |index: usize| {
+        tokens
+            .iter()
+            .enumerate()
+            .skip(index)
+            .find(|(_, token)| {
+                !matches!(
+                    token.kind(),
+                    ra_ap_syntax::SyntaxKind::WHITESPACE | ra_ap_syntax::SyntaxKind::COMMENT
+                )
+            })
+            .map(|(index, _)| index)
+    };
+    tokens.iter().enumerate().any(|(index, token)| {
+        if token.text() != "macro_rules" {
+            return false;
         }
-        None
-    };
-    let Some(bang) = significant(open) else {
-        return false;
-    };
-    if tokens[bang].kind() != ra_ap_syntax::SyntaxKind::BANG {
-        return false;
-    }
-    let Some(name) = significant(bang) else {
-        return false;
-    };
-    tokens[name].kind() == ra_ap_syntax::SyntaxKind::IDENT
-        && matches!(
-            tokens[name].text(),
-            "stringify"
-                | "concat"
-                | "env"
-                | "option_env"
-                | "include"
-                | "include_bytes"
-                | "include_str"
-        )
+        let Some(bang) = significant(index + 1) else {
+            return false;
+        };
+        let Some(declared) = significant(bang + 1) else {
+            return false;
+        };
+        tokens[bang].kind() == ra_ap_syntax::SyntaxKind::BANG && tokens[declared].text() == name
+    })
 }
 
 fn bare_path_starts_at_boundary(tokens: &[ra_ap_syntax::SyntaxToken], position: usize) -> bool {

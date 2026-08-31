@@ -615,6 +615,64 @@ fn debug() -> String {
 }
 
 #[test]
+fn nested_data_macro_input_never_becomes_a_subject() -> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("nested-macro-input-data")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/nested_macro_input.rs",
+            "use libtest_mimic::Trial;
+
+fn debug() -> String {
+    stringify!((Trial::test(\"ghost_case\", || Ok(()))))
+}
+",
+        )],
+    )?;
+    let files = [PathBuf::from("tests/nested_macro_input.rs")];
+    let registrations = [custom_target_registration("tests/nested_macro_input.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    assert!(
+        index.harness_subjects.is_empty(),
+        "{:?}",
+        index.harness_subjects
+    );
+    assert!(index.tests.is_empty(), "{:?}", index.tests);
+    Ok(())
+}
+
+#[test]
+fn shadowed_data_macro_name_keeps_executable_trial_eligible()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("shadowed-data-macro")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/shadowed_macro.rs",
+            "use libtest_mimic::Trial;
+
+macro_rules! stringify { ($value:expr) => { $value }; }
+
+fn trials() -> Vec<Trial> {
+    stringify!(vec![Trial::test(\"real_case\", || Ok(()))])
+}
+",
+        )],
+    )?;
+    let files = [PathBuf::from("tests/shadowed_macro.rs")];
+    let registrations = [custom_target_registration("tests/shadowed_macro.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    assert_eq!(
+        index.harness_subjects.len(),
+        1,
+        "{:?}",
+        index.harness_subjects
+    );
+    assert_eq!(index.tests.len(), 1, "{:?}", index.tests);
+    Ok(())
+}
+
+#[test]
 fn struct_field_initializers_still_start_trial_paths() -> Result<(), Box<dyn std::error::Error>> {
     let root = temp_dir("struct-field-trial")?;
     write_workspace(
