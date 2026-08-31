@@ -594,7 +594,7 @@ mod raw_path_tests {
     }
 
     #[test]
-    fn raw_byte_finding_paths_render_through_stable_text() {
+    fn raw_byte_finding_paths_render_through_stable_text() -> Result<(), String> {
         let finding = raw_byte_finding();
         // Sanity: the fixture really carries a non-UTF-8 path, the shape
         // that motivated the rewrite.
@@ -610,9 +610,11 @@ mod raw_path_tests {
         );
         // The rewritten artifact serializes without the JSON
         // invalid-UTF-8 rejection that motivated the rewrite.
-        let serialized = serde_json::to_string(&rewritten).expect("artifact serializes");
+        let serialized = serde_json::to_string(&rewritten)
+            .map_err(|error| format!("artifact serializes: {error}"))?;
         assert!(serialized.contains("pricing_%FF.rs"));
         let _ = FlowSinkKind::ReturnValue;
+        Ok(())
     }
 
     #[test]

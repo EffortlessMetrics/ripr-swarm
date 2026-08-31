@@ -273,7 +273,6 @@ fn decode_path_bytes(bytes: Vec<u8>) -> DecodedPath {
         Ok(text) => DecodedPath::Text(text),
         #[cfg(unix)]
         Err(err) => {
-            use std::os::unix::ffi::OsStrExt;
             use std::os::unix::ffi::OsStringExt;
             DecodedPath::Raw(std::ffi::OsString::from_vec(err.into_bytes()))
         }
