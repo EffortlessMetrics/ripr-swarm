@@ -10266,6 +10266,11 @@ fn given_foreign_separator_paths_when_grip_associates_then_same_test_file_still_
             predicate.file(),
             predicate.display_line(),
         );
+        let ctx_tests: Vec<String> = context
+            .tests
+            .iter()
+            .map(|t| t.test.file.to_string_lossy().to_string())
+            .collect();
         assert!(
             evidence
                 .related_tests
@@ -10277,6 +10282,7 @@ fn given_foreign_separator_paths_when_grip_associates_then_same_test_file_still_
             evidence.related_tests,
             index.files.keys().collect::<Vec<_>>(),
             index.tests.len(),
+            ctx_tests,
             context.tests_by_file_stem.keys().collect::<Vec<_>>(),
             predicate.file(),
             predicate.display_line(),
