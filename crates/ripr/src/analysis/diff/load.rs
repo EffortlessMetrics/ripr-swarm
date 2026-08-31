@@ -437,7 +437,7 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    fn given_quote_path_disabled_repo_when_diff_loaded_then_distinct_non_utf8_paths_stay_distinct()
+    fn given_quote_path_disabled_repo_when_diff_loaded_then_non_ascii_paths_keep_identity()
     -> std::io::Result<()> {
         use std::ffi::OsStr;
         use std::os::unix::ffi::OsStrExt;
@@ -446,7 +446,9 @@ mod tests {
         // non-UTF-8 file names reached the loader's lossy UTF-8 decode as
         // one U+FFFD-collapsed string and their changes merged. The
         // loader pins `core.quotePath=true`, so git's own C-quoting
-        // carries both names through the decode distinctly.
+        // carries all non-ASCII names through the decode: valid UTF-8
+        // names reconstruct their on-disk identity, and distinct
+        // invalid-byte names stay distinct.
         let dir = unique_fixture_root("diff-quote-path-distinct")?;
         init_git_repo(&dir, "main")?;
         run_git_checked(&dir, &["config", "core.quotePath", "false"])?;
@@ -470,11 +472,9 @@ mod tests {
         let second = dir.join(OsStr::from_bytes(b"pricing_\xfe.rs"));
         fs::write(&first, "pub fn first() -> u32 { 1 }\n")?;
         fs::write(&second, "pub fn second() -> u32 { 2 }\n")?;
+        fs::write(dir.join("café.rs"), "pub fn third() -> u32 { 3 }\n")?;
         run_git_checked(&dir, &["add", "-A"])?;
-        run_git_checked(
-            &dir,
-            &["commit", "-m", "two distinct non-utf8 files", "--quiet"],
-        )?;
+        run_git_checked(&dir, &["commit", "-m", "non-ascii filenames", "--quiet"])?;
 
         let diff = load_diff_range(&dir, &base, "HEAD").map_err(std::io::Error::other)?;
         let files = super::super::parse::parse_unified_diff(&diff);
@@ -486,18 +486,28 @@ mod tests {
 
         assert_eq!(
             paths.len(),
-            2,
-            "distinct non-UTF-8 names must not collapse at decode: {paths:?} from:\n{diff}"
+            3,
+            "distinct non-ASCII names must not collapse at decode: {paths:?} from:\n{diff}"
         );
-        assert_ne!(paths[0], paths[1], "paths must stay distinct: {paths:?}");
-        // The C-quoted forms decode octal escapes to distinct code points;
-        // neither may be the lossy replacement character.
+        assert!(
+            paths.contains(&"café.rs".to_string()),
+            "valid UTF-8 names must decode to their on-disk identity: {paths:?}"
+        );
         for path in &paths {
             assert!(
                 !path.contains('\u{FFFD}'),
                 "lossy replacement must not reach parsed paths: {paths:?}"
             );
         }
+        let invalid: Vec<&String> = paths
+            .iter()
+            .filter(|path| path.starts_with("pricing_\\"))
+            .collect();
+        assert_eq!(
+            invalid.len(),
+            2,
+            "distinct invalid-byte names must stay distinct as octal residue: {paths:?}"
+        );
 
         let _ = fs::remove_dir_all(&dir);
         Ok(())

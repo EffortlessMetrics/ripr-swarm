@@ -152,40 +152,96 @@ fn parse_diff_path_token(raw: &str) -> Option<String> {
 }
 
 fn parse_c_quoted_path(raw: &str) -> Option<String> {
-    let mut path = String::new();
+    // Decode at the byte level: git's octal escapes carry raw bytes, so
+    // mapping each escaped byte to one Unicode scalar would turn a valid
+    // UTF-8 name like `caf\303\251.rs` into `cafÃ©.rs` and lose workspace
+    // identity (#3601 review). Valid UTF-8 sequences reconstruct their
+    // true name; invalid bytes stay visible as octal residue, keeping
+    // distinct invalid names distinct instead of collapsing onto one
+    // replacement character.
+    let mut bytes = Vec::new();
     let mut chars = raw.chars().peekable();
 
     while let Some(ch) = chars.next() {
         match ch {
-            '"' => return Some(path),
-            '\\' => path.push(parse_c_escape(&mut chars)),
-            _ => path.push(ch),
+            '"' => return Some(decode_path_bytes(bytes)),
+            '\\' => parse_c_escape(&mut chars, &mut bytes),
+            _ => {
+                let mut buf = [0u8; 4];
+                bytes.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+            }
         }
     }
 
     None
 }
 
-fn parse_c_escape<I>(chars: &mut std::iter::Peekable<I>) -> char
+/// Reconstruct a path string from decoded bytes: valid UTF-8 passes
+/// through untouched; invalid bytes render as literal octal escapes
+/// (`\377`) — distinct per byte and never the U+FFFD replacement
+/// character, so distinct invalid names cannot merge downstream.
+fn decode_path_bytes(bytes: Vec<u8>) -> String {
+    match String::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(err) => {
+            let bytes = err.into_bytes();
+            let mut out = String::with_capacity(bytes.len());
+            let mut rest: &[u8] = &bytes;
+            while !rest.is_empty() {
+                match std::str::from_utf8(rest) {
+                    Ok(valid) => {
+                        out.push_str(valid);
+                        break;
+                    }
+                    Err(error) => {
+                        let valid_up_to = error.valid_up_to();
+                        if let Ok(valid) = std::str::from_utf8(&rest[..valid_up_to]) {
+                            out.push_str(valid);
+                        }
+                        let invalid_len = error.error_len().unwrap_or(rest.len() - valid_up_to);
+                        for byte in &rest[valid_up_to..valid_up_to + invalid_len] {
+                            push_octal_residue(&mut out, *byte);
+                        }
+                        rest = &rest[valid_up_to + invalid_len..];
+                    }
+                }
+            }
+            out
+        }
+    }
+}
+
+fn push_octal_residue(out: &mut String, byte: u8) {
+    out.push('\\');
+    out.push((b'0' + byte / 64) as char);
+    out.push((b'0' + (byte / 8) % 8) as char);
+    out.push((b'0' + byte % 8) as char);
+}
+
+fn parse_c_escape<I>(chars: &mut std::iter::Peekable<I>, bytes: &mut Vec<u8>)
 where
     I: Iterator<Item = char>,
 {
     let Some(ch) = chars.next() else {
-        return '\\';
+        bytes.push(b'\\');
+        return;
     };
 
     match ch {
-        'n' => '\n',
-        'r' => '\r',
-        't' => '\t',
-        '\\' => '\\',
-        '"' => '"',
-        '0'..='7' => parse_octal_escape(ch, chars),
-        _ => ch,
+        'n' => bytes.push(b'\n'),
+        'r' => bytes.push(b'\r'),
+        't' => bytes.push(b'\t'),
+        '\\' => bytes.push(b'\\'),
+        '"' => bytes.push(b'"'),
+        '0'..='7' => bytes.push(parse_octal_escape(ch, chars)),
+        other => {
+            let mut buf = [0u8; 4];
+            bytes.extend_from_slice(other.encode_utf8(&mut buf).as_bytes());
+        }
     }
 }
 
-fn parse_octal_escape<I>(first: char, chars: &mut std::iter::Peekable<I>) -> char
+fn parse_octal_escape<I>(first: char, chars: &mut std::iter::Peekable<I>) -> u8
 where
     I: Iterator<Item = char>,
 {
@@ -202,12 +258,41 @@ where
         value = value.saturating_mul(8).saturating_add(digit);
     }
 
-    char::from_u32(value).unwrap_or('\u{FFFD}')
+    // git emits three octal digits per raw byte, so the value fits u8;
+    // clamp out-of-range forms instead of widening to a Unicode scalar.
+    u8::try_from(value).unwrap_or(0)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn c_quoted_paths_reconstruct_utf8_names_and_keep_invalid_bytes_distinct() {
+        // Valid UTF-8 sequences decode at the byte level, restoring the
+        // on-disk name (#3601 review): \303\251 is é, not Ã©.
+        assert_eq!(
+            parse_diff_path_token("\"caf\\303\\251.rs\""),
+            Some("café.rs".to_string())
+        );
+        // Distinct invalid bytes stay distinct as octal residue, never a
+        // replacement character.
+        assert_eq!(
+            parse_diff_path_token("\"pricing_\\377.rs\""),
+            Some("pricing_\\377.rs".to_string())
+        );
+        assert_eq!(
+            parse_diff_path_token("\"pricing_\\376.rs\""),
+            Some("pricing_\\376.rs".to_string())
+        );
+        // Escaped backslash and metacharacters decode as before.
+        assert_eq!(
+            parse_diff_path_token("\"a\\\\b\\tc.rs\""),
+            Some("a\\b\tc.rs".to_string())
+        );
+        // No closing quote stays malformed.
+        assert_eq!(parse_diff_path_token("\"unclosed.rs"), None);
+    }
 
     #[test]
     fn parse_new_path_marker_strips_b_prefix() {
