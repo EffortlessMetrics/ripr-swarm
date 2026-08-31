@@ -774,8 +774,7 @@ pub(super) fn normalize_path(path: &Path) -> String {
 /// makes [`std::path::Path::file_stem`] treat an entire relative path as
 /// one file name, so same-test-file lookups miss on exactly one host.
 /// Non-UTF-8 paths fail closed: lossy replacement characters could
-/// collapse distinct file names into one stem and fabricate a
-/// same-test-file relation (the #3545 `cross_host_stem` guard).
+/// collapse distinct file names and fabricate a same-test-file relation.
 pub(super) fn normalized_file_stem(path: &Path) -> String {
     let Some(text) = path.to_str() else {
         return String::new();

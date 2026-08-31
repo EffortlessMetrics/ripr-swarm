@@ -188,16 +188,6 @@ pub fn find_owner_function<'a>(
     if let Some(summary) = index.files.get(file) {
         return owner_in(summary);
     }
-    // Repo seams normalize their file identity to `/` separators
-    // (#3469 family) while index keys keep the producing host's
-    // separators. On the opposite-separator host the component-wise
-    // lookup above misses (`src\pricing.rs` is a single component on
-    // Linux), so fall back to matching normalized key forms. The scan
-    // only runs after the direct lookup missed, so native-separator
-    // inputs keep the exact-lookup cost. Non-UTF-8 paths fail closed:
-    // lossy replacement characters can collapse distinct names into
-    // one form and attribute the wrong owner, so neither side of the
-    // comparison may pass through lossy conversion.
     let target = file.to_str()?.replace('\\', "/");
     index
         .files
@@ -207,16 +197,6 @@ pub fn find_owner_function<'a>(
             (key_text.replace('\\', "/") == target).then_some(summary)
         })
         .and_then(owner_in)
-}
-
-/// `/`-separated display form of a path, independent of the host's
-/// native separator. Used by [`is_test_file`] to judge the normalized
-/// form; lossy text is safe here because replacement characters can
-/// never become separators. The [`find_owner_function`] fallback does
-/// NOT use this helper — identity attribution must not pass through
-/// lossy conversion.
-fn normalize_display(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
 }
 
 pub fn changed_nodes_for_lines(
@@ -240,7 +220,7 @@ pub fn changed_nodes_for_lines(
 }
 
 pub(crate) fn is_test_file(path: &Path) -> bool {
-    let normalized = normalize_display(path);
+    let normalized = path.to_string_lossy().replace('\\', "/");
     normalized == "tests" || normalized.starts_with("tests/") || normalized.contains("/tests/")
 }
 
@@ -252,15 +232,10 @@ mod tests {
     fn find_owner_function_resolves_normalized_seam_paths() {
         let facts = summarize_file(
             PathBuf::from("src\\pricing.rs"),
-            "fn apply_discount(amount: i32, threshold: i32) -> i32 { \
-                 if amount >= threshold { amount - 10 } else { amount } }\n"
-                .to_string(),
+            "fn apply_discount(amount: i32, threshold: i32) -> i32 { amount }\n".to_string(),
         );
         let mut index = RustIndex::default();
         index.files.insert(PathBuf::from("src\\pricing.rs"), facts);
-        // Repo seams carry `/`-normalized file identity; on Linux this is
-        // not component-equal to the `\`-separator index key, so the
-        // direct lookup misses and the normalized fallback must resolve.
         let owner = find_owner_function(&index, Path::new("src/pricing.rs"), 1);
         assert_eq!(owner.map(|f| f.name.as_str()), Some("apply_discount"));
     }
@@ -271,7 +246,6 @@ mod tests {
         assert!(is_test_file(Path::new("tests/pricing_test.rs")));
         assert!(is_test_file(Path::new("crates\\demo\\tests\\main.rs")));
         assert!(!is_test_file(Path::new("src\\pricing.rs")));
-        // A `tests`-prefixed sibling directory name stays production.
         assert!(!is_test_file(Path::new("testing\\pricing.rs")));
     }
 
@@ -289,9 +263,6 @@ mod tests {
             PathBuf::from(OsStr::from_bytes(b"src/pricing_\xff.rs")),
             facts,
         );
-        // A query whose lossy rendering collides with the indexed key
-        // must not attribute the owner through lossy text: the fallback
-        // requires valid UTF-8 on both sides.
         let colliding = Path::new(OsStr::from_bytes(b"src\\pricing_\xfe.rs"));
         assert_eq!(
             find_owner_function(&index, colliding, 1).map(|f| f.name.as_str()),
