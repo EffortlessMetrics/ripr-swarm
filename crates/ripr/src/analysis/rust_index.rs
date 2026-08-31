@@ -209,16 +209,6 @@ pub fn find_owner_function<'a>(
         .and_then(owner_in)
 }
 
-/// `/`-separated display form of a path, independent of the host's
-/// native separator. Used by [`is_test_file`] to judge the normalized
-/// form; lossy text is safe here because replacement characters can
-/// never become separators. The [`find_owner_function`] fallback does
-/// NOT use this helper — identity attribution must not pass through
-/// lossy conversion.
-fn normalize_display(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
-}
-
 pub fn changed_nodes_for_lines(
     index: &RustIndex,
     file: &Path,
@@ -240,7 +230,7 @@ pub fn changed_nodes_for_lines(
 }
 
 pub(crate) fn is_test_file(path: &Path) -> bool {
-    let normalized = normalize_display(path);
+    let normalized = path.to_string_lossy().replace('\\', "/");
     normalized == "tests" || normalized.starts_with("tests/") || normalized.contains("/tests/")
 }
 
@@ -252,9 +242,7 @@ mod tests {
     fn find_owner_function_resolves_normalized_seam_paths() {
         let facts = summarize_file(
             PathBuf::from("src\\pricing.rs"),
-            "fn apply_discount(amount: i32, threshold: i32) -> i32 { \
-                 if amount >= threshold { amount - 10 } else { amount } }\n"
-                .to_string(),
+            "fn apply_discount(amount: i32, threshold: i32) -> i32 { amount }\n".to_string(),
         );
         let mut index = RustIndex::default();
         index.files.insert(PathBuf::from("src\\pricing.rs"), facts);
@@ -271,7 +259,6 @@ mod tests {
         assert!(is_test_file(Path::new("tests/pricing_test.rs")));
         assert!(is_test_file(Path::new("crates\\demo\\tests\\main.rs")));
         assert!(!is_test_file(Path::new("src\\pricing.rs")));
-        // A `tests`-prefixed sibling directory name stays production.
         assert!(!is_test_file(Path::new("testing\\pricing.rs")));
     }
 
@@ -289,9 +276,6 @@ mod tests {
             PathBuf::from(OsStr::from_bytes(b"src/pricing_\xff.rs")),
             facts,
         );
-        // A query whose lossy rendering collides with the indexed key
-        // must not attribute the owner through lossy text: the fallback
-        // requires valid UTF-8 on both sides.
         let colliding = Path::new(OsStr::from_bytes(b"src\\pricing_\xfe.rs"));
         assert_eq!(
             find_owner_function(&index, colliding, 1).map(|f| f.name.as_str()),
