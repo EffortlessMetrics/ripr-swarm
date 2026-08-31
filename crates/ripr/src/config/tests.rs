@@ -1404,6 +1404,16 @@ fn parse_config_rejects_harness_root_escape_and_lookalike_marker() -> Result<(),
         marker_error.contains("exact identifier path"),
         "{marker_error}"
     );
+
+    for marker in ["fn", "myco::match"] {
+        let reserved_error = harness_parse_error(&format!(
+            "[[analysis.test_harnesses]]\nregistration_id = 'x'\ntarget = 'tests/a.rs'\nkind = 'registered_attribute'\nadapter = 'exact_attribute_v1'\nmarker = '{marker}'\n"
+        ))?;
+        assert!(
+            reserved_error.contains("exact identifier path"),
+            "{reserved_error}"
+        );
+    }
     Ok(())
 }
 

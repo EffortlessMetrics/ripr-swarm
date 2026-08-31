@@ -18,17 +18,12 @@ pub(crate) use super::extract::{
     unwrap_err_bound_variables,
 };
 use super::facts::ModulePathTarget;
-#[cfg(test)]
-pub use super::facts::build_index_with_test_harnesses;
+pub(crate) use super::facts::build_index_from_loaded_files_with_cache_and_test_harnesses_and_production_like_targets;
 #[cfg(test)]
 pub use super::facts::{CallFact, LiteralFact, ReturnFact};
 pub use super::facts::{
     FileFacts, FunctionFact, FunctionSummary, OracleFact, ProbeShapeFact, RustIndex, TestFact,
     TestSummary, build_index, build_index_with_test_harnesses_and_production_like_targets,
-};
-pub(crate) use super::facts::{
-    build_index_from_loaded_files_with_cache_and_test_harnesses,
-    build_index_from_loaded_files_with_cache_and_test_harnesses_and_production_like_targets,
 };
 #[cfg(test)]
 use super::syntax::LexicalRustSyntaxAdapter;
