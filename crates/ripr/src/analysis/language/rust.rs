@@ -1608,10 +1608,11 @@ impl RustAdapter {
                 Ok((file.clone(), bytes))
             })
             .collect::<Result<Vec<_>, String>>()?;
-        let cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
+        let cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses_and_production_like_targets(
             &options.root,
             &loaded_files,
             &options.test_harnesses,
+            &options.production_like_targets,
         )?;
         let mut index = cached.index;
         if let Some(disclosure) = rust_index::include_resolution_disclosure(&index) {
@@ -1849,10 +1850,11 @@ impl RustAdapter {
                 Ok((file.clone(), bytes))
             })
             .collect::<Result<Vec<_>, String>>()?;
-        let cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
+        let cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses_and_production_like_targets(
             &options.root,
             &loaded_rust_files,
             &options.test_harnesses,
+            &options.production_like_targets,
         )?;
         let mut index = cached.index;
         if let Some(disclosure) = rust_index::lexical_fallback_disclosure(&index) {

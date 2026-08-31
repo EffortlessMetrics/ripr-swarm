@@ -8257,6 +8257,8 @@ tests = [
   "crates/ripr/src/analysis/language/rust.rs::tests::diff_analysis_confirms_declared_test_targets_but_not_unconfirmed_names",
   "crates/ripr/src/analysis/language/rust.rs::tests::diff_analysis_opt_in_restores_production_like_analysis",
   "crates/ripr/src/config/tests.rs::parse_config_reads_production_like_targets",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs",
+  "crates/ripr/src/output/json/report.rs::harness_projection_tests",
 ]
 fixtures = []
 code = [
@@ -8266,6 +8268,9 @@ code = [
   "crates/ripr/src/analysis/seam_inventory.rs",
   "crates/ripr/src/config.rs",
   "crates/ripr/src/config/model.rs",
+  "crates/ripr/src/analysis/facts/harness_registry.rs",
+  "crates/ripr/src/analysis/harness_projection.rs",
+  "crates/ripr/src/output/json/report.rs",
 ]
 outputs = []
 metrics = [

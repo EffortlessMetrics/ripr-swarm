@@ -44,7 +44,11 @@
       "type": "array",
       "items": { "$ref": "#/$defs/preview_language" }
     },
-    "finding_alignment": { "$ref": "#/$defs/finding_alignment" }
+    "finding_alignment": { "$ref": "#/$defs/finding_alignment" },
+    "test_harnesses": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/test_harness_projection" }
+    }
   },
   "$defs": {
     "nullable_string": { "type": ["string", "null"] },
@@ -448,6 +452,60 @@
         "raw_findings": { "type": "array", "items": { "type": "object" } },
         "presentation_text": { "type": ["object", "null"] },
         "config_policy": { "type": ["object", "null"] }
+      }
+    },
+    "test_harness_projection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "registration_id",
+        "harness_kind",
+        "adapter",
+        "marker",
+        "target",
+        "provenance",
+        "subjects",
+        "limitations"
+      ],
+      "properties": {
+        "registration_id": { "type": "string", "minLength": 1 },
+        "harness_kind": { "type": "string", "minLength": 1 },
+        "adapter": { "type": "string", "minLength": 1 },
+        "marker": { "type": "string", "minLength": 1 },
+        "target": { "type": "string", "minLength": 1 },
+        "provenance": { "type": "string", "minLength": 1 },
+        "subjects": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/test_harness_subject" }
+        },
+        "limitations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/test_harness_limitation" }
+        }
+      }
+    },
+    "test_harness_subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "file", "start_line", "end_line", "selector", "claim"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "file": { "type": "string", "minLength": 1 },
+        "start_line": { "type": "integer", "minimum": 1 },
+        "end_line": { "type": "integer", "minimum": 1 },
+        "selector": { "type": "string", "minLength": 1 },
+        "claim": { "type": "string", "minLength": 1 }
+      }
+    },
+    "test_harness_limitation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "file", "line", "detail"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "file": { "type": "string", "minLength": 1 },
+        "line": { "type": "integer", "minimum": 1 },
+        "detail": { "type": "string", "minLength": 1 }
       }
     }
   }
