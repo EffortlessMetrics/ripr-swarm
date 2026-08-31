@@ -653,8 +653,8 @@ fn dormant_macro_templates_never_become_subjects() -> Result<(), Box<dyn std::er
         &[(
             "tests/dormant_template.rs",
             "macro_rules! trial_template {
-    ($name:literal) => {
-        libtest_mimic::Trial::test($name, || Ok(()))
+    () => {
+        libtest_mimic::Trial::test(\"dormant_case\", || Ok(()))
     };
 }
 

@@ -213,6 +213,9 @@ fn apply_libtest_mimic_target(
             });
             continue;
         }
+        if in_macro_definition(tokens[position].parent_ancestors()) {
+            continue;
+        }
         let Some(name_token) = tokens.get(matched.name_token_index) else {
             continue;
         };
@@ -1073,6 +1076,10 @@ fn in_loop(mut ancestors: impl Iterator<Item = ra_ap_syntax::SyntaxNode>) -> boo
             || ast::ForExpr::can_cast(ancestor.kind())
             || ast::LoopExpr::can_cast(ancestor.kind())
     })
+}
+
+fn in_macro_definition(mut ancestors: impl Iterator<Item = ra_ap_syntax::SyntaxNode>) -> bool {
+    ancestors.any(|ancestor| ast::MacroRules::can_cast(ancestor.kind()))
 }
 
 /// Exact simple string-literal text of one token. Escaped spellings,
