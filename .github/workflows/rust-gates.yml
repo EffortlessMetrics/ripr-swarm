@@ -173,12 +173,15 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           GITHUB_PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           RIPR_REVIEW_COMMENTS_TIMEOUT_SECS: "60"
-          # Raised from the 2000 default as the PR #3592 decision artifact; the variable is documented in docs/CONFIGURATION.md.
-          RIPR_MAX_DIFF_CHANGED_RUST_LINES: "3000"
+          # Raised from the 2000 default as the PR #3592 decision artifact, then
+          # to 3500 for #3532 (3,222-line capability diff); the variable is
+          # documented in docs/CONFIGURATION.md.
+          RIPR_MAX_DIFF_CHANGED_RUST_LINES: "3500"
           # Match the raised max limit: the partial-budget clamp bounds against
-          # the effective limit, so without this a 2001-3000-line PR passes the
-          # hard guard but still lands in gate-ineligible limited_partial_scope.
-          RIPR_PARTIAL_DIFF_LINE_BUDGET: "3000"
+          # the effective limit, so without this a PR above the default passes
+          # the hard guard but still lands in gate-ineligible
+          # limited_partial_scope.
+          RIPR_PARTIAL_DIFF_LINE_BUDGET: "3500"
           # Large analyzer PRs need more than the 120s default for the
           # evidence producer's ripr check subprocess.
           RIPR_PR_EVIDENCE_TIMEOUT_SECS: "600"
