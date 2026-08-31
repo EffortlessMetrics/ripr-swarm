@@ -476,8 +476,8 @@ mod tests {
             &["commit", "-m", "two distinct non-utf8 files", "--quiet"],
         )?;
 
-        let diff = load_diff_range(&dir, &base, "HEAD")?;
-        let files = super::parse::parse_unified_diff(&diff);
+        let diff = load_diff_range(&dir, &base, "HEAD").map_err(std::io::Error::other)?;
+        let files = super::super::parse::parse_unified_diff(&diff);
         let mut paths: Vec<String> = files
             .iter()
             .map(|file| file.path.to_string_lossy().to_string())
