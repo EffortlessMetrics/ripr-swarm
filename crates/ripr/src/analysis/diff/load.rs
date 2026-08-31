@@ -379,7 +379,15 @@ fn run_git_diff(
     // contract pins. The named timeout and cancellation errors pass through
     // unwrapped so the LSP refresh path can match them; the non-zero-exit
     // text below stays byte-identical.
-    let mut args: Vec<&str> = vec!["diff"];
+    // `core.quotePath=true` pins the diff input contract (#3601): with the
+    // user's `quotePath=false`, non-UTF-8 path bytes reached the lossy
+    // stdout decode below and distinct file names collapsed onto one
+    // U+FFFD string before any analysis saw them. Git's C-quoting keeps
+    // those paths ASCII (`"src/pricing_\376.rs"`), so they survive the
+    // decode distinct and the C-quoted parser form applies. ASCII-only
+    // paths are unaffected, so existing fixtures and goldens see no
+    // change.
+    let mut args: Vec<&str> = vec!["-c", "core.quotePath=true", "diff"];
     args.extend_from_slice(extra_args);
     args.push(range);
     let output = match crate::git::run_git_output_with_deadline(root, &args, git_timeout) {
@@ -422,6 +430,84 @@ mod tests {
 
         let result = load_diff(&dir, None, Some(&diff_file), None);
         assert_eq!(result.as_deref(), Ok("test content"));
+
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn given_quote_path_disabled_repo_when_diff_loaded_then_non_ascii_paths_keep_identity()
+    -> std::io::Result<()> {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        // #3601: with the repo's `core.quotePath=false`, two distinct
+        // non-UTF-8 file names reached the loader's lossy UTF-8 decode as
+        // one U+FFFD-collapsed string and their changes merged. The
+        // loader pins `core.quotePath=true`, so git's own C-quoting
+        // carries all non-ASCII names through the decode: valid UTF-8
+        // names reconstruct their on-disk identity, and distinct
+        // invalid-byte names stay distinct.
+        let dir = unique_fixture_root("diff-quote-path-distinct")?;
+        init_git_repo(&dir, "main")?;
+        run_git_checked(&dir, &["config", "core.quotePath", "false"])?;
+        fs::write(dir.join("base.rs"), "pub fn base() -> u32 { 0 }\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "base", "--quiet"])?;
+        let base = {
+            let output =
+                crate::git::run_git_output_with_deadline(&dir, &["rev-parse", "HEAD"], None)
+                    .map_err(std::io::Error::other)?;
+            if !output.status.success() {
+                return Err(std::io::Error::other("git rev-parse HEAD failed"));
+            }
+            String::from_utf8(output.stdout)
+                .map_err(|err| std::io::Error::other(err.to_string()))?
+                .trim()
+                .to_string()
+        };
+
+        let first = dir.join(OsStr::from_bytes(b"pricing_\xff.rs"));
+        let second = dir.join(OsStr::from_bytes(b"pricing_\xfe.rs"));
+        fs::write(&first, "pub fn first() -> u32 { 1 }\n")?;
+        fs::write(&second, "pub fn second() -> u32 { 2 }\n")?;
+        fs::write(dir.join("café.rs"), "pub fn third() -> u32 { 3 }\n")?;
+        run_git_checked(&dir, &["add", "-A"])?;
+        run_git_checked(&dir, &["commit", "-m", "non-ascii filenames", "--quiet"])?;
+
+        let diff = load_diff_range(&dir, &base, "HEAD").map_err(std::io::Error::other)?;
+        let files = super::super::parse::parse_unified_diff(&diff);
+        let mut paths: Vec<String> = files
+            .iter()
+            .map(|file| file.path.to_string_lossy().to_string())
+            .collect();
+        paths.sort();
+
+        assert_eq!(
+            paths.len(),
+            3,
+            "distinct non-ASCII names must not collapse at decode: {paths:?} from:\n{diff}"
+        );
+        assert!(
+            paths.contains(&"café.rs".to_string()),
+            "valid UTF-8 names must decode to their on-disk identity: {paths:?}"
+        );
+        for path in &paths {
+            assert!(
+                !path.contains('\u{FFFD}'),
+                "lossy replacement must not reach parsed paths: {paths:?}"
+            );
+        }
+        let invalid: Vec<&String> = paths
+            .iter()
+            .filter(|path| path.starts_with("pricing_\\"))
+            .collect();
+        assert_eq!(
+            invalid.len(),
+            2,
+            "distinct invalid-byte names must stay distinct as octal residue: {paths:?}"
+        );
 
         let _ = fs::remove_dir_all(&dir);
         Ok(())
