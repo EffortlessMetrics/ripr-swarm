@@ -178,13 +178,37 @@ pub fn find_owner_function<'a>(
     file: &Path,
     line: usize,
 ) -> Option<&'a FunctionSummary> {
-    index.files.get(file).and_then(|summary| {
+    let owner_in = |summary: &'a FileFacts| {
         summary
             .functions
             .iter()
             .filter(|f| f.start_line <= line && line <= f.end_line)
             .max_by_key(|f| f.start_line)
-    })
+    };
+    if let Some(summary) = index.files.get(file) {
+        return owner_in(summary);
+    }
+    // Repo seams normalize their file identity to `/` separators
+    // (#3469 family) while index keys keep the producing host's
+    // separators. On the opposite-separator host the component-wise
+    // lookup above misses (`src\pricing.rs` is a single component on
+    // Linux), so fall back to matching normalized key forms. The scan
+    // only runs after the direct lookup missed, so native-separator
+    // inputs keep the exact-lookup cost.
+    let target = normalize_display(file);
+    index
+        .files
+        .iter()
+        .find(|(key, _)| normalize_display(key) == target)
+        .and_then(|(_, summary)| owner_in(summary))
+}
+
+/// `/`-separated display form of a path, independent of the host's
+/// native separator. Shared by the normalized-key fallback in
+/// [`find_owner_function`] and [`is_test_file`] so both judge the same
+/// normalized form.
+fn normalize_display(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 pub fn changed_nodes_for_lines(
@@ -208,16 +232,40 @@ pub fn changed_nodes_for_lines(
 }
 
 pub(crate) fn is_test_file(path: &Path) -> bool {
-    path.starts_with("tests")
-        || path
-            .to_string_lossy()
-            .replace('\\', "/")
-            .contains("/tests/")
+    let normalized = normalize_display(path);
+    normalized == "tests" || normalized.starts_with("tests/") || normalized.contains("/tests/")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn find_owner_function_resolves_normalized_seam_paths() {
+        let facts = summarize_file(
+            PathBuf::from("src\\pricing.rs"),
+            "fn apply_discount(amount: i32, threshold: i32) -> i32 { \
+                 if amount >= threshold { amount - 10 } else { amount } }\n"
+                .to_string(),
+        );
+        let mut index = RustIndex::default();
+        index.files.insert(PathBuf::from("src\\pricing.rs"), facts);
+        // Repo seams carry `/`-normalized file identity; on Linux this is
+        // not component-equal to the `\`-separator index key, so the
+        // direct lookup misses and the normalized fallback must resolve.
+        let owner = find_owner_function(&index, Path::new("src/pricing.rs"), 1);
+        assert_eq!(owner.map(|f| f.name.as_str()), Some("apply_discount"));
+    }
+
+    #[test]
+    fn is_test_file_judges_foreign_separator_forms_like_native_ones() {
+        assert!(is_test_file(Path::new("tests\\pricing_test.rs")));
+        assert!(is_test_file(Path::new("tests/pricing_test.rs")));
+        assert!(is_test_file(Path::new("crates\\demo\\tests\\main.rs")));
+        assert!(!is_test_file(Path::new("src\\pricing.rs")));
+        // A `tests`-prefixed sibling directory name stays production.
+        assert!(!is_test_file(Path::new("testing\\pricing.rs")));
+    }
 
     #[test]
     fn finds_tests_and_assertions() {

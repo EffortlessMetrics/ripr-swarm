@@ -773,12 +773,17 @@ pub(super) fn normalize_path(path: &Path) -> String {
 /// than the host resolving the association (#3469); a foreign separator
 /// makes [`std::path::Path::file_stem`] treat an entire relative path as
 /// one file name, so same-test-file lookups miss on exactly one host.
-/// Mirrors classify's `normalized_file_stem`.
+/// Non-UTF-8 paths fail closed: lossy replacement characters could
+/// collapse distinct file names into one stem and fabricate a
+/// same-test-file relation (the #3545 `cross_host_stem` guard).
 pub(super) fn normalized_file_stem(path: &Path) -> String {
-    normalize_path(path)
-        .rsplit('/')
-        .next()
-        .and_then(|file| Path::new(file).file_stem())
+    let Some(text) = path.to_str() else {
+        return String::new();
+    };
+    let unified = text.replace('\\', "/");
+    let file = unified.rsplit('/').next().unwrap_or_default();
+    Path::new(file)
+        .file_stem()
         .and_then(|stem| stem.to_str())
         .unwrap_or_default()
         .to_string()
