@@ -329,11 +329,19 @@ fn match_trial_path(
         }
     }
 
+    // A lone `:` predecessor only continues into a candidate when it is
+    // syntactically a record field (`trials: Trial::test(...)`); macro
+    // input like `stringify!(trial: Trial::test(...))` is inert data and
+    // must not adopt the exception.
+    let lone_colon_is_record_field = tokens[position].parent_ancestors().any(|ancestor| {
+        ast::RecordExprField::can_cast(ancestor.kind())
+            || ast::RecordExprFieldList::can_cast(ancestor.kind())
+    });
     for qualified in [false, true] {
         // A bare `Trial` match is only a candidate at a path start; the
         // inner `Trial` of `other::Trial::test(` is a foreign path and
         // must not be adopted through an unrelated import binding.
-        if !qualified && !at_path_start(tokens, position) {
+        if !qualified && !at_path_start(tokens, position, lone_colon_is_record_field) {
             continue;
         }
         let mut segments: Vec<&str> = if qualified {
@@ -396,7 +404,11 @@ struct TrialPathMatch {
 /// single COLON only continues a path when another colon precedes it; a
 /// lone `:` is struct-field syntax and a field initializer like
 /// `trials: Trial::test(...)` still starts a path.
-fn at_path_start(tokens: &[ra_ap_syntax::SyntaxToken], position: usize) -> bool {
+fn at_path_start(
+    tokens: &[ra_ap_syntax::SyntaxToken],
+    position: usize,
+    lone_colon_is_record_field: bool,
+) -> bool {
     let mut cursor = position;
     while cursor > 0 {
         cursor -= 1;
@@ -408,7 +420,9 @@ fn at_path_start(tokens: &[ra_ap_syntax::SyntaxToken], position: usize) -> bool 
         }
         return match tokens[cursor].kind() {
             ra_ap_syntax::SyntaxKind::COLON2 => false,
-            ra_ap_syntax::SyntaxKind::COLON => !previous_significant_is_colon(tokens, cursor),
+            ra_ap_syntax::SyntaxKind::COLON => {
+                !previous_significant_is_colon(tokens, cursor) && lone_colon_is_record_field
+            }
             _ => true,
         };
     }

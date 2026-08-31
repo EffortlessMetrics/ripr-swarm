@@ -508,6 +508,33 @@ fn other() -> Vec<Trial> {
 }
 
 #[test]
+fn macro_input_data_never_becomes_a_subject() -> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("macro-input-data")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/macro_input.rs",
+            "fn debug() -> String {
+    stringify!(trial: Trial::test(\"ghost_case\", || Ok(())))
+}
+",
+        )],
+    )?;
+    let files = [PathBuf::from("tests/macro_input.rs")];
+    let registrations = [custom_target_registration("tests/macro_input.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    // Macro input is inert data; a `label:` colon inside it must not
+    // adopt the record-field exception.
+    assert!(
+        index.harness_subjects.is_empty(),
+        "{:?}",
+        index.harness_subjects
+    );
+    assert!(index.tests.is_empty(), "{:?}", index.tests);
+    Ok(())
+}
+
+#[test]
 fn struct_field_initializers_still_start_trial_paths() -> Result<(), Box<dyn std::error::Error>> {
     let root = temp_dir("struct-field-trial")?;
     write_workspace(
