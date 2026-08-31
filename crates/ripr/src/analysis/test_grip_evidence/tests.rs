@@ -10261,17 +10261,48 @@ fn given_foreign_separator_paths_when_grip_associates_then_same_test_file_still_
             .find(|s| s.kind() == SeamKind::PredicateBoundary)
             .ok_or_else(|| "predicate seam present".to_string())?;
         let evidence = evidence_for_seam(predicate, &index);
+        let context = CompactGripContext::new(&index);
+        let owner_fn = crate::analysis::rust_index::find_owner_function(
+            &index,
+            predicate.file(),
+            predicate.display_line(),
+        );
+        let ctx_tests: Vec<String> = context
+            .tests
+            .iter()
+            .map(|t| t.test.file.to_string_lossy().to_string())
+            .collect();
         assert!(
             evidence
                 .related_tests
                 .iter()
                 .any(|grip| grip.relation_reason == RelationReason::SameTestFile),
             "same-test-file association must hold for owner `{owner_path}` / test \
-             `{test_path}`; got {:?}",
-            evidence.related_tests
+             `{test_path}`; got {:?} | diag: index_files={:?} index_tests={} \
+             ctx_tests={ctx_tests:?} stem_keys={:?} seam_file={:?} seam_line={} \
+             owner={owner_fn:?} owner_stem_norm={:?} owner_stem_native={:?} \
+             test_stem_norm={:?} test_stem_native={:?}",
+            evidence.related_tests,
+            index.files.keys().collect::<Vec<_>>(),
+            index.tests.len(),
+            context.tests_by_file_stem.keys().collect::<Vec<_>>(),
+            predicate.file(),
+            predicate.display_line(),
+            normalized_file_stem_to_string(Path::new(owner_path)),
+            Path::new(owner_path)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string()),
+            normalized_file_stem_to_string(Path::new(test_path)),
+            Path::new(test_path)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string()),
         );
     }
     Ok(())
+}
+
+fn normalized_file_stem_to_string(path: &Path) -> String {
+    super::related_tests::normalized_file_stem(path)
 }
 
 // -- helper coverage ---------------------------------------------
