@@ -357,7 +357,9 @@ fn match_trial_path(
     }
 
     for qualified in [false, true] {
-        if qualified && !qualified_path_starts_at_boundary(tokens, position) {
+        if (!qualified && !bare_path_starts_at_boundary(tokens, position))
+            || (qualified && !qualified_path_starts_at_boundary(tokens, position))
+        {
             continue;
         }
         let mut segments: Vec<&str> = if qualified {
@@ -391,6 +393,40 @@ fn match_trial_path(
         }
     }
     None
+}
+
+fn bare_path_starts_at_boundary(tokens: &[ra_ap_syntax::SyntaxToken], position: usize) -> bool {
+    let mut cursor = position;
+    while cursor > 0 {
+        cursor -= 1;
+        if matches!(
+            tokens[cursor].kind(),
+            ra_ap_syntax::SyntaxKind::WHITESPACE | ra_ap_syntax::SyntaxKind::COMMENT
+        ) {
+            continue;
+        }
+        return match tokens[cursor].kind() {
+            ra_ap_syntax::SyntaxKind::COLON2 => false,
+            ra_ap_syntax::SyntaxKind::COLON => {
+                // A single colon can be a record-field initializer; a
+                // doubled colon is always a qualified path separator.
+                let mut previous = cursor;
+                while previous > 0 {
+                    previous -= 1;
+                    if matches!(
+                        tokens[previous].kind(),
+                        ra_ap_syntax::SyntaxKind::WHITESPACE | ra_ap_syntax::SyntaxKind::COMMENT
+                    ) {
+                        continue;
+                    }
+                    return tokens[previous].kind() != ra_ap_syntax::SyntaxKind::COLON;
+                }
+                true
+            }
+            _ => true,
+        };
+    }
+    true
 }
 
 fn qualified_path_starts_at_boundary(
@@ -673,8 +709,7 @@ fn is_assertion_macro_name(name: &str) -> bool {
     matches!(
         name,
         "assert" | "assert_eq" | "assert_ne" | "assert_matches" | "matches"
-    ) || name.starts_with("insta::assert")
-        || name.contains("snapshot")
+    ) || name == "assert_snapshot"
 }
 /// Exact registered test-producing attribute adapter, generation 1
 /// (#3532). Promotes functions carrying the exact registered attribute
