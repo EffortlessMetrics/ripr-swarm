@@ -7,9 +7,6 @@ mod parameterized_tests;
 mod role_composition;
 mod test_styles;
 
-#[cfg(test)]
-pub(crate) use build::build_index_from_loaded_files_with_cache;
-
 use std::path::{Path, PathBuf};
 
 use crate::config::TestHarnessRegistration;
@@ -53,15 +50,26 @@ pub(crate) fn build_index_from_loaded_files_with_cache_and_test_harnesses(
     Ok(cached)
 }
 
+/// Test-only compatibility facade for the cache path without harness
+/// registrations. Keep the same post-parse normalization and contextual
+/// role composition as the production index builder; callers that need the
+/// registry use the explicit sibling above.
+#[cfg(test)]
+pub(crate) fn build_index_from_loaded_files_with_cache(
+    root: &Path,
+    files: &[(PathBuf, Vec<u8>)],
+) -> Result<build::CachedRustIndex, String> {
+    build_index_from_loaded_files_with_cache_and_test_harnesses(root, files, &[])
+}
+
 // Keep compilation-unit rebasing available at the facts facade for index consumers.
 pub(crate) use includes::compilation_unit_path_from_parents;
 pub use model::{
-    CallFact, FileFacts, FunctionFact, FunctionSourceRole, FunctionSummary, LiteralFact,
+    CallFact, FileFacts, FunctionFact, FunctionSourceRole, FunctionSummary, HarnessLimitationFact,
+    HarnessSelectorCapability, HarnessSubjectClaim, HarnessSubjectFact, LiteralFact,
     ModuleDeclarationFact, ModulePathTarget, OracleFact, ProbeShapeFact, ResolvedIncludeParent,
     ReturnFact, RustIncludeLimitation, RustIndex, SourceRoleProvenance, SourceRoleProvenanceEdge,
     SourceRoleProvenanceEdgeKind, TestFact, TestSummary,
-    HarnessLimitationFact,
-    HarnessSelectorCapability, HarnessSubjectClaim, HarnessSubjectFact,
 };
 #[cfg(test)]
 pub(crate) use model::{WorkspaceFileAuthority, WorkspaceRootAuthority};
