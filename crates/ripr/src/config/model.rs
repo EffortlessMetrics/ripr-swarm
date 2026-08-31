@@ -228,6 +228,15 @@ impl TestHarnessRegistration {
     pub(crate) fn provenance() -> &'static str {
         "ripr.toml [analysis.test_harnesses]"
     }
+
+    /// Whether the registration makes its whole target file evidence
+    /// role. Only a custom `harness = false` target is harness-driven
+    /// end to end; a registered attribute applies to individual
+    /// functions, so the rest of a mixed production file must keep
+    /// seeding production seams (#3532 review).
+    pub(crate) fn file_wide_harness_evidence(&self) -> bool {
+        matches!(self.kind, TestHarnessKind::CustomHarnessTarget)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -433,10 +433,9 @@ fn plain_idents_inside_trial_bodies_never_become_oracles() -> Result<(), Box<dyn
             .iter()
             .map(|assertion| assertion.text.as_str())
             .collect::<Vec<_>>(),
-        // One macro-shaped oracle; the `let snapshots` ident never
-        // classifies (the token text omits the opening paren by the
-        // collector's existing shape).
-        vec!["assert_eq!snapshots, 1))"]
+        // One macro-shaped oracle with the invocation's real text; the
+        // `let snapshots` ident never classifies.
+        vec!["assert_eq!(snapshots, 1)"]
     );
     Ok(())
 }

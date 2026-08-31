@@ -253,7 +253,7 @@ fn apply_libtest_mimic_target(
         let calls = extract_call_facts(&body, start_line);
         let literals = extract_literal_facts(&body, start_line);
         let assertions =
-            parser_oracles_for_node_tokens(&tokens, matched.name_token_index, start_line);
+            parser_oracles_for_node_tokens(&tokens, matched.name_token_index, &line_index);
         let subject = HarnessSubjectFact {
             registration_id: registration.registration_id.clone(),
             harness_kind: registration.kind.as_str().to_string(),
@@ -348,9 +348,23 @@ fn match_trial_path(
             }
         }
         if matched_segments == segments.len() && l_paren(cursor) {
+            // The name literal need not be adjacent to the paren:
+            // `Trial::test( "name", …)` is legal, so skip trivia before
+            // reading the name token.
+            let mut name_token_index = cursor + 1;
+            while let Some(token) = tokens.get(name_token_index) {
+                if matches!(
+                    token.kind(),
+                    ra_ap_syntax::SyntaxKind::WHITESPACE | ra_ap_syntax::SyntaxKind::COMMENT
+                ) {
+                    name_token_index += 1;
+                } else {
+                    break;
+                }
+            }
             return Some(TrialPathMatch {
                 qualified,
-                name_token_index: cursor + 1,
+                name_token_index,
                 open_paren_index: cursor,
             });
         }
@@ -388,16 +402,16 @@ fn balanced_call_end(tokens: &[ra_ap_syntax::SyntaxToken], open_paren_index: usi
 /// Assertion evidence for one trial subject: the exact assertion-macro and
 /// `unwrap`/`expect` tokens inside the registration's own argument span.
 /// Only tokens between the name argument and the balanced close count, so
-/// adjacent code never credits this subject.
+/// adjacent code never credits this subject. Each oracle carries the real
+/// source line of its invocation.
 fn parser_oracles_for_node_tokens(
     tokens: &[ra_ap_syntax::SyntaxToken],
     name_token_index: usize,
-    start_line: usize,
+    line_index: &LineIndex,
 ) -> Vec<OracleFact> {
     let mut assertions = Vec::new();
     let mut depth: usize = 1;
     let mut index = name_token_index + 1;
-    let line_offset = start_line.saturating_sub(1);
     while index < tokens.len() && depth > 0 {
         let token = &tokens[index];
         match token.kind() {
@@ -409,25 +423,28 @@ fn parser_oracles_for_node_tokens(
                     index += 1;
                     continue;
                 }
-                // Macro semantics: an assertion is an invocation, so the
-                // bang must directly follow the path segment. A plain
-                // identifier that merely contains an assertion keyword
-                // (`let snapshots = …`) never classifies.
-                if tokens
-                    .get(index + 1)
-                    .is_none_or(|token| token.kind() != ra_ap_syntax::SyntaxKind::BANG)
-                {
-                    index += 1;
-                    continue;
-                }
-                // assert!(..) / assert_eq!(..) — the token tree
-                // follows; the assertion text is the macro invocation.
+                // Macro semantics: an assertion is an invocation, so a
+                // bang must follow the path segment (trivia allowed). A
+                // plain identifier that merely contains an assertion
+                // keyword (`let snapshots = …`) never classifies.
+                let bang_index = match next_significant(tokens, index + 1) {
+                    Some(next) if tokens[next].kind() == ra_ap_syntax::SyntaxKind::BANG => next,
+                    _ => {
+                        index += 1;
+                        continue;
+                    }
+                };
+                // assert!(..) / assert_eq!(..) — the token tree follows;
+                // the assertion text is the macro invocation.
                 let mut text = format!("{name}!");
-                let mut cursor = index + 2;
-                if tokens
-                    .get(cursor)
-                    .is_some_and(|token| token.kind() == ra_ap_syntax::SyntaxKind::L_PAREN)
-                {
+                let mut cursor = match next_significant(tokens, bang_index + 1) {
+                    Some(next) if tokens[next].kind() == ra_ap_syntax::SyntaxKind::L_PAREN => {
+                        text.push('(');
+                        next
+                    }
+                    _ => bang_index + 1,
+                };
+                if text.ends_with('(') {
                     let mut macro_depth = 1;
                     cursor += 1;
                     while cursor < tokens.len() && macro_depth > 0 {
@@ -440,16 +457,19 @@ fn parser_oracles_for_node_tokens(
                         text.push_str(inner.text());
                         cursor += 1;
                     }
-                    text.push(')');
                 }
                 let classification = classify_assertion(&text);
                 assertions.push(OracleFact {
-                    line: line_offset + 1,
+                    line: line_index.line(tokens[index].text_range().start()) + 1,
                     kind: classification.kind,
                     strength: classification.strength,
                     observed_tokens: extract_identifier_tokens(&text),
                     text,
                 });
+                // The macro body has been consumed; resuming inside it
+                // would rescan nested idents as separate top-level
+                // oracles.
+                index = cursor.saturating_sub(1);
             }
             _ => {}
         }
@@ -457,6 +477,16 @@ fn parser_oracles_for_node_tokens(
     }
     assertions.sort_by(|left, right| left.line.cmp(&right.line).then(left.text.cmp(&right.text)));
     assertions
+}
+
+/// Index of the next non-trivia token at or after `from`.
+fn next_significant(tokens: &[ra_ap_syntax::SyntaxToken], from: usize) -> Option<usize> {
+    (from..tokens.len()).find(|index| {
+        !matches!(
+            tokens[*index].kind(),
+            ra_ap_syntax::SyntaxKind::WHITESPACE | ra_ap_syntax::SyntaxKind::COMMENT
+        )
+    })
 }
 
 /// Path segments that introduce an assertion macro when followed by a
@@ -467,8 +497,8 @@ fn parser_oracles_for_node_tokens(
 fn is_assertion_macro_name(name: &str) -> bool {
     matches!(
         name,
-        "assert" | "assert_eq" | "assert_ne" | "assert_matches" | "matches" | "assert_snapshot"
-    )
+        "assert" | "assert_eq" | "assert_ne" | "assert_matches" | "matches"
+    ) || name.ends_with("snapshot")
 }
 /// Exact registered test-producing attribute adapter, generation 1
 /// (#3532). Promotes functions carrying the exact registered attribute

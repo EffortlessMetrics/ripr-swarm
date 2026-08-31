@@ -1638,6 +1638,7 @@ impl RustAdapter {
         source_role_context.harness_targets = options
             .test_harnesses
             .iter()
+            .filter(|registration| registration.file_wide_harness_evidence())
             .map(|registration| registration.target.clone())
             .collect();
 
@@ -1820,6 +1821,7 @@ impl RustAdapter {
             context.harness_targets = options
                 .test_harnesses
                 .iter()
+                .filter(|registration| registration.file_wide_harness_evidence())
                 .map(|registration| registration.target.clone())
                 .collect();
             context

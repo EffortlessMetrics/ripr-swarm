@@ -1113,6 +1113,7 @@ fn harness_targets_from_config(config: &RiprConfig) -> std::collections::BTreeSe
         .analysis()
         .test_harnesses()
         .iter()
+        .filter(|registration| registration.file_wide_harness_evidence())
         .map(|registration| registration.target.clone())
         .collect()
 }
@@ -1454,6 +1455,38 @@ fn expected_sink_for(kind: SeamKind) -> ExpectedSink {
 mod tests {
     use super::*;
     use crate::analysis::facts::FunctionSourceRole;
+
+    #[test]
+    fn only_custom_harness_targets_receive_file_wide_evidence_role() -> Result<(), String> {
+        // #3532 review: a registered attribute applies to individual
+        // functions, so its target must not enter the file-wide harness
+        // evidence set — a mixed production file keeps seeding seams.
+        let config = crate::config::tests_only_parse(
+            r#"[analysis]
+[[analysis.test_harnesses]]
+registration_id = "mimic"
+target = "tests/mimic.rs"
+kind = "custom_harness"
+adapter = "libtest_mimic_v1"
+marker = "libtest_mimic::Trial"
+
+[[analysis.test_harnesses]]
+registration_id = "contract"
+target = "src/lib.rs"
+kind = "registered_attribute"
+adapter = "exact_attribute_v1"
+marker = "myco::contract_test"
+"#,
+        )
+        .map_err(|error| format!("fixture config parses: {error}"))?;
+        let targets = harness_targets_from_config(&config);
+        assert_eq!(
+            targets,
+            std::iter::once(PathBuf::from("tests/mimic.rs"))
+                .collect::<std::collections::BTreeSet<_>>()
+        );
+        Ok(())
+    }
     use crate::analysis::rust_index::{
         FileFacts, FunctionFact, RaRustSyntaxAdapter, RustSyntaxAdapter,
     };
