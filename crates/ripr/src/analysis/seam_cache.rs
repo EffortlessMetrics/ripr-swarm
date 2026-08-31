@@ -2059,6 +2059,20 @@ fn is_absolute_declared_path(declared: &str) -> bool {
     Path::new(declared).is_absolute()
 }
 
+/// Classify a lexically resolved repo-relative path target. A path
+/// dependency resolves only when its target is an existing directory
+/// that contains a Cargo.toml manifest; a bare directory cannot satisfy
+/// the dependency, so it must not count as `Resolved` and become a
+/// manifest node downstream (#3613 review).
+fn classify_repo_relative_target(root: &Path, resolved: &str) -> PathDependencyResolution {
+    let target = root.join(resolved);
+    if target.is_dir() && target.join("Cargo.toml").is_file() {
+        PathDependencyResolution::Resolved
+    } else {
+        PathDependencyResolution::TargetMissing
+    }
+}
+
 /// Lexically resolve a `/`-separated declared path against a `/`-separated
 /// repo-relative directory, without touching the filesystem. The caller
 /// passes the host resolution form: on Windows hosts `\` has been normalized
@@ -2175,10 +2189,8 @@ fn collect_path_dependency_edges(
                     let (resolved, escaped) = resolve_repo_relative(manifest_dir, &resolution_form);
                     let resolution = if escaped {
                         PathDependencyResolution::ResolvedOutsideWorkspace
-                    } else if root.join(&resolved).is_dir() {
-                        PathDependencyResolution::Resolved
                     } else {
-                        PathDependencyResolution::TargetMissing
+                        classify_repo_relative_target(root, &resolved)
                     };
                     (Some(resolved), resolution)
                 };
@@ -2208,10 +2220,8 @@ fn collect_path_dependency_edges(
                                     resolve_repo_relative(&root_dir, &resolution_form);
                                 let resolution = if escaped {
                                     PathDependencyResolution::ResolvedOutsideWorkspace
-                                } else if root.join(&resolved).is_dir() {
-                                    PathDependencyResolution::Resolved
                                 } else {
-                                    PathDependencyResolution::TargetMissing
+                                    classify_repo_relative_target(root, &resolved)
                                 };
                                 (Some(resolved), resolution)
                             };
@@ -3577,6 +3587,35 @@ mod tests {
         // Sorted by dependency_name: "plain" < "winstyle".
         assert_eq!(edges[0].declared_path.as_deref(), Some("../shared"));
         assert_eq!(edges[1].declared_path.as_deref(), Some("..\\shared"));
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn path_dependency_edge_to_manifest_less_directory_is_target_missing() -> Result<(), String> {
+        // A bare directory cannot satisfy a Cargo path dependency: the
+        // producer classifies it TargetMissing so it never becomes a
+        // manifest node downstream (#3613 review).
+        let root = isolated_dir("path-dep-manifest-less-target");
+        let _ = std::fs::remove_dir_all(&root);
+        write_manifest(&root, "Cargo.toml", "[workspace]\nmembers = []\n")?;
+        write_manifest(
+            &root,
+            "crates/app/Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\nempty = { path = \"../empty-dep\" }\n",
+        )?;
+        std::fs::create_dir_all(root.join("crates/empty-dep")).map_err(|err| err.to_string())?;
+
+        let provenance = workspace_graph_provenance(&root);
+        let edges = &provenance.path_dependency_edges;
+        assert_eq!(edges.len(), 1, "{edges:?}");
+        assert_eq!(
+            edges[0].resolution,
+            PathDependencyResolution::TargetMissing,
+            "a directory without Cargo.toml must not count as resolved: {edges:?}"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
         Ok(())

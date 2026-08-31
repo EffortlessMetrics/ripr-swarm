@@ -127,6 +127,69 @@ struct TargetedRerunGraphProvenance {
     feature_graph_detail: Option<String>,
     external_dependency_graph_status: String,
     external_dependency_graph_detail: String,
+    /// #2969 slice B: the forward/reverse path-dependency adjacency built
+    /// from captured edges, disclosed per manifest with its build status.
+    /// Disclosure only: this section does not yet contribute to
+    /// `input_changed` naming or parity input mismatches, because workspace
+    /// scope expansion does not consume the graph yet (#2970). `serde(default)`
+    /// keeps before artifacts written before this section deserializable.
+    #[serde(default)]
+    path_dependency_graph: TargetedRerunPathDependencyGraph,
+}
+
+/// Per-manifest forward/reverse neighbor lists, sorted.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, serde::Deserialize)]
+struct TargetedRerunPathDependencyNeighbors {
+    forward: Vec<String>,
+    reverse: Vec<String>,
+}
+
+/// Serialized path-dependency adjacency disclosure. `status` is `complete`,
+/// `limited`, or `unavailable`; an empty adjacency with status `complete`
+/// means no path dependencies were declared, never an omitted analysis.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, serde::Deserialize)]
+struct TargetedRerunPathDependencyGraph {
+    status: String,
+    detail: Option<String>,
+    edge_count: usize,
+    connected_edge_count: usize,
+    /// Forward and reverse neighbors per participating manifest, keyed by
+    /// repo-relative manifest path, sorted. Crates with no path-dependency
+    /// edges are absent: they are isolated from the path-dep graph.
+    adjacency: BTreeMap<String, TargetedRerunPathDependencyNeighbors>,
+}
+
+impl From<&crate::analysis::seam_cache::WorkspaceGraphProvenance>
+    for TargetedRerunPathDependencyGraph
+{
+    fn from(provenance: &crate::analysis::seam_cache::WorkspaceGraphProvenance) -> Self {
+        let adjacency = crate::analysis::PathDependencyAdjacency::build(provenance);
+        Self {
+            status: adjacency.status().as_str().to_string(),
+            detail: adjacency.detail().map(str::to_string),
+            edge_count: adjacency.edge_count(),
+            connected_edge_count: adjacency.connected_edge_count(),
+            adjacency: adjacency
+                .nodes()
+                .iter()
+                .map(|manifest| {
+                    (
+                        manifest.clone(),
+                        TargetedRerunPathDependencyNeighbors {
+                            forward: adjacency
+                                .forward_neighbors(manifest)
+                                .map(|set| set.iter().cloned().collect())
+                                .unwrap_or_default(),
+                            reverse: adjacency
+                                .reverse_neighbors(manifest)
+                                .map(|set| set.iter().cloned().collect())
+                                .unwrap_or_default(),
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
 }
 
 impl From<&crate::analysis::seam_cache::RepoSeamCacheKey> for TargetedRerunInputFingerprint {
@@ -161,6 +224,7 @@ impl From<&crate::analysis::seam_cache::WorkspaceGraphProvenance> for TargetedRe
             feature_graph_detail: provenance.feature_graph_detail.clone(),
             external_dependency_graph_status: provenance.external_dependency_graph_status.clone(),
             external_dependency_graph_detail: provenance.external_dependency_graph_detail.clone(),
+            path_dependency_graph: TargetedRerunPathDependencyGraph::from(provenance),
         }
     }
 }
@@ -1756,6 +1820,7 @@ mod tests {
     use super::{
         RerunSelector, ResolvedRerunScope, TargetedRerunCache, TargetedRerunGraphProvenance,
         TargetedRerunInputFingerprint, TargetedRerunMissingDiscriminator, TargetedRerunMovement,
+        TargetedRerunPathDependencyGraph, TargetedRerunPathDependencyNeighbors,
         TargetedRerunRelatedTest, TargetedRerunReport, TargetedRerunSeam, TargetedRerunSelector,
         cache_from, compare_selector_scoped_seams, entry_matches_selected_gap,
         graph_provenance_unavailable_fields, input_fingerprint_changes, parity_mismatch_fields,
@@ -2763,6 +2828,112 @@ mod tests {
         Ok(())
     }
 
+    /// #2969 slice B: the fingerprint discloses the path-dependency adjacency
+    /// (status, counts, per-manifest forward/reverse neighbors), and a before
+    /// artifact written before the section existed still deserializes via the
+    /// section default instead of failing artifact compatibility.
+    #[test]
+    fn path_dependency_graph_section_is_disclosed_in_the_fingerprint() -> Result<(), String> {
+        let provenance = crate::analysis::seam_cache::WorkspaceGraphProvenance {
+            package_graph_status: "complete".to_string(),
+            external_dependency_graph_status: "unavailable".to_string(),
+            external_dependency_graph_detail: "external dependency metadata is not resolved"
+                .to_string(),
+            path_dependency_edges: vec![crate::analysis::seam_cache::PathDependencyEdge {
+                from_manifest: "a/Cargo.toml".to_string(),
+                section: crate::analysis::seam_cache::PathDependencySection::Dependencies,
+                target: None,
+                dependency_name: "b".to_string(),
+                declared_path: Some("../b".to_string()),
+                resolved_path: Some("b".to_string()),
+                resolution: crate::analysis::seam_cache::PathDependencyResolution::Resolved,
+                source: crate::analysis::seam_cache::PathDependencySource::Package,
+            }],
+            ..crate::analysis::seam_cache::WorkspaceGraphProvenance::default()
+        };
+        let mut fingerprint = sample_input_fingerprint();
+        fingerprint.graph_provenance = (&provenance).into();
+        let graph = &fingerprint.graph_provenance.path_dependency_graph;
+        assert_eq!(graph.status, "complete");
+        assert_eq!(graph.edge_count, 1);
+        assert_eq!(graph.connected_edge_count, 1);
+        let a = graph
+            .adjacency
+            .get("a/Cargo.toml")
+            .ok_or_else(|| "a must appear in the disclosed adjacency".to_string())?;
+        assert_eq!(a.forward, vec!["b/Cargo.toml".to_string()]);
+        assert!(a.reverse.is_empty());
+        let b = graph
+            .adjacency
+            .get("b/Cargo.toml")
+            .ok_or_else(|| "b must appear in the disclosed adjacency".to_string())?;
+        assert_eq!(b.reverse, vec!["a/Cargo.toml".to_string()]);
+        assert!(b.forward.is_empty());
+
+        let value = serde_json::to_value(&fingerprint)
+            .map_err(|err| format!("serialize fingerprint: {err}"))?;
+        let section = value
+            .get("graph_provenance")
+            .and_then(|graph| graph.get("path_dependency_graph"))
+            .ok_or_else(|| "path_dependency_graph must serialize".to_string())?;
+        assert_eq!(
+            section.get("status").and_then(|status| status.as_str()),
+            Some("complete")
+        );
+        assert_eq!(
+            section
+                .get("adjacency")
+                .and_then(|adjacency| adjacency.get("a/Cargo.toml"))
+                .and_then(|a| a.get("forward"))
+                .and_then(|forward| forward.as_array())
+                .map(|forward| forward.len()),
+            Some(1)
+        );
+
+        // Legacy compatibility: a fingerprint JSON without the section still
+        // deserializes; the default carries an empty (not fabricated) graph.
+        let mut legacy = value.clone();
+        legacy
+            .get_mut("graph_provenance")
+            .and_then(|graph| graph.as_object_mut())
+            .ok_or_else(|| "graph_provenance should serialize as an object".to_string())?
+            .remove("path_dependency_graph");
+        let deserialized: TargetedRerunInputFingerprint = serde_json::from_value(legacy)
+            .map_err(|err| format!("deserialize legacy fingerprint: {err}"))?;
+        assert_eq!(
+            deserialized.graph_provenance.path_dependency_graph.status, "",
+            "a legacy artifact has no recorded path-dependency graph; the empty default must not invent a status"
+        );
+        Ok(())
+    }
+
+    /// Slice-B boundary: the disclosed adjacency is not yet an input-change
+    /// discriminator because workspace scope expansion does not consume the
+    /// graph yet (#2970). Pinning this keeps before/after receipts honest —
+    /// a path-dependency edit must not be named as an input change until the
+    /// analysis actually depends on it.
+    #[test]
+    fn path_dependency_graph_differences_are_not_named_as_input_changes() {
+        let before = sample_input_fingerprint();
+        let mut current = before.clone();
+        current.graph_provenance.path_dependency_graph.status = "limited".to_string();
+        current
+            .graph_provenance
+            .path_dependency_graph
+            .adjacency
+            .insert(
+                "a/Cargo.toml".to_string(),
+                TargetedRerunPathDependencyNeighbors {
+                    forward: vec!["b/Cargo.toml".to_string()],
+                    reverse: Vec::new(),
+                },
+            );
+        assert!(
+            input_fingerprint_changes(&before, &current).is_empty(),
+            "path-dependency disclosure differences are not input changes in slice B"
+        );
+    }
+
     fn sample_input_fingerprint() -> TargetedRerunInputFingerprint {
         TargetedRerunInputFingerprint {
             schema_version: "0.3".to_string(),
@@ -2788,6 +2959,7 @@ mod tests {
                 external_dependency_graph_status: "unavailable".to_string(),
                 external_dependency_graph_detail: "external dependency metadata is not resolved"
                     .to_string(),
+                path_dependency_graph: TargetedRerunPathDependencyGraph::default(),
             },
         }
     }

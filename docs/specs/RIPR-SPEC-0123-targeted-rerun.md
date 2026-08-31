@@ -179,6 +179,22 @@ implicit fact source. Graph statuses are `complete`, `limited`, or
 when required local graph provenance is unavailable or differs between
 targeted and full inputs.
 
+The fingerprint also discloses the `path_dependency_graph`: a forward and
+reverse adjacency over the path-dependency edges captured from the same local
+manifests, built in memory with no network access and no filesystem walking
+of dependencies. `status` follows the same `complete`/`limited`/
+`unavailable` vocabulary, where `limited` names a partial edge inventory and
+`complete` with an empty adjacency states truthfully that no path dependency
+was declared. Every participating manifest exposes sorted `forward` and
+`reverse` neighbor lists; cycles terminate any walk and are disclosed as
+cycle markers; edges without a resolved identity do not participate and are
+named in `detail` and `connected_edge_count`. This section is disclosure
+only: until dep-driven scope expansion consumes the adjacency (#2970), it
+does not contribute to `input_changed` naming, parity input mismatches, or
+parity fail-closed decisions, and a fingerprint written before the section
+existed is read as having no recorded path-dependency graph rather than an
+empty one.
+
 A content change to any selected test, selected production seam, Cargo manifest
 or lockfile, workspace membership or package graph, selected feature
 configuration, toolchain or analyzer configuration, configured oracle policy,
