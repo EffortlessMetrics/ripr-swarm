@@ -421,10 +421,10 @@ fn is_data_only_macro_input(tokens: &[ra_ap_syntax::SyntaxToken], position: usiz
                 return false;
             };
             let path = path.syntax().text().to_string().replace(' ', "");
-            let Some(name) = supported_data_only_macro_name(&path) else {
+            let Some((name, shadowable)) = supported_data_only_macro_name(&path) else {
                 return false;
             };
-            !data_only_macro_is_shadowed(tokens, position, name)
+            !shadowable || !data_only_macro_is_shadowed(tokens, position, name)
         })
 }
 
@@ -435,14 +435,18 @@ fn is_data_only_macro_name(name: &str) -> bool {
     )
 }
 
-fn supported_data_only_macro_name(path: &str) -> Option<&str> {
+/// Return the supported data-only macro's terminal name and whether a local
+/// `macro_rules!` declaration can shadow this spelling. Qualified standard
+/// library paths are fixed built-ins; only their bare spelling is lexical.
+fn supported_data_only_macro_name(path: &str) -> Option<(&str, bool)> {
     if is_data_only_macro_name(path) {
-        return Some(path);
+        return Some((path, true));
     }
     ["std::", "core::"]
         .iter()
         .find_map(|prefix| path.strip_prefix(prefix))
         .filter(|name| is_data_only_macro_name(name))
+        .map(|name| (name, false))
 }
 
 fn data_only_macro_is_shadowed(

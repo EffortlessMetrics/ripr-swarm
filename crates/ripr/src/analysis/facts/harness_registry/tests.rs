@@ -769,6 +769,64 @@ fn arbitrary_prefix() -> Vec<Trial> {
 }
 
 #[test]
+fn local_stringify_does_not_shadow_std_stringify() -> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("local-before-std-stringify")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/std_stringify.rs",
+            "use libtest_mimic::Trial;
+
+macro_rules! stringify { ($value:expr) => { $value }; }
+
+fn trials() -> Vec<Trial> {
+    std::stringify!(vec![Trial::test(\"std_builtin_case\", || Ok(()))])
+}
+",
+        )],
+    )?;
+    let files = [PathBuf::from("tests/std_stringify.rs")];
+    let registrations = [custom_target_registration("tests/std_stringify.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    assert!(
+        index.harness_subjects.is_empty(),
+        "{:?}",
+        index.harness_subjects
+    );
+    assert!(index.tests.is_empty(), "{:?}", index.tests);
+    Ok(())
+}
+
+#[test]
+fn local_concat_does_not_shadow_core_concat() -> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("local-before-core-concat")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/core_concat.rs",
+            "use libtest_mimic::Trial;
+
+macro_rules! concat { ($value:expr) => { $value }; }
+
+fn trials() -> Vec<Trial> {
+    core::concat!(vec![Trial::test(\"core_builtin_case\", || Ok(()))])
+}
+",
+        )],
+    )?;
+    let files = [PathBuf::from("tests/core_concat.rs")];
+    let registrations = [custom_target_registration("tests/core_concat.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    assert!(
+        index.harness_subjects.is_empty(),
+        "{:?}",
+        index.harness_subjects
+    );
+    assert!(index.tests.is_empty(), "{:?}", index.tests);
+    Ok(())
+}
+
+#[test]
 fn struct_field_initializers_still_start_trial_paths() -> Result<(), Box<dyn std::error::Error>> {
     let root = temp_dir("struct-field-trial")?;
     write_workspace(
