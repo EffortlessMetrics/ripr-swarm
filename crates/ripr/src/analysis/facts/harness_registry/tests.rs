@@ -673,6 +673,68 @@ fn trials() -> Vec<Trial> {
 }
 
 #[test]
+fn later_data_macro_declaration_does_not_shadow_an_earlier_builtin_input()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("later-shadowed-data-macro")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/later_shadow.rs",
+            "use libtest_mimic::Trial;
+
+fn trials() -> Vec<Trial> {
+    stringify!(vec![Trial::test(\"builtin_case\", || Ok(()))])
+}
+
+macro_rules! stringify { ($value:expr) => { $value }; }
+",
+        )],
+    )?;
+    let files = [PathBuf::from("tests/later_shadow.rs")];
+    let registrations = [custom_target_registration("tests/later_shadow.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    assert!(
+        index.harness_subjects.is_empty(),
+        "{:?}",
+        index.harness_subjects
+    );
+    assert!(index.tests.is_empty(), "{:?}", index.tests);
+    Ok(())
+}
+
+#[test]
+fn sibling_data_macro_declaration_does_not_shadow_a_builtin_input()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("sibling-shadowed-data-macro")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/sibling_shadow.rs",
+            "use libtest_mimic::Trial;
+
+fn trials() -> Vec<Trial> {
+    stringify!(vec![Trial::test(\"builtin_case\", || Ok(()))])
+}
+
+mod sibling {
+    macro_rules! stringify { ($value:expr) => { $value }; }
+}
+",
+        )],
+    )?;
+    let files = [PathBuf::from("tests/sibling_shadow.rs")];
+    let registrations = [custom_target_registration("tests/sibling_shadow.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    assert!(
+        index.harness_subjects.is_empty(),
+        "{:?}",
+        index.harness_subjects
+    );
+    assert!(index.tests.is_empty(), "{:?}", index.tests);
+    Ok(())
+}
+
+#[test]
 fn struct_field_initializers_still_start_trial_paths() -> Result<(), Box<dyn std::error::Error>> {
     let root = temp_dir("struct-field-trial")?;
     write_workspace(
@@ -1071,6 +1133,72 @@ fn bare_attribute_without_marker_import_stays_unclassified()
             .any(|limitation| limitation.code == "unresolved_marker_import"),
         "{:?}",
         index.harness_limitations
+    );
+    Ok(())
+}
+
+#[test]
+fn exact_registered_attribute_after_unresolved_bare_attribute_still_matches()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("attribute-exact-after-bare")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/after_bare.rs",
+            "#[contract_test]
+#[myco::contract_test]
+fn exact_after_bare() {
+    assert_eq!(1, 1);
+}
+",
+        )],
+    )?;
+    let target = "tests/after_bare.rs";
+    let index = build_index_with_test_harnesses(
+        &root.0,
+        &[PathBuf::from(target)],
+        &[attribute_registration(target, "myco::contract_test")],
+    )?;
+    assert_eq!(
+        index
+            .harness_subjects
+            .iter()
+            .map(|subject| subject.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["exact_after_bare"]
+    );
+    Ok(())
+}
+
+#[test]
+fn exact_registered_attribute_before_unresolved_bare_attribute_still_matches()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("attribute-exact-before-bare")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/before_bare.rs",
+            "#[myco::contract_test]
+#[contract_test]
+fn exact_before_bare() {
+    assert_eq!(1, 1);
+}
+",
+        )],
+    )?;
+    let target = "tests/before_bare.rs";
+    let index = build_index_with_test_harnesses(
+        &root.0,
+        &[PathBuf::from(target)],
+        &[attribute_registration(target, "myco::contract_test")],
+    )?;
+    assert_eq!(
+        index
+            .harness_subjects
+            .iter()
+            .map(|subject| subject.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["exact_before_bare"]
     );
     Ok(())
 }

@@ -421,7 +421,7 @@ fn is_data_only_macro_input(tokens: &[ra_ap_syntax::SyntaxToken], position: usiz
                 return false;
             };
             let name = path.syntax().text().to_string().replace(' ', "");
-            is_data_only_macro_name(&name) && !data_only_macro_is_shadowed(tokens, &name)
+            is_data_only_macro_name(&name) && !data_only_macro_is_shadowed(tokens, position, &name)
         })
 }
 
@@ -432,7 +432,11 @@ fn is_data_only_macro_name(name: &str) -> bool {
     )
 }
 
-fn data_only_macro_is_shadowed(tokens: &[ra_ap_syntax::SyntaxToken], name: &str) -> bool {
+fn data_only_macro_is_shadowed(
+    tokens: &[ra_ap_syntax::SyntaxToken],
+    invocation_position: usize,
+    name: &str,
+) -> bool {
     let significant = |index: usize| {
         tokens
             .iter()
@@ -446,8 +450,11 @@ fn data_only_macro_is_shadowed(tokens: &[ra_ap_syntax::SyntaxToken], name: &str)
             })
             .map(|(index, _)| index)
     };
+    let invocation_scopes = lexical_scopes(tokens[invocation_position].parent_ancestors());
+    let invocation_offset = tokens[invocation_position].text_range().start();
+
     tokens.iter().enumerate().any(|(index, token)| {
-        if token.text() != "macro_rules" {
+        if token.text() != "macro_rules" || token.text_range().start() >= invocation_offset {
             return false;
         }
         let Some(bang) = significant(index + 1) else {
@@ -456,8 +463,41 @@ fn data_only_macro_is_shadowed(tokens: &[ra_ap_syntax::SyntaxToken], name: &str)
         let Some(declared) = significant(bang + 1) else {
             return false;
         };
-        tokens[bang].kind() == ra_ap_syntax::SyntaxKind::BANG && tokens[declared].text() == name
+        if tokens[bang].kind() != ra_ap_syntax::SyntaxKind::BANG || tokens[declared].text() != name
+        {
+            return false;
+        }
+        let Some(declaration) = token.parent_ancestors().find_map(ast::MacroRules::cast) else {
+            return false;
+        };
+        let declaration_scopes = lexical_scopes(declaration.syntax().ancestors());
+        declaration_scopes.iter().any(|declaration_scope| {
+            invocation_scopes
+                .iter()
+                .any(|invocation_scope| same_syntax_node(declaration_scope, invocation_scope))
+        })
     })
+}
+
+fn lexical_scopes(
+    ancestors: impl Iterator<Item = ra_ap_syntax::SyntaxNode>,
+) -> Vec<ra_ap_syntax::SyntaxNode> {
+    ancestors
+        .filter(|ancestor| {
+            matches!(
+                ancestor.kind(),
+                ra_ap_syntax::SyntaxKind::ASSOC_ITEM_LIST
+                    | ra_ap_syntax::SyntaxKind::BLOCK_EXPR
+                    | ra_ap_syntax::SyntaxKind::EXTERN_ITEM_LIST
+                    | ra_ap_syntax::SyntaxKind::ITEM_LIST
+                    | ra_ap_syntax::SyntaxKind::SOURCE_FILE
+            )
+        })
+        .collect()
+}
+
+fn same_syntax_node(left: &ra_ap_syntax::SyntaxNode, right: &ra_ap_syntax::SyntaxNode) -> bool {
+    left.kind() == right.kind() && left.text_range() == right.text_range()
 }
 
 fn bare_path_starts_at_boundary(tokens: &[ra_ap_syntax::SyntaxToken], position: usize) -> bool {
@@ -1005,6 +1045,9 @@ fn resolve_registered_attribute(
     marker: &str,
     use_bindings: &BTreeSet<String>,
 ) -> Option<RegisteredAttributeResolution> {
+    // An exact configured path is authoritative regardless of where an
+    // unresolved bare leaf appears in the attribute list. Scan it first so a
+    // conservative limitation for one spelling cannot hide a provable match.
     for attribute in attrs {
         let Some(path) = normalized_attribute_path(attribute) else {
             continue;
@@ -1012,6 +1055,12 @@ fn resolve_registered_attribute(
         if path == marker {
             return Some(RegisteredAttributeResolution::Matched);
         }
+    }
+
+    for attribute in attrs {
+        let Some(path) = normalized_attribute_path(attribute) else {
+            continue;
+        };
         let Some((_prefix, name)) = marker.rsplit_once("::") else {
             continue;
         };
