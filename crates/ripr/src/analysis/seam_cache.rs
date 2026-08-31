@@ -2059,7 +2059,6 @@ fn is_absolute_declared_path(declared: &str) -> bool {
     Path::new(declared).is_absolute()
 }
 
-/// Lexically resolve a `/`-separated declared path against a `/`-separated
 /// Classify a lexically resolved repo-relative path target. A path
 /// dependency resolves only when its target is an existing directory
 /// that contains a Cargo.toml manifest; a bare directory cannot satisfy
@@ -2074,6 +2073,7 @@ fn classify_repo_relative_target(root: &Path, resolved: &str) -> PathDependencyR
     }
 }
 
+/// Lexically resolve a `/`-separated declared path against a `/`-separated
 /// repo-relative directory, without touching the filesystem. The caller
 /// passes the host resolution form: on Windows hosts `\` has been normalized
 /// to `/`; on Unix hosts `\` is a legal filename character and is preserved.
