@@ -571,6 +571,7 @@ fn precommit() -> Result<(), String> {
     check_capabilities()?;
     check_workspace_shape()?;
     check_architecture()?;
+    check_source_role_authority()?;
     check_public_api()?;
     check_output_contracts()?;
     check_doc_artifacts()?;
