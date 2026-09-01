@@ -64,10 +64,21 @@ pub(crate) fn select_rust_files_for_mode_with_dependent_packages(
     }
 
     let package_files = all_files.iter().filter(|file| {
-        package_root(file).as_ref().is_some_and(|root| {
-            package_roots.iter().any(|changed| changed == root)
-                || dependent_package_roots.contains(root)
-        })
+        if let Some(root) = package_root(file) {
+            package_roots.iter().any(|changed| changed == &root)
+                || dependent_package_roots.contains(&root)
+        } else {
+            // #3616 review: a file with no heuristic root can still belong
+            // to an expanded dependent package (custom Cargo target paths
+            // such as `b/lib/core.rs`). Prefix membership against the
+            // graph-attributed dependent roots keeps it indexed; those
+            // roots come from the captured manifest inventory, so they
+            // are the package directories themselves.
+            let normalized = file.to_string_lossy().replace('\\', "/");
+            dependent_package_roots
+                .iter()
+                .any(|root| normalized.starts_with(root.as_str()))
+        }
     });
     with_module_context_files(
         all_files,
@@ -524,6 +535,38 @@ mod tests {
             &std::collections::BTreeSet::new(),
         );
         assert_eq!(selected, files(&["a/src/lib.rs"]));
+    }
+
+    /// #3616 review: a dependent crate's custom-target file carries no
+    /// heuristic package root (`b/lib/core.rs` matches no `src/`/`tests/`
+    /// pattern), so heuristic attribution alone would exclude it even
+    /// though `b` was attributed as a dependent. Prefix membership against
+    /// the graph-attributed dependent roots keeps such files indexed.
+    #[test]
+    fn dependent_custom_target_files_enter_selection_by_root_prefix() {
+        let all = files(&[
+            "a/src/lib.rs",
+            "b/lib/core.rs",
+            "b/src/lib.rs",
+            "d/src/lib.rs",
+        ]);
+        let changed = files(&["a/src/lib.rs"]);
+        let dependents = ["b/".to_string()]
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+
+        let selected = select_rust_files_for_mode_with_dependent_packages(
+            &all,
+            &changed,
+            AnalysisMode::Draft,
+            true,
+            &dependents,
+        );
+        assert_eq!(
+            selected,
+            files(&["a/src/lib.rs", "b/lib/core.rs", "b/src/lib.rs"]),
+            "the dependent's custom-target file enters by root prefix; unrelated d stays out"
+        );
     }
 
     /// #3616 review: custom-target changed files carry no heuristic package
