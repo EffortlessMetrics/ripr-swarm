@@ -271,16 +271,14 @@ pub(in crate::analysis) fn find_related_tests<'a>(
     related
 }
 
-/// #2972: whether one captured, callable path-dependency edge lets an
-/// ambiguous-name cross-crate bare call be attributed to the owner's
+/// #2972: whether one captured, callable path-dependency declaration lets
+/// an ambiguous-name cross-crate call be attributed to the owner's
 /// package. Under-emit is the contract for relation credit, so every
 /// boundary fails closed:
 ///
-/// - the call evidence must be a bare free-function call. A `let` binding
-///   of the owner name in the test body (a closure or shadowing local,
-///   invisible to `index.functions`) defeats the admit, and a method-call
-///   form (`receiver.owner(`) defeats it: a method resolves on the
-///   receiver's type, not the calling crate's scope (#2972 review).
+/// - a `let` binding of the owner name in the test body (a closure or
+///   shadowing local, invisible to `index.functions`) defeats the admit
+///   (#2972 review).
 /// - the graph must be `Complete`. A `limited` capture is a partial edge
 ///   inventory and this surface has no disclosure channel, so it fails
 ///   closed exactly the way the #2971 rule fails closed on an incomplete
@@ -294,12 +292,23 @@ pub(in crate::analysis) fn find_related_tests<'a>(
 ///   callable edge is an equally plausible competing candidate, and an
 ///   unattributable same-named definition cannot be refuted at all; each
 ///   defeats the admit.
-/// - one direct forward edge in a callable section only: the test's
-///   package declares a normal or dev path dependency on the owner's
-///   package. A bare call binds names the declaring crate's own
-///   dependency sections provide, so reverse edges (the owner's crate
+/// - one direct forward declaration in a callable section only: the
+///   test's package declares a normal or dev path dependency on the
+///   owner's package. A bare call binds names the declaring crate's own
+///   dependency declarations provide, so reverse edges (the owner's crate
 ///   depends on the test crate) and build-only edges admit nothing
 ///   (#2972 review).
+/// - call identity comes from the parser-backed captured `calls` facts
+///   only, never from raw body text: a `score(` occurrence inside a
+///   comment or string literal fabricates no call (#2972 review round
+///   3). Calls the extractor could not capture stay unadmitted.
+/// - the captured call must be attributable to THIS dependency: either a
+///   qualified call `dependency_name::owner(`, or a bare call whose
+///   stripped body imports the owner from the declared dependency name
+///   (`use dependency_name::...owner;`, including nested paths and brace
+///   lists). Aliased (`as`) and glob (`*`) imports prove nothing and are
+///   refused; another dependency supplying the same name defeats the
+///   admit (#2972 review round 3).
 fn dependency_edge_admits_owner_call(
     context: &DependencyEdgeContext<'_>,
     owner_name: &str,
@@ -309,13 +318,6 @@ fn dependency_edge_admits_owner_call(
     same_name_unattributed_definition: bool,
 ) -> bool {
     if body_binds_owner_name(&test.body, owner_name) {
-        return false;
-    }
-    if !test.calls.iter().any(|call| {
-        call.name == owner_name
-            && super::helper_transfer::is_direct_call_site(&call.text, owner_name)
-    }) && !body_has_bare_owner_call(&test.body, owner_name)
-    {
         return false;
     }
     if same_name_unattributed_definition {
@@ -338,39 +340,146 @@ fn dependency_edge_admits_owner_call(
     }
     if same_name_definition_manifests.iter().any(|manifest| {
         manifest != &owner_manifest
-            && callable_forward_dependency(context.adjacency, &test_manifest, manifest)
+            && has_callable_forward_dependency(context.adjacency, &test_manifest, manifest)
     }) {
         // A second same-named definition the test's package can also call
         // through a captured callable edge: the bare call is ambiguous
         // between them.
         return false;
     }
-    callable_forward_dependency(context.adjacency, &test_manifest, &owner_manifest)
+    let Some(declarations) = context
+        .adjacency
+        .forward_dependency_declarations(&test_manifest, &owner_manifest)
+    else {
+        return false;
+    };
+    let callable_dependency_names: BTreeSet<&str> = declarations
+        .iter()
+        .filter(|(section, _)| {
+            matches!(
+                section,
+                PathDependencySection::Dependencies | PathDependencySection::DevDependencies
+            )
+        })
+        .map(|(_, name)| name.as_str())
+        .collect();
+    if callable_dependency_names.is_empty() {
+        return false;
+    }
+    // Call identity is parser-backed only: a bare direct call of the owner
+    // name among the captured calls. Comments and string literals in the
+    // body never fabricate one.
+    let bare_call_captured = test.calls.iter().any(|call| {
+        call.name == owner_name
+            && super::helper_transfer::is_direct_call_site(&call.text, owner_name)
+    });
+    let stripped_body = strip_comments_and_strings(&test.body);
+    callable_dependency_names.iter().any(|dependency_name| {
+        let qualified = format!("{dependency_name}::{owner_name}");
+        let qualified_call = test
+            .calls
+            .iter()
+            .any(|call| is_qualified_owner_call(&call.text, &qualified))
+            || is_qualified_owner_call(&stripped_body, &qualified);
+        if qualified_call {
+            // The call is spelled through this dependency's declared name:
+            // unambiguous without an import.
+            return true;
+        }
+        bare_call_captured
+            && imports_owner_from_dependency(&stripped_body, dependency_name, owner_name)
+    })
+}
+
+/// Whether `text` invokes the owner through the dependency's declared name,
+/// spelled exactly `dependency_name::owner_name(` at a token boundary not
+/// preceded by a longer path or a receiver.
+fn is_qualified_owner_call(text: &str, qualified_name: &str) -> bool {
+    super::helper_transfer::is_direct_call_site(text, qualified_name)
 }
 
 /// Whether the test's package declares a callable path dependency on the
 /// other manifest: a direct forward edge whose captured section is normal
-/// or dev dependencies. Normal dependencies are callable from every target
-/// of the declaring package; dev dependencies are additionally callable
-/// from its test targets, which is the surface being classified.
-/// Build dependencies are visible only to the build script, and the
-/// reverse direction (the other crate declares the dependency) provides no
-/// route from the test crate to the owner — neither is callable here.
-fn callable_forward_dependency(
+/// or dev dependencies (consumed by the competing-candidate guard).
+/// Normal dependencies are callable from every target of the declaring
+/// package; dev dependencies are additionally callable from its test
+/// targets, which is the surface being classified. Build dependencies are
+/// visible only to the build script, and the reverse direction provides
+/// no route from the test crate to the owner — neither is callable here.
+fn has_callable_forward_dependency(
     adjacency: &PathDependencyAdjacency,
     test_manifest: &str,
     dependency_manifest: &str,
 ) -> bool {
     adjacency
-        .forward_dependency_sections(test_manifest, dependency_manifest)
-        .is_some_and(|sections| {
-            sections.iter().any(|section| {
+        .forward_dependency_declarations(test_manifest, dependency_manifest)
+        .is_some_and(|declarations| {
+            declarations.iter().any(|(section, _)| {
                 matches!(
                     section,
                     PathDependencySection::Dependencies | PathDependencySection::DevDependencies
                 )
             })
         })
+}
+
+/// Whether the stripped body imports the owner name from the declaring
+/// dependency: `use dependency_name::...owner_name;` in simple or nested
+/// path form, or a brace list `use dependency_name::path::{a, b};` naming
+/// the owner as a whole item. Aliased (`as`) and glob (`*`) imports are
+/// refused — neither establishes that a bare call binds the owner's name
+/// from this dependency — and any brace shape this conservative parser
+/// cannot read is skipped (fail closed).
+fn imports_owner_from_dependency(stripped: &str, dependency_name: &str, owner_name: &str) -> bool {
+    let use_prefix = format!("use {dependency_name}::");
+    let mut search_from = 0usize;
+    while let Some(rel) = stripped[search_from..].find(&use_prefix) {
+        let at = search_from + rel;
+        let keyword_delimited = at == 0
+            || !stripped
+                .as_bytes()
+                .get(at - 1)
+                .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_');
+        if keyword_delimited && use_path_names_owner(&stripped[at + use_prefix.len()..], owner_name)
+        {
+            return true;
+        }
+        search_from = at + use_prefix.len();
+    }
+    false
+}
+
+/// Whether the `use` path beginning after `use dependency_name::` names the
+/// owner as an imported item: the path before `;` must equal the owner, end
+/// on a `::owner` segment, or — for a brace list — carry the owner as a
+/// whole top-level item.
+fn use_path_names_owner(rest: &str, owner_name: &str) -> bool {
+    let Some(semicolon) = rest.find(';') else {
+        return false;
+    };
+    let path = rest[..semicolon].trim();
+    if path.contains(" as ") || path.contains('*') {
+        return false;
+    }
+    match path.find('{') {
+        None => path == owner_name || path.ends_with(&format!("::{owner_name}")),
+        Some(brace) => {
+            let items_text = &path[brace + 1..];
+            let Some(items_text) = items_text.strip_suffix('}') else {
+                return false;
+            };
+            if items_text.contains('{') || items_text.contains('}') {
+                // Nested brace groups: the conservative parser refuses to
+                // guess which level the owner would import from.
+                return false;
+            }
+            items_text.split(',').any(|item| {
+                let item = item.trim();
+                !item.is_empty()
+                    && (item == owner_name || item.ends_with(&format!("::{owner_name}")))
+            })
+        }
+    }
 }
 
 /// Nearest discovered manifest directory owning `file` (longest prefix, the
@@ -423,30 +532,113 @@ fn body_binds_owner_name(body: &str, owner_name: &str) -> bool {
     false
 }
 
-/// Whether `body` invokes `owner_name` as a bare free-function call at
-/// least once: an occurrence of `owner_name(` whose preceding character is
-/// neither a receiver (`.`) nor a path qualifier (`::`) nor part of a
-/// longer identifier. Mirrors the `helper_transfer::is_direct_call_site`
-/// boundary rule, but scans every occurrence instead of only the first so
-/// a method-shaped earlier occurrence does not mask a bare call.
-fn body_has_bare_owner_call(body: &str, owner_name: &str) -> bool {
-    if owner_name.is_empty() {
-        return false;
-    }
-    let needle = format!("{owner_name}(");
-    let mut search_from = 0usize;
-    while let Some(rel) = body[search_from..].find(&needle) {
-        let at = search_from + rel;
-        let bare = at == 0
-            || !body.as_bytes().get(at - 1).is_some_and(|byte| {
-                byte.is_ascii_alphanumeric() || *byte == b'_' || *byte == b'.' || *byte == b':'
-            });
-        if bare {
-            return true;
+/// Comment- and string-stripped form of a test body: code content only.
+/// Mirrors the `value_resolution::strip_comments_and_strings` semantics
+/// (line comments, escaped string literals) and adds nested block comments
+/// and raw string literals with hash delimiters, carried across lines the
+/// way `owner_shape::strip_comments_and_strings` carries them, so import
+/// or call evidence can never be fabricated from comment or string text
+/// (#2972 review). Every ambiguity strips MORE: a lost evidence site only
+/// suppresses the admit.
+fn strip_comments_and_strings(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    let mut chars = source.chars().peekable();
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut block_depth = 0usize;
+    let mut raw_hashes: Option<usize> = None;
+    while let Some(ch) = chars.next() {
+        if let Some(hashes) = raw_hashes {
+            if ch == '"' {
+                let mut seen = 0usize;
+                while seen < hashes && chars.peek().is_some_and(|next| *next == '#') {
+                    let _ = chars.next();
+                    seen += 1;
+                }
+                if seen == hashes {
+                    raw_hashes = None;
+                }
+            }
+            if ch == '\n' {
+                out.push('\n');
+            } else {
+                out.push(' ');
+            }
+            continue;
         }
-        search_from = at + needle.len();
+        if block_depth > 0 {
+            match (ch, chars.peek().copied()) {
+                ('*', Some('/')) => {
+                    let _ = chars.next();
+                    block_depth -= 1;
+                }
+                ('/', Some('*')) => {
+                    let _ = chars.next();
+                    block_depth += 1;
+                }
+                _ => {}
+            }
+            if ch == '\n' {
+                out.push('\n');
+            } else {
+                out.push(' ');
+            }
+            continue;
+        }
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            if ch == '\n' {
+                out.push('\n');
+            } else {
+                out.push(' ');
+            }
+            continue;
+        }
+        match ch {
+            '/' if chars.peek() == Some(&'/') => {
+                for skipped in chars.by_ref() {
+                    if skipped == '\n' {
+                        out.push('\n');
+                        break;
+                    }
+                }
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                let _ = chars.next();
+                block_depth += 1;
+                out.push(' ');
+            }
+            '"' => {
+                in_string = true;
+                out.push('"');
+            }
+            'r' => {
+                let mut hashes = 0usize;
+                while chars.peek().is_some_and(|next| *next == '#') {
+                    let _ = chars.next();
+                    hashes += 1;
+                }
+                if chars.peek().is_some_and(|next| *next == '"') {
+                    let _ = chars.next();
+                    raw_hashes = Some(hashes);
+                    out.push(' ');
+                } else {
+                    out.push('r');
+                    for _ in 0..hashes {
+                        out.push('#');
+                    }
+                }
+            }
+            _ => out.push(ch),
+        }
     }
-    false
+    out
 }
 
 /// Return whether `test_file` is the canonical companion test file for
@@ -774,17 +966,19 @@ mod tests {
     }
 
     // --- #2972: dependency-edge admit for ambiguous cross-crate owner calls ---
-    // (review round 2: forward-only callable edges, nearest-manifest
-    // identities, and local-binding / method-call fail-closed guards)
+    // (review round 3: parser-backed call identity only - comments and
+    // strings never fabricate calls - and owner-crate import evidence via
+    // the captured dependency name)
 
     /// A path-dependency adjacency over synthetic provenance — pure, no
     /// filesystem, the same fixture style the graph module's own tests use.
     /// Each edge names the declaring manifest, the resolved dependency
-    /// directory, and the Cargo section it was declared in; `limitations`
-    /// degrades the capture to a partial inventory (`limited` status).
+    /// directory, the Cargo section it was declared in, and the declared
+    /// dependency name; `limitations` degrades the capture to a partial
+    /// inventory (`limited` status).
     fn adjacency_with(
         package_graph_status: &str,
-        edges: &[(&str, &str, PathDependencySection)],
+        edges: &[(&str, &str, PathDependencySection, &str)],
         limitations: bool,
     ) -> PathDependencyAdjacency {
         use crate::analysis::seam_cache::{
@@ -795,11 +989,11 @@ mod tests {
             package_graph_status: package_graph_status.to_string(),
             path_dependency_edges: edges
                 .iter()
-                .map(|(from, to, section)| PathDependencyEdge {
+                .map(|(from, to, section, dependency_name)| PathDependencyEdge {
                     from_manifest: (*from).to_string(),
                     section: *section,
                     target: None,
-                    dependency_name: "dep".to_string(),
+                    dependency_name: (*dependency_name).to_string(),
                     declared_path: Some("../dep".to_string()),
                     resolved_path: Some((*to).to_string()),
                     resolution: PathDependencyResolution::Resolved,
@@ -841,11 +1035,29 @@ mod tests {
         }
     }
 
+    /// A complete adjacency joining the calling test's crate to the owner's
+    /// crate through one normal forward dependency, plus the standard
+    /// prefix inventory.
+    fn crate_a_dependency_context() -> (PathDependencyAdjacency, Vec<String>) {
+        let adjacency = adjacency_with(
+            "complete",
+            &[(
+                "crates/crate_c/Cargo.toml",
+                "crates/crate_a",
+                PathDependencySection::Dependencies,
+                "crate_a",
+            )],
+            false,
+        );
+        (adjacency, crate_abc_prefixes())
+    }
+
     /// #2972 positive control: the owner name `score` is ambiguous (crate_a
     /// and crate_b both define it), so the #2971 uniqueness bypass cannot
     /// fire. A captured, callable forward path-dependency edge — the calling
-    /// test's crate declares a normal path dependency on the owner's crate —
-    /// is the graph evidence that attributes the bare call.
+    /// test's crate declares a normal path dependency named `crate_a` —
+    /// plus the `use crate_a::score;` import in the stripped test body is
+    /// the evidence that attributes the bare call.
     #[test]
     fn given_ambiguous_owner_when_cross_crate_dependent_test_calls_owner_then_edge_admits() {
         let owner = function("crates/crate_a/src/lib.rs", "score");
@@ -858,7 +1070,7 @@ mod tests {
                 test(
                     "crates/crate_c/tests/score.rs",
                     "crate_c_score_test",
-                    "score(7)",
+                    "use crate_a::score; score(7)",
                 ),
                 test(
                     "crates/crate_a/tests/score.rs",
@@ -868,17 +1080,7 @@ mod tests {
             ],
             ..RustIndex::default()
         };
-        // crate_c declares a normal path dependency on crate_a.
-        let adjacency = adjacency_with(
-            "complete",
-            &[(
-                "crates/crate_c/Cargo.toml",
-                "crates/crate_a",
-                PathDependencySection::Dependencies,
-            )],
-            false,
-        );
-        let prefixes = crate_abc_prefixes();
+        let (adjacency, prefixes) = crate_a_dependency_context();
         let context = edge_context(&adjacency, &prefixes);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
@@ -903,7 +1105,8 @@ mod tests {
 
     /// #2972 review: dev dependencies are callable from the declaring
     /// package's test targets — exactly the surface being classified — so a
-    /// captured dev-dependency edge admits the same way a normal one does.
+    /// captured dev-dependency edge admits the same way a normal one does
+    /// when the body imports the owner through the declared name.
     #[test]
     fn given_forward_dev_dependency_edge_when_cross_crate_test_calls_owner_then_admits() {
         let owner = function("crates/crate_a/src/lib.rs", "score");
@@ -915,7 +1118,7 @@ mod tests {
             tests: vec![test(
                 "crates/crate_c/tests/score.rs",
                 "crate_c_score_test",
-                "score(7)",
+                "use crate_a::score; score(7)",
             )],
             ..RustIndex::default()
         };
@@ -925,6 +1128,7 @@ mod tests {
                 "crates/crate_c/Cargo.toml",
                 "crates/crate_a",
                 PathDependencySection::DevDependencies,
+                "crate_a",
             )],
             false,
         );
@@ -942,10 +1146,107 @@ mod tests {
         assert_eq!(related[0].0.name, "crate_c_score_test");
     }
 
+    /// #2972 review round 3: a nested `use` path ending on the owner name is
+    /// import evidence too — the dependency supplies the module path that
+    /// binds the owner.
+    #[test]
+    fn given_nested_use_path_import_when_cross_crate_test_calls_owner_then_admits() {
+        let owner = function("crates/crate_a/src/lib.rs", "score");
+        let index = RustIndex {
+            functions: vec![
+                function("crates/crate_a/src/lib.rs", "score"),
+                function("crates/crate_b/src/lib.rs", "score"),
+            ],
+            tests: vec![test(
+                "crates/crate_c/tests/score.rs",
+                "crate_c_score_test",
+                "use crate_a::math::score; score(7)",
+            )],
+            ..RustIndex::default()
+        };
+        let (adjacency, prefixes) = crate_a_dependency_context();
+        let context = edge_context(&adjacency, &prefixes);
+        let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context));
+
+        assert_eq!(
+            related.len(),
+            1,
+            "a nested use path from the declared dependency must admit: {related:?}"
+        );
+        assert_eq!(related[0].0.name, "crate_c_score_test");
+    }
+
+    /// #2972 review round 3: a brace-list import naming the owner as a
+    /// whole item is import evidence; items the conservative parser cannot
+    /// read stay failed closed (no test here admits through them).
+    #[test]
+    fn given_brace_list_use_import_when_cross_crate_test_calls_owner_then_admits() {
+        let owner = function("crates/crate_a/src/lib.rs", "score");
+        let index = RustIndex {
+            functions: vec![
+                function("crates/crate_a/src/lib.rs", "score"),
+                function("crates/crate_b/src/lib.rs", "score"),
+            ],
+            tests: vec![test(
+                "crates/crate_c/tests/score.rs",
+                "crate_c_score_test",
+                "use crate_a::math::{score, other}; score(7)",
+            )],
+            ..RustIndex::default()
+        };
+        let (adjacency, prefixes) = crate_a_dependency_context();
+        let context = edge_context(&adjacency, &prefixes);
+        let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context));
+
+        assert_eq!(
+            related.len(),
+            1,
+            "a brace-list import naming the owner must admit: {related:?}"
+        );
+        assert_eq!(related[0].0.name, "crate_c_score_test");
+    }
+
+    /// #2972 review round 3: a call qualified through the dependency's
+    /// declared name binds the owner without any import — the second
+    /// evidence form.
+    #[test]
+    fn given_qualified_call_through_dependency_name_when_no_import_exists_then_admits() {
+        let owner = function("crates/crate_a/src/lib.rs", "score");
+        let index = RustIndex {
+            functions: vec![
+                function("crates/crate_a/src/lib.rs", "score"),
+                function("crates/crate_b/src/lib.rs", "score"),
+            ],
+            tests: vec![test(
+                "crates/crate_c/tests/score.rs",
+                "crate_c_score_test",
+                "let ok = crate_a::score(7);",
+            )],
+            ..RustIndex::default()
+        };
+        let (adjacency, prefixes) = crate_a_dependency_context();
+        let context = edge_context(&adjacency, &prefixes);
+        let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context));
+
+        assert_eq!(
+            related.len(),
+            1,
+            "a call qualified through the declared dependency name must admit: {related:?}"
+        );
+        assert_eq!(related[0].0.name, "crate_c_score_test");
+    }
+
     /// #2972 discrimination: the same workspace shape, but the probe's owner
-    /// lives in crate_b. The only edge connects crate_c to crate_a, so the
-    /// bare `score()` call in crate_c stays unattributed for crate_b::score —
-    /// the captured edge, not the call alone, is what admits.
+    /// lives in crate_b. The only edge connects crate_c to crate_a — and the
+    /// test even imports crate_a's `score` — so the bare call stays
+    /// unattributed for crate_b::score: the captured edge to the owner's
+    /// package, not the call or the name, is what admits.
     #[test]
     fn given_ambiguous_owner_when_test_crate_has_no_edge_to_owner_crate_then_stays_filtered() {
         let owner = function("crates/crate_b/src/lib.rs", "score");
@@ -958,7 +1259,7 @@ mod tests {
                 test(
                     "crates/crate_c/tests/score.rs",
                     "crate_c_score_test",
-                    "score(7)",
+                    "use crate_a::score; score(7)",
                 ),
                 test(
                     "crates/crate_b/tests/score.rs",
@@ -968,16 +1269,7 @@ mod tests {
             ],
             ..RustIndex::default()
         };
-        let adjacency = adjacency_with(
-            "complete",
-            &[(
-                "crates/crate_c/Cargo.toml",
-                "crates/crate_a",
-                PathDependencySection::Dependencies,
-            )],
-            false,
-        );
-        let prefixes = crate_abc_prefixes();
+        let (adjacency, prefixes) = crate_a_dependency_context();
         let context = edge_context(&adjacency, &prefixes);
         let probe = probe("crates/crate_b/src/lib.rs", "score + 1");
 
@@ -994,8 +1286,8 @@ mod tests {
     /// #2972 review: the reverse direction admits nothing. The owner's crate
     /// declares the path dependency on the calling test's crate, which gives
     /// the owner crate a route to the test crate — not the other way round —
-    /// so a bare call in the test's crate cannot bind the owner's name
-    /// through that edge.
+    /// so even an import of the owner name through the (nonexistent)
+    /// forward declaration cannot attribute the call.
     #[test]
     fn given_reverse_dependency_edge_when_cross_crate_test_calls_owner_then_stays_filtered() {
         let owner = function("crates/crate_a/src/lib.rs", "score");
@@ -1008,7 +1300,7 @@ mod tests {
                 test(
                     "crates/crate_c/tests/score.rs",
                     "crate_c_score_test",
-                    "score(7)",
+                    "use crate_a::score; score(7)",
                 ),
                 test(
                     "crates/crate_a/tests/score.rs",
@@ -1025,6 +1317,7 @@ mod tests {
                 "crates/crate_a/Cargo.toml",
                 "crates/crate_c",
                 PathDependencySection::Dependencies,
+                "crate_c",
             )],
             false,
         );
@@ -1056,7 +1349,7 @@ mod tests {
             tests: vec![test(
                 "crates/crate_c/tests/score.rs",
                 "crate_c_score_test",
-                "score(7)",
+                "use crate_a::score; score(7)",
             )],
             ..RustIndex::default()
         };
@@ -1066,6 +1359,7 @@ mod tests {
                 "crates/crate_c/Cargo.toml",
                 "crates/crate_a",
                 PathDependencySection::BuildDependencies,
+                "crate_a",
             )],
             false,
         );
@@ -1138,7 +1432,7 @@ mod tests {
             tests: vec![test(
                 "crates/crate_c/tests/score.rs",
                 "crate_c_score_test",
-                "score(7)",
+                "use crate_a::score; score(7)",
             )],
             ..RustIndex::default()
         };
@@ -1148,6 +1442,7 @@ mod tests {
                 "crates/crate_c/Cargo.toml",
                 "crates/crate_a",
                 PathDependencySection::Dependencies,
+                "crate_a",
             )],
             true,
         );
@@ -1180,20 +1475,11 @@ mod tests {
             tests: vec![test(
                 "crates/crate_c/tests/score.rs",
                 "crate_c_score_test",
-                "score(7)",
+                "use crate_a::score; score(7)",
             )],
             ..RustIndex::default()
         };
-        let adjacency = adjacency_with(
-            "complete",
-            &[(
-                "crates/crate_c/Cargo.toml",
-                "crates/crate_a",
-                PathDependencySection::Dependencies,
-            )],
-            false,
-        );
-        let prefixes = crate_abc_prefixes();
+        let (adjacency, prefixes) = crate_a_dependency_context();
         let context = edge_context(&adjacency, &prefixes);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
@@ -1233,11 +1519,13 @@ mod tests {
                     "crates/crate_c/Cargo.toml",
                     "crates/crate_a",
                     PathDependencySection::Dependencies,
+                    "crate_a",
                 ),
                 (
                     "crates/crate_c/Cargo.toml",
                     "crates/crate_b",
                     PathDependencySection::Dependencies,
+                    "crate_b",
                 ),
             ],
             false,
@@ -1251,6 +1539,130 @@ mod tests {
         assert!(
             related.is_empty(),
             "two edge-connected same-named candidates must fail closed: {related:?}"
+        );
+    }
+
+    /// #2972 review round 3: the test imports `score` from a DIFFERENT
+    /// dependency than the one whose edge reaches the owner's package. The
+    /// bare call plausibly binds the other dependency's name, so the
+    /// crate_a edge admits nothing.
+    #[test]
+    fn given_import_from_another_dependency_when_cross_crate_test_calls_owner_then_stays_filtered()
+    {
+        let owner = function("crates/crate_a/src/lib.rs", "score");
+        let index = RustIndex {
+            functions: vec![
+                function("crates/crate_a/src/lib.rs", "score"),
+                function("crates/crate_b/src/lib.rs", "score"),
+            ],
+            tests: vec![test(
+                "crates/crate_c/tests/score.rs",
+                "crate_c_score_test",
+                "use other_dep::score; score(7)",
+            )],
+            ..RustIndex::default()
+        };
+        let (adjacency, prefixes) = crate_a_dependency_context();
+        let context = edge_context(&adjacency, &prefixes);
+        let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context));
+
+        assert!(
+            related.is_empty(),
+            "an import naming another dependency must defeat the edge admit: {related:?}"
+        );
+    }
+
+    /// #2972 review round 3: an aliased import renames the item, so a bare
+    /// `score(` call cannot bind through it; the alias defeats the admit.
+    #[test]
+    fn given_aliased_import_when_cross_crate_test_calls_owner_then_stays_filtered() {
+        let owner = function("crates/crate_a/src/lib.rs", "score");
+        let index = RustIndex {
+            functions: vec![
+                function("crates/crate_a/src/lib.rs", "score"),
+                function("crates/crate_b/src/lib.rs", "score"),
+            ],
+            tests: vec![test(
+                "crates/crate_c/tests/score.rs",
+                "crate_c_score_test",
+                "use crate_a::score as compute; score(7)",
+            )],
+            ..RustIndex::default()
+        };
+        let (adjacency, prefixes) = crate_a_dependency_context();
+        let context = edge_context(&adjacency, &prefixes);
+        let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context));
+
+        assert!(
+            related.is_empty(),
+            "an aliased import must not read as owner-import evidence: {related:?}"
+        );
+    }
+
+    /// #2972 review round 3 (fabricated-call guard): the only `score(`
+    /// occurrence lives in a comment. The parser-backed calls carry no bare
+    /// owner call, so the comment fabricates nothing and the import alone
+    /// admits nothing.
+    #[test]
+    fn given_comment_only_call_evidence_when_cross_crate_test_calls_owner_then_stays_filtered() {
+        let owner = function("crates/crate_a/src/lib.rs", "score");
+        let index = RustIndex {
+            functions: vec![
+                function("crates/crate_a/src/lib.rs", "score"),
+                function("crates/crate_b/src/lib.rs", "score"),
+            ],
+            tests: vec![test_with_call(
+                "crates/crate_c/tests/score.rs",
+                "crate_c_score_test",
+                "use crate_a::score; // score(9)",
+                "helper",
+            )],
+            ..RustIndex::default()
+        };
+        let (adjacency, prefixes) = crate_a_dependency_context();
+        let context = edge_context(&adjacency, &prefixes);
+        let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context));
+
+        assert!(
+            related.is_empty(),
+            "a commented-out call must not ride through the edge admit: {related:?}"
+        );
+    }
+
+    /// #2972 review round 3 (fabricated-call guard): the only `score(`
+    /// occurrence lives inside a string literal. Same refusal as the
+    /// comment case — captured calls, not body text, carry call identity.
+    #[test]
+    fn given_string_literal_call_evidence_when_cross_crate_test_calls_owner_then_stays_filtered() {
+        let owner = function("crates/crate_a/src/lib.rs", "score");
+        let index = RustIndex {
+            functions: vec![
+                function("crates/crate_a/src/lib.rs", "score"),
+                function("crates/crate_b/src/lib.rs", "score"),
+            ],
+            tests: vec![test_with_call(
+                "crates/crate_c/tests/score.rs",
+                "crate_c_score_test",
+                "use crate_a::score; let s = \"score(9)\";",
+                "helper",
+            )],
+            ..RustIndex::default()
+        };
+        let (adjacency, prefixes) = crate_a_dependency_context();
+        let context = edge_context(&adjacency, &prefixes);
+        let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context));
+
+        assert!(
+            related.is_empty(),
+            "a string-literal call must not ride through the edge admit: {related:?}"
         );
     }
 
@@ -1282,6 +1694,7 @@ mod tests {
                 "crates/crate_c/Cargo.toml",
                 "crates/crate_a",
                 PathDependencySection::Dependencies,
+                "crate_a",
             )],
             false,
         );
@@ -1301,7 +1714,8 @@ mod tests {
     /// would read `crates/outer/inner/src/lib.rs` as `crates/outer/`, but
     /// the nearest-manifest attribution resolves the owner to
     /// `crates/outer/inner/Cargo.toml`. A test crate that depends only on
-    /// `outer` has no edge to `inner`, so the call stays filtered.
+    /// `outer` has no edge to `inner`, so the call stays filtered — even
+    /// though the test imports `outer`'s own `score`.
     #[test]
     fn given_nested_package_owner_when_test_depends_only_on_outer_crate_then_stays_filtered() {
         let owner = function("crates/outer/inner/src/lib.rs", "score");
@@ -1313,7 +1727,7 @@ mod tests {
             tests: vec![test(
                 "crates/crate_c/tests/score.rs",
                 "crate_c_score_test",
-                "score(7)",
+                "use outer::score; score(7)",
             )],
             ..RustIndex::default()
         };
@@ -1325,6 +1739,7 @@ mod tests {
                 "crates/crate_c/Cargo.toml",
                 "crates/outer",
                 PathDependencySection::Dependencies,
+                "outer",
             )],
             false,
         );
@@ -1360,7 +1775,7 @@ mod tests {
             tests: vec![test(
                 "crates/crate_c/tests/score.rs",
                 "crate_c_score_test",
-                "score(7)",
+                "use inner::score; score(7)",
             )],
             ..RustIndex::default()
         };
@@ -1370,6 +1785,7 @@ mod tests {
                 "crates/crate_c/Cargo.toml",
                 "crates/outer/inner",
                 PathDependencySection::Dependencies,
+                "inner",
             )],
             false,
         );
@@ -1396,7 +1812,7 @@ mod tests {
     /// #2972 review (local binding): a `let score = |x| x;` closure in the
     /// test body is invisible to `index.functions` and is the most plausible
     /// resolution target for the bare call, so the edge-connected crate's
-    /// owner is not credited.
+    /// owner is not credited even with an import present.
     #[test]
     fn given_local_let_binding_when_cross_crate_test_calls_owner_then_stays_filtered() {
         let owner = function("crates/crate_a/src/lib.rs", "score");
@@ -1408,20 +1824,11 @@ mod tests {
             tests: vec![test(
                 "crates/crate_c/tests/score.rs",
                 "crate_c_score_test",
-                "let score = |x| x; assert_eq!(score(7), 7);",
+                "use crate_a::score; let score = |x| x; assert_eq!(score(7), 7);",
             )],
             ..RustIndex::default()
         };
-        let adjacency = adjacency_with(
-            "complete",
-            &[(
-                "crates/crate_c/Cargo.toml",
-                "crates/crate_a",
-                PathDependencySection::Dependencies,
-            )],
-            false,
-        );
-        let prefixes = crate_abc_prefixes();
+        let (adjacency, prefixes) = crate_a_dependency_context();
         let context = edge_context(&adjacency, &prefixes);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
@@ -1447,20 +1854,11 @@ mod tests {
             tests: vec![test(
                 "crates/crate_c/tests/score.rs",
                 "crate_c_score_test",
-                "let report = harness.score(7);",
+                "use crate_a::score; let report = harness.score(7);",
             )],
             ..RustIndex::default()
         };
-        let adjacency = adjacency_with(
-            "complete",
-            &[(
-                "crates/crate_c/Cargo.toml",
-                "crates/crate_a",
-                PathDependencySection::Dependencies,
-            )],
-            false,
-        );
-        let prefixes = crate_abc_prefixes();
+        let (adjacency, prefixes) = crate_a_dependency_context();
         let context = edge_context(&adjacency, &prefixes);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
@@ -1487,20 +1885,11 @@ mod tests {
             tests: vec![test(
                 "crates/crate_c/custom/suite.rs",
                 "crate_c_score_suite",
-                "score(7)",
+                "use crate_a::score; score(7)",
             )],
             ..RustIndex::default()
         };
-        let adjacency = adjacency_with(
-            "complete",
-            &[(
-                "crates/crate_c/Cargo.toml",
-                "crates/crate_a",
-                PathDependencySection::Dependencies,
-            )],
-            false,
-        );
-        let prefixes = crate_abc_prefixes();
+        let (adjacency, prefixes) = crate_a_dependency_context();
         let context = edge_context(&adjacency, &prefixes);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
