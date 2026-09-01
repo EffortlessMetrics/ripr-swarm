@@ -27,8 +27,8 @@ use super::refresh_scheduler::{
     RefreshAttemptOutcome, RefreshDecision, RefreshReason, RefreshRequest, RefreshScope,
 };
 use super::state::{
-    AnalysisAttemptState, AnalysisFailureKind, AnalysisSnapshot, DocumentStore, RefreshMetadata,
-    content_digest, format_duration,
+    AnalysisAttemptState, AnalysisFailureKind, AnalysisSnapshot, DocumentStore,
+    HarnessFactsOnSnapshot, RefreshMetadata, content_digest, format_duration,
 };
 use super::uri::{encode_uri_path, file_uri_for_path, file_uris_match, path_from_file_uri};
 use super::{
@@ -713,7 +713,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
         classified_seams: Vec::new(),
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
-        harness_projections: Vec::new(),
+        harness_facts: HarnessFactsOnSnapshot::NotRegistered,
         diagnostics_by_uri,
         delivery_selection: None,
         seams_deferred: false,
@@ -10728,7 +10728,7 @@ fn sample_analysis_snapshot(
         classified_seams: Vec::new(),
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
-        harness_projections: Vec::new(),
+        harness_facts: HarnessFactsOnSnapshot::NotRegistered,
         diagnostics_by_uri,
         delivery_selection: None,
         seams_deferred: false,
@@ -15173,7 +15173,7 @@ fn quarantine_workspace_diagnostics(fixture: &QuarantineFixture) -> WorkspaceDia
         classified_seams: Vec::new(),
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
-        harness_projections: Vec::new(),
+        harness_facts: HarnessFactsOnSnapshot::NotRegistered,
         diagnostics_by_uri,
         delivery_selection: None,
         seams_deferred: false,
@@ -17442,7 +17442,13 @@ fn registered_harness_projection_reaches_the_lsp_snapshot() -> Result<(), Box<dy
     };
     let diagnostics = workspace_diagnostics_with_config(root.path(), &config, true)?;
 
-    let projections = &diagnostics.snapshot.harness_projections;
+    let _diagnostics = workspace_diagnostics_with_config(root.path(), &config, true)?;
+
+    let super::state::HarnessFactsOnSnapshot::Complete(projections) =
+        &diagnostics.snapshot.harness_facts
+    else {
+        return Err("registered harness must disclose complete facts".into());
+    };
     assert_eq!(projections.len(), 1, "{:?}", projections);
     assert_eq!(projections[0].registration_id, "mimic-suite");
     assert_eq!(projections[0].harness_kind, "custom_harness");
@@ -17458,6 +17464,5 @@ fn registered_harness_projection_reaches_the_lsp_snapshot() -> Result<(), Box<dy
             .collect::<Vec<_>>(),
         vec!["mimic_case", "mimic_case_two"]
     );
-    let _ = projections;
     Ok(())
 }
