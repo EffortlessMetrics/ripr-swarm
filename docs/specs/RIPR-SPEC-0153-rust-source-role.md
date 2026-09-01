@@ -1,6 +1,10 @@
 # RIPR-SPEC-0153: Rust producer-owned source role
 
-Status: proposed
+Status: accepted
+
+Ratified 2026-09-01: the #3534 conformance corpus and
+`cargo xtask check-rust-source-role-authority` passed on #3618 after
+the implementation train (#3499, #3519 disposition, #3530-#3534) merged.
 
 Issue: #3283 (parent #3213; builds on #3273 and #3286)
 
@@ -62,10 +66,24 @@ functions stay available for owner relations, activation input,
 sink/oracle evidence, and selectors. `TestFact` semantics are untouched
 — source role never registers a helper as an executable test selector.
 
+At item granularity, the typed `FunctionSourceRole` model (#3531)
+classifies each function: `Production`, `TestAttribute` (exact
+supported test-defining attribute; registers an executable
+`TestFact`), `CfgTestModule` (evidence-only member of a
+test-required module, preserved by the facts normalizer and the
+#3533 composition walk), `HarnessHelper` (demoted member of a
+registered `harness = false` target), and
+`RegisteredTestAttribute` (promoted through a repository-
+governed `[analysis.test_harnesses]` registration, #3532).
+Attribute-driven membership is authoritative; filenames, imports,
+and macro suffixes never classify.
+
 The opt-in joins the check-artifact config identity as
 FindingAffecting (`CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION` 1 → 2) and
 the repo-exposure consumed-config list; the workspace cache key already
 hashes the `ripr.toml` text, so no generation bump is required for it.
+The #3532 harness registry joined the same identity as FindingAffecting
+(2 → 3, canonical length-prefixed encoding pinned byte-for-byte).
 
 ## Required Evidence
 
@@ -128,6 +146,13 @@ pins manifest extraction. `analysis/language/rust.rs` pins diff seeding
 (bench gap regression, declared-target confirmation with a probeable
 helper, opt-in restore). `config/tests.rs` pins parsing, identity
 classification, and absolute-path rejection.
+`analysis::source_role_corpus` loads the retained conformance corpus
+(`crates/ripr/tests/data/source-role-corpus/cases/`) and pins
+executable-test membership, layout classification, naming-lookalike
+rejection, and cfg-variant equivalence against `facts::build_index`.
+`cargo xtask check-rust-source-role-authority` structurally rejects
+consumer-side role re-derivation and inventories the approved
+`rust_index::is_test_file` consumers.
 
 ## Non-Goals
 
@@ -145,7 +170,13 @@ classification, and absolute-path rejection.
 
 ## Implementation Mapping
 
-- `analysis/workspace/source_role.rs` — the typed model.
+- `analysis/workspace/source_role.rs` — the typed file-role model.
+- `analysis/facts/` — item-role producers: the facts builders, the
+  cfg-predicate authority (`cfg_predicates.rs`), the harness registry
+  (`harness_registry.rs`, #3532), role composition
+  (`role_composition.rs`, #3533), and the test-style normalizers.
+- `analysis/source_role_corpus.rs` — the conformance corpus driver.
+- `analysis/harness_projection.rs` — the typed harness projection.
 - `analysis/workspace/cargo_targets.rs` — manifest enumeration,
   workspace-root-anchored.
 - `analysis/language/rust.rs` — diff seeding and repo production set.
