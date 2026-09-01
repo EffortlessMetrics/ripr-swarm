@@ -39,6 +39,11 @@ Verify command:
 Receipt command:
 `ripr receipt write --gap gap:typescript:typescript_preview:2396aec1 --verify-command "jest tests/discount.test.ts" --status not_run --out target/ripr/receipts/gap-typescript-typescript_preview-2396aec1.json`
 
+Receipt command (PowerShell):
+`ripr receipt write --gap gap:typescript:typescript_preview:2396aec1 --verify-command "jest tests/discount.test.ts" --status not_run --out target/ripr/receipts/gap-typescript-typescript_preview-2396aec1.json`
+
+The first form is written for Bash; cmd.exe is not supported.
+
 Agent packet command:
 `ripr agent packet --root fixtures/first_successful_pr/typescript-preview-gap --gap-ledger inputs/reports/gap-decision-ledger.json --gap-id gap:pr:gap:typescript:typescript_preview:2396aec1 --json > target/ripr/workflow/agent-packet.json`
 

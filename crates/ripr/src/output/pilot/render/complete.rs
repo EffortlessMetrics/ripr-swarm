@@ -7,6 +7,7 @@ use crate::output::agent_seam_packets::{
     suggested_assertion_for_classified_seam, targeted_test_brief_outline_for_classified_seam,
 };
 use crate::output::json::escape as json_escape;
+use crate::output::markdown::powershell_command;
 use crate::output::path::{display_path, display_path_text};
 use crate::output::pilot::commands::PilotCommands;
 use crate::output::pilot::ranking::{actionable_total, top_actionable_seams};
@@ -231,10 +232,16 @@ pub(crate) fn render_pilot_summary_md(
     out.push_str(
         "After adding one focused test, rerun repo exposure and compare the snapshots:\n\n",
     );
+    out.push_str(super::COMMAND_SHELL_DISCLOSURE);
     out.push_str("```bash\n");
     out.push_str(&commands.after_snapshot);
     out.push('\n');
     out.push_str(&commands.outcome);
+    out.push_str("\n```\n");
+    out.push_str("\n```powershell\n");
+    out.push_str(&powershell_command(&commands.after_snapshot));
+    out.push('\n');
+    out.push_str(&powershell_command(&commands.outcome));
     out.push_str("\n```\n");
     out
 }

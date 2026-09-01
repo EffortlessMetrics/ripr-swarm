@@ -2,6 +2,7 @@ use crate::app::agent_workflow::{
     AGENT_WORKFLOW_SCHEMA_VERSION, AgentWorkflowArtifact, AgentWorkflowCommand,
     AgentWorkflowManifest, AgentWorkflowSeam,
 };
+use crate::output::markdown::powershell_command;
 use serde_json::{Value, json};
 
 /// Shell that every `command` string in this packet is written for.
@@ -89,7 +90,7 @@ fn command_label(step: &str) -> String {
 }
 
 mod markdown {
-    use super::{AgentWorkflowManifest, command_label};
+    use super::{AgentWorkflowManifest, command_label, powershell_command};
 
     pub(super) fn render_commands_document(manifest: &AgentWorkflowManifest) -> String {
         let mut lines = Vec::new();
@@ -158,39 +159,6 @@ mod markdown {
             lines.push("```".to_string());
             lines.push(String::new());
         }
-    }
-
-    pub(super) fn powershell_command(command: &str) -> String {
-        // Preserve PowerShell single-quote escaping while writing redirected
-        // output with BOM-free .NET UTF-8 for Windows PowerShell 5.1.
-        let command = command.replace("'\\''", "''");
-        let mut chars = command.char_indices().peekable();
-        let mut in_single_quote = false;
-        let mut redirect = None;
-        while let Some((index, ch)) = chars.next() {
-            if ch == '\'' {
-                if in_single_quote && chars.peek().is_some_and(|(_, next)| *next == '\'') {
-                    chars.next();
-                    continue;
-                }
-                in_single_quote = !in_single_quote;
-            } else if !in_single_quote
-                && ch == '>'
-                && command[..index].ends_with(' ')
-                && command[index + ch.len_utf8()..].starts_with(' ')
-            {
-                redirect = Some(index);
-                break;
-            }
-        }
-        if let Some(index) = redirect {
-            let invocation = command[..index].trim_end();
-            let output = command[index + 1..].trim();
-            return format!(
-                "[System.IO.File]::WriteAllText({output}, (({invocation}) | Out-String), [System.Text.UTF8Encoding]::new($false))"
-            );
-        }
-        command
     }
 
     fn push_missing_inputs_section(lines: &mut Vec<String>, manifest: &AgentWorkflowManifest) {
@@ -326,18 +294,6 @@ mod tests {
         let rendered = render_agent_workflow_commands_md(&value);
         assert!(
             rendered.contains("[System.IO.File]::WriteAllText('out', ((ripr agent start --root 'it''s') | Out-String), [System.Text.UTF8Encoding]::new($false))")
-        );
-    }
-
-    #[test]
-    fn powershell_command_handles_unredirected_quoted_and_unicode_commands() {
-        assert_eq!(
-            markdown::powershell_command("ripr check --root 'a > b'"),
-            "ripr check --root 'a > b'"
-        );
-        assert_eq!(
-            markdown::powershell_command("ripr check --root 'café' > 'résumé.json'"),
-            "[System.IO.File]::WriteAllText('résumé.json', ((ripr check --root 'café') | Out-String), [System.Text.UTF8Encoding]::new($false))"
         );
     }
 
