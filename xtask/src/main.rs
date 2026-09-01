@@ -531,6 +531,7 @@ const PRECOMMIT_GATE_COMMANDS: &[&str] = &[
     "check-capabilities",
     "check-workspace-shape",
     "check-architecture",
+    "check-rust-source-role-authority",
     "check-public-api",
     "check-output-contracts",
     "check-doc-artifacts",
@@ -12129,6 +12130,186 @@ fn check_architecture() -> Result<(), String> {
         },
         &violations,
     )
+}
+
+/// #3534: Rust source-role authority. Producer modules derive source role
+/// from Cargo target declarations, role configuration, test-defining
+/// attributes, cfg predicates, harness registrations, and composition
+/// provenance; every other consumer must receive the typed
+/// role/provenance facts instead of re-deriving role from paths,
+/// attributes, or strings. This gate rejects consumer-side role
+/// heuristics and names the owning producer API to route through.
+fn check_source_role_authority() -> Result<(), String> {
+    const SCAN_ROOT: &str = "crates/ripr/src";
+    /// Out of scope: non-Rust adapters own their per-language test-file
+    /// authorities (`python`/`typescript` define local `is_test_file`
+    /// helpers); this gate polices the RUST source-role authority only.
+    const OUT_OF_SCOPE_PREFIXES: [&str; 2] = [
+        "crates/ripr/src/analysis/language/python",
+        "crates/ripr/src/analysis/language/typescript",
+    ];
+    /// Producer modules allowed to contain the patterns below: they are the
+    /// role-derivation authorities (RIPR-SPEC-0153) or package-identity
+    /// layout classification that feeds `SourceRoleContext`.
+    const PRODUCER_PREFIXES: [&str; 5] = [
+        "crates/ripr/src/analysis/facts/",
+        "crates/ripr/src/analysis/workspace/source_role.rs",
+        "crates/ripr/src/analysis/workspace/classify.rs",
+        "crates/ripr/src/analysis/rust_index.rs",
+        "crates/ripr/src/analysis/syntax/",
+    ];
+    /// (file, pattern) pairs explicitly allowed outside producers, each with
+    /// the reason it is not a role authority. New entries need the reason in
+    /// the surrounding code and a review that the check stays display- or
+    /// identity-scoped.
+    const ALLOWED_SITE_PATTERNS: [(&str, &str, &str); 7] = [
+        (
+            "crates/ripr/src/output/review_comments.rs",
+            "starts_with(\"tests",
+            "display grouping of test-like files inside the rendered review comment; grouping only, findings are already selected",
+        ),
+        (
+            "crates/ripr/src/output/review_comments.rs",
+            "contains(\"/tests/\")",
+            "display grouping of test-like files inside the rendered review comment; grouping only, findings are already selected",
+        ),
+        (
+            "crates/ripr/src/output/review_comments.rs",
+            "ends_with(\"_test.rs\")",
+            "display grouping of test-like files inside the rendered review comment; grouping only, findings are already selected",
+        ),
+        (
+            "crates/ripr/src/output/review_comments.rs",
+            "ends_with(\"_tests.rs\")",
+            "display grouping of test-like files inside the rendered review comment; grouping only, findings are already selected",
+        ),
+        (
+            "crates/ripr/src/analysis/test_grip_evidence/related_tests.rs",
+            "starts_with(\"tests",
+            "package_prefix/package_scope derive package identity from paths, which the source-role contract explicitly permits; they do not classify role",
+        ),
+        (
+            "crates/ripr/src/analysis/classify/related_tests.rs",
+            "starts_with(\"tests",
+            "package_prefix/package_scope derive package identity from paths, which the source-role contract explicitly permits; they do not classify role",
+        ),
+        (
+            "crates/ripr/src/lsp/tests.rs",
+            "\"#[cfg(test)]\"",
+            "LSP test fixtures split source text on the attribute spelling; the string is test data, not a role decision",
+        ),
+    ];
+    /// Rules: (pattern, owner guidance). Patterns are matched as plain
+    /// substrings of the scanned production text.
+    const RULES: [(&str, &str); 5] = [
+        (
+            "starts_with(\"tests",
+            "route test-file decisions through `rust_index::is_test_file` or the layout role from `SourceRoleContext::classify_with` (RIPR-SPEC-0153)",
+        ),
+        (
+            "contains(\"/tests/\")",
+            "route test-file decisions through `rust_index::is_test_file` or the layout role from `SourceRoleContext::classify_with` (RIPR-SPEC-0153)",
+        ),
+        (
+            "ends_with(\"_test.rs\")",
+            "a naming convention cannot establish role; use the layout role from `SourceRoleContext::classify_with` and keep naming purely presentational (RIPR-SPEC-0153)",
+        ),
+        (
+            "ends_with(\"_tests.rs\")",
+            "a naming convention cannot establish role; use the layout role from `SourceRoleContext::classify_with` and keep naming purely presentational (RIPR-SPEC-0153)",
+        ),
+        (
+            "\"#[cfg(test)]\"",
+            "route cfg-term recognition through `analysis::facts::cfg_predicates` (the #3530 cfg-predicate authority); consumers receive typed facts",
+        ),
+    ];
+    /// Approved `rust_index::is_test_file` call sites: the typed test-file
+    /// authority may be consumed only by this inventoried set; new consumers
+    /// extend the inventory here with a reason so role consumers stay
+    /// reviewable.
+    const IS_TEST_FILE_CONSUMERS: [&str; 5] = [
+        "crates/ripr/src/analysis/classify/owner_shape.rs",
+        "crates/ripr/src/analysis/test_grip_evidence.rs",
+        "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
+        "crates/ripr/src/analysis/mod.rs",
+        "crates/ripr/src/analysis/language/rust.rs",
+    ];
+
+    let files = tracked_files()?;
+    let mut violations = Vec::new();
+    for file in &files {
+        if !file.starts_with(SCAN_ROOT) || !file.ends_with(".rs") {
+            continue;
+        }
+        if OUT_OF_SCOPE_PREFIXES
+            .iter()
+            .any(|prefix| file.starts_with(prefix))
+        {
+            continue;
+        }
+        if PRODUCER_PREFIXES
+            .iter()
+            .any(|prefix| file.starts_with(prefix))
+        {
+            continue;
+        }
+        // Test code asserts producer behavior and manipulates source text
+        // as data, so scanning stops at the file's first top-level
+        // `#[cfg(test)]` item: production code precedes test modules by
+        // convention in this repository, and the gate polices production
+        // role derivation only.
+        let scanned = raw_production_text(&read_text_lossy(Path::new(file))?);
+        for (pattern, owner) in RULES {
+            if !scanned.contains(pattern) {
+                continue;
+            }
+            if ALLOWED_SITE_PATTERNS
+                .iter()
+                .any(|(allowed_file, allowed_pattern, _)| {
+                    *allowed_file == file.as_str() && *allowed_pattern == pattern
+                })
+            {
+                continue;
+            }
+            violations.push(format!(
+                "{file} re-derives source role with `{pattern}` outside the producer modules\n  owner: {owner}\n  reason: #3534 - consumers receive typed role facts; path, attribute, and string heuristics may not become role authorities"
+            ));
+        }
+        if scanned.contains("is_test_file(") && !IS_TEST_FILE_CONSUMERS.contains(&file.as_str()) {
+            violations.push(format!(
+                "{file} calls `rust_index::is_test_file` outside the approved consumer inventory\n  owner: `rust_index::is_test_file` is the typed test-file authority; extend the inventory in `check_source_role_authority` with a reviewed reason or route through `SourceRoleContext`\n  reason: #3534 - role consumers stay reviewable against the producer contract"
+            ));
+        }
+    }
+
+    finish_policy_report(
+        PolicyReportSpec {
+            report_file: "source-role-authority.md",
+            check: "check-rust-source-role-authority",
+            why_it_matters: "Source-role fixes have repeatedly landed in one producer or consumer while another path retained an older heuristic; a mechanical authority gate keeps every consumer on the producer-owned role contract.",
+            fix_kind: FixKind::AuthorDecisionRequired,
+            recommended_fixes: &[
+                "Route test-file decisions through `rust_index::is_test_file` or `SourceRoleContext::classify_with`.",
+                "Route cfg-term recognition through `analysis::facts::cfg_predicates`.",
+                "Keep path checks scoped to path containment, package identity, display, or integration-test kind.",
+                "Extend the consumer inventory in `check_source_role_authority` only with a reviewed reason.",
+            ],
+            rerun_command: "cargo xtask check-rust-source-role-authority",
+            exception_template: None,
+        },
+        &violations,
+    )
+}
+
+/// Production-side text of one Rust source file: everything before the
+/// file's first top-level `#[cfg(test)]` item. Test modules close a file in
+/// this repository, so test fixtures and assertions (which manipulate
+/// source text as data) never reach role-authority pattern scans.
+fn raw_production_text(text: &str) -> String {
+    text.lines()
+        .take_while(|line| !line.trim_start().starts_with("#[cfg(test)]"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// RIPR-SPEC-0087 §8 (issue #2028): the producer-owned repair-packet

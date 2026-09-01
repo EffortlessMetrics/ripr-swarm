@@ -16,6 +16,8 @@ mod seam_classification;
 mod seam_inventory;
 pub(crate) mod seams;
 mod sort;
+#[cfg(test)]
+mod source_role_corpus;
 mod summary;
 mod syntax;
 pub(crate) mod test_grip_evidence;

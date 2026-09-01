@@ -154,6 +154,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckCapabilities => super::check_capabilities(),
         XtaskCommand::CheckWorkspaceShape => super::check_workspace_shape(),
         XtaskCommand::CheckArchitecture => super::check_architecture(),
+        XtaskCommand::CheckSourceRoleAuthority => super::check_source_role_authority(),
         XtaskCommand::CheckPublicApi => super::check_public_api(),
         XtaskCommand::CheckOutputContracts => super::check_output_contracts(),
         XtaskCommand::CheckDocArtifacts => super::check_doc_artifacts(),
