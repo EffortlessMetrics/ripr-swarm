@@ -6,7 +6,9 @@ mod select;
 mod source_role;
 
 pub(crate) use cargo_targets::{context_for_files, declared_crate_root_paths_from_manifest};
-pub(crate) use path_dependencies::{PathDependencyAdjacency, reverse_dependent_scope_expansion};
+pub(crate) use path_dependencies::{
+    PathDependencyAdjacency, PathDependencyGraphStatus, reverse_dependent_scope_expansion,
+};
 pub(crate) use source_role::{SourceRoleContext, classify_with};
 
 pub(crate) use classify::{normalize_path, package_root};

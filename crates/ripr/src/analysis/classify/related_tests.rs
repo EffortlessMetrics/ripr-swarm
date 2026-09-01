@@ -1,7 +1,9 @@
 use super::super::rust_index::{
     FunctionSummary, RustIndex, TestSummary, extract_identifier_tokens,
 };
+use crate::analysis::workspace::{PathDependencyAdjacency, PathDependencyGraphStatus};
 use crate::domain::{Probe, RelationReason};
+use std::collections::BTreeSet;
 use std::path::Path;
 
 /// Minimum token length for the `assertions_reference_owner` signal.
@@ -14,6 +16,7 @@ pub(in crate::analysis) fn find_related_tests<'a>(
     index: &'a RustIndex,
     workspace_complete: bool,
     helper_chain: Option<&super::helper_transfer::HelperChain>,
+    dependency_adjacency: Option<&PathDependencyAdjacency>,
 ) -> Vec<(&'a TestSummary, RelationReason)> {
     let mut related: Vec<(&TestSummary, RelationReason)> = Vec::new();
     let owner_name = owner_fn.map(|f| f.name.as_str()).unwrap_or("");
@@ -37,14 +40,30 @@ pub(in crate::analysis) fn find_related_tests<'a>(
     // index, and anything narrower fails closed. This follows the
     // owner_shape.rs precedent of scanning index.functions for same-name
     // collision.
-    let owner_name_is_unique = workspace_complete
-        && !owner_name.is_empty()
-        && index
-            .functions
-            .iter()
-            .filter(|f| f.name == owner_name)
-            .count()
-            == 1;
+    //
+    // #2972: the same scan also records the package scope of every same-named
+    // definition, so the dependency-edge admit below can refuse when a
+    // same-named definition shadows the owner in (or near) the calling test's
+    // own package. Prefixes that cannot be resolved (`None`) are tracked
+    // separately: an unplaceable same-named definition can never be refuted
+    // as the call target.
+    let mut same_name_function_count = 0usize;
+    let mut same_name_definition_prefixes: BTreeSet<String> = BTreeSet::new();
+    let mut same_name_unscoped_definition = false;
+    if !owner_name.is_empty() {
+        for function in &index.functions {
+            if function.name == owner_name {
+                same_name_function_count += 1;
+                match package_prefix(&function.file) {
+                    Some(prefix) => {
+                        same_name_definition_prefixes.insert(prefix);
+                    }
+                    None => same_name_unscoped_definition = true,
+                }
+            }
+        }
+    }
+    let owner_name_is_unique = workspace_complete && same_name_function_count == 1;
 
     // For module-level struct/field probes (owner_fn is None) derive the package
     // prefix from the probe's source file so cross-crate spurious matches are
@@ -101,10 +120,28 @@ pub(in crate::analysis) fn find_related_tests<'a>(
         // that do not directly call the owner, OR tests that call a bare name
         // that is ambiguous across crates. A cross-crate test that calls a
         // uniquely-named owner is genuinely related and must not be suppressed.
+        //
+        // #2972: the remaining way an ambiguous-name cross-crate call stays
+        // related is GRAPH evidence — one captured path-dependency edge
+        // connecting the calling test's package and the owner's package, with
+        // no same-named definition shadowing or competing for the call. The
+        // `calls_owner` signal stays mandatory: an edge never admits on name
+        // similarity alone, and no other weak signal can ride through it.
         if let Some(prefix) = &owner_package_prefix
             && !normalize_path(&test.file).starts_with(prefix)
             && !(calls_owner && owner_name_is_unique)
             && !calls_helper_entry
+            && !(calls_owner
+                && workspace_complete
+                && dependency_adjacency.is_some_and(|adjacency| {
+                    dependency_edge_admits_owner_call(
+                        adjacency,
+                        prefix,
+                        &test.file,
+                        &same_name_definition_prefixes,
+                        same_name_unscoped_definition,
+                    )
+                }))
         {
             continue;
         }
@@ -206,6 +243,78 @@ pub(in crate::analysis) fn find_related_tests<'a>(
     related.sort_by(|(a, _), (b, _)| a.name.cmp(&b.name).then_with(|| a.file.cmp(&b.file)));
     related.dedup_by(|(a, _), (b, _)| a.name == b.name && a.file == b.file);
     related
+}
+
+/// #2972: whether one captured path-dependency edge lets an ambiguous-name
+/// cross-crate call be attributed to the owner's package. Under-emit is the
+/// contract for relation credit, so every boundary fails closed:
+///
+/// - the graph must be `Complete`. A `limited` capture is a partial edge
+///   inventory and this surface has no disclosure channel, so it fails closed
+///   exactly the way the #2971 rule fails closed on an incomplete index;
+///   `unavailable` means no adjacency exists and admits nothing.
+/// - both package identities must resolve to graph node identities through
+///   the `<package-root>Cargo.toml` shape `package_prefix` already produces
+///   (a `crates/<name>/` root names `crates/<name>/Cargo.toml`); an
+///   unresolvable identity admits nothing.
+/// - a same-named definition inside the calling test's own package is the
+///   most plausible call target (a local shadow), and a second same-named
+///   definition that the test's package also reaches through a path edge is
+///   an equally plausible competing candidate; either defeats attribution.
+///   An unplaceable (`prefix`-less) same-named definition cannot be refuted
+///   at all and defeats it unconditionally.
+/// - a direct edge only: forward (the test's package declares a path
+///   dependency on the owner's package) or reverse (the owner's package
+///   declares one on the test's package). Transitive reach is not admitted.
+fn dependency_edge_admits_owner_call(
+    adjacency: &PathDependencyAdjacency,
+    owner_package_prefix: &str,
+    test_file: &Path,
+    same_name_definition_prefixes: &BTreeSet<String>,
+    same_name_unscoped_definition: bool,
+) -> bool {
+    if same_name_unscoped_definition {
+        return false;
+    }
+    if adjacency.status() != PathDependencyGraphStatus::Complete {
+        return false;
+    }
+    let Some(test_package_prefix) = package_prefix(test_file) else {
+        return false;
+    };
+    let test_manifest = format!("{test_package_prefix}Cargo.toml");
+    let owner_manifest = format!("{owner_package_prefix}Cargo.toml");
+    let mut owner_candidate_connected = false;
+    for prefix in same_name_definition_prefixes {
+        let manifest = format!("{prefix}Cargo.toml");
+        if manifest == test_manifest {
+            // Local shadow: the calling test's own package defines the name.
+            return false;
+        }
+        if manifest == owner_manifest {
+            owner_candidate_connected = edge_connects(adjacency, &test_manifest, &owner_manifest);
+        } else if edge_connects(adjacency, &test_manifest, &manifest) {
+            // A second same-named definition the test's package also reaches
+            // through a path edge: the bare call is ambiguous between them.
+            return false;
+        }
+    }
+    owner_candidate_connected
+}
+
+/// Whether one captured path-dependency edge joins the two manifest
+/// identities in either direction (declarer → target, or target → declarer).
+fn edge_connects(
+    adjacency: &PathDependencyAdjacency,
+    test_manifest: &str,
+    other_manifest: &str,
+) -> bool {
+    adjacency
+        .forward_neighbors(test_manifest)
+        .is_some_and(|dependencies| dependencies.contains(other_manifest))
+        || adjacency
+            .reverse_neighbors(test_manifest)
+            .is_some_and(|dependents| dependents.contains(other_manifest))
 }
 
 /// Return whether `test_file` is the canonical companion test file for
@@ -391,7 +500,7 @@ mod tests {
         };
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
-        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].0.name, "crate_a_score_test");
@@ -416,7 +525,7 @@ mod tests {
         };
         let probe = probe("crates/digest/src/lib.rs", "compute_hash(input)");
 
-        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
 
         assert_eq!(
             related.len(),
@@ -454,7 +563,7 @@ mod tests {
         };
         let probe = probe("src/lib.rs", "self.persist(amount * 9)");
 
-        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
 
         assert_eq!(related.len(), 1, "method owner must keep its calling test");
         assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
@@ -483,7 +592,7 @@ mod tests {
         let probe = probe("crates/digest/src/lib.rs", "compute_hash(input)");
 
         // The only difference from the positive control.
-        let related = find_related_tests(&probe, Some(&owner), &index, false, None);
+        let related = find_related_tests(&probe, Some(&owner), &index, false, None, None);
 
         assert!(
             related.is_empty(),
@@ -519,7 +628,7 @@ mod tests {
         };
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
-        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
 
         // The crate_a test is in-package and passes; the crate_b test is
         // cross-crate and filtered despite calling `score()` because the name
@@ -530,6 +639,374 @@ mod tests {
             "ambiguous-name cross-crate test must be filtered"
         );
         assert_eq!(related[0].0.name, "crate_a_score_test");
+    }
+
+    // --- #2972: dependency-edge admit for ambiguous cross-crate owner calls ---
+
+    /// A path-dependency adjacency over synthetic provenance — pure, no
+    /// filesystem, the same fixture style the graph module's own tests use.
+    /// Each edge names the declaring manifest and the resolved dependency
+    /// directory; `limitations` degrades the capture to a partial inventory
+    /// (`limited` status).
+    fn adjacency_with(
+        package_graph_status: &str,
+        edges: &[(&str, &str)],
+        limitations: bool,
+    ) -> PathDependencyAdjacency {
+        use crate::analysis::seam_cache::{
+            PathDependencyEdge, PathDependencyLimitation, PathDependencyLimitationKind,
+            PathDependencyResolution, PathDependencySection, PathDependencySource,
+            WorkspaceGraphProvenance,
+        };
+        let provenance = WorkspaceGraphProvenance {
+            package_graph_status: package_graph_status.to_string(),
+            path_dependency_edges: edges
+                .iter()
+                .map(|(from, to)| PathDependencyEdge {
+                    from_manifest: (*from).to_string(),
+                    section: PathDependencySection::Dependencies,
+                    target: None,
+                    dependency_name: "dep".to_string(),
+                    declared_path: Some("../dep".to_string()),
+                    resolved_path: Some((*to).to_string()),
+                    resolution: PathDependencyResolution::Resolved,
+                    source: PathDependencySource::Package,
+                })
+                .collect(),
+            path_dependency_limitations: if limitations {
+                vec![PathDependencyLimitation {
+                    manifest: "crates/crate_c/Cargo.toml".to_string(),
+                    kind: PathDependencyLimitationKind::UnfollowedWorkspaceRedirect,
+                    detail: "redirect not followed".to_string(),
+                }]
+            } else {
+                Vec::new()
+            },
+            ..WorkspaceGraphProvenance::default()
+        };
+        PathDependencyAdjacency::build(&provenance)
+    }
+
+    /// #2972 positive control: the owner name `score` is ambiguous (crate_a
+    /// and crate_b both define it), so the #2971 uniqueness bypass cannot
+    /// fire. A captured path-dependency edge from the calling test's crate to
+    /// the owner's crate is the graph evidence that attributes the bare call.
+    #[test]
+    fn given_ambiguous_owner_when_cross_crate_dependent_test_calls_owner_then_edge_admits() {
+        let owner = function("crates/crate_a/src/lib.rs", "score");
+        let index = RustIndex {
+            functions: vec![
+                function("crates/crate_a/src/lib.rs", "score"),
+                function("crates/crate_b/src/lib.rs", "score"),
+            ],
+            tests: vec![
+                test(
+                    "crates/crate_c/tests/score.rs",
+                    "crate_c_score_test",
+                    "score(7)",
+                ),
+                test(
+                    "crates/crate_a/tests/score.rs",
+                    "crate_a_score_test",
+                    "score(1)",
+                ),
+            ],
+            ..RustIndex::default()
+        };
+        // crate_c declares a path dependency on crate_a.
+        let adjacency = adjacency_with(
+            "complete",
+            &[("crates/crate_c/Cargo.toml", "crates/crate_a")],
+            false,
+        );
+        let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
+
+        let related =
+            find_related_tests(&probe, Some(&owner), &index, true, None, Some(&adjacency));
+
+        assert_eq!(
+            related.len(),
+            2,
+            "the dependent crate's calling test must be admitted: {related:?}"
+        );
+        let admitted: Vec<_> = related
+            .iter()
+            .filter(|(test, _)| test.name == "crate_c_score_test")
+            .collect();
+        assert_eq!(
+            admitted.len(),
+            1,
+            "crate_c test missing or duplicated: {related:?}"
+        );
+        assert_eq!(admitted[0].1, RelationReason::DirectOwnerCall);
+    }
+
+    /// #2972 discrimination: the same workspace shape, but the probe's owner
+    /// lives in crate_b. The only edge connects crate_c to crate_a, so the
+    /// bare `score()` call in crate_c stays unattributed for crate_b::score —
+    /// the captured edge, not the call alone, is what admits.
+    #[test]
+    fn given_ambiguous_owner_when_test_crate_has_no_edge_to_owner_crate_then_stays_filtered() {
+        let owner = function("crates/crate_b/src/lib.rs", "score");
+        let index = RustIndex {
+            functions: vec![
+                function("crates/crate_a/src/lib.rs", "score"),
+                function("crates/crate_b/src/lib.rs", "score"),
+            ],
+            tests: vec![
+                test(
+                    "crates/crate_c/tests/score.rs",
+                    "crate_c_score_test",
+                    "score(7)",
+                ),
+                test(
+                    "crates/crate_b/tests/score.rs",
+                    "crate_b_score_test",
+                    "score(2)",
+                ),
+            ],
+            ..RustIndex::default()
+        };
+        let adjacency = adjacency_with(
+            "complete",
+            &[("crates/crate_c/Cargo.toml", "crates/crate_a")],
+            false,
+        );
+        let probe = probe("crates/crate_b/src/lib.rs", "score + 1");
+
+        let related =
+            find_related_tests(&probe, Some(&owner), &index, true, None, Some(&adjacency));
+
+        assert_eq!(
+            related.len(),
+            1,
+            "a crate the edge does not reach must stay filtered: {related:?}"
+        );
+        assert_eq!(related[0].0.name, "crate_b_score_test");
+    }
+
+    /// #2972 fail-closed: an ambiguous owner with no usable graph (the
+    /// adjacency reports an unavailable manifest scan) admits nothing; the
+    /// #2971 package-prefix filter stands.
+    #[test]
+    fn given_unavailable_graph_when_cross_crate_test_calls_ambiguous_owner_then_stays_filtered() {
+        let owner = function("crates/crate_a/src/lib.rs", "score");
+        let index = RustIndex {
+            functions: vec![
+                function("crates/crate_a/src/lib.rs", "score"),
+                function("crates/crate_b/src/lib.rs", "score"),
+            ],
+            tests: vec![
+                test(
+                    "crates/crate_d/tests/score.rs",
+                    "crate_d_score_test",
+                    "score(9)",
+                ),
+                test(
+                    "crates/crate_a/tests/score.rs",
+                    "crate_a_score_test",
+                    "score(1)",
+                ),
+            ],
+            ..RustIndex::default()
+        };
+        let adjacency = adjacency_with("unavailable", &[], false);
+        assert_eq!(adjacency.status(), PathDependencyGraphStatus::Unavailable);
+        let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
+
+        let related =
+            find_related_tests(&probe, Some(&owner), &index, true, None, Some(&adjacency));
+
+        assert_eq!(
+            related.len(),
+            1,
+            "an unavailable graph must not produce edge admits: {related:?}"
+        );
+        assert_eq!(related[0].0.name, "crate_a_score_test");
+    }
+
+    /// #2972 reverse direction: the owner's crate declares the path
+    /// dependency on the calling test's crate. The admit follows the captured
+    /// edge in either direction, so this shape admits too.
+    #[test]
+    fn given_reverse_dependency_edge_when_cross_crate_test_calls_ambiguous_owner_then_admits() {
+        let owner = function("crates/crate_a/src/lib.rs", "score");
+        let index = RustIndex {
+            functions: vec![
+                function("crates/crate_a/src/lib.rs", "score"),
+                function("crates/crate_b/src/lib.rs", "score"),
+            ],
+            tests: vec![test(
+                "crates/crate_c/tests/score.rs",
+                "crate_c_score_test",
+                "score(7)",
+            )],
+            ..RustIndex::default()
+        };
+        // crate_a declares a path dependency on crate_c.
+        let adjacency = adjacency_with(
+            "complete",
+            &[("crates/crate_a/Cargo.toml", "crates/crate_c")],
+            false,
+        );
+        let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
+
+        let related =
+            find_related_tests(&probe, Some(&owner), &index, true, None, Some(&adjacency));
+
+        assert_eq!(
+            related.len(),
+            1,
+            "the reverse-direction edge must admit the calling test: {related:?}"
+        );
+        assert_eq!(related[0].0.name, "crate_c_score_test");
+    }
+
+    /// #2972 identity guard: the calling test's own package also defines
+    /// `score`, so the bare call most plausibly names the local definition.
+    /// The dependency edge cannot establish that the call crosses packages
+    /// and the match stays filtered (the token-coincidence family).
+    #[test]
+    fn given_local_same_name_definition_when_cross_crate_test_calls_owner_then_stays_filtered() {
+        let owner = function("crates/crate_a/src/lib.rs", "score");
+        let index = RustIndex {
+            functions: vec![
+                function("crates/crate_a/src/lib.rs", "score"),
+                function("crates/crate_b/src/lib.rs", "score"),
+                function("crates/crate_c/src/lib.rs", "score"),
+            ],
+            tests: vec![test(
+                "crates/crate_c/tests/score.rs",
+                "crate_c_score_test",
+                "score(7)",
+            )],
+            ..RustIndex::default()
+        };
+        let adjacency = adjacency_with(
+            "complete",
+            &[("crates/crate_c/Cargo.toml", "crates/crate_a")],
+            false,
+        );
+        let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
+
+        let related =
+            find_related_tests(&probe, Some(&owner), &index, true, None, Some(&adjacency));
+
+        assert!(
+            related.is_empty(),
+            "a local same-named definition must defeat the edge admit: {related:?}"
+        );
+    }
+
+    /// #2972 competing-candidate guard: the calling crate depends on both
+    /// crate_a and crate_b, and both define `score`. A bare `score()` call is
+    /// ambiguous between two edge-connected candidates, so neither owner is
+    /// credited through the edge.
+    #[test]
+    fn given_competing_edge_connected_candidate_when_cross_crate_test_calls_owner_then_stays_filtered()
+     {
+        let owner = function("crates/crate_a/src/lib.rs", "score");
+        let index = RustIndex {
+            functions: vec![
+                function("crates/crate_a/src/lib.rs", "score"),
+                function("crates/crate_b/src/lib.rs", "score"),
+            ],
+            tests: vec![test(
+                "crates/crate_c/tests/score.rs",
+                "crate_c_score_test",
+                "score(7)",
+            )],
+            ..RustIndex::default()
+        };
+        let adjacency = adjacency_with(
+            "complete",
+            &[
+                ("crates/crate_c/Cargo.toml", "crates/crate_a"),
+                ("crates/crate_c/Cargo.toml", "crates/crate_b"),
+            ],
+            false,
+        );
+        let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
+
+        let related =
+            find_related_tests(&probe, Some(&owner), &index, true, None, Some(&adjacency));
+
+        assert!(
+            related.is_empty(),
+            "two edge-connected same-named candidates must fail closed: {related:?}"
+        );
+    }
+
+    /// #2972 graph-status honesty: a `limited` capture is a partial edge
+    /// inventory and this relation surface has no disclosure channel, so the
+    /// admit requires a complete graph — the same fail-closed posture the
+    /// #2971 rule takes toward an incomplete index.
+    #[test]
+    fn given_limited_graph_when_cross_crate_test_calls_ambiguous_owner_then_stays_filtered() {
+        let owner = function("crates/crate_a/src/lib.rs", "score");
+        let index = RustIndex {
+            functions: vec![
+                function("crates/crate_a/src/lib.rs", "score"),
+                function("crates/crate_b/src/lib.rs", "score"),
+            ],
+            tests: vec![test(
+                "crates/crate_c/tests/score.rs",
+                "crate_c_score_test",
+                "score(7)",
+            )],
+            ..RustIndex::default()
+        };
+        let adjacency = adjacency_with(
+            "complete",
+            &[("crates/crate_c/Cargo.toml", "crates/crate_a")],
+            true,
+        );
+        assert_eq!(adjacency.status(), PathDependencyGraphStatus::Limited);
+        let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
+
+        let related =
+            find_related_tests(&probe, Some(&owner), &index, true, None, Some(&adjacency));
+
+        assert!(
+            related.is_empty(),
+            "a partial edge inventory must not produce edge admits: {related:?}"
+        );
+    }
+
+    /// #2972 unplaceable definition guard: an indexed same-named definition
+    /// whose file carries no resolvable package scope (a root-package
+    /// `src/lib.rs`) can never be refuted as the call target, so it defeats
+    /// the edge admit.
+    #[test]
+    fn given_unscoped_same_name_definition_when_cross_crate_test_calls_owner_then_stays_filtered() {
+        let owner = function("crates/crate_a/src/lib.rs", "score");
+        let index = RustIndex {
+            functions: vec![
+                function("crates/crate_a/src/lib.rs", "score"),
+                function("crates/crate_b/src/lib.rs", "score"),
+                function("src/lib.rs", "score"),
+            ],
+            tests: vec![test(
+                "crates/crate_c/tests/score.rs",
+                "crate_c_score_test",
+                "score(7)",
+            )],
+            ..RustIndex::default()
+        };
+        let adjacency = adjacency_with(
+            "complete",
+            &[("crates/crate_c/Cargo.toml", "crates/crate_a")],
+            false,
+        );
+        let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
+
+        let related =
+            find_related_tests(&probe, Some(&owner), &index, true, None, Some(&adjacency));
+
+        assert!(
+            related.is_empty(),
+            "an unplaceable same-named definition must defeat the edge admit: {related:?}"
+        );
     }
 
     #[test]
@@ -544,7 +1021,7 @@ mod tests {
         };
         let probe = probe("src/lib.rs", "score + 1");
 
-        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
 
         assert_eq!(related.len(), 2);
         assert_eq!(related[0].0.file, PathBuf::from("tests/a_case.rs"));
@@ -565,7 +1042,7 @@ mod tests {
         };
         let probe = probe("crates/core/src/config.rs", "marker");
 
-        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
@@ -597,7 +1074,7 @@ mod tests {
         };
         let probe = probe("crates/core/src/config.rs", "marker");
 
-        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
 
         assert_eq!(related.len(), 3);
         assert!(
@@ -625,7 +1102,7 @@ mod tests {
         };
         let probe = probe("crates\\core\\src\\config.rs", "marker");
 
-        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].1, RelationReason::SameTestFile);
@@ -659,7 +1136,7 @@ mod tests {
         };
         let probe = probe("src/lib.rs", "vat >= threshold");
 
-        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].0.name, "vat_boundary_is_checked_by_macro");
@@ -689,7 +1166,7 @@ mod tests {
         };
         let probe = probe("src/internal.rs", "if a >= b");
 
-        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
 
         assert!(
             related.is_empty(),
@@ -717,7 +1194,7 @@ mod tests {
         };
         let probe = probe("src/internal.rs", "if a >= b");
 
-        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
@@ -895,7 +1372,7 @@ mod tests {
         // Struct field probe: expression contains `open_in` (7 chars, >= 5)
         let probe = struct_field_probe("crates/ripr/src/config.rs", "open_in");
 
-        let related = find_related_tests(&probe, None, &index, true, None);
+        let related = find_related_tests(&probe, None, &index, true, None, None);
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].0.name, "repo_lane_deserializes_fields_correctly");
@@ -921,8 +1398,8 @@ mod tests {
         let forward_probe = struct_field_probe("crates/ripr/src/config.rs", "marker");
         let windows_probe = struct_field_probe("crates\\ripr\\src\\config.rs", "marker");
 
-        let forward_related = find_related_tests(&forward_probe, None, &index, true, None);
-        let windows_related = find_related_tests(&windows_probe, None, &index, true, None);
+        let forward_related = find_related_tests(&forward_probe, None, &index, true, None, None);
+        let windows_related = find_related_tests(&windows_probe, None, &index, true, None, None);
 
         assert_eq!(forward_related.len(), 1);
         assert_eq!(windows_related.len(), 1);
@@ -961,7 +1438,7 @@ mod tests {
         let windows_probe = struct_field_probe("crates\\ripr\\src\\.config", "marker");
 
         for probe in [forward_probe, windows_probe] {
-            let related = find_related_tests(&probe, None, &index, true, None);
+            let related = find_related_tests(&probe, None, &index, true, None, None);
 
             assert_eq!(related.len(), 1);
             assert_eq!(related[0].0.file, Path::new("crates/ripr/tests/.config.rs"));
@@ -1023,8 +1500,8 @@ mod tests {
         let probe_open_in = struct_field_probe("crates/ripr/src/config.rs", "open_in");
         let probe_open_cap = struct_field_probe("crates/ripr/src/config.rs", "open_cap");
 
-        let related_in = find_related_tests(&probe_open_in, None, &index, true, None);
-        let related_cap = find_related_tests(&probe_open_cap, None, &index, true, None);
+        let related_in = find_related_tests(&probe_open_in, None, &index, true, None, None);
+        let related_cap = find_related_tests(&probe_open_cap, None, &index, true, None, None);
 
         assert_eq!(
             related_in.len(),
@@ -1071,7 +1548,7 @@ mod tests {
         // Probe expression is `port` (4 chars) — below the >= 5 threshold.
         let probe = struct_field_probe("crates/ripr/src/scheduler.rs", "port");
 
-        let related = find_related_tests(&probe, None, &index, true, None);
+        let related = find_related_tests(&probe, None, &index, true, None, None);
 
         assert!(
             related.is_empty(),
@@ -1108,7 +1585,7 @@ mod tests {
         // assertions_reference_owner signal must NOT fire.
         let probe = probe("src/lib.rs", "amount >= discount_threshold");
 
-        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
 
         assert!(
             related.is_empty(),
@@ -1131,7 +1608,7 @@ mod tests {
             "pub(crate) state: GateWatchdogState",
         );
 
-        let related = find_related_tests(&probe, None, &index, true, None);
+        let related = find_related_tests(&probe, None, &index, true, None, None);
         let Some((test, reason)) = related.first() else {
             return Err(
                 "absolute root probe did not match its relative companion test".to_string(),
@@ -1160,7 +1637,7 @@ mod tests {
             "pub(crate) state: State",
         );
 
-        let related = find_related_tests(&probe, None, &index, true, None);
+        let related = find_related_tests(&probe, None, &index, true, None, None);
         if !related.is_empty() {
             return Err(format!("cross-crate test must stay unrelated: {related:?}"));
         }
@@ -1187,7 +1664,7 @@ mod tests {
         };
         let probe = probe("/ws/pkg-a/src/lib.rs", "score + 1");
 
-        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
 
         assert!(
             related.is_empty(),
@@ -1214,7 +1691,7 @@ mod tests {
         };
         let probe = probe("/ws/pkg-a/src/lib.rs", "compute_hash(input)");
 
-        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
 
         assert_eq!(
             related.len(),
@@ -1245,7 +1722,7 @@ mod tests {
         };
         let probe = probe(&owner_file, "score + 1");
 
-        let related = find_related_tests(&probe, Some(&owner), &index, true, None);
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
 
         assert!(
             related.is_empty(),
@@ -1268,7 +1745,7 @@ mod tests {
         };
         let probe = struct_field_probe("/ws/pkg-a/src/gate_watchdog.rs", "pub(crate) state: State");
 
-        let related = find_related_tests(&probe, None, &index, true, None);
+        let related = find_related_tests(&probe, None, &index, true, None, None);
         if !related.is_empty() {
             return Err(format!(
                 "struct-probe wrong-package weak match must be filtered: {related:?}"
