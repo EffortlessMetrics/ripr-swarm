@@ -4,7 +4,7 @@ use super::gap_artifacts::{
     GapArtifactKind, GapArtifactRejection, GapArtifactValidationContext, validate_gap_artifact,
     validate_workspace_gap_artifact_report,
 };
-use super::state::{AnalysisSnapshot, RefreshMetadata};
+use super::state::{AnalysisSnapshot, HarnessFactsOnSnapshot, RefreshMetadata};
 use super::uri::{absolute_join, display_path, file_uri_for_path, path_from_file_uri};
 use crate::agent::command_specs::{command_display_is_nonblank, command_displays_are_complete};
 use crate::analysis::ClassifiedSeam;
@@ -763,6 +763,22 @@ pub(super) fn workspace_diagnostics_with_config(
     let root = output.root;
     let base = output.base;
     let analysis_outcome = output.analysis_outcome;
+    // Harness facts on the snapshot distinguish three states: no
+    // registrations (repositories keep byte-identical output), facts
+    // established by this run, and limited runs that disclose the run-status
+    // limitation instead (#3605).
+    let registrations = config.repo_config().analysis().test_harnesses();
+    let harness_facts = if !registrations.is_empty() {
+        if output.harness_projections.is_empty() {
+            // Registrations exist but this run established no facts (Rust
+            // disabled, or a partial scope that indexed none of the targets).
+            HarnessFactsOnSnapshot::Unknown
+        } else {
+            HarnessFactsOnSnapshot::Complete(output.harness_projections)
+        }
+    } else {
+        HarnessFactsOnSnapshot::NotRegistered
+    };
     let mode = output.mode;
     let partial_scope = output.partial_scope;
     // Scope the LSP projection to production Rust anchors, matching the CLI
@@ -998,6 +1014,7 @@ pub(super) fn workspace_diagnostics_with_config(
         classified_seams,
         gap_artifacts: gap_artifact_report.artifacts,
         gap_artifact_rejections: gap_artifact_report.rejections,
+        harness_facts,
         diagnostics_by_uri,
         delivery_selection: None,
         seams_deferred: defer_seam_inventory,
@@ -1105,6 +1122,15 @@ fn git_timeout_limited_diagnostics(
         classified_seams: Vec::new(),
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
+        // Limited runs disclose the run-status limitation instead of
+        // harness facts; the next full refresh repopulates them (#3605).
+        // NotRegistered vs UnavailableLimitedRun stays resolvable here
+        // because the config is authoritative for registration presence.
+        harness_facts: if config.repo_config().analysis().test_harnesses().is_empty() {
+            HarnessFactsOnSnapshot::NotRegistered
+        } else {
+            HarnessFactsOnSnapshot::UnavailableLimitedRun
+        },
         diagnostics_by_uri: BTreeMap::new(),
         delivery_selection: None,
         seams_deferred: defer_seam_inventory,
@@ -1174,6 +1200,15 @@ fn oversized_diff_limited_diagnostics(
         classified_seams: Vec::new(),
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
+        // Limited runs disclose the run-status limitation instead of
+        // harness facts; the next full refresh repopulates them (#3605).
+        // NotRegistered vs UnavailableLimitedRun stays resolvable here
+        // because the config is authoritative for registration presence.
+        harness_facts: if config.repo_config().analysis().test_harnesses().is_empty() {
+            HarnessFactsOnSnapshot::NotRegistered
+        } else {
+            HarnessFactsOnSnapshot::UnavailableLimitedRun
+        },
         diagnostics_by_uri,
         delivery_selection: None,
         seams_deferred: defer_seam_inventory,
@@ -4206,6 +4241,7 @@ mod delivery_tests {
             classified_seams: Vec::new(),
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
+            harness_facts: HarnessFactsOnSnapshot::NotRegistered,
             diagnostics_by_uri,
             delivery_selection: None,
             seams_deferred: false,

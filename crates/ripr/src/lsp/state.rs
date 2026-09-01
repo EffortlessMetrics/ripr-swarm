@@ -601,6 +601,22 @@ impl Default for RefreshMetadata {
     }
 }
 
+/// Harness registry facts carried on one analysis snapshot (#3605).
+#[derive(Clone, Debug)]
+pub(super) enum HarnessFactsOnSnapshot {
+    /// The repository has no `[analysis.test_harnesses]` registrations.
+    NotRegistered,
+    /// Registrations exist but this run established no facts (Rust
+    /// disabled, or a partial-scope run that indexed none of the
+    /// registered targets). Availability is unknown, not absent.
+    Unknown,
+    /// A limited run (git timeout, oversized diff) did not compute harness
+    /// facts; the registration state is unknown for this snapshot.
+    UnavailableLimitedRun,
+    /// The registered facts established by this run's index.
+    Complete(Vec<crate::analysis::harness_projection::TestHarnessProjection>),
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct AnalysisSnapshot {
     pub(super) root: PathBuf,
@@ -626,6 +642,14 @@ pub(super) struct AnalysisSnapshot {
     pub(super) classified_seams: Vec<ClassifiedSeam>,
     pub(super) gap_artifacts: Vec<ValidatedGapArtifact>,
     pub(super) gap_artifact_rejections: Vec<GapArtifactRejection>,
+    /// Harness registry facts (#3532, #3605): what each exact
+    /// `[analysis.test_harnesses]` registration established for this run.
+    /// `NotRegistered` keeps repositories without registrations
+    /// byte-identical; `UnavailableLimitedRun` preserves the
+    /// absent-versus-limited distinction instead of collapsing both into an
+    /// empty list; `Complete` carries the registered facts the editor
+    /// surface reads. Never a claim that harness subjects were executed.
+    pub(super) harness_facts: HarnessFactsOnSnapshot,
     pub(super) diagnostics_by_uri: BTreeMap<Uri, Vec<Diagnostic>>,
     /// The one immutable delivery selection shared by push publication and
     /// both pull handlers (#1973). Computed once at refresh-transaction
@@ -1506,6 +1530,7 @@ mod tests {
             classified_seams: Vec::new(),
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
+            harness_facts: HarnessFactsOnSnapshot::NotRegistered,
             diagnostics_by_uri,
             delivery_selection: None,
             seams_deferred: false,
@@ -1537,6 +1562,7 @@ mod tests {
             classified_seams: Vec::new(),
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
+            harness_facts: HarnessFactsOnSnapshot::NotRegistered,
             diagnostics_by_uri,
             delivery_selection: None,
             seams_deferred: false,

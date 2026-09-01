@@ -1333,6 +1333,23 @@ the repository registered test harnesses (`[analysis.test_harnesses]` in
 repositories without registrations, so their output is byte-identical to the
 pre-#3532 shape. Does not bump `schema_version`.
 
+The LSP editor surface carries the same registered facts on its analysis
+snapshot (`harness_projections`): registration identity, harness kind,
+adapter generation, exact marker and target, provenance, established
+subjects, and typed limitations.
+
+The editor workspace status discloses a bounded summary of the same
+facts: `harness_registry.registrations[]` with registration id,
+harness kind, adapter, target, established subject count, and typed
+limitation count per registration. The key is Null when the run
+carried no harness facts and is absent from runs of repositories
+without registrations. The snapshot carries them only from
+complete runs whose diff scope included the registered target; limited
+runs (git timeout, oversized diff) disclose the run-status limitation
+instead and repopulate on the next full refresh. This is the
+registered-facts subset — it never claims the harness subjects were
+executed (#3605).
+
 Example — one registered `harness = false` custom target with one exact trial
 subject and one dynamic-name limitation:
 
