@@ -1,4 +1,4 @@
-# RIPR-SPEC-0170: path-dependency diff-scope expansion
+# RIPR-SPEC-0171: path-dependency diff-scope expansion
 
 Status: proposed
 

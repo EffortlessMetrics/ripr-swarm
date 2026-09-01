@@ -478,10 +478,7 @@ mod tests {
 
         let diff = load_diff_range(&dir, &base, "HEAD").map_err(std::io::Error::other)?;
         let files = super::super::parse::parse_unified_diff(&diff);
-        let mut paths: Vec<String> = files
-            .iter()
-            .map(|file| file.path.to_string_lossy().to_string())
-            .collect();
+        let mut paths: Vec<PathBuf> = files.iter().map(|file| file.path.clone()).collect();
         paths.sort();
 
         assert_eq!(
@@ -490,23 +487,115 @@ mod tests {
             "distinct non-ASCII names must not collapse at decode: {paths:?} from:\n{diff}"
         );
         assert!(
-            paths.contains(&"café.rs".to_string()),
+            paths
+                .iter()
+                .any(|path| path.as_os_str().as_bytes() == "café.rs".as_bytes()),
             "valid UTF-8 names must decode to their on-disk identity: {paths:?}"
         );
-        for path in &paths {
-            assert!(
-                !path.contains('\u{FFFD}'),
-                "lossy replacement must not reach parsed paths: {paths:?}"
-            );
-        }
-        let invalid: Vec<&String> = paths
+        let invalid: Vec<&PathBuf> = paths
             .iter()
-            .filter(|path| path.starts_with("pricing_\\"))
+            .filter(|path| {
+                path.as_os_str().as_bytes().starts_with(b"pricing_")
+                    && path.as_os_str().as_bytes().ends_with(b".rs")
+            })
             .collect();
         assert_eq!(
             invalid.len(),
             2,
-            "distinct invalid-byte names must stay distinct as octal residue: {paths:?}"
+            "distinct invalid-byte names must stay distinct: {paths:?}"
+        );
+        assert!(
+            invalid
+                .iter()
+                .any(|path| path.as_os_str().as_bytes() == b"pricing_\xff.rs")
+                && invalid
+                    .iter()
+                    .any(|path| path.as_os_str().as_bytes() == b"pricing_\xfe.rs"),
+            "raw invalid bytes must remain distinct in parsed paths: {paths:?}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn given_quote_path_disabled_repo_when_diff_loaded_then_raw_byte_and_mimic_names_stay_distinct()
+    -> std::io::Result<()> {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        // #3609: an invalid-byte file name and a valid-UTF-8 name that
+        // literally spells the octal escape text (`pricing_\377.rs`) are two
+        // distinct files. A string-contract decoder renders both as the same
+        // octal residue, so their changes merge in the parser's path-keyed
+        // map. Decoding through the path type keeps the raw byte native on
+        // Unix, so both identities stay byte-distinct end to end, and valid
+        // UTF-8 names keep their on-disk identity.
+        let dir = unique_fixture_root("diff-raw-byte-vs-mimic-distinct")?;
+        init_git_repo(&dir, "main")?;
+        run_git_checked(&dir, &["config", "core.quotePath", "false"])?;
+        fs::write(dir.join("base.rs"), "pub fn base() -> u32 { 0 }\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "base", "--quiet"])?;
+        let base = {
+            let output =
+                crate::git::run_git_output_with_deadline(&dir, &["rev-parse", "HEAD"], None)
+                    .map_err(std::io::Error::other)?;
+            if !output.status.success() {
+                return Err(std::io::Error::other("git rev-parse HEAD failed"));
+            }
+            String::from_utf8(output.stdout)
+                .map_err(|err| std::io::Error::other(err.to_string()))?
+                .trim()
+                .to_string()
+        };
+
+        let raw_byte = dir.join(OsStr::from_bytes(b"pricing_\xff.rs"));
+        // The mimic's name carries the literal backslash characters, not the
+        // escaped byte: `pricing_\377.rs` spelled with ordinary ASCII.
+        let mimic = dir.join(OsStr::from_bytes(b"pricing_\\377.rs"));
+        fs::write(&raw_byte, "pub fn raw_byte() -> u32 { 1 }\n")?;
+        fs::write(&mimic, "pub fn mimic() -> u32 { 2 }\n")?;
+        fs::write(dir.join("café.rs"), "pub fn third() -> u32 { 3 }\n")?;
+        run_git_checked(&dir, &["add", "-A"])?;
+        run_git_checked(
+            &dir,
+            &[
+                "commit",
+                "-m",
+                "raw byte and residue-mimic filenames",
+                "--quiet",
+            ],
+        )?;
+
+        let diff = load_diff_range(&dir, &base, "HEAD").map_err(std::io::Error::other)?;
+        let files = super::super::parse::parse_unified_diff(&diff);
+        let mut paths: Vec<PathBuf> = files.iter().map(|file| file.path.clone()).collect();
+        paths.sort();
+
+        assert_eq!(
+            paths.len(),
+            3,
+            "the raw-byte name and its residue mimic must stay distinct: {paths:?} from:\n{diff}"
+        );
+        assert!(
+            paths
+                .iter()
+                .any(|path| path.as_os_str().as_bytes() == b"pricing_\xff.rs"),
+            "the raw-byte name must keep byte 0xFF in its decoded identity: {paths:?}"
+        );
+        assert!(
+            paths
+                .iter()
+                .any(|path| path.as_os_str().as_bytes() == b"pricing_\\377.rs"),
+            "the literal mimic name must keep its own text identity: {paths:?}"
+        );
+        assert!(
+            paths
+                .iter()
+                .any(|path| path.as_os_str().as_bytes() == "café.rs".as_bytes()),
+            "valid UTF-8 names must keep their on-disk identity: {paths:?}"
         );
 
         let _ = fs::remove_dir_all(&dir);

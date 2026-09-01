@@ -6605,6 +6605,28 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0170"
+name = "Stable cross-platform path text"
+spec = "docs/specs/RIPR-SPEC-0170-stable-cross-platform-path-text.md"
+tests = [
+  "crates/ripr/src/analysis/mod.rs::tests::stable_path_text_escapes_reserved_percent_on_every_platform",
+  "crates/ripr/src/analysis/mod.rs::tests::stable_path_text_keeps_invalid_byte_encoding_distinct_from_literal_escape",
+  "crates/ripr/src/analysis/diff/load.rs::tests::given_quote_path_disabled_repo_when_diff_loaded_then_raw_byte_and_mimic_names_stay_distinct",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/mod.rs",
+  "crates/ripr/src/analysis/language/rust.rs",
+  "crates/ripr/src/analysis/probes/ids.rs",
+  "crates/ripr/src/output/path.rs",
+]
+outputs = []
+metrics = [
+  "stable_path_text_regression_pass_rate",
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0150"
 name = "Rust bounded value-propagation limitation"
 spec = "docs/specs/RIPR-SPEC-0150-rust-value-propagation-limitation.md"
@@ -8655,9 +8677,9 @@ metrics = [
 ]
 
 [[behavior]]
-id = "RIPR-SPEC-0170"
+id = "RIPR-SPEC-0171"
 name = "path-dependency diff-scope expansion"
-spec = "docs/specs/RIPR-SPEC-0170-path-dependency-diff-scope.md"
+spec = "docs/specs/RIPR-SPEC-0171-path-dependency-diff-scope.md"
 tests = [
   "crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_reaches_dependents_of_changed_packages_only",
   "crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_adds_nothing_for_unmapped_or_empty_changed_roots",
@@ -8682,7 +8704,7 @@ code = [
   "crates/ripr/src/analysis/language/rust.rs",
 ]
 outputs = [
-  "docs/specs/RIPR-SPEC-0170-path-dependency-diff-scope.md",
+  "docs/specs/RIPR-SPEC-0171-path-dependency-diff-scope.md",
 ]
 metrics = [
   "unit_test_pass_rate",

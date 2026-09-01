@@ -61,7 +61,13 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
             file_returns.extend(returns.clone());
             file_literals.extend(literals.clone());
             let function = FunctionFact {
-                id: SymbolId(format!("{}::{name}", path.display())),
+                // Same stable projection as the parser producer: lossy
+                // display would merge distinct raw-byte filenames in the
+                // shared FunctionFact.id namespace (#3609).
+                id: SymbolId(format!(
+                    "{}::{name}",
+                    crate::analysis::stable_path_text(path.as_path())
+                )),
                 name: name.clone(),
                 file: path.clone(),
                 start_line,

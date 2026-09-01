@@ -389,6 +389,57 @@ use crate::domain::{Finding, Summary};
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
+/// Render a path for textual identity without collapsing distinct Unix byte
+/// paths through U+FFFD. Valid paths retain their usual spelling except that
+/// `%` is escaped, reserving `%XX` for bytes that are not valid UTF-8.
+pub(crate) fn stable_path_text(path: &Path) -> String {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let mut output = String::new();
+        let mut remaining = path.as_os_str().as_bytes();
+        while !remaining.is_empty() {
+            match std::str::from_utf8(remaining) {
+                Ok(valid) => {
+                    push_stable_path_text(&mut output, valid);
+                    break;
+                }
+                Err(error) => {
+                    let valid_prefix = &remaining[..error.valid_up_to()];
+                    if let Ok(valid) = std::str::from_utf8(valid_prefix) {
+                        push_stable_path_text(&mut output, valid);
+                    }
+                    let invalid = error
+                        .error_len()
+                        .unwrap_or(remaining.len() - error.valid_up_to());
+                    for byte in &remaining[error.valid_up_to()..error.valid_up_to() + invalid] {
+                        output.push_str(&format!("%{byte:02X}"));
+                    }
+                    remaining = &remaining[error.valid_up_to() + invalid..];
+                }
+            }
+        }
+        output.replace('\\', "/")
+    }
+
+    #[cfg(not(unix))]
+    {
+        let mut output = String::new();
+        push_stable_path_text(&mut output, &path.to_string_lossy());
+        output.replace('\\', "/")
+    }
+}
+
+fn push_stable_path_text(output: &mut String, text: &str) {
+    for character in text.chars() {
+        if character == '%' {
+            output.push_str("%25");
+        } else {
+            output.push(character);
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AnalysisMode {
     Instant,
@@ -717,6 +768,32 @@ mod tests {
     use super::*;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn stable_path_text_escapes_reserved_percent_on_every_platform() {
+        assert_eq!(
+            stable_path_text(Path::new("pricing_%FF.rs")),
+            "pricing_%25FF.rs"
+        );
+        assert_ne!(
+            stable_path_text(Path::new("pricing_%FF.rs")),
+            "pricing_%FF.rs"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stable_path_text_keeps_invalid_byte_encoding_distinct_from_literal_escape() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let invalid = PathBuf::from(OsString::from_vec(b"pricing_\xff.rs".to_vec()));
+        let literal = Path::new("pricing_%FF.rs");
+
+        assert_eq!(stable_path_text(&invalid), "pricing_%FF.rs");
+        assert_eq!(stable_path_text(literal), "pricing_%25FF.rs");
+        assert_ne!(stable_path_text(&invalid), stable_path_text(literal));
+    }
 
     /// Each rejection branch of the rerun-anchor guard, asserted by reason so a
     /// single platform's `is_absolute()` behavior cannot mask an unexercised
