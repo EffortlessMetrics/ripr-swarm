@@ -1730,6 +1730,7 @@ impl RustAdapter {
                 .map(|adjacency| classify::DependencyEdgeContext {
                     adjacency,
                     manifest_dir_prefixes: &manifest_dir_prefixes,
+                    index: &index,
                 })
         } else {
             None
@@ -1962,6 +1963,7 @@ impl RustAdapter {
         let dependency_edges = classify::DependencyEdgeContext {
             adjacency: &dependency_adjacency,
             manifest_dir_prefixes: &manifest_dir_prefixes,
+            index: &index,
         };
 
         for path in &production_files {

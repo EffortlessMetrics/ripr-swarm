@@ -21,6 +21,10 @@ pub(in crate::analysis) struct DependencyEdgeContext<'a> {
     /// attribute to their nearest owning manifest instead of a synthesized
     /// package prefix.
     pub(in crate::analysis) manifest_dir_prefixes: &'a [String],
+    /// The classified index, for the full source of the test's file: `use`
+    /// statements live at module level, outside the test function body the
+    /// test summary carries (#3619 review).
+    pub(in crate::analysis) index: &'a RustIndex,
 }
 
 /// Minimum token length for the `assertions_reference_owner` signal.
@@ -374,6 +378,14 @@ fn dependency_edge_admits_owner_call(
             && super::helper_transfer::is_direct_call_site(&call.text, owner_name)
     });
     let stripped_body = strip_comments_and_strings(&test.body);
+    // Imports are module-scoped: scan the test's whole stripped file source,
+    // not the function body, so a file-level `use` is seen (#3619 review).
+    let stripped_file = context
+        .index
+        .files
+        .get(&test.file)
+        .map(|facts| strip_comments_and_strings(&facts.source))
+        .unwrap_or_else(|| stripped_body.clone());
     callable_dependency_names.iter().any(|dependency_name| {
         let qualified = format!("{dependency_name}::{owner_name}");
         let qualified_call = test
@@ -387,7 +399,7 @@ fn dependency_edge_admits_owner_call(
             return true;
         }
         bare_call_captured
-            && imports_owner_from_dependency(&stripped_body, dependency_name, owner_name)
+            && imports_owner_from_dependency(&stripped_file, dependency_name, owner_name)
     })
 }
 
@@ -793,7 +805,7 @@ pub(in crate::analysis) fn body_contains_owner_call(body: &str, owner_name: &str
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::facts::FunctionSourceRole;
+    use crate::analysis::facts::{FileFacts, FunctionSourceRole};
     use crate::analysis::rust_index::{CallFact, OracleFact, extract_identifier_tokens};
     use crate::domain::{
         DeltaKind, OracleKind, OracleStrength, ProbeFamily, ProbeId, SourceLocation, SymbolId,
@@ -1028,10 +1040,12 @@ mod tests {
     fn edge_context<'a>(
         adjacency: &'a PathDependencyAdjacency,
         manifest_dir_prefixes: &'a [String],
+        index: &'a RustIndex,
     ) -> DependencyEdgeContext<'a> {
         DependencyEdgeContext {
             adjacency,
             manifest_dir_prefixes,
+            index,
         }
     }
 
@@ -1081,7 +1095,7 @@ mod tests {
             ..RustIndex::default()
         };
         let (adjacency, prefixes) = crate_a_dependency_context();
-        let context = edge_context(&adjacency, &prefixes);
+        let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context));
@@ -1133,7 +1147,7 @@ mod tests {
             false,
         );
         let prefixes = crate_abc_prefixes();
-        let context = edge_context(&adjacency, &prefixes);
+        let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context));
@@ -1142,6 +1156,65 @@ mod tests {
             related.len(),
             1,
             "a dev-dependency edge is callable from the test target: {related:?}"
+        );
+        assert_eq!(related[0].0.name, "crate_c_score_test");
+    }
+
+    /// #2972 review: imports are module-scoped. The `use crate_a::score;`
+    /// lives at file level, outside the test function body the summary
+    /// carries — the import scan reads the whole stripped file source, so a
+    /// genuine dependent test is not lost.
+    #[test]
+    fn given_module_level_import_when_cross_crate_test_calls_owner_then_admits() {
+        let owner = function("crates/crate_a/src/lib.rs", "score");
+        let test_file = PathBuf::from("crates/crate_c/tests/score.rs");
+        let source = "use crate_a::score;
+
+#[test]
+fn crate_c_score_test() {
+    score(7);
+}
+";
+        let index = RustIndex {
+            functions: vec![
+                function("crates/crate_a/src/lib.rs", "score"),
+                function("crates/crate_b/src/lib.rs", "score"),
+            ],
+            tests: vec![test(
+                "crates/crate_c/tests/score.rs",
+                "crate_c_score_test",
+                "score(7)",
+            )],
+            files: std::collections::BTreeMap::from([(
+                test_file.clone(),
+                FileFacts {
+                    path: test_file.clone(),
+                    source: source.to_string(),
+                    ..FileFacts::default()
+                },
+            )]),
+            ..RustIndex::default()
+        };
+        let adjacency = adjacency_with(
+            "complete",
+            &[(
+                "crates/crate_c/Cargo.toml",
+                "crates/crate_a",
+                PathDependencySection::Dependencies,
+                "crate_a",
+            )],
+            false,
+        );
+        let prefixes = crate_abc_prefixes();
+        let context = edge_context(&adjacency, &prefixes, &index);
+        let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context));
+
+        assert_eq!(
+            related.len(),
+            1,
+            "a module-level import must be seen by the whole-file scan: {related:?}"
         );
         assert_eq!(related[0].0.name, "crate_c_score_test");
     }
@@ -1165,7 +1238,7 @@ mod tests {
             ..RustIndex::default()
         };
         let (adjacency, prefixes) = crate_a_dependency_context();
-        let context = edge_context(&adjacency, &prefixes);
+        let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context));
@@ -1197,7 +1270,7 @@ mod tests {
             ..RustIndex::default()
         };
         let (adjacency, prefixes) = crate_a_dependency_context();
-        let context = edge_context(&adjacency, &prefixes);
+        let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context));
@@ -1229,7 +1302,7 @@ mod tests {
             ..RustIndex::default()
         };
         let (adjacency, prefixes) = crate_a_dependency_context();
-        let context = edge_context(&adjacency, &prefixes);
+        let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context));
@@ -1270,7 +1343,7 @@ mod tests {
             ..RustIndex::default()
         };
         let (adjacency, prefixes) = crate_a_dependency_context();
-        let context = edge_context(&adjacency, &prefixes);
+        let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_b/src/lib.rs", "score + 1");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context));
@@ -1322,7 +1395,7 @@ mod tests {
             false,
         );
         let prefixes = crate_abc_prefixes();
-        let context = edge_context(&adjacency, &prefixes);
+        let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context));
@@ -1364,7 +1437,7 @@ mod tests {
             false,
         );
         let prefixes = crate_abc_prefixes();
-        let context = edge_context(&adjacency, &prefixes);
+        let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context));
@@ -1404,7 +1477,7 @@ mod tests {
         assert_eq!(adjacency.status(), PathDependencyGraphStatus::Unavailable);
         let prefixes =
             owned_prefixes(&["", "crates/crate_a/", "crates/crate_b/", "crates/crate_d/"]);
-        let context = edge_context(&adjacency, &prefixes);
+        let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context));
@@ -1448,7 +1521,7 @@ mod tests {
         );
         assert_eq!(adjacency.status(), PathDependencyGraphStatus::Limited);
         let prefixes = crate_abc_prefixes();
-        let context = edge_context(&adjacency, &prefixes);
+        let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context));
@@ -1480,7 +1553,7 @@ mod tests {
             ..RustIndex::default()
         };
         let (adjacency, prefixes) = crate_a_dependency_context();
-        let context = edge_context(&adjacency, &prefixes);
+        let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context));
@@ -1531,7 +1604,7 @@ mod tests {
             false,
         );
         let prefixes = crate_abc_prefixes();
-        let context = edge_context(&adjacency, &prefixes);
+        let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context));
@@ -1563,7 +1636,7 @@ mod tests {
             ..RustIndex::default()
         };
         let (adjacency, prefixes) = crate_a_dependency_context();
-        let context = edge_context(&adjacency, &prefixes);
+        let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context));
@@ -1592,7 +1665,7 @@ mod tests {
             ..RustIndex::default()
         };
         let (adjacency, prefixes) = crate_a_dependency_context();
-        let context = edge_context(&adjacency, &prefixes);
+        let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context));
@@ -1624,7 +1697,7 @@ mod tests {
             ..RustIndex::default()
         };
         let (adjacency, prefixes) = crate_a_dependency_context();
-        let context = edge_context(&adjacency, &prefixes);
+        let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context));
@@ -1655,7 +1728,7 @@ mod tests {
             ..RustIndex::default()
         };
         let (adjacency, prefixes) = crate_a_dependency_context();
-        let context = edge_context(&adjacency, &prefixes);
+        let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context));
@@ -1699,7 +1772,7 @@ mod tests {
             false,
         );
         let prefixes = owned_prefixes(&["crates/crate_a/", "crates/crate_b/", "crates/crate_c/"]);
-        let context = edge_context(&adjacency, &prefixes);
+        let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context));
@@ -1750,7 +1823,7 @@ mod tests {
             "crates/crate_b/",
             "crates/crate_c/",
         ]);
-        let context = edge_context(&adjacency, &prefixes);
+        let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/outer/inner/src/lib.rs", "score + 1");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context));
@@ -1796,7 +1869,7 @@ mod tests {
             "crates/crate_b/",
             "crates/crate_c/",
         ]);
-        let context = edge_context(&adjacency, &prefixes);
+        let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/outer/inner/src/lib.rs", "score + 1");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context));
@@ -1829,7 +1902,7 @@ mod tests {
             ..RustIndex::default()
         };
         let (adjacency, prefixes) = crate_a_dependency_context();
-        let context = edge_context(&adjacency, &prefixes);
+        let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context));
@@ -1859,7 +1932,7 @@ mod tests {
             ..RustIndex::default()
         };
         let (adjacency, prefixes) = crate_a_dependency_context();
-        let context = edge_context(&adjacency, &prefixes);
+        let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context));
@@ -1890,7 +1963,7 @@ mod tests {
             ..RustIndex::default()
         };
         let (adjacency, prefixes) = crate_a_dependency_context();
-        let context = edge_context(&adjacency, &prefixes);
+        let context = edge_context(&adjacency, &prefixes, &index);
         let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context));
