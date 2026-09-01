@@ -89,7 +89,7 @@ fn explicit_test_target_joins_executable_tests_and_stays_out_of_production() -> 
         roles.get("discount").map(String::as_str),
         Some("Production")
     );
-    assert!(is_test_file(Path::new("tests/smoke.rs")));
+    assert!(is_test_file(Path::new("tests/custom/smoke_case.rs")));
     let smoke_role =
         crate::analysis::workspace::classify_with(Path::new("tests/smoke.rs"), &empty_context());
     assert_eq!(format!("{:?}", smoke_role), "TestEvidence");

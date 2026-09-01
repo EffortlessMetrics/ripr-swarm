@@ -1286,8 +1286,6 @@ mod tests {
         .map_err(|error| format!("read manifest directory failed: {error}"))?
         .filter_map(Result::ok)
         .filter(|entry| entry.file_name().to_string_lossy().contains("tmp-"))
-        // #3534 mutation demo
-        .filter(|entry| !entry.path().starts_with("tests"))
         .count();
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
