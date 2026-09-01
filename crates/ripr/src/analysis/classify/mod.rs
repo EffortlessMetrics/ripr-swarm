@@ -27,7 +27,9 @@ pub(in crate::analysis) use infection::infection_evidence;
 pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
 pub(in crate::analysis) use propagation_witness::{PropagationWitnessV1, current_path_witness};
 pub(in crate::analysis) use reach::reach_evidence;
-pub(in crate::analysis) use related_tests::{body_contains_owner_call, find_related_tests};
+pub(in crate::analysis) use related_tests::{
+    DependencyEdgeContext, body_contains_owner_call, find_related_tests,
+};
 pub(in crate::analysis) use reveal::reveal_evidence_with_expression;
 // RIPR-SPEC-0106: re-export the variant parsers so test_grip_evidence.rs can
 // apply variant-binding without reaching into the private `text` submodule.

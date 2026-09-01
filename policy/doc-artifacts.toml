@@ -851,3 +851,11 @@ path = "docs/specs/RIPR-SPEC-0171-path-dependency-diff-scope.md"
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Issue #2665-C/#2970 records the reverse-dependency diff-scope contract: Draft/Fast package scope grows by the package roots that reach a changed package through the path-dependency adjacency, expansion only adds, limited/unavailable graphs disclose the boundary, non-narrowing selections are unchanged, and the diff-index scope cap stays fail-closed."
+
+[[artifact]]
+id = "RIPR-SPEC-0172"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0172-cross-crate-dependency-edge-relation.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #2972 records the cross-crate relation-admit contract: an ambiguous-name cross-crate call is admitted as related evidence only through one captured forward callable dependency declaration (normal/dev) to the owner's nearest-manifest package, with parser-backed call identity and import evidence attributable to the declared dependency name, and every other boundary failing closed."

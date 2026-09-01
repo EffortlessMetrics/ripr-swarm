@@ -8723,3 +8723,47 @@ metrics = [
   "unit_test_pass_rate",
   "golden_fixture_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0172"
+name = "cross-crate test relation through dependency edges"
+spec = "docs/specs/RIPR-SPEC-0172-cross-crate-dependency-edge-relation.md"
+tests = [
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_ambiguous_owner_when_cross_crate_dependent_test_calls_owner_then_edge_admits",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_forward_dev_dependency_edge_when_cross_crate_test_calls_owner_then_admits",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_nested_use_path_import_when_cross_crate_test_calls_owner_then_admits",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_brace_list_use_import_when_cross_crate_test_calls_owner_then_admits",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_qualified_call_through_dependency_name_when_no_import_exists_then_admits",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_ambiguous_owner_when_test_crate_has_no_edge_to_owner_crate_then_stays_filtered",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_reverse_dependency_edge_when_cross_crate_test_calls_owner_then_stays_filtered",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_build_only_dependency_edge_when_cross_crate_test_calls_owner_then_stays_filtered",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_import_from_another_dependency_when_cross_crate_test_calls_owner_then_stays_filtered",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_aliased_import_when_cross_crate_test_calls_owner_then_stays_filtered",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_comment_only_call_evidence_when_cross_crate_test_calls_owner_then_stays_filtered",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_string_literal_call_evidence_when_cross_crate_test_calls_owner_then_stays_filtered",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_local_let_binding_when_cross_crate_test_calls_owner_then_stays_filtered",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_method_call_form_when_cross_crate_test_calls_owner_then_stays_filtered",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_local_same_name_definition_when_cross_crate_test_calls_owner_then_stays_filtered",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_competing_edge_connected_candidate_when_cross_crate_test_calls_owner_then_stays_filtered",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_unattributed_same_name_definition_when_cross_crate_test_calls_owner_then_stays_filtered",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_nested_package_owner_when_test_depends_only_on_outer_crate_then_stays_filtered",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_nested_package_owner_when_test_depends_on_the_nested_crate_then_admits",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_custom_cargo_test_target_path_when_edge_connects_then_admits",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_limited_graph_when_cross_crate_test_calls_ambiguous_owner_then_stays_filtered",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_unavailable_graph_when_cross_crate_test_calls_ambiguous_owner_then_stays_filtered",
+  "crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::forward_dependency_declarations_keep_section_and_declared_name",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/classify/related_tests.rs",
+  "crates/ripr/src/analysis/classifier.rs",
+  "crates/ripr/src/analysis/language/rust.rs",
+  "crates/ripr/src/analysis/workspace/path_dependencies.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0172-cross-crate-dependency-edge-relation.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]

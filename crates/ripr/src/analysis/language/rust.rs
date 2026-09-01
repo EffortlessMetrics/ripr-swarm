@@ -1712,6 +1712,30 @@ impl RustAdapter {
         // stays out, the index stays partial and the bypass stays off.
         let workspace_index_complete = index_files.len() == analyzable_rust_files.len();
 
+        // #2972: one path-dependency edge context per classification pass,
+        // consumed by the cross-crate owner-call admit in
+        // `find_related_tests`. Only a whole-workspace index can admit (the
+        // same precondition as the #2971 uniqueness bypass), so narrower
+        // passes skip the manifest scan entirely.
+        let (manifest_dir_prefixes, dependency_adjacency) = if workspace_index_complete {
+            let manifest_dir_prefixes =
+                crate::analysis::seam_cache::workspace_manifest_dir_prefixes(&options.root);
+            let dependency_adjacency = workspace::PathDependencyAdjacency::build(
+                &crate::analysis::seam_cache::workspace_graph_provenance(&options.root),
+            );
+            (manifest_dir_prefixes, Some(dependency_adjacency))
+        } else {
+            (Vec::new(), None)
+        };
+        let dependency_edges =
+            dependency_adjacency
+                .as_ref()
+                .map(|adjacency| classify::DependencyEdgeContext {
+                    adjacency,
+                    manifest_dir_prefixes: &manifest_dir_prefixes,
+                    index: &index,
+                });
+
         for changed in analyzable_changed_files
             .iter()
             .filter(|file| self.accepts_path(&file.path))
@@ -1739,8 +1763,12 @@ impl RustAdapter {
             for (probe, binding_relation) in probes {
                 candidate_lines.insert((probe.location.file.clone(), probe.location.line));
                 cancellation::checkpoint()?;
-                let mut finding =
-                    classifier::classify_probe(&probe, &index, workspace_index_complete);
+                let mut finding = classifier::classify_probe(
+                    &probe,
+                    &index,
+                    workspace_index_complete,
+                    dependency_edges.as_ref(),
+                );
                 finding.language = Some(LanguageId::Rust);
                 // Producer-owned source currentness (#3280): resolved from the diff
                 // evidence that seeded the probe, before any limitation shaping.
@@ -1924,10 +1952,25 @@ impl RustAdapter {
 
         let mut findings = Vec::new();
 
+        // #2972: one path-dependency edge context per repo pass. Repo mode
+        // indexes the whole workspace, so the admit precondition holds by
+        // construction here.
+        let manifest_dir_prefixes =
+            crate::analysis::seam_cache::workspace_manifest_dir_prefixes(&options.root);
+        let dependency_adjacency = workspace::PathDependencyAdjacency::build(
+            &crate::analysis::seam_cache::workspace_graph_provenance(&options.root),
+        );
+        let dependency_edges = classify::DependencyEdgeContext {
+            adjacency: &dependency_adjacency,
+            manifest_dir_prefixes: &manifest_dir_prefixes,
+            index: &index,
+        };
+
         for path in &production_files {
             let probes = probes::probes_for_repo_file(&options.root, path, &index);
             for probe in probes {
-                let mut finding = classifier::classify_probe(&probe, &index, true);
+                let mut finding =
+                    classifier::classify_probe(&probe, &index, true, Some(&dependency_edges));
                 finding.language = Some(LanguageId::Rust);
                 // Repo mode seeds probes from the current tree, so every
                 // finding's source is candidate-side by construction
