@@ -10,7 +10,8 @@
 //! returned findings.
 
 use super::super::{
-    AnalysisOptions, classifier, classify, diff::ChangedFile, probes, rust_index, workspace,
+    AnalysisMode, AnalysisOptions, classifier, classify, diff::ChangedFile, probes, rust_index,
+    workspace,
 };
 use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route};
 use crate::analysis::cancellation;
@@ -1570,11 +1571,59 @@ impl RustAdapter {
             .into_iter()
             .filter(|path| !is_generated_rust_file_with_patterns(path, generated_file_patterns))
             .collect::<Vec<_>>();
-        let index_files = workspace::select_rust_files_for_mode(
+        // #2970 slice C: in the modes whose selection narrows to changed
+        // packages (Draft/Fast with unchanged tests), a behavior change in a
+        // path dependency can surface in every crate that depends on it, so
+        // the reverse path-dependency adjacency contributes the dependent
+        // package roots to the scope decision. Expansion only ever adds
+        // packages; every other selection contract (Instant changed-files-
+        // only, Deep/Ready whole-workspace, include_unchanged_tests=false)
+        // ignores the roots. The manifest scan runs only when package
+        // narrowing can apply, so non-narrowing paths pay nothing. A
+        // `limited`/`unavailable` graph is disclosed, never silently treated
+        // as a complete reach.
+        let (dependent_package_roots, manifest_dir_prefixes) =
+            if matches!(options.mode, AnalysisMode::Draft | AnalysisMode::Fast)
+                && options.include_unchanged_tests
+            {
+                let changed_package_roots = changed_rust_paths
+                    .iter()
+                    .filter_map(|path| workspace::package_root(path))
+                    .collect::<std::collections::BTreeSet<_>>();
+                // Files the layout heuristics cannot place (custom Cargo
+                // target paths, #3616 review) would previously drop out of
+                // the seed set entirely; they go to the expansion for
+                // attribution against the discovered manifest inventory.
+                let unattributed_changed_files = changed_rust_paths
+                    .iter()
+                    .filter(|path| workspace::package_root(path).is_none())
+                    .map(|path| workspace::normalize_path(path))
+                    .collect::<std::collections::BTreeSet<_>>();
+                if changed_package_roots.is_empty() && unattributed_changed_files.is_empty() {
+                    (std::collections::BTreeSet::new(), Vec::new())
+                } else {
+                    let expansion = workspace::reverse_dependent_scope_expansion(
+                        &options.root,
+                        &changed_package_roots,
+                        &unattributed_changed_files,
+                    );
+                    if let Some(disclosure) = expansion.scope_disclosure() {
+                        eprintln!("{disclosure}");
+                    }
+                    let manifest_dir_prefixes = expansion.manifest_dir_prefixes().to_vec();
+                    let dependent_package_roots = expansion.into_dependent_package_roots();
+                    (dependent_package_roots, manifest_dir_prefixes)
+                }
+            } else {
+                (std::collections::BTreeSet::new(), Vec::new())
+            };
+        let index_files = workspace::select_rust_files_for_mode_with_dependent_packages(
             &analyzable_rust_files,
             &changed_rust_paths,
             options.mode,
             options.include_unchanged_tests,
+            &dependent_package_roots,
+            &manifest_dir_prefixes,
         );
         // Fail closed before the working-set build that can exhaust a
         // constrained runner's memory (#1023): a too-large index is a named
@@ -1655,6 +1704,12 @@ impl RustAdapter {
         // that actually built the index instead: it is a deduplicated subset
         // of `analyzable_rust_files`, so an equal length means nothing was
         // dropped. Any narrower selection leaves the index partial.
+        //
+        // #2970 slice C: path-dependency scope expansion folds into the same
+        // derivation without special-casing. When the dependent roots happen
+        // to cover every analyzable file, the equality genuinely holds and
+        // the index really does span the workspace; when an unrelated crate
+        // stays out, the index stays partial and the bypass stays off.
         let workspace_index_complete = index_files.len() == analyzable_rust_files.len();
 
         for changed in analyzable_changed_files
@@ -2043,6 +2098,261 @@ mod tests {
                 })
             }),
             "changed test must remain indexed as related evidence: {:?}",
+            result.findings
+        );
+        Ok(())
+    }
+
+    // --- #2970 slice C: path-dependency diff-scope expansion ---
+
+    fn diff_options(root: PathBuf, mode: AnalysisMode) -> AnalysisOptions {
+        AnalysisOptions {
+            root,
+            base: None,
+            diff_file: None,
+            mode,
+            resolved_subject_identity: None,
+            include_unchanged_tests: true,
+            resolve_tsconfig_paths: false,
+            perl_facts_path: None,
+            git_timeout: None,
+            git_candidate: None,
+            production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
+        }
+    }
+
+    /// Writes the a <- b <- c path-dep workspace: `b` declares a path
+    /// dependency on `a`, `c` declares one on `b`, and `b`'s integration test
+    /// calls `a`'s changed owner. `with_edge = false` removes `b`'s edge and
+    /// is the over-reach discriminator: scope must then stay `a`-only.
+    fn write_path_dep_workspace(root: &Path, with_edge: bool) -> Result<(), String> {
+        write(
+            &root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"a\", \"b\", \"c\"]\nresolver = \"2\"\n",
+        )?;
+        write(
+            &root.join("a/Cargo.toml"),
+            "[package]\nname = \"scope_a\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        let b_dependencies = if with_edge {
+            "\n[dependencies]\nscope_a = { path = \"../a\" }\n"
+        } else {
+            ""
+        };
+        write(
+            &root.join("b/Cargo.toml"),
+            &format!(
+                "[package]\nname = \"scope_b\"\nversion = \"0.1.0\"\nedition = \"2024\"\n{b_dependencies}"
+            ),
+        )?;
+        write(
+            &root.join("c/Cargo.toml"),
+            "[package]\nname = \"scope_c\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
+             [dependencies]\nscope_b = { path = \"../b\" }\n",
+        )?;
+        write(
+            &root.join("a/src/lib.rs"),
+            "pub fn quarble_gauge(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
+        )?;
+        write(
+            &root.join("b/src/lib.rs"),
+            "pub fn relay(flag: bool) -> bool {\n    scope_a::quarble_gauge(flag)\n}\n",
+        )?;
+        write(
+            &root.join("b/tests/quarble_gauge_tests.rs"),
+            "#[test]\nfn quarble_gauge_holds() {\n    assert!(scope_a::quarble_gauge(true));\n}\n",
+        )?;
+        write(
+            &root.join("c/src/lib.rs"),
+            "pub fn forward(flag: bool) -> bool {\n    scope_b::relay(flag)\n}\n",
+        )
+    }
+
+    fn changed_a_lib_diff() -> Vec<ChangedFile> {
+        diff::parse_unified_diff(
+            "diff --git a/a/src/lib.rs b/a/src/lib.rs\n\
+             new file mode 100644\n\
+             --- /dev/null\n\
+             +++ b/a/src/lib.rs\n\
+             @@ -0,0 +1,4 @@\n\
+             +pub fn quarble_gauge(flag: bool) -> bool {\n\
+             +    if flag { true } else { false }\n\
+             +}\n",
+        )
+    }
+
+    fn has_related_test(findings: &[Finding], test_file_suffix: &str) -> bool {
+        findings.iter().any(|finding| {
+            finding.related_tests.iter().any(|test| {
+                test.file
+                    .to_string_lossy()
+                    .replace('\\', "/")
+                    .ends_with(test_file_suffix)
+            })
+        })
+    }
+
+    fn has_related_test_in_b(findings: &[Finding]) -> bool {
+        has_related_test(findings, "b/tests/quarble_gauge_tests.rs")
+    }
+
+    /// The slice C contract end to end: a Draft-mode diff that touches only
+    /// crate `a` brings the tests of path-dependents `b` and `c` into scope,
+    /// so `b`'s integration test that calls the changed owner is credited as
+    /// related evidence. The reach must come from the dependency edge: a
+    /// swapped forward/reverse adjacency fails here, because `a` declares no
+    /// dependencies, so a forward walk from `a` reaches nothing and `b`'s
+    /// test never enters the index.
+    #[test]
+    fn draft_diff_scope_reaches_path_dependent_tests_through_the_dependency_edge()
+    -> Result<(), String> {
+        let root = temp_root("path-dep-scope-reach")?;
+        write_path_dep_workspace(&root, true)?;
+        let changed_files = changed_a_lib_diff();
+
+        let result = RustAdapter.analyze_diff(
+            &diff_options(root, AnalysisMode::Draft),
+            &OraclePolicy::default(),
+            &changed_files,
+        )?;
+
+        assert!(
+            !result.findings.is_empty(),
+            "the changed owner must seed probes: {:?}",
+            result.findings
+        );
+        assert!(
+            has_related_test_in_b(&result.findings),
+            "the dependent crate's test must become reachable related evidence: {:?}",
+            result.findings
+        );
+        Ok(())
+    }
+
+    /// Over-reach discriminator: the same workspace without `b`'s dependency
+    /// edge must not reach `b`. The index stays `a`-only, is therefore not
+    /// workspace-complete, and the cross-crate test stays out fail-closed.
+    #[test]
+    fn draft_diff_scope_stays_narrow_without_the_path_dependency_edge() -> Result<(), String> {
+        let root = temp_root("path-dep-scope-no-edge")?;
+        write_path_dep_workspace(&root, false)?;
+        let changed_files = changed_a_lib_diff();
+
+        let result = RustAdapter.analyze_diff(
+            &diff_options(root, AnalysisMode::Draft),
+            &OraclePolicy::default(),
+            &changed_files,
+        )?;
+
+        assert!(
+            !result.findings.is_empty(),
+            "the changed owner must seed probes: {:?}",
+            result.findings
+        );
+        assert!(
+            !has_related_test_in_b(&result.findings),
+            "without the dependency edge the dependent test stays out of scope: {:?}",
+            result.findings
+        );
+        Ok(())
+    }
+
+    /// Instant stays changed-files-only even with the dependency edge: the
+    /// expansion participates only in the package-narrowing selections.
+    #[test]
+    fn instant_mode_does_not_expand_scope_through_path_dependencies() -> Result<(), String> {
+        let root = temp_root("path-dep-scope-instant")?;
+        write_path_dep_workspace(&root, true)?;
+        let changed_files = changed_a_lib_diff();
+
+        let result = RustAdapter.analyze_diff(
+            &diff_options(root, AnalysisMode::Instant),
+            &OraclePolicy::default(),
+            &changed_files,
+        )?;
+
+        assert!(
+            !result.findings.is_empty(),
+            "the changed owner must seed probes: {:?}",
+            result.findings
+        );
+        assert!(
+            !has_related_test_in_b(&result.findings),
+            "Instant stays changed-files-only; the dependent test stays out: {:?}",
+            result.findings
+        );
+        Ok(())
+    }
+
+    /// #3616 review fix 1 end to end: a Draft diff that touches only a
+    /// custom-target file (`[lib] path = "lib/core.rs"`, no heuristic
+    /// package root) still expands its crate's path dependents. The
+    /// manifest-inventory attribution seeds the owning package, the index
+    /// spans the whole two-crate workspace, and the dependent's integration
+    /// test is credited as related evidence through the #2971 uniqueness
+    /// bypass. Without the attribution the index stays at the changed file
+    /// alone and the dependent test stays out fail-closed. The supported
+    /// production-like opt-in (#3283) is what makes the custom-target file
+    /// seed probes at all.
+    #[test]
+    fn draft_diff_scope_expands_custom_target_files_to_their_path_dependents() -> Result<(), String>
+    {
+        let root = temp_root("path-dep-scope-custom-target")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"t\", \"u\"]\nresolver = \"2\"\n",
+        )?;
+        write(
+            &root.join("t/Cargo.toml"),
+            "[package]\nname = \"scope_t\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
+             [lib]\npath = \"lib/core.rs\"\n",
+        )?;
+        write(
+            &root.join("u/Cargo.toml"),
+            "[package]\nname = \"scope_u\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
+             [dependencies]\nscope_t = { path = \"../t\" }\n",
+        )?;
+        write(
+            &root.join("t/lib/core.rs"),
+            "pub fn quarble_gauge(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
+        )?;
+        write(
+            &root.join("u/src/lib.rs"),
+            "pub fn relay(flag: bool) -> bool {\n    scope_t::quarble_gauge(flag)\n}\n",
+        )?;
+        write(
+            &root.join("u/tests/quarble_gauge_tests.rs"),
+            "#[test]\nfn quarble_gauge_holds() {\n    assert!(scope_t::quarble_gauge(true));\n}\n",
+        )?;
+        let changed_files = diff::parse_unified_diff(
+            "diff --git a/t/lib/core.rs b/t/lib/core.rs\n\
+             new file mode 100644\n\
+             --- /dev/null\n\
+             +++ b/t/lib/core.rs\n\
+             @@ -0,0 +1,4 @@\n\
+             +pub fn quarble_gauge(flag: bool) -> bool {\n\
+             +    if flag { true } else { false }\n\
+             +}\n",
+        );
+        let mut production_like_targets = std::collections::BTreeSet::new();
+        production_like_targets.insert(PathBuf::from("t/lib/core.rs"));
+        let options = AnalysisOptions {
+            production_like_targets,
+            ..diff_options(root, AnalysisMode::Draft)
+        };
+
+        let result =
+            RustAdapter.analyze_diff(&options, &OraclePolicy::default(), &changed_files)?;
+
+        assert!(
+            !result.findings.is_empty(),
+            "the opted-in custom-target owner must seed probes: {:?}",
+            result.findings
+        );
+        assert!(
+            has_related_test(&result.findings, "u/tests/quarble_gauge_tests.rs"),
+            "the dependent crate's test must become reachable through the attributed scope: {:?}",
             result.findings
         );
         Ok(())

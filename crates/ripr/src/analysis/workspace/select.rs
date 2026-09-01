@@ -8,11 +8,41 @@ use std::path::{Path, PathBuf};
 /// fails closed (their children keep their standalone roles).
 const MAX_MODULE_CONTEXT_DEPTH: usize = 32;
 
-pub fn select_rust_files_for_mode(
+/// Pre-#2970 selection entry, kept for the selection test matrix: identical
+/// to [`select_rust_files_for_mode_with_dependent_packages`] with no
+/// dependent roots. The workspace module re-exports only the expansion-aware
+/// form, so this wrapper exists under `cfg(test)` alone.
+#[cfg(test)]
+fn select_rust_files_for_mode(
     all_files: &[PathBuf],
     changed_rust_files: &[PathBuf],
     mode: AnalysisMode,
     include_unchanged_tests: bool,
+) -> Vec<PathBuf> {
+    select_rust_files_for_mode_with_dependent_packages(
+        all_files,
+        changed_rust_files,
+        mode,
+        include_unchanged_tests,
+        &BTreeSet::new(),
+        &[],
+    )
+}
+
+/// The package-narrowing selection with the reverse-dependency expansion of
+/// the package scope (#2970 slice C): `dependent_package_roots` carries the
+/// package roots that reach a changed package through path dependencies, so
+/// the Draft/Fast package narrowing also indexes the tests of dependent
+/// crates instead of dropping them from scope. Expansion only ever adds
+/// packages; Instant's changed-files-only and Deep/Ready's whole-workspace
+/// selections ignore it, as does every branch without package narrowing.
+pub(crate) fn select_rust_files_for_mode_with_dependent_packages(
+    all_files: &[PathBuf],
+    changed_rust_files: &[PathBuf],
+    mode: AnalysisMode,
+    include_unchanged_tests: bool,
+    dependent_package_roots: &BTreeSet<String>,
+    manifest_dir_prefixes: &[String],
 ) -> Vec<PathBuf> {
     let changed_existing = changed_existing_files(all_files, changed_rust_files);
     if matches!(mode, AnalysisMode::Instant) || !include_unchanged_tests {
@@ -27,14 +57,36 @@ pub fn select_rust_files_for_mode(
         .iter()
         .filter_map(|path| package_root(path))
         .collect::<Vec<_>>();
-    if package_roots.is_empty() {
+    // #3616 review: custom-target changed files can carry no heuristic root
+    // while the expansion still attributed dependent packages, so the
+    // dependent roots alone must keep the package narrowing alive. With
+    // neither set the fallback to changed files only stands.
+    if package_roots.is_empty() && dependent_package_roots.is_empty() {
         return with_module_context_files(all_files, changed_existing);
     }
 
     let package_files = all_files.iter().filter(|file| {
-        package_root(file)
-            .as_ref()
-            .is_some_and(|root| package_roots.iter().any(|changed| changed == root))
+        if let Some(root) = package_root(file) {
+            package_roots.iter().any(|changed| changed == &root)
+                || dependent_package_roots.contains(&root)
+        } else {
+            // #3616 review: a file with no heuristic root can still belong
+            // to an expanded dependent package (custom Cargo target paths
+            // such as `b/lib/core.rs`). Ownership is the nearest discovered
+            // manifest directory — the same longest-prefix rule the
+            // expansion seeding used — so a nested crate inside a dependent
+            // does not leak into scope unless the nested manifest is itself
+            // a dependent (#3616 review, second round).
+            let normalized = file.to_string_lossy().replace('\\', "/");
+            let Some(owner) = manifest_dir_prefixes
+                .iter()
+                .filter(|prefix| normalized.starts_with(prefix.as_str()))
+                .max_by_key(|prefix| prefix.len())
+            else {
+                return false;
+            };
+            dependent_package_roots.contains(owner)
+        }
     });
     with_module_context_files(
         all_files,
@@ -433,5 +485,251 @@ mod tests {
             .wrapping_mul(6364136223846793005)
             .wrapping_add(1442695040888963407);
         *seed
+    }
+
+    /// #2970 slice C: the a <- b <- c path-dep chain plus unrelated d. The
+    /// dependent roots enter the Draft/Fast package selection, `d` stays out,
+    /// and the direction is discriminated: expansion from `a` (nothing
+    /// depends on `a` in the forward direction) is what brings `b`/`c` in, so
+    /// a swapped forward/reverse adjacency — whose expansion of `a` is empty
+    /// — loses the dependent files.
+    #[test]
+    fn dependent_packages_enter_draft_and_fast_selection() {
+        let all = files(&[
+            "a/src/lib.rs",
+            "b/src/lib.rs",
+            "b/tests/behavior.rs",
+            "c/src/lib.rs",
+            "d/src/lib.rs",
+            "d/tests/d.rs",
+        ]);
+        let changed = files(&["a/src/lib.rs"]);
+        let dependents = ["b/".to_string(), "c/".to_string()]
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        let prefixes = ["", "a/", "b/", "c/", "d/"]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+
+        for mode in [AnalysisMode::Draft, AnalysisMode::Fast] {
+            let selected = select_rust_files_for_mode_with_dependent_packages(
+                &all,
+                &changed,
+                mode,
+                true,
+                &dependents,
+                &prefixes,
+            );
+            assert_eq!(
+                selected,
+                files(&[
+                    "a/src/lib.rs",
+                    "b/src/lib.rs",
+                    "b/tests/behavior.rs",
+                    "c/src/lib.rs"
+                ]),
+                "{mode:?}: dependent crates b and c enter scope, unrelated d stays out"
+            );
+        }
+    }
+
+    /// Empty dependent roots reproduce the unchanged package selection
+    /// exactly: expansion only ever adds, never narrows.
+    #[test]
+    fn empty_dependent_roots_reproduce_the_unchanged_selection() {
+        let all = files(&["a/src/lib.rs", "b/src/lib.rs", "b/tests/b.rs"]);
+        let changed = files(&["a/src/lib.rs"]);
+        let selected = select_rust_files_for_mode_with_dependent_packages(
+            &all,
+            &changed,
+            AnalysisMode::Draft,
+            true,
+            &std::collections::BTreeSet::new(),
+            &[],
+        );
+        assert_eq!(selected, files(&["a/src/lib.rs"]));
+    }
+
+    /// #3616 review: a dependent crate's custom-target file carries no
+    /// heuristic package root (`b/lib/core.rs` matches no `src/`/`tests/`
+    /// pattern), so heuristic attribution alone would exclude it even
+    /// though `b` was attributed as a dependent. Prefix membership against
+    /// the graph-attributed dependent roots keeps such files indexed.
+    #[test]
+    fn dependent_custom_target_files_enter_selection_by_root_prefix() {
+        let all = files(&[
+            "a/src/lib.rs",
+            "b/lib/core.rs",
+            "b/src/lib.rs",
+            "d/src/lib.rs",
+        ]);
+        let changed = files(&["a/src/lib.rs"]);
+        let dependents = ["b/".to_string()]
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        let prefixes = ["", "a/", "b/", "d/"]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+
+        let selected = select_rust_files_for_mode_with_dependent_packages(
+            &all,
+            &changed,
+            AnalysisMode::Draft,
+            true,
+            &dependents,
+            &prefixes,
+        );
+        assert_eq!(
+            selected,
+            files(&["a/src/lib.rs", "b/lib/core.rs", "b/src/lib.rs"]),
+            "the dependent's custom-target file enters by root prefix; unrelated d stays out"
+        );
+    }
+
+    /// #3616 review, second round: a nested crate inside a dependent must
+    /// not leak into scope through the bare prefix rule — ownership of an
+    /// unattributed file is its nearest manifest, so the nested crate's
+    /// custom-target files stay out unless the nested manifest is itself a
+    /// dependent.
+    #[test]
+    fn nested_crate_inside_dependent_stays_out_unless_itself_dependent() {
+        let all = files(&[
+            "a/src/lib.rs",
+            "b/src/lib.rs",
+            "b/lib/core.rs",
+            "b/plugins/inner/lib.rs",
+            "d/src/lib.rs",
+        ]);
+        let changed = files(&["a/src/lib.rs"]);
+        let dependents = ["b/".to_string()]
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        let prefixes = ["", "a/", "b/", "b/plugins/inner/", "d/"]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+
+        let selected = select_rust_files_for_mode_with_dependent_packages(
+            &all,
+            &changed,
+            AnalysisMode::Draft,
+            true,
+            &dependents,
+            &prefixes,
+        );
+        assert_eq!(
+            selected,
+            files(&["a/src/lib.rs", "b/lib/core.rs", "b/src/lib.rs"]),
+            "b's own custom target enters; the nested crate's files stay out while              b/plugins/inner is not itself a dependent"
+        );
+    }
+
+    /// #3616 review: custom-target changed files carry no heuristic package
+    /// root, yet the expansion can still attribute dependent packages. The
+    /// dependent roots alone must keep the package narrowing alive — the
+    /// changed custom-target file enters through the changed-file set and
+    /// the dependents' files through their package roots.
+    #[test]
+    fn dependent_packages_narrow_selection_without_heuristic_changed_roots() {
+        let all = files(&["t/lib/core.rs", "u/src/lib.rs", "u/tests/u.rs"]);
+        let changed = files(&["t/lib/core.rs"]);
+        let dependents = ["u/".to_string()]
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+
+        let prefixes = ["", "t/", "u/"]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            select_rust_files_for_mode_with_dependent_packages(
+                &all,
+                &changed,
+                AnalysisMode::Draft,
+                true,
+                &dependents,
+                &prefixes
+            ),
+            files(&["t/lib/core.rs", "u/src/lib.rs", "u/tests/u.rs"]),
+            "the attributed dependents enter scope although no changed file has a heuristic root"
+        );
+        assert_eq!(
+            select_rust_files_for_mode_with_dependent_packages(
+                &all,
+                &changed,
+                AnalysisMode::Draft,
+                true,
+                &std::collections::BTreeSet::new(),
+                &prefixes
+            ),
+            files(&["t/lib/core.rs"]),
+            "without dependents the selection stays the changed files only"
+        );
+    }
+
+    /// Modes and toggles without package narrowing ignore the dependent
+    /// roots: Instant stays changed-files-only, Deep/Ready stay
+    /// whole-workspace, and `include_unchanged_tests = false` stays
+    /// changed-files-only in every mode.
+    #[test]
+    fn dependent_roots_do_not_change_non_narrowing_selections() {
+        let all = files(&["a/src/lib.rs", "b/src/lib.rs", "b/tests/b.rs"]);
+        let changed = files(&["a/src/lib.rs"]);
+        let dependents = ["b/".to_string()]
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        let prefixes = ["", "a/", "b/"]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            select_rust_files_for_mode_with_dependent_packages(
+                &all,
+                &changed,
+                AnalysisMode::Instant,
+                true,
+                &dependents,
+                &prefixes
+            ),
+            files(&["a/src/lib.rs"]),
+            "Instant must stay changed-files-only"
+        );
+        for mode in [AnalysisMode::Deep, AnalysisMode::Ready] {
+            assert_eq!(
+                select_rust_files_for_mode_with_dependent_packages(
+                    &all,
+                    &changed,
+                    mode,
+                    true,
+                    &dependents,
+                    &prefixes
+                ),
+                files(&["a/src/lib.rs", "b/src/lib.rs", "b/tests/b.rs"]),
+                "{mode:?} already spans the workspace"
+            );
+        }
+        for mode in [
+            AnalysisMode::Instant,
+            AnalysisMode::Draft,
+            AnalysisMode::Fast,
+            AnalysisMode::Deep,
+            AnalysisMode::Ready,
+        ] {
+            assert_eq!(
+                select_rust_files_for_mode_with_dependent_packages(
+                    &all,
+                    &changed,
+                    mode,
+                    false,
+                    &dependents,
+                    &prefixes
+                ),
+                files(&["a/src/lib.rs"]),
+                "{mode:?} with include_unchanged_tests=false must stay changed-files-only"
+            );
+        }
     }
 }

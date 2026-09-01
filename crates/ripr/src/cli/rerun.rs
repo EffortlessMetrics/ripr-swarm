@@ -129,10 +129,14 @@ struct TargetedRerunGraphProvenance {
     external_dependency_graph_detail: String,
     /// #2969 slice B: the forward/reverse path-dependency adjacency built
     /// from captured edges, disclosed per manifest with its build status.
-    /// Disclosure only: this section does not yet contribute to
-    /// `input_changed` naming or parity input mismatches, because workspace
-    /// scope expansion does not consume the graph yet (#2970). `serde(default)`
-    /// keeps before artifacts written before this section deserializable.
+    /// Disclosure only: this section still does not contribute to
+    /// `input_changed` naming or parity input mismatches. Slice C (#2970)
+    /// gave the graph its first analysis consumer — reverse-dependency
+    /// diff-scope expansion in the Rust adapter — which rebuilds the
+    /// adjacency from current provenance on every run, so hash-stability
+    /// naming for this section remains deliberately deferred rather than
+    /// implied by that consumption. `serde(default)` keeps before artifacts
+    /// written before this section deserializable.
     #[serde(default)]
     path_dependency_graph: TargetedRerunPathDependencyGraph,
 }

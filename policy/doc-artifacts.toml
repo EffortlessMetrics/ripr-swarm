@@ -843,3 +843,11 @@ path = "docs/specs/RIPR-SPEC-0170-stable-cross-platform-path-text.md"
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Issue #3609 records the shared stable textual path contract: literal percent escaping is consistent across platforms while Unix invalid-byte `%XX` identity remains distinct; no decoder, confinement, schema, or support-tier change."
+
+[[artifact]]
+id = "RIPR-SPEC-0171"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0171-path-dependency-diff-scope.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #2665-C/#2970 records the reverse-dependency diff-scope contract: Draft/Fast package scope grows by the package roots that reach a changed package through the path-dependency adjacency, expansion only adds, limited/unavailable graphs disclose the boundary, non-narrowing selections are unchanged, and the diff-index scope cap stays fail-closed."

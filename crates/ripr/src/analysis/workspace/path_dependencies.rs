@@ -26,12 +26,15 @@
 //! - when no path dependency was declared at all the status is `complete`
 //!   with an empty node set and the detail states that truthfully.
 //!
-//! Scope boundary: this slice builds and exposes the graph only. Scope
-//! expansion and dep-driven impact analysis consume it later (#2970).
+//! Scope boundary: this module builds and exposes the graph, and (#2970
+//! slice C) computes the reverse-dependency diff-scope expansion that the
+//! Rust adapter feeds into the Draft/Fast package selection. Dep-driven
+//! impact analysis beyond scope expansion is still future work.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
-use crate::analysis::seam_cache::WorkspaceGraphProvenance;
+use crate::analysis::seam_cache::{WorkspaceGraphProvenance, workspace_graph_provenance};
 
 /// Build status of the path-dependency adjacency, disclosed alongside every
 /// rendered neighbor list.
@@ -61,13 +64,8 @@ impl PathDependencyGraphStatus {
 /// One reachability walk result: the transitively reachable manifests plus
 /// the cycle markers cut to keep the walk finite.
 ///
-/// Reserved-until-consumed: the walk surface is the #2970 consumer contract
-/// (scope expansion walks the graph); slice B builds and test-proves it, so
-/// it is dead in non-test builds until that slice lands.
-#[allow(
-    dead_code,
-    reason = "walk result type is the #2970 consumer contract; exercised by tests in slice B"
-)]
+/// #2970 slice C consumes reverse walks for diff-scope expansion; the
+/// forward direction has no production consumer yet.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PathDependencyWalk {
     /// Manifest identities reached from the start node, sorted, excluding the
@@ -82,10 +80,6 @@ pub(crate) struct PathDependencyWalk {
 
 impl PathDependencyWalk {
     /// Manifests reached from the start node, sorted, start excluded.
-    #[allow(
-        dead_code,
-        reason = "walk result type is the #2970 consumer contract; exercised by tests in slice B"
-    )]
     pub(crate) fn reachable(&self) -> &[String] {
         &self.reachable
     }
@@ -93,7 +87,8 @@ impl PathDependencyWalk {
     /// Cycle markers: back-edge targets already on the walk path, sorted.
     #[allow(
         dead_code,
-        reason = "walk result type is the #2970 consumer contract; exercised by tests in slice B"
+        reason = "cycle markers stay disclosed on the graph surfaces (rerun fingerprint, \
+                  adjacency tests); diff-scope expansion needs only the reachable set"
     )]
     pub(crate) fn cycle_manifests(&self) -> &[String] {
         &self.cycle_manifests
@@ -229,11 +224,10 @@ impl PathDependencyAdjacency {
 
     /// Whether `manifest` participates in the graph at all. Unknown manifests
     /// and crates with no path-dependency edges both return `false`.
-    ///
-    /// Reserved-until-consumed by the #2970 scope-expansion slice.
     #[allow(
         dead_code,
-        reason = "reserved for the #2970 scope-expansion consumer; exercised by tests in slice B"
+        reason = "adjacency membership probe kept for graph consumers and tests; the scope \
+                  expansion resolves membership through the walk itself"
     )]
     pub(crate) fn contains_node(&self, manifest: &str) -> bool {
         self.nodes.contains(manifest)
@@ -257,10 +251,13 @@ impl PathDependencyAdjacency {
     /// path dependencies, with cycles cut and disclosed. `None` when the
     /// manifest is not a graph node.
     ///
-    /// Reserved-until-consumed by the #2970 scope-expansion slice.
+    /// No production consumer yet: the #2970 diff-scope expansion walks the
+    /// reverse direction (dependents), and forward scope expansion is not a
+    /// stated contract.
     #[allow(
         dead_code,
-        reason = "reserved for the #2970 scope-expansion consumer; exercised by tests in slice B"
+        reason = "forward direction is pinned by tests and reserved for future dep-driven \
+                  consumers; only the reverse walk has a production consumer today"
     )]
     pub(crate) fn forward_walk(&self, manifest: &str) -> Option<PathDependencyWalk> {
         self.walk(&self.forward, manifest)
@@ -269,12 +266,6 @@ impl PathDependencyAdjacency {
     /// Transitive reverse reach: every manifest that reaches `manifest`
     /// through path dependencies, with cycles cut and disclosed. `None` when
     /// the manifest is not a graph node.
-    ///
-    /// Reserved-until-consumed by the #2970 scope-expansion slice.
-    #[allow(
-        dead_code,
-        reason = "reserved for the #2970 scope-expansion consumer; exercised by tests in slice B"
-    )]
     pub(crate) fn reverse_walk(&self, manifest: &str) -> Option<PathDependencyWalk> {
         self.walk(&self.reverse, manifest)
     }
@@ -284,10 +275,6 @@ impl PathDependencyAdjacency {
     /// already on the current path is a cycle back-edge: disclosed, never
     /// recursed. Together the two guards bound the walk to O(nodes + edges)
     /// steps on any input, cyclic or not.
-    #[allow(
-        dead_code,
-        reason = "reserved for the #2970 scope-expansion consumer; exercised by tests in slice B"
-    )]
     fn walk(
         &self,
         adjacency: &BTreeMap<String, BTreeSet<String>>,
@@ -346,6 +333,189 @@ impl PathDependencyAdjacency {
             cycle_manifests: cycles.into_iter().collect(),
         })
     }
+}
+
+/// Reverse-dependency expansion of the diff-scope package set (#2970
+/// slice C).
+///
+/// The diff-scope decision surface (`select_rust_files_for_mode`) narrows
+/// Draft/Fast analysis to the packages that own changed files. A behavior
+/// change in a path dependency can surface in every crate that depends on
+/// it, so the reverse adjacency contributes the dependent package roots to
+/// the scope decision. The base scope is never dropped: expansion only ever
+/// adds packages, and a graph that could not be built (`unavailable`) or a
+/// partial edge inventory (`limited`) is disclosed through
+/// [`PathDependencyScopeExpansion::scope_disclosure`] instead of silently
+/// narrowing the scope or silently pretending the reach was complete.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PathDependencyScopeExpansion {
+    status: PathDependencyGraphStatus,
+    /// Package roots (forward-slash, trailing `/`, sorted) of manifests that
+    /// reach a changed package through the reverse path-dependency adjacency.
+    /// Empty when no changed package has dependents, including when the
+    /// graph was unavailable.
+    dependent_package_roots: BTreeSet<String>,
+    /// The discovered manifest directory prefixes behind this expansion, so
+    /// consumers attribute unattributed files with the same nearest-manifest
+    /// ownership rule the seeding used (#3616 review).
+    manifest_dir_prefixes: Vec<String>,
+}
+
+impl PathDependencyScopeExpansion {
+    /// Discovered manifest directory prefixes (`/`-separated, trailing `/`,
+    /// including the empty root prefix), sorted as produced by the walk.
+    pub(crate) fn manifest_dir_prefixes(&self) -> &[String] {
+        &self.manifest_dir_prefixes
+    }
+    /// Disclosed graph state behind this expansion.
+    #[allow(
+        dead_code,
+        reason = "status accessor is exercised by the expansion tests; the production scope \
+                  surface consumes the disclosure and the roots only"
+    )]
+    pub(crate) fn status(&self) -> PathDependencyGraphStatus {
+        self.status
+    }
+
+    /// Boundary disclosure for the scope decision. `Some` exactly when the
+    /// graph state could have made the computed reach differ from the real
+    /// dependency reach (`limited`: partial edge inventory; `unavailable`:
+    /// no adjacency at all). A `complete` graph needs no disclosure: the
+    /// walk covered the full captured edge inventory.
+    pub(crate) fn scope_disclosure(&self) -> Option<String> {
+        match self.status {
+            PathDependencyGraphStatus::Complete => None,
+            PathDependencyGraphStatus::Limited => Some(
+                "ripr: path-dependency graph status is limited: reverse-dependency diff-scope \
+                 expansion used a partial edge inventory and may have missed dependents"
+                    .to_string(),
+            ),
+            PathDependencyGraphStatus::Unavailable => Some(
+                "ripr: path-dependency graph status is unavailable: no local Cargo.toml \
+                 manifest was found, so reverse-dependency diff-scope expansion did not run \
+                 and the diff scope stays the changed packages"
+                    .to_string(),
+            ),
+        }
+    }
+
+    /// The computed dependent package roots, consuming the expansion.
+    pub(crate) fn into_dependent_package_roots(self) -> BTreeSet<String> {
+        self.dependent_package_roots
+    }
+}
+
+/// Compute the reverse-dependency expansion for the changed package roots.
+/// Reads the local manifest inventory (`workspace_graph_provenance`) and
+/// walks the reverse adjacency; no network, no Cargo invocation. A changed
+/// root whose manifest is not a graph node (no manifest at that root, or no
+/// connected path edge anywhere) can still contribute through the
+/// declared-target index when some manifest declared a path dependency on
+/// it. `unattributed_changed_files` carries the repo-relative,
+/// `/`-separated changed Rust files that the layout heuristics could not
+/// place in any package; they are attributed to the nearest discovered
+/// manifest directory (#3616 review).
+pub(crate) fn reverse_dependent_scope_expansion(
+    root: &Path,
+    changed_package_roots: &BTreeSet<String>,
+    unattributed_changed_files: &BTreeSet<String>,
+) -> PathDependencyScopeExpansion {
+    let manifest_dir_prefixes = crate::analysis::seam_cache::workspace_manifest_dir_prefixes(root);
+    let provenance = workspace_graph_provenance(root);
+    expansion_from_provenance(
+        &provenance,
+        &manifest_dir_prefixes,
+        changed_package_roots,
+        unattributed_changed_files,
+    )
+}
+
+/// Pure core behind [`reverse_dependent_scope_expansion`]: the expansion
+/// computed from one provenance snapshot plus the discovered manifest
+/// directory prefixes. Kept separate so the deleted-target scenario can be
+/// proved against synthetic provenance without a filesystem.
+pub(crate) fn expansion_from_provenance(
+    provenance: &WorkspaceGraphProvenance,
+    manifest_dir_prefixes: &[String],
+    changed_package_roots: &BTreeSet<String>,
+    unattributed_changed_files: &BTreeSet<String>,
+) -> PathDependencyScopeExpansion {
+    // Fast path first: the heuristic package roots keep their existing
+    // meaning, and the attribution fallback below only ever adds seeds for
+    // files the heuristics dropped (#3616 review).
+    let mut seed_roots: BTreeSet<String> = changed_package_roots.clone();
+    // Custom Cargo target paths (`[[bin]] path = "bin/tool.rs"`, `[lib]
+    // path = "lib/x.rs"`) match no layout heuristic, so those changed files
+    // previously never seeded a package root and their dependents never
+    // expanded. Attribute each unplaced file to the nearest discovered
+    // manifest directory that is an ancestor of the file (longest prefix;
+    // the root manifest is the empty prefix), using the same scan that
+    // names the adjacency's manifests so the identities agree.
+    for file in unattributed_changed_files {
+        if let Some(directory) = manifest_dir_prefixes
+            .iter()
+            .filter(|prefix| file.starts_with(prefix.as_str()))
+            .max_by_key(|prefix| prefix.len())
+        {
+            seed_roots.insert(directory.clone());
+        }
+    }
+
+    let adjacency = PathDependencyAdjacency::build(provenance);
+    // Declared-target index over every captured edge that carries a lexical
+    // identity, resolution regardless (#3616 review): when a diff deletes
+    // or renames a dependency directory, the declaring manifests' edges are
+    // `TargetMissing` and stay disconnected after the #3613 hardening, but
+    // the declarers remain real declared dependents of the identity they
+    // named — and a build error is exactly when the dependents' tests
+    // belong in scope. One hop, no walk, so cycles cannot loop here.
+    let mut declared_dependents: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for edge in &provenance.path_dependency_edges {
+        let Some(resolved) = edge.resolved_path.as_deref() else {
+            continue;
+        };
+        declared_dependents
+            .entry(manifest_identity_from_resolved_path(resolved))
+            .or_default()
+            .insert(edge.from_manifest.clone());
+    }
+
+    let mut dependent_package_roots = BTreeSet::new();
+    for changed in &seed_roots {
+        let manifest = manifest_of_package_root(changed);
+        if let Some(walk) = adjacency.reverse_walk(&manifest) {
+            for reached in walk.reachable() {
+                dependent_package_roots.insert(package_root_of_manifest(reached));
+            }
+        }
+        if let Some(declarers) = declared_dependents.get(&manifest) {
+            for declarer in declarers {
+                dependent_package_roots.insert(package_root_of_manifest(declarer));
+            }
+        }
+    }
+    PathDependencyScopeExpansion {
+        status: adjacency.status(),
+        dependent_package_roots,
+        manifest_dir_prefixes: manifest_dir_prefixes.to_vec(),
+    }
+}
+
+/// Manifest identity of a `package_root`-shaped directory prefix: the empty
+/// root is the scan-root manifest, every other root already ends in `/`.
+fn manifest_of_package_root(package_root: &str) -> String {
+    format!("{package_root}Cargo.toml")
+}
+
+/// `package_root`-shaped directory prefix of an adjacency manifest node.
+/// A node that does not end in `Cargo.toml` cannot name a package root, so
+/// the identity is kept as-is and matches no workspace file (fail closed:
+/// nothing is selected through an unmappable node).
+fn package_root_of_manifest(manifest: &str) -> String {
+    manifest
+        .strip_suffix("Cargo.toml")
+        .unwrap_or(manifest)
+        .to_string()
 }
 
 /// Node identity of one resolved dependency path. Cargo path dependencies
@@ -963,5 +1133,384 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
+    }
+
+    // --- #2970 slice C: reverse-dependency diff-scope expansion ---
+
+    fn chain_workspace(root: &Path) -> Result<(), String> {
+        // a <- b <- c: b declares a, c declares b. d is unrelated.
+        write_manifest(
+            root,
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"a\", \"b\", \"c\", \"d\"]\n",
+        )?;
+        write_manifest(
+            root,
+            "a/Cargo.toml",
+            "[package]\nname = \"a\"\nversion = \"0.1.0\"\n",
+        )?;
+        write_manifest(
+            root,
+            "b/Cargo.toml",
+            "[package]\nname = \"b\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\na = { path = \"../a\" }\n",
+        )?;
+        write_manifest(
+            root,
+            "c/Cargo.toml",
+            "[package]\nname = \"c\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\nb = { path = \"../b\" }\n",
+        )?;
+        write_manifest(
+            root,
+            "d/Cargo.toml",
+            "[package]\nname = \"d\"\nversion = \"0.1.0\"\n",
+        )
+    }
+
+    fn roots(values: &[&str]) -> BTreeSet<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    /// Expansion with no unattributed files: the heuristic fast path.
+    fn expansion_for(root: &Path, changed: &BTreeSet<String>) -> PathDependencyScopeExpansion {
+        reverse_dependent_scope_expansion(root, changed, &BTreeSet::new())
+    }
+
+    /// The task matrix: changing `a` reaches dependents `b` and `c` through
+    /// the reverse adjacency, the unrelated `d` contributes nothing, and the
+    /// direction is discriminated on both ends — expanding from `c` (which
+    /// nothing depends on) yields nothing. A swapped forward/reverse build
+    /// would fail both halves: `a` would reach nothing and `c` would reach
+    /// `b` and `a`.
+    #[test]
+    fn expansion_reaches_dependents_of_changed_packages_only() -> Result<(), String> {
+        let root = unique_dir("expansion-chain");
+        let _ = std::fs::remove_dir_all(&root);
+        chain_workspace(&root)?;
+
+        let from_a = expansion_for(&root, &roots(&["a/"]));
+        assert_eq!(from_a.status(), PathDependencyGraphStatus::Complete);
+        assert_eq!(
+            from_a.scope_disclosure(),
+            None,
+            "a complete graph needs no scope disclosure"
+        );
+        assert_eq!(
+            from_a.into_dependent_package_roots(),
+            roots(&["b/", "c/"]),
+            "changing a must bring its transitive dependents b and c into scope"
+        );
+
+        let from_c = expansion_for(&root, &roots(&["c/"]));
+        assert_eq!(from_c.status(), PathDependencyGraphStatus::Complete);
+        assert!(
+            from_c.into_dependent_package_roots().is_empty(),
+            "nothing depends on c, so expanding from c must add nothing"
+        );
+
+        let from_a_and_d = expansion_for(&root, &roots(&["a/", "d/"]));
+        assert_eq!(
+            from_a_and_d.into_dependent_package_roots(),
+            roots(&["b/", "c/"]),
+            "the unrelated crate d must stay out of the expansion"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// Changed roots with no manifest node (an unknown package root, a root
+    /// whose crate has no path edges) expand to nothing without inventing
+    /// scope; an empty changed set is an empty expansion.
+    #[test]
+    fn expansion_adds_nothing_for_unmapped_or_empty_changed_roots() -> Result<(), String> {
+        let root = unique_dir("expansion-unmapped");
+        let _ = std::fs::remove_dir_all(&root);
+        chain_workspace(&root)?;
+
+        let unknown = expansion_for(&root, &roots(&["crates/ghost/"]));
+        assert_eq!(unknown.status(), PathDependencyGraphStatus::Complete);
+        assert!(unknown.into_dependent_package_roots().is_empty());
+
+        let isolated = expansion_for(&root, &roots(&["d/"]));
+        assert!(
+            isolated.into_dependent_package_roots().is_empty(),
+            "d participates in no path edge, so it has no dependents to add"
+        );
+
+        let empty = expansion_for(&root, &BTreeSet::new());
+        assert_eq!(empty.status(), PathDependencyGraphStatus::Complete);
+        assert!(empty.into_dependent_package_roots().is_empty());
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// Honesty: an absent manifest scan must disclose that the expansion did
+    /// not run, and a partial edge inventory must disclose that dependents
+    /// may be missing. Neither state may read as a complete reach.
+    #[test]
+    fn expansion_discloses_limited_and_unavailable_graph_states() -> Result<(), String> {
+        let missing_root = unique_dir("expansion-missing");
+        let _ = std::fs::remove_dir_all(&missing_root);
+        let missing = expansion_for(&missing_root, &roots(&["a/"]));
+        assert_eq!(missing.status(), PathDependencyGraphStatus::Unavailable);
+        let unavailable_disclosure = missing
+            .scope_disclosure()
+            .ok_or_else(|| "an unavailable graph must disclose the scope boundary".to_string())?;
+        assert!(
+            missing.into_dependent_package_roots().is_empty(),
+            "an unavailable graph must not fabricate reach"
+        );
+        for needle in [
+            "unavailable",
+            "expansion did not run",
+            "stays the changed packages",
+        ] {
+            assert!(
+                unavailable_disclosure.contains(needle),
+                "disclosure must name `{needle}`: {unavailable_disclosure}"
+            );
+        }
+
+        let limited_root = unique_dir("expansion-limited");
+        let _ = std::fs::remove_dir_all(&limited_root);
+        write_manifest(&limited_root, "Cargo.toml", "[package\nname = \"broken\"\n")?;
+        chain_dependents_under_broken_root(&limited_root)?;
+        let limited = expansion_for(&limited_root, &roots(&["a/"]));
+        assert_eq!(limited.status(), PathDependencyGraphStatus::Limited);
+        let limited_disclosure = limited
+            .scope_disclosure()
+            .ok_or_else(|| "a limited graph must disclose the partial inventory".to_string())?;
+        assert_eq!(
+            limited.into_dependent_package_roots(),
+            roots(&["b/"]),
+            "the connected edge still participates under a limited inventory"
+        );
+        assert!(
+            limited_disclosure.contains("limited") && limited_disclosure.contains("partial"),
+            "disclosure must name the limited partial inventory: {limited_disclosure}"
+        );
+
+        let _ = std::fs::remove_dir_all(&missing_root);
+        let _ = std::fs::remove_dir_all(&limited_root);
+        Ok(())
+    }
+
+    /// Under a root whose own manifest is unparsed, the a -> b edge between
+    /// member manifests still resolves: b depends on a.
+    fn chain_dependents_under_broken_root(root: &Path) -> Result<(), String> {
+        write_manifest(
+            root,
+            "a/Cargo.toml",
+            "[package]\nname = \"a\"\nversion = \"0.1.0\"\n",
+        )?;
+        write_manifest(
+            root,
+            "b/Cargo.toml",
+            "[package]\nname = \"b\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\na = { path = \"../a\" }\n",
+        )
+    }
+
+    /// Identity mapping between `package_root` shapes and adjacency manifest
+    /// nodes round-trips, and an unmappable node fails closed to a root that
+    /// matches nothing.
+    #[test]
+    fn package_root_and_manifest_identities_round_trip() {
+        assert_eq!(manifest_of_package_root(""), "Cargo.toml");
+        assert_eq!(manifest_of_package_root("crates/b/"), "crates/b/Cargo.toml");
+        assert_eq!(package_root_of_manifest("Cargo.toml"), "");
+        assert_eq!(package_root_of_manifest("crates/b/Cargo.toml"), "crates/b/");
+        assert_eq!(
+            package_root_of_manifest("not-a-manifest"),
+            "not-a-manifest",
+            "an unmappable node keeps its identity and matches no package root"
+        );
+    }
+
+    /// #3616 review fix 1: a crate whose package uses custom Cargo target
+    /// paths (`[lib] path = "lib/core.rs"`, `[[bin]] path = "bin/tool.rs"`)
+    /// matches no layout heuristic, so its changed files carry no package
+    /// root. The manifest-inventory attribution must place them with the
+    /// nearest discovered manifest directory (longest prefix) so their
+    /// dependents still expand, while the heuristic fast path stays
+    /// untouched.
+    #[test]
+    fn expansion_attributes_custom_target_files_via_the_manifest_inventory() -> Result<(), String> {
+        let root = unique_dir("expansion-custom-target");
+        let _ = std::fs::remove_dir_all(&root);
+        write_manifest(
+            &root,
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"t\", \"u\", \"t/inner\"]\n",
+        )?;
+        write_manifest(
+            &root,
+            "t/Cargo.toml",
+            "[package]\nname = \"t\"\nversion = \"0.1.0\"\n\n\
+             [lib]\npath = \"lib/core.rs\"\n\n\
+             [[bin]]\nname = \"t-tool\"\npath = \"bin/tool.rs\"\n",
+        )?;
+        write_manifest(
+            &root,
+            "t/inner/Cargo.toml",
+            "[package]\nname = \"t_inner\"\nversion = \"0.1.0\"\n",
+        )?;
+        write_manifest(
+            &root,
+            "u/Cargo.toml",
+            "[package]\nname = \"u\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\nt = { path = \"../t\" }\n",
+        )?;
+
+        // Custom-target files of t: no heuristic root, attributed to "t/"
+        // by longest prefix, whose dependent u expands.
+        let custom = reverse_dependent_scope_expansion(
+            &root,
+            &BTreeSet::new(),
+            &roots(&["t/lib/core.rs", "t/bin/tool.rs"]),
+        );
+        assert_eq!(custom.status(), PathDependencyGraphStatus::Complete);
+        assert_eq!(custom.scope_disclosure(), None);
+        assert_eq!(
+            custom.into_dependent_package_roots(),
+            roots(&["u/"]),
+            "the custom-target crate's dependents must expand"
+        );
+
+        // Longest-prefix discrimination: a custom target inside the nested
+        // t/inner package attributes to "t/inner/", whose dependents are
+        // none — not to "t/", which would have pulled u in.
+        let nested = reverse_dependent_scope_expansion(
+            &root,
+            &BTreeSet::new(),
+            &roots(&["t/inner/lib/core.rs"]),
+        );
+        assert!(
+            nested.into_dependent_package_roots().is_empty(),
+            "the nested package owns the file; t's dependent must not expand"
+        );
+
+        // A file under no manifest directory other than the scan root
+        // attributes to the root manifest prefix.
+        let root_level =
+            reverse_dependent_scope_expansion(&root, &BTreeSet::new(), &roots(&["bin/root.rs"]));
+        assert!(
+            root_level.into_dependent_package_roots().is_empty(),
+            "the root manifest is not a graph node, so attribution adds a seed but no reach"
+        );
+
+        // The heuristic fast path is unchanged on the same workspace.
+        let heuristic = expansion_for(&root, &roots(&["t/"]));
+        assert_eq!(
+            heuristic.into_dependent_package_roots(),
+            roots(&["u/"]),
+            "heuristic seeds must keep their existing behavior"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #3616 review fix 2: when a diff deletes or renames a dependency
+    /// directory, the declaring manifest's edge is `TargetMissing` and stays
+    /// disconnected, but the declarer is still a real declared dependent of
+    /// the identity it named. The declared-target index (every captured edge
+    /// with a lexical identity, resolution regardless) must reach it. One
+    /// hop only: no walk runs through a broken edge.
+    #[test]
+    fn expansion_reaches_declared_dependents_when_the_dependency_target_is_missing() {
+        let edges = vec![
+            edge_from_manifest(
+                "b/Cargo.toml",
+                PathDependencyResolution::TargetMissing,
+                Some("a"),
+            ),
+            edge_from_manifest(
+                "c/Cargo.toml",
+                PathDependencyResolution::Resolved,
+                Some("b"),
+            ),
+            edge_from_manifest(
+                "s/Cargo.toml",
+                PathDependencyResolution::ResolvedOutsideWorkspace,
+                Some("../outside"),
+            ),
+        ];
+        let provenance = WorkspaceGraphProvenance {
+            package_graph_status: "complete".to_string(),
+            path_dependency_edges: edges,
+            path_dependency_limitations: Vec::new(),
+            ..WorkspaceGraphProvenance::default()
+        };
+        let inventory = vec!["a/".to_string(), "b/".to_string(), "c/".to_string()];
+
+        // The connected adjacency has no a -> dependent edge (TargetMissing
+        // is disconnected), so only the declared-target index reaches b.
+        let from_deleted =
+            expansion_from_provenance(&provenance, &inventory, &roots(&["a/"]), &BTreeSet::new());
+        assert_eq!(from_deleted.status(), PathDependencyGraphStatus::Complete);
+        assert_eq!(from_deleted.scope_disclosure(), None);
+        assert_eq!(
+            from_deleted.into_dependent_package_roots(),
+            roots(&["b/"]),
+            "the declarer of the missing target is a real declared dependent"
+        );
+
+        // A connected changed package unions its walk reach with its
+        // declared dependents without duplication.
+        let from_b =
+            expansion_from_provenance(&provenance, &inventory, &roots(&["b/"]), &BTreeSet::new());
+        assert_eq!(
+            from_b.into_dependent_package_roots(),
+            roots(&["c/"]),
+            "the walk and the declared index agree on c"
+        );
+
+        // An outside-root lexical identity can never match an in-workspace
+        // changed manifest, so the outside edge stays out.
+        let from_outside = expansion_from_provenance(
+            &provenance,
+            &inventory,
+            &roots(&["outside/"]),
+            &BTreeSet::new(),
+        );
+        assert!(
+            from_outside.into_dependent_package_roots().is_empty(),
+            "an outside-workspace declared identity must not match an in-root seed"
+        );
+
+        // The declared index matches by identity alone: a seed whose
+        // manifest is absent from the inventory still reaches its
+        // declarers, but nothing declares `ghost` here.
+        let from_ghost = expansion_from_provenance(
+            &provenance,
+            &inventory,
+            &roots(&["ghost/"]),
+            &BTreeSet::new(),
+        );
+        assert!(
+            from_ghost.into_dependent_package_roots().is_empty(),
+            "no edge declared ghost, so nothing expands"
+        );
+    }
+
+    fn edge_from_manifest(
+        from_manifest: &str,
+        resolution: PathDependencyResolution,
+        resolved_path: Option<&str>,
+    ) -> PathDependencyEdge {
+        PathDependencyEdge {
+            from_manifest: from_manifest.to_string(),
+            section: PathDependencySection::Dependencies,
+            target: None,
+            dependency_name: "dep".to_string(),
+            declared_path: Some("../dep".to_string()),
+            resolved_path: resolved_path.map(str::to_string),
+            resolution,
+            source: PathDependencySource::Package,
+        }
     }
 }

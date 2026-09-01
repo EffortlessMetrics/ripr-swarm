@@ -2438,6 +2438,20 @@ fn workspace_file_identity(mut files: Vec<(PathBuf, Vec<u8>)>) -> Option<String>
     (!input.is_empty()).then(|| hash_str(&input))
 }
 
+/// Directories every workspace manifest/lockfile scan skips. Shared by the
+/// content-collecting walks and the path-only inventory walk so the
+/// discovered-manifest identities behind
+/// [`workspace_manifest_dir_prefixes`] can never drift from the manifests
+/// `workspace_graph_provenance` parsed.
+const WORKSPACE_SCAN_SKIPPED_DIRS: [&str; 6] = [
+    ".git",
+    ".ripr",
+    "target",
+    "fixtures",
+    ".direnv",
+    "node_modules",
+];
+
 fn collect_named_workspace_files_by_name(
     root: &Path,
     directory: &Path,
@@ -2453,10 +2467,7 @@ fn collect_named_workspace_files_by_name(
             .and_then(|value| value.to_str())
             .unwrap_or("");
         if entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
-            if matches!(
-                name,
-                ".git" | ".ripr" | "target" | "fixtures" | ".direnv" | "node_modules"
-            ) {
+            if WORKSPACE_SCAN_SKIPPED_DIRS.contains(&name) {
                 continue;
             }
             collect_named_workspace_files_by_name(root, &path, files);
@@ -2486,10 +2497,7 @@ fn collect_named_workspace_files(
             .and_then(|value| value.to_str())
             .unwrap_or("");
         if entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
-            if matches!(
-                name,
-                ".git" | ".ripr" | "target" | "fixtures" | ".direnv" | "node_modules"
-            ) {
+            if WORKSPACE_SCAN_SKIPPED_DIRS.contains(&name) {
                 continue;
             }
             collect_named_workspace_files(root, &path, file_name, files);
@@ -2498,6 +2506,52 @@ fn collect_named_workspace_files(
             let bytes =
                 std::fs::read(&path).unwrap_or_else(|_| b"<workspace input unreadable>".to_vec());
             files.push((relative, bytes));
+        }
+    }
+}
+
+/// Directory prefixes (`/`-separated, trailing `/`, root manifest as the
+/// empty prefix, sorted) of every Cargo.toml the workspace scan discovers.
+/// Path-only: no manifest content is read. The #2970 diff-scope expansion
+/// uses this real manifest inventory to attribute changed files that the
+/// layout heuristics cannot place (custom Cargo target paths, #3616
+/// review) to the nearest owning manifest directory.
+pub(crate) fn workspace_manifest_dir_prefixes(root: &Path) -> Vec<String> {
+    let mut prefixes = Vec::new();
+    collect_manifest_dir_prefixes(root, root, &mut prefixes);
+    prefixes.sort();
+    prefixes.dedup();
+    prefixes
+}
+
+fn collect_manifest_dir_prefixes(root: &Path, directory: &Path, prefixes: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("");
+        if entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
+            if WORKSPACE_SCAN_SKIPPED_DIRS.contains(&name) {
+                continue;
+            }
+            collect_manifest_dir_prefixes(root, &path, prefixes);
+        } else if name == "Cargo.toml" {
+            let dir = path
+                .parent()
+                .unwrap_or_else(|| Path::new(""))
+                .strip_prefix(root)
+                .unwrap_or_else(|_| Path::new(""))
+                .to_string_lossy()
+                .replace('\\', "/");
+            prefixes.push(if dir.is_empty() {
+                String::new()
+            } else {
+                format!("{dir}/")
+            });
         }
     }
 }
