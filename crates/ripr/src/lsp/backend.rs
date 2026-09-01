@@ -4731,7 +4731,7 @@ impl Backend {
         };
         let receipt_status_summary = workspace_status_receipt_summary(&root, &snapshot);
 
-        Some(serde_json::json!({
+        let mut status_json = serde_json::json!({
             "schema_version": "0.1",
             "tool": "ripr",
             "kind": "workspace_status",
@@ -4762,7 +4762,17 @@ impl Backend {
             "report_paths": workspace_status_report_paths(),
             "refresh_command": REFRESH_COMMAND,
             "limits_note": SAVED_WORKTREE_LIMITS_NOTE,
-        }))
+        });
+        // Repositories without registrations keep the documented absent-field
+        // contract: the key is removed rather than serialized as null.
+        if matches!(
+            snapshot.harness_facts,
+            crate::lsp::state::HarnessFactsOnSnapshot::NotRegistered
+        ) && let Some(object) = status_json.as_object_mut()
+        {
+            object.remove("harness_registry");
+        }
+        Some(status_json)
     }
 }
 
@@ -5136,6 +5146,10 @@ fn workspace_status_report_paths() -> serde_json::Value {
 fn workspace_status_harness_summary(snapshot: &AnalysisSnapshot) -> serde_json::Value {
     match &snapshot.harness_facts {
         crate::lsp::state::HarnessFactsOnSnapshot::NotRegistered => serde_json::Value::Null,
+        crate::lsp::state::HarnessFactsOnSnapshot::Unknown => serde_json::json!({
+            "available": false,
+            "reason": "unknown_this_run",
+        }),
         crate::lsp::state::HarnessFactsOnSnapshot::UnavailableLimitedRun => serde_json::json!({
             "available": false,
             "reason": "limited_run",

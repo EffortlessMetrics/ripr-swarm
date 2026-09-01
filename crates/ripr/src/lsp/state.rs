@@ -606,6 +606,10 @@ impl Default for RefreshMetadata {
 pub(super) enum HarnessFactsOnSnapshot {
     /// The repository has no `[analysis.test_harnesses]` registrations.
     NotRegistered,
+    /// Registrations exist but this run established no facts (Rust
+    /// disabled, or a partial-scope run that indexed none of the
+    /// registered targets). Availability is unknown, not absent.
+    Unknown,
     /// A limited run (git timeout, oversized diff) did not compute harness
     /// facts; the registration state is unknown for this snapshot.
     UnavailableLimitedRun,

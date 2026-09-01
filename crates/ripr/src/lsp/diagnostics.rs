@@ -767,10 +767,17 @@ pub(super) fn workspace_diagnostics_with_config(
     // registrations (repositories keep byte-identical output), facts
     // established by this run, and limited runs that disclose the run-status
     // limitation instead (#3605).
-    let harness_facts = if output.harness_projections.is_empty() {
-        HarnessFactsOnSnapshot::NotRegistered
+    let registrations = config.repo_config().analysis().test_harnesses();
+    let harness_facts = if !registrations.is_empty() {
+        if output.harness_projections.is_empty() {
+            // Registrations exist but this run established no facts (Rust
+            // disabled, or a partial scope that indexed none of the targets).
+            HarnessFactsOnSnapshot::Unknown
+        } else {
+            HarnessFactsOnSnapshot::Complete(output.harness_projections)
+        }
     } else {
-        HarnessFactsOnSnapshot::Complete(output.harness_projections)
+        HarnessFactsOnSnapshot::NotRegistered
     };
     let mode = output.mode;
     let partial_scope = output.partial_scope;
