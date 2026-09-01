@@ -370,22 +370,27 @@ fn dependency_edge_admits_owner_call(
     if callable_dependency_names.is_empty() {
         return false;
     }
-    // Call identity is parser-backed only: a bare direct call of the owner
-    // name among the captured calls. Comments and string literals in the
-    // body never fabricate one.
+    // Call identity is parser-backed (a bare direct call of the owner name
+    // among the captured calls) except for one spelling read from the
+    // comment-and-string-stripped source: a qualified call through the
+    // dependency's declared name, which is unambiguous by construction.
     let bare_call_captured = test.calls.iter().any(|call| {
         call.name == owner_name
             && super::helper_transfer::is_direct_call_site(&call.text, owner_name)
     });
     let stripped_body = strip_comments_and_strings(&test.body);
-    // Imports are module-scoped: scan the test's whole stripped file source,
-    // not the function body, so a file-level `use` is seen (#3619 review).
+    // Imports are module-scoped and visible file-wide: scan the test's
+    // stripped file source, not the function body, so a file-level `use` is
+    // seen (#3619 review). Only file-level imports count — a `use` inside a
+    // nested module is invisible to tests outside it, so it must not
+    // credit them (#3619 review, second round).
     let stripped_file = context
         .index
         .files
         .get(&test.file)
         .map(|facts| strip_comments_and_strings(&facts.source))
         .unwrap_or_else(|| stripped_body.clone());
+    let file_level_imports = file_level_use_text(&stripped_file);
     callable_dependency_names.iter().any(|dependency_name| {
         let qualified = format!("{dependency_name}::{owner_name}");
         let qualified_call = test
@@ -399,7 +404,7 @@ fn dependency_edge_admits_owner_call(
             return true;
         }
         bare_call_captured
-            && imports_owner_from_dependency(&stripped_file, dependency_name, owner_name)
+            && imports_owner_from_dependency(&file_level_imports, dependency_name, owner_name)
     })
 }
 
@@ -442,6 +447,53 @@ fn has_callable_forward_dependency(
 /// refused — neither establishes that a bare call binds the owner's name
 /// from this dependency — and any brace shape this conservative parser
 /// cannot read is skipped (fail closed).
+/// Extract the depth-zero `use` statements of a comment-and-string-stripped
+/// source: file-level items only. A `use` inside a nested module is
+/// invisible to tests outside that module, so nested text is dropped
+/// rather than credited (#3619 review). Brace lists inside a `use`
+/// statement are kept: their braces do not change the statement's depth.
+fn file_level_use_text(stripped: &str) -> String {
+    let chars: Vec<char> = stripped.chars().collect();
+    let mut depth_at = vec![0usize; chars.len() + 1];
+    let mut depth = 0usize;
+    for (index, ch) in chars.iter().enumerate() {
+        match ch {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        depth_at[index + 1] = depth;
+    }
+    let is_ident_char = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let mut out = String::new();
+    let mut index = 0usize;
+    while index < chars.len() {
+        let use_starts = depth_at[index] == 0
+            && chars[index] == 'u'
+            && (index == 0 || !is_ident_char(chars[index - 1]))
+            && chars.get(index + 1).is_some_and(|ch| *ch == 's')
+            && chars.get(index + 2).is_some_and(|ch| *ch == 'e')
+            && chars.get(index + 3).is_some_and(|ch| !is_ident_char(*ch));
+        if use_starts {
+            let mut end = index;
+            while end < chars.len() {
+                if chars[end] == ';' && depth_at[end] == 0 {
+                    break;
+                }
+                end += 1;
+            }
+            if end < chars.len() {
+                out.extend(&chars[index..=end]);
+                out.push('\n');
+                index = end + 1;
+                continue;
+            }
+        }
+        index += 1;
+    }
+    out
+}
+
 fn imports_owner_from_dependency(stripped: &str, dependency_name: &str, owner_name: &str) -> bool {
     let use_prefix = format!("use {dependency_name}::");
     let mut search_from = 0usize;
@@ -1217,6 +1269,64 @@ fn crate_c_score_test() {
             "a module-level import must be seen by the whole-file scan: {related:?}"
         );
         assert_eq!(related[0].0.name, "crate_c_score_test");
+    }
+
+    /// #3619 review, second round: an import inside a nested module is
+    /// invisible to tests outside it. A file-level import is required; the
+    /// nested-module form must not credit an unrelated bare call.
+    #[test]
+    fn given_nested_module_import_when_bare_call_has_no_file_level_import_then_stays_filtered() {
+        let owner = function("crates/crate_a/src/lib.rs", "score");
+        let test_file = PathBuf::from("crates/crate_c/tests/score.rs");
+        let source = "mod helpers {
+    use crate_a::score;
+}
+
+#[test]
+fn crate_c_score_test() {
+    score(7);
+}
+";
+        let index = RustIndex {
+            functions: vec![
+                function("crates/crate_a/src/lib.rs", "score"),
+                function("crates/crate_b/src/lib.rs", "score"),
+            ],
+            tests: vec![test(
+                "crates/crate_c/tests/score.rs",
+                "crate_c_score_test",
+                "score(7)",
+            )],
+            files: std::collections::BTreeMap::from([(
+                test_file.clone(),
+                FileFacts {
+                    path: test_file.clone(),
+                    source: source.to_string(),
+                    ..FileFacts::default()
+                },
+            )]),
+            ..RustIndex::default()
+        };
+        let adjacency = adjacency_with(
+            "complete",
+            &[(
+                "crates/crate_c/Cargo.toml",
+                "crates/crate_a",
+                PathDependencySection::Dependencies,
+                "crate_a",
+            )],
+            false,
+        );
+        let prefixes = crate_abc_prefixes();
+        let context = edge_context(&adjacency, &prefixes, &index);
+        let probe = probe("crates/crate_a/src/lib.rs", "score + 1");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, Some(&context));
+
+        assert!(
+            related.is_empty(),
+            "a nested-module import must not credit a test outside it: {related:?}"
+        );
     }
 
     /// #2972 review round 3: a nested `use` path ending on the owner name is

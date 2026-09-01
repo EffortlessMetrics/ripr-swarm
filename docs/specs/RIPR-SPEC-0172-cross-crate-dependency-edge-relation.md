@@ -83,12 +83,14 @@ credit):
 - the captured call must be attributable to the admitted dependency: a
   call qualified through the edge's declared dependency name
   (`dependency_name::owner(`) admits without an import; otherwise a bare
-  call admits only when the comment- and string-stripped test body
-  imports the owner from that dependency name (`use
+  call admits only when the comment- and string-stripped **file source**
+  imports the owner from that dependency name at file level (`use
   dependency_name::...owner;`, nested paths and brace lists naming the
-  owner as a whole item). Aliased (`as`) and glob (`*`) imports are
-  refused, brace shapes the conservative parser cannot read fail closed,
-  and an import naming a different dependency defeats the admit;
+  owner as a whole item). Imports inside nested modules are invisible to
+  tests outside them and are not credited. Aliased (`as`) and glob (`*`)
+  imports are refused, brace shapes the conservative parser cannot read
+  fail closed, and an import naming a different dependency defeats the
+  admit;
 - a `let` binding of the owner name in the test body (invisible to the
   function index) defeats the admit unconditionally.
 

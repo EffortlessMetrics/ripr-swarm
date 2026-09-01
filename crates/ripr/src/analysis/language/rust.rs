@@ -1717,24 +1717,24 @@ impl RustAdapter {
         // `find_related_tests`. Only a whole-workspace index can admit (the
         // same precondition as the #2971 uniqueness bypass), so narrower
         // passes skip the manifest scan entirely.
-        let manifest_dir_prefixes;
-        let dependency_adjacency;
-        let dependency_edges = if workspace_index_complete {
-            manifest_dir_prefixes =
+        let (manifest_dir_prefixes, dependency_adjacency) = if workspace_index_complete {
+            let manifest_dir_prefixes =
                 crate::analysis::seam_cache::workspace_manifest_dir_prefixes(&options.root);
-            dependency_adjacency = Some(workspace::PathDependencyAdjacency::build(
+            let dependency_adjacency = workspace::PathDependencyAdjacency::build(
                 &crate::analysis::seam_cache::workspace_graph_provenance(&options.root),
-            ));
+            );
+            (manifest_dir_prefixes, Some(dependency_adjacency))
+        } else {
+            (Vec::new(), None)
+        };
+        let dependency_edges =
             dependency_adjacency
                 .as_ref()
                 .map(|adjacency| classify::DependencyEdgeContext {
                     adjacency,
                     manifest_dir_prefixes: &manifest_dir_prefixes,
                     index: &index,
-                })
-        } else {
-            None
-        };
+                });
 
         for changed in analyzable_changed_files
             .iter()
