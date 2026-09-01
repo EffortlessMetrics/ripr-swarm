@@ -74,7 +74,9 @@ test-required module, preserved by the facts normalizer and the
 #3533 composition walk), `HarnessHelper` (demoted member of a
 registered `harness = false` target), and
 `RegisteredTestAttribute` (promoted through a repository-
-governed `[analysis.test_harnesses]` registration, #3532).
+governed `[analysis.test_harnesses]` registration, #3532), and
+`ParameterizedExpansion` (expansion of a parameterized-test macro
+registration; registers executable tests).
 Attribute-driven membership is authoritative; filenames, imports,
 and macro suffixes never classify.
 

@@ -8301,6 +8301,11 @@ code = [
   "crates/ripr/src/analysis/seam_inventory.rs",
   "crates/ripr/src/analysis/source_role_corpus.rs",
   "crates/ripr/src/analysis/facts/harness_registry.rs",
+  "crates/ripr/src/analysis/facts/role_composition.rs",
+  "crates/ripr/src/analysis/facts/cfg_predicates.rs",
+  "crates/ripr/src/analysis/facts/test_styles.rs",
+  "crates/ripr/src/analysis/facts/build.rs",
+  "crates/ripr/src/analysis/harness_projection.rs",
   "crates/ripr/src/config.rs",
   "crates/ripr/src/config/model.rs",
 ]
