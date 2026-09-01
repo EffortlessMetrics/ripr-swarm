@@ -1583,7 +1583,7 @@ impl RustAdapter {
         // narrowing can apply, so non-narrowing paths pay nothing. A
         // `limited`/`unavailable` graph is disclosed, never silently treated
         // as a complete reach.
-        let dependent_package_roots =
+        let (dependent_package_roots, manifest_dir_prefixes) =
             if matches!(options.mode, AnalysisMode::Draft | AnalysisMode::Fast)
                 && options.include_unchanged_tests
             {
@@ -1601,7 +1601,7 @@ impl RustAdapter {
                     .map(|path| workspace::normalize_path(path))
                     .collect::<std::collections::BTreeSet<_>>();
                 if changed_package_roots.is_empty() && unattributed_changed_files.is_empty() {
-                    std::collections::BTreeSet::new()
+                    (std::collections::BTreeSet::new(), Vec::new())
                 } else {
                     let expansion = workspace::reverse_dependent_scope_expansion(
                         &options.root,
@@ -1611,10 +1611,12 @@ impl RustAdapter {
                     if let Some(disclosure) = expansion.scope_disclosure() {
                         eprintln!("{disclosure}");
                     }
-                    expansion.into_dependent_package_roots()
+                    let manifest_dir_prefixes = expansion.manifest_dir_prefixes().to_vec();
+                    let dependent_package_roots = expansion.into_dependent_package_roots();
+                    (dependent_package_roots, manifest_dir_prefixes)
                 }
             } else {
-                std::collections::BTreeSet::new()
+                (std::collections::BTreeSet::new(), Vec::new())
             };
         let index_files = workspace::select_rust_files_for_mode_with_dependent_packages(
             &analyzable_rust_files,
@@ -1622,6 +1624,7 @@ impl RustAdapter {
             options.mode,
             options.include_unchanged_tests,
             &dependent_package_roots,
+            &manifest_dir_prefixes,
         );
         // Fail closed before the working-set build that can exhaust a
         // constrained runner's memory (#1023): a too-large index is a named

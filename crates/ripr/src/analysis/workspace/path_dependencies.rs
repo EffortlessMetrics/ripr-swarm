@@ -355,9 +355,18 @@ pub(crate) struct PathDependencyScopeExpansion {
     /// Empty when no changed package has dependents, including when the
     /// graph was unavailable.
     dependent_package_roots: BTreeSet<String>,
+    /// The discovered manifest directory prefixes behind this expansion, so
+    /// consumers attribute unattributed files with the same nearest-manifest
+    /// ownership rule the seeding used (#3616 review).
+    manifest_dir_prefixes: Vec<String>,
 }
 
 impl PathDependencyScopeExpansion {
+    /// Discovered manifest directory prefixes (`/`-separated, trailing `/`,
+    /// including the empty root prefix), sorted as produced by the walk.
+    pub(crate) fn manifest_dir_prefixes(&self) -> &[String] {
+        &self.manifest_dir_prefixes
+    }
     /// Disclosed graph state behind this expansion.
     #[allow(
         dead_code,
@@ -488,6 +497,7 @@ pub(crate) fn expansion_from_provenance(
     PathDependencyScopeExpansion {
         status: adjacency.status(),
         dependent_package_roots,
+        manifest_dir_prefixes: manifest_dir_prefixes.to_vec(),
     }
 }
 
