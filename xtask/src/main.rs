@@ -571,7 +571,7 @@ fn precommit() -> Result<(), String> {
     check_capabilities()?;
     check_workspace_shape()?;
     check_architecture()?;
-    check_source_role_authority()?;
+    check_rust_source_role_authority()?;
     check_public_api()?;
     check_output_contracts()?;
     check_doc_artifacts()?;
@@ -4405,7 +4405,7 @@ fn receipts_report_markdown(
 }
 
 fn precommit_report_body() -> String {
-    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
+    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-rust-source-role-authority`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
 }
 
 /// Compose the check-pr report for either terminal state (#3036). One
@@ -12140,7 +12140,7 @@ fn check_architecture() -> Result<(), String> {
 /// role/provenance facts instead of re-deriving role from paths,
 /// attributes, or strings. This gate rejects consumer-side role
 /// heuristics and names the owning producer API to route through.
-fn check_source_role_authority() -> Result<(), String> {
+fn check_rust_source_role_authority() -> Result<(), String> {
     const SCAN_ROOT: &str = "crates/ripr/src";
     /// Out of scope: non-Rust adapters own their per-language test-file
     /// authorities (`python`/`typescript` define local `is_test_file`
@@ -12278,7 +12278,7 @@ fn check_source_role_authority() -> Result<(), String> {
         }
         if scanned.contains("is_test_file(") && !IS_TEST_FILE_CONSUMERS.contains(&file.as_str()) {
             violations.push(format!(
-                "{file} calls `rust_index::is_test_file` outside the approved consumer inventory\n  owner: `rust_index::is_test_file` is the typed test-file authority; extend the inventory in `check_source_role_authority` with a reviewed reason or route through `SourceRoleContext`\n  reason: #3534 - role consumers stay reviewable against the producer contract"
+                "{file} calls `rust_index::is_test_file` outside the approved consumer inventory\n  owner: `rust_index::is_test_file` is the typed test-file authority; extend the inventory in `check_rust_source_role_authority` with a reviewed reason or route through `SourceRoleContext`\n  reason: #3534 - role consumers stay reviewable against the producer contract"
             ));
         }
     }
@@ -12293,7 +12293,7 @@ fn check_source_role_authority() -> Result<(), String> {
                 "Route test-file decisions through `rust_index::is_test_file` or `SourceRoleContext::classify_with`.",
                 "Route cfg-term recognition through `analysis::facts::cfg_predicates`.",
                 "Keep path checks scoped to path containment, package identity, display, or integration-test kind.",
-                "Extend the consumer inventory in `check_source_role_authority` only with a reviewed reason.",
+                "Extend the consumer inventory in `check_rust_source_role_authority` only with a reviewed reason.",
             ],
             rerun_command: "cargo xtask check-rust-source-role-authority",
             exception_template: None,
