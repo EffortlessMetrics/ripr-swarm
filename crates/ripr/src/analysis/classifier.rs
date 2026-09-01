@@ -5,17 +5,18 @@ mod owner;
 use self::evidence::ClassifiedProbeEvidence;
 use self::finding::build_finding;
 use self::owner::resolve_owner_function;
-use super::classify::{ProbeContext, find_related_tests, is_assertion_shaped_owner};
+use super::classify::{
+    DependencyEdgeContext, ProbeContext, find_related_tests, is_assertion_shaped_owner,
+};
 use super::probes::parser_expression_for_probe;
 use super::rust_index::RustIndex;
-use crate::analysis::workspace::PathDependencyAdjacency;
 use crate::domain::*;
 
 pub fn classify_probe(
     probe: &Probe,
     index: &RustIndex,
     workspace_complete: bool,
-    dependency_adjacency: Option<&PathDependencyAdjacency>,
+    dependency_edges: Option<&DependencyEdgeContext<'_>>,
 ) -> Finding {
     let owner_fn = resolve_owner_function(probe, index);
     // #3296: one chain resolution per probe, shared by the relation
@@ -30,7 +31,7 @@ pub fn classify_probe(
         index,
         workspace_complete,
         helper_chain.as_ref(),
-        dependency_adjacency,
+        dependency_edges,
     );
     // RIPR-SPEC-0133: detect assertion-shaped owners (oracles) here, where the
     // full index is available; the context carries the verdict so guidance can

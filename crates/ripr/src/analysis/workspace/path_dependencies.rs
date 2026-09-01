@@ -34,7 +34,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use crate::analysis::seam_cache::{WorkspaceGraphProvenance, workspace_graph_provenance};
+use crate::analysis::seam_cache::{
+    PathDependencySection, WorkspaceGraphProvenance, workspace_graph_provenance,
+};
 
 /// Build status of the path-dependency adjacency, disclosed alongside every
 /// rendered neighbor list.
@@ -110,6 +112,12 @@ pub(crate) struct PathDependencyAdjacency {
     nodes: BTreeSet<String>,
     forward: BTreeMap<String, BTreeSet<String>>,
     reverse: BTreeMap<String, BTreeSet<String>>,
+    /// Captured Cargo sections per connected (declarer, target) pair, so a
+    /// consumer can require a callable section instead of reading the
+    /// untyped neighbor sets (#2972 review). Deduplicated like the neighbor
+    /// sets: two declarations of the same target in different sections
+    /// collapse to the set of sections they declare.
+    forward_sections: BTreeMap<(String, String), BTreeSet<PathDependencySection>>,
 }
 
 impl PathDependencyAdjacency {
@@ -135,12 +143,15 @@ impl PathDependencyAdjacency {
                 nodes: BTreeSet::new(),
                 forward: BTreeMap::new(),
                 reverse: BTreeMap::new(),
+                forward_sections: BTreeMap::new(),
             };
         }
 
         let edges = &provenance.path_dependency_edges;
         let mut forward: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         let mut reverse: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        let mut forward_sections: BTreeMap<(String, String), BTreeSet<PathDependencySection>> =
+            BTreeMap::new();
         let mut nodes: BTreeSet<String> = BTreeSet::new();
         let mut connected_edge_count = 0usize;
         for edge in edges {
@@ -166,6 +177,10 @@ impl PathDependencyAdjacency {
                 .entry(edge.from_manifest.clone())
                 .or_default()
                 .insert(target.clone());
+            forward_sections
+                .entry((edge.from_manifest.clone(), target.clone()))
+                .or_default()
+                .insert(edge.section);
             reverse
                 .entry(target)
                 .or_default()
@@ -188,6 +203,7 @@ impl PathDependencyAdjacency {
             nodes,
             forward,
             reverse,
+            forward_sections,
         }
     }
 
@@ -245,6 +261,22 @@ impl PathDependencyAdjacency {
     /// manifest through a connected path edge.
     pub(crate) fn reverse_neighbors(&self, manifest: &str) -> Option<&BTreeSet<String>> {
         self.reverse.get(manifest)
+    }
+
+    /// Captured Cargo sections of the direct forward edges from `manifest`
+    /// (the declarer) to `target` (the dependency), when at least one
+    /// connected edge joins them. `None` when the pair is not joined by any
+    /// forward connected edge — including the reverse direction, which is a
+    /// reverse-side relation only and is deliberately not reported here
+    /// (#2972 review: a bare call in the declarer can only bind names the
+    /// declarer's own dependency sections provide).
+    pub(crate) fn forward_dependency_sections(
+        &self,
+        manifest: &str,
+        target: &str,
+    ) -> Option<&BTreeSet<PathDependencySection>> {
+        self.forward_sections
+            .get(&(manifest.to_string(), target.to_string()))
     }
 
     /// Transitive forward reach: every manifest `manifest` reaches through
@@ -899,6 +931,74 @@ mod tests {
             neighbors.iter().collect::<Vec<_>>(),
             vec!["tool/Cargo.toml"],
             "two declarations of the same target are one adjacency neighbor"
+        );
+        assert_eq!(
+            adjacency
+                .forward_dependency_sections("app/Cargo.toml", "tool/Cargo.toml")
+                .map(|sections| sections.len()),
+            Some(2),
+            "both declared sections stay on the deduplicated pair"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #2972 review: the section-aware forward lookup keeps the captured
+    /// Cargo section per (declarer, target) pair, deduplicated like the
+    /// neighbor sets and absent for unconnected pairs — including the
+    /// reverse direction, which must not read as a forward edge.
+    #[test]
+    fn forward_dependency_sections_keep_the_declared_cargo_section() -> Result<(), String> {
+        let root = unique_dir("sections");
+        let _ = std::fs::remove_dir_all(&root);
+        write_manifest(
+            &root,
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"app\", \"tool\", \"buildtool\"]\n",
+        )?;
+        write_manifest(
+            &root,
+            "tool/Cargo.toml",
+            "[package]\nname = \"tool\"\nversion = \"0.1.0\"\n",
+        )?;
+        write_manifest(
+            &root,
+            "buildtool/Cargo.toml",
+            "[package]\nname = \"buildtool\"\nversion = \"0.1.0\"\n",
+        )?;
+        write_manifest(
+            &root,
+            "app/Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\ntool = { path = \"../tool\" }\n\n\
+             [build-dependencies]\nbuildtool = { path = \"../buildtool\" }\n",
+        )?;
+
+        let adjacency = adjacency_for(&root);
+        let tool_sections = adjacency
+            .forward_dependency_sections("app/Cargo.toml", "tool/Cargo.toml")
+            .ok_or_else(|| "the declared normal dependency must be connected".to_string())?;
+        assert_eq!(
+            tool_sections.iter().collect::<Vec<_>>(),
+            vec![&PathDependencySection::Dependencies]
+        );
+        let build_sections = adjacency
+            .forward_dependency_sections("app/Cargo.toml", "buildtool/Cargo.toml")
+            .ok_or_else(|| "the declared build dependency must be connected".to_string())?;
+        assert_eq!(
+            build_sections.iter().collect::<Vec<_>>(),
+            vec![&PathDependencySection::BuildDependencies]
+        );
+        assert_eq!(
+            adjacency.forward_dependency_sections("tool/Cargo.toml", "app/Cargo.toml"),
+            None,
+            "the reverse direction is not a forward edge"
+        );
+        assert_eq!(
+            adjacency.forward_dependency_sections("ghost/Cargo.toml", "tool/Cargo.toml"),
+            None,
+            "an unknown declarer has no forward sections"
         );
 
         let _ = std::fs::remove_dir_all(&root);

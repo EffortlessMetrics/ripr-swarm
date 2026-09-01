@@ -1712,15 +1712,25 @@ impl RustAdapter {
         // stays out, the index stays partial and the bypass stays off.
         let workspace_index_complete = index_files.len() == analyzable_rust_files.len();
 
-        // #2972: one path-dependency adjacency per classification pass,
+        // #2972: one path-dependency edge context per classification pass,
         // consumed by the cross-crate owner-call admit in
         // `find_related_tests`. Only a whole-workspace index can admit (the
         // same precondition as the #2971 uniqueness bypass), so narrower
         // passes skip the manifest scan entirely.
-        let dependency_adjacency = if workspace_index_complete {
-            Some(workspace::PathDependencyAdjacency::build(
+        let manifest_dir_prefixes;
+        let dependency_adjacency;
+        let dependency_edges = if workspace_index_complete {
+            manifest_dir_prefixes =
+                crate::analysis::seam_cache::workspace_manifest_dir_prefixes(&options.root);
+            dependency_adjacency = Some(workspace::PathDependencyAdjacency::build(
                 &crate::analysis::seam_cache::workspace_graph_provenance(&options.root),
-            ))
+            ));
+            dependency_adjacency
+                .as_ref()
+                .map(|adjacency| classify::DependencyEdgeContext {
+                    adjacency,
+                    manifest_dir_prefixes: &manifest_dir_prefixes,
+                })
         } else {
             None
         };
@@ -1756,7 +1766,7 @@ impl RustAdapter {
                     &probe,
                     &index,
                     workspace_index_complete,
-                    dependency_adjacency.as_ref(),
+                    dependency_edges.as_ref(),
                 );
                 finding.language = Some(LanguageId::Rust);
                 // Producer-owned source currentness (#3280): resolved from the diff
@@ -1941,18 +1951,24 @@ impl RustAdapter {
 
         let mut findings = Vec::new();
 
-        // #2972: one path-dependency adjacency per repo pass. Repo mode
+        // #2972: one path-dependency edge context per repo pass. Repo mode
         // indexes the whole workspace, so the admit precondition holds by
         // construction here.
+        let manifest_dir_prefixes =
+            crate::analysis::seam_cache::workspace_manifest_dir_prefixes(&options.root);
         let dependency_adjacency = workspace::PathDependencyAdjacency::build(
             &crate::analysis::seam_cache::workspace_graph_provenance(&options.root),
         );
+        let dependency_edges = classify::DependencyEdgeContext {
+            adjacency: &dependency_adjacency,
+            manifest_dir_prefixes: &manifest_dir_prefixes,
+        };
 
         for path in &production_files {
             let probes = probes::probes_for_repo_file(&options.root, path, &index);
             for probe in probes {
                 let mut finding =
-                    classifier::classify_probe(&probe, &index, true, Some(&dependency_adjacency));
+                    classifier::classify_probe(&probe, &index, true, Some(&dependency_edges));
                 finding.language = Some(LanguageId::Rust);
                 // Repo mode seeds probes from the current tree, so every
                 // finding's source is candidate-side by construction
