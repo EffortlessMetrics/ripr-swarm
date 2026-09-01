@@ -55,7 +55,11 @@ pub(crate) fn select_rust_files_for_mode_with_dependent_packages(
         .iter()
         .filter_map(|path| package_root(path))
         .collect::<Vec<_>>();
-    if package_roots.is_empty() {
+    // #3616 review: custom-target changed files can carry no heuristic root
+    // while the expansion still attributed dependent packages, so the
+    // dependent roots alone must keep the package narrowing alive. With
+    // neither set the fallback to changed files only stands.
+    if package_roots.is_empty() && dependent_package_roots.is_empty() {
         return with_module_context_files(all_files, changed_existing);
     }
 
@@ -520,6 +524,43 @@ mod tests {
             &std::collections::BTreeSet::new(),
         );
         assert_eq!(selected, files(&["a/src/lib.rs"]));
+    }
+
+    /// #3616 review: custom-target changed files carry no heuristic package
+    /// root, yet the expansion can still attribute dependent packages. The
+    /// dependent roots alone must keep the package narrowing alive — the
+    /// changed custom-target file enters through the changed-file set and
+    /// the dependents' files through their package roots.
+    #[test]
+    fn dependent_packages_narrow_selection_without_heuristic_changed_roots() {
+        let all = files(&["t/lib/core.rs", "u/src/lib.rs", "u/tests/u.rs"]);
+        let changed = files(&["t/lib/core.rs"]);
+        let dependents = ["u/".to_string()]
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+
+        assert_eq!(
+            select_rust_files_for_mode_with_dependent_packages(
+                &all,
+                &changed,
+                AnalysisMode::Draft,
+                true,
+                &dependents
+            ),
+            files(&["t/lib/core.rs", "u/src/lib.rs", "u/tests/u.rs"]),
+            "the attributed dependents enter scope although no changed file has a heuristic root"
+        );
+        assert_eq!(
+            select_rust_files_for_mode_with_dependent_packages(
+                &all,
+                &changed,
+                AnalysisMode::Draft,
+                true,
+                &std::collections::BTreeSet::new()
+            ),
+            files(&["t/lib/core.rs"]),
+            "without dependents the selection stays the changed files only"
+        );
     }
 
     /// Modes and toggles without package narrowing ignore the dependent

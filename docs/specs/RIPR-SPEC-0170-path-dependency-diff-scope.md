@@ -64,7 +64,25 @@ through the reverse path-dependency adjacency:
   edge inventory, and a complete-but-empty graph truthfully adds nothing;
 - the diff-index scope cap keeps its fail-closed behavior unchanged, and the
   expansion counts toward it: a diff whose dependent reach pushes the index
-  over the cap fails closed with `diff_scope_oversized` exactly as before.
+  over the cap fails closed with `diff_scope_oversized` exactly as before;
+- changed files that match no layout heuristic — custom Cargo target paths
+  such as `[lib] path = "lib/core.rs"` or `[[bin]] path = "bin/tool.rs"`
+  (#3616 review) — are attributed to the nearest discovered manifest
+  directory that is an ancestor of the file (longest prefix, the root
+  manifest being the empty prefix), using the same scan that names the
+  adjacency's manifests. The heuristic fast path is untouched: attribution
+  only adds seeds for files the heuristics dropped, and package narrowing
+  stays alive when the attributed dependents are the only narrowing input;
+- a secondary declared-target index covers every captured edge that carries
+  a lexical identity regardless of resolution (#3616 review): when a diff
+  deletes or renames a dependency directory, the declaring manifest's edge
+  is `TargetMissing` and stays disconnected, but the declarer is still a
+  real declared dependent of the identity it named — exactly when a build
+  error makes the dependents' tests belong in scope. This reach is one hop
+  (no walk runs through a broken edge), matches by manifest identity alone
+  (the declared manifest need not exist), is unioned with the connected
+  walk without duplication, and is disclosed as ordinary expansion results
+  with no extra disclosure.
 
 The manifest inventory is read locally; no Cargo invocation, no registry
 metadata, and no network access is added.
@@ -89,8 +107,15 @@ schema. No registry or external dependency resolution.
 - end-to-end evidence that a Draft-mode diff touching only `a` surfaces the
   dependent crate's test as related evidence through the dependency edge,
   and that the same workspace without the edge does not;
-- selection-level evidence that the unrelated crate stays out and that
-  non-narrowing selections ignore the expansion.
+- end-to-end evidence that a custom-target changed file (`[lib] path`
+  outside the default layouts) expands its crate's path dependents through
+  the manifest-inventory attribution;
+- synthetic-provenance evidence that `TargetMissing` edges reach their
+  declared dependents, that the connected walk and the declared index agree
+  without duplication, and that outside-root declared identities stay out;
+- selection-level evidence that the unrelated crate stays out, that
+  non-narrowing selections ignore the expansion, and that attributed
+  dependents keep package narrowing alive without heuristic changed roots.
 
 ## Acceptance Examples
 
@@ -106,29 +131,45 @@ schema. No registry or external dependency resolution.
 - A directory with no `Cargo.toml` at all: the graph is `unavailable`, the
   expansion did not run, and the disclosure says the scope stays the changed
   packages.
+- Crate `t` declares `[lib] path = "lib/core.rs"` and crate `u` path-depends
+  on `t`: a Draft diff touching only `t/lib/core.rs` (no heuristic package
+  root) attributes the file to `t`, brings `u`'s package files into scope,
+  and may name `u`'s integration test as related evidence; a custom target
+  inside a nested package attributes to that nested package, not `t`.
+- A diff deletes dependency directory `a` while `b` still declares
+  `a = { path = "../a" }`: the edge is `TargetMissing` and disconnected,
+  and the declared-target index still brings `b`'s package files into
+  scope.
 
 ## Test Mapping
 
 - `crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_reaches_dependents_of_changed_packages_only`
 - `crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_adds_nothing_for_unmapped_or_empty_changed_roots`
 - `crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_discloses_limited_and_unavailable_graph_states`
+- `crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_attributes_custom_target_files_via_the_manifest_inventory`
+- `crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_reaches_declared_dependents_when_the_dependency_target_is_missing`
 - `crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::package_root_and_manifest_identities_round_trip`
+- `crates/ripr/src/analysis/workspace/select.rs::tests::dependent_packages_narrow_selection_without_heuristic_changed_roots`
 - `crates/ripr/src/analysis/workspace/select.rs::tests::dependent_packages_enter_draft_and_fast_selection`
 - `crates/ripr/src/analysis/workspace/select.rs::tests::empty_dependent_roots_reproduce_the_unchanged_selection`
 - `crates/ripr/src/analysis/workspace/select.rs::tests::dependent_roots_do_not_change_non_narrowing_selections`
 - `crates/ripr/src/analysis/language/rust.rs::tests::draft_diff_scope_reaches_path_dependent_tests_through_the_dependency_edge`
 - `crates/ripr/src/analysis/language/rust.rs::tests::draft_diff_scope_stays_narrow_without_the_path_dependency_edge`
 - `crates/ripr/src/analysis/language/rust.rs::tests::instant_mode_does_not_expand_scope_through_path_dependencies`
+- `crates/ripr/src/analysis/language/rust.rs::tests::draft_diff_scope_expands_custom_target_files_to_their_path_dependents`
 
 ## Implementation Mapping
 
+- `crates/ripr/src/analysis/seam_cache.rs` —
+  `workspace_manifest_dir_prefixes` (path-only manifest inventory sharing
+  the provenance scan's skip list)
 - `crates/ripr/src/analysis/workspace/path_dependencies.rs` —
-  `reverse_dependent_scope_expansion`, `PathDependencyScopeExpansion`,
-  package-root/manifest identity mapping
+  `reverse_dependent_scope_expansion`, `expansion_from_provenance`,
+  `PathDependencyScopeExpansion`, package-root/manifest identity mapping
 - `crates/ripr/src/analysis/workspace/select.rs` —
   `select_rust_files_for_mode_with_dependent_packages`
 - `crates/ripr/src/analysis/language/rust.rs` — Draft/Fast gating,
-  disclosure emission, selection wiring
+  unattributed-file collection, disclosure emission, selection wiring
 
 ## Metrics
 

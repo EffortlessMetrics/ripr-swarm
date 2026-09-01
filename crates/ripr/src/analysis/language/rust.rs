@@ -1591,12 +1591,22 @@ impl RustAdapter {
                     .iter()
                     .filter_map(|path| workspace::package_root(path))
                     .collect::<std::collections::BTreeSet<_>>();
-                if changed_package_roots.is_empty() {
+                // Files the layout heuristics cannot place (custom Cargo
+                // target paths, #3616 review) would previously drop out of
+                // the seed set entirely; they go to the expansion for
+                // attribution against the discovered manifest inventory.
+                let unattributed_changed_files = changed_rust_paths
+                    .iter()
+                    .filter(|path| workspace::package_root(path).is_none())
+                    .map(|path| workspace::normalize_path(path))
+                    .collect::<std::collections::BTreeSet<_>>();
+                if changed_package_roots.is_empty() && unattributed_changed_files.is_empty() {
                     std::collections::BTreeSet::new()
                 } else {
                     let expansion = workspace::reverse_dependent_scope_expansion(
                         &options.root,
                         &changed_package_roots,
+                        &unattributed_changed_files,
                     );
                     if let Some(disclosure) = expansion.scope_disclosure() {
                         eprintln!("{disclosure}");
@@ -2170,15 +2180,19 @@ mod tests {
         )
     }
 
-    fn has_related_test_in_b(findings: &[Finding]) -> bool {
+    fn has_related_test(findings: &[Finding], test_file_suffix: &str) -> bool {
         findings.iter().any(|finding| {
             finding.related_tests.iter().any(|test| {
                 test.file
                     .to_string_lossy()
                     .replace('\\', "/")
-                    .ends_with("b/tests/quarble_gauge_tests.rs")
+                    .ends_with(test_file_suffix)
             })
         })
+    }
+
+    fn has_related_test_in_b(findings: &[Finding]) -> bool {
+        has_related_test(findings, "b/tests/quarble_gauge_tests.rs")
     }
 
     /// The slice C contract end to end: a Draft-mode diff that touches only
@@ -2264,6 +2278,79 @@ mod tests {
         assert!(
             !has_related_test_in_b(&result.findings),
             "Instant stays changed-files-only; the dependent test stays out: {:?}",
+            result.findings
+        );
+        Ok(())
+    }
+
+    /// #3616 review fix 1 end to end: a Draft diff that touches only a
+    /// custom-target file (`[lib] path = "lib/core.rs"`, no heuristic
+    /// package root) still expands its crate's path dependents. The
+    /// manifest-inventory attribution seeds the owning package, the index
+    /// spans the whole two-crate workspace, and the dependent's integration
+    /// test is credited as related evidence through the #2971 uniqueness
+    /// bypass. Without the attribution the index stays at the changed file
+    /// alone and the dependent test stays out fail-closed. The supported
+    /// production-like opt-in (#3283) is what makes the custom-target file
+    /// seed probes at all.
+    #[test]
+    fn draft_diff_scope_expands_custom_target_files_to_their_path_dependents() -> Result<(), String>
+    {
+        let root = temp_root("path-dep-scope-custom-target")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"t\", \"u\"]\nresolver = \"2\"\n",
+        )?;
+        write(
+            &root.join("t/Cargo.toml"),
+            "[package]\nname = \"scope_t\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
+             [lib]\npath = \"lib/core.rs\"\n",
+        )?;
+        write(
+            &root.join("u/Cargo.toml"),
+            "[package]\nname = \"scope_u\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
+             [dependencies]\nscope_t = { path = \"../t\" }\n",
+        )?;
+        write(
+            &root.join("t/lib/core.rs"),
+            "pub fn quarble_gauge(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
+        )?;
+        write(
+            &root.join("u/src/lib.rs"),
+            "pub fn relay(flag: bool) -> bool {\n    scope_t::quarble_gauge(flag)\n}\n",
+        )?;
+        write(
+            &root.join("u/tests/quarble_gauge_tests.rs"),
+            "#[test]\nfn quarble_gauge_holds() {\n    assert!(scope_t::quarble_gauge(true));\n}\n",
+        )?;
+        let changed_files = diff::parse_unified_diff(
+            "diff --git a/t/lib/core.rs b/t/lib/core.rs\n\
+             new file mode 100644\n\
+             --- /dev/null\n\
+             +++ b/t/lib/core.rs\n\
+             @@ -0,0 +1,4 @@\n\
+             +pub fn quarble_gauge(flag: bool) -> bool {\n\
+             +    if flag { true } else { false }\n\
+             +}\n",
+        );
+        let mut production_like_targets = std::collections::BTreeSet::new();
+        production_like_targets.insert(PathBuf::from("t/lib/core.rs"));
+        let options = AnalysisOptions {
+            production_like_targets,
+            ..diff_options(root, AnalysisMode::Draft)
+        };
+
+        let result =
+            RustAdapter.analyze_diff(&options, &OraclePolicy::default(), &changed_files)?;
+
+        assert!(
+            !result.findings.is_empty(),
+            "the opted-in custom-target owner must seed probes: {:?}",
+            result.findings
+        );
+        assert!(
+            has_related_test(&result.findings, "u/tests/quarble_gauge_tests.rs"),
+            "the dependent crate's test must become reachable through the attributed scope: {:?}",
             result.findings
         );
         Ok(())
