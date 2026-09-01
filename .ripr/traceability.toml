@@ -8286,13 +8286,26 @@ tests = [
   "crates/ripr/src/analysis/language/rust.rs::tests::diff_analysis_confirms_declared_test_targets_but_not_unconfirmed_names",
   "crates/ripr/src/analysis/language/rust.rs::tests::diff_analysis_opt_in_restores_production_like_analysis",
   "crates/ripr/src/config/tests.rs::parse_config_reads_production_like_targets",
+  "crates/ripr/src/analysis/source_role_corpus.rs::production_lib_has_one_production_subject_and_no_executable_tests",
+  "crates/ripr/src/analysis/source_role_corpus.rs::explicit_test_target_joins_executable_tests_and_stays_out_of_production",
+  "crates/ripr/src/analysis/source_role_corpus.rs::lookalike_test_named_file_in_src_is_a_production_subject",
+  "crates/ripr/src/analysis/source_role_corpus.rs::cfg_test_variants_all_reach_executable_tests",
 ]
-fixtures = []
+fixtures = [
+  "crates/ripr/tests/data/source-role-corpus",
+]
 code = [
   "crates/ripr/src/analysis/workspace/source_role.rs",
   "crates/ripr/src/analysis/workspace/cargo_targets.rs",
   "crates/ripr/src/analysis/language/rust.rs",
   "crates/ripr/src/analysis/seam_inventory.rs",
+  "crates/ripr/src/analysis/source_role_corpus.rs",
+  "crates/ripr/src/analysis/facts/harness_registry.rs",
+  "crates/ripr/src/analysis/facts/role_composition.rs",
+  "crates/ripr/src/analysis/facts/cfg_predicates.rs",
+  "crates/ripr/src/analysis/facts/test_styles.rs",
+  "crates/ripr/src/analysis/facts/build.rs",
+  "crates/ripr/src/analysis/harness_projection.rs",
   "crates/ripr/src/config.rs",
   "crates/ripr/src/config/model.rs",
 ]
