@@ -14,7 +14,7 @@ mod conjunct {
     fn conjunct_case() { assert_eq!(super::conjunct::conjunct_helper(2), 2); }
 }
 
-#[cfg(not(missing_feature))]
+#[cfg(not(not(test)))]
 mod negated {
     fn negated_helper(value: i32) -> i32 { value }
     #[test]

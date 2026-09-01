@@ -90,6 +90,11 @@ fn explicit_test_target_joins_executable_tests_and_stays_out_of_production() -> 
         Some("Production")
     );
     assert!(is_test_file(Path::new("tests/custom/smoke_case.rs")));
+    let custom_role = crate::analysis::workspace::classify_with(
+        Path::new("tests/custom/smoke_case.rs"),
+        &empty_context(),
+    );
+    assert_eq!(format!("{:?}", custom_role), "TestEvidence");
     let smoke_role =
         crate::analysis::workspace::classify_with(Path::new("tests/smoke.rs"), &empty_context());
     assert_eq!(format!("{:?}", smoke_role), "TestEvidence");

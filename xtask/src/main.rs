@@ -12309,7 +12309,7 @@ fn check_rust_source_role_authority() -> Result<(), String> {
 /// source text as data) never reach role-authority pattern scans.
 fn raw_production_text(text: &str) -> String {
     text.lines()
-        .take_while(|line| !line.trim_start().starts_with("#[cfg(test)]"))
+        .take_while(|line| !line.starts_with("#[cfg(test)]"))
         .collect::<Vec<_>>()
         .join("\n")
 }
