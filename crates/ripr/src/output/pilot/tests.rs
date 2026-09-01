@@ -365,7 +365,10 @@ fn pilot_summary_md_pairs_bash_next_commands_with_powershell_variants() -> Resul
         md.contains(bash_block),
         "bash next-commands block drifted:\n{md}"
     );
-    let powershell_snapshot = "[System.IO.File]::WriteAllText(target/ripr/pilot/after.repo-exposure.json, ((ripr check --root . --mode draft --format repo-exposure-json) | Out-String), [System.Text.UTF8Encoding]::new($false))";
+    // The default pilot path is unquoted in the bash form; PowerShell parses
+    // method-call arguments in expression mode, so the WriteAllText target must
+    // arrive as a quoted literal (PR #3617 review, gemini HIGH + codex P1).
+    let powershell_snapshot = "[System.IO.File]::WriteAllText('target/ripr/pilot/after.repo-exposure.json', ((ripr check --root . --mode draft --format repo-exposure-json) | Out-String), [System.Text.UTF8Encoding]::new($false))";
     assert!(
         md.contains(powershell_snapshot),
         "powershell after-snapshot translation missing:\n{md}"
