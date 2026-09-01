@@ -1837,6 +1837,49 @@ mod tests {
         cleanup(&repo)
     }
 
+    /// The start-here markdown must present the receipt command for both
+    /// shells: the bash form stays byte-identical, and the PowerShell form
+    /// round-trips an embedded quote through PowerShell's doubled-quote idiom
+    /// via the shared `powershell_command` translation (#2628).
+    #[test]
+    fn start_here_markdown_offers_receipt_command_powershell_variant() -> Result<(), String> {
+        let packet = json!({
+            "status": "actionable",
+            "selected": {
+                "state": "top_gap",
+                "kind": "MissingBoundaryAssertion",
+                "receipt_command": "ripr receipt write --gap 'it'\\''s' --verify-command 'cargo test' --status not_run",
+            },
+        });
+        let markdown = render_start_here_markdown(&packet);
+
+        let bash_form = "Receipt command:\n`ripr receipt write --gap 'it'\\''s' --verify-command 'cargo test' --status not_run`\n\n";
+        assert!(
+            markdown.contains(bash_form),
+            "bash receipt command drifted:\n{markdown}"
+        );
+        let powershell_form = "Receipt command (PowerShell):\n`ripr receipt write --gap 'it''s' --verify-command 'cargo test' --status not_run`";
+        assert!(
+            markdown.contains(powershell_form),
+            "powershell receipt command missing or drifted:\n{markdown}"
+        );
+        let bash_label = markdown
+            .find("Receipt command:\n")
+            .ok_or_else(|| format!("bash receipt label must exist: {markdown}"))?;
+        let powershell_label = markdown
+            .find("Receipt command (PowerShell):\n")
+            .ok_or_else(|| format!("powershell receipt label must exist: {markdown}"))?;
+        assert!(
+            bash_label < powershell_label,
+            "bash form must be presented before the PowerShell variant"
+        );
+        assert!(
+            markdown.contains("The first form is written for Bash; cmd.exe is not supported."),
+            "receipt presentation must state the cmd.exe boundary:\n{markdown}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn top_gap_contract_requires_changed_behavior() {
         let selected = json!({

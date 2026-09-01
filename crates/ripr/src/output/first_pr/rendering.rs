@@ -1,4 +1,5 @@
 use super::{STATIC_EVIDENCE_BOUNDARY, string_path};
+use crate::output::markdown::powershell_command;
 use crate::output::start_here_state::{
     START_HERE_PREVIEW_LIMITED, normalize_start_here_output_state,
 };
@@ -377,6 +378,9 @@ fn render_top_gap_markdown(selected: &Value, out: &mut String) {
     if let Some(command) = selected.get("receipt_command").and_then(Value::as_str) {
         out.push_str("Receipt command:\n");
         out.push_str(&format!("`{command}`\n\n"));
+        out.push_str("Receipt command (PowerShell):\n");
+        out.push_str(&format!("`{}`\n\n", powershell_command(command)));
+        out.push_str("The first form is written for Bash; cmd.exe is not supported.\n\n");
     }
     if let Some(command) = selected.get("agent_packet_command").and_then(Value::as_str) {
         out.push_str("Agent packet command:\n");
