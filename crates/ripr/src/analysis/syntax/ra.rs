@@ -419,7 +419,10 @@ fn attribute_string_literal(attribute: &str) -> Option<String> {
 }
 
 fn parser_symbol_id(path: &Path, function: &ast::Fn, name: &str) -> SymbolId {
-    let mut segments = vec![path.display().to_string()];
+    // The stable text projection keeps distinct raw-byte paths distinct
+    // in owner identity; lossy rendering would merge same-named
+    // functions across invalid-byte filenames (#3609).
+    let mut segments = vec![crate::analysis::stable_path_text(path)];
 
     let mut modules = function
         .syntax()
@@ -1211,6 +1214,33 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    #[cfg(unix)]
+    fn parser_symbol_id_keeps_raw_byte_files_distinct() -> Result<(), Box<dyn Error>> {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let source = "fn bounds_check() {}\n";
+        let parse_a = SourceFile::parse(source, Edition::CURRENT);
+        let parse_b = SourceFile::parse(source, Edition::CURRENT);
+        let function = |tree: &SourceFile| {
+            tree.syntax()
+                .descendants()
+                .find_map(ast::Fn::cast)
+                .ok_or("function present")
+        };
+        let function_a = function(&parse_a.tree())?;
+        let function_b = function(&parse_b.tree())?;
+        let raw_a = Path::new(OsStr::from_bytes(b"pricing_\xff.rs"));
+        let raw_b = Path::new(OsStr::from_bytes(b"pricing_\xfe.rs"));
+        let id_a = parser_symbol_id(raw_a, &function_a, "bounds_check");
+        let id_b = parser_symbol_id(raw_b, &function_b, "bounds_check");
+        assert_ne!(
+            id_a, id_b,
+            "distinct raw-byte files must own distinct symbols"
+        );
+        Ok(())
+    }
 
     fn temp_dir(name: &str) -> Result<PathBuf, Box<dyn Error>> {
         let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();

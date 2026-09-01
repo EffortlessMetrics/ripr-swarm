@@ -362,8 +362,7 @@ struct PartitionCandidate {
 }
 
 fn normalize_changed_path(path: &Path) -> String {
-    path.to_string_lossy()
-        .replace('\\', "/")
+    crate::analysis::stable_path_text(path)
         .trim_start_matches("./")
         .to_string()
 }

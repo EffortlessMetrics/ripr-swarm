@@ -835,3 +835,11 @@ path = "docs/specs/RIPR-SPEC-0169-contextual-source-role-composition.md"
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Issue #3533 records the contextual source-role composition contract: evidence-only CfgTestModule grants across module and include edges, fail-closed unresolved chains with provenance reasons and disclosure, and crate-root-anchored default module resolution."
+
+[[artifact]]
+id = "RIPR-SPEC-0170"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0170-stable-cross-platform-path-text.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #3609 records the shared stable textual path contract: literal percent escaping is consistent across platforms while Unix invalid-byte `%XX` identity remains distinct; no decoder, confinement, schema, or support-tier change."
