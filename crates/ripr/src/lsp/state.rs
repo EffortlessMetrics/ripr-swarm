@@ -626,6 +626,15 @@ pub(super) struct AnalysisSnapshot {
     pub(super) classified_seams: Vec<ClassifiedSeam>,
     pub(super) gap_artifacts: Vec<ValidatedGapArtifact>,
     pub(super) gap_artifact_rejections: Vec<GapArtifactRejection>,
+    /// Harness registry projections (#3532): what each exact
+    /// `[analysis.test_harnesses]` registration established for this run —
+    /// subjects, provenance, and typed limitations. Empty when the
+    /// repository has no registrations or when a limited run (git timeout,
+    /// oversized diff) carried no harness facts. Carried on the snapshot so
+    /// editor surfaces read the same registered facts the CLI projects
+    /// (#3605); this is the registered-facts subset, not a claim that the
+    /// harness's subjects were executed.
+    pub(super) harness_projections: Vec<crate::analysis::harness_projection::TestHarnessProjection>,
     pub(super) diagnostics_by_uri: BTreeMap<Uri, Vec<Diagnostic>>,
     /// The one immutable delivery selection shared by push publication and
     /// both pull handlers (#1973). Computed once at refresh-transaction
@@ -1506,6 +1515,7 @@ mod tests {
             classified_seams: Vec::new(),
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
+            harness_projections: Vec::new(),
             diagnostics_by_uri,
             delivery_selection: None,
             seams_deferred: false,
@@ -1537,6 +1547,7 @@ mod tests {
             classified_seams: Vec::new(),
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
+            harness_projections: Vec::new(),
             diagnostics_by_uri,
             delivery_selection: None,
             seams_deferred: false,

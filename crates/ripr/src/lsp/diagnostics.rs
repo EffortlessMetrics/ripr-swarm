@@ -763,6 +763,7 @@ pub(super) fn workspace_diagnostics_with_config(
     let root = output.root;
     let base = output.base;
     let analysis_outcome = output.analysis_outcome;
+    let harness_projections = output.harness_projections;
     let mode = output.mode;
     let partial_scope = output.partial_scope;
     // Scope the LSP projection to production Rust anchors, matching the CLI
@@ -998,6 +999,7 @@ pub(super) fn workspace_diagnostics_with_config(
         classified_seams,
         gap_artifacts: gap_artifact_report.artifacts,
         gap_artifact_rejections: gap_artifact_report.rejections,
+        harness_projections,
         diagnostics_by_uri,
         delivery_selection: None,
         seams_deferred: defer_seam_inventory,
@@ -1105,6 +1107,9 @@ fn git_timeout_limited_diagnostics(
         classified_seams: Vec::new(),
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
+        // Limited runs disclose the run-status limitation instead of
+        // harness facts; the next full refresh repopulates them (#3605).
+        harness_projections: Vec::new(),
         diagnostics_by_uri: BTreeMap::new(),
         delivery_selection: None,
         seams_deferred: defer_seam_inventory,
@@ -1174,6 +1179,9 @@ fn oversized_diff_limited_diagnostics(
         classified_seams: Vec::new(),
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
+        // Limited runs disclose the run-status limitation instead of
+        // harness facts; the next full refresh repopulates them (#3605).
+        harness_projections: Vec::new(),
         diagnostics_by_uri,
         delivery_selection: None,
         seams_deferred: defer_seam_inventory,
@@ -4206,6 +4214,7 @@ mod delivery_tests {
             classified_seams: Vec::new(),
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
+            harness_projections: Vec::new(),
             diagnostics_by_uri,
             delivery_selection: None,
             seams_deferred: false,

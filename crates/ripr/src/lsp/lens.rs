@@ -387,6 +387,7 @@ mod tests {
             classified_seams: Vec::new(),
             gap_artifacts: Vec::<ValidatedGapArtifact>::new(),
             gap_artifact_rejections: Vec::<GapArtifactRejection>::new(),
+            harness_projections: Vec::new(),
             diagnostics_by_uri,
             delivery_selection: None,
             seams_deferred: false,

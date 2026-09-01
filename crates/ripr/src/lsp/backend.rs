@@ -4715,6 +4715,7 @@ impl Backend {
                         "gap_artifacts": gap_artifacts,
                         "actionable_gap_artifacts": actionable_gap_artifacts,
                         "gap_artifact_rejections": gap_artifact_rejections,
+                "harness_registry": workspace_status_harness_summary(&snapshot),
                         "out_of_scope_test_file_findings": snapshot.out_of_scope_test_file_findings,
                     },
                     "diagnostic_budget": diagnostic_budget_json.clone(),
@@ -5125,6 +5126,31 @@ fn workspace_status_report_paths() -> serde_json::Value {
         "gap_decision_ledger": DEFAULT_GAP_DECISION_LEDGER_OUT,
         "start_here": "target/ripr/reports/start-here.json",
     })
+}
+
+/// Bounded harness-registry disclosure for `collect_workspace_status`:
+/// one entry per registration with its established subject and typed
+/// limitation counts. Null when the run carried no harness facts (no
+/// registrations or a limited run), so the JSON stays additive (#3605).
+fn workspace_status_harness_summary(snapshot: &AnalysisSnapshot) -> serde_json::Value {
+    if snapshot.harness_projections.is_empty() {
+        return serde_json::Value::Null;
+    }
+    let registrations: Vec<serde_json::Value> = snapshot
+        .harness_projections
+        .iter()
+        .map(|projection| {
+            serde_json::json!({
+                "registration_id": projection.registration_id,
+                "harness_kind": projection.harness_kind,
+                "adapter": projection.adapter,
+                "target": projection.target.to_string_lossy(),
+                "subject_count": projection.subjects.len(),
+                "limitation_count": projection.limitations.len(),
+            })
+        })
+        .collect();
+    serde_json::json!({ "registrations": registrations })
 }
 
 /// Compact receipt/outcome summary for `collect_workspace_status`.
@@ -5727,6 +5753,7 @@ mod top_limitation_selection_tests {
             classified_seams: Vec::new(),
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
+            harness_projections: Vec::new(),
             diagnostics_by_uri: BTreeMap::new(),
             delivery_selection: None,
             seams_deferred: false,
@@ -7577,6 +7604,7 @@ mod delivery_selection_parity_tests {
             classified_seams: Vec::new(),
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
+            harness_projections: Vec::new(),
             diagnostics_by_uri,
             delivery_selection: None,
             seams_deferred: false,
@@ -8508,6 +8536,7 @@ mod list_actionable_items_tests {
             classified_seams: Vec::new(),
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
+            harness_projections: Vec::new(),
             diagnostics_by_uri: BTreeMap::new(),
             delivery_selection: selection.map(Arc::new),
             seams_deferred: false,

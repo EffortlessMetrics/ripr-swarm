@@ -713,6 +713,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
         classified_seams: Vec::new(),
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
+        harness_projections: Vec::new(),
         diagnostics_by_uri,
         delivery_selection: None,
         seams_deferred: false,
@@ -10727,6 +10728,7 @@ fn sample_analysis_snapshot(
         classified_seams: Vec::new(),
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
+        harness_projections: Vec::new(),
         diagnostics_by_uri,
         delivery_selection: None,
         seams_deferred: false,
@@ -15171,6 +15173,7 @@ fn quarantine_workspace_diagnostics(fixture: &QuarantineFixture) -> WorkspaceDia
         classified_seams: Vec::new(),
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
+        harness_projections: Vec::new(),
         diagnostics_by_uri,
         delivery_selection: None,
         seams_deferred: false,
@@ -17359,5 +17362,102 @@ fn workspace_diagnostics_production_like_opt_in_target_keeps_editor_projection()
             diagnostics.snapshot.out_of_scope_test_file_findings
         ));
     }
+    Ok(())
+}
+
+#[test]
+fn registered_harness_projection_reaches_the_lsp_snapshot() -> Result<(), Box<dyn std::error::Error>>
+{
+    // #3605: the editor surface reads the same registered harness facts the
+    // CLI projects — registration identity, subjects, and typed limitations
+    // ride on the analysis snapshot instead of being dropped at the LSP
+    // boundary.
+    let root = unique_lsp_test_root("harness-projection")?;
+    std::fs::write(
+        root.path().join("Cargo.toml"),
+        concat!(
+            "[package]\n",
+            "name = \"lsp-harness-fixture\"\n",
+            "version = \"0.1.0\"\n",
+            "edition = \"2024\"\n",
+            "\n",
+            "[lib]\n",
+            "name = \"lsp_harness_fixture\"\n",
+            "path = \"src/lib.rs\"\n",
+            "\n",
+            "[[test]]\n",
+            "name = \"mimic\"\n",
+            "path = \"tests/mimic.rs\"\n",
+            "harness = false\n",
+        ),
+    )?;
+    std::fs::write(
+        root.path().join("ripr.toml"),
+        concat!(
+            "[analysis]\n",
+            "[[analysis.test_harnesses]]\n",
+            "registration_id = \"mimic-suite\"\n",
+            "target = \"tests/mimic.rs\"\n",
+            "kind = \"custom_harness\"\n",
+            "adapter = \"libtest_mimic_v1\"\n",
+            "marker = \"libtest_mimic\"\n",
+        ),
+    )?;
+    std::fs::create_dir_all(root.path().join("src"))?;
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn gate(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
+    )?;
+    std::fs::create_dir_all(root.path().join("tests"))?;
+    std::fs::write(
+        root.path().join("tests/mimic.rs"),
+        "fn mimic_helper(value: i32) -> i32 { value }\n\nfn trials() -> Vec<libtest_mimic::Trial> {\n    vec![libtest_mimic::Trial::test(\"mimic_case\", || Ok(()))]\n}\n",
+    )?;
+
+    let run_git = |args: &[&str]| -> Result<std::process::Output, String> {
+        lsp_scope_git_output(root.path(), args)
+    };
+    run_git(&["init"])?;
+    run_git(&["config", "user.email", "ripr@example.invalid"])?;
+    run_git(&["config", "user.name", "RIPR Test"])?;
+    run_git(&["add", "."])?;
+    run_git(&["commit", "-m", "base"])?;
+    // A tracked edit to the registered target itself puts it in the diff
+    // scope, so the diff-scoped adapter indexes its facts and the
+    // projection carries the established subjects.
+    std::fs::write(
+        root.path().join("tests/mimic.rs"),
+        "fn mimic_helper(value: i32) -> i32 { value }\n\nfn trials() -> Vec<libtest_mimic::Trial> {\n    vec![libtest_mimic::Trial::test(\"mimic_case\", || Ok(())), libtest_mimic::Trial::test(\"mimic_case_two\", || Ok(()))]\n}\n",
+    )?;
+
+    let repo_config = crate::config::tests_only_parse(
+        "[analysis]\n[[analysis.test_harnesses]]\nregistration_id = \"mimic-suite\"\ntarget = \"tests/mimic.rs\"\nkind = \"custom_harness\"\nadapter = \"libtest_mimic_v1\"\nmarker = \"libtest_mimic\"\n",
+    )?;
+    let config = LspAnalysisConfig {
+        base_ref: Some("HEAD".to_string()),
+        mode: Mode::Instant,
+        diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
+        repo_config,
+        ..LspAnalysisConfig::default()
+    };
+    let diagnostics = workspace_diagnostics_with_config(root.path(), &config, true)?;
+
+    let projections = &diagnostics.snapshot.harness_projections;
+    assert_eq!(projections.len(), 1, "{:?}", projections);
+    assert_eq!(projections[0].registration_id, "mimic-suite");
+    assert_eq!(projections[0].harness_kind, "custom_harness");
+    assert_eq!(
+        projections[0].target,
+        std::path::PathBuf::from("tests/mimic.rs")
+    );
+    assert_eq!(
+        projections[0]
+            .subjects
+            .iter()
+            .map(|subject| subject.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["mimic_case", "mimic_case_two"]
+    );
+    let _ = projections;
     Ok(())
 }
