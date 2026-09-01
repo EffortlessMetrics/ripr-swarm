@@ -155,15 +155,9 @@ impl TestTargetEvidence {
             symbol_id: SymbolId(format!("fixture:test:{}:{}:{}", file.display(), line, name)),
             file: file.to_path_buf(),
             line,
-            test_kind: if file
-                .to_string_lossy()
-                .replace('\\', "/")
-                .contains("/tests/")
-                || file
-                    .to_string_lossy()
-                    .replace('\\', "/")
-                    .starts_with("tests/")
-            {
+            // Integration-vs-inline kind comes from the typed test-file
+            // authority, not a local path re-derivation (#3534).
+            test_kind: if crate::analysis::rust_index::is_test_file(file) {
                 TestKind::Integration
             } else {
                 TestKind::InlineUnit
