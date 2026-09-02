@@ -12256,10 +12256,13 @@ fn check_rust_source_role_authority() -> Result<(), String> {
             continue;
         }
         // Test code asserts producer behavior and manipulates source text
-        // as data, so scanning stops at the file's first top-level
-        // `#[cfg(test)]` item: production code precedes test modules by
-        // convention in this repository, and the gate polices production
-        // role derivation only.
+        // as data, so the interiors of top-level `#[cfg(test)]` items stay
+        // exempt: the gate polices production role derivation only. The
+        // region-aware scan still covers production code before, between,
+        // and after those items; the earlier first-item truncation let
+        // every production region below that line escape the ban (for
+        // example `analysis/mod.rs`, whose gated corpus declaration sits
+        // near the top of the file).
         let scanned = raw_production_text(&read_text_lossy(Path::new(file))?);
         for (pattern, owner) in RULES {
             if !scanned.contains(pattern) {
@@ -12303,15 +12306,434 @@ fn check_rust_source_role_authority() -> Result<(), String> {
     )
 }
 
-/// Production-side text of one Rust source file: everything before the
-/// file's first top-level `#[cfg(test)]` item. Test modules close a file in
-/// this repository, so test fixtures and assertions (which manipulate
-/// source text as data) never reach role-authority pattern scans.
+/// Production-side text of one Rust source file, region-aware: the whole
+/// file minus the interiors of its top-level `#[cfg(test)]` items.
+///
+/// The previous scanner truncated the file at the first column-0
+/// `#[cfg(test)]` line, which left every later production region outside
+/// the scan (for example `analysis/mod.rs`, whose `#[cfg(test)] mod
+/// source_role_corpus;` boundary sits near the top of the file). This
+/// scanner lexes just enough Rust — line and block comments, string /
+/// raw-string / char literals — to track brace/paren depth, exempts the
+/// items gated at the top level, and rescans production code before,
+/// between, and after them. Gated item bodies stay exempt so test
+/// fixtures and assertions (which manipulate source text as data) never
+/// reach role-authority pattern scans. Patterns are still matched as
+/// plain substrings of the returned text, so producer exemptions and the
+/// allowed-site inventory behave exactly as before.
 fn raw_production_text(text: &str) -> String {
-    text.lines()
-        .take_while(|line| !line.starts_with("#[cfg(test)]"))
-        .collect::<Vec<_>>()
-        .join("\n")
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0usize;
+    let mut depth = 0usize; // brace/paren nesting depth of production code
+    while i < chars.len() {
+        if depth == 0 && chars[i] == '#' && is_top_level_cfg_test_attr(&chars, i) {
+            i = skip_cfg_test_item(&chars, i);
+            // Keep a line seam so patterns cannot splice across a
+            // removed item.
+            out.push('\n');
+            continue;
+        }
+        if let Some(end) = advance_lexeme(&chars, i) {
+            out.extend(chars[i..end].iter().copied());
+            i = end;
+            continue;
+        }
+        match chars[i] {
+            '{' | '(' => depth += 1,
+            '}' | ')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
+}
+
+/// Whether `#[cfg(test)]` (with optional interior whitespace) starts at
+/// `i` on the `#`. The caller guarantees top-level (depth 0) position.
+fn is_top_level_cfg_test_attr(chars: &[char], i: usize) -> bool {
+    let mut j = i + 1;
+    skip_whitespace(chars, &mut j);
+    if chars.get(j) != Some(&'[') {
+        return false;
+    }
+    j += 1;
+    for expected in ["cfg", "(", "test", ")"] {
+        skip_whitespace(chars, &mut j);
+        for spelled in expected.chars() {
+            if chars.get(j) != Some(&spelled) {
+                return false;
+            }
+            j += 1;
+        }
+    }
+    skip_whitespace(chars, &mut j);
+    chars.get(j) == Some(&']')
+}
+
+/// End of the top-level item gated by the `#[cfg(test)]` attribute that
+/// starts at `start`: the attribute, any further attributes, and then the
+/// item itself — either through the `;` at the item's own brace level
+/// (`mod name;`, `use ...;`, `static ... = ...;`) or through the closing
+/// brace of its body (`mod name { ... }`, `fn name() { ... }`). Nothing
+/// in that range reaches production pattern scans.
+fn skip_cfg_test_item(chars: &[char], start: usize) -> usize {
+    let mut i = start;
+    loop {
+        i = skip_attribute(chars, i);
+        i = skip_trivia(chars, i);
+        if chars.get(i) != Some(&'#') {
+            break;
+        }
+    }
+    let mut rel = 0usize; // brace/paren/bracket depth inside the item
+    while i < chars.len() {
+        if let Some(end) = advance_lexeme(chars, i) {
+            i = end;
+            continue;
+        }
+        match chars[i] {
+            '{' | '(' | '[' => rel += 1,
+            '}' | ')' | ']' => {
+                rel = rel.saturating_sub(1);
+                if rel == 0 {
+                    // Body closed; consume one optional trailing `;`.
+                    let mut j = skip_trivia(chars, i + 1);
+                    if chars.get(j) == Some(&';') {
+                        j += 1;
+                    }
+                    return j;
+                }
+            }
+            ';' if rel == 0 => return i + 1,
+            _ => {}
+        }
+        i += 1;
+    }
+    chars.len()
+}
+
+/// End of the `#[...]` attribute starting at `i` on the `#`, or `i` when
+/// no attribute starts there. Bracket contents are lexeme-aware so a
+/// string cannot fake the closing bracket.
+fn skip_attribute(chars: &[char], i: usize) -> usize {
+    if chars.get(i) != Some(&'#') {
+        return i;
+    }
+    let mut j = i + 1;
+    skip_whitespace(chars, &mut j);
+    if chars.get(j) != Some(&'[') {
+        return i;
+    }
+    let mut rel = 0usize;
+    while j < chars.len() {
+        if let Some(end) = advance_lexeme(chars, j) {
+            j = end;
+            continue;
+        }
+        match chars[j] {
+            '[' => rel += 1,
+            ']' => {
+                rel = rel.saturating_sub(1);
+                if rel == 0 {
+                    return j + 1;
+                }
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    chars.len()
+}
+
+/// Position after whitespace and comments starting at `i`.
+fn skip_trivia(chars: &[char], mut i: usize) -> usize {
+    loop {
+        skip_whitespace(chars, &mut i);
+        match chars.get(i) {
+            Some('/') if chars.get(i + 1) == Some(&'/') => i = line_comment_end(chars, i),
+            Some('/') if chars.get(i + 1) == Some(&'*') => i = block_comment_end(chars, i),
+            _ => return i,
+        }
+    }
+}
+
+fn skip_whitespace(chars: &[char], i: &mut usize) {
+    while matches!(
+        chars.get(*i),
+        Some(' ') | Some('\t') | Some('\r') | Some('\n')
+    ) {
+        *i += 1;
+    }
+}
+
+/// End of the comment or literal that starts at `i`, or `None` when no
+/// lexeme that could hide a brace or delimiter starts there. Purely
+/// structural: delimiters inside these lexemes never affect depth
+/// tracking, and production scans still see their text verbatim.
+fn advance_lexeme(chars: &[char], i: usize) -> Option<usize> {
+    match chars[i] {
+        '/' if chars.get(i + 1) == Some(&'/') => Some(line_comment_end(chars, i)),
+        '/' if chars.get(i + 1) == Some(&'*') => Some(block_comment_end(chars, i)),
+        '"' => Some(string_literal_end(chars, i)),
+        'r' if !in_identifier(chars, i)
+            && (chars.get(i + 1) == Some(&'"') || chars.get(i + 1) == Some(&'#')) =>
+        {
+            Some(raw_string_end(chars, i))
+        }
+        '\'' => Some(char_literal_or_lifetime_end(chars, i)),
+        _ => None,
+    }
+}
+
+fn is_identifier_continue(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// Whether the char before `i` continues an identifier, so an `r` there
+/// belongs to a name (`var`) rather than a raw-string prefix.
+fn in_identifier(chars: &[char], i: usize) -> bool {
+    i > 0 && is_identifier_continue(chars[i - 1])
+}
+
+fn line_comment_end(chars: &[char], start: usize) -> usize {
+    let mut i = start;
+    while i < chars.len() && chars[i] != '\n' {
+        i += 1;
+    }
+    i
+}
+
+/// End of a (nestable) `/* ... */` block comment.
+fn block_comment_end(chars: &[char], start: usize) -> usize {
+    let mut i = start + 2;
+    let mut nesting = 1usize;
+    while i < chars.len() {
+        if chars[i] == '/' && chars.get(i + 1) == Some(&'*') {
+            nesting += 1;
+            i += 2;
+        } else if chars[i] == '*' && chars.get(i + 1) == Some(&'/') {
+            nesting -= 1;
+            i += 2;
+            if nesting == 0 {
+                return i;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    chars.len()
+}
+
+fn string_literal_end(chars: &[char], start: usize) -> usize {
+    let mut i = start + 1;
+    while i < chars.len() {
+        match chars[i] {
+            '\\' => i += 2,
+            '"' => return i + 1,
+            _ => i += 1,
+        }
+    }
+    chars.len()
+}
+
+/// End of a raw string `r"..."` / `r#"..."#` that starts at `i` on the
+/// `r`, or `i + 1` when the hash run never opens a quote.
+fn raw_string_end(chars: &[char], start: usize) -> usize {
+    let mut hashes = 0usize;
+    let mut i = start + 1;
+    while chars.get(i) == Some(&'#') {
+        hashes += 1;
+        i += 1;
+    }
+    if chars.get(i) != Some(&'"') {
+        return start + 1;
+    }
+    i += 1;
+    while i < chars.len() {
+        if chars[i] == '"' {
+            let mut close_hashes = 0usize;
+            let mut j = i + 1;
+            while chars.get(j) == Some(&'#') {
+                close_hashes += 1;
+                j += 1;
+            }
+            if close_hashes == hashes {
+                return j;
+            }
+        }
+        i += 1;
+    }
+    chars.len()
+}
+
+/// End of a char literal starting at `i` on the quote, or `i + 1` for a
+/// lifetime (or loop label), whose quote is syntax and never hides a
+/// brace.
+fn char_literal_or_lifetime_end(chars: &[char], i: usize) -> usize {
+    match chars.get(i + 1) {
+        Some('\\') => {
+            let mut j = i + 2;
+            while j < chars.len() {
+                match chars[j] {
+                    '\\' => j += 2,
+                    '\'' => return j + 1,
+                    _ => j += 1,
+                }
+            }
+            chars.len()
+        }
+        Some(_) if chars.get(i + 2) == Some(&'\'') => i + 3,
+        _ => i + 1,
+    }
+}
+
+#[cfg(test)]
+mod raw_production_text_tests {
+    use super::raw_production_text;
+
+    #[test]
+    fn production_only_file_is_returned_verbatim() {
+        let text = "pub fn a(path: &str) -> bool {\n    path.contains(\"/tests/\")\n}\n";
+        assert_eq!(raw_production_text(text), text);
+    }
+
+    #[test]
+    fn production_after_a_leading_test_module_is_scanned() {
+        // The #3534 blind-spot shape: the gated item sits first, so the
+        // earlier first-item truncation hid everything below it.
+        let text = "#[cfg(test)]\nmod tests {\n    fn t() {\n        let _ = path.contains(\"/tests/\");\n    }\n}\n\npub fn later(path: &str) -> bool {\n    path.contains(\"/tests/\")\n}\n";
+        let scanned = raw_production_text(text);
+        assert!(scanned.contains("pub fn later"));
+        assert!(scanned.contains("path.contains(\"/tests/\")"));
+        assert!(!scanned.contains("fn t()"));
+    }
+
+    #[test]
+    fn production_before_a_test_module_stays_scanned() {
+        let text = "pub fn early(path: &str) -> bool {\n    path.ends_with(\"_test.rs\")\n}\n\n#[cfg(test)]\nmod tests {\n    fn t() {\n        let _ = path.ends_with(\"_test.rs\");\n    }\n}\n";
+        let scanned = raw_production_text(text);
+        assert!(scanned.contains("pub fn early"));
+        assert!(scanned.contains("path.ends_with(\"_test.rs\")"));
+        assert!(!scanned.contains("fn t()"));
+    }
+
+    #[test]
+    fn gated_declaration_exempts_only_the_declaration() {
+        // `analysis/mod.rs` shape: a gated `mod name;` declaration with
+        // production module declarations after it.
+        let text = "mod facts;\n#[cfg(test)]\nmod source_role_corpus;\nmod summary;\npub fn rest(path: &str) -> bool {\n    path.contains(\"/tests/\")\n}\n";
+        let scanned = raw_production_text(text);
+        assert!(scanned.contains("mod facts;"));
+        assert!(scanned.contains("mod summary;"));
+        assert!(scanned.contains("path.contains(\"/tests/\")"));
+        assert!(!scanned.contains("source_role_corpus"));
+    }
+
+    #[test]
+    fn gated_free_function_is_exempt_in_full() {
+        let text = "pub fn early() -> bool { true }\n\n#[cfg(test)]\nfn gated() {\n    let _ = path.contains(\"/tests/\");\n}\n\npub fn last(path: &str) -> bool {\n    path.contains(\"/tests/\")\n}\n";
+        let scanned = raw_production_text(text);
+        assert!(scanned.contains("pub fn early"));
+        assert!(scanned.contains("pub fn last"));
+        assert!(!scanned.contains("fn gated"));
+    }
+
+    #[test]
+    fn production_between_two_gated_items_is_scanned() {
+        let text = "#[cfg(test)]\nmod a { fn ta() {} }\n\npub fn mid() -> bool { true }\n\n#[cfg(test)]\nmod b { fn tb() {} }\n\npub fn last() -> bool { true }\n";
+        let scanned = raw_production_text(text);
+        assert!(scanned.contains("pub fn mid"));
+        assert!(scanned.contains("pub fn last"));
+        assert!(!scanned.contains("fn ta"));
+        assert!(!scanned.contains("fn tb"));
+    }
+
+    #[test]
+    fn nested_braces_inside_a_test_module_stay_exempt() {
+        let text = "#[cfg(test)]\nmod tests {\n    mod inner {\n        fn t() {\n            if x {\n                let _ = path.starts_with(\"tests\");\n            }\n        }\n    }\n}\n\npub fn later(path: &str) -> bool {\n    path.starts_with(\"tests\")\n}\n";
+        let scanned = raw_production_text(text);
+        assert!(scanned.contains("pub fn later"));
+        assert!(scanned.contains("path.starts_with(\"tests\")"));
+        assert!(!scanned.contains("fn t()"));
+        assert!(!scanned.contains("mod inner"));
+    }
+
+    #[test]
+    fn brace_strings_inside_a_test_module_do_not_end_the_exemption() {
+        // A naive depth tracker reads the `}` inside the string as the
+        // end of the test module and leaks the rest of its body.
+        let text = "#[cfg(test)]\nmod tests {\n    fn t() {\n        let braces = \"}{{{\";\n    }\n}\n\npub fn later() -> bool { true }\n";
+        let scanned = raw_production_text(text);
+        assert!(scanned.contains("pub fn later"));
+        assert!(!scanned.contains("fn t()"));
+    }
+
+    #[test]
+    fn brace_strings_in_production_do_not_shift_depth() {
+        let text = "pub fn render() -> &'static str {\n    \"}{\"\n}\n\n#[cfg(test)]\nmod tests {\n    fn t() { let _ = \"x\"; }\n}\n\npub fn later() -> bool { true }\n";
+        let scanned = raw_production_text(text);
+        assert!(scanned.contains("pub fn render"));
+        assert!(scanned.contains("pub fn later"));
+        assert!(!scanned.contains("fn t()"));
+    }
+
+    #[test]
+    fn raw_strings_with_hashes_keep_depth() {
+        let text = "#[cfg(test)]\nmod tests {\n    fn t() {\n        let raw = r#\" { } \"#;\n        let raw2 = r\" } \";\n    }\n}\n\npub fn later() -> bool { true }\n";
+        let scanned = raw_production_text(text);
+        assert!(scanned.contains("pub fn later"));
+        assert!(!scanned.contains("fn t()"));
+    }
+
+    #[test]
+    fn char_literals_and_lifetimes_keep_depth() {
+        let text = "#[cfg(test)]\nmod tests {\n    fn t() {\n        let _ = ('{', '}');\n    }\n}\n\npub fn later(path: &'static str) -> char {\n    '{'\n}\n";
+        let scanned = raw_production_text(text);
+        assert!(scanned.contains("pub fn later"));
+        assert!(scanned.contains("path: &'static str"));
+        assert!(!scanned.contains("fn t()"));
+    }
+
+    #[test]
+    fn cfg_test_spelling_in_comments_or_strings_does_not_exempt() {
+        let text = "pub fn doc() -> bool {\n    // a line mentioning #[cfg(test)]\n    /* block #[cfg(test)] comment */\n    let s = \"#[cfg(test)]\";\n    true\n}\n\npub fn later() -> bool { true }\n";
+        let scanned = raw_production_text(text);
+        assert!(scanned.contains("pub fn doc"));
+        assert!(scanned.contains("pub fn later"));
+    }
+
+    #[test]
+    fn indented_cfg_test_items_stay_in_production_text() {
+        // Only top-level (depth 0) gated items are exempt; a nested
+        // cfg(test) item inside a production function body stays in the
+        // scanned text, matching the earlier first-item boundary policy.
+        let text =
+            "pub fn wrapper() {\n    #[cfg(test)]\n    mod inner {\n        fn t() {}\n    }\n}\n";
+        let scanned = raw_production_text(text);
+        assert!(scanned.contains("mod inner"));
+    }
+
+    #[test]
+    fn gated_items_with_extra_attributes_stay_exempt() {
+        let text = "pub fn early() -> bool { true }\n\n#[cfg(test)]\n#[expect(clippy::duck)]\nmod tests {\n    fn t() {\n        let _ = path.contains(\"/tests/\");\n    }\n}\n\npub fn last(path: &str) -> bool {\n    path.contains(\"/tests/\")\n}\n";
+        let scanned = raw_production_text(text);
+        assert!(scanned.contains("pub fn early"));
+        assert!(scanned.contains("pub fn last"));
+        assert!(!scanned.contains("fn t()"));
+    }
+
+    #[test]
+    fn test_module_body_strings_do_not_leak_into_production_text() {
+        // Repo-shaped case: test code legitimately quotes test-path
+        // strings; those must stay inside the exempt region.
+        let text = "pub fn early() -> bool { true }\n\n#[cfg(test)]\nmod tests {\n    fn t() {\n        assert!(fixture.ends_with(\"_test.rs\"));\n        assert!(fixture.starts_with(\"tests\"));\n    }\n}\n";
+        let scanned = raw_production_text(text);
+        assert!(scanned.contains("pub fn early"));
+        assert!(!scanned.contains("_test.rs"));
+        assert!(!scanned.contains("starts_with(\"tests"));
+    }
 }
 
 /// RIPR-SPEC-0087 §8 (issue #2028): the producer-owned repair-packet
