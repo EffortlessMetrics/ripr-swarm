@@ -1880,6 +1880,71 @@ mod tests {
         Ok(())
     }
 
+    /// The start-here markdown must present the verify and agent packet
+    /// commands for both shells (#2628): the bash forms stay byte-identical,
+    /// the PowerShell forms round-trip an embedded quote (verify) and the
+    /// packet redirect (agent packet) through the shared `powershell_command`
+    /// translation, and each block states the cmd.exe boundary.
+    #[test]
+    fn start_here_markdown_offers_verify_and_agent_packet_powershell_variants() -> Result<(), String>
+    {
+        let packet = json!({
+            "status": "actionable",
+            "selected": {
+                "state": "top_gap",
+                "kind": "MissingBoundaryAssertion",
+                "verify_command": "cargo test 'it'\\''s'",
+                "agent_packet_command": "ripr agent packet --root 'repo root' --gap-id gap:pr:pricing --json > target/ripr/workflow/agent-packet.json",
+            },
+        });
+        let markdown = render_start_here_markdown(&packet);
+
+        let bash_verify = "Verify command:\n`cargo test 'it'\\''s'`\n\n";
+        assert!(
+            markdown.contains(bash_verify),
+            "bash verify command drifted:\n{markdown}"
+        );
+        let powershell_verify = "Verify command (PowerShell):\n`cargo test 'it''s'`";
+        assert!(
+            markdown.contains(powershell_verify),
+            "powershell verify command missing or drifted:\n{markdown}"
+        );
+        let bash_packet = "Agent packet command:\n`ripr agent packet --root 'repo root' --gap-id gap:pr:pricing --json > target/ripr/workflow/agent-packet.json`\n\n";
+        assert!(
+            markdown.contains(bash_packet),
+            "bash agent packet command drifted:\n{markdown}"
+        );
+        let powershell_packet = "Agent packet command (PowerShell):\n`[System.IO.File]::WriteAllText('target/ripr/workflow/agent-packet.json', ((ripr agent packet --root 'repo root' --gap-id gap:pr:pricing --json) | Out-String), [System.Text.UTF8Encoding]::new($false))`";
+        assert!(
+            markdown.contains(powershell_packet),
+            "powershell agent packet command missing or drifted:\n{markdown}"
+        );
+        let bash_verify_at = markdown
+            .find(bash_verify)
+            .ok_or_else(|| format!("bash verify label must exist: {markdown}"))?;
+        let powershell_verify_at = markdown
+            .find(powershell_verify)
+            .ok_or_else(|| format!("powershell verify label must exist: {markdown}"))?;
+        let bash_packet_at = markdown
+            .find(bash_packet)
+            .ok_or_else(|| format!("bash agent packet label must exist: {markdown}"))?;
+        let powershell_packet_at = markdown
+            .find(powershell_packet)
+            .ok_or_else(|| format!("powershell agent packet label must exist: {markdown}"))?;
+        assert!(
+            bash_verify_at < powershell_verify_at && bash_packet_at < powershell_packet_at,
+            "bash form must be presented before the PowerShell variant:\n{markdown}"
+        );
+        assert_eq!(
+            markdown
+                .matches("The first form is written for Bash; cmd.exe is not supported.")
+                .count(),
+            2,
+            "each presented block must state the cmd.exe boundary:\n{markdown}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn top_gap_contract_requires_changed_behavior() {
         let selected = json!({

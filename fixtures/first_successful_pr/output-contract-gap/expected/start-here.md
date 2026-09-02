@@ -35,6 +35,11 @@ Repair:
 Verify command:
 `cargo xtask goldens check`
 
+Verify command (PowerShell):
+`cargo xtask goldens check`
+
+The first form is written for Bash; cmd.exe is not supported.
+
 Receipt command:
 `ripr receipt write --gap gap:rust:output:device-label --verify-command 'cargo xtask goldens check' --status not_run --out target/ripr/receipts/gap-pr-output-device-label.targeted-test-outcome.json`
 
@@ -45,6 +50,11 @@ The first form is written for Bash; cmd.exe is not supported.
 
 Agent packet command:
 `ripr agent packet --root fixtures/first_successful_pr/output-contract-gap --gap-ledger inputs/reports/gap-decision-ledger.json --gap-id gap:pr:output:device-label --json > target/ripr/workflow/agent-packet.json`
+
+Agent packet command (PowerShell):
+`[System.IO.File]::WriteAllText('target/ripr/workflow/agent-packet.json', ((ripr agent packet --root fixtures/first_successful_pr/output-contract-gap --gap-ledger inputs/reports/gap-decision-ledger.json --gap-id gap:pr:output:device-label --json) | Out-String), [System.Text.UTF8Encoding]::new($false))`
+
+The first form is written for Bash; cmd.exe is not supported.
 
 ## Artifacts
 
