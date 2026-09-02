@@ -39,11 +39,12 @@ pub(crate) const POWERSHELL_UNAVAILABLE_DISCLOSURE: &str =
 /// quotes and PowerShell rejects at the `'\''` escape (#2628). Translations
 /// applied:
 ///
-/// - Compound bash commands (`&&`, `||`, `;`, heredocs, command substitution
-///   outside quoted regions) return [`None`]: re-tokenizing them as PowerShell
-///   would be a second shell parser, so the caller under-emits — bash form
-///   plus [`POWERSHELL_UNAVAILABLE_DISCLOSURE`] — instead of shipping a line
-///   that is invalid or semantically different (PR #3625 review, devin BUG).
+/// - Compound bash commands (`&&`, `||`, `;`, heredocs, input redirection,
+///   command substitution outside quoted regions) return [`None`]:
+///   re-tokenizing them as PowerShell would be a second shell parser, so the
+///   caller under-emits — bash form plus
+///   [`POWERSHELL_UNAVAILABLE_DISCLOSURE`] — instead of shipping a line that
+///   is invalid or semantically different (PR #3625 review, devin BUG).
 /// - PowerShell single quotes are also literal inside, but its doubling idiom
 ///   differs: bash closes, escapes, and reopens (`'\''`) where PowerShell
 ///   doubles in place (`''`), so every occurrence is rewritten.
@@ -55,10 +56,14 @@ pub(crate) const POWERSHELL_UNAVAILABLE_DISCLOSURE: &str =
 ///   only outside single-quoted regions, so a quoted `>` inside an argument
 ///   cannot hijack it.
 /// - The artifact write is guarded: the invocation's output is captured, the
-///   write happens only `if ($LASTEXITCODE -eq 0)`, and the line ends
-///   `exit $LASTEXITCODE`. Without the guard, a nonzero `ripr` exit still
-///   published the artifact and exited 0, so a failed step looked complete
-///   (PR #3625 review, codex P1).
+///   write happens only `if ($LASTEXITCODE -eq 0)`, and a nonzero status
+///   throws `"ripr exited with code $LASTEXITCODE"`. Without the guard, a
+///   nonzero `ripr` exit still published the artifact and exited 0, so a
+///   failed step looked complete (PR #3625 review, codex P1). The failure
+///   surfaces as `throw`, not `exit`: `throw` aborts a pasted or scripted
+///   block — so in a composed fence a failed snapshot stops the sequence
+///   before its outcome command — while leaving an interactive session open
+///   where `exit` would close it (PR #3625 follow-up review).
 ///
 /// cmd.exe has no translation: it has no quoting form that keeps an argv token
 /// literal, so a generated command is deliberately not offered for it. This
@@ -96,7 +101,7 @@ pub(crate) fn powershell_command(command: &str) -> Option<String> {
         let invocation = command[..index].trim_end();
         let output = powershell_literal(command[index + 1..].trim());
         return Some(format!(
-            "$ripr = (({invocation}) | Out-String); if ($LASTEXITCODE -eq 0) {{ [System.IO.File]::WriteAllText({output}, $ripr, [System.Text.UTF8Encoding]::new($false)) }}; exit $LASTEXITCODE"
+            "$ripr = (({invocation}) | Out-String); if ($LASTEXITCODE -eq 0) {{ [System.IO.File]::WriteAllText({output}, $ripr, [System.Text.UTF8Encoding]::new($false)) }} else {{ throw \"ripr exited with code $LASTEXITCODE\" }}"
         ));
     }
     Some(command)
@@ -107,12 +112,13 @@ pub(crate) fn powershell_command(command: &str) -> Option<String> {
 /// translation.
 ///
 /// Detected outside single-quoted regions: `;`, `&&`, `||`, heredoc `<<`,
-/// command substitution `$(`, and backtick; inside double quotes, where bash
-/// still expands them: `$(` and backtick. A backslash escapes the next
-/// character outside quotes, so `\;` is a literal semicolon, not a separator.
-/// When in doubt the caller under-emits: a false "compound" costs one
-/// disclosure line, a false "simple" would publish an invalid or semantically
-/// different PowerShell line.
+/// input redirection `<` — a parse error in PowerShell, which defines no
+/// `<` operator (PR #3625 follow-up review) — command substitution `$(`, and
+/// backtick; inside double quotes, where bash still expands them: `$(` and
+/// backtick. A backslash escapes the next character outside quotes, so `\;` is
+/// a literal semicolon, not a separator. When in doubt the caller under-emits:
+/// a false "compound" costs one disclosure line, a false "simple" would
+/// publish an invalid or semantically different PowerShell line.
 fn is_compound_bash_command(command: &str) -> bool {
     let chars: Vec<char> = command.chars().collect();
     let mut index = 0;
@@ -143,7 +149,7 @@ fn is_compound_bash_command(command: &str) -> bool {
                 ';' => return true,
                 '&' if next == Some('&') => return true,
                 '|' if next == Some('|') => return true,
-                '<' if next == Some('<') => return true,
+                '<' => return true,
                 '`' => return true,
                 '$' if next == Some('(') => return true,
                 _ => {}
@@ -197,7 +203,7 @@ mod tests {
         );
         assert_eq!(
             powershell_command("ripr check --root 'café' > 'résumé.json'"),
-            Some("$ripr = ((ripr check --root 'café') | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('résumé.json', $ripr, [System.Text.UTF8Encoding]::new($false)) }; exit $LASTEXITCODE".to_string())
+            Some("$ripr = ((ripr check --root 'café') | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('résumé.json', $ripr, [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
         );
     }
 
@@ -230,7 +236,7 @@ mod tests {
             powershell_command(
                 "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json"
             ),
-            Some("$ripr = ((ripr check --root . --mode draft --format repo-exposure-json) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('target/ripr/pilot/after.repo-exposure.json', $ripr, [System.Text.UTF8Encoding]::new($false)) }; exit $LASTEXITCODE".to_string())
+            Some("$ripr = ((ripr check --root . --mode draft --format repo-exposure-json) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('target/ripr/pilot/after.repo-exposure.json', $ripr, [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
         );
     }
 
@@ -241,28 +247,33 @@ mod tests {
     fn powershell_command_redirect_target_escapes_embedded_quotes() {
         assert_eq!(
             powershell_command("ripr check --root . > it's.json"),
-            Some("$ripr = ((ripr check --root .) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('it''s.json', $ripr, [System.Text.UTF8Encoding]::new($false)) }; exit $LASTEXITCODE".to_string())
+            Some("$ripr = ((ripr check --root .) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('it''s.json', $ripr, [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
         );
         assert_eq!(
             powershell_command("ripr check --root . > 'it'\\''s.json'"),
-            Some("$ripr = ((ripr check --root .) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('it''s.json', $ripr, [System.Text.UTF8Encoding]::new($false)) }; exit $LASTEXITCODE".to_string())
+            Some("$ripr = ((ripr check --root .) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('it''s.json', $ripr, [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
         );
     }
 
-    /// The artifact write must sit inside the success branch and the line must
-    /// propagate the invocation's exit status (PR #3625 review, codex P1):
-    /// without the guard, a nonzero `ripr` exit still published the artifact
-    /// and exited 0, so a failed step advanced as if it had completed.
-    /// String-pinned only — see the disclosed limitation on
-    /// [`powershell_command`] for why no pwsh runtime oracle backs this.
+    /// The artifact write must sit inside the success branch, and a nonzero
+    /// invocation must abort without publishing it (PR #3625 review, codex
+    /// P1): without the guard, a nonzero `ripr` exit still published the
+    /// artifact and exited 0, so a failed step advanced as if it had
+    /// completed. The failure surfaces as `throw`, not `exit` (PR #3625
+    /// follow-up review): `throw` aborts a pasted or scripted block — in a
+    /// composed fence a failed snapshot stops the sequence before its outcome
+    /// command — while leaving an interactive session open, where `exit`
+    /// would close the reader's shell. String-pinned only — see the disclosed
+    /// limitation on [`powershell_command`] for why no pwsh runtime oracle
+    /// backs this.
     #[test]
     fn powershell_command_guard_only_writes_the_artifact_on_success() -> Result<(), String> {
         let line = powershell_command(
             "ripr agent packet --root . --json > target/ripr/workflow/agent-packet.json",
         )
         .ok_or_else(|| "simple command must translate".to_string())?;
-        // The write is textually inside the success branch, and the line ends
-        // by propagating the invocation's exit status.
+        // The write is textually inside the success branch, and the failure
+        // branch throws with the invocation's exit status instead of exiting.
         assert!(
             line.contains(
                 "if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('target/ripr/workflow/agent-packet.json', $ripr, [System.Text.UTF8Encoding]::new($false)) }"
@@ -270,8 +281,12 @@ mod tests {
             "write must be guarded by the success branch:\n{line}"
         );
         assert!(
-            line.ends_with("}; exit $LASTEXITCODE"),
-            "exit status must propagate after the guarded write:\n{line}"
+            line.ends_with("} else { throw \"ripr exited with code $LASTEXITCODE\" }"),
+            "failure must abort the block with throw, preserving the session:\n{line}"
+        );
+        assert!(
+            !line.contains("exit $LASTEXITCODE"),
+            "exit would terminate an interactive session:\n{line}"
         );
         assert!(
             !line.contains("WriteAllText")
@@ -284,8 +299,10 @@ mod tests {
     /// Compound bash commands have no honest PowerShell translation: they must
     /// return [`None`] so the caller under-emits (bash form plus a disclosure)
     /// instead of shipping an invalid or semantically different line (PR
-    /// #3625 review, devin BUG). Quoted separators stay simple: `;` inside a
-    /// single-quoted token is data, and `&&` inside a double-quoted token is
+    /// #3625 review, devin BUG). Input redirection `<` is included: PowerShell
+    /// defines no `<` operator, so it would be a parse error at the copy site
+    /// (PR #3625 follow-up review). Quoted separators stay simple: `;` inside
+    /// a single-quoted token is data, and `&&` inside a double-quoted token is
     /// data.
     #[test]
     fn powershell_command_rejects_compound_commands() {
@@ -293,6 +310,8 @@ mod tests {
         assert_eq!(powershell_command("cmd1 || cmd2"), None);
         assert_eq!(powershell_command("cmd1; cmd2"), None);
         assert_eq!(powershell_command("cmd1 <<EOF"), None);
+        assert_eq!(powershell_command("ripr check --diff < input.json"), None);
+        assert_eq!(powershell_command("cmd1 <input.json"), None);
         assert_eq!(powershell_command("cmd1 $(whoami)"), None);
         assert_eq!(powershell_command("cmd1 `whoami`"), None);
         assert_eq!(

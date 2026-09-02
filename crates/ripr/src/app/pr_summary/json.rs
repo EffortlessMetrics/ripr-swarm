@@ -710,7 +710,7 @@ mod tests {
             markdown.contains(bash_form),
             "bash verify command drifted:\n{markdown}"
         );
-        let powershell_form = "```powershell\n$ripr = ((cargo test boundary) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('evidence.txt', $ripr, [System.Text.UTF8Encoding]::new($false)) }; exit $LASTEXITCODE\n```\n\n";
+        let powershell_form = "```powershell\n$ripr = ((cargo test boundary) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('evidence.txt', $ripr, [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }\n```\n\n";
         assert!(
             markdown.contains(powershell_form),
             "powershell verify command missing or drifted:\n{markdown}"
@@ -759,6 +759,50 @@ mod tests {
         assert!(
             !markdown.contains("```powershell\ncargo test a"),
             "compound command must not gain a powershell fence:\n{markdown}"
+        );
+        let bash_fence = markdown
+            .find(bash_form)
+            .ok_or_else(|| format!("bash fence must exist: {markdown}"))?;
+        let disclosure_at = markdown
+            .find(disclosure)
+            .ok_or_else(|| format!("disclosure must exist: {markdown}"))?;
+        assert!(
+            bash_fence < disclosure_at,
+            "bash form must be presented before the disclosure"
+        );
+        Ok(())
+    }
+
+    /// Bash input redirection `<` is a PowerShell parse error (no `<`
+    /// operator), so the command under-emits the same way as a compound form
+    /// (PR #3625 follow-up review): bash-only fence plus the availability
+    /// disclosure, no powershell fence.
+    #[test]
+    fn evidence_summary_md_input_redirect_command_under_emits_to_disclosure() -> Result<(), String>
+    {
+        let start_here = serde_json::json!({
+            "selected": {
+                "state": "top_gap",
+                "verify_command": "cargo run --bin replay < input.json"
+            }
+        });
+        let s = build_pr_evidence_summary(Some(&start_here), None, None, None, None, None);
+        let markdown = super::super::render_evidence_summary_md(&s);
+
+        // Bash-only form is still offered, byte-identical.
+        let bash_form = "```bash\ncargo run --bin replay < input.json\n```\n\n";
+        assert!(
+            markdown.contains(bash_form),
+            "bash input-redirect command drifted:\n{markdown}"
+        );
+        let disclosure = "PowerShell form unavailable for compound commands: `cargo run --bin replay < input.json`\n\n";
+        assert!(
+            markdown.contains(disclosure),
+            "input-redirect disclosure missing:\n{markdown}"
+        );
+        assert!(
+            !markdown.contains("```powershell\ncargo run --bin replay"),
+            "input-redirect command must not gain a powershell fence:\n{markdown}"
         );
         let bash_fence = markdown
             .find(bash_form)
