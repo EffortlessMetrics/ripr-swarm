@@ -212,9 +212,18 @@ pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String
         rendered.push_str("```bash\n");
         rendered.push_str(&next.command);
         rendered.push_str("\n```\n");
-        rendered.push_str("\n```powershell\n");
-        rendered.push_str(&powershell_command(&next.command));
-        rendered.push_str("\n```\n");
+        match powershell_command(&next.command) {
+            Some(line) => {
+                rendered.push_str("\n```powershell\n");
+                rendered.push_str(&line);
+                rendered.push_str("\n```\n");
+            }
+            None => rendered.push_str(&format!(
+                "{}: `{}`\n",
+                crate::output::markdown::POWERSHELL_UNAVAILABLE_DISCLOSURE,
+                next.command
+            )),
+        }
     } else {
         rendered.push_str("\nNo missing agent-loop artifacts were detected.\n");
     }
@@ -698,7 +707,7 @@ mod tests {
             rendered.contains(bash_form),
             "bash next command drifted:\n{rendered}"
         );
-        let powershell_form = "```powershell\n[System.IO.File]::WriteAllText('target/ripr/workflow/before.repo-exposure.json', ((ripr check --root 'repo root' --mode draft --format repo-exposure-json) | Out-String), [System.Text.UTF8Encoding]::new($false))\n```\n";
+        let powershell_form = "```powershell\n$ripr = ((ripr check --root 'repo root' --mode draft --format repo-exposure-json) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('target/ripr/workflow/before.repo-exposure.json', $ripr, [System.Text.UTF8Encoding]::new($false)) }; exit $LASTEXITCODE\n```\n";
         assert!(
             rendered.contains(powershell_form),
             "powershell next command missing or drifted:\n{rendered}"

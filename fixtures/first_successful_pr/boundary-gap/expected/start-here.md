@@ -52,7 +52,7 @@ Agent packet command:
 `ripr agent packet --root fixtures/first_successful_pr/boundary-gap --gap-ledger inputs/reports/gap-decision-ledger.json --gap-id gap:pr:pricing:threshold-boundary --json > target/ripr/workflow/agent-packet.json`
 
 Agent packet command (PowerShell):
-`[System.IO.File]::WriteAllText('target/ripr/workflow/agent-packet.json', ((ripr agent packet --root fixtures/first_successful_pr/boundary-gap --gap-ledger inputs/reports/gap-decision-ledger.json --gap-id gap:pr:pricing:threshold-boundary --json) | Out-String), [System.Text.UTF8Encoding]::new($false))`
+`$ripr = ((ripr agent packet --root fixtures/first_successful_pr/boundary-gap --gap-ledger inputs/reports/gap-decision-ledger.json --gap-id gap:pr:pricing:threshold-boundary --json) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('target/ripr/workflow/agent-packet.json', $ripr, [System.Text.UTF8Encoding]::new($false)) }; exit $LASTEXITCODE`
 
 The first form is written for Bash; cmd.exe is not supported.
 

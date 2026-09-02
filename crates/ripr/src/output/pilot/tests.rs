@@ -367,8 +367,10 @@ fn pilot_summary_md_pairs_bash_next_commands_with_powershell_variants() -> Resul
     );
     // The default pilot path is unquoted in the bash form; PowerShell parses
     // method-call arguments in expression mode, so the WriteAllText target must
-    // arrive as a quoted literal (PR #3617 review, gemini HIGH + codex P1).
-    let powershell_snapshot = "[System.IO.File]::WriteAllText('target/ripr/pilot/after.repo-exposure.json', ((ripr check --root . --mode draft --format repo-exposure-json) | Out-String), [System.Text.UTF8Encoding]::new($false))";
+    // arrive as a quoted literal (PR #3617 review), and the write is guarded by
+    // $LASTEXITCODE with the status propagated so a failed run cannot publish
+    // the artifact (PR #3625 review, codex P1).
+    let powershell_snapshot = "$ripr = ((ripr check --root . --mode draft --format repo-exposure-json) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('target/ripr/pilot/after.repo-exposure.json', $ripr, [System.Text.UTF8Encoding]::new($false)) }; exit $LASTEXITCODE";
     assert!(
         md.contains(powershell_snapshot),
         "powershell after-snapshot translation missing:\n{md}"

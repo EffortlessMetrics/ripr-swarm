@@ -493,10 +493,13 @@ pub fn render_evidence_summary_md(s: &super::model::PrEvidenceSummaryJson) -> St
     out.push_str(COMMAND_SHELL_DISCLOSURE);
     for cmd in &s.local_reproduction_commands {
         out.push_str(&format!("```bash\n{cmd}\n```\n\n"));
-        out.push_str(&format!(
-            "```powershell\n{}\n```\n\n",
-            powershell_command(cmd)
-        ));
+        match powershell_command(cmd) {
+            Some(line) => out.push_str(&format!("```powershell\n{line}\n```\n\n")),
+            None => out.push_str(&format!(
+                "{}: `{cmd}`\n\n",
+                crate::output::markdown::POWERSHELL_UNAVAILABLE_DISCLOSURE
+            )),
+        }
     }
 
     out.push_str(

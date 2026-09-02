@@ -24,14 +24,26 @@ pub(crate) fn markdown_text(value: &str) -> String {
     value.replace('\\', "\\\\")
 }
 
+/// One-line disclosure emitted in place of a PowerShell variant when the bash
+/// command is compound and no honest translation exists (#2628). Standalone
+/// emitters append the sentence period; emitters that name the command append
+/// `: `<command>`.
+pub(crate) const POWERSHELL_UNAVAILABLE_DISCLOSURE: &str =
+    "PowerShell form unavailable for compound commands";
+
 /// Translate a bash-rendered advisory command into its PowerShell form.
 ///
 /// The bash string stays authoritative (`agent::loop_commands::shell_arg`
 /// renders it); this derives a copy-pasteable PowerShell equivalent so a
 /// Windows reader is not left with bash source that cmd.exe reads as literal
-/// quotes and PowerShell rejects at the `'\''` escape (#2628). Exactly two
-/// translations are applied:
+/// quotes and PowerShell rejects at the `'\''` escape (#2628). Translations
+/// applied:
 ///
+/// - Compound bash commands (`&&`, `||`, `;`, heredocs, command substitution
+///   outside quoted regions) return [`None`]: re-tokenizing them as PowerShell
+///   would be a second shell parser, so the caller under-emits — bash form
+///   plus [`POWERSHELL_UNAVAILABLE_DISCLOSURE`] — instead of shipping a line
+///   that is invalid or semantically different (PR #3625 review, devin BUG).
 /// - PowerShell single quotes are also literal inside, but its doubling idiom
 ///   differs: bash closes, escapes, and reopens (`'\''`) where PowerShell
 ///   doubles in place (`''`), so every occurrence is rewritten.
@@ -42,15 +54,24 @@ pub(crate) fn markdown_text(value: &str) -> String {
 ///   path is a parse error (PR #3617 review) — and the redirect is detected
 ///   only outside single-quoted regions, so a quoted `>` inside an argument
 ///   cannot hijack it.
+/// - The artifact write is guarded: the invocation's output is captured, the
+///   write happens only `if ($LASTEXITCODE -eq 0)`, and the line ends
+///   `exit $LASTEXITCODE`. Without the guard, a nonzero `ripr` exit still
+///   published the artifact and exited 0, so a failed step looked complete
+///   (PR #3625 review, codex P1).
 ///
 /// cmd.exe has no translation: it has no quoting form that keeps an argv token
 /// literal, so a generated command is deliberately not offered for it. This
 /// lives beside the markdown render helpers because every generated-command
 /// surface renders both shell variants from this one implementation.
 ///
-/// Disclosed limitation: the tests pin these forms as strings; no pwsh runtime
-/// oracle that executes them is assumed on every host.
-pub(crate) fn powershell_command(command: &str) -> String {
+/// Disclosed limitation: the tests pin these forms as strings, and the CI
+/// environment that runs them cannot assume a pwsh runtime oracle, so the
+/// guard and the translations carry no executed regression on that lane.
+pub(crate) fn powershell_command(command: &str) -> Option<String> {
+    if is_compound_bash_command(command) {
+        return None;
+    }
     let command = command.replace("'\\''", "''");
     let mut chars = command.char_indices().peekable();
     let mut in_single_quote = false;
@@ -74,11 +95,63 @@ pub(crate) fn powershell_command(command: &str) -> String {
     if let Some(index) = redirect {
         let invocation = command[..index].trim_end();
         let output = powershell_literal(command[index + 1..].trim());
-        return format!(
-            "[System.IO.File]::WriteAllText({output}, (({invocation}) | Out-String), [System.Text.UTF8Encoding]::new($false))"
-        );
+        return Some(format!(
+            "$ripr = (({invocation}) | Out-String); if ($LASTEXITCODE -eq 0) {{ [System.IO.File]::WriteAllText({output}, $ripr, [System.Text.UTF8Encoding]::new($false)) }}; exit $LASTEXITCODE"
+        ));
     }
-    command
+    Some(command)
+}
+
+/// Decide whether a bash command is compound: forms whose PowerShell
+/// translation would need a second shell parser rather than a quoting
+/// translation.
+///
+/// Detected outside single-quoted regions: `;`, `&&`, `||`, heredoc `<<`,
+/// command substitution `$(`, and backtick; inside double quotes, where bash
+/// still expands them: `$(` and backtick. A backslash escapes the next
+/// character outside quotes, so `\;` is a literal semicolon, not a separator.
+/// When in doubt the caller under-emits: a false "compound" costs one
+/// disclosure line, a false "simple" would publish an invalid or semantically
+/// different PowerShell line.
+fn is_compound_bash_command(command: &str) -> bool {
+    let chars: Vec<char> = command.chars().collect();
+    let mut index = 0;
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    while index < chars.len() {
+        let ch = chars[index];
+        let next = chars.get(index + 1).copied();
+        if in_single_quote {
+            if ch == '\'' {
+                in_single_quote = false;
+            }
+            index += 1;
+        } else if in_double_quote {
+            match ch {
+                '"' => in_double_quote = false,
+                '\\' => index += 1,
+                '`' => return true,
+                '$' if next == Some('(') => return true,
+                _ => {}
+            }
+            index += 1;
+        } else {
+            match ch {
+                '\'' => in_single_quote = true,
+                '"' => in_double_quote = true,
+                '\\' => index += 1,
+                ';' => return true,
+                '&' if next == Some('&') => return true,
+                '|' if next == Some('|') => return true,
+                '<' if next == Some('<') => return true,
+                '`' => return true,
+                '$' if next == Some('(') => return true,
+                _ => {}
+            }
+            index += 1;
+        }
+    }
+    false
 }
 
 /// Render one value as a PowerShell single-quoted string literal.
@@ -120,11 +193,11 @@ mod tests {
     fn powershell_command_handles_unredirected_quoted_and_unicode_commands() {
         assert_eq!(
             powershell_command("ripr check --root 'a > b'"),
-            "ripr check --root 'a > b'"
+            Some("ripr check --root 'a > b'".to_string())
         );
         assert_eq!(
             powershell_command("ripr check --root 'café' > 'résumé.json'"),
-            "[System.IO.File]::WriteAllText('résumé.json', ((ripr check --root 'café') | Out-String), [System.Text.UTF8Encoding]::new($false))"
+            Some("$ripr = ((ripr check --root 'café') | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('résumé.json', $ripr, [System.Text.UTF8Encoding]::new($false)) }; exit $LASTEXITCODE".to_string())
         );
     }
 
@@ -135,11 +208,14 @@ mod tests {
     #[test]
     fn powershell_command_round_trips_embedded_quotes_through_doubling() {
         let bash = "ripr receipt write --gap 'it'\\''s'";
-        assert_eq!(powershell_command(bash), "ripr receipt write --gap 'it''s'");
+        assert_eq!(
+            powershell_command(bash),
+            Some("ripr receipt write --gap 'it''s'".to_string())
+        );
         // A quoted `>` inside an argument must not be mistaken for a redirect.
         assert_eq!(
             powershell_command("ripr receipt write --gap 'gap > file'"),
-            "ripr receipt write --gap 'gap > file'"
+            Some("ripr receipt write --gap 'gap > file'".to_string())
         );
     }
 
@@ -154,7 +230,7 @@ mod tests {
             powershell_command(
                 "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/pilot/after.repo-exposure.json"
             ),
-            "[System.IO.File]::WriteAllText('target/ripr/pilot/after.repo-exposure.json', ((ripr check --root . --mode draft --format repo-exposure-json) | Out-String), [System.Text.UTF8Encoding]::new($false))"
+            Some("$ripr = ((ripr check --root . --mode draft --format repo-exposure-json) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('target/ripr/pilot/after.repo-exposure.json', $ripr, [System.Text.UTF8Encoding]::new($false)) }; exit $LASTEXITCODE".to_string())
         );
     }
 
@@ -165,11 +241,72 @@ mod tests {
     fn powershell_command_redirect_target_escapes_embedded_quotes() {
         assert_eq!(
             powershell_command("ripr check --root . > it's.json"),
-            "[System.IO.File]::WriteAllText('it''s.json', ((ripr check --root .) | Out-String), [System.Text.UTF8Encoding]::new($false))"
+            Some("$ripr = ((ripr check --root .) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('it''s.json', $ripr, [System.Text.UTF8Encoding]::new($false)) }; exit $LASTEXITCODE".to_string())
         );
         assert_eq!(
             powershell_command("ripr check --root . > 'it'\\''s.json'"),
-            "[System.IO.File]::WriteAllText('it''s.json', ((ripr check --root .) | Out-String), [System.Text.UTF8Encoding]::new($false))"
+            Some("$ripr = ((ripr check --root .) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('it''s.json', $ripr, [System.Text.UTF8Encoding]::new($false)) }; exit $LASTEXITCODE".to_string())
+        );
+    }
+
+    /// The artifact write must sit inside the success branch and the line must
+    /// propagate the invocation's exit status (PR #3625 review, codex P1):
+    /// without the guard, a nonzero `ripr` exit still published the artifact
+    /// and exited 0, so a failed step advanced as if it had completed.
+    /// String-pinned only — see the disclosed limitation on
+    /// [`powershell_command`] for why no pwsh runtime oracle backs this.
+    #[test]
+    fn powershell_command_guard_only_writes_the_artifact_on_success() -> Result<(), String> {
+        let line = powershell_command(
+            "ripr agent packet --root . --json > target/ripr/workflow/agent-packet.json",
+        )
+        .ok_or_else(|| "simple command must translate".to_string())?;
+        // The write is textually inside the success branch, and the line ends
+        // by propagating the invocation's exit status.
+        assert!(
+            line.contains(
+                "if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('target/ripr/workflow/agent-packet.json', $ripr, [System.Text.UTF8Encoding]::new($false)) }"
+            ),
+            "write must be guarded by the success branch:\n{line}"
+        );
+        assert!(
+            line.ends_with("}; exit $LASTEXITCODE"),
+            "exit status must propagate after the guarded write:\n{line}"
+        );
+        assert!(
+            !line.contains("WriteAllText")
+                || line.contains("if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText("),
+            "no unguarded WriteAllText may appear:\n{line}"
+        );
+        Ok(())
+    }
+
+    /// Compound bash commands have no honest PowerShell translation: they must
+    /// return [`None`] so the caller under-emits (bash form plus a disclosure)
+    /// instead of shipping an invalid or semantically different line (PR
+    /// #3625 review, devin BUG). Quoted separators stay simple: `;` inside a
+    /// single-quoted token is data, and `&&` inside a double-quoted token is
+    /// data.
+    #[test]
+    fn powershell_command_rejects_compound_commands() {
+        assert_eq!(powershell_command("cmd1 && cmd2"), None);
+        assert_eq!(powershell_command("cmd1 || cmd2"), None);
+        assert_eq!(powershell_command("cmd1; cmd2"), None);
+        assert_eq!(powershell_command("cmd1 <<EOF"), None);
+        assert_eq!(powershell_command("cmd1 $(whoami)"), None);
+        assert_eq!(powershell_command("cmd1 `whoami`"), None);
+        assert_eq!(
+            powershell_command("ripr receipt write --gap 'a;b'"),
+            Some("ripr receipt write --gap 'a;b'".to_string())
+        );
+        assert_eq!(
+            powershell_command("cargo test \"a && b\""),
+            Some("cargo test \"a && b\"".to_string())
+        );
+        // A backslash-escaped separator is data, not a compound form.
+        assert_eq!(
+            powershell_command(r"echo a\;b"),
+            Some(r"echo a\;b".to_string())
         );
     }
 }

@@ -386,9 +386,11 @@ fn render_top_gap_markdown(selected: &Value, out: &mut String) {
 ///
 /// The bash form stays authoritative and byte-identical; the PowerShell form
 /// derives through the shared `powershell_command` translation (never a second
-/// quoting implementation); the closing line states the cmd.exe boundary, which
-/// has no translation. `trailing_blank_line` is false for the last block in the
-/// section so the following heading keeps a single separating blank line.
+/// quoting implementation), and a compound command under-emits to the
+/// availability disclosure instead of an invalid line; the closing line states
+/// the cmd.exe boundary, which has no translation. `trailing_blank_line` is
+/// false for the last block in the section so the following heading keeps a
+/// single separating blank line.
 fn push_shell_command_pair(
     out: &mut String,
     label: &str,
@@ -397,8 +399,16 @@ fn push_shell_command_pair(
 ) {
     out.push_str(&format!("{label}:\n"));
     out.push_str(&format!("`{command}`\n\n"));
-    out.push_str(&format!("{label} (PowerShell):\n"));
-    out.push_str(&format!("`{}`\n\n", powershell_command(command)));
+    match powershell_command(command) {
+        Some(line) => {
+            out.push_str(&format!("{label} (PowerShell):\n"));
+            out.push_str(&format!("`{line}`\n\n"));
+        }
+        None => out.push_str(&format!(
+            "{}: `{command}`\n\n",
+            crate::output::markdown::POWERSHELL_UNAVAILABLE_DISCLOSURE
+        )),
+    }
     out.push_str("The first form is written for Bash; cmd.exe is not supported.\n");
     if trailing_blank_line {
         out.push('\n');

@@ -2,7 +2,7 @@ use crate::app::agent_workflow::{
     AGENT_WORKFLOW_SCHEMA_VERSION, AgentWorkflowArtifact, AgentWorkflowCommand,
     AgentWorkflowManifest, AgentWorkflowSeam,
 };
-use crate::output::markdown::powershell_command;
+use crate::output::markdown::{POWERSHELL_UNAVAILABLE_DISCLOSURE, powershell_command};
 use serde_json::{Value, json};
 
 /// Shell that every `command` string in this packet is written for.
@@ -90,7 +90,9 @@ fn command_label(step: &str) -> String {
 }
 
 mod markdown {
-    use super::{AgentWorkflowManifest, command_label, powershell_command};
+    use super::{
+        AgentWorkflowManifest, POWERSHELL_UNAVAILABLE_DISCLOSURE, command_label, powershell_command,
+    };
 
     pub(super) fn render_commands_document(manifest: &AgentWorkflowManifest) -> String {
         let mut lines = Vec::new();
@@ -154,9 +156,14 @@ mod markdown {
             lines.push(command.command.clone());
             lines.push("```".to_string());
             lines.push(String::new());
-            lines.push("```powershell".to_string());
-            lines.push(powershell_command(&command.command));
-            lines.push("```".to_string());
+            match powershell_command(&command.command) {
+                Some(line) => {
+                    lines.push("```powershell".to_string());
+                    lines.push(line);
+                    lines.push("```".to_string());
+                }
+                None => lines.push(format!("{POWERSHELL_UNAVAILABLE_DISCLOSURE}.")),
+            }
             lines.push(String::new());
         }
     }
@@ -293,7 +300,7 @@ mod tests {
         value.commands[0].command = "ripr agent start --root 'it'\\''s' > 'out'".to_string();
         let rendered = render_agent_workflow_commands_md(&value);
         assert!(
-            rendered.contains("[System.IO.File]::WriteAllText('out', ((ripr agent start --root 'it''s') | Out-String), [System.Text.UTF8Encoding]::new($false))")
+            rendered.contains("$ripr = ((ripr agent start --root 'it''s') | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('out', $ripr, [System.Text.UTF8Encoding]::new($false)) }; exit $LASTEXITCODE")
         );
     }
 

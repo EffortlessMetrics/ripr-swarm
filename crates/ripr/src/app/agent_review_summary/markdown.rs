@@ -57,9 +57,18 @@ pub(crate) fn render_agent_review_summary_markdown(report: &AgentReviewSummaryRe
         rendered.push_str("```bash\n");
         rendered.push_str(&next_command.command);
         rendered.push_str("\n```\n");
-        rendered.push_str("\n```powershell\n");
-        rendered.push_str(&powershell_command(&next_command.command));
-        rendered.push_str("\n```\n");
+        match powershell_command(&next_command.command) {
+            Some(line) => {
+                rendered.push_str("\n```powershell\n");
+                rendered.push_str(&line);
+                rendered.push_str("\n```\n");
+            }
+            None => rendered.push_str(&format!(
+                "{}: `{}`\n",
+                crate::output::markdown::POWERSHELL_UNAVAILABLE_DISCLOSURE,
+                next_command.command
+            )),
+        }
     }
     rendered.push_str("\n## Limits\n\n");
     rendered.push_str("- Static artifact relationship only.\n");
