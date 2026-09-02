@@ -1178,7 +1178,10 @@ fn top_gap_from_record(record: &Value, root: &Path, options: &FirstPrOptions) ->
         static_limit_detail: string_path(record, &["static_limit_detail"]),
         agent_packet_command: format!(
             "ripr agent packet --root {} --gap-ledger {} --gap-id {} --json > {}",
-            options.root, options.gap_ledger, gap_id, options.agent_packet
+            shell_arg(&options.root),
+            shell_arg(&options.gap_ledger),
+            shell_arg(&gap_id),
+            shell_arg(&options.agent_packet)
         ),
     }
 }
@@ -1876,6 +1879,71 @@ mod tests {
         assert!(
             markdown.contains("The first form is written for Bash; cmd.exe is not supported."),
             "receipt presentation must state the cmd.exe boundary:\n{markdown}"
+        );
+        Ok(())
+    }
+
+    /// The start-here markdown must present the verify and agent packet
+    /// commands for both shells (#2628): the bash forms stay byte-identical,
+    /// the PowerShell forms round-trip an embedded quote (verify) and the
+    /// packet redirect (agent packet) through the shared `powershell_command`
+    /// translation, and each block states the cmd.exe boundary.
+    #[test]
+    fn start_here_markdown_offers_verify_and_agent_packet_powershell_variants() -> Result<(), String>
+    {
+        let packet = json!({
+            "status": "actionable",
+            "selected": {
+                "state": "top_gap",
+                "kind": "MissingBoundaryAssertion",
+                "verify_command": "cargo test 'it'\\''s'",
+                "agent_packet_command": "ripr agent packet --root 'repo root' --gap-id gap:pr:pricing --json > target/ripr/workflow/agent-packet.json",
+            },
+        });
+        let markdown = render_start_here_markdown(&packet);
+
+        let bash_verify = "Verify command:\n`cargo test 'it'\\''s'`\n\n";
+        assert!(
+            markdown.contains(bash_verify),
+            "bash verify command drifted:\n{markdown}"
+        );
+        let powershell_verify = "Verify command (PowerShell):\n`cargo test 'it''s'`";
+        assert!(
+            markdown.contains(powershell_verify),
+            "powershell verify command missing or drifted:\n{markdown}"
+        );
+        let bash_packet = "Agent packet command:\n`ripr agent packet --root 'repo root' --gap-id gap:pr:pricing --json > target/ripr/workflow/agent-packet.json`\n\n";
+        assert!(
+            markdown.contains(bash_packet),
+            "bash agent packet command drifted:\n{markdown}"
+        );
+        let powershell_packet = "Agent packet command (PowerShell):\n`$ripr = ((ripr agent packet --root 'repo root' --gap-id gap:pr:pricing --json) | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('target/ripr/workflow/agent-packet.json', $ripr, [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }`";
+        assert!(
+            markdown.contains(powershell_packet),
+            "powershell agent packet command missing or drifted:\n{markdown}"
+        );
+        let bash_verify_at = markdown
+            .find(bash_verify)
+            .ok_or_else(|| format!("bash verify label must exist: {markdown}"))?;
+        let powershell_verify_at = markdown
+            .find(powershell_verify)
+            .ok_or_else(|| format!("powershell verify label must exist: {markdown}"))?;
+        let bash_packet_at = markdown
+            .find(bash_packet)
+            .ok_or_else(|| format!("bash agent packet label must exist: {markdown}"))?;
+        let powershell_packet_at = markdown
+            .find(powershell_packet)
+            .ok_or_else(|| format!("powershell agent packet label must exist: {markdown}"))?;
+        assert!(
+            bash_verify_at < powershell_verify_at && bash_packet_at < powershell_packet_at,
+            "bash form must be presented before the PowerShell variant:\n{markdown}"
+        );
+        assert_eq!(
+            markdown
+                .matches("The first form is written for Bash; cmd.exe is not supported.")
+                .count(),
+            2,
+            "each presented block must state the cmd.exe boundary:\n{markdown}"
         );
         Ok(())
     }
@@ -2747,9 +2815,23 @@ mod tests {
             !packet_receipt_cmd.contains("ripr outcome"),
             "packet receipt_command must not contain ripr outcome, got: {packet_receipt_cmd}"
         );
+        // The gap id carries shell metacharacters (`>=`), so both presented
+        // forms must quote it: unquoted, bash truncates the argument at `>`
+        // and redirects to a file literally named `=threshold` (PR #3625
+        // review round 3, coderabbit).
         assert_eq!(
             packet["selected"]["agent_packet_command"],
-            "ripr agent packet --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --gap-id gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold --json > target/ripr/workflow/agent-packet.json"
+            "ripr agent packet --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --gap-id 'gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold' --json > target/ripr/workflow/agent-packet.json"
+        );
+        let quoted_id = "gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold";
+        let markdown = render_start_here_markdown(&packet);
+        assert!(
+            markdown.contains(&format!("--gap-id '{quoted_id}' --json >")),
+            "rendered bash form must quote the gap id:\n{markdown}"
+        );
+        assert!(
+            markdown.contains(&format!("--gap-id '{quoted_id}' --json) | Out-String")),
+            "rendered powershell form must quote the gap id:\n{markdown}"
         );
         let packet_artifact = packet["artifacts"]
             .as_array()

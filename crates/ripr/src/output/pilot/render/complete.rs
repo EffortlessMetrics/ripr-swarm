@@ -238,11 +238,30 @@ pub(crate) fn render_pilot_summary_md(
     out.push('\n');
     out.push_str(&commands.outcome);
     out.push_str("\n```\n");
-    out.push_str("\n```powershell\n");
-    out.push_str(&powershell_command(&commands.after_snapshot));
-    out.push('\n');
-    out.push_str(&powershell_command(&commands.outcome));
-    out.push_str("\n```\n");
+    let mut unavailable: Vec<&String> = Vec::new();
+    let mut translations: Vec<String> = Vec::new();
+    for command in [&commands.after_snapshot, &commands.outcome] {
+        match powershell_command(command) {
+            Some(line) => translations.push(line),
+            None => unavailable.push(command),
+        }
+    }
+    // Only fence translations that exist; a compound command under-emits to a
+    // disclosure naming the bash form instead of an invalid translation.
+    if !translations.is_empty() {
+        out.push_str("\n```powershell\n");
+        for line in &translations {
+            out.push_str(line);
+            out.push('\n');
+        }
+        out.push_str("\n```\n");
+    }
+    for command in unavailable {
+        out.push_str(&format!(
+            "{}: `{command}`\n",
+            crate::output::markdown::POWERSHELL_UNAVAILABLE_DISCLOSURE
+        ));
+    }
     out
 }
 

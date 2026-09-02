@@ -120,9 +120,18 @@ pub(crate) fn render_pilot_timeout_summary_md(context: PilotSummaryContext<'_>) 
     out.push_str("```bash\n");
     out.push_str(&commands.retry);
     out.push_str("\n```\n");
-    out.push_str("\n```powershell\n");
-    out.push_str(&powershell_command(&commands.retry));
-    out.push_str("\n```\n");
+    match powershell_command(&commands.retry) {
+        Some(line) => {
+            out.push_str("\n```powershell\n");
+            out.push_str(&line);
+            out.push_str("\n```\n");
+        }
+        None => out.push_str(&format!(
+            "{}: `{}`\n",
+            crate::output::markdown::POWERSHELL_UNAVAILABLE_DISCLOSURE,
+            commands.retry
+        )),
+    }
     out
 }
 
