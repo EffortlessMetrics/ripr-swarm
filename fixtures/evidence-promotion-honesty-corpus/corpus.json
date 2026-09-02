@@ -1152,6 +1152,38 @@
         { "type": "expected_class", "class": "weakly_exposed" },
         { "type": "maximum_class", "class": "weakly_exposed" }
       ]
+    },
+    {
+      "id": "rust_dep_edge_cross_crate_positive_control",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_dep_edge_cross_crate_positive",
+      "vector": "dependency_edge_linked_cross_crate_owner_call_still_exposed",
+      "control": "must_stay_exposed",
+      "assertions": [
+        { "type": "must_promote" },
+        { "type": "must_disclose_scope" },
+        { "type": "must_not_emit_repair_packet" },
+        { "type": "must_not_have_receipt_command" },
+        { "type": "expected_class", "class": "exposed" }
+      ]
+    },
+    {
+      "id": "rust_dep_edge_cross_crate_wrong_crate_oracle_non_promotion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_dep_edge_cross_crate_ambiguity",
+      "vector": "dependency_edge_unlinked_wrong_crate_oracle_stays_uncredited",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_disclose_scope" },
+        { "type": "must_not_emit_repair_packet" },
+        { "type": "must_not_have_verify_command" },
+        { "type": "must_not_have_receipt_command" },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "no_static_path" },
+        { "type": "maximum_class", "class": "no_static_path" }
+      ]
     }
   ]
 }
