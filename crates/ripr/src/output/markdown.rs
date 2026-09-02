@@ -138,7 +138,11 @@ fn is_compound_bash_command(command: &str) -> bool {
         } else if in_double_quote {
             match ch {
                 '"' => in_double_quote = false,
-                '\\' => index += 1,
+                // Bash treats `\$` inside double quotes as literal data, but
+                // PowerShell evaluates `$(...)` as a subexpression — the
+                // same text changes meaning across shells, so any
+                // double-quoted backslash under-emits (#3625 review).
+                '\\' => return true,
                 '`' => return true,
                 '$' if next == Some('(') => return true,
                 _ => {}
@@ -217,6 +221,19 @@ mod tests {
             powershell_command("ripr check --root 'café' > 'résumé.json'"),
             Some("$ripr = ((ripr check --root 'café') | Out-String); if ($LASTEXITCODE -eq 0) { [System.IO.File]::WriteAllText('résumé.json', $ripr, [System.Text.UTF8Encoding]::new($false)) } else { throw \"ripr exited with code $LASTEXITCODE\" }".to_string())
         );
+    }
+
+    /// #3625 review (CWE-78): bash treats `\$` inside double quotes as
+    /// literal data, but PowerShell evaluates `$(...)` as a subexpression —
+    /// the same pasted text changes meaning across shells, so a
+    /// double-quoted backslash under-emits to bash-only.
+    #[test]
+    fn powershell_command_rejects_double_quoted_backslash_escapes() {
+        assert_eq!(
+            powershell_command("echo \"\\$(Write-Output injected)\""),
+            None
+        );
+        assert_eq!(powershell_command("echo \"a\\b\""), None);
     }
 
     /// The PowerShell single-quote round-trip: bash's close-escape-reopen idiom
