@@ -1178,7 +1178,10 @@ fn top_gap_from_record(record: &Value, root: &Path, options: &FirstPrOptions) ->
         static_limit_detail: string_path(record, &["static_limit_detail"]),
         agent_packet_command: format!(
             "ripr agent packet --root {} --gap-ledger {} --gap-id {} --json > {}",
-            options.root, options.gap_ledger, gap_id, options.agent_packet
+            shell_arg(&options.root),
+            shell_arg(&options.gap_ledger),
+            shell_arg(&gap_id),
+            shell_arg(&options.agent_packet)
         ),
     }
 }
@@ -2812,9 +2815,23 @@ mod tests {
             !packet_receipt_cmd.contains("ripr outcome"),
             "packet receipt_command must not contain ripr outcome, got: {packet_receipt_cmd}"
         );
+        // The gap id carries shell metacharacters (`>=`), so both presented
+        // forms must quote it: unquoted, bash truncates the argument at `>`
+        // and redirects to a file literally named `=threshold` (PR #3625
+        // review round 3, coderabbit).
         assert_eq!(
             packet["selected"]["agent_packet_command"],
-            "ripr agent packet --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --gap-id gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold --json > target/ripr/workflow/agent-packet.json"
+            "ripr agent packet --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --gap-id 'gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold' --json > target/ripr/workflow/agent-packet.json"
+        );
+        let quoted_id = "gap:pr:gap:python:app/pricing.py:calculate_discount:predicate_boundary:amount>=threshold";
+        let markdown = render_start_here_markdown(&packet);
+        assert!(
+            markdown.contains(&format!("--gap-id '{quoted_id}' --json >")),
+            "rendered bash form must quote the gap id:\n{markdown}"
+        );
+        assert!(
+            markdown.contains(&format!("--gap-id '{quoted_id}' --json) | Out-String")),
+            "rendered powershell form must quote the gap id:\n{markdown}"
         );
         let packet_artifact = packet["artifacts"]
             .as_array()

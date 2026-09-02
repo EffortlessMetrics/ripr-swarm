@@ -111,14 +111,17 @@ pub(crate) fn powershell_command(command: &str) -> Option<String> {
 /// translation would need a second shell parser rather than a quoting
 /// translation.
 ///
-/// Detected outside single-quoted regions: `;`, `&&`, `||`, heredoc `<<`,
-/// input redirection `<` — a parse error in PowerShell, which defines no
-/// `<` operator (PR #3625 follow-up review) — command substitution `$(`, and
-/// backtick; inside double quotes, where bash still expands them: `$(` and
-/// backtick. A backslash escapes the next character outside quotes, so `\;` is
-/// a literal semicolon, not a separator. When in doubt the caller under-emits:
-/// a false "compound" costs one disclosure line, a false "simple" would
-/// publish an invalid or semantically different PowerShell line.
+/// Detected outside single-quoted regions: `;`, `&` and `&&`, `|` and `||`,
+/// heredoc `<<`, input redirection `<` — a parse error in PowerShell, which
+/// defines no `<` operator (PR #3625 follow-up review) — command substitution
+/// `$(`, backtick, and any other backslash escape (PowerShell does not treat
+/// backslash as an escape, so `\;` would execute `b` as a separate command,
+/// PR #3625 review round 3, devin); inside double quotes, where bash still
+/// expands them: `$(` and backtick. The one exception is `\'` outside quotes,
+/// which is the close-escape-reopen idiom inside a `'\''`-escaped token and
+/// must keep translating. When in doubt the caller under-emits: a false
+/// "compound" costs one disclosure line, a false "simple" would publish an
+/// invalid or semantically different PowerShell line.
 fn is_compound_bash_command(command: &str) -> bool {
     let chars: Vec<char> = command.chars().collect();
     let mut index = 0;
@@ -145,10 +148,19 @@ fn is_compound_bash_command(command: &str) -> bool {
             match ch {
                 '\'' => in_single_quote = true,
                 '"' => in_double_quote = true,
-                '\\' => index += 1,
+                '\\' => match chars.get(index + 1).copied() {
+                    // `\'` outside quotes closes, escapes, and reopens a
+                    // single-quoted region (`'it'\''s'`); it is quoting, not
+                    // a compound form.
+                    Some('\'') => index += 1,
+                    // Any other escape (`\;`, `\&`, `\ `, `\\`...) changes
+                    // how the shells tokenize the line.
+                    Some(_) => return true,
+                    None => index += 1,
+                },
                 ';' => return true,
-                '&' if next == Some('&') => return true,
-                '|' if next == Some('|') => return true,
+                '&' => return true,
+                '|' => return true,
                 '<' => return true,
                 '`' => return true,
                 '$' if next == Some('(') => return true,
@@ -299,19 +311,26 @@ mod tests {
     /// Compound bash commands have no honest PowerShell translation: they must
     /// return [`None`] so the caller under-emits (bash form plus a disclosure)
     /// instead of shipping an invalid or semantically different line (PR
-    /// #3625 review, devin BUG). Input redirection `<` is included: PowerShell
-    /// defines no `<` operator, so it would be a parse error at the copy site
-    /// (PR #3625 follow-up review). Quoted separators stay simple: `;` inside
-    /// a single-quoted token is data, and `&&` inside a double-quoted token is
-    /// data.
+    /// #3625 review, devin BUG). A single `|` or `&` is as compound as its
+    /// doubled form (PR #3625 review round 3, coderabbit), and input
+    /// redirection `<` is included: PowerShell defines no `<` operator, so it
+    /// would be a parse error at the copy site. Backslash escapes outside
+    /// quotes under-emit too: PowerShell does not treat backslash as an
+    /// escape, so `echo a\;b` would execute `b` as a separate command — only
+    /// the `'\''` idiom's `\'` keeps translating. Quoted separators stay
+    /// simple: `;` inside a single-quoted token is data, and `&&` inside a
+    /// double-quoted token is data.
     #[test]
     fn powershell_command_rejects_compound_commands() {
         assert_eq!(powershell_command("cmd1 && cmd2"), None);
         assert_eq!(powershell_command("cmd1 || cmd2"), None);
+        assert_eq!(powershell_command("cmd1 & cmd2"), None);
+        assert_eq!(powershell_command("cargo test | tee evidence.txt"), None);
         assert_eq!(powershell_command("cmd1; cmd2"), None);
         assert_eq!(powershell_command("cmd1 <<EOF"), None);
         assert_eq!(powershell_command("ripr check --diff < input.json"), None);
         assert_eq!(powershell_command("cmd1 <input.json"), None);
+        assert_eq!(powershell_command(r"echo a\;b"), None);
         assert_eq!(powershell_command("cmd1 $(whoami)"), None);
         assert_eq!(powershell_command("cmd1 `whoami`"), None);
         assert_eq!(
@@ -322,10 +341,11 @@ mod tests {
             powershell_command("cargo test \"a && b\""),
             Some("cargo test \"a && b\"".to_string())
         );
-        // A backslash-escaped separator is data, not a compound form.
+        // The `'\''` idiom keeps translating: its `\'` is quoting, not a
+        // compound escape.
         assert_eq!(
-            powershell_command(r"echo a\;b"),
-            Some(r"echo a\;b".to_string())
+            powershell_command("ripr receipt write --gap 'it'\\''s'"),
+            Some("ripr receipt write --gap 'it''s'".to_string())
         );
     }
 }
