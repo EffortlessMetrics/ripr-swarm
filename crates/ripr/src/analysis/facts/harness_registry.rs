@@ -775,8 +775,19 @@ fn push_file_test(index: &mut RustIndex, target: &Path, test: TestFact) {
 /// no member enters the executable-test denominator on its own: the
 /// whole target is helper-evidence, and executable subjects come only
 /// from adapter-established trial registrations.
+///
+/// The drop is keyed on (file, span overlap) with the demoted functions,
+/// never on name lookup (#3602): a `TestFact` is removed exactly when its
+/// line range overlaps the range of a function this demotion claims. A
+/// producer that names `TestFact`s differently from their source function
+/// (a trial string instead of the constructed fn's name, for example)
+/// therefore cannot leak a phantom executable test into the harness-target
+/// denominator, and a fact outside the demoted spans is never dropped for
+/// merely sharing a demoted function's name. Adapter-established subjects
+/// are unaffected: they are established after this demotion runs, on
+/// invocation spans that are theirs by construction.
 fn demote_harness_target_functions(index: &mut RustIndex, target: &Path) {
-    let demoted: BTreeSet<String> = {
+    let demoted_spans: Vec<(usize, usize)> = {
         let Some(facts) = index.files.get(target) else {
             return;
         };
@@ -784,27 +795,38 @@ fn demote_harness_target_functions(index: &mut RustIndex, target: &Path) {
             .functions
             .iter()
             .filter(|function| function.source_role != FunctionSourceRole::HarnessHelper)
-            .map(|function| function.name.clone())
+            .map(|function| (function.start_line, function.end_line))
             .collect()
     };
-    if demoted.is_empty() {
+    if demoted_spans.is_empty() {
         return;
     }
+    let overlaps_demoted_span =
+        |test: &TestFact| spans_overlap(&demoted_spans, test.start_line, test.end_line);
     let Some(facts) = index.files.get_mut(target) else {
         return;
     };
     for function in &mut facts.functions {
         function.source_role = FunctionSourceRole::HarnessHelper;
     }
-    facts.tests.retain(|test| !demoted.contains(&test.name));
+    facts.tests.retain(|test| !overlaps_demoted_span(test));
     index
         .tests
-        .retain(|test| test.file != target || !demoted.contains(&test.name));
+        .retain(|test| test.file != target || !overlaps_demoted_span(test));
     for function in &mut index.functions {
         if function.file == target {
             function.source_role = FunctionSourceRole::HarnessHelper;
         }
     }
+}
+
+/// Inclusive line-range overlap between a fact's span and any demoted
+/// function span. Line spans are only comparable within one file; the
+/// flat-index caller guards the file identity before consulting this.
+fn spans_overlap(demoted_spans: &[(usize, usize)], start_line: usize, end_line: usize) -> bool {
+    demoted_spans.iter().any(|(demoted_start, demoted_end)| {
+        start_line <= *demoted_end && *demoted_start <= end_line
+    })
 }
 
 enum RegisteredAttributeResolution {

@@ -80,6 +80,16 @@ registration; registers executable tests).
 Attribute-driven membership is authoritative; filenames, imports,
 and macro suffixes never classify.
 
+Registered-target demotion (#3532) claims the `HarnessHelper` role
+across the registered target and drops its executable `TestFact`s by
+(file, span) overlap with the demoted functions — never by name lookup
+(#3602) — so a fact is never dropped for merely sharing a demoted
+function's name, and a fact named differently from its source function
+cannot leak a phantom executable test into the harness-target
+denominator. Adapter-established subjects join the executable-test
+denominator only after demotion runs, on their own invocation spans,
+and the warm file-fact-cache path applies the identical demotion.
+
 The opt-in joins the check-artifact config identity as
 FindingAffecting (`CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION` 1 → 2) and
 the repo-exposure consumed-config list; the workspace cache key already

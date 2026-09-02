@@ -5,7 +5,7 @@
 //! behavior.
 
 use super::*;
-use crate::analysis::facts::build_index_with_test_harnesses;
+use crate::analysis::facts::{build_index, build_index_with_test_harnesses};
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -249,6 +249,194 @@ fn ordinary_test_attribute_is_inert_without_the_harness() {
         })
         .ok_or("missing production fn")?;
     assert_eq!(production.source_role, FunctionSourceRole::Production);
+    Ok(())
+}
+
+#[test]
+fn demotion_keys_on_the_constructed_span_not_the_name() -> Result<(), Box<dyn std::error::Error>> {
+    // #3602 positive: the registered trial constructs `beta_case`, whose
+    // name differs from the trial string. A producer that names the
+    // TestFact after the trial instead of the fn must still be demoted,
+    // because demotion drops by span overlap with the constructed fn —
+    // name-based retention would keep that phantom in the executable-test
+    // denominator next to the adapter's own subject.
+    let root = temp_dir("span-demotion")?;
+    write_workspace(
+        &root,
+        &[
+            (
+                "src/lib.rs",
+                "pub fn price(amount: i32) -> i32 {\n    amount * 2\n}\n",
+            ),
+            (
+                "tests/span_mimic.rs",
+                r#"
+use libtest_mimic::Trial;
+
+fn beta_case() -> Result<(), String> {
+    Ok(())
+}
+
+fn static_trials() -> Vec<Trial> {
+    vec![Trial::test("beta_round_trips", beta_case)]
+}
+"#,
+            ),
+        ],
+    )?;
+    let target = PathBuf::from("tests/span_mimic.rs");
+    let files = [PathBuf::from("src/lib.rs"), target.clone()];
+
+    // Simulate the producer shape the finding names: a TestFact anchored
+    // to the constructed fn's span but named after the trial string. No
+    // real producer names facts this way today; this pins the retention
+    // contract for the producers the registry cannot see yet.
+    let mut index = build_index(&root.0, &files)?;
+    let constructed = index
+        .functions
+        .iter()
+        .find(|function| function.name == "beta_case" && function.file == target)
+        .ok_or("missing constructed fn")?
+        .clone();
+    let phantom = TestFact {
+        name: "beta_round_trips".to_string(),
+        file: target.clone(),
+        start_line: constructed.start_line,
+        end_line: constructed.end_line,
+        body: constructed.body.clone(),
+        calls: Vec::new(),
+        assertions: Vec::new(),
+        literals: Vec::new(),
+        attrs: Vec::new(),
+    };
+    index
+        .files
+        .get_mut(&target)
+        .ok_or("missing target facts")?
+        .tests
+        .push(phantom.clone());
+    index.tests.push(phantom);
+
+    let registrations = [custom_target_registration("tests/span_mimic.rs")];
+    apply_registrations(&mut index, &registrations);
+
+    // The constructed fn is demoted even though its name differs from the
+    // trial string: the demotion claims the target's spans, not names.
+    let demoted_constructed = index
+        .functions
+        .iter()
+        .find(|function| function.name == "beta_case" && function.file == target)
+        .ok_or("missing constructed fn after demotion")?;
+    assert_eq!(
+        demoted_constructed.source_role,
+        FunctionSourceRole::HarnessHelper
+    );
+
+    // The trial-named fact anchored to the constructed fn's span is gone
+    // from both denominators; only the adapter's own subject remains, on
+    // the invocation span.
+    let remaining = index
+        .tests
+        .iter()
+        .filter(|test| test.file == target)
+        .collect::<Vec<_>>();
+    assert_eq!(remaining.len(), 1, "{:?}", remaining);
+    assert_eq!(remaining[0].name, "beta_round_trips");
+    let subject = index
+        .harness_subjects
+        .iter()
+        .find(|subject| subject.name == "beta_round_trips")
+        .ok_or("missing harness subject")?;
+    assert_eq!(
+        (remaining[0].start_line, remaining[0].end_line),
+        (subject.start_line, subject.end_line),
+        "the retained fact is the adapter subject on the invocation span"
+    );
+    assert_ne!(
+        (subject.start_line, subject.end_line),
+        (constructed.start_line, constructed.end_line),
+        "the subject span is the invocation, not the constructed fn"
+    );
+    assert_eq!(
+        index
+            .files
+            .get(&target)
+            .ok_or("missing target facts")?
+            .tests
+            .len(),
+        1,
+        "the file-level denominator drops the phantom too"
+    );
+    Ok(())
+}
+
+#[test]
+fn production_fn_sharing_a_trial_name_is_not_demoted() -> Result<(), Box<dyn std::error::Error>> {
+    // #3602 negative control: sharing a registered trial's name earns no
+    // demotion outside the registered target's own spans. A production fn
+    // in another file that merely shares the trial string stays a
+    // production subject, and same-family facts outside the target are
+    // untouched even when their line ranges overlap a demoted span —
+    // demotion's flat-index drop is file-scoped to the registered target.
+    let root = temp_dir("trial-name-collision")?;
+    write_workspace(
+        &root,
+        &[
+            (
+                "src/lib.rs",
+                "pub fn beta_round_trips(amount: i32) -> i32 {\n    amount * 2\n}\n\n#[test]\nfn beta_round_trips_neighbor() {\n    assert_eq!(beta_round_trips(2), 4);\n}\n",
+            ),
+            (
+                "tests/collision_mimic.rs",
+                r#"
+use libtest_mimic::Trial;
+
+fn static_trials() -> Vec<Trial> {
+    vec![Trial::test("beta_round_trips", || Ok(()))]
+}
+"#,
+            ),
+        ],
+    )?;
+    let files = [
+        PathBuf::from("src/lib.rs"),
+        PathBuf::from("tests/collision_mimic.rs"),
+    ];
+    let registrations = [custom_target_registration("tests/collision_mimic.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+
+    let production = index
+        .functions
+        .iter()
+        .find(|function| {
+            function.name == "beta_round_trips"
+                && function.file.as_path() == Path::new("src/lib.rs")
+        })
+        .ok_or("missing production fn")?;
+    assert_eq!(
+        production.source_role,
+        FunctionSourceRole::Production,
+        "sharing the trial string is not a demotion claim"
+    );
+
+    // The neighbor test fact sits at src/lib.rs lines that overlap the
+    // harness target's `static_trials` span (4-6 there, 6-8 here): only
+    // the file identity keeps it out of the demotion.
+    let neighbor = index
+        .tests
+        .iter()
+        .find(|test| test.name == "beta_round_trips_neighbor")
+        .ok_or("missing neighbor test fact")?;
+    assert_eq!(neighbor.file.as_path(), Path::new("src/lib.rs"));
+
+    // The harness target still establishes its own subject exactly once.
+    assert_eq!(index.harness_subjects.len(), 1);
+    let subject = &index.harness_subjects[0];
+    assert_eq!(subject.name, "beta_round_trips");
+    assert_eq!(
+        subject.file.as_path(),
+        Path::new("tests/collision_mimic.rs")
+    );
     Ok(())
 }
 
@@ -838,11 +1026,20 @@ fn bare_attribute_without_marker_import_stays_unclassified()
 fn cached_index_applies_registrations_identically() -> Result<(), Box<dyn std::error::Error>> {
     let root = temp_dir("cached-harness")?;
     let file = PathBuf::from("tests/cached_mimic.rs");
+    // The inert `#[test]` fn constructs no trial: on this `harness = false`
+    // target it must be demoted on the cold run and identically on the
+    // warm run, whose file facts were served from the cache store that
+    // predates the registry pass (#3602).
     let source = br#"
 use libtest_mimic::Trial;
 
 fn trials() -> Vec<Trial> {
     vec![Trial::test("cached_case", || Ok(()))]
+}
+
+#[test]
+fn inert_cached_attribute_is_never_collected() {
+    assert_eq!(1, 1);
 }
 "#
     .to_vec();
@@ -868,7 +1065,17 @@ fn trials() -> Vec<Trial> {
                 .collect::<Vec<_>>(),
             vec!["cached_case"]
         );
-        assert_eq!(index.tests.len(), 1);
+        // Exactly the adapter subject enters the executable-test
+        // denominator on this run: the inert `#[test]` fn's fact was
+        // demoted here too, not only on the cold run.
+        assert_eq!(index.tests.len(), 1, "{:?}", index.tests);
+        assert_eq!(index.tests[0].name, "cached_case");
+        let inert = index
+            .functions
+            .iter()
+            .find(|function| function.name == "inert_cached_attribute_is_never_collected")
+            .ok_or("missing inert attribute fn")?;
+        assert_eq!(inert.source_role, FunctionSourceRole::HarnessHelper);
     }
     assert_eq!(cold.file_fact_cache.hits, 0);
     assert_eq!(warm.file_fact_cache.hits, 1);
