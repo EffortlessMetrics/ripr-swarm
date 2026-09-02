@@ -878,6 +878,9 @@ fn inert_test_in_harness_target() {
         // denominator; the inert #[test] is demoted on both cold and warm runs (#3602).
         assert_eq!(index.tests.len(), 1);
         assert_eq!(index.tests[0].name, "cached_case");
+        let file_facts = index.files.get(&file).ok_or("file facts missing")?;
+        assert_eq!(file_facts.tests.len(), 1);
+        assert_eq!(file_facts.tests[0].name, "cached_case");
         let inert = index
             .functions
             .iter()
