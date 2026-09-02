@@ -781,7 +781,7 @@ fn push_file_test(index: &mut RustIndex, target: &Path, test: TestFact) {
 /// demoted function in the target file (or belongs to the target) is dropped,
 /// preventing any future producer that names `TestFact`s differently from its
 /// source function from leaking phantom tests into the harness target.
-fn demote_harness_target_functions(index: &mut RustIndex, target: &Path) {
+pub(crate) fn demote_harness_target_functions(index: &mut RustIndex, target: &Path) {
     let demoted_spans: Vec<(usize, usize)> = {
         let Some(facts) = index.files.get(target) else {
             return;

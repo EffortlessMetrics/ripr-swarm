@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::analysis::facts::build_index_with_test_harnesses;
+use crate::analysis::facts::model::FileFacts;
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -935,5 +936,71 @@ fn double_attributed() {
         .find(|function| function.name == "double_attributed")
         .ok_or("missing fn")?;
     assert_eq!(function.source_role, FunctionSourceRole::TestAttribute);
+    Ok(())
+}
+
+#[test]
+fn demote_harness_target_functions_drops_differently_named_test_facts()
+-> Result<(), Box<dyn std::error::Error>> {
+    // Discriminating regression test for #3602 / chatgpt-codex review finding:
+    // Verify that demote_harness_target_functions drops TestFacts overlapping a
+    // demoted function's span even when the TestFact's name does NOT match the
+    // function's name (which name-based demotion would miss).
+    let target = Path::new("tests/custom_harness.rs");
+    let mut index = RustIndex::default();
+    let function = FunctionFact {
+        id: crate::domain::SymbolId("custom_harness::test_fn".to_string()),
+        name: "source_function_name".to_string(),
+        file: target.to_path_buf(),
+        start_line: 10,
+        end_line: 20,
+        body: "assert_eq!(1, 1);".to_string(),
+        calls: Vec::new(),
+        returns: Vec::new(),
+        literals: Vec::new(),
+        source_role: FunctionSourceRole::TestAttribute,
+        attrs: vec!["#[test]".to_string()],
+    };
+    let test_fact = TestFact {
+        name: "differently_named_test_case".to_string(),
+        file: target.to_path_buf(),
+        start_line: 10,
+        end_line: 20,
+        body: "assert_eq!(1, 1);".to_string(),
+        calls: Vec::new(),
+        assertions: Vec::new(),
+        literals: Vec::new(),
+        attrs: vec!["#[test]".to_string()],
+    };
+    let file_facts = FileFacts {
+        path: target.to_path_buf(),
+        functions: vec![function.clone()],
+        tests: vec![test_fact.clone()],
+        ..Default::default()
+    };
+    index.files.insert(target.to_path_buf(), file_facts.clone());
+    index.functions.push(function);
+    index.tests.push(test_fact);
+
+    demote_harness_target_functions(&mut index, target);
+
+    // Span overlap drops the test fact despite the name mismatch.
+    assert!(
+        index.tests.is_empty(),
+        "differently-named TestFact overlapping demoted span must be dropped"
+    );
+    let facts = index.files.get(target).ok_or("file facts missing")?;
+    assert!(
+        facts.tests.is_empty(),
+        "file-level differently-named TestFact must be dropped"
+    );
+    assert_eq!(
+        facts.functions[0].source_role,
+        FunctionSourceRole::HarnessHelper
+    );
+    assert_eq!(
+        index.functions[0].source_role,
+        FunctionSourceRole::HarnessHelper
+    );
     Ok(())
 }
