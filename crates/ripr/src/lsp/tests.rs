@@ -17442,8 +17442,6 @@ fn registered_harness_projection_reaches_the_lsp_snapshot() -> Result<(), Box<dy
     };
     let diagnostics = workspace_diagnostics_with_config(root.path(), &config, true)?;
 
-    let _diagnostics = workspace_diagnostics_with_config(root.path(), &config, true)?;
-
     let super::state::HarnessFactsOnSnapshot::Complete(projections) =
         &diagnostics.snapshot.harness_facts
     else {
