@@ -844,6 +844,11 @@ use libtest_mimic::Trial;
 fn trials() -> Vec<Trial> {
     vec![Trial::test("cached_case", || Ok(()))]
 }
+
+#[test]
+fn inert_test_in_harness_target() {
+    assert_eq!(1, 1);
+}
 "#
     .to_vec();
     let files = [(file.clone(), source)];
@@ -868,7 +873,16 @@ fn trials() -> Vec<Trial> {
                 .collect::<Vec<_>>(),
             vec!["cached_case"]
         );
+        // Only the adapter-established trial subject enters the executable test
+        // denominator; the inert #[test] is demoted on both cold and warm runs (#3602).
         assert_eq!(index.tests.len(), 1);
+        assert_eq!(index.tests[0].name, "cached_case");
+        let inert = index
+            .functions
+            .iter()
+            .find(|f| f.name == "inert_test_in_harness_target")
+            .ok_or("inert fn present")?;
+        assert_eq!(inert.source_role, FunctionSourceRole::HarnessHelper);
     }
     assert_eq!(cold.file_fact_cache.hits, 0);
     assert_eq!(warm.file_fact_cache.hits, 1);
