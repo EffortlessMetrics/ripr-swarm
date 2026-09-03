@@ -12314,7 +12314,8 @@ fn check_rust_source_role_authority() -> Result<(), String> {
 /// the scan (for example `analysis/mod.rs`, whose `#[cfg(test)] mod
 /// source_role_corpus;` boundary sits near the top of the file). This
 /// scanner lexes just enough Rust — line and block comments, string /
-/// raw-string / char literals — to track brace/paren depth, exempts the
+/// raw-string / char literals — to track brace/paren/bracket depth,
+/// exempts the
 /// items gated at the top level, and rescans production code before,
 /// between, and after them. Gated item bodies stay exempt so test
 /// fixtures and assertions (which manipulate source text as data) never
@@ -12325,7 +12326,7 @@ fn raw_production_text(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
     let mut i = 0usize;
-    let mut depth = 0usize; // brace/paren nesting depth of production code
+    let mut depth = 0usize; // brace/paren/bracket nesting of production code
     while i < chars.len() {
         if depth == 0 && chars[i] == '#' && is_top_level_cfg_test_attr(&chars, i) {
             i = skip_cfg_test_item(&chars, i);
@@ -12340,8 +12341,8 @@ fn raw_production_text(text: &str) -> String {
             continue;
         }
         match chars[i] {
-            '{' | '(' => depth += 1,
-            '}' | ')' => depth = depth.saturating_sub(1),
+            '{' | '(' | '[' => depth += 1,
+            '}' | ')' | ']' => depth = depth.saturating_sub(1),
             _ => {}
         }
         out.push(chars[i]);
@@ -12374,10 +12375,13 @@ fn is_top_level_cfg_test_attr(chars: &[char], i: usize) -> bool {
 
 /// End of the top-level item gated by the `#[cfg(test)]` attribute that
 /// starts at `start`: the attribute, any further attributes, and then the
-/// item itself — either through the `;` at the item's own brace level
-/// (`mod name;`, `use ...;`, `static ... = ...;`) or through the closing
-/// brace of its body (`mod name { ... }`, `fn name() { ... }`). Nothing
-/// in that range reaches production pattern scans.
+/// item itself — either through the `;` at the item's own level (a
+/// declaration: `mod name;`, `use ...;`, `static ... = ...;`) or through
+/// the closing brace of the first brace group at that level (a
+/// definition's body: `mod name { ... }`, `fn name(...) { ... }`). The
+/// signature's `)`/`]` closers only unwind the signature — they never end
+/// the item, so a gated function's body stays exempt. Nothing in the
+/// skipped range reaches production pattern scans.
 fn skip_cfg_test_item(chars: &[char], start: usize) -> usize {
     let mut i = start;
     loop {
@@ -12387,26 +12391,39 @@ fn skip_cfg_test_item(chars: &[char], start: usize) -> usize {
             break;
         }
     }
-    let mut rel = 0usize; // brace/paren/bracket depth inside the item
+    let mut depth = 0usize; // paren/bracket/brace nesting inside the head
     while i < chars.len() {
         if let Some(end) = advance_lexeme(chars, i) {
             i = end;
             continue;
         }
         match chars[i] {
-            '{' | '(' | '[' => rel += 1,
-            '}' | ')' | ']' => {
-                rel = rel.saturating_sub(1);
-                if rel == 0 {
-                    // Body closed; consume one optional trailing `;`.
-                    let mut j = skip_trivia(chars, i + 1);
-                    if chars.get(j) == Some(&';') {
-                        j += 1;
+            ';' if depth == 0 => return i + 1,
+            '{' if depth == 0 => {
+                // The body of a definition: skip its balanced braces.
+                let mut body = 1usize;
+                i += 1;
+                while i < chars.len() && body > 0 {
+                    if let Some(end) = advance_lexeme(chars, i) {
+                        i = end;
+                        continue;
                     }
-                    return j;
+                    match chars[i] {
+                        '{' => body += 1,
+                        '}' => body -= 1,
+                        _ => {}
+                    }
+                    i += 1;
                 }
+                // Body closed; consume one optional trailing `;`.
+                let mut j = skip_trivia(chars, i);
+                if chars.get(j) == Some(&';') {
+                    j += 1;
+                }
+                return j;
             }
-            ';' if rel == 0 => return i + 1,
+            '{' | '(' | '[' => depth += 1,
+            '}' | ')' | ']' => depth = depth.saturating_sub(1),
             _ => {}
         }
         i += 1;
@@ -12471,14 +12488,15 @@ fn skip_whitespace(chars: &[char], i: &mut usize) {
 /// End of the comment or literal that starts at `i`, or `None` when no
 /// lexeme that could hide a brace or delimiter starts there. Purely
 /// structural: delimiters inside these lexemes never affect depth
-/// tracking, and production scans still see their text verbatim.
+/// tracking, and production scans still see their text verbatim. Raw
+/// strings are recognized under every Rust prefix (`r`, `br`, `cr`).
 fn advance_lexeme(chars: &[char], i: usize) -> Option<usize> {
     match chars[i] {
         '/' if chars.get(i + 1) == Some(&'/') => Some(line_comment_end(chars, i)),
         '/' if chars.get(i + 1) == Some(&'*') => Some(block_comment_end(chars, i)),
         '"' => Some(string_literal_end(chars, i)),
-        'r' if !in_identifier(chars, i)
-            && (chars.get(i + 1) == Some(&'"') || chars.get(i + 1) == Some(&'#')) =>
+        'r' | 'b' | 'c'
+            if !in_identifier(chars, i) && raw_string_prefix_end(chars, i).is_some() =>
         {
             Some(raw_string_end(chars, i))
         }
@@ -12487,12 +12505,36 @@ fn advance_lexeme(chars: &[char], i: usize) -> Option<usize> {
     }
 }
 
+/// Quote position of the raw string whose prefix starts at `i` on `r`,
+/// `b`, or `c`, or `None` when those chars do not open a raw string.
+/// `b"..."`/`c"..."` ordinary strings return `None` here: their quote is
+/// handled by the plain string branch.
+fn raw_string_prefix_end(chars: &[char], i: usize) -> Option<usize> {
+    let mut j = i;
+    if matches!(chars.get(j), Some('b') | Some('c')) {
+        j += 1;
+    }
+    if chars.get(j) != Some(&'r') {
+        return None;
+    }
+    j += 1;
+    while chars.get(j) == Some(&'#') {
+        j += 1;
+    }
+    if chars.get(j) == Some(&'"') {
+        Some(j)
+    } else {
+        None
+    }
+}
+
 fn is_identifier_continue(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 
-/// Whether the char before `i` continues an identifier, so an `r` there
-/// belongs to a name (`var`) rather than a raw-string prefix.
+/// Whether the char before `i` continues an identifier, so an `r`, `b`,
+/// or `c` there belongs to a name (`var`, `pub`) rather than a raw-string
+/// prefix.
 fn in_identifier(chars: &[char], i: usize) -> bool {
     i > 0 && is_identifier_continue(chars[i - 1])
 }
@@ -12538,11 +12580,19 @@ fn string_literal_end(chars: &[char], start: usize) -> usize {
     chars.len()
 }
 
-/// End of a raw string `r"..."` / `r#"..."#` that starts at `i` on the
-/// `r`, or `i + 1` when the hash run never opens a quote.
+/// End of a raw string `r"..."`, `r#"..."#`, `br#"..."#`, or `cr#"..."#`
+/// that starts at `i` on the prefix's first char, or `i + 1` when the
+/// hash run never opens a quote. The hash-aware terminator keeps an
+/// embedded quote (legal inside raw strings) from closing the lexeme
+/// early and exposing braces to depth tracking.
 fn raw_string_end(chars: &[char], start: usize) -> usize {
     let mut hashes = 0usize;
-    let mut i = start + 1;
+    let mut i = start;
+    if matches!(chars.get(i), Some('b') | Some('c')) {
+        i += 1;
+    }
+    // The caller's prefix check guarantees chars[i] == 'r' here.
+    i += 1;
     while chars.get(i) == Some(&'#') {
         hashes += 1;
         i += 1;
@@ -12633,11 +12683,49 @@ mod raw_production_text_tests {
 
     #[test]
     fn gated_free_function_is_exempt_in_full() {
-        let text = "pub fn early() -> bool { true }\n\n#[cfg(test)]\nfn gated() {\n    let _ = path.contains(\"/tests/\");\n}\n\npub fn last(path: &str) -> bool {\n    path.contains(\"/tests/\")\n}\n";
+        // The gated helper's body is the only `/tests/` occurrence, so a
+        // leak of that body would surface as the denied spelling here.
+        let text = "pub fn early() -> bool { true }\n\n#[cfg(test)]\nfn gated() {\n    let secret = path.contains(\"/tests/\");\n}\n\npub fn last(path: &str) -> bool {\n    path.ends_with(\"_test.rs\")\n}\n";
         let scanned = raw_production_text(text);
         assert!(scanned.contains("pub fn early"));
         assert!(scanned.contains("pub fn last"));
+        assert!(scanned.contains("path.ends_with(\"_test.rs\")"));
         assert!(!scanned.contains("fn gated"));
+        assert!(!scanned.contains("/tests/"));
+    }
+
+    #[test]
+    fn gated_function_signature_parens_do_not_end_the_item() {
+        // The signature's `)` must unwind only the signature; the item
+        // ends at the body's closing brace, so the body stays exempt.
+        let text = "#[cfg(test)]\nfn gated(x: [u8; 2]) {\n    let secret = path.contains(\"/tests/\");\n}\n\npub fn last() -> bool { true }\n";
+        let scanned = raw_production_text(text);
+        assert!(scanned.contains("pub fn last"));
+        assert!(!scanned.contains("fn gated"));
+        assert!(!scanned.contains("/tests/"));
+    }
+
+    #[test]
+    fn cfg_test_inside_a_production_array_stays_in_production_text() {
+        // Square brackets count toward production depth, so a gated
+        // element inside a module-level array is not mistaken for a
+        // top-level item and the array's tokens are not discarded.
+        let text = "pub const GATED: [&str; 1] = &[\n    #[cfg(test)]\n    \"inside\",\n];\n\npub fn later() -> bool { true }\n";
+        let scanned = raw_production_text(text);
+        assert!(scanned.contains("inside"));
+        assert!(scanned.contains("pub fn later"));
+    }
+
+    #[test]
+    fn byte_and_c_raw_strings_with_hashes_keep_depth() {
+        // `br#"..."#` and `cr#"..."#` carry the same hash-aware
+        // terminator; an embedded quote must not close the lexeme early
+        // and expose braces to depth tracking. Plain `b"..."` and
+        // `c"..."` strings are pinned alongside.
+        let text = "#[cfg(test)]\nmod tests {\n    fn t() {\n        let a = br#\" { } \"#;\n        let b = cr#\" { } \"#;\n        let c = br#\" q \" z { \"#;\n        let d = b\"{ }\";\n        let e = c\"{ }\";\n    }\n}\n\npub fn later() -> bool { true }\n";
+        let scanned = raw_production_text(text);
+        assert!(scanned.contains("pub fn later"));
+        assert!(!scanned.contains("fn t()"));
     }
 
     #[test]
