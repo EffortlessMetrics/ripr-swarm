@@ -85,6 +85,27 @@ fn write_workspace(
     Ok(())
 }
 
+/// Declare a `[[test]]` target with `harness = false` in the workspace
+/// manifest (#3608): the parsed Cargo metadata a valid custom-harness
+/// registration must be able to point at. A registration whose target is
+/// not declared this way records a conflict instead of granting
+/// file-wide evidence role.
+fn declare_harness_false_target(
+    root: &TempDir,
+    name: &str,
+    path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::io::Write;
+    let mut manifest = std::fs::OpenOptions::new()
+        .append(true)
+        .open(root.0.join("Cargo.toml"))?;
+    writeln!(
+        manifest,
+        "\n[[test]]\nname = '{name}'\npath = '{path}'\nharness = false"
+    )?;
+    Ok(())
+}
+
 #[test]
 fn without_registrations_the_index_is_unchanged() -> Result<(), Box<dyn std::error::Error>> {
     let root = temp_dir("no-registrations")?;
@@ -158,6 +179,7 @@ fn ordinary_test_attribute_is_inert_without_the_harness() {
         PathBuf::from("tests/price_mimic.rs"),
         PathBuf::from("tests/ordinary.rs"),
     ];
+    declare_harness_false_target(&root, "price_mimic", "tests/price_mimic.rs")?;
     let registrations = [custom_target_registration("tests/price_mimic.rs")];
     let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
 
@@ -270,6 +292,7 @@ fn trials() -> Vec<Trial> {
         )],
     )?;
     let files = [PathBuf::from("tests/unanchored.rs")];
+    declare_harness_false_target(&root, "unanchored", "tests/unanchored.rs")?;
     let registrations = [custom_target_registration("tests/unanchored.rs")];
     let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
     assert!(index.harness_subjects.is_empty());
@@ -299,6 +322,7 @@ fn trials() -> Vec<Trial> {
         )],
     )?;
     let files = [PathBuf::from("tests/ambiguous.rs")];
+    declare_harness_false_target(&root, "ambiguous", "tests/ambiguous.rs")?;
     let registrations = [custom_target_registration("tests/ambiguous.rs")];
     let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
     assert!(index.harness_subjects.is_empty());
@@ -332,6 +356,7 @@ fn trials() -> Vec<Trial> {
         )],
     )?;
     let files = [PathBuf::from("tests/duplicates.rs")];
+    declare_harness_false_target(&root, "duplicates", "tests/duplicates.rs")?;
     let registrations = [custom_target_registration("tests/duplicates.rs")];
     let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
     assert_eq!(index.harness_subjects.len(), 1);
@@ -358,6 +383,7 @@ fn fully_qualified_trial_calls_match_the_marker_path() -> Result<(), Box<dyn std
         )],
     )?;
     let files = [PathBuf::from("tests/qualified.rs")];
+    declare_harness_false_target(&root, "qualified", "tests/qualified.rs")?;
     let registrations = [custom_target_registration("tests/qualified.rs")];
     let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
     assert_eq!(
@@ -391,6 +417,7 @@ fn qualified_trial_with_bare_import_emits_one_subject_and_no_false_limitation()
         )],
     )?;
     let files = [PathBuf::from("tests/both_forms.rs")];
+    declare_harness_false_target(&root, "both_forms", "tests/both_forms.rs")?;
     let registrations = [custom_target_registration("tests/both_forms.rs")];
     let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
     assert_eq!(
@@ -421,6 +448,7 @@ fn plain_idents_inside_trial_bodies_never_become_oracles() -> Result<(), Box<dyn
         )],
     )?;
     let files = [PathBuf::from("tests/ident_noise.rs")];
+    declare_harness_false_target(&root, "ident_noise", "tests/ident_noise.rs")?;
     let registrations = [custom_target_registration("tests/ident_noise.rs")];
     let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
     let subject_test = index
@@ -460,6 +488,7 @@ fn snapshot_named_helpers_never_become_oracles_but_snapshot_asserts_do()
         )],
     )?;
     let files = [PathBuf::from("tests/leaf_boundary.rs")];
+    declare_harness_false_target(&root, "leaf_boundary", "tests/leaf_boundary.rs")?;
     let registrations = [custom_target_registration("tests/leaf_boundary.rs")];
     let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
     let subject_test = index
@@ -497,6 +526,7 @@ fn other() -> Vec<Trial> {
         )],
     )?;
     let files = [PathBuf::from("tests/foreign_trial.rs")];
+    declare_harness_false_target(&root, "foreign_trial", "tests/foreign_trial.rs")?;
     let registrations = [custom_target_registration("tests/foreign_trial.rs")];
     let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
     assert!(
@@ -531,6 +561,7 @@ fn suite() -> Suite {
         )],
     )?;
     let files = [PathBuf::from("tests/record_in_macro.rs")];
+    declare_harness_false_target(&root, "record_in_macro", "tests/record_in_macro.rs")?;
     let registrations = [custom_target_registration("tests/record_in_macro.rs")];
     let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
     // Inside vec!'s token tree the record field is raw syntax; the
@@ -560,6 +591,7 @@ fn macro_input_data_never_becomes_a_subject() -> Result<(), Box<dyn std::error::
         )],
     )?;
     let files = [PathBuf::from("tests/macro_input.rs")];
+    declare_harness_false_target(&root, "macro_input", "tests/macro_input.rs")?;
     let registrations = [custom_target_registration("tests/macro_input.rs")];
     let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
     // Macro input is inert data; a `label:` colon inside it must not
@@ -595,6 +627,7 @@ fn suite() -> Suite {
         )],
     )?;
     let files = [PathBuf::from("tests/field_trial.rs")];
+    declare_harness_false_target(&root, "field_trial", "tests/field_trial.rs")?;
     let registrations = [custom_target_registration("tests/field_trial.rs")];
     let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
     assert_eq!(
@@ -628,6 +661,7 @@ fn trials() -> Vec<libtest_mimic::Trial> {
         )],
     )?;
     let files = [PathBuf::from("tests/dormant_template.rs")];
+    declare_harness_false_target(&root, "dormant_template", "tests/dormant_template.rs")?;
     let registrations = [custom_target_registration("tests/dormant_template.rs")];
     let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
     // The macro body is a template, not a registration: an uninvoked
@@ -853,6 +887,11 @@ fn inert_test_in_harness_target() {
 "#
     .to_vec();
     let files = [(file.clone(), source)];
+    fs::write(
+        root.0.join("Cargo.toml"),
+        "[package]\nname = 'harness-fixture'\nversion = '0.1.0'\nedition = '2024'\n",
+    )?;
+    declare_harness_false_target(&root, "cached_mimic", "tests/cached_mimic.rs")?;
     let registrations = [custom_target_registration("tests/cached_mimic.rs")];
 
     let cold = crate::analysis::facts::build_index_from_loaded_files_with_cache_and_test_harnesses(
@@ -1004,6 +1043,194 @@ fn demote_harness_target_functions_drops_differently_named_test_facts()
     assert_eq!(
         index.functions[0].source_role,
         FunctionSourceRole::HarnessHelper
+    );
+    Ok(())
+}
+
+/// #3608: a `custom_harness` registration whose target path does not
+/// match any Cargo `[[test]]` target records the conflict and degrades to
+/// per-function behavior — the misdeclared file keeps its ordinary
+/// classification (a `#[test]` fn stays an executable test; nothing is
+/// demoted and no trial subjects appear).
+#[test]
+fn misdeclared_target_keeps_per_function_roles_and_records_the_conflict()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("misdeclared-target")?;
+    write_workspace(
+        &root,
+        &[(
+            "src/misdeclared.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn trials() -> Vec<Trial> {
+    vec![Trial::test("ghost_trial", || Ok(()))]
+}
+
+#[test]
+fn ordinary_libtest_still_runs_here() {
+    assert_eq!(1, 1);
+}
+"#,
+        )],
+    )?;
+    // The manifest declares nothing for src/misdeclared.rs: the
+    // registration's target is missing from Cargo metadata.
+    let files = [PathBuf::from("src/misdeclared.rs")];
+    let registrations = [custom_target_registration("src/misdeclared.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    assert!(
+        index.harness_subjects.is_empty(),
+        "a misdeclared target must not establish trial subjects: {:?}",
+        index.harness_subjects
+    );
+    assert!(
+        index
+            .tests
+            .iter()
+            .any(|test| test.name == "ordinary_libtest_still_runs_here"),
+        "the ordinary #[test] keeps running: the misdeclared file is not demoted"
+    );
+    let function = index
+        .functions
+        .iter()
+        .find(|function| function.name == "ordinary_libtest_still_runs_here")
+        .ok_or("missing fn")?;
+    assert_eq!(
+        function.source_role,
+        FunctionSourceRole::TestAttribute,
+        "per-function behavior is retained: no file-wide demotion"
+    );
+    let conflict = index
+        .harness_limitations
+        .iter()
+        .find(|limitation| limitation.code == "target_not_declared")
+        .ok_or("missing target_not_declared limitation")?;
+    assert!(
+        conflict.detail.contains("src/misdeclared.rs"),
+        "the conflict names the misdeclared target: {:?}",
+        conflict.detail
+    );
+    Ok(())
+}
+
+/// #3608: a target known to Cargo only through autodiscovery still has
+/// `harness = true` (Cargo's default), so a `custom_harness` registration
+/// on the conventional layout records the harness-flag conflict and the
+/// file keeps its ordinary libtest behavior.
+#[test]
+fn harness_enabled_target_records_conflict_and_keeps_executable_tests()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("harness-enabled-target")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/auto_discovered.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn trials() -> Vec<Trial> {
+    vec![Trial::test("never_runs_under_libtest", || Ok(()))]
+}
+
+#[test]
+fn ordinary_libtest_still_runs_here() {
+    assert_eq!(1, 1);
+}
+"#,
+        )],
+    )?;
+    // No [[test]] entry: tests/auto_discovered.rs is autodiscovered with
+    // the harness enabled.
+    let files = [PathBuf::from("tests/auto_discovered.rs")];
+    let registrations = [custom_target_registration("tests/auto_discovered.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    assert!(index.harness_subjects.is_empty());
+    assert_eq!(
+        index
+            .tests
+            .iter()
+            .map(|test| test.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["ordinary_libtest_still_runs_here"],
+        "the autodiscovered #[test] keeps running; no demotion happened"
+    );
+    let conflict = index
+        .harness_limitations
+        .iter()
+        .find(|limitation| limitation.code == "harness_flag_conflict")
+        .ok_or("missing harness_flag_conflict limitation")?;
+    assert!(
+        conflict.detail.contains("harness = true"),
+        "the conflict names the still-enabled harness flag: {:?}",
+        conflict.detail
+    );
+    Ok(())
+}
+
+/// #3608: an explicit `harness = false` declaration on the conventional
+/// `tests/` layout (a name-only `[[test]]` entry) confirms the
+/// registration's premise — the adapter runs and the trial subject is
+/// established with no conflict recorded.
+#[test]
+fn explicit_harness_false_declaration_on_conventional_layout_is_accepted()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("declared-conventional")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/suite.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn trials() -> Vec<Trial> {
+    vec![Trial::test("declared_case", || Ok(()))]
+}
+"#,
+        )],
+    )?;
+    declare_harness_false_target(&root, "suite", "tests/suite.rs")?;
+    let files = [PathBuf::from("tests/suite.rs")];
+    let registrations = [custom_target_registration("tests/suite.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    assert_eq!(
+        index
+            .harness_subjects
+            .iter()
+            .map(|subject| subject.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["declared_case"]
+    );
+    assert!(index.harness_limitations.is_empty());
+    Ok(())
+}
+
+/// #3608: without any readable owning manifest, the `harness = false`
+/// premise cannot be established from Cargo metadata; the registration
+/// records the typed limitation and grants nothing.
+#[test]
+fn unreadable_manifest_records_manifest_unavailable_and_grants_nothing()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("manifest-unavailable")?;
+    fs::create_dir_all(root.0.join("tests"))?;
+    fs::write(
+        root.0.join("tests/orphan_mimic.rs"),
+        "use libtest_mimic::Trial;\n\nfn trials() -> Vec<Trial> {\n    vec![Trial::test(\"unverifiable_case\", || Ok(()))]\n}\n",
+    )?;
+    // No Cargo.toml exists at the package root: the premise cannot be
+    // established from Cargo metadata.
+    let files = [PathBuf::from("tests/orphan_mimic.rs")];
+    let registrations = [custom_target_registration("tests/orphan_mimic.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    assert!(index.harness_subjects.is_empty());
+    assert!(
+        index
+            .harness_limitations
+            .iter()
+            .any(|limitation| limitation.code == "manifest_unavailable"
+                && limitation.detail.contains("tests/orphan_mimic.rs")),
+        "{:?}",
+        index.harness_limitations
     );
     Ok(())
 }

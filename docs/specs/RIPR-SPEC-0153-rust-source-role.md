@@ -80,6 +80,25 @@ registration; registers executable tests).
 Attribute-driven membership is authoritative; filenames, imports,
 and macro suffixes never classify.
 
+A `custom_harness` registration grants its file-wide evidence role
+(and the registry's helper demotion and trial-subject derivation)
+only after its target validates against the parsed Cargo target
+metadata of the owning package (#3608): the target must match a
+declared `[[test]]` target — explicit `path = ...` or a name-only
+entry resolved to its autodiscovery shape — whose effective
+`harness` flag is `false`. The verdict is derived from the same
+workspace/package manifest loading the declared-target rules use, so
+no second discovery walk exists. A target missing from Cargo
+metadata, a target whose Cargo entry still has `harness = true`
+(explicit or autodiscovered default), or an unreadable owning
+manifest each record a typed limitation (`target_not_declared`,
+`harness_flag_conflict`, `manifest_unavailable`) naming the target;
+the registration degrades to per-function behavior — the file keeps
+its ordinary classification and a misdeclared target keeps seeding
+production seams. Every file-wide evidence surface (diff seeding,
+repo seam inventory, LSP scope partition) consumes the same
+validated grant, so the degradation is identical everywhere.
+
 The opt-in joins the check-artifact config identity as
 FindingAffecting (`CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION` 1 → 2) and
 the repo-exposure consumed-config list; the workspace cache key already
@@ -127,6 +146,10 @@ The #3532 harness registry joined the same identity as FindingAffecting
 - Evidence files stay indexed; no evidence path is dropped from the
   index or from related-test discovery.
 - `TestFact` registration remains attribute-driven only.
+- A `custom_harness` registration never grants file-wide evidence role
+  without a confirmed `harness = false` Cargo declaration (#3608): a
+  misdeclared target keeps seeding production seams and the conflict is
+  recorded as a typed limitation naming the target.
 
 ## Acceptance Examples
 
@@ -136,6 +159,12 @@ The #3532 harness registry joined the same identity as FindingAffecting
   evidence; `src/unconfirmed_test.rs` without a declaration → production.
 - Accept: `production_like_targets = ["tests/api_contract.rs"]` → that
   file analyzed as production; `tests/other.rs` stays evidence.
+- Accept: a `custom_harness` registration on a declared
+  `harness = false` target (explicit custom path or name-only entry on
+  the conventional layout) → file-wide evidence role with adapter
+  subjects; the same registration against an undeclared or
+  `harness = true` target → typed limitation, no demotion, and the
+  target keeps seeding production seams (#3608).
 - Reject: a bench harness call (`criterion_main!`) becoming an
   obligation; a `test_*.rs` name alone excluding a production file.
 
@@ -144,7 +173,12 @@ The #3532 harness registry joined the same identity as FindingAffecting
 `analysis/workspace/source_role.rs` unit tests pin the layout rules,
 Cargo-autodiscovery shapes, override priority, windows normalization,
 and the seeding/evidence partition. `analysis/workspace/cargo_targets.rs`
-pins manifest extraction. `analysis/language/rust.rs` pins diff seeding
+pins manifest extraction and the #3608 harness-target Cargo verdict
+(declared, harness-enabled, undeclared, manifest-unavailable).
+`analysis/facts/harness_registry` pins the conflict limitations and the
+degraded per-function behavior for misdeclared targets, and
+`analysis/language/rust.rs` pins the diff-path seeding flip alongside
+diff seeding
 (bench gap regression, declared-target confirmation with a probeable
 helper, opt-in restore). `config/tests.rs` pins parsing, identity
 classification, and absolute-path rejection.

@@ -8290,6 +8290,14 @@ tests = [
   "crates/ripr/src/analysis/source_role_corpus.rs::explicit_test_target_joins_executable_tests_and_stays_out_of_production",
   "crates/ripr/src/analysis/source_role_corpus.rs::lookalike_test_named_file_in_src_is_a_production_subject",
   "crates/ripr/src/analysis/source_role_corpus.rs::cfg_test_variants_all_reach_executable_tests",
+  "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::test_targets_with_harness_cover_explicit_name_resolved_and_defaults",
+  "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::harness_verdict_discriminates_declared_enabled_and_missing_targets",
+  "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::virtual_manifest_root_declares_no_autodiscovered_targets",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::misdeclared_target_keeps_per_function_roles_and_records_the_conflict",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::harness_enabled_target_records_conflict_and_keeps_executable_tests",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::explicit_harness_false_declaration_on_conventional_layout_is_accepted",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::unreadable_manifest_records_manifest_unavailable_and_grants_nothing",
+  "crates/ripr/src/analysis/language/rust.rs::tests::diff_analysis_misdeclared_harness_target_keeps_seeding_and_records_the_conflict",
 ]
 fixtures = [
   "crates/ripr/tests/data/source-role-corpus",

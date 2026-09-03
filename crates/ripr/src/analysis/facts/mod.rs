@@ -35,8 +35,9 @@ pub fn build_index_with_test_harnesses(
     role_composition::compose_index_source_roles(&mut index, root);
     // Explicit harness registrations are the most specific authority, so
     // they run after composition and a composed generic grant can never
-    // overwrite a registered subject's role (#3532).
-    harness_registry::apply_registrations(&mut index, registrations);
+    // overwrite a registered subject's role (#3532). The workspace root
+    // anchors the Cargo target metadata validation (#3608).
+    harness_registry::apply_registrations(&mut index, root, registrations);
     Ok(index)
 }
 
@@ -51,10 +52,18 @@ pub(crate) fn build_index_from_loaded_files_with_cache_and_test_harnesses(
     role_composition::compose_index_source_roles(&mut cached.index, root);
     // Explicit harness registrations are the most specific authority, so
     // they run after composition and a composed generic grant can never
-    // overwrite a registered subject's role (#3532).
-    harness_registry::apply_registrations(&mut cached.index, registrations);
+    // overwrite a registered subject's role (#3532). The workspace root
+    // anchors the Cargo target metadata validation (#3608); the verdict
+    // is recomputed after cache retrieval, so a manifest edit re-validates
+    // immediately.
+    harness_registry::apply_registrations(&mut cached.index, root, registrations);
     Ok(cached)
 }
+
+// The Cargo-validated file-wide harness evidence grant (#3608) is shared
+// by every role surface (diff seeding, seam inventory, LSP scope) so a
+// misdeclared registration degrades identically everywhere.
+pub(crate) use harness_registry::validated_file_wide_harness_targets;
 
 // Keep compilation-unit rebasing available at the facts facade for index consumers.
 pub(crate) use includes::compilation_unit_path_from_parents;
