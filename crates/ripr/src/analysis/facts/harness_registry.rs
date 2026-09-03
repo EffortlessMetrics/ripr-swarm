@@ -606,6 +606,17 @@ fn parser_oracles_for_node_tokens(
             ra_ap_syntax::SyntaxKind::R_PAREN => depth = depth.saturating_sub(1),
             ra_ap_syntax::SyntaxKind::IDENT => {
                 let name = token.text();
+                // A `macro_rules!` definition inside the claimed span is a
+                // dormant token tree: its template never executes, so no
+                // token inside it — assertion macro, method call, or
+                // otherwise — classifies as oracle evidence. The same
+                // ancestor authority that keeps dormant templates from
+                // becoming subjects keeps their tokens from becoming
+                // oracles.
+                if inside_macro_rules(tokens[index].parent_ancestors()) {
+                    index += 1;
+                    continue;
+                }
                 // Method-position unwrap/expect smoke oracles (#3603): a
                 // `.name(` shape only. A path-shaped `Result::unwrap(...)`,
                 // a bare binding, or a field read never classifies — the
@@ -1429,6 +1440,38 @@ fn resolve_trial_binding(bindings: &BTreeSet<String>, marker: &str) -> TrialBind
 /// Whether the ancestor chain of a token sits inside a loop expression —
 /// the bounded signal for runtime-only trial discovery. Works through
 /// macro token trees too, because tokens keep their ancestor nodes.
+
+/// End of the `macro_rules! name { ... }` definition whose `macro_rules`
+/// token sits at `index`, or `index + 1` when the shape is not a
+/// definition. Brace-balanced at the token level; braces inside the
+/// template (including nested definitions) are consumed so nothing in
+/// the dormant template classifies.
+fn skip_macro_rules_definition(tokens: &[ra_ap_syntax::SyntaxToken], index: usize) -> usize {
+    let mut j = index + 1;
+    if tokens.get(j).map(|t| t.kind()) != Some(ra_ap_syntax::SyntaxKind::BANG) {
+        return index + 1;
+    }
+    j += 1;
+    if tokens.get(j).map(|t| t.kind()) != Some(ra_ap_syntax::SyntaxKind::IDENT) {
+        return j;
+    }
+    j += 1;
+    let mut body = 0usize;
+    while j < tokens.len() {
+        match tokens[j].kind() {
+            ra_ap_syntax::SyntaxKind::L_CURLY => body += 1,
+            ra_ap_syntax::SyntaxKind::R_CURLY => {
+                body = body.saturating_sub(1);
+                if body == 0 {
+                    return j + 1;
+                }
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    j
+}
 /// Whether the token sits inside a `macro_rules!` definition body: the
 /// tokens there are a template, not an executed registration.
 fn inside_macro_rules(mut ancestors: impl Iterator<Item = ra_ap_syntax::SyntaxNode>) -> bool {

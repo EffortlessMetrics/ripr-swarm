@@ -863,6 +863,50 @@ impl Reader {
 }
 
 #[test]
+fn given_dormant_macro_rules_template_when_trial_scanned_then_no_smoke_oracle_from_template()
+-> Result<(), Box<dyn std::error::Error>> {
+    // #3603 review: a `macro_rules!` definition inside the trial callback
+    // is a dormant token tree. A `.unwrap()` inside the template must not
+    // gain smoke evidence while the macro is never invoked.
+    let root = temp_dir("trial-dormant-macro-template")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/dormant_macro.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn trials() -> Vec<Trial> {
+    vec![libtest_mimic::Trial::test("dormant_template", || {
+        macro_rules! dormant {
+            () => {
+                assert_eq!(ready().unwrap(), 1);
+            };
+        }
+        Ok(())
+    })]
+}
+"#,
+        )],
+    )?;
+    let files = [PathBuf::from("tests/dormant_macro.rs")];
+    let registrations = [custom_target_registration("tests/dormant_macro.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    let subject_test = index
+        .tests
+        .iter()
+        .find(|test| test.name == "dormant_template")
+        .ok_or("dormant_template test missing")?;
+
+    assert!(
+        subject_test.assertions.is_empty(),
+        "a dormant macro_rules template must not gain smoke evidence: {:?}",
+        subject_test.assertions
+    );
+    Ok(())
+}
+
+#[test]
 fn trial_method_unwrap_expect_oracles_carry_real_lines_and_receivers()
 -> Result<(), Box<dyn std::error::Error>> {
     // #3603 gap 2: ordinary `#[test]` parsing records `.unwrap()` /
