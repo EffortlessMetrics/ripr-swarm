@@ -12430,71 +12430,80 @@ fn skip_cfg_test_item(chars: &[char], start: usize) -> usize {
             break;
         }
     }
-    // Head keyword routes the item ender (#3629 review): definitions (`fn`,
-    // `mod`) end at their body's closing brace; other items (`const`,
-    // `static`, `use`, ...) end at the top-level `;` -- a gated `const`
-    // initializer like `if true { "" } else { r#"..."# };` must not leak
-    // its tail into production scans.
-    let is_definition = matches!(head_keyword(chars, i).as_deref(), Some("fn") | Some("mod"));
+    // The item ender (#3629 review): a depth-0 `;` after the head ends
+    // declarations and initializer items (`const X = if true { .. } else
+    // { .. };` must not leak the else tail); when no `;` follows a closed
+    // depth-0 brace group (a definition body), that close ends the item.
     let mut depth = 0usize; // paren/bracket/brace nesting
-    let mut body_mode = false;
-    let mut body = 0usize;
     while i < chars.len() {
         if let Some(end) = advance_lexeme(chars, i) {
             i = end;
             continue;
         }
-        if is_definition {
-            match chars[i] {
-                ';' if depth == 0 && !body_mode => return i + 1,
-                '{' if depth == 0 && !body_mode => {
-                    body_mode = true;
-                    body = 1;
-                }
-                '{' if body_mode => body += 1,
-                '}' if body_mode => {
-                    body -= 1;
-                    if body == 0 {
-                        let mut j = skip_trivia(chars, i + 1);
-                        if chars.get(j) == Some(&';') {
-                            j += 1;
-                        }
-                        return j;
+        match chars[i] {
+            ';' if depth == 0 => return i + 1,
+            '{' if depth == 0 => {
+                // A depth-0 brace group: definition body or initializer
+                // block. Skip it balanced; the item ends at this close
+                // unless an `else` chain or a `;` continues the initializer
+                // expression (#3629 review).
+                let mut body = 1usize;
+                i += 1;
+                while i < chars.len() && body > 0 {
+                    if let Some(end) = advance_lexeme(chars, i) {
+                        i = end;
+                        continue;
                     }
+                    match chars[i] {
+                        '{' => body += 1,
+                        '}' => body -= 1,
+                        _ => {}
+                    }
+                    i += 1;
                 }
-                '(' | '[' if !body_mode => depth += 1,
-                ')' | ']' if !body_mode => depth = depth.saturating_sub(1),
-                _ => {}
+                loop {
+                    let mut j = skip_trivia(chars, i);
+                    if chars.get(j) == Some(&';') {
+                        return j + 1;
+                    }
+                    let is_else = chars[j..].len() >= 4
+                        && chars[j] == 'e'
+                        && chars[j + 1] == 'l'
+                        && chars[j + 2] == 's'
+                        && chars[j + 3] == 'e'
+                        && !chars.get(j + 4).is_some_and(|c| is_identifier_continue(*c));
+                    if !is_else {
+                        return i;
+                    }
+                    j = skip_trivia(chars, j + 4);
+                    if chars.get(j) != Some(&'{') {
+                        // `else if ...` chains: bail conservatively.
+                        return chars.len();
+                    }
+                    let mut tail = 1usize;
+                    j += 1;
+                    while j < chars.len() && tail > 0 {
+                        if let Some(end) = advance_lexeme(chars, j) {
+                            j = end;
+                            continue;
+                        }
+                        match chars[j] {
+                            '{' => tail += 1,
+                            '}' => tail -= 1,
+                            _ => {}
+                        }
+                        j += 1;
+                    }
+                    i = j;
+                }
             }
-        } else {
-            match chars[i] {
-                '{' | '(' | '[' => depth += 1,
-                '}' | ')' | ']' => depth = depth.saturating_sub(1),
-                ';' if depth == 0 => return i + 1,
-                _ => {}
-            }
+            '{' | '(' | '[' => depth += 1,
+            '}' | ')' | ']' => depth = depth.saturating_sub(1),
+            _ => {}
         }
         i += 1;
     }
     chars.len()
-}
-
-/// The head identifier of the gated item starting just after its
-/// attributes (`fn`, `mod`, `const`, `static`, `use`, ...), or `None`
-/// when the item does not begin with an identifier.
-fn head_keyword(chars: &[char], start: usize) -> Option<String> {
-    let i = skip_trivia(chars, start);
-    let mut word = String::new();
-    let mut j = i;
-    while let Some(&c) = chars.get(j) {
-        if is_identifier_continue(c) {
-            word.push(c);
-            j += 1;
-        } else {
-            break;
-        }
-    }
-    if word.is_empty() { None } else { Some(word) }
 }
 
 /// End of the `#[...]` attribute starting at `i` on the `#`, or `i` when
@@ -12758,6 +12767,22 @@ pub fn later() {}
     fn production_only_file_is_returned_verbatim() {
         let text = "pub fn a(path: &str) -> bool {\n    path.contains(\"/tests/\")\n}\n";
         assert_eq!(raw_production_text(text), text);
+    }
+
+    #[test]
+    fn scratch_debug_dump() {
+        let text = "#[cfg(test)]
+mod tests {
+    fn t() {
+        let _ = path.contains(\"/tests/\");
+    }
+}
+
+pub fn later(path: &str) -> bool {
+    path.contains(\"/tests/\")
+}
+";
+        eprintln!("SCANNED_START>>{}<<SCANNED_END", raw_production_text(text));
     }
 
     #[test]
