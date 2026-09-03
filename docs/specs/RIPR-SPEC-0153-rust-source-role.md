@@ -86,18 +86,29 @@ only after its target validates against the parsed Cargo target
 metadata of the owning package (#3608): the target must match a
 declared `[[test]]` target — explicit `path = ...` or a name-only
 entry resolved to its autodiscovery shape — whose effective
-`harness` flag is `false`. The verdict is derived from the same
-workspace/package manifest loading the declared-target rules use, so
-no second discovery walk exists. A target missing from Cargo
-metadata, a target whose Cargo entry still has `harness = true`
-(explicit or autodiscovered default), or an unreadable owning
-manifest each record a typed limitation (`target_not_declared`,
+`harness` flag is `false`. Target ownership follows manifest
+presence: the nearest ancestor `Cargo.toml` at or below the
+workspace root owns the path, so targets outside the conventional
+`src`/`tests`/`benches`/`examples` directories resolve, and a nested
+workspace's deepest manifest owns before the workspace root. Each
+batch parses every owning manifest at most once; a manifest that
+cannot be read or parsed yields `manifest_unavailable`, never a
+target-typo verdict. Package autodiscovery is credited only for
+package-root `tests/**` shapes under Cargo's effective default —
+including the edition-2015 backward-compatibility rule where a
+manual `[[test]]` target with edition 2015 (explicit or omitted)
+disables autodiscovery. A target missing from Cargo metadata, a
+target whose Cargo entry still has `harness = true` (explicit or
+autodiscovered default), or an unresolvable owning manifest each
+record a typed limitation (`target_not_declared`,
 `harness_flag_conflict`, `manifest_unavailable`) naming the target;
 the registration degrades to per-function behavior — the file keeps
 its ordinary classification and a misdeclared target keeps seeding
-production seams. Every file-wide evidence surface (diff seeding,
-repo seam inventory, LSP scope partition) consumes the same
-validated grant, so the degradation is identical everywhere.
+production seams. Every file-wide evidence surface (diff
+seeding, repo seam inventory, LSP scope partition) consumes the same
+validated grant, so the degradation is identical everywhere, and the
+classified-seam caches bump their schema generations so pre-#3608
+entries cannot serve classifications that bypass the validation.
 
 The opt-in joins the check-artifact config identity as
 FindingAffecting (`CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION` 1 → 2) and

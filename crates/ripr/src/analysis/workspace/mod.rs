@@ -6,7 +6,7 @@ mod select;
 mod source_role;
 
 pub(crate) use cargo_targets::{
-    CargoHarnessVerdict, cargo_test_target_harness_verdict, context_for_files,
+    CargoHarnessVerdict, ManifestInventory, context_for_files,
     declared_crate_root_paths_from_manifest,
 };
 pub(crate) use path_dependencies::{

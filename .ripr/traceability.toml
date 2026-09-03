@@ -8298,6 +8298,14 @@ tests = [
   "crates/ripr/src/analysis/facts/harness_registry/tests.rs::explicit_harness_false_declaration_on_conventional_layout_is_accepted",
   "crates/ripr/src/analysis/facts/harness_registry/tests.rs::unreadable_manifest_records_manifest_unavailable_and_grants_nothing",
   "crates/ripr/src/analysis/language/rust.rs::tests::diff_analysis_misdeclared_harness_target_keeps_seeding_and_records_the_conflict",
+  "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::edition_2015_with_manual_test_target_disables_test_autodiscovery",
+  "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::edition_2015_manual_declaration_keeps_explicit_match_and_drops_discovery",
+  "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::malformed_readable_manifest_is_manifest_unavailable",
+  "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::nonconventional_directory_target_resolves_to_the_nearest_manifest",
+  "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::nested_src_tests_module_file_is_not_an_autodiscovered_target",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::nonconventional_directory_target_declared_harness_false_is_accepted",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::malformed_manifest_records_manifest_unavailable_and_keeps_per_function_roles",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::warm_file_fact_cache_still_reaches_cargo_target_validation",
 ]
 fixtures = [
   "crates/ripr/tests/data/source-role-corpus",

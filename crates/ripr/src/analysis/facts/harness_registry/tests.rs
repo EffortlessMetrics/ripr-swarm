@@ -1234,3 +1234,157 @@ fn unreadable_manifest_records_manifest_unavailable_and_grants_nothing()
     );
     Ok(())
 }
+
+/// #3608 review: a `custom_harness` target declared `harness = false`
+/// outside the conventional source directories (`qa/mimic.rs`) resolves
+/// ownership by manifest presence, so the adapter runs and the trial
+/// subject is established.
+#[test]
+fn nonconventional_directory_target_declared_harness_false_is_accepted()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("nonconventional-target")?;
+    write_workspace(
+        &root,
+        &[(
+            "qa/mimic.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn trials() -> Vec<Trial> {
+    vec![Trial::test("qa_case", || Ok(()))]
+}
+"#,
+        )],
+    )?;
+    declare_harness_false_target(&root, "mimic", "qa/mimic.rs")?;
+    let files = [PathBuf::from("qa/mimic.rs")];
+    let registrations = [custom_target_registration("qa/mimic.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    assert_eq!(
+        index
+            .harness_subjects
+            .iter()
+            .map(|subject| subject.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["qa_case"]
+    );
+    assert!(index.harness_limitations.is_empty());
+    Ok(())
+}
+
+/// #3608 review: a readable but malformed owning manifest cannot
+/// establish the registration's premise — the registry records the
+/// `manifest_unavailable` limitation instead of a target typo, and the
+/// target keeps its ordinary per-function behavior.
+#[test]
+fn malformed_manifest_records_manifest_unavailable_and_keeps_per_function_roles()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("malformed-manifest")?;
+    fs::create_dir_all(root.0.join("src"))?;
+    fs::write(root.0.join("Cargo.toml"), "not [ valid toml")?;
+    fs::write(
+        root.0.join("src/malformed_mimic.rs"),
+        "use libtest_mimic::Trial;\n\nfn trials() -> Vec<Trial> {\n    vec![Trial::test(\"ghost_case\", || Ok(()))]\n}\n\n#[test]\nfn ordinary_libtest_still_runs_here() {\n    assert_eq!(1, 1);\n}\n",
+    )?;
+    let files = [PathBuf::from("src/malformed_mimic.rs")];
+    let registrations = [custom_target_registration("src/malformed_mimic.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    assert!(
+        index.harness_subjects.is_empty(),
+        "{:?}",
+        index.harness_subjects
+    );
+    assert!(
+        index
+            .tests
+            .iter()
+            .any(|test| test.name == "ordinary_libtest_still_runs_here"),
+        "the ordinary #[test] keeps running: nothing is demoted"
+    );
+    let conflict = index
+        .harness_limitations
+        .iter()
+        .find(|limitation| limitation.code == "manifest_unavailable")
+        .ok_or("missing manifest_unavailable limitation")?;
+    assert!(
+        conflict.detail.contains("src/malformed_mimic.rs"),
+        "{:?}",
+        conflict.detail
+    );
+    Ok(())
+}
+
+/// #3608 review / cache invalidation: the per-file fact cache must not
+/// bypass the Cargo target metadata validation. The cold run records the
+/// conflict limitation; the warm run (same inputs, cache hit) still
+/// reaches the validation and records the same limitation — the registry
+/// applies after cache retrieval on every build.
+#[test]
+fn warm_file_fact_cache_still_reaches_cargo_target_validation()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("warm-validation")?;
+    fs::create_dir_all(root.0.join("src"))?;
+    fs::write(
+        root.0.join("Cargo.toml"),
+        "[package]\nname = 'harness-fixture'\nversion = '0.1.0'\nedition = '2024'\n",
+    )?;
+    // The manifest deliberately declares nothing for the target: the
+    // registration below is misdeclared.
+    let file = PathBuf::from("src/misdeclared_mimic.rs");
+    let source = br#"
+use libtest_mimic::Trial;
+
+fn trials() -> Vec<Trial> {
+    vec![Trial::test("ghost_case", || Ok(()))]
+}
+
+#[test]
+fn ordinary_libtest_still_runs_here() {
+    assert_eq!(1, 1);
+}
+"#
+    .to_vec();
+    let files = [(file.clone(), source)];
+    let registrations = [custom_target_registration("src/misdeclared_mimic.rs")];
+
+    let cold = crate::analysis::facts::build_index_from_loaded_files_with_cache_and_test_harnesses(
+        &root.0,
+        &files,
+        &registrations,
+    )?;
+    let warm = crate::analysis::facts::build_index_from_loaded_files_with_cache_and_test_harnesses(
+        &root.0,
+        &files,
+        &registrations,
+    )?;
+    assert_eq!(
+        warm.file_fact_cache.hits, 1,
+        "the warm run must be a cache hit"
+    );
+    for (label, index) in [("cold", &cold.index), ("warm", &warm.index)] {
+        assert!(
+            index.harness_subjects.is_empty(),
+            "{label}: a misdeclared target establishes no subjects"
+        );
+        assert!(
+            index
+                .harness_limitations
+                .iter()
+                .any(|limitation| limitation.code == "target_not_declared"
+                    && limitation.detail.contains("src/misdeclared_mimic.rs")),
+            "{label}: the conflict limitation must be recorded on cache hits too: {:?}",
+            index.harness_limitations
+        );
+        let function = index
+            .functions
+            .iter()
+            .find(|function| function.name == "ordinary_libtest_still_runs_here")
+            .ok_or("missing fn")?;
+        assert_eq!(
+            function.source_role,
+            FunctionSourceRole::TestAttribute,
+            "{label}: per-function behavior is retained on the warm path too"
+        );
+    }
+    Ok(())
+}

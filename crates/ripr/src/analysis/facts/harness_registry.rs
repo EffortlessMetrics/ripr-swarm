@@ -38,7 +38,7 @@ use crate::analysis::rust_index::{
     extract_literal_facts,
 };
 use crate::analysis::syntax::ra::{LineIndex, parser_oracles_for_function, slice_text};
-use crate::analysis::workspace::{CargoHarnessVerdict, cargo_test_target_harness_verdict};
+use crate::analysis::workspace::{CargoHarnessVerdict, ManifestInventory};
 use crate::config::{TestHarnessAdapter, TestHarnessKind, TestHarnessRegistration};
 use ra_ap_syntax::ast::{self, HasName};
 use ra_ap_syntax::{AstNode, Edition, SourceFile, TextSize};
@@ -69,6 +69,9 @@ pub(super) fn apply_registrations(
     }
     let mut subjects = Vec::new();
     let mut limitations = Vec::new();
+    // One parsed-manifest inventory for the whole registration batch, so
+    // registrations sharing a package parse its manifest once (#3608 review).
+    let mut manifests = ManifestInventory::default();
     for registration in registrations {
         // Exact target identity only: a registration whose file is not in
         // this index (stale, wrong package, unanalyzed scope) applies to
@@ -79,7 +82,7 @@ pub(super) fn apply_registrations(
         let source = facts.source.clone();
         match (registration.kind, registration.adapter) {
             (TestHarnessKind::CustomHarnessTarget, TestHarnessAdapter::LibtestMimicV1) => {
-                match cargo_test_target_harness_verdict(workspace_root, &registration.target) {
+                match manifests.verdict(workspace_root, &registration.target) {
                     CargoHarnessVerdict::HarnessDisabled => apply_libtest_mimic_target(
                         index,
                         registration,
@@ -178,11 +181,12 @@ pub(crate) fn validated_file_wide_harness_targets(
     workspace_root: &Path,
     registrations: &[TestHarnessRegistration],
 ) -> BTreeSet<std::path::PathBuf> {
+    let mut manifests = ManifestInventory::default();
     registrations
         .iter()
         .filter(|registration| registration.file_wide_harness_evidence())
         .filter(|registration| {
-            cargo_test_target_harness_verdict(workspace_root, &registration.target)
+            manifests.verdict(workspace_root, &registration.target)
                 == CargoHarnessVerdict::HarnessDisabled
         })
         .map(|registration| registration.target.clone())

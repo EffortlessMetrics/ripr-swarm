@@ -96,13 +96,27 @@ pub(crate) struct DeclaredCargoTestTarget {
 /// The flag is the entry's `harness` key when present, Cargo's `true`
 /// default otherwise. Entries with neither a name nor a path contribute
 /// nothing (fail closed). Malformed manifests yield no targets.
+/// Text-taking test form of the parsed-value core; the verdict path
+/// parses each manifest once and calls
+/// [`declared_test_targets_with_harness_from_value`] directly.
+#[cfg(test)]
 pub(crate) fn declared_test_targets_with_harness_from_manifest(
     manifest_text: &str,
     manifest_dir: &Path,
 ) -> Vec<DeclaredCargoTestTarget> {
-    let Ok(value) = toml::from_str::<toml::Value>(manifest_text) else {
-        return Vec::new();
-    };
+    match toml::from_str::<toml::Value>(manifest_text) {
+        Ok(value) => declared_test_targets_with_harness_from_value(&value, manifest_dir),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// The parsed-manifest core of [`declared_test_targets_with_harness_from_manifest`].
+/// The verdict path parses each manifest exactly once and reuses the value
+/// here (#3608 review).
+fn declared_test_targets_with_harness_from_value(
+    value: &toml::Value,
+    manifest_dir: &Path,
+) -> Vec<DeclaredCargoTestTarget> {
     let Some(entries) = value.get("test").and_then(|value| value.as_array()) else {
         return Vec::new();
     };
@@ -140,18 +154,30 @@ pub(crate) fn declared_test_targets_with_harness_from_manifest(
     targets
 }
 
-/// Whether the manifest's `[package]` table disables test autodiscovery
-/// via `autotests = false`. Absent key (or absent table) keeps Cargo's
-/// enabled default.
-fn test_autodiscovery_enabled(manifest_text: &str) -> bool {
-    let Ok(value) = toml::from_str::<toml::Value>(manifest_text) else {
-        return true;
-    };
-    value
-        .get("package")
+/// Cargo's test-autodiscovery default for one parsed manifest (#3608
+/// review). An explicit `package.autotests` flag wins. Otherwise the
+/// default is `false` only for Cargo's backward-compatibility rule —
+/// edition 2015 (explicit or omitted, Cargo's own default) combined with
+/// at least one manually declared `[[test]]` target — and `true` in every
+/// other combination.
+fn test_autodiscovery_default(value: &toml::Value) -> bool {
+    let package = value.get("package");
+    if let Some(flag) = package
         .and_then(|package| package.get("autotests"))
         .and_then(|value| value.as_bool())
-        .unwrap_or(true)
+    {
+        return flag;
+    }
+    let edition_2015 = package
+        .and_then(|package| package.get("edition"))
+        .and_then(|value| value.as_str())
+        .unwrap_or("2015")
+        == "2015";
+    let manual_test_target = value
+        .get("test")
+        .and_then(|value| value.as_array())
+        .is_some_and(|entries| !entries.is_empty());
+    !(edition_2015 && manual_test_target)
 }
 
 /// The verdict of one registered harness target against the parsed Cargo
@@ -169,56 +195,159 @@ pub(crate) enum CargoHarnessVerdict {
     /// The parsed manifest declares no Cargo test target for this path:
     /// the target is missing from Cargo metadata.
     NotDeclared,
-    /// The owning package manifest is missing, unreadable, or malformed,
-    /// so no premise about the target can be established from metadata.
+    /// No manifest could be resolved for the target, or the owning
+    /// manifest exists but cannot be read or parsed, so no premise about
+    /// the target can be established from metadata.
     ManifestUnavailable,
 }
 
+/// The nearest ancestor directory of `anchored` — walking up to and
+/// including `workspace_root` — that contains a `Cargo.toml` (#3608
+/// review). Cargo target ownership follows manifest presence, not
+/// source-layout component names, so a `[[test]] path = "qa/mimic.rs"`
+/// target outside the conventional `src`/`tests`/`benches`/`examples`
+/// directories still resolves, and a nested workspace's nearest (deepest)
+/// manifest owns before the workspace root. `None`: no manifest anywhere
+/// on the walk declares this path's context.
+fn owning_manifest_root(workspace_root: &Path, anchored: &Path) -> Option<PathBuf> {
+    let normalized_root = normalize(workspace_root);
+    let mut cursor = anchored.parent()?;
+    loop {
+        let normalized_cursor = normalize(cursor);
+        if !normalized_cursor.starts_with(&normalized_root) {
+            return None;
+        }
+        if cursor.join("Cargo.toml").is_file() {
+            return Some(cursor.to_path_buf());
+        }
+        if normalized_cursor == normalized_root {
+            return None;
+        }
+        cursor = cursor.parent()?;
+    }
+}
+
+/// One analysis pass's parsed owning manifests (#3608 review): each
+/// manifest is read and parsed at most once per batch, so a batch of
+/// registrations in one package costs one manifest parse, not one per
+/// registration.
+#[derive(Default)]
+pub(crate) struct ManifestInventory {
+    manifests: BTreeMap<PathBuf, OwnedManifest>,
+}
+
+/// The memoized parse outcome for one owning manifest.
+#[derive(Clone)]
+enum OwnedManifest {
+    /// No manifest exists on the ownership walk.
+    Absent,
+    /// The owning manifest exists but could not be read or parsed.
+    Unresolvable,
+    Parsed {
+        root: PathBuf,
+        value: toml::Value,
+    },
+}
+
+impl ManifestInventory {
+    /// The Cargo target metadata verdict for one registered harness
+    /// target path. `workspace_root` anchors the ownership walk; the
+    /// registration target is workspace-relative.
+    pub(crate) fn verdict(
+        &mut self,
+        workspace_root: &Path,
+        registration_target: &Path,
+    ) -> CargoHarnessVerdict {
+        let anchored = normalize(&workspace_root.join(registration_target));
+        match self.owning_manifest(workspace_root, &anchored) {
+            OwnedManifest::Absent | OwnedManifest::Unresolvable => {
+                CargoHarnessVerdict::ManifestUnavailable
+            }
+            OwnedManifest::Parsed { root, value } => {
+                self.verdict_from_parsed(&anchored, &root, &value)
+            }
+        }
+    }
+
+    fn owning_manifest(&mut self, workspace_root: &Path, anchored: &Path) -> OwnedManifest {
+        let Some(root) = owning_manifest_root(workspace_root, anchored) else {
+            return OwnedManifest::Absent;
+        };
+        if let Some(cached) = self.manifests.get(&root) {
+            return cached.clone();
+        }
+        let parsed = match std::fs::read_to_string(root.join("Cargo.toml"))
+            .ok()
+            .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
+        {
+            Some(value) => OwnedManifest::Parsed {
+                root: root.clone(),
+                value,
+            },
+            None => OwnedManifest::Unresolvable,
+        };
+        self.manifests.insert(root, parsed.clone());
+        parsed
+    }
+
+    fn verdict_from_parsed(
+        &self,
+        anchored: &Path,
+        root: &Path,
+        value: &toml::Value,
+    ) -> CargoHarnessVerdict {
+        let declared = declared_test_targets_with_harness_from_value(value, root);
+        for target in &declared {
+            if target.path == *anchored {
+                return if target.harness {
+                    CargoHarnessVerdict::HarnessEnabled
+                } else {
+                    CargoHarnessVerdict::HarnessDisabled
+                };
+            }
+        }
+        // No explicit entry matched. Cargo still knows the target through
+        // package autodiscovery when the path has the conventional test
+        // shape directly at the package root, autodiscovery is enabled,
+        // and the manifest is a package manifest (autodiscovery is a
+        // package behavior; a virtual workspace root declares nothing).
+        // The index-0 guard keeps nested `src/tests/case.rs` module files
+        // out: the shared layout predicate classifies any `tests`
+        // component for source-role purposes, but Cargo only ever
+        // autodiscovers `tests/**` at the package root.
+        let package_table_present = value.get("package").is_some();
+        let relative_is_root_test_target = anchored
+            .strip_prefix(normalize(root))
+            .map(|relative| {
+                let components = relative.components().collect::<Vec<_>>();
+                components
+                    .first()
+                    .is_some_and(|component| component.as_os_str().to_string_lossy() == "tests")
+                    && cargo_discoverable_under(&components, "tests")
+            })
+            .unwrap_or(false);
+        if package_table_present
+            && test_autodiscovery_default(value)
+            && relative_is_root_test_target
+        {
+            return CargoHarnessVerdict::HarnessEnabled;
+        }
+        CargoHarnessVerdict::NotDeclared
+    }
+}
+
 /// Resolve the Cargo target metadata verdict for one registered harness
-/// target path (#3608). Reuses this module's package-root walk and
-/// manifest read — the same loading `context_for_files` performs — rather
-/// than a second discovery walk. The registration target is
-/// workspace-relative; it is anchored at `workspace_root` and resolved
-/// against the manifest of the nearest owning package.
+/// target path (#3608). Single-target form: constructs a throwaway
+/// [`ManifestInventory`]. Batch callers (the registry, the role-grant
+/// filter) reuse one inventory so a registration set in one package
+/// parses its manifest once. Test-only: production consumers go through
+/// [`ManifestInventory`].
+#[cfg(test)]
 pub(crate) fn cargo_test_target_harness_verdict(
     workspace_root: &Path,
     registration_target: &Path,
 ) -> CargoHarnessVerdict {
-    let anchored = normalize(&workspace_root.join(registration_target));
-    let Some(root) = package_root_of(&anchored) else {
-        return CargoHarnessVerdict::NotDeclared;
-    };
-    let Ok(manifest_text) = std::fs::read_to_string(root.join("Cargo.toml")) else {
-        return CargoHarnessVerdict::ManifestUnavailable;
-    };
-    let declared = declared_test_targets_with_harness_from_manifest(&manifest_text, &root);
-    for target in &declared {
-        if target.path == anchored {
-            return if target.harness {
-                CargoHarnessVerdict::HarnessEnabled
-            } else {
-                CargoHarnessVerdict::HarnessDisabled
-            };
-        }
-    }
-    // No explicit entry matched. Cargo still knows the target through
-    // package autodiscovery when the path has the conventional test
-    // shape, autotests are not disabled, and the manifest is a package
-    // manifest (autodiscovery is a package behavior; a virtual workspace
-    // root declares nothing).
-    let package_table_present = toml::from_str::<toml::Value>(&manifest_text)
-        .ok()
-        .is_some_and(|value| value.get("package").is_some());
-    let relative_matches = anchored
-        .strip_prefix(normalize(&root))
-        .map(|relative| {
-            cargo_discoverable_under(&relative.components().collect::<Vec<_>>(), "tests")
-        })
-        .unwrap_or(false);
-    if package_table_present && test_autodiscovery_enabled(&manifest_text) && relative_matches {
-        return CargoHarnessVerdict::HarnessEnabled;
-    }
-    CargoHarnessVerdict::NotDeclared
+    ManifestInventory::default().verdict(workspace_root, registration_target)
 }
 
 /// Crate-root paths declared by one manifest, relative to `manifest_dir`
@@ -505,8 +634,12 @@ mod tests {
             verdict("pkg/src/contract_tset.rs"),
             CargoHarnessVerdict::NotDeclared
         );
-        // A path outside any package source layout has no owning manifest.
-        assert_eq!(verdict("loose.rs"), CargoHarnessVerdict::NotDeclared);
+        // No manifest exists anywhere on the ownership walk (the temp root
+        // itself has no Cargo.toml): the premise cannot be established.
+        assert_eq!(
+            verdict("loose.rs"),
+            CargoHarnessVerdict::ManifestUnavailable
+        );
 
         // Manifest B: plain package, no [[test]] entries — autodiscovery on.
         write_manifest("[package]\nname='p'\nversion='0.1.0'\n")?;
@@ -551,6 +684,225 @@ mod tests {
         assert_eq!(
             cargo_test_target_harness_verdict(&dir, Path::new("tests/it.rs")),
             CargoHarnessVerdict::NotDeclared
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    fn parse_manifest(text: &str) -> Result<toml::Value, String> {
+        toml::from_str::<toml::Value>(text).map_err(|error| error.to_string())
+    }
+
+    /// #3608 review: Cargo's test-autodiscovery default is `false` only
+    /// for the backward-compatibility combination — edition 2015 (explicit
+    /// or omitted) with at least one manually declared `[[test]]` target —
+    /// and an explicit `package.autotests` flag always wins.
+    #[test]
+    fn edition_2015_with_manual_test_target_disables_test_autodiscovery() -> Result<(), String> {
+        let enabled = |manifest: &str| -> Result<bool, String> {
+            Ok(test_autodiscovery_default(&parse_manifest(manifest)?))
+        };
+        // Explicit flags always win.
+        assert!(
+            !enabled(
+                "[package]\nname='p'\nedition='2015'\nautotests=false\n\n[[test]]\nname='a'\n"
+            )?,
+            "an explicit autotests = false wins over every default"
+        );
+        assert!(
+            enabled("[package]\nname='p'\nedition='2015'\nautotests=true\n\n[[test]]\nname='a'\n")?,
+            "an explicit autotests = true wins over the 2015 backward-compatibility default"
+        );
+        // Backward-compatibility combination: edition 2015 + manual target.
+        assert!(
+            !enabled("[package]\nname='p'\nedition='2015'\n\n[[test]]\nname='a'\n")?,
+            "edition 2015 with a manual [[test]] disables autodiscovery"
+        );
+        assert!(
+            !enabled("[package]\nname='p'\n\n[[test]]\nname='a'\n")?,
+            "an omitted edition defaults to 2015, so a manual [[test]] disables autodiscovery"
+        );
+        // Every other combination keeps autodiscovery enabled.
+        assert!(
+            enabled("[package]\nname='p'\nedition='2015'\n")?,
+            "edition 2015 without a manual [[test]] keeps autodiscovery"
+        );
+        assert!(
+            enabled("[package]\nname='p'\nedition='2021'\n\n[[test]]\nname='a'\n")?,
+            "edition 2021 with a manual [[test]] keeps autodiscovery"
+        );
+        assert!(
+            enabled("[package]\nname='p'\nedition='2024'\n\n[[test]]\nname='a'\n")?,
+            "edition 2024 with a manual [[test]] keeps autodiscovery"
+        );
+        Ok(())
+    }
+
+    /// #3608 review: verdict-level pin of the same rule — under edition
+    /// 2015 with a manual `[[test]]` entry, the declared entry still
+    /// matches (explicit declarations are independent of autodiscovery)
+    /// while a sibling conventional-layout file is no longer discovered.
+    #[test]
+    fn edition_2015_manual_declaration_keeps_explicit_match_and_drops_discovery()
+    -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-harness-edition-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(dir.join("pkg/tests")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("pkg/Cargo.toml"),
+            "[package]\nname='p'\nedition='2015'\n\n[[test]]\nname='declared'\nharness=false\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
+        assert_eq!(
+            verdict("pkg/tests/declared.rs"),
+            CargoHarnessVerdict::HarnessDisabled,
+            "the explicit declaration matches regardless of the autodiscovery default"
+        );
+        assert_eq!(
+            verdict("pkg/tests/other.rs"),
+            CargoHarnessVerdict::NotDeclared,
+            "edition 2015 with a manual [[test]] disables autodiscovery of siblings"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3608 review: a readable but malformed owning manifest cannot
+    /// establish any premise about its targets — the verdict is
+    /// ManifestUnavailable, never a target-typo NotDeclared.
+    #[test]
+    fn malformed_readable_manifest_is_manifest_unavailable() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-harness-malformed-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(dir.join("pkg/src")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(dir.join("pkg/tests")).map_err(|error| error.to_string())?;
+        std::fs::write(dir.join("pkg/Cargo.toml"), "not [ valid toml")
+            .map_err(|error| error.to_string())?;
+        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
+        assert_eq!(
+            verdict("pkg/src/mimic.rs"),
+            CargoHarnessVerdict::ManifestUnavailable
+        );
+        assert_eq!(
+            verdict("pkg/tests/mimic.rs"),
+            CargoHarnessVerdict::ManifestUnavailable,
+            "even the autodiscovery premise cannot be established from a malformed manifest"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3608 review: target ownership follows manifest presence, not
+    /// source-layout components. A `[[test]] path = "qa/mimic.rs"`
+    /// harness = false target outside the conventional directories
+    /// resolves against the nearest (deepest) owning manifest, and a
+    /// nested workspace's package manifest owns before the workspace root.
+    #[test]
+    fn nonconventional_directory_target_resolves_to_the_nearest_manifest() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-harness-nonconventional-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(dir.join("crates/a/qa")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(dir.join("qa_root")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname='ws'\nedition='2024'\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(dir.join("qa_root/mimic.rs"), "fn trials() {}\n")
+            .map_err(|error| error.to_string())?;
+        let write_pkg_manifest = |text: &str| -> Result<(), String> {
+            std::fs::write(dir.join("crates/a/Cargo.toml"), text).map_err(|error| error.to_string())
+        };
+        write_pkg_manifest(
+            "[package]\nname='a'\nedition='2024'\n\n\
+             [[test]]\nname='mimic'\npath='qa/mimic.rs'\nharness=false\n",
+        )?;
+        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
+
+        // Longest ownership: the nested package manifest declares the
+        // nonconventional target, so the premise holds.
+        assert_eq!(
+            verdict("crates/a/qa/mimic.rs"),
+            CargoHarnessVerdict::HarnessDisabled
+        );
+        // The root package's own nonconventional path matches nothing and
+        // is not an autodiscovery shape either.
+        assert_eq!(
+            verdict("qa_root/mimic.rs"),
+            CargoHarnessVerdict::NotDeclared
+        );
+
+        // Dropping the nested declaration: the nearest manifest (crates/a)
+        // no longer declares the target, and the workspace root cannot own
+        // it across the nested package boundary.
+        write_pkg_manifest("[package]\nname='a'\nedition='2024'\n")?;
+        assert_eq!(
+            verdict("crates/a/qa/mimic.rs"),
+            CargoHarnessVerdict::NotDeclared
+        );
+
+        // A top-level nonconventional target resolves against the root
+        // manifest when no deeper manifest exists.
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname='ws'\nedition='2024'\n\n\
+             [[test]]\nname='mimic'\npath='qa_root/mimic.rs'\nharness=false\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            verdict("qa_root/mimic.rs"),
+            CargoHarnessVerdict::HarnessDisabled
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3608 review: Cargo never autodiscovers tests below `src/tests/`;
+    /// the package-root guard keeps nested module files out of the
+    /// autodiscovery premise without changing the shared layout
+    /// predicate's source-role behavior.
+    #[test]
+    fn nested_src_tests_module_file_is_not_an_autodiscovered_target() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-harness-nested-tests-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(dir.join("pkg/src/tests")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(dir.join("pkg/tests")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("pkg/Cargo.toml"),
+            "[package]\nname='p'\nedition='2024'\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
+        assert_eq!(
+            verdict("pkg/src/tests/case.rs"),
+            CargoHarnessVerdict::NotDeclared,
+            "a module file below src/tests/ is not a package-root test target"
+        );
+        assert_eq!(
+            verdict("pkg/tests/case.rs"),
+            CargoHarnessVerdict::HarnessEnabled,
+            "the package-root tests/ shape stays autodiscovered"
         );
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
