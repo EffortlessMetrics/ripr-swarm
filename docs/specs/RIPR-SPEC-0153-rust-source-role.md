@@ -87,15 +87,19 @@ metadata of the owning package (#3608): the target must match a
 declared `[[test]]` target — explicit `path = ...` or a name-only
 entry resolved to its autodiscovery shape — whose effective
 `harness` flag is `false`. Explicit-target ownership is
-declaration-driven: the deepest ancestor manifest whose
-`[[test]] path = ...` entry names the path owns it, wherever the
-declared path sits below that manifest, so a workspace-root
-declaration claims a target that lies below a nested manifest
-directory and targets outside the conventional
-`src`/`tests`/`benches`/`examples` directories resolve.
-Nearest-manifest resolution governs the autodiscovery premise alone.
-Each batch parses every manifest on the walk at most once; a manifest
-that cannot be read or parsed yields `manifest_unavailable`, never a
+declaration-driven across the whole workspace: every package
+manifest's `[[test]] path = ...` entries are resolved lexically
+against their own manifest directory (ParentDir and CurDir segments
+collapse without touching the filesystem; a leading escape chain stays
+as spelled), and any manifest declaring the exact resolved target path
+claims it — so sibling-package `../shared/x.rs` declarations, targets
+below nested manifest directories, and in-package `generated/../qa/...`
+spellings all resolve. Agreeing declarations are deterministic;
+conflicting `harness` flags on one path are ambiguous ownership and
+fail closed. Nearest-manifest resolution governs the autodiscovery
+premise alone. Each batch parses every manifest in the workspace at
+most once; any manifest that cannot be read or parsed leaves the
+declaration map incomplete and yields `manifest_unavailable`, never a
 target-typo verdict. Package autodiscovery is credited only for
 package-root `tests/**` shapes (never `src/tests/**`) under Cargo's
 effective default — including the edition-2015

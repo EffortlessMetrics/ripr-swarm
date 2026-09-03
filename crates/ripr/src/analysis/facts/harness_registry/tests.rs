@@ -1434,3 +1434,48 @@ fn trials() -> Vec<Trial> {
     assert!(index.harness_limitations.is_empty());
     Ok(())
 }
+
+/// #3608 review round four (Gajt): Cargo permits an explicit `[[test]]`
+/// path to resolve outside the declaring package's directory — a sibling
+/// package's `../../shared/mimic.rs` harness = false declaration claims
+/// the shared target, so the adapter establishes its trial subjects.
+#[test]
+fn shared_target_declared_from_a_sibling_package_is_accepted()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("shared-target")?;
+    write_workspace(
+        &root,
+        &[(
+            "shared/mimic.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn trials() -> Vec<Trial> {
+    vec![Trial::test("shared_case", || Ok(()))]
+}
+"#,
+        )],
+    )?;
+    // The declaring package sits beside shared/; its target path escapes
+    // its own directory.
+    fs::create_dir_all(root.0.join("crates/a"))?;
+    fs::write(
+        root.0.join("crates/a/Cargo.toml"),
+        "[package]\nname = 'a'\nversion = '0.1.0'\nedition = '2024'\n\n\
+         [[test]]\nname = 'mimic'\npath = '../../shared/mimic.rs'\nharness = false\n",
+    )?;
+    let files = [PathBuf::from("shared/mimic.rs")];
+    let registrations = [custom_target_registration("shared/mimic.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    assert_eq!(
+        index
+            .harness_subjects
+            .iter()
+            .map(|subject| subject.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["shared_case"],
+        "the sibling package's declaration claims the shared target"
+    );
+    assert!(index.harness_limitations.is_empty());
+    Ok(())
+}

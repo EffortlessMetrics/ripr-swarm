@@ -137,7 +137,7 @@ fn declared_test_targets_with_harness_from_value(
                 continue;
             }
             targets.push(DeclaredCargoTestTarget {
-                path: normalize(&manifest_dir.join(path)),
+                path: lexical(&normalize(&manifest_dir.join(path))),
                 harness,
             });
             continue;
@@ -154,7 +154,7 @@ fn declared_test_targets_with_harness_from_value(
         }
         for candidate in [format!("tests/{name}.rs"), format!("tests/{name}/main.rs")] {
             targets.push(DeclaredCargoTestTarget {
-                path: normalize(&manifest_dir.join(candidate)),
+                path: lexical(&normalize(&manifest_dir.join(candidate))),
                 harness,
             });
         }
@@ -222,9 +222,10 @@ pub(crate) enum CargoHarnessVerdict {
     /// The parsed manifest declares no Cargo test target for this path:
     /// the target is missing from Cargo metadata.
     NotDeclared,
-    /// No manifest could be resolved for the target, or the owning
-    /// manifest exists but cannot be read or parsed, so no premise about
-    /// the target can be established from metadata.
+    /// No premise about the target can be established from metadata: no
+    /// manifest resolves for it, a workspace manifest could not be read
+    /// or parsed (the declaration map is incomplete), or two manifests
+    /// declare the path with conflicting `harness` flags.
     ManifestUnavailable,
 }
 
@@ -235,6 +236,17 @@ pub(crate) enum CargoHarnessVerdict {
 #[derive(Default)]
 pub(crate) struct ManifestInventory {
     manifests: BTreeMap<PathBuf, OwnedManifest>,
+    workspace_scan: Option<WorkspaceScan>,
+}
+
+/// The per-batch workspace manifest inventory (#3608 review): whether
+/// every discovered manifest could be read and parsed, and the map of
+/// lexically resolved explicit `[[test]] path = ...` declarations to the
+/// `harness` flags of every package manifest declaring each path.
+#[derive(Default)]
+struct WorkspaceScan {
+    any_unresolvable: bool,
+    declarations: BTreeMap<PathBuf, Vec<bool>>,
 }
 
 /// The memoized parse outcome for one manifest directory on the ownership
@@ -253,79 +265,119 @@ enum OwnedManifest {
 
 impl ManifestInventory {
     /// The Cargo target metadata verdict for one registered harness
-    /// target path. `workspace_root` anchors the ownership walk; the
-    /// registration target is workspace-relative.
+    /// target path. `workspace_root` anchors the ownership resolution;
+    /// the registration target is workspace-relative.
     ///
-    /// Ownership is declaration-driven for explicit targets (#3608
-    /// review): the deepest manifest on the target's ancestor chain whose
-    /// `[[test]] path = ...` entry explicitly names the anchored path owns
-    /// it, wherever that declared path sits below the manifest — so a
-    /// workspace-root declaration still claims a target that lies below a
-    /// nested manifest directory. Nearest-manifest resolution then
-    /// governs the autodiscovery premise alone (package-root `tests/**`
-    /// shape, package presence, effective edition, `autotests` flag).
+    /// Explicit-target ownership is declaration-driven across the whole
+    /// workspace (#3608 review): every parsed package manifest's
+    /// `[[test]] path = ...` entries are resolved against their own
+    /// manifest directory (lexically, `..` collapsed), and any manifest
+    /// declaring the exact normalized target path claims it — so a
+    /// sibling package's `../shared/mimic.rs` declaration and a
+    /// workspace-root declaration below a nested manifest directory both
+    /// resolve. Agreeing declarations are deterministic; conflicting
+    /// `harness` flags on one path are ambiguous and fail closed.
+    /// Nearest-manifest resolution then governs the autodiscovery
+    /// premise alone (package-root `tests/**` shape, package presence,
+    /// effective edition, `autotests` flag).
     pub(crate) fn verdict(
         &mut self,
         workspace_root: &Path,
         registration_target: &Path,
     ) -> CargoHarnessVerdict {
-        let anchored = normalize(&workspace_root.join(registration_target));
+        let anchored = lexical(&normalize(&workspace_root.join(registration_target)));
+        self.ensure_workspace_scan(workspace_root);
+        let scan = match self.workspace_scan.as_ref() {
+            Some(scan) => scan,
+            None => return CargoHarnessVerdict::ManifestUnavailable,
+        };
+        if scan.any_unresolvable {
+            // The declaration map is incomplete: a manifest that could not
+            // be read or parsed may declare this target, so no ownership
+            // or autodiscovery premise is provable.
+            return CargoHarnessVerdict::ManifestUnavailable;
+        }
+        if let Some(flags) = scan.declarations.get(&anchored) {
+            let harness = flags[0];
+            if flags.iter().all(|flag| *flag == harness) {
+                return if harness {
+                    CargoHarnessVerdict::HarnessEnabled
+                } else {
+                    CargoHarnessVerdict::HarnessDisabled
+                };
+            }
+            // Two manifests declare the same path with different harness
+            // flags; which compilation unit collects the file is not
+            // statically decidable here.
+            return CargoHarnessVerdict::ManifestUnavailable;
+        }
+        // Autodiscovery stays a nearest-manifest premise.
+        let Some((root, value)) = self.nearest_parsed_manifest(workspace_root, &anchored) else {
+            return CargoHarnessVerdict::ManifestUnavailable;
+        };
+        let inherited_edition = self.workspace_inherited_edition(workspace_root);
+        self.verdict_from_parsed(inherited_edition.as_deref(), &anchored, &root, &value)
+    }
+
+    /// The first parsed manifest on the anchored target's ancestor chain,
+    /// bounded at the workspace root.
+    fn nearest_parsed_manifest(
+        &mut self,
+        workspace_root: &Path,
+        anchored: &Path,
+    ) -> Option<(PathBuf, toml::Value)> {
         let normalized_root = normalize(workspace_root);
-        let mut unresolvable_on_walk = false;
-        let mut nearest: Option<(PathBuf, toml::Value)> = None;
         let mut cursor = anchored.parent();
         while let Some(dir) = cursor {
             let normalized_dir = normalize(dir);
             if !normalized_dir.starts_with(&normalized_root) {
                 break;
             }
-            match self.manifest_at(dir) {
-                OwnedManifest::Absent => {}
-                OwnedManifest::Unresolvable => unresolvable_on_walk = true,
-                OwnedManifest::Parsed { root, value } => {
-                    if nearest.is_none() {
-                        nearest = Some((root.clone(), value.clone()));
-                    }
-                    // A manifest without `[package]` declares nothing Cargo
-                    // would accept (review FhIA): virtual manifests reject
-                    // target tables.
-                    if value.get("package").is_some() {
-                        for target in
-                            declared_test_targets_with_harness_from_value(&value, &root, true)
-                        {
-                            if target.path == anchored {
-                                if unresolvable_on_walk {
-                                    // A deeper unresolvable manifest may own
-                                    // this target with an unknown declaration,
-                                    // so the ancestor claim is not provable.
-                                    return CargoHarnessVerdict::ManifestUnavailable;
-                                }
-                                return if target.harness {
-                                    CargoHarnessVerdict::HarnessEnabled
-                                } else {
-                                    CargoHarnessVerdict::HarnessDisabled
-                                };
-                            }
-                        }
-                    }
-                }
+            if let OwnedManifest::Parsed { root, value } = self.manifest_at(dir) {
+                return Some((root, value));
             }
             if normalized_dir == normalized_root {
                 break;
             }
             cursor = dir.parent();
         }
-        // An unresolvable manifest on the walk could have declared the
-        // target, and with no manifest at all there is nothing to
-        // establish the premise from: both fail closed.
-        if unresolvable_on_walk {
-            return CargoHarnessVerdict::ManifestUnavailable;
+        None
+    }
+
+    /// Enumerate the workspace's manifests once per batch (the same scan
+    /// the cache key and #3616 manifest attribution use) and build the
+    /// explicit-declaration map: lexically resolved declared path to the
+    /// `harness` flags of every package manifest declaring it. A manifest
+    /// without `[package]` contributes nothing (review FhIA).
+    fn ensure_workspace_scan(&mut self, workspace_root: &Path) {
+        if self.workspace_scan.is_some() {
+            return;
         }
-        let Some((root, value)) = nearest else {
-            return CargoHarnessVerdict::ManifestUnavailable;
-        };
-        let inherited_edition = self.workspace_inherited_edition(workspace_root);
-        self.verdict_from_parsed(inherited_edition.as_deref(), &anchored, &root, &value)
+        let mut scan = WorkspaceScan::default();
+        for prefix in crate::analysis::seam_cache::workspace_manifest_dir_prefixes(workspace_root) {
+            let dir = if prefix.is_empty() {
+                workspace_root.to_path_buf()
+            } else {
+                workspace_root.join(&prefix)
+            };
+            match self.manifest_at(&dir) {
+                OwnedManifest::Absent => {}
+                OwnedManifest::Unresolvable => scan.any_unresolvable = true,
+                OwnedManifest::Parsed { root, value } => {
+                    if value.get("package").is_some() {
+                        for target in
+                            declared_test_targets_with_harness_from_value(&value, &root, true)
+                        {
+                            scan.declarations
+                                .entry(target.path)
+                                .or_default()
+                                .push(target.harness);
+                        }
+                    }
+                }
+            }
+        }
+        self.workspace_scan = Some(scan);
     }
 
     fn manifest_at(&mut self, dir: &Path) -> OwnedManifest {
@@ -560,6 +612,34 @@ fn package_root_of(file: &Path) -> Option<PathBuf> {
 
 fn normalize(path: &Path) -> PathBuf {
     PathBuf::from(path.to_string_lossy().replace('\\', "/"))
+}
+
+/// Lexically resolve one normalized path (#3608 review): collapse CurDir
+/// components and ParentDir/preceding-segment pairs without touching the
+/// filesystem, so a declared path like `generated/../qa/mimic.rs` (or a
+/// `../shared/x.rs` sibling declaration) compares equal to its
+/// registration spelling. A leading ParentDir chain — the path escaping
+/// above its base — is kept as spelled, so outside-root declarations
+/// resolve consistently without being silently clamped into the root.
+fn lexical(path: &Path) -> PathBuf {
+    let mut resolved: Vec<std::path::Component> = Vec::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => match resolved.last() {
+                Some(std::path::Component::Normal(_)) => {
+                    resolved.pop();
+                }
+                // Nothing to pop (base root or a leading `..` chain): keep
+                // the escape as spelled; only a prefix/root below it is
+                // dropped, since `..` cannot rise above a filesystem root.
+                Some(std::path::Component::Prefix(_) | std::path::Component::RootDir) => {}
+                _ => resolved.push(component),
+            },
+            other => resolved.push(other),
+        }
+    }
+    resolved.into_iter().collect()
 }
 
 #[cfg(test)]
@@ -844,8 +924,10 @@ mod tests {
             CargoHarnessVerdict::HarnessEnabled
         );
 
-        // Precedence: the deepest declaring manifest wins when more than
-        // one manifest declares the same path.
+        // Round 4 (Gajt): two manifests declaring the same path with
+        // conflicting `harness` flags is ambiguous ownership — which
+        // compilation unit collects the file is not statically decidable —
+        // so the verdict fails closed instead of picking a winner.
         std::fs::write(
             dir.join("below/nested/manifest/Cargo.toml"),
             "[package]\nname='nested'\nedition='2024'\n\n\
@@ -854,8 +936,192 @@ mod tests {
         .map_err(|error| error.to_string())?;
         assert_eq!(
             verdict("below/nested/manifest/dir/mimic.rs"),
-            CargoHarnessVerdict::HarnessEnabled,
-            "the deepest declaration owns the target"
+            CargoHarnessVerdict::ManifestUnavailable,
+            "conflicting declarations fail closed"
+        );
+
+        // Agreeing declarations remain deterministic.
+        std::fs::write(
+            dir.join("below/nested/manifest/Cargo.toml"),
+            "[package]\nname='nested'\nedition='2024'\n\n\
+             [[test]]\nname='mimic'\npath='dir/mimic.rs'\nharness=false\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            verdict("below/nested/manifest/dir/mimic.rs"),
+            CargoHarnessVerdict::HarnessDisabled,
+            "agreeing declarations keep the deterministic verdict"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3608 review round four (Gajt): Cargo permits an explicit
+    /// `[[test]]` path to resolve outside the declaring package's
+    /// directory, so a sibling package's `../shared/mimic.rs`
+    /// harness = false declaration claims the shared target even though
+    /// the declaring manifest is not an ancestor of it; the
+    /// nearest-manifest autodiscovery fallback is unchanged for
+    /// undeclared paths.
+    #[test]
+    fn shared_target_declared_from_a_sibling_package_resolves() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-harness-shared-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(dir.join("crates/a")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(dir.join("shared")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[package]
+name='ws'
+edition='2024'
+",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("crates/a/Cargo.toml"),
+            "[package]
+name='a'
+edition='2024'
+
+             [[test]]
+name='mimic'
+path='../../shared/mimic.rs'
+harness=false
+",
+        )
+        .map_err(|error| error.to_string())?;
+        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
+        // The sibling package's declaration claims the shared target.
+        assert_eq!(
+            verdict("shared/mimic.rs"),
+            CargoHarnessVerdict::HarnessDisabled
+        );
+        // Undeclared sibling paths keep the ordinary fallback.
+        assert_eq!(verdict("shared/other.rs"), CargoHarnessVerdict::NotDeclared);
+
+        // Ambiguity: a second package declaring the same shared path with
+        // a conflicting harness flag fails closed.
+        std::fs::create_dir_all(dir.join("crates/b")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("crates/b/Cargo.toml"),
+            "[package]
+name='b'
+edition='2024'
+
+             [[test]]
+name='mimic'
+path='../../shared/mimic.rs'
+harness=true
+",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            verdict("shared/mimic.rs"),
+            CargoHarnessVerdict::ManifestUnavailable,
+            "conflicting declarations of one shared path are ambiguous"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3608 review round four (GalA): declared paths and registration
+    /// targets compare on the lexically resolved identity — ParentDir and
+    /// CurDir segments collapse without touching the filesystem, and a
+    /// leading escape chain stays as spelled so outside-root declarations
+    /// resolve consistently.
+    #[test]
+    fn parent_segments_lexically_resolve_on_both_sides() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-harness-lexical-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(dir.join("pkg")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(dir.join("shared")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[package]
+name='ws'
+edition='2024'
+",
+        )
+        .map_err(|error| error.to_string())?;
+        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
+
+        // In-package `..` declaration: `generated/../qa/mimic.rs` resolves
+        // to `pkg/qa/mimic.rs` (the generated/ directory need not exist).
+        std::fs::write(
+            dir.join("pkg/Cargo.toml"),
+            "[package]
+name='p'
+edition='2024'
+
+             [[test]]
+name='mimic'
+path='generated/../qa/mimic.rs'
+harness=false
+",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            verdict("pkg/qa/mimic.rs"),
+            CargoHarnessVerdict::HarnessDisabled
+        );
+        // The un-collapsed spelling of the same target matches too.
+        assert_eq!(
+            verdict("pkg/generated/../qa/mimic.rs"),
+            CargoHarnessVerdict::HarnessDisabled
+        );
+
+        // The reviewer's shape: a sibling `../shared/x.rs` declaration
+        // matches a target that spells the same location with a `..`
+        // segment.
+        std::fs::write(
+            dir.join("pkg/Cargo.toml"),
+            "[package]
+name='p'
+edition='2024'
+
+             [[test]]
+name='shared'
+path='../shared/x.rs'
+harness=false
+",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            verdict("shared/../shared/x.rs"),
+            CargoHarnessVerdict::HarnessDisabled
+        );
+        assert_eq!(verdict("shared/x.rs"), CargoHarnessVerdict::HarnessDisabled);
+
+        // An escape above the workspace root stays outside: the
+        // declaration resolves outside and never claims an in-workspace
+        // target spelled as if it were inside.
+        std::fs::write(
+            dir.join("pkg/Cargo.toml"),
+            "[package]
+name='p'
+edition='2024'
+
+             [[test]]
+name='escape'
+path='../../outside/x.rs'
+harness=false
+",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            verdict("outside/x.rs"),
+            CargoHarnessVerdict::NotDeclared,
+            "a root-escaping declaration does not clamp onto an in-workspace path"
         );
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())

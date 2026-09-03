@@ -8310,6 +8310,9 @@ tests = [
   "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::workspace_root_declaration_claims_a_target_below_a_nested_manifest",
   "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::workspace_inherited_edition_governs_autodiscovery",
   "crates/ripr/src/analysis/facts/harness_registry/tests.rs::root_declaration_claims_a_target_below_a_nested_manifest",
+  "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::shared_target_declared_from_a_sibling_package_resolves",
+  "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::parent_segments_lexically_resolve_on_both_sides",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::shared_target_declared_from_a_sibling_package_is_accepted",
 ]
 fixtures = [
   "crates/ripr/tests/data/source-role-corpus",
