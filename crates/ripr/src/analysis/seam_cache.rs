@@ -102,9 +102,12 @@ pub(crate) struct CachedSeamLimitInfo {
 /// (#3533); out-of-line `#[cfg(test)]` module helpers flip out of the
 /// production inventory, changing classified-seam content.
 /// `1.3` -> `1.4`: `custom_harness` registrations now validate against
-/// parsed Cargo target metadata (#3608); a misdeclared target keeps
-/// seeding production seams instead of receiving file-wide evidence role,
-/// changing the production inventory classified seams derive from.
+/// parsed Cargo target metadata (#3608); a misdeclared target keeps its
+/// ordinary classification — targets that ordinary classification treats
+/// as production keep seeding production seams, while `tests/`-layout and
+/// Cargo-discovered evidence paths stay evidence-only — instead of
+/// receiving file-wide evidence role, changing the production inventory
+/// classified seams derive from.
 pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.4";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
@@ -142,8 +145,10 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.10";
 /// (#3533); out-of-line `#[cfg(test)]` module helpers flip out of the
 /// production inventory, changing compact classified-seam content.
 /// `0.10` -> `0.11`: `custom_harness` registrations now validate against
-/// parsed Cargo target metadata (#3608); a misdeclared target keeps
-/// seeding production seams, changing compact classified-seam content.
+/// parsed Cargo target metadata (#3608); a misdeclared target keeps its
+/// ordinary classification — production-classified targets keep seeding
+/// production seams, evidence-layout targets stay evidence-only —
+/// changing compact classified-seam content.
 pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.11";
 
 /// Compact class-count cache used by repo badge rendering. It keys off

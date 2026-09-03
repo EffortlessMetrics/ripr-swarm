@@ -105,17 +105,22 @@ pub(crate) fn declared_test_targets_with_harness_from_manifest(
     manifest_dir: &Path,
 ) -> Vec<DeclaredCargoTestTarget> {
     match toml::from_str::<toml::Value>(manifest_text) {
-        Ok(value) => declared_test_targets_with_harness_from_value(&value, manifest_dir),
+        Ok(value) => declared_test_targets_with_harness_from_value(&value, manifest_dir, false),
         Err(_) => Vec::new(),
     }
 }
 
 /// The parsed-manifest core of [`declared_test_targets_with_harness_from_manifest`].
 /// The verdict path parses each manifest exactly once and reuses the value
-/// here (#3608 review).
+/// here (#3608 review). `explicit_only` restricts the result to explicit
+/// `path = ...` entries: the ancestor declaration walk matches only those
+/// (a name-only entry resolves to autodiscovery shapes under its own
+/// manifest and must not claim targets governed by a deeper manifest),
+/// while nearest-manifest matching includes both shapes.
 fn declared_test_targets_with_harness_from_value(
     value: &toml::Value,
     manifest_dir: &Path,
+    explicit_only: bool,
 ) -> Vec<DeclaredCargoTestTarget> {
     let Some(entries) = value.get("test").and_then(|value| value.as_array()) else {
         return Vec::new();
@@ -135,6 +140,9 @@ fn declared_test_targets_with_harness_from_value(
                 path: normalize(&manifest_dir.join(path)),
                 harness,
             });
+            continue;
+        }
+        if explicit_only {
             continue;
         }
         let Some(name) = entry.get("name").and_then(|value| value.as_str()) else {
@@ -159,8 +167,15 @@ fn declared_test_targets_with_harness_from_value(
 /// default is `false` only for Cargo's backward-compatibility rule —
 /// edition 2015 (explicit or omitted, Cargo's own default) combined with
 /// at least one manually declared `[[test]]` target — and `true` in every
-/// other combination.
-fn test_autodiscovery_default(value: &toml::Value) -> bool {
+/// other combination. `inherited_workspace_edition` carries the
+/// `[workspace.package]` edition of the analysis-root manifest: a member
+/// declaring `edition.workspace = true` inherits its effective edition
+/// from there, and an unresolvable root conservatively keeps the 2015
+/// default.
+fn test_autodiscovery_default(
+    value: &toml::Value,
+    inherited_workspace_edition: Option<&str>,
+) -> bool {
     let package = value.get("package");
     if let Some(flag) = package
         .and_then(|package| package.get("autotests"))
@@ -168,16 +183,28 @@ fn test_autodiscovery_default(value: &toml::Value) -> bool {
     {
         return flag;
     }
-    let edition_2015 = package
-        .and_then(|package| package.get("edition"))
-        .and_then(|value| value.as_str())
-        .unwrap_or("2015")
-        == "2015";
+    let raw_edition = package.and_then(|package| package.get("edition"));
+    // `edition.workspace = true` parses either as a `{ workspace = true }`
+    // table (TOML dotted key) or — defensively — as a bare boolean.
+    let edition_is_inherited = match raw_edition {
+        Some(toml::Value::Table(table)) => {
+            table.get("workspace").and_then(|value| value.as_bool()) == Some(true)
+        }
+        Some(toml::Value::Boolean(true)) => true,
+        _ => false,
+    };
+    let edition = if edition_is_inherited {
+        inherited_workspace_edition.unwrap_or("2015")
+    } else {
+        raw_edition
+            .and_then(|value| value.as_str())
+            .unwrap_or("2015")
+    };
     let manual_test_target = value
         .get("test")
         .and_then(|value| value.as_array())
         .is_some_and(|entries| !entries.is_empty());
-    !(edition_2015 && manual_test_target)
+    !(edition == "2015" && manual_test_target)
 }
 
 /// The verdict of one registered harness target against the parsed Cargo
@@ -201,32 +228,6 @@ pub(crate) enum CargoHarnessVerdict {
     ManifestUnavailable,
 }
 
-/// The nearest ancestor directory of `anchored` — walking up to and
-/// including `workspace_root` — that contains a `Cargo.toml` (#3608
-/// review). Cargo target ownership follows manifest presence, not
-/// source-layout component names, so a `[[test]] path = "qa/mimic.rs"`
-/// target outside the conventional `src`/`tests`/`benches`/`examples`
-/// directories still resolves, and a nested workspace's nearest (deepest)
-/// manifest owns before the workspace root. `None`: no manifest anywhere
-/// on the walk declares this path's context.
-fn owning_manifest_root(workspace_root: &Path, anchored: &Path) -> Option<PathBuf> {
-    let normalized_root = normalize(workspace_root);
-    let mut cursor = anchored.parent()?;
-    loop {
-        let normalized_cursor = normalize(cursor);
-        if !normalized_cursor.starts_with(&normalized_root) {
-            return None;
-        }
-        if cursor.join("Cargo.toml").is_file() {
-            return Some(cursor.to_path_buf());
-        }
-        if normalized_cursor == normalized_root {
-            return None;
-        }
-        cursor = cursor.parent()?;
-    }
-}
-
 /// One analysis pass's parsed owning manifests (#3608 review): each
 /// manifest is read and parsed at most once per batch, so a batch of
 /// registrations in one package costs one manifest parse, not one per
@@ -236,12 +237,13 @@ pub(crate) struct ManifestInventory {
     manifests: BTreeMap<PathBuf, OwnedManifest>,
 }
 
-/// The memoized parse outcome for one owning manifest.
+/// The memoized parse outcome for one manifest directory on the ownership
+/// walk.
 #[derive(Clone)]
 enum OwnedManifest {
-    /// No manifest exists on the ownership walk.
+    /// No manifest exists at this directory.
     Absent,
-    /// The owning manifest exists but could not be read or parsed.
+    /// The manifest exists but could not be read or parsed.
     Unresolvable,
     Parsed {
         root: PathBuf,
@@ -253,50 +255,134 @@ impl ManifestInventory {
     /// The Cargo target metadata verdict for one registered harness
     /// target path. `workspace_root` anchors the ownership walk; the
     /// registration target is workspace-relative.
+    ///
+    /// Ownership is declaration-driven for explicit targets (#3608
+    /// review): the deepest manifest on the target's ancestor chain whose
+    /// `[[test]] path = ...` entry explicitly names the anchored path owns
+    /// it, wherever that declared path sits below the manifest — so a
+    /// workspace-root declaration still claims a target that lies below a
+    /// nested manifest directory. Nearest-manifest resolution then
+    /// governs the autodiscovery premise alone (package-root `tests/**`
+    /// shape, package presence, effective edition, `autotests` flag).
     pub(crate) fn verdict(
         &mut self,
         workspace_root: &Path,
         registration_target: &Path,
     ) -> CargoHarnessVerdict {
         let anchored = normalize(&workspace_root.join(registration_target));
-        match self.owning_manifest(workspace_root, &anchored) {
-            OwnedManifest::Absent | OwnedManifest::Unresolvable => {
-                CargoHarnessVerdict::ManifestUnavailable
+        let normalized_root = normalize(workspace_root);
+        let mut unresolvable_on_walk = false;
+        let mut nearest: Option<(PathBuf, toml::Value)> = None;
+        let mut cursor = anchored.parent();
+        while let Some(dir) = cursor {
+            let normalized_dir = normalize(dir);
+            if !normalized_dir.starts_with(&normalized_root) {
+                break;
             }
-            OwnedManifest::Parsed { root, value } => {
-                self.verdict_from_parsed(&anchored, &root, &value)
+            match self.manifest_at(dir) {
+                OwnedManifest::Absent => {}
+                OwnedManifest::Unresolvable => unresolvable_on_walk = true,
+                OwnedManifest::Parsed { root, value } => {
+                    if nearest.is_none() {
+                        nearest = Some((root.clone(), value.clone()));
+                    }
+                    // A manifest without `[package]` declares nothing Cargo
+                    // would accept (review FhIA): virtual manifests reject
+                    // target tables.
+                    if value.get("package").is_some() {
+                        for target in
+                            declared_test_targets_with_harness_from_value(&value, &root, true)
+                        {
+                            if target.path == anchored {
+                                if unresolvable_on_walk {
+                                    // A deeper unresolvable manifest may own
+                                    // this target with an unknown declaration,
+                                    // so the ancestor claim is not provable.
+                                    return CargoHarnessVerdict::ManifestUnavailable;
+                                }
+                                return if target.harness {
+                                    CargoHarnessVerdict::HarnessEnabled
+                                } else {
+                                    CargoHarnessVerdict::HarnessDisabled
+                                };
+                            }
+                        }
+                    }
+                }
             }
+            if normalized_dir == normalized_root {
+                break;
+            }
+            cursor = dir.parent();
         }
+        // An unresolvable manifest on the walk could have declared the
+        // target, and with no manifest at all there is nothing to
+        // establish the premise from: both fail closed.
+        if unresolvable_on_walk {
+            return CargoHarnessVerdict::ManifestUnavailable;
+        }
+        let Some((root, value)) = nearest else {
+            return CargoHarnessVerdict::ManifestUnavailable;
+        };
+        let inherited_edition = self.workspace_inherited_edition(workspace_root);
+        self.verdict_from_parsed(inherited_edition.as_deref(), &anchored, &root, &value)
     }
 
-    fn owning_manifest(&mut self, workspace_root: &Path, anchored: &Path) -> OwnedManifest {
-        let Some(root) = owning_manifest_root(workspace_root, anchored) else {
+    fn manifest_at(&mut self, dir: &Path) -> OwnedManifest {
+        if !dir.join("Cargo.toml").is_file() {
             return OwnedManifest::Absent;
-        };
-        if let Some(cached) = self.manifests.get(&root) {
+        }
+        if let Some(cached) = self.manifests.get(dir) {
             return cached.clone();
         }
-        let parsed = match std::fs::read_to_string(root.join("Cargo.toml"))
+        let parsed = match std::fs::read_to_string(dir.join("Cargo.toml"))
             .ok()
             .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
         {
             Some(value) => OwnedManifest::Parsed {
-                root: root.clone(),
+                root: dir.to_path_buf(),
                 value,
             },
             None => OwnedManifest::Unresolvable,
         };
-        self.manifests.insert(root, parsed.clone());
+        self.manifests.insert(dir.to_path_buf(), parsed.clone());
         parsed
+    }
+
+    /// The `[workspace.package]` edition of the analysis-root manifest,
+    /// when one exists (#3608 review): member manifests declaring
+    /// `edition.workspace = true` inherit their effective edition from
+    /// there, and the edition-2015 autodiscovery rule consumes the
+    /// effective edition. Bounded to the analysis root's own manifest —
+    /// an analysis root below a larger workspace cannot see past its
+    /// root, and an absent or unresolvable root keeps the conservative
+    /// 2015 default downstream.
+    fn workspace_inherited_edition(&mut self, workspace_root: &Path) -> Option<String> {
+        match self.manifest_at(workspace_root) {
+            OwnedManifest::Parsed { value, .. } => value
+                .get("workspace")
+                .and_then(|workspace| workspace.get("package"))
+                .and_then(|package| package.get("edition"))
+                .and_then(|edition| edition.as_str())
+                .map(str::to_string),
+            _ => None,
+        }
     }
 
     fn verdict_from_parsed(
         &self,
+        inherited_workspace_edition: Option<&str>,
         anchored: &Path,
         root: &Path,
         value: &toml::Value,
     ) -> CargoHarnessVerdict {
-        let declared = declared_test_targets_with_harness_from_value(value, root);
+        // Cargo rejects target tables in virtual manifests (review FhIA):
+        // a TOML-valid `[[test]]` in a manifest without `[package]`
+        // declares nothing.
+        if value.get("package").is_none() {
+            return CargoHarnessVerdict::NotDeclared;
+        }
+        let declared = declared_test_targets_with_harness_from_value(value, root, false);
         for target in &declared {
             if target.path == *anchored {
                 return if target.harness {
@@ -315,7 +401,6 @@ impl ManifestInventory {
         // out: the shared layout predicate classifies any `tests`
         // component for source-role purposes, but Cargo only ever
         // autodiscovers `tests/**` at the package root.
-        let package_table_present = value.get("package").is_some();
         let relative_is_root_test_target = anchored
             .strip_prefix(normalize(root))
             .map(|relative| {
@@ -326,8 +411,7 @@ impl ManifestInventory {
                     && cargo_discoverable_under(&components, "tests")
             })
             .unwrap_or(false);
-        if package_table_present
-            && test_autodiscovery_default(value)
+        if test_autodiscovery_default(value, inherited_workspace_edition)
             && relative_is_root_test_target
         {
             return CargoHarnessVerdict::HarnessEnabled;
@@ -689,6 +773,147 @@ mod tests {
         Ok(())
     }
 
+    /// #3608 review (FhIA): Cargo rejects target tables in virtual
+    /// manifests, so a TOML-valid `[[test]]` entry in a manifest without
+    /// `[package]` declares nothing — the verdict stays NotDeclared even
+    /// though the entry would otherwise match.
+    #[test]
+    fn virtual_manifest_declares_no_targets_even_with_a_test_table() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-harness-virtual-decl-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(dir.join("tests")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[workspace]\nmembers = []\n\n[[test]]\nname = 'mimic'\nharness = false\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            cargo_test_target_harness_verdict(&dir, Path::new("tests/mimic.rs")),
+            CargoHarnessVerdict::NotDeclared
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3608 review (Fe25): declaration-driven ownership — a
+    /// workspace-root package's explicit `[[test]] path = ...` entry claims
+    /// its target even when the path sits below a directory containing
+    /// another (undeclaring) Cargo.toml, while nearest-manifest resolution
+    /// still governs autodiscovery credit.
+    #[test]
+    fn workspace_root_declaration_claims_a_target_below_a_nested_manifest() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-harness-root-decl-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(dir.join("below/nested/manifest/dir"))
+            .map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(dir.join("below/nested/manifest/tests"))
+            .map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname='ws'\nedition='2024'\n\n\
+             [[test]]\nname='mimic'\npath='below/nested/manifest/dir/mimic.rs'\nharness=false\n",
+        )
+        .map_err(|error| error.to_string())?;
+        // The nested manifest directory declares nothing for the target.
+        std::fs::write(
+            dir.join("below/nested/manifest/Cargo.toml"),
+            "[package]\nname='nested'\nedition='2024'\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
+
+        // The root declaration wins for the explicit target.
+        assert_eq!(
+            verdict("below/nested/manifest/dir/mimic.rs"),
+            CargoHarnessVerdict::HarnessDisabled
+        );
+        // Nearest-manifest resolution still governs autodiscovery credit:
+        // the nested package's own conventional tests/ file is discovered.
+        assert_eq!(
+            verdict("below/nested/manifest/tests/other.rs"),
+            CargoHarnessVerdict::HarnessEnabled
+        );
+
+        // Precedence: the deepest declaring manifest wins when more than
+        // one manifest declares the same path.
+        std::fs::write(
+            dir.join("below/nested/manifest/Cargo.toml"),
+            "[package]\nname='nested'\nedition='2024'\n\n\
+             [[test]]\nname='mimic'\npath='dir/mimic.rs'\nharness=true\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            verdict("below/nested/manifest/dir/mimic.rs"),
+            CargoHarnessVerdict::HarnessEnabled,
+            "the deepest declaration owns the target"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3608 review (Fe4d): a member declaring `edition.workspace = true`
+    /// inherits the workspace root's `[workspace.package]` edition before
+    /// the edition-2015 autodiscovery rule applies — workspace edition
+    /// 2024 keeps a second conventional tests/*.rs autodiscovered instead
+    /// of degrading to NotDeclared.
+    #[test]
+    fn workspace_inherited_edition_governs_autodiscovery() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-harness-ws-edition-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(dir.join("member/tests")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[workspace]\nmembers = ['member']\n\n[workspace.package]\nedition = '2024'\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("member/Cargo.toml"),
+            "[package]\nname='m'\nversion='0.1.0'\nedition.workspace=true\n\n\
+             [[test]]\nname='declared'\nharness=false\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
+        assert_eq!(
+            verdict("member/tests/declared.rs"),
+            CargoHarnessVerdict::HarnessDisabled
+        );
+        assert_eq!(
+            verdict("member/tests/other.rs"),
+            CargoHarnessVerdict::HarnessEnabled,
+            "the member inherits edition 2024, so autodiscovery stays on"
+        );
+
+        // Without the workspace edition the member's inherited edition is
+        // unknown and conservatively keeps the 2015 default.
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[workspace]\nmembers = ['member']\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            verdict("member/tests/other.rs"),
+            CargoHarnessVerdict::NotDeclared,
+            "no inherited edition resolves to the conservative 2015 default"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
     fn parse_manifest(text: &str) -> Result<toml::Value, String> {
         toml::from_str::<toml::Value>(text).map_err(|error| error.to_string())
     }
@@ -699,41 +924,81 @@ mod tests {
     /// and an explicit `package.autotests` flag always wins.
     #[test]
     fn edition_2015_with_manual_test_target_disables_test_autodiscovery() -> Result<(), String> {
-        let enabled = |manifest: &str| -> Result<bool, String> {
-            Ok(test_autodiscovery_default(&parse_manifest(manifest)?))
+        let enabled = |manifest: &str, inherited: Option<&str>| -> Result<bool, String> {
+            Ok(test_autodiscovery_default(
+                &parse_manifest(manifest)?,
+                inherited,
+            ))
         };
         // Explicit flags always win.
         assert!(
             !enabled(
-                "[package]\nname='p'\nedition='2015'\nautotests=false\n\n[[test]]\nname='a'\n"
+                "[package]\nname='p'\nedition='2015'\nautotests=false\n\n[[test]]\nname='a'\n",
+                None
             )?,
             "an explicit autotests = false wins over every default"
         );
         assert!(
-            enabled("[package]\nname='p'\nedition='2015'\nautotests=true\n\n[[test]]\nname='a'\n")?,
+            enabled(
+                "[package]\nname='p'\nedition='2015'\nautotests=true\n\n[[test]]\nname='a'\n",
+                None
+            )?,
             "an explicit autotests = true wins over the 2015 backward-compatibility default"
         );
         // Backward-compatibility combination: edition 2015 + manual target.
         assert!(
-            !enabled("[package]\nname='p'\nedition='2015'\n\n[[test]]\nname='a'\n")?,
+            !enabled(
+                "[package]\nname='p'\nedition='2015'\n\n[[test]]\nname='a'\n",
+                None
+            )?,
             "edition 2015 with a manual [[test]] disables autodiscovery"
         );
         assert!(
-            !enabled("[package]\nname='p'\n\n[[test]]\nname='a'\n")?,
+            !enabled("[package]\nname='p'\n\n[[test]]\nname='a'\n", None)?,
             "an omitted edition defaults to 2015, so a manual [[test]] disables autodiscovery"
         );
         // Every other combination keeps autodiscovery enabled.
         assert!(
-            enabled("[package]\nname='p'\nedition='2015'\n")?,
+            enabled("[package]\nname='p'\nedition='2015'\n", None)?,
             "edition 2015 without a manual [[test]] keeps autodiscovery"
         );
         assert!(
-            enabled("[package]\nname='p'\nedition='2021'\n\n[[test]]\nname='a'\n")?,
+            enabled(
+                "[package]\nname='p'\nedition='2021'\n\n[[test]]\nname='a'\n",
+                None
+            )?,
             "edition 2021 with a manual [[test]] keeps autodiscovery"
         );
         assert!(
-            enabled("[package]\nname='p'\nedition='2024'\n\n[[test]]\nname='a'\n")?,
+            enabled(
+                "[package]\nname='p'\nedition='2024'\n\n[[test]]\nname='a'\n",
+                None
+            )?,
             "edition 2024 with a manual [[test]] keeps autodiscovery"
+        );
+        // Workspace inheritance (review Fe4d): `edition.workspace = true`
+        // resolves to the inherited effective edition before the rule
+        // applies.
+        assert!(
+            enabled(
+                "[package]\nname='p'\nedition.workspace=true\n\n[[test]]\nname='a'\n",
+                Some("2024")
+            )?,
+            "a member inheriting workspace edition 2024 keeps autodiscovery"
+        );
+        assert!(
+            !enabled(
+                "[package]\nname='p'\nedition.workspace=true\n\n[[test]]\nname='a'\n",
+                Some("2015")
+            )?,
+            "a member inheriting workspace edition 2015 disables autodiscovery"
+        );
+        assert!(
+            !enabled(
+                "[package]\nname='p'\nedition.workspace=true\n\n[[test]]\nname='a'\n",
+                None
+            )?,
+            "an unresolvable workspace root keeps the conservative 2015 default"
         );
         Ok(())
     }

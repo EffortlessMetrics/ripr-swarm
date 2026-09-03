@@ -86,25 +86,34 @@ only after its target validates against the parsed Cargo target
 metadata of the owning package (#3608): the target must match a
 declared `[[test]]` target — explicit `path = ...` or a name-only
 entry resolved to its autodiscovery shape — whose effective
-`harness` flag is `false`. Target ownership follows manifest
-presence: the nearest ancestor `Cargo.toml` at or below the
-workspace root owns the path, so targets outside the conventional
-`src`/`tests`/`benches`/`examples` directories resolve, and a nested
-workspace's deepest manifest owns before the workspace root. Each
-batch parses every owning manifest at most once; a manifest that
-cannot be read or parsed yields `manifest_unavailable`, never a
+`harness` flag is `false`. Explicit-target ownership is
+declaration-driven: the deepest ancestor manifest whose
+`[[test]] path = ...` entry names the path owns it, wherever the
+declared path sits below that manifest, so a workspace-root
+declaration claims a target that lies below a nested manifest
+directory and targets outside the conventional
+`src`/`tests`/`benches`/`examples` directories resolve.
+Nearest-manifest resolution governs the autodiscovery premise alone.
+Each batch parses every manifest on the walk at most once; a manifest
+that cannot be read or parsed yields `manifest_unavailable`, never a
 target-typo verdict. Package autodiscovery is credited only for
-package-root `tests/**` shapes under Cargo's effective default —
-including the edition-2015 backward-compatibility rule where a
-manual `[[test]]` target with edition 2015 (explicit or omitted)
-disables autodiscovery. A target missing from Cargo metadata, a
+package-root `tests/**` shapes (never `src/tests/**`) under Cargo's
+effective default — including the edition-2015
+backward-compatibility rule where a manual `[[test]]` target with
+edition 2015 (explicit, omitted, or inherited via
+`edition.workspace = true` from the analysis root's
+`[workspace.package]`) disables autodiscovery. A manifest without a
+`[package]` table declares nothing: Cargo rejects target tables in
+virtual manifests. A target missing from Cargo metadata, a
 target whose Cargo entry still has `harness = true` (explicit or
 autodiscovered default), or an unresolvable owning manifest each
 record a typed limitation (`target_not_declared`,
 `harness_flag_conflict`, `manifest_unavailable`) naming the target;
 the registration degrades to per-function behavior — the file keeps
-its ordinary classification and a misdeclared target keeps seeding
-production seams. Every file-wide evidence surface (diff
+its ordinary classification, so a misdeclared target that ordinary
+classification treats as production keeps seeding production seams
+while a target in a `tests/`-style or Cargo-discovered evidence
+layout keeps its evidence role. Every file-wide evidence surface (diff
 seeding, repo seam inventory, LSP scope partition) consumes the same
 validated grant, so the degradation is identical everywhere, and the
 classified-seam caches bump their schema generations so pre-#3608
@@ -159,8 +168,11 @@ The #3532 harness registry joined the same identity as FindingAffecting
 - `TestFact` registration remains attribute-driven only.
 - A `custom_harness` registration never grants file-wide evidence role
   without a confirmed `harness = false` Cargo declaration (#3608): a
-  misdeclared target keeps seeding production seams and the conflict is
-  recorded as a typed limitation naming the target.
+  misdeclared target keeps its ordinary classification — targets that
+  ordinary classification treats as production keep seeding production
+  seams, while `tests/`-style or Cargo-discovered evidence layouts stay
+  evidence-only — and the conflict is recorded as a typed limitation
+  naming the target.
 
 ## Acceptance Examples
 
@@ -174,8 +186,9 @@ The #3532 harness registry joined the same identity as FindingAffecting
   `harness = false` target (explicit custom path or name-only entry on
   the conventional layout) → file-wide evidence role with adapter
   subjects; the same registration against an undeclared or
-  `harness = true` target → typed limitation, no demotion, and the
-  target keeps seeding production seams (#3608).
+  `harness = true` target → typed limitation, no demotion, and a
+  production-classified target keeps seeding production seams while an
+  evidence-layout target keeps its evidence role (#3608).
 - Reject: a bench harness call (`criterion_main!`) becoming an
   obligation; a `test_*.rs` name alone excluding a production file.
 

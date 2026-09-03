@@ -1388,3 +1388,49 @@ fn ordinary_libtest_still_runs_here() {
     }
     Ok(())
 }
+
+/// #3608 review (Fe25): declaration-driven ownership — a workspace-root
+/// package's explicit `harness = false` declaration claims its target even
+/// when the target sits below a directory containing another (undeclaring)
+/// Cargo.toml; the trial subject is established with no conflict recorded.
+#[test]
+fn root_declaration_claims_a_target_below_a_nested_manifest()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = temp_dir("root-declared-nested")?;
+    write_workspace(
+        &root,
+        &[(
+            "below/nested/manifest/dir/mimic.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn trials() -> Vec<Trial> {
+    vec![Trial::test("root_claimed_case", || Ok(()))]
+}
+"#,
+        )],
+    )?;
+    // The nested manifest directory declares nothing for the target.
+    fs::create_dir_all(root.0.join("below/nested/manifest"))?;
+    fs::write(
+        root.0.join("below/nested/manifest/Cargo.toml"),
+        "[package]\nname = 'nested'\nversion = '0.1.0'\nedition = '2024'\n",
+    )?;
+    declare_harness_false_target(&root, "mimic", "below/nested/manifest/dir/mimic.rs")?;
+    let files = [PathBuf::from("below/nested/manifest/dir/mimic.rs")];
+    let registrations = [custom_target_registration(
+        "below/nested/manifest/dir/mimic.rs",
+    )];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    assert_eq!(
+        index
+            .harness_subjects
+            .iter()
+            .map(|subject| subject.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["root_claimed_case"],
+        "the root declaration claims the target across the nested manifest"
+    );
+    assert!(index.harness_limitations.is_empty());
+    Ok(())
+}

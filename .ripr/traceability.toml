@@ -8306,6 +8306,10 @@ tests = [
   "crates/ripr/src/analysis/facts/harness_registry/tests.rs::nonconventional_directory_target_declared_harness_false_is_accepted",
   "crates/ripr/src/analysis/facts/harness_registry/tests.rs::malformed_manifest_records_manifest_unavailable_and_keeps_per_function_roles",
   "crates/ripr/src/analysis/facts/harness_registry/tests.rs::warm_file_fact_cache_still_reaches_cargo_target_validation",
+  "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::virtual_manifest_declares_no_targets_even_with_a_test_table",
+  "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::workspace_root_declaration_claims_a_target_below_a_nested_manifest",
+  "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::workspace_inherited_edition_governs_autodiscovery",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::root_declaration_claims_a_target_below_a_nested_manifest",
 ]
 fixtures = [
   "crates/ripr/tests/data/source-role-corpus",
