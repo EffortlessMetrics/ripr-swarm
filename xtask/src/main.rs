@@ -12329,6 +12329,10 @@ fn raw_production_text(text: &str) -> String {
     let mut depth = 0usize; // brace/paren/bracket nesting of production code
     while i < chars.len() {
         if depth == 0 && chars[i] == '#' && is_top_level_cfg_test_attr(&chars, i) {
+            // A doc comment or attribute line preceding the gated item
+            // (`#[doc = r#"path.contains("/tests/")"#]`) belongs to the
+            // exempt item, not to production scans (#3629 review).
+            trim_preceding_attribute_run(&mut out);
             i = skip_cfg_test_item(&chars, i);
             // Keep a line seam so patterns cannot splice across a
             // removed item.
@@ -12351,17 +12355,52 @@ fn raw_production_text(text: &str) -> String {
     out
 }
 
+/// Drop the trailing run of attribute/doc-comment lines from `out` --
+/// the run the scanner just decided belongs to a `#[cfg(test)]` item.
+/// Single-line forms only (`#[...]` balanced on one line, `///...`);
+/// multi-line attributes break the run conservatively and stay.
+fn trim_preceding_attribute_run(out: &mut String) {
+    let mut scan_end = out.len();
+    loop {
+        if scan_end == 0 {
+            break;
+        }
+        // A trailing newline would make the last line empty and stop the
+        // backward walk early; step over it first.
+        if out.as_bytes()[scan_end - 1] == b'\n' {
+            scan_end -= 1;
+            continue;
+        }
+        let line_start = out[..scan_end].rfind('\n').map(|p| p + 1).unwrap_or(0);
+        let line = out[line_start..scan_end].trim();
+        if line.is_empty() {
+            scan_end = line_start;
+            continue;
+        }
+        let is_attr = line.starts_with("#[") && line.ends_with(']');
+        let is_doc = line.starts_with("///");
+        if is_attr || is_doc {
+            scan_end = line_start;
+        } else {
+            break;
+        }
+    }
+    out.truncate(scan_end);
+}
+
 /// Whether `#[cfg(test)]` (with optional interior whitespace) starts at
 /// `i` on the `#`. The caller guarantees top-level (depth 0) position.
 fn is_top_level_cfg_test_attr(chars: &[char], i: usize) -> bool {
     let mut j = i + 1;
-    skip_whitespace(chars, &mut j);
+    // Comments are trivia (`#[cfg(/* test-only */ test)]` is a gated
+    // item), so token boundaries skip them like whitespace (#3629 review).
+    j = skip_trivia(chars, j);
     if chars.get(j) != Some(&'[') {
         return false;
     }
     j += 1;
     for expected in ["cfg", "(", "test", ")"] {
-        skip_whitespace(chars, &mut j);
+        j = skip_trivia(chars, j);
         for spelled in expected.chars() {
             if chars.get(j) != Some(&spelled) {
                 return false;
@@ -12369,7 +12408,7 @@ fn is_top_level_cfg_test_attr(chars: &[char], i: usize) -> bool {
             j += 1;
         }
     }
-    skip_whitespace(chars, &mut j);
+    j = skip_trivia(chars, j);
     chars.get(j) == Some(&']')
 }
 
@@ -12391,44 +12430,71 @@ fn skip_cfg_test_item(chars: &[char], start: usize) -> usize {
             break;
         }
     }
-    let mut depth = 0usize; // paren/bracket/brace nesting inside the head
+    // Head keyword routes the item ender (#3629 review): definitions (`fn`,
+    // `mod`) end at their body's closing brace; other items (`const`,
+    // `static`, `use`, ...) end at the top-level `;` -- a gated `const`
+    // initializer like `if true { "" } else { r#"..."# };` must not leak
+    // its tail into production scans.
+    let is_definition = matches!(head_keyword(chars, i).as_deref(), Some("fn") | Some("mod"));
+    let mut depth = 0usize; // paren/bracket/brace nesting
+    let mut body_mode = false;
+    let mut body = 0usize;
     while i < chars.len() {
         if let Some(end) = advance_lexeme(chars, i) {
             i = end;
             continue;
         }
-        match chars[i] {
-            ';' if depth == 0 => return i + 1,
-            '{' if depth == 0 => {
-                // The body of a definition: skip its balanced braces.
-                let mut body = 1usize;
-                i += 1;
-                while i < chars.len() && body > 0 {
-                    if let Some(end) = advance_lexeme(chars, i) {
-                        i = end;
-                        continue;
-                    }
-                    match chars[i] {
-                        '{' => body += 1,
-                        '}' => body -= 1,
-                        _ => {}
-                    }
-                    i += 1;
+        if is_definition {
+            match chars[i] {
+                ';' if depth == 0 && !body_mode => return i + 1,
+                '{' if depth == 0 && !body_mode => {
+                    body_mode = true;
+                    body = 1;
                 }
-                // Body closed; consume one optional trailing `;`.
-                let mut j = skip_trivia(chars, i);
-                if chars.get(j) == Some(&';') {
-                    j += 1;
+                '{' if body_mode => body += 1,
+                '}' if body_mode => {
+                    body -= 1;
+                    if body == 0 {
+                        let mut j = skip_trivia(chars, i + 1);
+                        if chars.get(j) == Some(&';') {
+                            j += 1;
+                        }
+                        return j;
+                    }
                 }
-                return j;
+                '(' | '[' if !body_mode => depth += 1,
+                ')' | ']' if !body_mode => depth = depth.saturating_sub(1),
+                _ => {}
             }
-            '{' | '(' | '[' => depth += 1,
-            '}' | ')' | ']' => depth = depth.saturating_sub(1),
-            _ => {}
+        } else {
+            match chars[i] {
+                '{' | '(' | '[' => depth += 1,
+                '}' | ')' | ']' => depth = depth.saturating_sub(1),
+                ';' if depth == 0 => return i + 1,
+                _ => {}
+            }
         }
         i += 1;
     }
     chars.len()
+}
+
+/// The head identifier of the gated item starting just after its
+/// attributes (`fn`, `mod`, `const`, `static`, `use`, ...), or `None`
+/// when the item does not begin with an identifier.
+fn head_keyword(chars: &[char], start: usize) -> Option<String> {
+    let i = skip_trivia(chars, start);
+    let mut word = String::new();
+    let mut j = i;
+    while let Some(&c) = chars.get(j) {
+        if is_identifier_continue(c) {
+            word.push(c);
+            j += 1;
+        } else {
+            break;
+        }
+    }
+    if word.is_empty() { None } else { Some(word) }
 }
 
 /// End of the `#[...]` attribute starting at `i` on the `#`, or `i` when
@@ -12642,6 +12708,51 @@ fn char_literal_or_lifetime_end(chars: &[char], i: usize) -> usize {
 #[cfg(test)]
 mod raw_production_text_tests {
     use super::raw_production_text;
+
+    #[test]
+    fn preceding_doc_attribute_is_removed_with_the_gated_item() {
+        // #3629 review: a doc attribute carrying a denied pattern before a
+        // gated module belongs to the exempt item, not production text.
+        let text = "#[doc = r\"path.contains(\"/tests/\")\" ]
+#[cfg(test)]
+mod tests {
+}
+
+pub fn later() {}
+";
+        let scanned = raw_production_text(text);
+        assert!(!scanned.contains("/tests/"), "{scanned}");
+        assert!(scanned.contains("pub fn later()"));
+    }
+
+    #[test]
+    fn cfg_attr_with_interior_comment_is_recognized() {
+        // #3629 review: comments are trivia inside the attribute.
+        let text = "#[cfg(/* test-only */ test)]
+mod tests {
+}
+
+pub fn later() {}
+";
+        let scanned = raw_production_text(text);
+        assert!(!scanned.contains("mod tests"), "{scanned}");
+        assert!(scanned.contains("pub fn later()"));
+    }
+
+    #[test]
+    fn gated_const_initializer_does_not_leak_its_tail() {
+        // #3629 review: a gated const with a block-expression initializer
+        // ends at its top-level `;`, so the else-branch text (which carries
+        // a denied pattern inside a raw string) stays exempt.
+        let text = "#[cfg(test)]
+const X: &str = if true { \"\" } else { r\"path.contains(\"/tests/\")\" };
+
+pub fn later() {}
+";
+        let scanned = raw_production_text(text);
+        assert!(!scanned.contains("/tests/"), "{scanned}");
+        assert!(scanned.contains("pub fn later()"));
+    }
 
     #[test]
     fn production_only_file_is_returned_verbatim() {
