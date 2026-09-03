@@ -89,8 +89,15 @@ widening directions, each fail-closed:
 Macro input is skipped wholesale for method scanning (assertion macros
 still classify themselves), matching what parsed method-call nodes could
 see on the ordinary path: a method token inside `println!(...)` never
-classifies. Closures, path callbacks, unresolved names, ambiguous names,
-and shadowed names contribute nothing beyond the invocation span.
+classifies. A dormant `macro_rules!` definition inside the claimed span
+or inside a helper body is a template that never executes: no token
+inside it — assertion macro, method call, or otherwise — classifies as
+oracle evidence, at the token level (a definition inside another macro's
+token tree carries no node to query) and at the file level (the same
+ancestor authority that keeps dormant templates from becoming subjects),
+and helper-body oracle evidence drops template-line ranges. Closures,
+path callbacks, unresolved names, ambiguous names, and shadowed names
+contribute nothing beyond the invocation span.
 
 ## Non-Goals
 
@@ -135,6 +142,11 @@ and shadowed names contribute nothing beyond the invocation span.
 - fail-closed method-oracle controls: a struct field named `expect`, a
   path-shaped `Result::unwrap(...)` call, and method tokens inside
   non-assertion macro input never classify;
+- dormant-template controls: a `macro_rules!` definition inside a trial
+  closure and inside a helper body contribute no oracle from the
+  template (the full expected oracle set, exactly) while the subject
+  still classifies and live surrounding helper evidence still admits;
+  the helper-path template line ranges are pinned as a mechanism;
 - a warm-cache regression: a classified-seam envelope seeded under the
   previous generation must miss the current generation's key with
   identical identity fields, and the schema-generation pin moves in the
@@ -165,6 +177,9 @@ and shadowed names contribute nothing beyond the invocation span.
 - `crates/ripr/src/analysis/facts/harness_registry/tests.rs::trial_method_unwrap_expect_oracles_carry_real_lines_and_receivers`
 - `crates/ripr/src/analysis/facts/harness_registry/tests.rs::shadowed_callback_names_fail_closed`
 - `crates/ripr/src/analysis/facts/harness_registry/tests.rs::trial_method_oracle_receivers_carry_keyword_and_chained_forms`
+- `crates/ripr/src/analysis/facts/harness_registry/tests.rs::given_dormant_macro_rules_template_when_trial_scanned_then_no_smoke_oracle_from_template`
+- `crates/ripr/src/analysis/facts/harness_registry/tests.rs::given_dormant_macro_rules_template_in_helper_callback_then_no_oracle_either`
+- `crates/ripr/src/analysis/facts/harness_registry/tests.rs::dormant_macro_rules_line_ranges_span_the_parsed_definition`
 - `crates/ripr/src/analysis/seam_cache.rs::tests::previous_generation_classified_seam_envelope_with_identical_identity_is_a_miss`
 - `crates/ripr/src/analysis/seam_cache.rs::tests::schema_versions_pin_the_role_composition_generation`
 

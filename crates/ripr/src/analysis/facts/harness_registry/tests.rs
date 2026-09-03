@@ -898,11 +898,121 @@ fn trials() -> Vec<Trial> {
         .find(|test| test.name == "dormant_template")
         .ok_or("dormant_template test missing")?;
 
+    // The full expected oracle set is exactly empty: the claimed span
+    // contains no live oracle evidence at all — the template's
+    // `assert_eq!` (ExactValue/Strong on the pre-fix head) and its
+    // `.unwrap()` both stay unclaimed.
     assert!(
         subject_test.assertions.is_empty(),
         "a dormant macro_rules template must not gain smoke evidence: {:?}",
         subject_test.assertions
     );
+    // The subject itself still classifies.
+    assert!(
+        index
+            .harness_subjects
+            .iter()
+            .any(|subject| subject.name == "dormant_template"),
+        "{:?}",
+        index.harness_subjects
+    );
+    Ok(())
+}
+
+#[test]
+fn given_dormant_macro_rules_template_in_helper_callback_then_no_oracle_either()
+-> Result<(), Box<dyn std::error::Error>> {
+    // #3603 review, helper-callback path: a bare-identifier helper whose
+    // body defines a dormant `macro_rules!` template contributes its
+    // body evidence one level deep — but the template's own oracle must
+    // never join the subject while live helper evidence still admits.
+    let root = temp_dir("trial-dormant-template-helper")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/dormant_template_helper.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn check_template() -> Result<(), String> {
+    macro_rules! dormant {
+        () => {
+            assert_eq!(ready().unwrap(), 1);
+        };
+    }
+    assert_eq!(parse_config("8080"), 8080);
+    Ok(())
+}
+
+fn parse_config(raw: &str) -> u16 {
+    raw.parse().unwrap_or(0)
+}
+
+fn trials() -> Vec<Trial> {
+    vec![Trial::test("helper_template", check_template)]
+}
+"#,
+        )],
+    )?;
+    let files = [PathBuf::from("tests/dormant_template_helper.rs")];
+    let registrations = [custom_target_registration(
+        "tests/dormant_template_helper.rs",
+    )];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    let subject_test = index
+        .tests
+        .iter()
+        .find(|test| test.name == "helper_template")
+        .ok_or("helper_template test missing")?;
+
+    // The live helper assertion (line 10) stays; only the template's
+    // oracle (line 7, inside the `macro_rules!` definition spanning
+    // lines 5-9) is dropped — the full expected set.
+    let texts = subject_test
+        .assertions
+        .iter()
+        .map(|oracle| (oracle.line, oracle.text.clone()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        texts,
+        vec![(10, "assert_eq!(parse_config(\"8080\"), 8080);".to_string())],
+        "{:?}",
+        texts
+    );
+    // The helper's live call evidence still admits (one-level parity).
+    assert!(
+        subject_test
+            .calls
+            .iter()
+            .any(|call| call.name == "parse_config"),
+        "{:?}",
+        subject_test.calls
+    );
+    Ok(())
+}
+
+#[test]
+fn dormant_macro_rules_line_ranges_span_the_parsed_definition()
+-> Result<(), Box<dyn std::error::Error>> {
+    // Mechanism pin for the helper-path template filter: the ranges come
+    // from the parsed `ast::MacroRules` node, offset by the function's
+    // start line, so a definition at body lines 2-6 of a helper starting
+    // at file line 8 spans 9..=13 — and live code after it is outside.
+    let body = "fn check() {
+    macro_rules! dormant {
+        () => {
+            assert_eq!(1, 1);
+        };
+    }
+    assert_eq!(2, 2);
+}";
+    let ranges = dormant_macro_rules_line_ranges(body, 8);
+    assert_eq!(ranges, vec![(9, 13)], "{:?}", ranges);
+    // A body without definitions yields no ranges: nothing is dropped.
+    let plain = "fn check() {
+    assert_eq!(1, 1);
+}";
+    assert!(dormant_macro_rules_line_ranges(plain, 3).is_empty());
     Ok(())
 }
 

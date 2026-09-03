@@ -309,6 +309,21 @@ fn apply_libtest_mimic_target(
                     .unwrap_or_else(|| extract_assertions(&helper.body, helper.start_line)),
             );
             literals.extend(extract_literal_facts(&helper.body, helper.start_line));
+            // A `macro_rules!` definition in the helper body is a dormant
+            // token tree. Today the ordinary parser path keeps definition
+            // token trees unstructured (no nested macro-call nodes), so it
+            // emits nothing from the template; this retain keeps that
+            // guarantee under parser behavior drift and covers the lexical
+            // fallback, which line-scans raw text and would credit the
+            // template's assertion (under-emit; #3603 review).
+            let dormant = dormant_macro_rules_line_ranges(&helper.body, helper.start_line);
+            if !dormant.is_empty() {
+                assertions.retain(|oracle| {
+                    !dormant
+                        .iter()
+                        .any(|(start, end)| oracle.line >= *start && oracle.line <= *end)
+                });
+            }
             calls.sort_by(|left, right| {
                 left.line
                     .cmp(&right.line)
@@ -604,6 +619,27 @@ fn parser_oracles_for_node_tokens(
         match token.kind() {
             ra_ap_syntax::SyntaxKind::L_PAREN => depth += 1,
             ra_ap_syntax::SyntaxKind::R_PAREN => depth = depth.saturating_sub(1),
+            // A `macro_rules!` definition inside the claimed span is a
+            // dormant token tree: its template never executes, so no token
+            // inside it — assertion macro, method call, or otherwise —
+            // classifies as oracle evidence. Skip the whole definition.
+            // The token-level shape walk is required because a definition
+            // inside another macro's token tree (a trial collected in
+            // `vec![...]`) carries no `MacroRules` node to query; the
+            // ancestor check inside the identifier arm still guards the
+            // file-level shapes.
+            ra_ap_syntax::SyntaxKind::IDENT if token.text() == "macro_rules" => {
+                match skip_macro_rules_definition(tokens, index) {
+                    Some(next) => {
+                        index = next;
+                        continue;
+                    }
+                    None => {
+                        index += 1;
+                        continue;
+                    }
+                }
+            }
             ra_ap_syntax::SyntaxKind::IDENT => {
                 let name = token.text();
                 // A `macro_rules!` definition inside the claimed span is a
@@ -1056,6 +1092,34 @@ fn enclosing_body_binds_name(function: &FunctionFact, name: &str) -> bool {
     !bindings.is_empty()
 }
 
+/// Inclusive 1-based line ranges of the dormant `macro_rules!` definitions
+/// in `function_text` (offset by `start_line`), or empty. The ranges come
+/// from the parsed `ast::MacroRules` nodes — real parsed structure, no
+/// brace balancing — so a template's oracle evidence can be dropped
+/// without touching live code around it. An unparseable body yields no
+/// ranges: the oracle producers already fail closed on their own.
+fn dormant_macro_rules_line_ranges(function_text: &str, start_line: usize) -> Vec<(usize, usize)> {
+    let parse = SourceFile::parse(function_text, Edition::CURRENT);
+    if !parse.errors().is_empty() {
+        return Vec::new();
+    }
+    let line_index = LineIndex::new(function_text);
+    let offset = start_line.saturating_sub(1);
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::MacroRules::cast)
+        .map(|definition| {
+            let range = definition.syntax().text_range();
+            (
+                line_index.line(range.start()) + offset,
+                line_index.line_for_range_end(range.end()) + offset,
+            )
+        })
+        .collect()
+}
+
 /// Index of the next non-trivia token at or after `from`.
 fn next_significant(tokens: &[ra_ap_syntax::SyntaxToken], from: usize) -> Option<usize> {
     (from..tokens.len()).find(|index| {
@@ -1440,50 +1504,56 @@ fn resolve_trial_binding(bindings: &BTreeSet<String>, marker: &str) -> TrialBind
 /// Whether the ancestor chain of a token sits inside a loop expression —
 /// the bounded signal for runtime-only trial discovery. Works through
 /// macro token trees too, because tokens keep their ancestor nodes.
-
-/// End of the `macro_rules! name { ... }` definition whose `macro_rules`
-/// token sits at `index`, or `index + 1` when the shape is not a
-/// definition. Brace-balanced at the token level; braces inside the
-/// template (including nested definitions) are consumed so nothing in
-/// the dormant template classifies.
-fn skip_macro_rules_definition(tokens: &[ra_ap_syntax::SyntaxToken], index: usize) -> usize {
-    let mut j = index + 1;
-    if tokens.get(j).map(|t| t.kind()) != Some(ra_ap_syntax::SyntaxKind::BANG) {
-        return index + 1;
-    }
-    j += 1;
-    if tokens.get(j).map(|t| t.kind()) != Some(ra_ap_syntax::SyntaxKind::IDENT) {
-        return j;
-    }
-    j += 1;
-    let mut body = 0usize;
-    while j < tokens.len() {
-        match tokens[j].kind() {
-            ra_ap_syntax::SyntaxKind::L_CURLY => body += 1,
-            ra_ap_syntax::SyntaxKind::R_CURLY => {
-                body = body.saturating_sub(1);
-                if body == 0 {
-                    return j + 1;
-                }
-            }
-            _ => {}
-        }
-        j += 1;
-    }
-    j
-}
-/// Whether the token sits inside a `macro_rules!` definition body: the
-/// tokens there are a template, not an executed registration.
-fn inside_macro_rules(mut ancestors: impl Iterator<Item = ra_ap_syntax::SyntaxNode>) -> bool {
-    ancestors.any(|ancestor| ast::MacroRules::can_cast(ancestor.kind()))
-}
-
 fn in_loop(mut ancestors: impl Iterator<Item = ra_ap_syntax::SyntaxNode>) -> bool {
     ancestors.any(|ancestor| {
         ast::WhileExpr::can_cast(ancestor.kind())
             || ast::ForExpr::can_cast(ancestor.kind())
             || ast::LoopExpr::can_cast(ancestor.kind())
     })
+}
+
+/// Whether the token sits inside a `macro_rules!` definition body: the
+/// tokens there are a template, not an executed registration.
+fn inside_macro_rules(mut ancestors: impl Iterator<Item = ra_ap_syntax::SyntaxNode>) -> bool {
+    ancestors.any(|ancestor| ast::MacroRules::can_cast(ancestor.kind()))
+}
+
+/// Index just past the `macro_rules! name { ... }` definition whose
+/// `macro_rules` token sits at `index`, or `None` when the shape is not a
+/// definition. Trivia-tolerant — `macro_rules` and `!` may be separated
+/// by whitespace or comments — and brace-balanced at the token level,
+/// because a definition inside another macro's token tree carries no
+/// `MacroRules` node to query.
+fn skip_macro_rules_definition(
+    tokens: &[ra_ap_syntax::SyntaxToken],
+    index: usize,
+) -> Option<usize> {
+    let bang = next_significant(tokens, index + 1)?;
+    if tokens[bang].kind() != ra_ap_syntax::SyntaxKind::BANG {
+        return None;
+    }
+    let name = next_significant(tokens, bang + 1)?;
+    if tokens[name].kind() != ra_ap_syntax::SyntaxKind::IDENT {
+        return None;
+    }
+    let open = next_significant(tokens, name + 1)?;
+    if tokens[open].kind() != ra_ap_syntax::SyntaxKind::L_CURLY {
+        return None;
+    }
+    let mut depth: usize = 0;
+    for (offset, token) in tokens[open..].iter().enumerate() {
+        match token.kind() {
+            ra_ap_syntax::SyntaxKind::L_CURLY => depth += 1,
+            ra_ap_syntax::SyntaxKind::R_CURLY => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(open + offset + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Exact simple string-literal text of one token. Escaped spellings,

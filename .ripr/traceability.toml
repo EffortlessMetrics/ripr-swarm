@@ -8778,6 +8778,9 @@ tests = [
   "crates/ripr/src/analysis/facts/harness_registry/tests.rs::trial_method_unwrap_expect_oracles_carry_real_lines_and_receivers",
   "crates/ripr/src/analysis/facts/harness_registry/tests.rs::shadowed_callback_names_fail_closed",
   "crates/ripr/src/analysis/facts/harness_registry/tests.rs::trial_method_oracle_receivers_carry_keyword_and_chained_forms",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::given_dormant_macro_rules_template_when_trial_scanned_then_no_smoke_oracle_from_template",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::given_dormant_macro_rules_template_in_helper_callback_then_no_oracle_either",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::dormant_macro_rules_line_ranges_span_the_parsed_definition",
   "crates/ripr/src/analysis/seam_cache.rs::tests::previous_generation_classified_seam_envelope_with_identical_identity_is_a_miss",
   "crates/ripr/src/analysis/seam_cache.rs::tests::schema_versions_pin_the_role_composition_generation",
 ]
