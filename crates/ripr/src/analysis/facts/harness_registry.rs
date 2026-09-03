@@ -775,8 +775,14 @@ fn push_file_test(index: &mut RustIndex, target: &Path, test: TestFact) {
 /// no member enters the executable-test denominator on its own: the
 /// whole target is helper-evidence, and executable subjects come only
 /// from adapter-established trial registrations.
-fn demote_harness_target_functions(index: &mut RustIndex, target: &Path) {
-    let demoted: BTreeSet<String> = {
+///
+/// Demotion cleans the target by file and span overlap (#3602) rather than
+/// by function name alone: any `TestFact` whose declared span overlaps a
+/// demoted function in the target file (or belongs to the target) is dropped,
+/// preventing any future producer that names `TestFact`s differently from its
+/// source function from leaking phantom tests into the harness target.
+pub(crate) fn demote_harness_target_functions(index: &mut RustIndex, target: &Path) {
+    let demoted_spans: Vec<(usize, usize)> = {
         let Some(facts) = index.files.get(target) else {
             return;
         };
@@ -784,10 +790,10 @@ fn demote_harness_target_functions(index: &mut RustIndex, target: &Path) {
             .functions
             .iter()
             .filter(|function| function.source_role != FunctionSourceRole::HarnessHelper)
-            .map(|function| function.name.clone())
+            .map(|function| (function.start_line, function.end_line))
             .collect()
     };
-    if demoted.is_empty() {
+    if demoted_spans.is_empty() {
         return;
     }
     let Some(facts) = index.files.get_mut(target) else {
@@ -796,10 +802,17 @@ fn demote_harness_target_functions(index: &mut RustIndex, target: &Path) {
     for function in &mut facts.functions {
         function.source_role = FunctionSourceRole::HarnessHelper;
     }
-    facts.tests.retain(|test| !demoted.contains(&test.name));
+    let overlaps_demoted = |test: &TestFact| -> bool {
+        demoted_spans.iter().any(|&(start, end)| {
+            // Span overlap between test [test.start_line, test.end_line] and
+            // demoted function [start, end].
+            test.start_line <= end && test.end_line >= start
+        })
+    };
+    facts.tests.retain(|test| !overlaps_demoted(test));
     index
         .tests
-        .retain(|test| test.file != target || !demoted.contains(&test.name));
+        .retain(|test| test.file != target || !overlaps_demoted(test));
     for function in &mut index.functions {
         if function.file == target {
             function.source_role = FunctionSourceRole::HarnessHelper;
