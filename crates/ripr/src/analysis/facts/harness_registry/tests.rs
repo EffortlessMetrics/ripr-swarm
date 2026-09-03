@@ -7,6 +7,7 @@
 use super::*;
 use crate::analysis::facts::build_index_with_test_harnesses;
 use crate::analysis::facts::model::FileFacts;
+use crate::domain::{OracleKind, OracleStrength};
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -476,6 +477,272 @@ fn snapshot_named_helpers_never_become_oracles_but_snapshot_asserts_do()
         // The *_snapshot naming boundary keeps helper-style macros out
         // while the assert_snapshot family still classifies.
         vec!["assert_snapshot!(1)"]
+    );
+    Ok(())
+}
+
+#[test]
+fn helper_callback_bodies_contribute_one_level_of_subject_evidence()
+-> Result<(), Box<dyn std::error::Error>> {
+    // #3603 gap 1: a trial registered as `Trial::test("name", helper_fn)`
+    // exercises the helper's body. The subject's claimed span stays the
+    // registration invocation, but its evidence (calls, oracles,
+    // literals) must be derived from the resolved helper body one level
+    // deep, with real line attribution — otherwise the subject
+    // understates observation relative to an ordinary `#[test]` that
+    // calls the same helper.
+    let root = temp_dir("helper-callback-body")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/helper_body.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn parse_config(raw: &str) -> u16 {
+    raw.parse().unwrap_or(0)
+}
+
+fn check_beta() -> Result<(), String> {
+    let port = parse_config("8080").unwrap();
+    assert_eq!(port, 8080);
+    Ok(())
+}
+
+fn trials() -> Vec<Trial> {
+    vec![
+        Trial::test("beta_round_trips", check_beta),
+        Trial::test("gamma_foreign", other_crate::check),
+    ]
+}
+"#,
+        )],
+    )?;
+    let files = [PathBuf::from("tests/helper_body.rs")];
+    let registrations = [custom_target_registration("tests/helper_body.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+
+    let beta = index
+        .harness_subjects
+        .iter()
+        .find(|subject| subject.name == "beta_round_trips")
+        .ok_or("beta subject missing")?;
+    // The claimed identity span stays the registration invocation: the
+    // helper widens the evidence, not the subject span or body.
+    assert_eq!(beta.start_line, 16, "{:?}", beta.start_line);
+    assert_eq!(beta.end_line, 16, "{:?}", beta.end_line);
+    assert!(
+        !beta.body.contains("parse_config"),
+        "the subject body stays the invocation span: {:?}",
+        beta.body
+    );
+
+    // Calls observed in the helper body join the subject with real lines.
+    let beta_calls = beta
+        .calls
+        .iter()
+        .map(|call| (call.line, call.name.as_str()))
+        .collect::<Vec<_>>();
+    assert!(
+        beta_calls.contains(&(9, "parse_config")),
+        "the helper body's call is subject evidence: {beta_calls:?}"
+    );
+
+    // One level deep only: the transitive callee's body (parse_config,
+    // lines 4-6) stays unclaimed — its internals are not code the trial
+    // subject's own callback text exercises directly.
+    assert!(
+        beta_calls.iter().all(|(line, _)| *line >= 8),
+        "transitive helper bodies stay unclaimed: {beta_calls:?}"
+    );
+
+    // Oracles from the helper body carry the helper's real source lines:
+    // the helper's own method unwrap (gap 2, helper path) and its macro
+    // assertion.
+    let unwrap_oracle = beta
+        .assertions
+        .iter()
+        .find(|oracle| oracle.text.contains(".unwrap()"))
+        .ok_or("helper unwrap oracle missing")?;
+    assert_eq!(unwrap_oracle.line, 9, "{:?}", unwrap_oracle.line);
+    assert_eq!(unwrap_oracle.kind, OracleKind::SmokeOnly);
+    assert_eq!(unwrap_oracle.strength, OracleStrength::Smoke);
+    let assert_eq = beta
+        .assertions
+        .iter()
+        .find(|oracle| oracle.text.starts_with("assert_eq!"))
+        .ok_or("helper assert_eq oracle missing")?;
+    assert_eq!(assert_eq.line, 10, "{:?}", assert_eq.line);
+    // Helper-body literals join the subject evidence.
+    assert!(
+        beta.literals
+            .iter()
+            .any(|literal| literal.value == "8080" && literal.line == 10),
+        "{:?}",
+        beta.literals
+    );
+
+    // Fail-closed control: a path callback (`other_crate::check`) is not a
+    // bare identifier bound in this file, so nothing is invented for it.
+    let gamma = index
+        .harness_subjects
+        .iter()
+        .find(|subject| subject.name == "gamma_foreign")
+        .ok_or("gamma subject missing")?;
+    assert!(
+        gamma.calls.iter().all(|call| call.name != "check"),
+        "unresolved callbacks contribute no invented evidence: {:?}",
+        gamma.calls
+    );
+    assert!(gamma.assertions.is_empty(), "{:?}", gamma.assertions);
+
+    // The mirrored TestFact carries the same widened evidence so every
+    // existing test consumer sees the subject the same way.
+    let beta_test = index
+        .tests
+        .iter()
+        .find(|test| test.name == "beta_round_trips")
+        .ok_or("beta test missing")?;
+    assert!(
+        beta_test
+            .calls
+            .iter()
+            .any(|call| call.name == "parse_config"),
+        "{:?}",
+        beta_test.calls
+    );
+    assert!(
+        beta_test
+            .assertions
+            .iter()
+            .any(|oracle| oracle.text.starts_with("assert_eq!") && oracle.line == 10),
+        "{:?}",
+        beta_test.assertions
+    );
+    Ok(())
+}
+
+#[test]
+fn trial_method_unwrap_expect_oracles_carry_real_lines_and_receivers()
+-> Result<(), Box<dyn std::error::Error>> {
+    // #3603 gap 2: ordinary `#[test]` parsing records `.unwrap()` /
+    // `.expect()` method calls as smoke evidence; the trial token scanner
+    // must credit the same oracles for trial subjects, with real line
+    // attribution and the receiver expression in the oracle text.
+    let root = temp_dir("trial-method-oracles")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/method_oracles.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn parse_port(raw: &str) -> Result<u16, String> {
+    raw.parse::<u16>().map_err(|error| error.to_string())
+}
+
+fn trials() -> Vec<Trial> {
+    vec![
+        libtest_mimic::Trial::test("alpha_unwraps", || {
+            let port = parse_port("8080").unwrap();
+            let doubled = port.unwrap() * 2;
+            assert_eq!(doubled, 16160);
+            let label: Result<String, String> = Ok(format!("port={doubled}"));
+            let shown = label.expect("label ready");
+            let unwrapped_value = doubled;
+            let _ = unwrapped_value;
+            let _ = config.expect;
+            println!("{}", doubled.unwrap());
+            Result::<u8, u8>::unwrap(Ok(1));
+            Ok(())
+        }),
+    ]
+}
+
+struct Config {
+    expect: u8,
+}
+"#,
+        )],
+    )?;
+    let files = [PathBuf::from("tests/method_oracles.rs")];
+    let registrations = [custom_target_registration("tests/method_oracles.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    let alpha = index
+        .tests
+        .iter()
+        .find(|test| test.name == "alpha_unwraps")
+        .ok_or("alpha test missing")?;
+
+    let oracle_lines = |needle: &str| -> Vec<(usize, &String)> {
+        alpha
+            .assertions
+            .iter()
+            .filter(|oracle| oracle.text.contains(needle))
+            .map(|oracle| (oracle.line, &oracle.text))
+            .collect()
+    };
+    let unwraps = oracle_lines("unwrap()");
+    let expects = oracle_lines(".expect(");
+    let assert_eqs = oracle_lines("assert_eq!(");
+
+    // Method oracles exist with receiver-ful text and real source lines.
+    assert_eq!(
+        unwraps
+            .iter()
+            .filter(|(_, text)| text.as_str() == "parse_port(\"8080\").unwrap()")
+            .count(),
+        1,
+        "receiver call chain is the oracle text: {unwraps:?}"
+    );
+    assert!(
+        unwraps.contains(&(11, &"parse_port(\"8080\").unwrap()".to_string())),
+        "unwrap oracle carries the real source line: {unwraps:?}"
+    );
+    assert!(
+        unwraps.contains(&(12, &"port.unwrap()".to_string())),
+        "bare-receiver unwrap keeps the receiver in the text: {unwraps:?}"
+    );
+    assert!(
+        expects.contains(&(15, &"label.expect(\"label ready\")".to_string())),
+        "expect oracle with real line and message argument: {expects:?}"
+    );
+    // The assertion-macro oracle line is the real source line too.
+    assert!(
+        assert_eqs.contains(&(13, &"assert_eq!(doubled, 16160)".to_string())),
+        "macro oracle lines are real source lines: {assert_eqs:?}"
+    );
+
+    // Smoke-strength parity with ordinary `#[test]` parsing.
+    for oracle in alpha
+        .assertions
+        .iter()
+        .filter(|oracle| oracle.text.ends_with(".unwrap()") || oracle.text.contains(".expect("))
+    {
+        assert_eq!(oracle.kind, OracleKind::SmokeOnly, "{oracle:?}");
+        assert_eq!(oracle.strength, OracleStrength::Smoke, "{oracle:?}");
+    }
+
+    // Fail-closed controls: a struct field named `expect`, a path-shaped
+    // `Result::unwrap` call, and anything inside a non-assertion macro's
+    // input never classify.
+    assert!(
+        unwraps.iter().all(|(_, text)| *text != "unwrap"),
+        "{unwraps:?}"
+    );
+    assert_eq!(
+        expects.len(),
+        1,
+        "only the real method-position expect classifies: {expects:?}"
+    );
+    assert!(
+        alpha
+            .assertions
+            .iter()
+            .all(|oracle| !oracle.text.contains("::unwrap")
+                && !oracle.text.contains("doubled.unwrap()")),
+        "path-shaped calls and non-assertion macro inputs stay out: {:?}",
+        alpha.assertions
     );
     Ok(())
 }

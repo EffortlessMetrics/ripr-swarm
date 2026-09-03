@@ -8290,6 +8290,8 @@ tests = [
   "crates/ripr/src/analysis/source_role_corpus.rs::explicit_test_target_joins_executable_tests_and_stays_out_of_production",
   "crates/ripr/src/analysis/source_role_corpus.rs::lookalike_test_named_file_in_src_is_a_production_subject",
   "crates/ripr/src/analysis/source_role_corpus.rs::cfg_test_variants_all_reach_executable_tests",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::helper_callback_bodies_contribute_one_level_of_subject_evidence",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::trial_method_unwrap_expect_oracles_carry_real_lines_and_receivers",
 ]
 fixtures = [
   "crates/ripr/tests/data/source-role-corpus",
@@ -8301,6 +8303,7 @@ code = [
   "crates/ripr/src/analysis/seam_inventory.rs",
   "crates/ripr/src/analysis/source_role_corpus.rs",
   "crates/ripr/src/analysis/facts/harness_registry.rs",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs",
   "crates/ripr/src/analysis/facts/role_composition.rs",
   "crates/ripr/src/analysis/facts/cfg_predicates.rs",
   "crates/ripr/src/analysis/facts/test_styles.rs",

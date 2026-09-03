@@ -573,7 +573,15 @@ impl HarnessSelectorCapability {
 pub enum HarnessSubjectClaim {
     /// The source invocation itself is one source-level test subject
     /// (e.g. one `Trial::test("name", ...)` registration). Generated
-    /// cases inside it are not enumerated.
+    /// cases inside it are not enumerated. The subject's span and body
+    /// stay the invocation, and its evidence is bounded two ways
+    /// (#3603): a bare-identifier callback resolving to exactly one
+    /// function in the registered target contributes that function's
+    /// parsed body evidence (calls, oracles, literals) one level deep;
+    /// method-position `.unwrap()`/`.expect()` calls inside the claimed
+    /// span register smoke oracles. Closures, path callbacks, and
+    /// unresolved or ambiguous names contribute nothing beyond the
+    /// invocation span — the boundary is fail-closed.
     NamedInvocation,
     /// The function is one executable test (registered test-producing
     /// attribute).
@@ -595,6 +603,11 @@ impl HarnessSubjectClaim {
 /// rather than mutating `FunctionFact` ad hoc. Each subject also
 /// registers an ordinary `TestFact` (same name/file/span) so the
 /// executable-test denominator and every existing test consumer see it.
+///
+/// Evidence boundary for `HarnessSubjectClaim::NamedInvocation` (#3603):
+/// `start_line`/`end_line`/`body` stay the registration invocation, while
+/// `calls`/`assertions`/`literals` widen over exactly the code the
+/// subject exercises — see the claim's docs for the fail-closed bounds.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct HarnessSubjectFact {
     /// The registration that authorized this subject.

@@ -27,6 +27,28 @@
 //! inference from filenames, crate imports, macro suffixes, or function
 //! names, and a registration that names a file outside the analyzed
 //! index simply grants nothing (fail closed).
+//!
+//! ## Named-invocation evidence boundary (#3603)
+//!
+//! A trial subject's identity span is the registration invocation, but
+//! the evidence it claims is widened in exactly two bounded directions,
+//! both fail-closed:
+//!
+//! - a bare-identifier callback (`Trial::test("name", helper_fn)`) that
+//!   resolves to exactly one function in the registered target file
+//!   contributes that function's parsed body evidence (calls, oracles,
+//!   literals) one level deep, with real line attribution; closures,
+//!   path callbacks, and unresolved or ambiguous names contribute
+//!   nothing beyond the invocation span;
+//! - method-position `.unwrap()`/`.expect()` calls inside the claimed
+//!   span register smoke oracles, the same evidence the ordinary
+//!   `#[test]` parser records for `ast::MethodCallExpr`. Non-assertion
+//!   macro input is skipped, matching what parsed method-call nodes
+//!   could see.
+//!
+//! No strength over-credit is possible: helper evidence reuses the
+//! ordinary parser path, and method oracles are smoke-strength by
+//! construction.
 
 use super::model::{FunctionFact, FunctionSourceRole, RustIndex, TestFact};
 use super::test_styles::normalized_test_attribute_path as normalized_attribute_path;
@@ -34,11 +56,12 @@ use super::{
     HarnessLimitationFact, HarnessSelectorCapability, HarnessSubjectClaim, HarnessSubjectFact,
 };
 use crate::analysis::rust_index::{
-    OracleFact, classify_assertion, extract_call_facts, extract_identifier_tokens,
-    extract_literal_facts,
+    OracleFact, classify_assertion, extract_assertions, extract_call_facts,
+    extract_identifier_tokens, extract_literal_facts,
 };
 use crate::analysis::syntax::ra::{LineIndex, parser_oracles_for_function, slice_text};
 use crate::config::{TestHarnessAdapter, TestHarnessKind, TestHarnessRegistration};
+use crate::domain::{OracleKind, OracleStrength};
 use ra_ap_syntax::ast::{self, HasName};
 use ra_ap_syntax::{AstNode, Edition, SourceFile, TextSize};
 use std::collections::BTreeSet;
@@ -255,10 +278,47 @@ fn apply_libtest_mimic_target(
         let start_line = line_index.line(start);
         let end_line = line_index.line_for_range_end(TextSize::new(end_offset));
         let body = slice_text(source, start, TextSize::new(end_offset));
-        let calls = extract_call_facts(&body, start_line);
-        let literals = extract_literal_facts(&body, start_line);
-        let assertions =
-            parser_oracles_for_node_tokens(&tokens, matched.name_token_index, &line_index);
+        let mut calls = extract_call_facts(&body, start_line);
+        let mut literals = extract_literal_facts(&body, start_line);
+        let mut assertions =
+            parser_oracles_for_node_tokens(source, &tokens, matched.name_token_index, &line_index);
+        // #3603: a bare-identifier callback (`Trial::test("name",
+        // helper_fn)`) resolves to exactly one function in this file, and
+        // that function's body is what the trial exercises — its parsed
+        // evidence joins the subject one level deep with real line
+        // attribution. Closures already scan through the claimed span;
+        // paths, unresolved, and ambiguous names contribute nothing.
+        if let Some(helper) =
+            bare_ident_callback(&tokens, matched.name_token_index, matched.open_paren_index)
+                .and_then(|ident_index| {
+                    resolve_helper_function(index, &target, tokens[ident_index].text())
+                })
+        {
+            calls.extend(extract_call_facts(&helper.body, helper.start_line));
+            assertions.extend(
+                parser_oracles_for_function(&helper.body, helper.start_line)
+                    .unwrap_or_else(|| extract_assertions(&helper.body, helper.start_line)),
+            );
+            literals.extend(extract_literal_facts(&helper.body, helper.start_line));
+            calls.sort_by(|left, right| {
+                left.line
+                    .cmp(&right.line)
+                    .then(left.name.cmp(&right.name))
+                    .then(left.text.cmp(&right.text))
+            });
+            calls.dedup_by(|left, right| {
+                left.line == right.line && left.name == right.name && left.text == right.text
+            });
+            assertions
+                .sort_by(|left, right| left.line.cmp(&right.line).then(left.text.cmp(&right.text)));
+            assertions.dedup_by(|left, right| left.line == right.line && left.text == right.text);
+            literals.sort_by(|left, right| {
+                left.line
+                    .cmp(&right.line)
+                    .then(left.value.cmp(&right.value))
+            });
+            literals.dedup_by(|left, right| left.line == right.line && left.value == right.value);
+        }
         let subject = HarnessSubjectFact {
             registration_id: registration.registration_id.clone(),
             harness_kind: registration.kind.as_str().to_string(),
@@ -510,11 +570,19 @@ fn balanced_call_end(tokens: &[ra_ap_syntax::SyntaxToken], open_paren_index: usi
 }
 
 /// Assertion evidence for one trial subject: the exact assertion-macro and
-/// `unwrap`/`expect` tokens inside the registration's own argument span.
-/// Only tokens between the name argument and the balanced close count, so
-/// adjacent code never credits this subject. Each oracle carries the real
-/// source line of its invocation.
+/// `unwrap`/`expect` method tokens inside the registration's own argument
+/// span. Only tokens between the name argument and the balanced close
+/// count, so adjacent code never credits this subject. Each oracle carries
+/// the real source line of its invocation (#3603).
+///
+/// Method-position `.unwrap()`/`.expect()` calls register smoke oracles
+/// with the receiver expression as text — the same evidence the ordinary
+/// `#[test]` parser records for `ast::MethodCallExpr`. Macro input is
+/// skipped wholesale (assertion macros still classify themselves), so a
+/// method token inside `println!(...)` never classifies, matching what
+/// parsed method-call nodes could see on the ordinary path.
 fn parser_oracles_for_node_tokens(
+    source: &str,
     tokens: &[ra_ap_syntax::SyntaxToken],
     name_token_index: usize,
     line_index: &LineIndex,
@@ -529,10 +597,68 @@ fn parser_oracles_for_node_tokens(
             ra_ap_syntax::SyntaxKind::R_PAREN => depth = depth.saturating_sub(1),
             ra_ap_syntax::SyntaxKind::IDENT => {
                 let name = token.text();
+                // Method-position unwrap/expect smoke oracles (#3603): a
+                // `.name(` shape only. A path-shaped `Result::unwrap(...)`,
+                // a bare binding, or a field read never classifies — the
+                // ordinary parser only sees `ast::MethodCallExpr` here
+                // either. The argument group is consumed so nothing inside
+                // it reclassifies.
+                let method_span = if name == "unwrap" || name == "expect" {
+                    previous_significant(tokens, index)
+                        .filter(|previous| {
+                            tokens[*previous].kind() == ra_ap_syntax::SyntaxKind::DOT
+                        })
+                        .and_then(|dot_index| {
+                            next_significant(tokens, index + 1)
+                                .filter(|open| {
+                                    tokens[*open].kind() == ra_ap_syntax::SyntaxKind::L_PAREN
+                                })
+                                .and_then(|open_index| {
+                                    matching_group_close(tokens, open_index)
+                                        .map(|close_index| (dot_index, close_index))
+                                })
+                        })
+                } else {
+                    None
+                };
+                if let Some((dot_index, close_index)) = method_span {
+                    let receiver_start = receiver_start_index(tokens, dot_index);
+                    let text = slice_text(
+                        source,
+                        tokens[receiver_start].text_range().start(),
+                        tokens[close_index].text_range().end(),
+                    )
+                    .trim()
+                    .trim_end_matches(';')
+                    .to_string();
+                    assertions.push(OracleFact {
+                        line: line_index.line(tokens[receiver_start].text_range().start()),
+                        kind: OracleKind::SmokeOnly,
+                        strength: OracleStrength::Smoke,
+                        observed_tokens: extract_identifier_tokens(&text),
+                        text,
+                    });
+                    index = close_index;
+                    index += 1;
+                    continue;
+                }
                 // Shared leaf predicate; the bang gate below restores
                 // MacroCall semantics, and the leaf boundary keeps
                 // `snapshot_helper!`-style names out of the oracle set.
                 if !crate::analysis::syntax::ra::is_assertion_macro_leaf(name) {
+                    // Non-assertion macro invocation: skip its input token
+                    // tree so method tokens inside macro input never
+                    // classify — the ordinary parser sees no method-call
+                    // nodes inside macro input either.
+                    if let Some(group_end) = next_significant(tokens, index + 1)
+                        .filter(|next| tokens[*next].kind() == ra_ap_syntax::SyntaxKind::BANG)
+                        .and_then(|bang_index| {
+                            next_significant(tokens, bang_index + 1)
+                                .and_then(|open| matching_group_close(tokens, open))
+                        })
+                    {
+                        index = group_end;
+                    }
                     index += 1;
                     continue;
                 }
@@ -570,10 +696,25 @@ fn parser_oracles_for_node_tokens(
                         text.push_str(inner.text());
                         cursor += 1;
                     }
+                } else if let Some(group_close) = next_significant(tokens, bang_index + 1)
+                    .filter(|next| {
+                        matches!(
+                            tokens[*next].kind(),
+                            ra_ap_syntax::SyntaxKind::L_BRACK | ra_ap_syntax::SyntaxKind::L_CURLY
+                        )
+                    })
+                    .and_then(|open| matching_group_close(tokens, open))
+                {
+                    // assert![..] / assert!{..}: the macro still
+                    // classifies, and its input is skipped like every
+                    // macro input — nothing inside it reclassifies.
+                    // `cursor` lands one past the close, matching the
+                    // consumed-paren path below.
+                    cursor = group_close + 1;
                 }
                 let classification = classify_assertion(&text);
                 assertions.push(OracleFact {
-                    line: line_index.line(tokens[index].text_range().start()) + 1,
+                    line: line_index.line(tokens[index].text_range().start()),
                     kind: classification.kind,
                     strength: classification.strength,
                     observed_tokens: extract_identifier_tokens(&text),
@@ -590,6 +731,212 @@ fn parser_oracles_for_node_tokens(
     }
     assertions.sort_by(|left, right| left.line.cmp(&right.line).then(left.text.cmp(&right.text)));
     assertions
+}
+
+/// Index of the previous non-trivia token before `from`.
+fn previous_significant(tokens: &[ra_ap_syntax::SyntaxToken], from: usize) -> Option<usize> {
+    if from == 0 {
+        return None;
+    }
+    (0..from).rev().find(|index| {
+        !matches!(
+            tokens[*index].kind(),
+            ra_ap_syntax::SyntaxKind::WHITESPACE | ra_ap_syntax::SyntaxKind::COMMENT
+        )
+    })
+}
+
+/// Whether one token kind is trivia.
+fn is_trivia(kind: ra_ap_syntax::SyntaxKind) -> bool {
+    matches!(
+        kind,
+        ra_ap_syntax::SyntaxKind::WHITESPACE | ra_ap_syntax::SyntaxKind::COMMENT
+    )
+}
+
+/// Index of the close token balancing the bracket-like open at
+/// `open_index` (`()`, `[]`, `{}`), or `None` when unbalanced.
+fn matching_group_close(tokens: &[ra_ap_syntax::SyntaxToken], open_index: usize) -> Option<usize> {
+    let close_kind = match tokens.get(open_index)?.kind() {
+        ra_ap_syntax::SyntaxKind::L_PAREN => ra_ap_syntax::SyntaxKind::R_PAREN,
+        ra_ap_syntax::SyntaxKind::L_BRACK => ra_ap_syntax::SyntaxKind::R_BRACK,
+        ra_ap_syntax::SyntaxKind::L_CURLY => ra_ap_syntax::SyntaxKind::R_CURLY,
+        _ => return None,
+    };
+    let open_kind = tokens[open_index].kind();
+    let mut depth: usize = 0;
+    for (offset, token) in tokens[open_index..].iter().enumerate() {
+        if token.kind() == open_kind {
+            depth += 1;
+        } else if token.kind() == close_kind {
+            depth = depth.checked_sub(1)?;
+            if depth == 0 {
+                return Some(open_index + offset);
+            }
+        }
+    }
+    None
+}
+
+/// Index of the open token balancing the bracket-like close at
+/// `close_index`, or `None` when unbalanced.
+fn matching_group_open(tokens: &[ra_ap_syntax::SyntaxToken], close_index: usize) -> Option<usize> {
+    let open_kind = match tokens.get(close_index)?.kind() {
+        ra_ap_syntax::SyntaxKind::R_PAREN => ra_ap_syntax::SyntaxKind::L_PAREN,
+        ra_ap_syntax::SyntaxKind::R_BRACK => ra_ap_syntax::SyntaxKind::L_BRACK,
+        ra_ap_syntax::SyntaxKind::R_CURLY => ra_ap_syntax::SyntaxKind::L_CURLY,
+        _ => return None,
+    };
+    let close_kind = tokens[close_index].kind();
+    let mut depth: usize = 0;
+    for (offset, token) in tokens[..=close_index].iter().rev().enumerate() {
+        if token.kind() == close_kind {
+            depth += 1;
+        } else if token.kind() == open_kind {
+            depth = depth.checked_sub(1)?;
+            if depth == 0 {
+                return Some(close_index - offset);
+            }
+        }
+    }
+    None
+}
+
+/// Index of the `<` balancing a `>` at `angle_index` (generic arguments
+/// such as `parse::<u16>(...)`), or `None` when unbalanced. Compound
+/// shift tokens never match, so expression contexts stop the walk.
+fn matching_angle_open(tokens: &[ra_ap_syntax::SyntaxToken], angle_index: usize) -> Option<usize> {
+    if tokens.get(angle_index)?.kind() != ra_ap_syntax::SyntaxKind::R_ANGLE {
+        return None;
+    }
+    let mut depth: usize = 0;
+    for (offset, token) in tokens[..=angle_index].iter().rev().enumerate() {
+        match token.kind() {
+            ra_ap_syntax::SyntaxKind::R_ANGLE => depth += 1,
+            ra_ap_syntax::SyntaxKind::L_ANGLE => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(angle_index - offset);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Index of the first token of the receiver expression for the method
+/// invocation whose `.` sits at `dot_index`. The walk runs backwards and
+/// only crosses balanced bracket groups, generic argument groups,
+/// literals, identifiers, and the `.`/`::` connectors of one postfix
+/// expression; anything else (operators, statement punctuation, keywords,
+/// a `!` not preceded by a macro-path identifier) ends the receiver, so
+/// the text never reaches across a statement boundary. Returns
+/// `dot_index` itself when nothing can be consumed.
+fn receiver_start_index(tokens: &[ra_ap_syntax::SyntaxToken], dot_index: usize) -> usize {
+    let mut receiver_start = dot_index;
+    let mut cursor = dot_index;
+    while cursor > 0 {
+        cursor -= 1;
+        if is_trivia(tokens[cursor].kind()) {
+            continue;
+        }
+        match tokens[cursor].kind() {
+            ra_ap_syntax::SyntaxKind::R_PAREN
+            | ra_ap_syntax::SyntaxKind::R_BRACK
+            | ra_ap_syntax::SyntaxKind::R_CURLY => {
+                let Some(open) = matching_group_open(tokens, cursor) else {
+                    return receiver_start;
+                };
+                receiver_start = open;
+                cursor = open;
+            }
+            ra_ap_syntax::SyntaxKind::R_ANGLE => {
+                let Some(open) = matching_angle_open(tokens, cursor) else {
+                    return receiver_start;
+                };
+                receiver_start = open;
+                cursor = open;
+            }
+            ra_ap_syntax::SyntaxKind::IDENT
+            | ra_ap_syntax::SyntaxKind::STRING
+            | ra_ap_syntax::SyntaxKind::INT_NUMBER
+            | ra_ap_syntax::SyntaxKind::FLOAT_NUMBER
+            | ra_ap_syntax::SyntaxKind::CHAR
+            | ra_ap_syntax::SyntaxKind::BYTE_STRING => {
+                receiver_start = cursor;
+            }
+            ra_ap_syntax::SyntaxKind::DOT | ra_ap_syntax::SyntaxKind::COLON2 => {
+                // Postfix connectors: the current receiver start stands.
+            }
+            ra_ap_syntax::SyntaxKind::BANG => {
+                // A macro-call receiver (`println!("x").unwrap()`)
+                // continues through `!` only when the macro path's last
+                // identifier precedes it; a negation operator ends the
+                // receiver.
+                let Some(path_ident) = previous_significant(tokens, cursor) else {
+                    return receiver_start;
+                };
+                if tokens[path_ident].kind() != ra_ap_syntax::SyntaxKind::IDENT {
+                    return receiver_start;
+                }
+                receiver_start = path_ident;
+                cursor = path_ident;
+            }
+            _ => return receiver_start,
+        }
+    }
+    receiver_start
+}
+
+/// Token index of a bare-identifier trial callback (`Trial::test("name",
+/// helper_fn)`): between the name argument and the balanced close, the
+/// only significant tokens are one separating comma, the identifier, and
+/// optionally a trailing comma. Closures, path callbacks, and any
+/// multi-token argument do not resolve (fail closed, #3603).
+fn bare_ident_callback(
+    tokens: &[ra_ap_syntax::SyntaxToken],
+    name_token_index: usize,
+    open_paren_index: usize,
+) -> Option<usize> {
+    let close_index = matching_group_close(tokens, open_paren_index)?;
+    let significant: Vec<usize> = (name_token_index + 1..close_index)
+        .filter(|index| !is_trivia(tokens[*index].kind()))
+        .collect();
+    if significant.len() != 2 && significant.len() != 3 {
+        return None;
+    }
+    let comma = significant[0];
+    let ident = significant[1];
+    if tokens[comma].kind() != ra_ap_syntax::SyntaxKind::COMMA
+        || tokens[ident].kind() != ra_ap_syntax::SyntaxKind::IDENT
+    {
+        return None;
+    }
+    match significant.len() {
+        2 => Some(ident),
+        // A trailing comma after the identifier is still a bare callback.
+        3 if tokens[significant[2]].kind() == ra_ap_syntax::SyntaxKind::COMMA => Some(ident),
+        _ => None,
+    }
+}
+
+/// The one function in the registered target whose name is `name`, or
+/// `None` when no function fact matches (including more than one — the
+/// evidence stays fail-closed). Function facts are producer-owned parsed
+/// structure, so resolution is never a name heuristic on raw text.
+fn resolve_helper_function<'a>(
+    index: &'a RustIndex,
+    target: &Path,
+    name: &str,
+) -> Option<&'a FunctionFact> {
+    let facts = index.files.get(target)?;
+    let mut matches = facts
+        .functions
+        .iter()
+        .filter(|function| function.name == name);
+    let matched = matches.next()?;
+    matches.next().is_none().then_some(matched)
 }
 
 /// Index of the next non-trivia token at or after `from`.
