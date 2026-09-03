@@ -623,6 +623,246 @@ fn trials() -> Vec<Trial> {
 }
 
 #[test]
+fn shadowed_callback_names_fail_closed() -> Result<(), Box<dyn std::error::Error>> {
+    // #3603 review: a bare-identifier callback may name a local binding
+    // (let/parameter/closure), an import, or a fn that is not even
+    // name-visible from the invocation — crediting a same-named
+    // file-level fn's body in those cases would credit evidence the
+    // trial cannot reach (false exposed). Every such shape fails closed:
+    // the trial subject stays, but none of the same-named fn's body
+    // evidence is claimed.
+    let root = temp_dir("shadowed-callbacks")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/shadowed.rs",
+            r#"
+use libtest_mimic::Trial;
+use other_crate::imported_helper;
+
+fn imported_helper() -> u16 {
+    production_call(1)
+}
+
+fn closure_shadow_trials() -> Vec<Trial> {
+    let shadow_target = || 1u16;
+    vec![Trial::test("closure_shadow", shadow_target)]
+}
+
+fn param_shadow_trials(shadow_target: fn() -> u16) -> Vec<Trial> {
+    vec![Trial::test("param_shadow", shadow_target)]
+}
+
+fn nested_mod_shadow_trials() -> Vec<Trial> {
+    vec![Trial::test("nested_mod_shadow", nested_helper)]
+}
+
+fn import_shadow_trials() -> Vec<Trial> {
+    vec![Trial::test("import_shadow", imported_helper)]
+}
+
+mod helpers {
+    pub fn nested_helper() -> u16 {
+        production_call(3)
+    }
+}
+
+fn shadow_target() -> u16 {
+    production_call(4)
+}
+"#,
+        )],
+    )?;
+    let files = [PathBuf::from("tests/shadowed.rs")];
+    let registrations = [custom_target_registration("tests/shadowed.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+
+    // The clean file-level fn `shadow_target` exists with distinctive
+    // body evidence; every negative subject must claim none of it.
+    let credited_evidence = |subject_name: &str| -> bool {
+        index
+            .harness_subjects
+            .iter()
+            .find(|subject| subject.name == subject_name)
+            .is_some_and(|subject| {
+                subject
+                    .calls
+                    .iter()
+                    .any(|call| call.name == "production_call")
+                    || subject
+                        .assertions
+                        .iter()
+                        .any(|oracle| oracle.text.contains("production_call"))
+            })
+    };
+
+    // Every subject still classifies; fail-closed means uncredited
+    // evidence, not a missing subject.
+    assert_eq!(
+        index
+            .harness_subjects
+            .iter()
+            .map(|subject| subject.name.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "closure_shadow",
+            "param_shadow",
+            "nested_mod_shadow",
+            "import_shadow"
+        ]
+    );
+    for subject in &index.harness_subjects {
+        assert_eq!(subject.claim, HarnessSubjectClaim::NamedInvocation);
+    }
+
+    // A local closure binding shadows the same-named file-level fn.
+    assert!(
+        !credited_evidence("closure_shadow"),
+        "a local `let` binding must fail closed: {:?}",
+        index
+            .harness_subjects
+            .iter()
+            .find(|subject| subject.name == "closure_shadow")
+            .map(|subject| (&subject.calls, &subject.assertions))
+    );
+    // A same-named fn parameter shadows it too.
+    assert!(
+        !credited_evidence("param_shadow"),
+        "a parameter binding must fail closed"
+    );
+    // A fn that exists only inside a nested module is not name-visible
+    // to the invocation.
+    assert!(
+        !credited_evidence("nested_mod_shadow"),
+        "a nested-module fn must fail closed"
+    );
+    // A top-level import binding the same leaf name makes the callback
+    // ambiguous with the import.
+    assert!(
+        !credited_evidence("import_shadow"),
+        "an import binding of the name must fail closed"
+    );
+
+    // The clean one-level positive still admits on the same authority:
+    // an unshadowed top-level fn's evidence is credited (pinned in full
+    // by helper_callback_bodies_contribute_one_level_of_subject_evidence).
+    let clean_root = temp_dir("shadowed-clean-control")?;
+    write_workspace(
+        &clean_root,
+        &[(
+            "tests/clean_control.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn clean_helper() -> u16 {
+    production_call(9)
+}
+
+fn trials() -> Vec<Trial> {
+    vec![Trial::test("clean_case", clean_helper)]
+}
+"#,
+        )],
+    )?;
+    let clean_files = [PathBuf::from("tests/clean_control.rs")];
+    let clean_registrations = [custom_target_registration("tests/clean_control.rs")];
+    let clean_index =
+        build_index_with_test_harnesses(&clean_root.0, &clean_files, &clean_registrations)?;
+    assert!(
+        clean_index
+            .harness_subjects
+            .iter()
+            .find(|subject| subject.name == "clean_case")
+            .is_some_and(|subject| subject
+                .calls
+                .iter()
+                .any(|call| call.name == "production_call")),
+        "the clean unshadowed callback still admits its helper body evidence: {:?}",
+        clean_index.harness_subjects
+    );
+    Ok(())
+}
+
+#[test]
+fn trial_method_oracle_receivers_carry_keyword_and_chained_forms()
+-> Result<(), Box<dyn std::error::Error>> {
+    // #3603 review: keyword receiver participants (`self`, `await`) are
+    // ordinary postfix receivers. Dropping them would truncate the
+    // oracle text (`value.unwrap()` instead of
+    // `self.value().unwrap()`) and misattribute the observed receiver.
+    let root = temp_dir("trial-keyword-receivers")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/keyword_receivers.rs",
+            r#"
+use libtest_mimic::Trial;
+
+struct Reader;
+
+impl Reader {
+    fn value(&self) -> Result<u16, String> {
+        Ok(8080)
+    }
+
+    fn trials(&self) -> Vec<Trial> {
+        vec![
+            libtest_mimic::Trial::test("keyword_receivers", || {
+                let direct = self.value().unwrap();
+                let awaited = self.value().await.unwrap();
+                let chained = self.value().map(|port| port).await.unwrap();
+                Ok(())
+            }),
+        ]
+    }
+}
+"#,
+        )],
+    )?;
+    let files = [PathBuf::from("tests/keyword_receivers.rs")];
+    let registrations = [custom_target_registration("tests/keyword_receivers.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    let subject_test = index
+        .tests
+        .iter()
+        .find(|test| test.name == "keyword_receivers")
+        .ok_or("keyword_receivers test missing")?;
+
+    let expected = [
+        (14, "self.value().unwrap()"),
+        (15, "self.value().await.unwrap()"),
+        (16, "self.value().map(|port| port).await.unwrap()"),
+    ];
+    for (line, text) in expected {
+        let oracle = subject_test
+            .assertions
+            .iter()
+            .find(|oracle| oracle.text == text)
+            .ok_or_else(|| format!("expected oracle `{text}` in {:?}", subject_test.assertions))?;
+        assert_eq!(oracle.line, line, "{:?}", oracle);
+        assert_eq!(oracle.kind, OracleKind::SmokeOnly, "{:?}", oracle);
+        assert_eq!(oracle.strength, OracleStrength::Smoke, "{:?}", oracle);
+        // The observed receiver keeps the full postfix chain.
+        assert!(
+            oracle.observed_tokens.contains(&"value".to_string()),
+            "{:?}",
+            oracle.observed_tokens
+        );
+    }
+    // No oracle may carry a truncated receiver: the keyword must be
+    // part of the text, not dropped from it.
+    assert!(
+        subject_test
+            .assertions
+            .iter()
+            .all(|oracle| !oracle.text.starts_with("value.")),
+        "{:?}",
+        subject_test.assertions
+    );
+    Ok(())
+}
+
+#[test]
 fn trial_method_unwrap_expect_oracles_carry_real_lines_and_receivers()
 -> Result<(), Box<dyn std::error::Error>> {
     // #3603 gap 2: ordinary `#[test]` parsing records `.unwrap()` /

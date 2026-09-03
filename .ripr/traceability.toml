@@ -8290,8 +8290,6 @@ tests = [
   "crates/ripr/src/analysis/source_role_corpus.rs::explicit_test_target_joins_executable_tests_and_stays_out_of_production",
   "crates/ripr/src/analysis/source_role_corpus.rs::lookalike_test_named_file_in_src_is_a_production_subject",
   "crates/ripr/src/analysis/source_role_corpus.rs::cfg_test_variants_all_reach_executable_tests",
-  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::helper_callback_bodies_contribute_one_level_of_subject_evidence",
-  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::trial_method_unwrap_expect_oracles_carry_real_lines_and_receivers",
 ]
 fixtures = [
   "crates/ripr/tests/data/source-role-corpus",
@@ -8765,6 +8763,33 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0172-cross-crate-dependency-edge-relation.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0173"
+name = "harness trial subject evidence parity"
+spec = "docs/specs/RIPR-SPEC-0173-trial-subject-evidence-parity.md"
+tests = [
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::helper_callback_bodies_contribute_one_level_of_subject_evidence",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::trial_method_unwrap_expect_oracles_carry_real_lines_and_receivers",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::shadowed_callback_names_fail_closed",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs::trial_method_oracle_receivers_carry_keyword_and_chained_forms",
+  "crates/ripr/src/analysis/seam_cache.rs::tests::previous_generation_classified_seam_envelope_with_identical_identity_is_a_miss",
+  "crates/ripr/src/analysis/seam_cache.rs::tests::schema_versions_pin_the_role_composition_generation",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/facts/harness_registry.rs",
+  "crates/ripr/src/analysis/facts/harness_registry/tests.rs",
+  "crates/ripr/src/analysis/facts/model.rs",
+  "crates/ripr/src/analysis/seam_cache.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0173-trial-subject-evidence-parity.md",
 ]
 metrics = [
   "unit_test_pass_rate",

@@ -169,7 +169,8 @@ fn apply_libtest_mimic_target(
         return;
     }
     let line_index = LineIndex::new(source);
-    let trial_bindings = top_level_use_bindings(parse.tree().syntax(), "Trial");
+    let file_syntax = parse.tree().syntax().clone();
+    let trial_bindings = top_level_use_bindings(&file_syntax, "Trial");
     let tokens: Vec<ra_ap_syntax::SyntaxToken> = parse
         .tree()
         .syntax()
@@ -283,15 +284,23 @@ fn apply_libtest_mimic_target(
         let mut assertions =
             parser_oracles_for_node_tokens(source, &tokens, matched.name_token_index, &line_index);
         // #3603: a bare-identifier callback (`Trial::test("name",
-        // helper_fn)`) resolves to exactly one function in this file, and
-        // that function's body is what the trial exercises — its parsed
-        // evidence joins the subject one level deep with real line
-        // attribution. Closures already scan through the claimed span;
-        // paths, unresolved, and ambiguous names contribute nothing.
+        // helper_fn)`) resolves to exactly one top-level function in this
+        // file, and that function's body is what the trial exercises —
+        // its parsed evidence joins the subject one level deep with real
+        // line attribution. Closures already scan through the claimed
+        // span; shadowed names, imports, paths, and unresolved or
+        // ambiguous names contribute nothing.
+        let enclosing_function = enclosing_function(index, &target, start_line);
         if let Some(helper) =
             bare_ident_callback(&tokens, matched.name_token_index, matched.open_paren_index)
                 .and_then(|ident_index| {
-                    resolve_helper_function(index, &target, tokens[ident_index].text())
+                    resolve_helper_function(
+                        index,
+                        &target,
+                        &file_syntax,
+                        enclosing_function,
+                        tokens[ident_index].text(),
+                    )
                 })
         {
             calls.extend(extract_call_facts(&helper.body, helper.start_line));
@@ -828,11 +837,13 @@ fn matching_angle_open(tokens: &[ra_ap_syntax::SyntaxToken], angle_index: usize)
 /// Index of the first token of the receiver expression for the method
 /// invocation whose `.` sits at `dot_index`. The walk runs backwards and
 /// only crosses balanced bracket groups, generic argument groups,
-/// literals, identifiers, and the `.`/`::` connectors of one postfix
-/// expression; anything else (operators, statement punctuation, keywords,
-/// a `!` not preceded by a macro-path identifier) ends the receiver, so
-/// the text never reaches across a statement boundary. Returns
-/// `dot_index` itself when nothing can be consumed.
+/// literals, identifiers, keyword receiver participants (`self`,
+/// `Self`, `await`, `crate`, `super`), and the `.`/`::` connectors of
+/// one postfix expression; anything else (operators, statement
+/// punctuation, other keywords, a `!` not preceded by a macro-path
+/// identifier) ends the receiver, so the text never reaches across a
+/// statement boundary. Returns `dot_index` itself when nothing can be
+/// consumed.
 fn receiver_start_index(tokens: &[ra_ap_syntax::SyntaxToken], dot_index: usize) -> usize {
     let mut receiver_start = dot_index;
     let mut cursor = dot_index;
@@ -863,7 +874,17 @@ fn receiver_start_index(tokens: &[ra_ap_syntax::SyntaxToken], dot_index: usize) 
             | ra_ap_syntax::SyntaxKind::INT_NUMBER
             | ra_ap_syntax::SyntaxKind::FLOAT_NUMBER
             | ra_ap_syntax::SyntaxKind::CHAR
-            | ra_ap_syntax::SyntaxKind::BYTE_STRING => {
+            | ra_ap_syntax::SyntaxKind::BYTE_STRING
+            // Keyword receiver participants (#3603 review): `self.value
+            // .unwrap()`, `future.await.unwrap()`, and path roots like
+            // `crate::config.value.unwrap()` are ordinary postfix
+            // receivers; dropping the keyword would truncate the receiver
+            // text and misattribute the observed receiver.
+            | ra_ap_syntax::SyntaxKind::SELF_KW
+            | ra_ap_syntax::SyntaxKind::SELF_TYPE_KW
+            | ra_ap_syntax::SyntaxKind::AWAIT_KW
+            | ra_ap_syntax::SyntaxKind::CRATE_KW
+            | ra_ap_syntax::SyntaxKind::SUPER_KW => {
                 receiver_start = cursor;
             }
             ra_ap_syntax::SyntaxKind::DOT | ra_ap_syntax::SyntaxKind::COLON2 => {
@@ -921,15 +942,50 @@ fn bare_ident_callback(
     }
 }
 
-/// The one function in the registered target whose name is `name`, or
-/// `None` when no function fact matches (including more than one — the
-/// evidence stays fail-closed). Function facts are producer-owned parsed
-/// structure, so resolution is never a name heuristic on raw text.
+/// The one file-level function the callback can be shown to name, or
+/// `None` whenever binding identity is not provable (#3603 review). The
+/// resolution is fail-closed in three directions:
+///
+/// - a local binding of the name inside the trial's enclosing body
+///   (`let`, parameter, closure or loop pattern, or a fn-local `use`)
+///   shadows any file-level fn — the callback would run the local, not
+///   the file-level fn, so nothing is credited;
+/// - a top-level `use` binding the same leaf name makes the bare
+///   callback ambiguous with the import — nothing is credited;
+/// - the name must name exactly one `FunctionFact` AND exactly one
+///   top-level `fn` item of the file; a same-named fn that lives only
+///   inside a nested module or impl is not name-visible to the
+///   invocation and never admits. Function facts are producer-owned
+///   parsed structure, so resolution is never a name heuristic on raw
+///   text.
 fn resolve_helper_function<'a>(
     index: &'a RustIndex,
     target: &Path,
+    file_syntax: &ra_ap_syntax::SyntaxNode,
+    enclosing: Option<&FunctionFact>,
     name: &str,
 ) -> Option<&'a FunctionFact> {
+    if let Some(function) = enclosing
+        && enclosing_body_binds_name(function, name)
+    {
+        return None;
+    }
+    if !top_level_use_bindings(file_syntax, name).is_empty() {
+        return None;
+    }
+    let top_level_same_named = file_syntax
+        .children()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| {
+            function
+                .name()
+                .map(|item| item.text() == name)
+                .unwrap_or(false)
+        })
+        .count();
+    if top_level_same_named != 1 {
+        return None;
+    }
     let facts = index.files.get(target)?;
     let mut matches = facts
         .functions
@@ -937,6 +993,56 @@ fn resolve_helper_function<'a>(
         .filter(|function| function.name == name);
     let matched = matches.next()?;
     matches.next().is_none().then_some(matched)
+}
+
+/// The innermost function fact whose span contains `line`, if any — the
+/// body whose local bindings could shadow a file-level fn for an
+/// invocation on that line.
+fn enclosing_function<'a>(
+    index: &'a RustIndex,
+    target: &Path,
+    line: usize,
+) -> Option<&'a FunctionFact> {
+    index
+        .files
+        .get(target)?
+        .functions
+        .iter()
+        .filter(|function| function.start_line <= line && line <= function.end_line)
+        .min_by_key(|function| function.end_line.saturating_sub(function.start_line))
+}
+
+/// Whether the enclosing body binds `name` locally: any identifier
+/// pattern (`let`, parameter, closure parameter, loop pattern), or any
+/// `use` item inside the body that binds the name. An unparseable body
+/// counts as bound (fail closed).
+fn enclosing_body_binds_name(function: &FunctionFact, name: &str) -> bool {
+    let parse = SourceFile::parse(&function.body, Edition::CURRENT);
+    if !parse.errors().is_empty() {
+        return true;
+    }
+    let tree = parse.tree();
+    let syntax = tree.syntax();
+    let pattern_binds = syntax
+        .descendants()
+        .filter_map(ast::IdentPat::cast)
+        .any(|pattern| {
+            pattern
+                .name()
+                .map(|item| item.text() == name)
+                .unwrap_or(false)
+        });
+    if pattern_binds {
+        return true;
+    }
+    let mut bindings = BTreeSet::new();
+    for use_item in syntax.descendants().filter_map(ast::Use::cast) {
+        let Some(use_tree) = use_item.use_tree() else {
+            continue;
+        };
+        collect_use_bindings(&use_tree, String::new(), name, &mut bindings);
+    }
+    !bindings.is_empty()
 }
 
 /// Index of the next non-trivia token at or after `from`.

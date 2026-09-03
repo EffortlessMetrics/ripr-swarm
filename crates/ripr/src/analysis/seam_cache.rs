@@ -101,7 +101,11 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.2` -> `1.3`: source roles now compose across include and module edges
 /// (#3533); out-of-line `#[cfg(test)]` module helpers flip out of the
 /// production inventory, changing classified-seam content.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.3";
+/// `1.3` -> `1.4`: harness trial subjects gained helper-callback one-level
+/// body evidence and method-position `unwrap`/`expect` smoke oracles
+/// (#3603); old classified entries would serve evidence-blind
+/// classifications for registered-harness workspaces.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.4";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -115,7 +119,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.3";
 /// evidence role (#3530), changing the facts sharded entries derive from.
 /// `0.8` -> `0.9`: source roles now compose across include and module edges
 /// (#3533), changing the facts sharded entries derive from.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.9";
+/// `0.9` -> `0.10`: #3603 trial evidence parity changes the facts sharded
+/// entries derive from.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.10";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -134,7 +140,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.9";
 /// `0.9` -> `0.10`: source roles now compose across include and module edges
 /// (#3533); out-of-line `#[cfg(test)]` module helpers flip out of the
 /// production inventory, changing compact classified-seam content.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.10";
+/// `0.10` -> `0.11`: #3603 trial evidence parity changes compact
+/// classified-seam content.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.11";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -179,6 +187,9 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// a typed unknown (#3533 review). Entries from the `0.8` generation store
 /// such declarations as `Default`, which would resolve the default file
 /// Rust does not compile under the conditional configuration.
+/// No bump for #3603: per-file parser facts are unchanged — the harness
+/// registry applies registrations after the file-fact cache loads, so the
+/// trial evidence parity change never alters a stored `FileFacts`.
 pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "0.9";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
@@ -2580,16 +2591,78 @@ mod tests {
     use crate::domain::{Confidence, StageEvidence, StageState};
     use std::path::PathBuf;
 
-    /// #3533 cache-bump pin: composed source roles change every cached
-    /// derivation that embeds them. Each version here was bumped on purpose;
-    /// a future change must move these pins in the same PR as its semantic
-    /// change so no warm cache serves stale roles.
+    /// Cache-bump pin: composed source roles change every cached
+    /// derivation that embeds them (#3533), and trial evidence parity
+    /// changes classified-seam content for registered-harness workspaces
+    /// (#3603). Each version here was bumped on purpose; a future change
+    /// must move these pins in the same PR as its semantic change so no
+    /// warm cache serves stale roles.
     #[test]
     fn schema_versions_pin_the_role_composition_generation() {
         assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "0.9");
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.3");
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.9");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.10");
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.4");
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.10");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.11");
+    }
+
+    #[test]
+    fn previous_generation_classified_seam_envelope_with_identical_identity_is_a_miss()
+    -> Result<(), String> {
+        // #3603: trial subjects gained helper-callback one-level body
+        // evidence and method unwrap/expect smoke oracles. An envelope
+        // seeded under the previous classified-seam generation must not
+        // satisfy the current generation's key, even with identical
+        // identity fields.
+        let dir = isolated_dir("gen-classified-seam");
+        let _ = std::fs::remove_dir_all(&dir);
+        let cache = RepoSeamFactCache::at_dir(dir.clone());
+        let seams = vec![sample_classified()];
+        let previous_key = RepoSeamCacheKey {
+            schema_version: "1.3".to_string(),
+            analyzer_version: env!("CARGO_PKG_VERSION").to_string(),
+            workspace_root_hash: hash_str("workspace"),
+            files_content_hash: hash_str("files"),
+            cfg_features_hash: hash_str(""),
+            config_hash: hash_str(""),
+            test_intent_hash: hash_str(""),
+            suppressions_hash: hash_str(""),
+            workspace_manifests_hash: hash_str("manifests"),
+            lockfile_hash: hash_str("lock"),
+            toolchain_hash: hash_str("toolchain"),
+            seam_limit_key: "unlimited".to_string(),
+        };
+        cache.store_classified_seams_with_limit(&previous_key, &seams, None, usize::MAX)?;
+        assert!(
+            cache.entry_path(&previous_key).exists(),
+            "seed sanity: previous-generation envelope stored"
+        );
+
+        // The current generation's key with identical identity must miss.
+        let current_key = RepoSeamCacheKey {
+            schema_version: CACHE_SCHEMA_VERSION.to_string(),
+            ..previous_key.clone()
+        };
+        assert_ne!(previous_key.schema_version, current_key.schema_version);
+        match cache.load_classified_seams(&current_key) {
+            CacheLoad::Miss => {}
+            other => {
+                return Err(format!(
+                    "expected Miss across the classified-seam generation transition, got {other:?}"
+                ));
+            }
+        }
+        // Seed sanity: the previous key still reads its own envelope; it
+        // is only reachable by a key current code never constructs.
+        match cache.load_classified_seams(&previous_key) {
+            CacheLoad::Hit((stored, _)) => assert_eq!(stored.len(), 1),
+            other => {
+                return Err(format!(
+                    "seed sanity: previous key should read its own envelope, got {other:?}"
+                ));
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
     }
 
     fn sample_classified() -> ClassifiedSeam {
