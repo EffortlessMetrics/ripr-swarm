@@ -1067,6 +1067,33 @@ fn receiver_start_index(tokens: &[ra_ap_syntax::SyntaxToken], dot_index: usize) 
                 let Some(open) = matching_angle_open(tokens, cursor) else {
                     return receiver_start;
                 };
+                // Only a turbofish group (`parse::<u16>(..)`) is a generic
+                // argument group in receiver position, and its `<` is
+                // always preceded by `::`. Without the path separators the
+                // angles are comparison operators, and consuming the group
+                // would reach across the expression and over-credit the
+                // receiver. Inside a macro token tree the separators reach
+                // the walk as two COLON tokens, so both spellings
+                // participate.
+                let turbofish = match previous_significant(tokens, open) {
+                    Some(separator) => match tokens[separator].kind() {
+                        ra_ap_syntax::SyntaxKind::COLON2 => true,
+                        ra_ap_syntax::SyntaxKind::COLON => {
+                            matches!(
+                                previous_significant(tokens, separator),
+                                Some(first) if tokens[first].kind() == ra_ap_syntax::SyntaxKind::COLON
+                            )
+                        }
+                        _ => false,
+                    },
+                    None => false,
+                };
+                if !turbofish {
+                    // Comparison operators end the receiver at their
+                    // operand; consuming the angle group would reach
+                    // across the expression.
+                    return receiver_start;
+                }
                 receiver_start = open;
                 cursor = open;
             }
@@ -1090,6 +1117,35 @@ fn receiver_start_index(tokens: &[ra_ap_syntax::SyntaxToken], dot_index: usize) 
             }
             ra_ap_syntax::SyntaxKind::DOT | ra_ap_syntax::SyntaxKind::COLON2 => {
                 // Postfix connectors: the current receiver start stands.
+            }
+            ra_ap_syntax::SyntaxKind::COLON => {
+                // A raw `::` inside a macro token tree reaches the walk as
+                // two COLON tokens: accept the pair when the neighbor
+                // colon sits on the other side. A lone colon (a
+                // struct-field separator) ends the receiver.
+                let previous_colon = matches!(
+                    previous_significant(tokens, cursor),
+                    Some(previous) if tokens[previous].kind() == ra_ap_syntax::SyntaxKind::COLON
+                );
+                let next_colon = matches!(
+                    next_significant(tokens, cursor + 1),
+                    Some(next) if tokens[next].kind() == ra_ap_syntax::SyntaxKind::COLON
+                );
+                if previous_colon {
+                    if let Some(first) = previous_significant(tokens, cursor) {
+                        cursor = first;
+                    } else {
+                        return receiver_start;
+                    }
+                } else if next_colon {
+                    if let Some(second) = next_significant(tokens, cursor + 1) {
+                        cursor = second;
+                    } else {
+                        return receiver_start;
+                    }
+                } else {
+                    return receiver_start;
+                }
             }
             ra_ap_syntax::SyntaxKind::BANG => {
                 // A macro-call receiver (`println!("x").unwrap()`)

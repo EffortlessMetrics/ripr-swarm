@@ -1752,6 +1752,86 @@ fn trials() -> Vec<Trial> {
 }
 
 #[test]
+fn trial_receiver_walk_stops_at_comparison_operators() -> Result<(), Box<dyn std::error::Error>> {
+    // #3603 review (coderabbit LtlN): the receiver walk accepted any
+    // R_ANGLE as a turbofish close, so `a < b && c > d.unwrap()` emitted
+    // `< b && c > d.unwrap()` as receiver text and inflated
+    // observed_tokens — the over-emit direction. An angle group in
+    // receiver position is a turbofish only when its `<` is preceded by
+    // `::`; comparisons end the receiver at their operand.
+    let root = temp_dir("trial-comparison-receivers")?;
+    write_workspace(
+        &root,
+        &[(
+            "tests/comparison_receivers.rs",
+            r#"
+use libtest_mimic::Trial;
+
+fn parse_u16(raw: &str) -> u16 {
+    raw.parse::<u16>().unwrap_or(0)
+}
+
+fn trials() -> Vec<Trial> {
+    vec![libtest_mimic::Trial::test("comparison_forms", || {
+        let a = true;
+        let b = true;
+        let c = true;
+        let d = Some(1u16);
+        let check = a < b && c > d.unwrap();
+        let parsed = parse_u16("7").parse::<u16>().unwrap();
+        let _ = (check, parsed);
+        Ok(())
+    })]
+}
+"#,
+        )],
+    )?;
+    declare_harness_false_target(
+        &root,
+        "comparison_receivers",
+        "tests/comparison_receivers.rs",
+    )?;
+    let files = [PathBuf::from("tests/comparison_receivers.rs")];
+    let registrations = [custom_target_registration("tests/comparison_receivers.rs")];
+    let index = build_index_with_test_harnesses(&root.0, &files, &registrations)?;
+    let subject_test = index
+        .tests
+        .iter()
+        .find(|test| test.name == "comparison_forms")
+        .ok_or("comparison_forms test missing")?;
+
+    // The comparison's operand is the receiver; the operator never
+    // extends it and no cross-expression text leaks in.
+    let d_oracle = subject_test
+        .assertions
+        .iter()
+        .find(|oracle| oracle.text == "d.unwrap()")
+        .ok_or_else(|| format!("expected `d.unwrap()` in {:?}", subject_test.assertions))?;
+    assert_eq!(d_oracle.line, 14, "{d_oracle:?}");
+    assert!(
+        !subject_test
+            .assertions
+            .iter()
+            .any(|oracle| oracle.text.contains("< b")),
+        "comparison text must not leak into receivers: {:?}",
+        subject_test.assertions
+    );
+    assert!(
+        !d_oracle.observed_tokens.contains(&"b".to_string()),
+        "{:?}",
+        d_oracle.observed_tokens
+    );
+    // A genuine turbofish still keeps its generic arguments.
+    let turbofish = subject_test
+        .assertions
+        .iter()
+        .find(|oracle| oracle.text.contains("parse::<u16>"))
+        .ok_or_else(|| format!("expected turbofish oracle in {:?}", subject_test.assertions))?;
+    assert_eq!(turbofish.text, "parse_u16(\"7\").parse::<u16>().unwrap()");
+    Ok(())
+}
+
+#[test]
 fn trial_method_unwrap_expect_oracles_carry_real_lines_and_receivers()
 -> Result<(), Box<dyn std::error::Error>> {
     // #3603 gap 2: ordinary `#[test]` parsing records `.unwrap()` /

@@ -193,15 +193,16 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// a typed unknown (#3533 review). Entries from the `0.8` generation store
 /// such declarations as `Default`, which would resolve the default file
 /// Rust does not compile under the conditional configuration.
-/// No bump for #3603: per-file parser facts are unchanged — the harness
-/// registry applies registrations after the file-fact cache loads, so the
-/// trial evidence parity change never alters a stored `FileFacts`.
+/// `0.9` -> `1.0`: call and literal extraction now masks comments (line
+/// and nested block), string contents, and character literals before
+/// scanning (#3633 review). Warm per-file facts from before the change
+/// would serve comment-derived calls and numbers as live evidence.
 ///
-/// No bump for the #3608 harness-registration validation either: stored
-/// per-file facts predate the registry entirely and the registry applies
-/// after cache retrieval, re-validating every build against the current
-/// manifests — a warm hit cannot bypass that validation.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "0.9";
+/// Still no bump for #3603/#3608 themselves: per-file parser facts are
+/// unchanged by the harness registry — it applies registrations after
+/// the file-fact cache loads, re-validating every build against the
+/// current manifests — so a warm hit cannot bypass that validation.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.0";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -2610,7 +2611,9 @@ mod tests {
     /// warm cache serves stale roles.
     #[test]
     fn schema_versions_pin_the_role_composition_generation() {
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "0.9");
+        // 0.9 -> 1.0: comment/string masking changed the extracted
+        // FileFacts.calls/literals content (#3633 review).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.0");
         assert_eq!(CACHE_SCHEMA_VERSION, "1.4");
         assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.10");
         assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.11");
@@ -5293,6 +5296,51 @@ mod generation_transition_tests {
         // And the stale entry itself, loaded by its own key, no longer
         // satisfies current analysis identity: it can only be reached by
         // the previous key, which current code never constructs.
+        match cache.load_file_facts(&previous_key) {
+            CacheLoad::Hit(_) => {}
+            other => {
+                return Err(format!(
+                    "seed sanity: previous key should still read its own envelope, got {other:?}"
+                ));
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn file_fact_generation_before_comment_masking_is_a_miss() -> Result<(), String> {
+        // #3633 review (coderabbit Ltle): call and literal extraction now
+        // masks comments and string contents, changing the stored
+        // FileFacts.calls/literals. An envelope seeded under the 0.9
+        // generation (pre-masking) must miss the current generation's key
+        // with identical identity fields.
+        let dir = isolated_dir("gen-masked-facts");
+        let _ = std::fs::remove_dir_all(&dir);
+        let cache = RepoFileFactCache::at_dir(dir.clone());
+        let file = Path::new("src/commented.rs");
+        let content = "fn check() {\n    /* other_call(9); */\n    live_call(3);\n}\n"
+            .as_bytes()
+            .to_vec();
+        let previous_key = RepoFileFactCacheKey {
+            schema_version: "0.9".to_string(),
+            analyzer_version: env!("CARGO_PKG_VERSION").to_string(),
+            file_path: file.to_path_buf(),
+            content_hash: content_hash_for(&content),
+        };
+        cache.store_file_facts(&previous_key, &FileFacts::default())?;
+        assert!(cache.entry_path(&previous_key).exists());
+
+        let current_key = RepoFileFactCacheKey::new(file, &content);
+        assert_ne!(previous_key.schema_version, current_key.schema_version);
+        match cache.load_file_facts(&current_key) {
+            CacheLoad::Miss => {}
+            other => {
+                return Err(format!(
+                    "expected Miss across the pre-masking file-fact generation, got {other:?}"
+                ));
+            }
+        }
         match cache.load_file_facts(&previous_key) {
             CacheLoad::Hit(_) => {}
             other => {

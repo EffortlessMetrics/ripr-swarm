@@ -29,21 +29,49 @@ enum MaskState {
 }
 
 /// Position of the closing quote for the character literal opening at
-/// `quote_index`, within a bounded lookahead, or `None` when no closing
-/// quote appears nearby (the apostrophe is then a lifetime marker or an
-/// unpaired character and stays code).
+/// Position of the closing quote for the character literal opening at
+/// `quote_index`, or `None` when the apostrophe opens something else —
+/// a lifetime (`'a`, `'static`), a loop label (`'outer:`), or an
+/// unpaired character. Recognition is syntactic: identifier-like
+/// content is a character literal only when a single character is
+/// followed immediately by the closing quote (`'x'`, `'7'`); longer
+/// runs, or the content character followed by anything else, are
+/// lifetimes or labels and stay code. Escape forms (`'\n'`, `'\''`,
+/// `'\u{1F600}'`) are scanned within a bounded window, an escape
+/// consuming the escaped byte.
 fn char_literal_close(bytes: &[u8], quote_index: usize) -> Option<usize> {
-    let mut cursor = quote_index + 1;
-    let limit = quote_index + 13;
-    while cursor < bytes.len() && cursor <= limit {
-        match bytes[cursor] {
-            b'\'' => return Some(cursor),
-            b'\\' => cursor += 2,
-            b'\n' => return None,
-            _ => cursor += 1,
-        }
+    let content = *bytes.get(quote_index + 1)?;
+    if content == b'\'' || content == b'\n' {
+        // An empty or line-breaking pair is not a character literal.
+        return None;
     }
-    None
+    if content.is_ascii_alphanumeric() || content == b'_' {
+        let closing = *bytes.get(quote_index + 2)?;
+        if closing == b'\'' {
+            return Some(quote_index + 2);
+        }
+        // Identifier content followed by anything else is a lifetime
+        // (`'static`), a label (`'outer:`), or a lifetime in a generic
+        // parameter list (`'a>`) — never a character literal.
+        return None;
+    }
+    if content == b'\\' {
+        let mut cursor = quote_index + 1;
+        let limit = quote_index + 13;
+        while cursor < bytes.len() && cursor <= limit {
+            match bytes[cursor] {
+                b'\'' => return Some(cursor),
+                b'\\' => cursor += 2,
+                b'\n' => return None,
+                _ => cursor += 1,
+            }
+        }
+        return None;
+    }
+    // Single-byte punctuation content (`'('`, `' '`, `'"'`): the literal
+    // closes immediately after the content byte.
+    let closing = *bytes.get(quote_index + 2)?;
+    (closing == b'\'').then_some(quote_index + 2)
 }
 
 /// Hash count of the raw-string prefix ending just before the quote at
@@ -270,5 +298,29 @@ mod tests {
         let text = "fn check<'a>(value: &'a str) {\n    keep(value);\n}";
         let masked = mask_comments_and_strings(text);
         assert!(masked.contains("keep(value);"), "{masked}");
+    }
+
+    #[test]
+    fn lifetimes_and_labels_never_mask_live_content() {
+        // #3633 review (devin LYzZ + coderabbit LtlJ): the bounded
+        // next-apostrophe heuristic paired the lifetime apostrophe of
+        // `'a>(){x(7);'b'` with the char-literal quote 10 bytes away,
+        // erasing `>(){x(7);` from extraction. Syntactic recognition
+        // keeps lifetimes (`'a`, `'static`), labels (`'lbl:`), and the
+        // code they guard in place.
+        let text = "fn x(_: i32) {} fn f<'a>(){x(7);'b';}\nfn g() { 'lbl: loop { keep(2); } }\n";
+        let masked = mask_comments_and_strings(text);
+        assert!(masked.contains("x(7);"), "{masked}");
+        assert!(masked.contains("keep(2);"), "{masked}");
+    }
+
+    #[test]
+    fn escaped_char_literals_still_mask() {
+        // `'\''`, `'\n'`, and `'\u{1F600}'` keep their escape-form
+        // masking under the syntactic recognition.
+        let text = "fn check() {\n    let a = '\\'';\n    let b = '\\n';\n    let c = '\\u{1F600}';\n    live(4);\n}";
+        let masked = mask_comments_and_strings(text);
+        assert!(masked.contains("live(4);"), "{masked}");
+        assert_eq!(masked.lines().count(), text.lines().count());
     }
 }

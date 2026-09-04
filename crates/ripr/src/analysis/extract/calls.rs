@@ -97,6 +97,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn lifetimes_and_labels_do_not_mask_call_and_literal_facts() {
+        // #3633 review (devin LYzZ + coderabbit LtlJ): nearby lifetime and
+        // label apostrophes used to pair with char-literal openings and
+        // erase live calls and numbers between them. Both extractors keep
+        // the evidence.
+        let body = "fn f<'a>() { x(7); 'b'; }\nfn g() { 'lbl: loop { keep(2); } }\n";
+
+        let calls = extract_call_facts(body, 1);
+        let call_names: Vec<&str> = calls.iter().map(|call| call.name.as_str()).collect();
+        assert!(
+            call_names.contains(&"x") && call_names.contains(&"keep"),
+            "{call_names:?}"
+        );
+
+        let literals = super::super::extract_literal_facts(body, 1);
+        let literal_values: Vec<&str> = literals
+            .iter()
+            .map(|literal| literal.value.as_str())
+            .collect();
+        assert!(
+            literal_values.contains(&"7") && literal_values.contains(&"2"),
+            "{literal_values:?}"
+        );
+    }
+
+    #[test]
     fn given_control_flow_and_assertion_like_calls_when_extracting_then_skips_non_function_names() {
         let calls = extract_call_facts(
             r#"if(condition) {}
