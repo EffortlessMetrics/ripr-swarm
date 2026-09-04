@@ -5326,7 +5326,10 @@ mod generation_transition_tests {
             schema_version: "0.9".to_string(),
             analyzer_version: env!("CARGO_PKG_VERSION").to_string(),
             file_path: file.to_path_buf(),
-            content_hash: content_hash_for(&content),
+            // Production derives this field via `hash_bytes`, so the seed
+            // must too: the only difference from the current key is then
+            // the schema generation, making the miss prove the boundary.
+            content_hash: hash_bytes(&content),
         };
         cache.store_file_facts(&previous_key, &FileFacts::default())?;
         assert!(cache.entry_path(&previous_key).exists());
