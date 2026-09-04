@@ -86,6 +86,7 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
                 ));
                 continue;
             }
+            eprintln!("DBG include: parent={parent:?} literal={literal:?} candidate={candidate:?}");
             let Some(target_facts) = index.files.get(&candidate) else {
                 limitations.push(limitation(
                     parent,
@@ -349,9 +350,18 @@ fn rebase_function_identity(
     if compilation_unit == function.file {
         return;
     }
-    let source_prefix = format!("{}::", function.file.display());
+    // Function identities are composed from the stable `/`-separated
+    // path text (`stable_path_text`, #3469 family) while `file` keeps the
+    // producing host's separators, so the prefix must be built from the
+    // same stable form — on a backslash host the display form never
+    // matches and the include rebase silently never fires (Windows-only
+    // failure of `rust_include_compilation_unit`, #3631-adjacent).
+    let source_prefix = format!("{}::", crate::analysis::stable_path_text(&function.file));
     if let Some(suffix) = function.id.0.strip_prefix(&source_prefix) {
-        function.id.0 = format!("{}::{suffix}", compilation_unit.display());
+        function.id.0 = format!(
+            "{}::{suffix}",
+            crate::analysis::stable_path_text(&compilation_unit)
+        );
     }
 }
 
