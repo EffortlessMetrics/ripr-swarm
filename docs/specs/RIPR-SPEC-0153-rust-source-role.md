@@ -90,9 +90,11 @@ entry resolved to its autodiscovery shape — whose effective
 declaration-driven across the analyzed workspace's MEMBER manifests
 only: the analysis-root manifest defines the member set (its own
 package, declared `[workspace.members]` with `*`/`?`/`**` globs
-matched lexically minus `[workspace.exclude]`, and regular path
-dependencies of members; dev-, build-, and workspace-inherited
-dependencies do not create membership). Every member manifest's
+matched lexically minus `[workspace.exclude]`, and package manifests
+reached through members' path dependencies across the regular, dev,
+and build dependency sections (verified against `cargo metadata`;
+workspace-inherited dependencies are not resolved in this bounded
+model)). Every member manifest's
 `[[test]] path = ...` entries are resolved lexically against their own
 manifest directory (ParentDir and CurDir segments collapse without
 touching the filesystem; a leading escape chain stays as spelled), and
@@ -106,7 +108,9 @@ Each batch parses every member manifest at most once; a member
 manifest that cannot be read or parsed leaves the declaration map
 incomplete and yields `manifest_unavailable`, never a target-typo
 verdict; nonmember manifests are skipped entirely (their declarations
-never validate a target and their conflicts never block one). Package autodiscovery is credited only for
+never validate a target and their conflicts never block one), and a
+declared member whose manifest does not exist fails closed the same
+way — Cargo rejects such workspaces too. Package autodiscovery is credited only for
 package-root `tests/**` shapes (never `src/tests/**`) under Cargo's
 effective default — including the edition-2015
 backward-compatibility rule where a manual `[[test]]` target with

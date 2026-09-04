@@ -408,7 +408,11 @@ impl ManifestInventory {
             let dir = queue[index].clone();
             index += 1;
             match self.manifest_at(&dir) {
-                OwnedManifest::Absent => {}
+                // A queued member directory without a manifest is a broken
+                // workspace (Cargo rejects it too): the declaration map is
+                // incomplete and the scan fails closed (review round five,
+                // IZc5). Nonmembers never reach this queue.
+                OwnedManifest::Absent => scan.any_unresolvable = true,
                 OwnedManifest::Unresolvable => scan.any_unresolvable = true,
                 OwnedManifest::Parsed { root, value } => {
                     if value.get("package").is_some() {
@@ -712,13 +716,18 @@ fn expand_member_pattern_walk(base: &Path, components: &[&str], matched: &mut Ve
     match components.split_first() {
         None => matched.push(base.to_path_buf()),
         Some((&"**", rest)) => {
+            // `**` spans zero or more directories at this position (review
+            // round five, IZb_): match the remainder here, then descend
+            // into each child KEEPING the `**` component so arbitrarily
+            // deep levels still match. Recursion is bounded by directory
+            // depth.
             expand_member_pattern_walk(base, rest, matched);
             let Ok(entries) = std::fs::read_dir(base) else {
                 return;
             };
             for entry in entries.flatten() {
                 if entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
-                    expand_member_pattern_walk(&entry.path(), rest, matched);
+                    expand_member_pattern_walk(&entry.path(), components, matched);
                 }
             }
         }
@@ -770,23 +779,29 @@ fn workspace_member_glob_matches(pattern: &str, name: &str) -> bool {
     }
 }
 
-/// The lexically resolved directories of the parsed manifest's regular
-/// path dependencies (`[dependencies]` and `[target.*.dependencies]`
-/// entries carrying a `path` key): Cargo folds those into the workspace
-/// as members, so they are member candidates for the declaration map
-/// (review HAkg). Dev-, build-, and workspace-inherited
-/// (`{ workspace = true }`) dependencies do not create membership in
-/// this bounded model.
+/// The lexically resolved directories of the parsed manifest's path
+/// dependencies across every dependency section Cargo folds into
+/// workspace membership — `[dependencies]`, `[dev-dependencies]`,
+/// `[build-dependencies]`, and their `[target.*]`-specific forms
+/// (verified against `cargo metadata`: a member's dev- or build-path
+/// dependency becomes a workspace member). Workspace-inherited
+/// (`{ workspace = true }`) dependencies are not resolved in this
+/// bounded model and contribute nothing.
 fn member_path_dependency_dirs(value: &toml::Value, manifest_dir: &Path) -> Vec<PathBuf> {
     let mut dependency_tables = Vec::new();
-    if let Some(dependencies) = value.get("dependencies").and_then(|value| value.as_table()) {
-        dependency_tables.push(dependencies);
+    for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
+        if let Some(dependencies) = value.get(section).and_then(|value| value.as_table()) {
+            dependency_tables.push(dependencies);
+        }
     }
     if let Some(targets) = value.get("target").and_then(|value| value.as_table()) {
         for (_, target_table) in targets {
-            if let Some(dependencies) = target_table.get("dependencies").and_then(|v| v.as_table())
-            {
-                dependency_tables.push(dependencies);
+            for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
+                if let Some(dependencies) =
+                    target_table.get(section).and_then(|value| value.as_table())
+                {
+                    dependency_tables.push(dependencies);
+                }
             }
         }
     }
@@ -947,6 +962,10 @@ mod tests {
         std::fs::write(dir.join("Cargo.toml"), "[workspace]\nmembers = ['pkg']\n")
             .map_err(|error| error.to_string())?;
         std::fs::create_dir_all(dir.join("pkg/src")).map_err(|error| error.to_string())?;
+        // The declared member carries a valid manifest from the start: a
+        // declared member without one is a broken workspace (review round
+        // five, IZc5).
+        write_manifest("[package]\nname='p'\nversion='0.1.0'\nedition='2024'\n")?;
         std::fs::create_dir_all(dir.join("orphan/src")).map_err(|error| error.to_string())?;
         let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
 
@@ -1892,6 +1911,164 @@ mod context_tests {
             cargo_test_target_harness_verdict(&dir, Path::new("shared/mimic.rs")),
             CargoHarnessVerdict::HarnessDisabled,
             "the excluded member's conflicting declaration is ignored"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3608 review round five (IZb_): a mid-pattern `**` spans
+    /// arbitrarily deep directories — a harness-declaring package several
+    /// directories below a `crates/**/pkg` member pattern resolves.
+    #[test]
+    fn recursive_member_glob_reaches_deep_packages() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-harness-deep-glob-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(dir.join("crates/x/y/pkg")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(dir.join("shared")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[workspace]\nmembers = ['crates/**/pkg']\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("crates/x/y/pkg/Cargo.toml"),
+            "[package]\nname='deep'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='../../../../shared/mimic.rs'\nharness=false\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            cargo_test_target_harness_verdict(&dir, Path::new("shared/mimic.rs")),
+            CargoHarnessVerdict::HarnessDisabled,
+            "the deep package's declaration is honored through the recursive glob"
+        );
+        // A trailing `**` reaches every depth — and, matching Cargo, a
+        // glob match landing on a manifest-less directory is a broken
+        // workspace that fails closed (Cargo errors on such members
+        // identically). Every matched directory here carries a manifest,
+        // so the declaration resolves.
+        std::fs::write(
+            dir.join("crates/x/Cargo.toml"),
+            "[package]\nname='x'\nedition='2024'\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("crates/x/y/Cargo.toml"),
+            "[package]\nname='y'\nedition='2024'\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(dir.join("crates/x/y/nested"))
+            .map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("crates/x/y/nested/Cargo.toml"),
+            "[package]\nname='nested'\nedition='2024'\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[workspace]\nmembers = ['crates/x/**']\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            cargo_test_target_harness_verdict(&dir, Path::new("shared/mimic.rs")),
+            CargoHarnessVerdict::HarnessDisabled
+        );
+        // One manifest-less glob match (an in-package src/ directory) is
+        // a broken workspace: the verdict fails closed, mirroring Cargo's
+        // rejection of such members.
+        std::fs::create_dir_all(dir.join("crates/x/y/nested/src"))
+            .map_err(|error| error.to_string())?;
+        assert_eq!(
+            cargo_test_target_harness_verdict(&dir, Path::new("shared/mimic.rs")),
+            CargoHarnessVerdict::ManifestUnavailable,
+            "a manifest-less glob match fails closed like Cargo's own rejection"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3608 review round five (IZc5): a declared member whose manifest
+    /// does not exist is a broken workspace — the declaration map is
+    /// incomplete and every custom-harness verdict fails closed, even
+    /// when another member declares the registered target.
+    #[test]
+    fn missing_member_manifest_fails_closed() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-harness-absent-member-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(dir.join("ghost")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(dir.join("real")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[workspace]\nmembers = ['ghost', 'real']\n",
+        )
+        .map_err(|error| error.to_string())?;
+        // ghost/ is deliberately left without a Cargo.toml.
+        std::fs::write(
+            dir.join("real/Cargo.toml"),
+            "[package]\nname='real'\nedition='2024'\n\n[[test]]\nname='mimic'\npath='target.rs'\nharness=false\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            cargo_test_target_harness_verdict(&dir, Path::new("real/target.rs")),
+            CargoHarnessVerdict::ManifestUnavailable,
+            "the missing member manifest leaves the workspace incomplete"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #3608 review round five (IZdo): dev- and build-dependency path
+    /// packages join the member set exactly as `cargo metadata` reports,
+    /// so their harness declarations are honored even when that
+    /// dependency is the only route to the package.
+    #[test]
+    fn dev_and_build_path_dependencies_join_the_member_set() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-harness-devbuild-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(dir.join("main")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(dir.join("devdep")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(dir.join("builddep")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(dir.join("shared")).map_err(|error| error.to_string())?;
+        std::fs::write(dir.join("Cargo.toml"), "[workspace]\nmembers = ['main']\n")
+            .map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("main/Cargo.toml"),
+            "[package]\nname='main'\nedition='2024'\n\n[dev-dependencies]\ndevdep = { path = '../devdep' }\n\n[build-dependencies]\nbuilddep = { path = '../builddep' }\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("devdep/Cargo.toml"),
+            "[package]\nname='devdep'\nedition='2024'\n\n[[test]]\nname='dev_mimic'\npath='../shared/dev.rs'\nharness=false\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            dir.join("builddep/Cargo.toml"),
+            "[package]\nname='builddep'\nedition='2024'\n\n[[test]]\nname='build_mimic'\npath='../shared/build.rs'\nharness=false\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
+        assert_eq!(
+            verdict("shared/dev.rs"),
+            CargoHarnessVerdict::HarnessDisabled,
+            "the dev-dependency member's declaration is honored"
+        );
+        assert_eq!(
+            verdict("shared/build.rs"),
+            CargoHarnessVerdict::HarnessDisabled,
+            "the build-dependency member's declaration is honored"
         );
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())

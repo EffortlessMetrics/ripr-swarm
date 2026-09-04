@@ -8317,6 +8317,9 @@ tests = [
   "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::membership_gates_the_declaration_map",
   "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::path_dependency_members_join_the_declaration_map",
   "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::glob_members_honor_excludes",
+  "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::recursive_member_glob_reaches_deep_packages",
+  "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::missing_member_manifest_fails_closed",
+  "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::dev_and_build_path_dependencies_join_the_member_set",
 ]
 fixtures = [
   "crates/ripr/tests/data/source-role-corpus",
