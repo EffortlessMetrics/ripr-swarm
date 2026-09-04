@@ -208,7 +208,7 @@ fn component_name(component: &std::path::Component) -> String {
 /// Whether the path below a `dir` component matches a Cargo
 /// autodiscovery target shape: `<dir>/<name>.rs` or
 /// `<dir>/<name>/main.rs`.
-fn cargo_discoverable_under(components: &[std::path::Component], dir: &str) -> bool {
+pub(crate) fn cargo_discoverable_under(components: &[std::path::Component], dir: &str) -> bool {
     components.iter().enumerate().any(|(index, component)| {
         if component.as_os_str().to_string_lossy() != dir {
             return false;

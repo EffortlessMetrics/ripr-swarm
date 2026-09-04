@@ -38,6 +38,7 @@ use crate::analysis::rust_index::{
     extract_literal_facts,
 };
 use crate::analysis::syntax::ra::{LineIndex, parser_oracles_for_function, slice_text};
+use crate::analysis::workspace::{CargoHarnessVerdict, ManifestInventory};
 use crate::config::{TestHarnessAdapter, TestHarnessKind, TestHarnessRegistration};
 use ra_ap_syntax::ast::{self, HasName};
 use ra_ap_syntax::{AstNode, Edition, SourceFile, TextSize};
@@ -49,8 +50,18 @@ use std::path::Path;
 ///
 /// Empty registrations leave the index untouched (no-op), so
 /// repositories without registrations keep every existing output.
+///
+/// Before a `custom_harness` registration grants anything, its target is
+/// validated against the parsed Cargo target metadata of the owning
+/// package (#3608): only a declared `[[test]]` target with
+/// `harness = false` carries the premise the adapter needs. A target
+/// missing from Cargo metadata, still harness-enabled, or backed by an
+/// unreadable manifest records a typed limitation and the registration
+/// degrades to per-function behavior — the file keeps its ordinary
+/// classification instead of receiving file-wide evidence role.
 pub(super) fn apply_registrations(
     index: &mut RustIndex,
+    workspace_root: &Path,
     registrations: &[TestHarnessRegistration],
 ) {
     if registrations.is_empty() {
@@ -58,6 +69,9 @@ pub(super) fn apply_registrations(
     }
     let mut subjects = Vec::new();
     let mut limitations = Vec::new();
+    // One parsed-manifest inventory for the whole registration batch, so
+    // registrations sharing a package parse its manifest once (#3608 review).
+    let mut manifests = ManifestInventory::default();
     for registration in registrations {
         // Exact target identity only: a registration whose file is not in
         // this index (stale, wrong package, unanalyzed scope) applies to
@@ -68,13 +82,22 @@ pub(super) fn apply_registrations(
         let source = facts.source.clone();
         match (registration.kind, registration.adapter) {
             (TestHarnessKind::CustomHarnessTarget, TestHarnessAdapter::LibtestMimicV1) => {
-                apply_libtest_mimic_target(
-                    index,
-                    registration,
-                    &source,
-                    &mut subjects,
-                    &mut limitations,
-                )
+                match manifests.verdict(workspace_root, &registration.target) {
+                    CargoHarnessVerdict::HarnessDisabled => apply_libtest_mimic_target(
+                        index,
+                        registration,
+                        &source,
+                        &mut subjects,
+                        &mut limitations,
+                    ),
+                    verdict => {
+                        if let Some(limitation) =
+                            cargo_metadata_conflict_limitation(registration, verdict)
+                        {
+                            limitations.push(limitation);
+                        }
+                    }
+                }
             }
             (TestHarnessKind::RegisteredAttribute, TestHarnessAdapter::ExactAttributeV1) => {
                 apply_registered_attribute(
@@ -108,6 +131,66 @@ pub(super) fn apply_registrations(
     limitations.dedup();
     index.harness_subjects = subjects;
     index.harness_limitations = limitations;
+}
+
+/// The typed limitation recorded when a `custom_harness` registration
+/// fails its Cargo target metadata validation (#3608). The target file is
+/// named; the detail states exactly which premise is missing and what the
+/// registration degrades to. `None` for the confirmed verdict — the
+/// adapter runs and no conflict exists.
+fn cargo_metadata_conflict_limitation(
+    registration: &TestHarnessRegistration,
+    verdict: CargoHarnessVerdict,
+) -> Option<HarnessLimitationFact> {
+    let code = match verdict {
+        CargoHarnessVerdict::HarnessEnabled => "harness_flag_conflict",
+        CargoHarnessVerdict::NotDeclared => "target_not_declared",
+        CargoHarnessVerdict::ManifestUnavailable => "manifest_unavailable",
+        CargoHarnessVerdict::HarnessDisabled => return None,
+    };
+    let target = registration.target.clone();
+    let displayed = target.to_string_lossy().replace('\\', "/");
+    let detail = match verdict {
+        CargoHarnessVerdict::HarnessEnabled => format!(
+            "the Cargo target for `{displayed}` still has `harness = true` (explicit or autodiscovered default); the `harness = false` premise of the registration is not established, so no file-wide evidence role, demotion, or trial subjects are granted and the file keeps its ordinary per-function classification"
+        ),
+        CargoHarnessVerdict::NotDeclared => format!(
+            "the registered custom-harness target `{displayed}` does not match any Cargo `[[test]]` target (declared or autodiscovered) in the owning package manifest; no file-wide evidence role, demotion, or trial subjects are granted and the file keeps its ordinary per-function classification"
+        ),
+        CargoHarnessVerdict::ManifestUnavailable => format!(
+            "the owning package manifest for `{displayed}` could not be read or parsed, so the `harness = false` premise of the registration cannot be established from Cargo metadata; no file-wide evidence role, demotion, or trial subjects are granted and the file keeps its ordinary per-function classification"
+        ),
+        CargoHarnessVerdict::HarnessDisabled => return None,
+    };
+    Some(HarnessLimitationFact {
+        registration_id: registration.registration_id.clone(),
+        code: code.to_string(),
+        file: target,
+        line: 1,
+        detail,
+    })
+}
+
+/// The file-wide evidence-role grant after Cargo target metadata
+/// validation (#3608): the workspace-relative targets of exactly those
+/// `custom_harness` registrations whose owning package manifest declares
+/// a `[[test]]` target with `harness = false`. Every file-wide evidence
+/// surface consumes this validated set, so a misdeclared registration
+/// cannot suppress production probing on an unverified premise.
+pub(crate) fn validated_file_wide_harness_targets(
+    workspace_root: &Path,
+    registrations: &[TestHarnessRegistration],
+) -> BTreeSet<std::path::PathBuf> {
+    let mut manifests = ManifestInventory::default();
+    registrations
+        .iter()
+        .filter(|registration| registration.file_wide_harness_evidence())
+        .filter(|registration| {
+            manifests.verdict(workspace_root, &registration.target)
+                == CargoHarnessVerdict::HarnessDisabled
+        })
+        .map(|registration| registration.target.clone())
+        .collect()
 }
 
 /// libtest-mimic adapter, generation 1 (#3532).

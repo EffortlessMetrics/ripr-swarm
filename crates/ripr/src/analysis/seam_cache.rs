@@ -101,7 +101,14 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.2` -> `1.3`: source roles now compose across include and module edges
 /// (#3533); out-of-line `#[cfg(test)]` module helpers flip out of the
 /// production inventory, changing classified-seam content.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.3";
+/// `1.3` -> `1.4`: `custom_harness` registrations now validate against
+/// parsed Cargo target metadata (#3608); a misdeclared target keeps its
+/// ordinary classification — targets that ordinary classification treats
+/// as production keep seeding production seams, while `tests/`-layout and
+/// Cargo-discovered evidence paths stay evidence-only — instead of
+/// receiving file-wide evidence role, changing the production inventory
+/// classified seams derive from.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.4";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -115,7 +122,10 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.3";
 /// evidence role (#3530), changing the facts sharded entries derive from.
 /// `0.8` -> `0.9`: source roles now compose across include and module edges
 /// (#3533), changing the facts sharded entries derive from.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.9";
+/// `0.9` -> `0.10`: `custom_harness` registrations now validate against
+/// parsed Cargo target metadata (#3608), changing the production
+/// inventory the facts sharded entries derive from.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.10";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -134,7 +144,12 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.9";
 /// `0.9` -> `0.10`: source roles now compose across include and module edges
 /// (#3533); out-of-line `#[cfg(test)]` module helpers flip out of the
 /// production inventory, changing compact classified-seam content.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.10";
+/// `0.10` -> `0.11`: `custom_harness` registrations now validate against
+/// parsed Cargo target metadata (#3608); a misdeclared target keeps its
+/// ordinary classification — production-classified targets keep seeding
+/// production seams, evidence-layout targets stay evidence-only —
+/// changing compact classified-seam content.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.11";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -179,6 +194,11 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// a typed unknown (#3533 review). Entries from the `0.8` generation store
 /// such declarations as `Default`, which would resolve the default file
 /// Rust does not compile under the conditional configuration.
+///
+/// No bump for the #3608 harness-registration validation: stored per-file
+/// facts predate the registry entirely and the registry applies after
+/// cache retrieval, re-validating every build against the current
+/// manifests — a warm hit cannot bypass that validation.
 pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "0.9";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
@@ -2587,9 +2607,9 @@ mod tests {
     #[test]
     fn schema_versions_pin_the_role_composition_generation() {
         assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "0.9");
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.3");
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.9");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.10");
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.4");
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.10");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.11");
     }
 
     fn sample_classified() -> ClassifiedSeam {

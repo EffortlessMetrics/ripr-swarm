@@ -76,7 +76,7 @@ pub(crate) fn inventory_seams_at_with_config(
     let mut context =
         workspace::context_for_files(root, rust_files.iter().map(|path| path.as_path()));
     context.production_like_targets = config.analysis().production_like_targets().clone();
-    context.harness_targets = harness_targets_from_config(config);
+    context.harness_targets = harness_targets_from_config(root, config);
     let production_files: Vec<PathBuf> = rust_files
         .iter()
         .filter(|p| workspace::classify_with(p, &context).seeds_production_findings())
@@ -392,7 +392,7 @@ pub(crate) fn inventory_classified_seams_uncached_with_config(
     let mut uncached_context =
         workspace::context_for_files(root, rust_files.iter().map(|path| path.as_path()));
     uncached_context.production_like_targets = config.analysis().production_like_targets().clone();
-    uncached_context.harness_targets = harness_targets_from_config(config);
+    uncached_context.harness_targets = harness_targets_from_config(root, config);
     let production_files: Vec<PathBuf> = rust_files
         .iter()
         .filter(|p| workspace::classify_with(p, &uncached_context).seeds_production_findings())
@@ -569,7 +569,7 @@ fn inventory_seam_grip_class_counts_uncached_with_config(
     let mut context =
         workspace::context_for_files(root, rust_files.iter().map(|path| path.as_path()));
     context.production_like_targets = config.analysis().production_like_targets().clone();
-    context.harness_targets = harness_targets_from_config(config);
+    context.harness_targets = harness_targets_from_config(root, config);
     let production_files: Vec<PathBuf> = rust_files
         .iter()
         .filter(|p| workspace::classify_with(p, &context).seeds_production_findings())
@@ -1108,14 +1108,14 @@ fn inventory_seam_grip_class_counts_from_state_with_config(
 
 /// Exact registered test-harness target identities (#3532), normalized to
 /// the forward-slashed workspace-relative form the role context compares.
-fn harness_targets_from_config(config: &RiprConfig) -> std::collections::BTreeSet<PathBuf> {
-    config
-        .analysis()
-        .test_harnesses()
-        .iter()
-        .filter(|registration| registration.file_wide_harness_evidence())
-        .map(|registration| registration.target.clone())
-        .collect()
+/// Validated against parsed Cargo target metadata (#3608): only
+/// registrations whose owning manifest declares the target
+/// `harness = false` keep the file-wide evidence-role grant.
+fn harness_targets_from_config(
+    root: &Path,
+    config: &RiprConfig,
+) -> std::collections::BTreeSet<PathBuf> {
+    rust_index::validated_file_wide_harness_targets(root, harness_registrations(config))
 }
 
 /// Registration list for the harness-aware index builds (#3532). Empty
@@ -1136,7 +1136,7 @@ fn production_files_from_state_with_role(
         state.files.iter().map(|(path, _)| path.as_path()),
     );
     context.production_like_targets = config.analysis().production_like_targets().clone();
-    context.harness_targets = harness_targets_from_config(config);
+    context.harness_targets = harness_targets_from_config(&state.workspace_root, config);
     state
         .files
         .iter()
@@ -1461,6 +1461,9 @@ mod tests {
         // #3532 review: a registered attribute applies to individual
         // functions, so its target must not enter the file-wide harness
         // evidence set — a mixed production file keeps seeding seams.
+        // #3608: a custom_harness target additionally needs its
+        // `harness = false` premise confirmed by the parsed Cargo target
+        // metadata; an undeclared target keeps nothing.
         let config = crate::config::tests_only_parse(
             r#"[analysis]
 [[analysis.test_harnesses]]
@@ -1476,15 +1479,38 @@ target = "src/lib.rs"
 kind = "registered_attribute"
 adapter = "exact_attribute_v1"
 marker = "myco::contract_test"
+
+[[analysis.test_harnesses]]
+registration_id = "misdeclared"
+target = "src/misdeclared.rs"
+kind = "custom_harness"
+adapter = "libtest_mimic_v1"
+marker = "libtest_mimic::Trial"
 "#,
         )
         .map_err(|error| format!("fixture config parses: {error}"))?;
-        let targets = harness_targets_from_config(&config);
+        let root = std::env::temp_dir().join(format!(
+            "ripr-harness-role-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = 'role-fixture'\nversion = '0.1.0'\n\n[[test]]\nname = 'mimic'\nharness = false\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let targets = harness_targets_from_config(&root, &config);
         assert_eq!(
             targets,
             std::iter::once(PathBuf::from("tests/mimic.rs"))
-                .collect::<std::collections::BTreeSet<_>>()
+                .collect::<std::collections::BTreeSet<_>>(),
+            "the declared harness = false target keeps the grant; the attribute \
+             target never has it and the undeclared custom target loses it"
         );
+        let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
     use crate::analysis::rust_index::{

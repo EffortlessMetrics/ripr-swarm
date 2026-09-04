@@ -2323,13 +2323,13 @@ fn partition_out_of_scope_test_file_findings(
             .map(|finding| finding.probe.location.file.as_path()),
     );
     context.production_like_targets = config.analysis().production_like_targets().clone();
-    context.harness_targets = config
-        .analysis()
-        .test_harnesses()
-        .iter()
-        .filter(|registration| registration.file_wide_harness_evidence())
-        .map(|registration| registration.target.clone())
-        .collect();
+    // Cargo-validated file-wide harness evidence (#3608): the same
+    // validated grant the diff seeding and seam inventory consume, so a
+    // misdeclared registration degrades identically in the editor.
+    context.harness_targets = crate::analysis::validated_file_wide_harness_targets(
+        root,
+        config.analysis().test_harnesses(),
+    );
     let mut scoped = Vec::with_capacity(findings.len());
     let mut out_of_scope = 0usize;
     for finding in findings {

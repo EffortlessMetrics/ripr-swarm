@@ -19,6 +19,7 @@ pub(crate) use super::extract::{
 };
 use super::facts::ModulePathTarget;
 pub(crate) use super::facts::build_index_from_loaded_files_with_cache_and_test_harnesses;
+pub(crate) use super::facts::validated_file_wide_harness_targets;
 #[cfg(test)]
 pub use super::facts::{CallFact, LiteralFact, ReturnFact};
 pub use super::facts::{
